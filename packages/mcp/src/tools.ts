@@ -4,6 +4,7 @@ import {
   type GeneralResource,
   type GeneralResourcePage,
 } from '@conflict-hq/ezacto-client'
+import { REPORT_CAPABILITIES } from '@ezacto/core'
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server'
 import { z } from 'zod/v4'
 
@@ -21,6 +22,16 @@ export type EzactoReadClient = Pick<
   | 'getClientRollupReport'
   | 'getProjectBudgetReport'
   | 'listProjectBudgetSummaries'
+  | 'getMyHoursReport'
+  | 'getTimeReport'
+  | 'getInvoicedReport'
+  | 'getPaymentsReceivedReport'
+  | 'getReceivablesReport'
+  | 'getContractorCostReport'
+  | 'getDetailedTimeReport'
+  | 'listActivityLog'
+  | 'getProfitabilityReport'
+  | 'getDetailedExpenseReport'
 >
 
 class SafeToolError extends Error {}
@@ -147,6 +158,38 @@ const projectBudgetInput = z
 
 const projectBudgetListInput = z
   .object(reportRange)
+  .strict()
+  .superRefine(validateRange)
+
+const reportIds = REPORT_CAPABILITIES.map((report) => report.id) as [
+  (typeof REPORT_CAPABILITIES)[number]['id'],
+  ...(typeof REPORT_CAPABILITIES)[number]['id'][],
+]
+
+const runReportInput = z
+  .object({
+    definition: z.enum(reportIds),
+    ...reportRange,
+    client: selector.optional(),
+    project: selector.optional(),
+    include_fixed_fee: z.boolean().optional(),
+    hours: z.enum(['all', 'billable', 'non_billable', 'uninvoiced']).optional(),
+    grain: z.enum(['day', 'entry']).optional(),
+    active_projects_only: z.boolean().optional(),
+    billable_only: z.boolean().optional(),
+    event_type: z.string().trim().min(1).max(200).optional(),
+    actor_id: positiveInteger.optional(),
+    as_of: canonicalDate.optional(),
+    status: z.enum(['draft', 'open', 'paid', 'closed']).optional(),
+    project_status: z.enum(['all', 'active', 'archived']).optional(),
+    billing_method: z.enum(['non_billable', 'time_materials', 'fixed_fee']).optional(),
+    manager_id: positiveInteger.optional(),
+    tag_id: positiveInteger.optional(),
+    task_id: positiveInteger.optional(),
+    user_id: positiveInteger.optional(),
+    role_id: positiveInteger.optional(),
+    invoice_state: z.enum(['all', 'invoiced', 'uninvoiced']).optional(),
+  })
   .strict()
   .superRefine(validateRange)
 
@@ -428,5 +471,161 @@ export const installEzactoReadTools = (
           query: range(input),
         }),
       ),
+  )
+
+  server.registerTool(
+    'list_reports',
+    {
+      title: 'List ezacto report capabilities',
+      description: 'List every report family with its route, filters, formats, and authorization.',
+      inputSchema: z.object({}).strict(),
+      annotations: readonlyAnnotations,
+    },
+    () => run(async () => ({ reports: REPORT_CAPABILITIES })),
+  )
+
+  server.registerTool(
+    'run_report',
+    {
+      title: 'Run any ezacto report',
+      description:
+        'Run any report in list_reports. Omitted dates mean all dates; names are resolved exactly and API authorization/redaction remains authoritative.',
+      inputSchema: runReportInput,
+      annotations: readonlyAnnotations,
+    },
+    (input) =>
+      run(async () => {
+        const dates = range(input)
+        const resolvedClientId =
+          input.client === undefined ? undefined : await clientId(client, input.client)
+        const resolvedProjectId =
+          input.project === undefined
+            ? undefined
+            : await projectId(client, input.project, resolvedClientId)
+        if (input.definition === 'my-hours') {
+          return client.getMyHoursReport({
+            query: {
+              ...dates,
+              ...(resolvedProjectId === undefined ? {} : { project_id: resolvedProjectId }),
+            },
+          })
+        }
+        if (input.definition === 'time') {
+          return client.getTimeReport({
+            query: {
+              ...dates,
+              ...(input.include_fixed_fee === undefined
+                ? {}
+                : { include_fixed_fee: input.include_fixed_fee }),
+            },
+          })
+        }
+        if (input.definition === 'invoiced') {
+          return client.getInvoicedReport({
+            query: {
+              ...dates,
+              ...(resolvedClientId === undefined ? {} : { client_id: resolvedClientId }),
+              ...(input.status === undefined ? {} : { status: input.status }),
+            },
+          })
+        }
+        if (input.definition === 'payments-received') {
+          return client.getPaymentsReceivedReport({
+            query: {
+              ...dates,
+              ...(resolvedClientId === undefined ? {} : { client_id: resolvedClientId }),
+            },
+          })
+        }
+        if (input.definition === 'receivables') {
+          if (input.as_of === undefined) {
+            throw new SafeToolError('receivables requires as_of')
+          }
+          return client.getReceivablesReport({
+            query: {
+              as_of: input.as_of,
+              ...(resolvedClientId === undefined ? {} : { client_id: resolvedClientId }),
+            },
+          })
+        }
+        if (input.definition === 'uninvoiced') {
+          return client.getUninvoicedReport({
+            query: {
+              ...dates,
+              ...(resolvedClientId === undefined ? {} : { client_id: resolvedClientId }),
+              ...(resolvedProjectId === undefined ? {} : { project_id: resolvedProjectId }),
+            },
+          })
+        }
+        if (input.definition === 'client-rollup') {
+          if (resolvedClientId === undefined) {
+            throw new SafeToolError('client-rollup requires client')
+          }
+          return client.getClientRollupReport({ clientId: resolvedClientId, query: dates })
+        }
+        if (input.definition === 'project-budget') {
+          if (resolvedProjectId === undefined) {
+            throw new SafeToolError('project-budget requires project')
+          }
+          return client.getProjectBudgetReport({ projectId: resolvedProjectId, query: dates })
+        }
+        if (input.definition === 'contractor-cost') {
+          return client.getContractorCostReport({ query: dates })
+        }
+        if (input.definition === 'detailed-time') {
+          return client.getDetailedTimeReport({
+            query: {
+              ...dates,
+              ...(resolvedClientId === undefined ? {} : { client_id: resolvedClientId }),
+              ...(resolvedProjectId === undefined ? {} : { project_id: resolvedProjectId }),
+              ...(input.task_id === undefined ? {} : { task_id: input.task_id }),
+              ...(input.user_id === undefined ? {} : { user_id: input.user_id }),
+              ...(input.role_id === undefined ? {} : { role_id: input.role_id }),
+              ...(input.tag_id === undefined ? {} : { tag_id: input.tag_id }),
+              ...(input.invoice_state === undefined
+                ? {}
+                : { invoice_state: input.invoice_state }),
+              ...(input.hours === undefined ? {} : { hours: input.hours }),
+              ...(input.grain === undefined ? {} : { grain: input.grain }),
+              ...(input.active_projects_only === undefined
+                ? {}
+                : { active_projects_only: input.active_projects_only }),
+            },
+          })
+        }
+        if (input.definition === 'activity-log') {
+          return client.listActivityLog({
+            query: {
+              ...dates,
+              per_page: 200,
+              ...(input.event_type === undefined ? {} : { event_type: input.event_type }),
+              ...(input.actor_id === undefined ? {} : { actor_id: input.actor_id }),
+            },
+          })
+        }
+        if (input.definition === 'profitability') {
+          return client.getProfitabilityReport({
+            query: {
+              ...dates,
+              ...(input.project_status === undefined
+                ? {}
+                : { project_status: input.project_status }),
+              ...(input.billing_method === undefined
+                ? {}
+                : { billing_method: input.billing_method }),
+              ...(input.manager_id === undefined ? {} : { manager_id: input.manager_id }),
+              ...(input.tag_id === undefined ? {} : { tag_id: input.tag_id }),
+            },
+          })
+        }
+        return client.getDetailedExpenseReport({
+          query: {
+            ...dates,
+            ...(resolvedClientId === undefined ? {} : { client_id: resolvedClientId }),
+            ...(resolvedProjectId === undefined ? {} : { project_id: resolvedProjectId }),
+            ...(input.billable_only === undefined ? {} : { billable_only: input.billable_only }),
+          },
+        })
+      }),
   )
 }

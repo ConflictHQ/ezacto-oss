@@ -287,6 +287,26 @@ describe('ez money commands against the native API', () => {
     expect(result.stderr).toContain('unknown report: bogus')
   })
 
+  it('[e2e:report #717] forwards the detailed-time workflow filters', async () => {
+    const result = await runEz(
+      [
+        'report', 'run', 'detailed-time', '--from', '2026-08-01', '--to', '2026-08-31',
+        '--task-id', '1', '--user-id', '1', '--role-id', '7', '--tag-id', '8',
+        '--invoice-state', 'uninvoiced', '--json',
+      ],
+      fullConfigPath,
+    )
+    expect(result.code, result.stderr).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      task_id: 1,
+      user_id: 1,
+      role_id: 7,
+      tag_id: 8,
+      invoice_state: 'uninvoiced',
+      grain: 'entry',
+    })
+  })
+
   it('[unit] missing --from/--to is rejected', async () => {
     const result = await runEz(
       ['uninvoiced'],

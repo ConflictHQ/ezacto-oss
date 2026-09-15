@@ -9,6 +9,7 @@ import {
   type ClientRollupNode,
   type ProjectBudgetGrain,
 } from '@conflict-hq/ezacto-client'
+import { REPORT_CAPABILITIES } from '@ezacto/core'
 
 export interface MoneyCommandResult {
   json: unknown
@@ -138,6 +139,40 @@ const csvEscape = (value: string): string =>
 const csvRow = (fields: readonly string[]): string =>
   fields.map(csvEscape).join(',')
 
+const reportCsvCell = (value: unknown): string => {
+  if (value === null || value === undefined) return ''
+  const raw = typeof value === 'object' ? JSON.stringify(value) : String(value)
+  const guarded = typeof value === 'string' && /^[=+\-@\t\r]/u.test(raw) ? `'${raw}` : raw
+  return csvEscape(guarded)
+}
+
+/** A deterministic scalar view for report rows that do not have a bespoke export. */
+const reportRowsCsv = (rows: readonly object[]): string => {
+  const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))]
+  if (columns.length === 0) return ''
+  return [
+    csvRow(columns),
+    ...rows.map((row) => {
+      const record = row as Record<string, unknown>
+      return columns.map((column) => reportCsvCell(record[column])).join(',')
+    }),
+  ].join('\n')
+}
+
+const reportResult = (
+  definition: string,
+  report: { readonly from?: string; readonly to?: string; readonly as_of?: string },
+  rows: readonly object[],
+): MoneyCommandResult => {
+  const start = report.from ?? report.as_of ?? ''
+  const end = report.to ?? report.as_of ?? ''
+  return {
+    json: report,
+    human: `${definition} ${start} — ${end}: ${rows.length} ${rows.length === 1 ? 'row' : 'rows'}`,
+    csv: reportRowsCsv(rows),
+  }
+}
+
 // --- uninvoiced -------------------------------------------------------------
 
 const formatCurrencyTotal = (total: UninvoicedCurrencyTotal): string => {
@@ -183,7 +218,11 @@ export const uninvoiced = async (
     }
   }
 
-  return { json: report, human: lines.join('\n') }
+  return {
+    json: report,
+    human: lines.join('\n'),
+    csv: reportRowsCsv(report.projects.length > 0 ? report.projects : report.totals),
+  }
 }
 
 // --- invoice generate -------------------------------------------------------
@@ -297,7 +336,9 @@ export const listInvoices = async (
 
 // --- report run -------------------------------------------------------------
 
-const reportDefinitions = new Set(['uninvoiced', 'client-rollup', 'project-budget'])
+const reportDefinitions: ReadonlySet<string> = new Set(
+  REPORT_CAPABILITIES.map((report) => report.id),
+)
 
 export const validReportDefinitions = (): readonly string[] => [...reportDefinitions]
 
@@ -309,6 +350,23 @@ export const runReport = async (
     to: string
     clientId?: number
     projectId?: number
+    includeFixedFee?: boolean
+    hours?: 'all' | 'billable' | 'non_billable' | 'uninvoiced'
+    grain?: 'day' | 'entry'
+    activeProjectsOnly?: boolean
+    billableOnly?: boolean
+    eventType?: string
+    actorId?: number
+    asOf?: string
+    invoiceStatus?: 'draft' | 'open' | 'paid' | 'closed'
+    projectStatus?: 'all' | 'active' | 'archived'
+    billingMethod?: 'non_billable' | 'time_materials' | 'fixed_fee'
+    managerId?: number
+    tagId?: number
+    taskId?: number
+    userId?: number
+    roleId?: number
+    invoiceState?: 'all' | 'invoiced' | 'uninvoiced'
   },
 ): Promise<MoneyCommandResult> => {
   if (!reportDefinitions.has(input.definition)) {
@@ -321,6 +379,131 @@ export const runReport = async (
     return uninvoiced(client, input)
   }
 
+  if (input.definition === 'receivables') {
+    if (input.asOf === undefined) throw new Error('receivables report requires --as-of')
+    const report = (await client.getReceivablesReport({
+      query: {
+        as_of: canonicalDate(input.asOf),
+        ...(input.clientId === undefined ? {} : { client_id: input.clientId }),
+      },
+    })).data
+    return reportResult(input.definition, report, report.rows)
+  }
+
+  const range = { from: canonicalDate(input.from), to: canonicalDate(input.to) }
+
+  if (input.definition === 'my-hours') {
+    const report = (await client.getMyHoursReport({
+      query: {
+        ...range,
+        ...(input.projectId === undefined ? {} : { project_id: input.projectId }),
+      },
+    })).data
+    return reportResult(input.definition, report, report.projects)
+  }
+
+  if (input.definition === 'time') {
+    const report = (await client.getTimeReport({
+      query: {
+        ...range,
+        ...(input.includeFixedFee === undefined
+          ? {}
+          : { include_fixed_fee: input.includeFixedFee }),
+      },
+    })).data
+    return reportResult(input.definition, report, report.projects)
+  }
+
+  if (input.definition === 'invoiced') {
+    const report = (await client.getInvoicedReport({
+      query: {
+        ...range,
+        ...(input.clientId === undefined ? {} : { client_id: input.clientId }),
+        ...(input.invoiceStatus === undefined ? {} : { status: input.invoiceStatus }),
+      },
+    })).data
+    return reportResult(input.definition, report, report.rows)
+  }
+
+  if (input.definition === 'payments-received') {
+    const report = (await client.getPaymentsReceivedReport({
+      query: {
+        ...range,
+        ...(input.clientId === undefined ? {} : { client_id: input.clientId }),
+      },
+    })).data
+    return reportResult(input.definition, report, report.rows)
+  }
+
+  if (input.definition === 'contractor-cost') {
+    const report = (await client.getContractorCostReport({ query: range })).data
+    return reportResult(input.definition, report, report.rows)
+  }
+
+  if (input.definition === 'detailed-time') {
+    const report = (await client.getDetailedTimeReport({
+      query: {
+        ...range,
+        ...(input.clientId === undefined ? {} : { client_id: input.clientId }),
+        ...(input.projectId === undefined ? {} : { project_id: input.projectId }),
+        ...(input.taskId === undefined ? {} : { task_id: input.taskId }),
+        ...(input.userId === undefined ? {} : { user_id: input.userId }),
+        ...(input.roleId === undefined ? {} : { role_id: input.roleId }),
+        ...(input.tagId === undefined ? {} : { tag_id: input.tagId }),
+        ...(input.invoiceState === undefined ? {} : { invoice_state: input.invoiceState }),
+        grain: input.grain ?? 'entry',
+        ...(input.hours === undefined ? {} : { hours: input.hours }),
+        ...(input.activeProjectsOnly === undefined
+          ? {}
+          : { active_projects_only: input.activeProjectsOnly }),
+      },
+    })).data
+    return reportResult(input.definition, report, report.rows)
+  }
+
+  if (input.definition === 'activity-log') {
+    const report = await client.listActivityLog({
+      query: {
+        ...range,
+        per_page: 200,
+        ...(input.eventType === undefined ? {} : { event_type: input.eventType }),
+        ...(input.actorId === undefined ? {} : { actor_id: input.actorId }),
+      },
+    })
+    return {
+      json: report,
+      human: `${input.definition} ${range.from} — ${range.to}: ${report.data.length} ${report.data.length === 1 ? 'event' : 'events'}`,
+      csv: reportRowsCsv(report.data),
+    }
+  }
+
+  if (input.definition === 'profitability') {
+    const report = (await client.getProfitabilityReport({
+      query: {
+        ...range,
+        ...(input.projectStatus === undefined ? {} : { project_status: input.projectStatus }),
+        ...(input.billingMethod === undefined ? {} : { billing_method: input.billingMethod }),
+        ...(input.managerId === undefined ? {} : { manager_id: input.managerId }),
+        ...(input.tagId === undefined ? {} : { tag_id: input.tagId }),
+      },
+    })).data
+    return reportResult(input.definition, report, report.rows)
+  }
+
+  if (input.definition === 'detailed-expense') {
+    const report = (await client.getDetailedExpenseReport({
+      query: {
+        ...range,
+        ...(input.clientId === undefined ? {} : { client_id: input.clientId }),
+        ...(input.projectId === undefined ? {} : { project_id: input.projectId }),
+        ...(input.billableOnly === undefined
+          ? {}
+          : { billable_only: input.billableOnly }),
+      },
+    })).data
+    return reportResult(input.definition, report, report.rows)
+  }
+
   if (input.definition === 'client-rollup') {
     if (input.clientId === undefined) {
       throw new Error('client-rollup report requires --client')
@@ -328,7 +511,7 @@ export const runReport = async (
     const report = (
       await client.getClientRollupReport({
         clientId: input.clientId,
-        query: { from: canonicalDate(input.from), to: canonicalDate(input.to) },
+        query: range,
       })
     ).data
 
@@ -364,7 +547,7 @@ export const runReport = async (
   const report = (
     await client.getProjectBudgetReport({
       projectId: input.projectId,
-      query: { from: canonicalDate(input.from), to: canonicalDate(input.to) },
+      query: range,
     })
   ).data
 

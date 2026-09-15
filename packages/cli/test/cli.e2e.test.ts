@@ -147,6 +147,26 @@ describe('ez CLI dev-server round trip', () => {
     expect(await readFile(configPath, 'utf8')).toBe(before)
   })
 
+  it('[e2e:cli-report] lists every canonical report in machine-readable form', async () => {
+    const result = await runEz(['report', 'list', '--json'], configPath)
+    expect(result.code, result.stderr).toBe(0)
+    expect(JSON.parse(result.stdout)).toEqual([
+      'my-hours',
+      'time',
+      'invoiced',
+      'payments-received',
+      'receivables',
+      'uninvoiced',
+      'client-rollup',
+      'project-budget',
+      'contractor-cost',
+      'detailed-time',
+      'activity-log',
+      'profitability',
+      'detailed-expense',
+    ])
+  })
+
   it('[e2e:cli-log] logout removes the final organization credential', async () => {
     const result = await runEz(['logout', '--json'], configPath)
     expect(result.code, result.stderr).toBe(0)

@@ -1634,8 +1634,8 @@ test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget report
     // locator in strict mode.
     reports.getByLabel('Period', { exact: true }),
     reports.getByRole('button', { name: 'Next period' }),
-    reports.getByLabel('From'),
-    reports.getByLabel('To'),
+    reports.getByLabel('From', { exact: true }),
+    reports.getByLabel('To', { exact: true }),
     reports.getByLabel('Client (optional)'),
     reports.getByLabel('Project (optional)'),
     reports.getByRole('button', { name: 'Run report' }),
@@ -1672,7 +1672,7 @@ test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget report
   await expectNoPageOverflow(page)
 
   await kindTabs.getByRole('link', { name: 'Project budget' }).click()
-  await reports.getByLabel('Project').selectOption({
+  await reports.getByLabel('Project', { exact: true }).selectOption({
     label: '[BROWSER] Browser Acceptance Project',
   })
   await reports.getByRole('button', { name: 'Run report' }).click()

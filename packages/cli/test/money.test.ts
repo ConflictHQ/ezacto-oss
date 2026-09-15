@@ -11,10 +11,21 @@ import {
 describe('CLI money module', () => {
   it('[unit] exposes the canonical report definitions', () => {
     const definitions = validReportDefinitions()
-    expect(definitions).toContain('uninvoiced')
-    expect(definitions).toContain('client-rollup')
-    expect(definitions).toContain('project-budget')
-    expect(definitions.length).toBe(3)
+    expect(definitions).toEqual([
+      'my-hours',
+      'time',
+      'invoiced',
+      'payments-received',
+      'receivables',
+      'uninvoiced',
+      'client-rollup',
+      'project-budget',
+      'contractor-cost',
+      'detailed-time',
+      'activity-log',
+      'profitability',
+      'detailed-expense',
+    ])
   })
 
   it('[unit] exportable columns describe the work without exposing invoice state', () => {

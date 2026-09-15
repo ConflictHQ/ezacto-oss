@@ -49,7 +49,14 @@ import { icon } from './icons.js'
 
 export type WeekStartDay = 'saturday' | 'sunday' | 'monday'
 
-export type PeriodKind = 'week' | 'month' | 'quarter' | 'year' | 'custom'
+export type PeriodKind =
+  | 'week'
+  | 'semimonth'
+  | 'month'
+  | 'quarter'
+  | 'year'
+  | 'all'
+  | 'custom'
 
 /** The four periods that can be computed from a date. `custom` cannot. */
 export type NamedPeriodKind = Exclude<PeriodKind, 'custom'>
@@ -76,10 +83,14 @@ const MONTH_NAMES = [
 
 const PERIOD_NAMES: Readonly<Record<NamedPeriodKind, string>> = {
   week: 'This week',
+  semimonth: 'This half-month',
   month: 'This month',
   quarter: 'This quarter',
   year: 'This year',
+  all: 'All time',
 }
+
+const ALL_TIME_FROM = '0001-01-01'
 
 export const isCalendarDay = (value: string): boolean => {
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) return false
@@ -123,11 +134,17 @@ export const periodRange = (
   within: string,
   weekStartDay: WeekStartDay = 'monday',
 ): PeriodRange => {
+  if (kind === 'all') return { from: ALL_TIME_FROM, to: within }
   if (kind === 'week') return weekRange(within, weekStartDay)
   const date = day(within)
   const year = date.getUTCFullYear()
   if (kind === 'year') return { from: iso(utcDay(year, 0, 1)), to: iso(utcDay(year, 11, 31)) }
   const month = date.getUTCMonth()
+  if (kind === 'semimonth') {
+    return date.getUTCDate() <= 15
+      ? { from: iso(utcDay(year, month, 1)), to: iso(utcDay(year, month, 15)) }
+      : { from: iso(utcDay(year, month, 16)), to: iso(utcDay(year, month + 1, 0)) }
+  }
   const start = kind === 'quarter' ? Math.floor(month / 3) * 3 : month
   const span = kind === 'quarter' ? 3 : 1
   return { from: iso(utcDay(year, start, 1)), to: iso(utcDay(year, start + span, 0)) }
@@ -145,10 +162,12 @@ export const periodRange = (
 export const detectPeriodKind = (
   range: PeriodRange,
   weekStartDay: WeekStartDay = 'monday',
+  today?: string,
 ): PeriodKind => {
   if (!isCalendarDay(range.from) || !isCalendarDay(range.to)) return 'custom'
   if (range.from > range.to) return 'custom'
-  for (const candidate of ['week', 'month', 'quarter', 'year'] as const) {
+  if (today !== undefined && range.from === ALL_TIME_FROM && range.to === today) return 'all'
+  for (const candidate of ['week', 'semimonth', 'month', 'quarter', 'year'] as const) {
     const named = periodRange(candidate, range.from, weekStartDay)
     if (named.from === range.from && named.to === range.to) return candidate
   }
@@ -167,6 +186,7 @@ export const stepPeriod = (
   direction: -1 | 1,
   weekStartDay: WeekStartDay = 'monday',
 ): PeriodRange => {
+  if (kind === 'all') return range
   if (kind === 'custom') {
     const length = daysBetween(range.from, range.to) + 1
     return {
@@ -175,6 +195,18 @@ export const stepPeriod = (
     }
   }
   if (kind === 'week') return periodRange('week', shift(range.from, 7 * direction), weekStartDay)
+  if (kind === 'semimonth') {
+    const start = day(range.from)
+    const target =
+      start.getUTCDate() === 1
+        ? direction === 1
+          ? utcDay(start.getUTCFullYear(), start.getUTCMonth(), 16)
+          : utcDay(start.getUTCFullYear(), start.getUTCMonth(), 0)
+        : direction === 1
+          ? utcDay(start.getUTCFullYear(), start.getUTCMonth() + 1, 1)
+          : utcDay(start.getUTCFullYear(), start.getUTCMonth(), 1)
+    return periodRange('semimonth', iso(target), weekStartDay)
+  }
   const start = day(range.from)
   const months = kind === 'quarter' ? 3 : kind === 'year' ? 12 : 1
   return periodRange(
@@ -204,6 +236,7 @@ export const formatDayRange = (range: PeriodRange): string => {
 
 const namedDetail = (kind: Exclude<NamedPeriodKind, 'week'>, from: string): string => {
   const start = day(from)
+  if (kind === 'semimonth') return formatDayRange(periodRange('semimonth', from))
   if (kind === 'month') return `${MONTH_NAMES[start.getUTCMonth()]!} ${start.getUTCFullYear()}`
   if (kind === 'quarter')
     return `Q${Math.floor(start.getUTCMonth() / 3) + 1} ${start.getUTCFullYear()}`
@@ -223,6 +256,7 @@ export const periodLabel = (
 ): string => {
   if (!isCalendarDay(range.from) || !isCalendarDay(range.to)) return 'Choose a range'
   if (kind === 'custom') return formatDayRange(range)
+  if (kind === 'all') return 'All time'
   // A week names itself by its days, so it reads off the range on screen rather
   // than a recomputed one: re-deriving it would need the week-start setting
   // here, and a label disagreeing with the dates it labels is worse than a
@@ -234,9 +268,11 @@ export const periodLabel = (
 
 const KIND_OPTIONS: readonly { readonly kind: PeriodKind; readonly label: string }[] = [
   { kind: 'week', label: 'Week' },
+  { kind: 'semimonth', label: 'Semimonth' },
   { kind: 'month', label: 'Month' },
   { kind: 'quarter', label: 'Quarter' },
   { kind: 'year', label: 'Year' },
+  { kind: 'all', label: 'All time' },
   { kind: 'custom', label: 'Custom range' },
 ]
 
@@ -390,6 +426,8 @@ export const createPeriodControl = (options: PeriodControlOptions): PeriodContro
     // Hidden rather than removed: the inputs are where the range lives, and the
     // screen reads them back whichever period happens to be showing.
     custom.hidden = kind !== 'custom'
+    previous.hidden = kind === 'all'
+    next.hidden = kind === 'all'
     summary.textContent = periodLabel(kind, readRange(), options.today())
   }
 
@@ -446,7 +484,7 @@ export const createPeriodControl = (options: PeriodControlOptions): PeriodContro
       // without this the same 1st-to-30th reads as "September 2026" when it is
       // chosen and as a custom range when it is typed -- one range, two labels,
       // depending on a history the reader cannot see.
-      kind = clamp(detectPeriodKind(readRange(), weekStartDay))
+      kind = clamp(detectPeriodKind(readRange(), weekStartDay, options.today()))
       refresh()
     })
   }
@@ -458,7 +496,7 @@ export const createPeriodControl = (options: PeriodControlOptions): PeriodContro
     setRange(range) {
       fromInput.value = range.from
       toInput.value = range.to
-      kind = clamp(detectPeriodKind(range, weekStartDay))
+      kind = clamp(detectPeriodKind(range, weekStartDay, options.today()))
       refresh()
     },
     setWeekStartDay(startDay) {
@@ -466,7 +504,7 @@ export const createPeriodControl = (options: PeriodControlOptions): PeriodContro
       // The setting usually lands after the first range does, and a week read
       // as `custom` under the default start is a week again once the
       // organisation's own start is known.
-      kind = clamp(detectPeriodKind(readRange(), weekStartDay))
+      kind = clamp(detectPeriodKind(readRange(), weekStartDay, options.today()))
       refresh()
     },
     setDisabled(disabled) {

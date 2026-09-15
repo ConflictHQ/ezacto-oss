@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   EzactoApiError,
   authenticationError,
@@ -25,6 +25,8 @@ import {
 } from './support/shell-harness.js'
 
 describe('invoice generation browser behavior', () => {
+  afterEach(() => vi.useRealTimers())
+
   it('[unit] loads and operates the global running timer on the invoice page', async () => {
     renderBrowserShell({ view: 'invoice-generation' })
     const api = browserApi()
@@ -50,6 +52,11 @@ describe('invoice generation browser behavior', () => {
     // The fieldset used to carry two `required` date inputs, so "last month"
     // meant typing four digits and the browser itself refused an empty range.
     // The control is the reports card's, and the emptiness check is now ours.
+    // Keep month-to-date away from the 15th and the final day of a month: on
+    // either boundary it is correctly a named semimonth/month rather than the
+    // custom range this test exercises.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-14T12:00:00.000Z'))
     renderBrowserShell({ view: 'invoice-generation' })
     const generateInvoice = vi
       .fn<NonNullable<ShellApi['generateInvoice']>>()
@@ -120,6 +127,44 @@ describe('invoice generation browser behavior', () => {
     // A whole month, and the one before the month the wizard opened on.
     expect(billed.from.slice(8)).toBe('01')
     expect(billed.from < billed.to).toBe(true)
+  })
+
+  it('[browser #713] accepts a report handoff as a bounded invoice-generation prefill', async () => {
+    renderBrowserShell({ view: 'invoice-generation' })
+    window.history.replaceState(
+      null,
+      '',
+      '/invoices/new?client_id=12&project_id=9&from=2026-07-01&to=2026-07-31',
+    )
+    const api: ShellApi = {
+      ...browserApi(),
+      listClients: async () => ({
+        data: [resource(11, 'Northwind Freight'), resource(12, 'Studio')],
+        page: { next_cursor: null },
+      }),
+      listProjects: async () => ({
+        data: [
+          { ...resource(7, 'Launch'), client_id: 12 },
+          { ...resource(9, 'Identity'), client_id: 12 },
+        ],
+        page: { next_cursor: null },
+      }),
+      generateInvoice: vi.fn(async () => invoice(21)),
+    }
+
+    await mountShell(api)
+
+    const wizard = document.querySelector<HTMLFormElement>('[data-invoice-generation-form]')!
+    await vi.waitFor(() =>
+      expect(wizard.querySelector<HTMLSelectElement>('[data-invoice-client]')!.value).toBe('12'),
+    )
+    expect(wizard.querySelector<HTMLInputElement>('[data-period-from]')!.value).toBe('2026-07-01')
+    expect(wizard.querySelector<HTMLInputElement>('[data-period-to]')!.value).toBe('2026-07-31')
+    const projects = [...wizard.querySelectorAll<HTMLInputElement>('[name="project"]')]
+    expect(projects.map((project) => [project.value, project.checked])).toEqual([
+      ['7', false],
+      ['9', true],
+    ])
   })
 })
 

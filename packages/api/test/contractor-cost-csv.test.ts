@@ -20,6 +20,7 @@ const report = {
       isContractor: true,
       currency: 'USD',
       roundedSeconds: 180_000,
+      utilizationPpm: 1_000_000,
       costCents: 500_000,
       costRateCents: 10_000,
       costRateIsMixed: false,
@@ -35,6 +36,7 @@ const report = {
       isContractor: true,
       currency: 'USD',
       roundedSeconds: 3_600,
+      utilizationPpm: null,
       costCents: null,
       // The rate moved inside the period as well as an entry lacking one, so
       // this row exercises both nulls at once.
@@ -80,12 +82,12 @@ describe('the payroll run as a file', () => {
     )
     const lines = body.trimEnd().split('\n')
     expect(lines[0]).toBe(
-      'user_id,name,payroll_email,is_contractor,currency,hours,cost_cents,cost_rate_cents,entry_count,entries_without_rate',
+      'user_id,name,payroll_email,is_contractor,currency,hours,utilization_ppm,cost_cents,cost_rate_cents,entry_count,entries_without_rate',
     )
     // 180000 seconds is 50 hours.
     // The trailing pair is the spot-check: how many entries made this figure,
     // and how many of them had no rate to make it from.
-    expect(lines[1]).toBe('1,R. Adeyemi,r.adeyemi@example.test,true,USD,50.00,500000,10000,1,0')
+    expect(lines[1]).toBe('1,R. Adeyemi,r.adeyemi@example.test,true,USD,50.00,1000000,500000,10000,1,0')
   })
 
   it('[money] leaves the cost empty when it could not be worked out', async () => {

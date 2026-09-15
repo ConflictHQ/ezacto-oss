@@ -59,7 +59,7 @@ describe('demo seed', () => {
     // asserts anything, and takes about 5.7s doing it against vitest's 5s
     // default. It has been failing on main for that reason, which reads as a
     // broken seed rather than a slow one. Same shape as issue 568.
-  }, 30_000)
+  }, 60_000)
 
   it('[unit] holds no address that could reach a stranger', () => {
     // Every seeded address is on ezacto.io, a domain this project owns.

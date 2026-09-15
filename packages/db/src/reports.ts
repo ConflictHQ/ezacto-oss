@@ -9,6 +9,10 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
 import { monthEndManifest, type MonthEndManifest } from './month-end-manifest.js'
+import { createReportDefinition, listMetrics, listReportFields, type MetricDefinition, type ReportDefinition, type ReportFieldDefinition, type UpdateReportDefinitionInput } from './report-definitions.js'
+import { runReportDefinition, type ReportRunnerResult } from './report-runner.js'
+import { executeReportTimeAction, type ReportTimeActionInput, type ReportTimeActionResult } from './report-time-actions.js'
+import { createSavedReportStore, type SavedReportPresentation, type SavedReportRecord, type SavedReportView } from './saved-reports.js'
 // The same anchoring the engine issues by, so a short month answers once (#709).
 import { anchoredDate } from './recurring-invoice-engine.js'
 
@@ -43,6 +47,99 @@ export interface UninvoicedReportRecord extends ReportDateRange {
   totals: readonly UninvoicedCurrencyTotal[]
   /** Ordered by client name, project name, then id. */
   projects: readonly UninvoicedProjectRecord[]
+}
+
+export type InvoicedReportState = 'draft' | 'open' | 'paid' | 'closed'
+
+export interface InvoicedReportFilter extends ReportDateRange {
+  clientId?: number
+  state?: InvoicedReportState
+}
+
+export interface InvoicedReportRow {
+  invoiceId: number
+  number: string
+  state: InvoicedReportState
+  closeReason: 'cancelled' | 'written_off' | 'source_closed' | null
+  issueDate: string
+  dueDate: string
+  clientId: number
+  clientName: string
+  subject: string | null
+  currency: string
+  invoicedCents: number
+  paidCents: number
+  balanceCents: number
+}
+
+export interface InvoicedReportTotal {
+  currency: string
+  invoiceCount: number
+  invoicedCents: number
+  paidCents: number
+  balanceCents: number
+}
+
+export interface InvoicedReportRecord extends ReportDateRange {
+  clientId: number | null
+  state: InvoicedReportState | null
+  totals: readonly InvoicedReportTotal[]
+  rows: readonly InvoicedReportRow[]
+}
+
+export interface PaymentsReceivedReportFilter extends ReportDateRange {
+  clientId?: number
+}
+
+export interface PaymentReceivedReportRow {
+  paymentId: number
+  paymentDate: string
+  invoiceId: number
+  invoiceNumber: string
+  clientId: number
+  clientName: string
+  currency: string
+  invoiceTotalCents: number
+  paymentCents: number
+  provider: string
+}
+
+export interface PaymentsReceivedReportTotal {
+  currency: string
+  paymentCount: number
+  paymentCents: number
+}
+
+export interface PaymentsReceivedReportRecord extends ReportDateRange {
+  clientId: number | null
+  totals: readonly PaymentsReceivedReportTotal[]
+  rows: readonly PaymentReceivedReportRow[]
+}
+
+export interface ReceivablesReportFilter {
+  asOf: string
+  clientId?: number
+}
+
+export interface ReceivablesReportRow {
+  clientId: number
+  clientName: string
+  currency: string
+  invoiceCount: number
+  invoicedCents: number
+  outstandingCents: number
+  notDueCents: number
+  days1To30Cents: number
+  days31To60Cents: number
+  days61To90Cents: number
+  days90PlusCents: number
+}
+
+export interface ReceivablesReportRecord {
+  asOf: string
+  clientId: number | null
+  totals: readonly Omit<ReceivablesReportRow, 'clientId' | 'clientName'>[]
+  rows: readonly ReceivablesReportRow[]
 }
 
 export interface ClientRollupCurrencyRecord {
@@ -269,11 +366,17 @@ export interface TimeReportTeammateRecord extends TimeReportTotalsRecord {
 }
 
 export interface TimeReportRecord extends ReportDateRange {
+  /** Whether fixed-fee project entries participate in every fold and total. */
+  fixedFeeIncluded: boolean
   totals: TimeReportTotalsRecord
   clients: readonly TimeReportClientRecord[]
   projects: readonly TimeReportProjectRecord[]
   tasks: readonly TimeReportTaskRecord[]
   teammates: readonly TimeReportTeammateRecord[]
+}
+
+export interface TimeReportFilter extends ReportDateRange {
+  includeFixedFee?: boolean
 }
 
 export interface ProjectReportViewer {
@@ -307,6 +410,8 @@ export interface ContractorCostRow {
    */
   currency: string
   roundedSeconds: number
+  /** Tracked time divided by prorated weekly capacity for the report range. */
+  utilizationPpm: number | null
   /** Null when any entry in the row has no cost rate -- see the note below. */
   costCents: number | null
   /**
@@ -367,10 +472,16 @@ export type DetailedTimeHours =
  * two of them.
  */
 export type DetailedTimeGrain = 'day' | 'entry'
+export type DetailedTimeInvoiceState = 'all' | 'invoiced' | 'uninvoiced'
 
 export interface DetailedTimeFilter extends ReportDateRange {
   clientId?: number
   projectId?: number
+  taskId?: number
+  userId?: number
+  roleId?: number
+  tagId?: number
+  invoiceState?: DetailedTimeInvoiceState
   hours?: DetailedTimeHours
   grain?: DetailedTimeGrain
   /**
@@ -445,6 +556,7 @@ export interface DetailedTimeRowRecord {
   invoiceId: number | null
   /** The entry's notes at `entry` grain; null at `day` grain. */
   notes: string | null
+  projectActive: boolean
 }
 
 export interface DetailedTimeCurrencyRecord {
@@ -456,6 +568,11 @@ export interface DetailedTimeCurrencyRecord {
 export interface DetailedTimeReportRecord extends ReportDateRange {
   clientId: number | null
   projectId: number | null
+  taskId: number | null
+  userId: number | null
+  roleId: number | null
+  tagId: number | null
+  invoiceState: DetailedTimeInvoiceState
   hours: DetailedTimeHours
   grain: DetailedTimeGrain
   activeProjectsOnly: boolean
@@ -600,6 +717,22 @@ interface BandedMonthQueryRow {
 }
 
 export interface ReportRepository {
+  reportDefinitionRegistry(): { fields: readonly ReportFieldDefinition[]; metrics: readonly MetricDefinition[] }
+  listSavedReports(input: { viewerUserId: number; view?: SavedReportView; query?: string; customOnly?: boolean }): Promise<readonly SavedReportRecord[]>
+  readSavedReport(reportId: string, viewerUserId: number): Promise<SavedReportRecord | null>
+  createSavedReport(input: { id: string; name: string; fields: ReportDefinition['fields']; metrics: ReportDefinition['metrics']; filters: ReportDefinition['filters']; groupBy: ReportDefinition['groupBy']; ownerUserId: number; presentation: SavedReportPresentation; createdAt: string }): Promise<SavedReportRecord>
+  updateSavedReport(input: { reportId: string; ownerUserId: number; expectedVersion: number; changes: UpdateReportDefinitionInput; presentation?: SavedReportPresentation }): Promise<'not_found' | 'version_conflict' | SavedReportRecord>
+  shareSavedReport(reportId: string, ownerUserId: number, userId: number, shared: boolean, at: string): Promise<boolean>
+  pinSavedReport(reportId: string, viewerUserId: number, pinned: boolean, at: string): Promise<boolean>
+  deleteSavedReport(reportId: string, ownerUserId: number): Promise<boolean>
+  runSavedReport(reportId: string, viewerUserId: number, authority: { billableMoney: boolean; costMoney: boolean }): Promise<ReportRunnerResult | null>
+  previewReport(definition: ReportDefinition, presentation: SavedReportPresentation, authority: { billableMoney: boolean; costMoney: boolean }): Promise<ReportRunnerResult>
+  executeTimeAction(input: ReportTimeActionInput): Promise<ReportTimeActionResult | 'command_conflict' | 'invoice_unavailable'>
+  invoiced(filter: Readonly<InvoicedReportFilter>): Promise<InvoicedReportRecord>
+  paymentsReceived(
+    filter: Readonly<PaymentsReceivedReportFilter>,
+  ): Promise<PaymentsReceivedReportRecord>
+  receivables(filter: Readonly<ReceivablesReportFilter>): Promise<ReceivablesReportRecord>
   /**
    * The organisation's cost-share threshold, in basis points (#710).
    *
@@ -623,12 +756,12 @@ export interface ReportRepository {
     periodStart: string
     periodEnd: string
   }): Promise<MonthEndManifest>
-  profitability(range: Readonly<ReportDateRange>): Promise<ProfitabilityReportRecord>
+  profitability(filter: Readonly<ProfitabilityFilter>): Promise<ProfitabilityReportRecord>
   detailedTime(filter: Readonly<DetailedTimeFilter>): Promise<DetailedTimeReportResult>
   detailedExpense(
     filter: Readonly<DetailedExpenseFilter>,
   ): Promise<DetailedExpenseReportRecord>
-  timeReport(range: Readonly<ReportDateRange>): Promise<TimeReportRecord>
+  timeReport(filter: Readonly<TimeReportFilter>): Promise<TimeReportRecord>
   memberHours(filter: Readonly<MemberHoursFilter>): Promise<MemberHoursReportRecord>
   uninvoiced(filter: Readonly<UninvoicedReportFilter>): Promise<UninvoicedReportRecord>
   clientRollup(
@@ -675,6 +808,212 @@ const checkedAdd = (left: number, right: number, field: string): number => {
     throw new RangeError(`${field} exceeds the supported aggregate range`)
   }
   return Number(sum)
+}
+
+const invoicedReport = async (
+  database: Database,
+  filter: Readonly<InvoicedReportFilter>,
+): Promise<InvoicedReportRecord> => {
+  assertRange(filter)
+  if (filter.clientId !== undefined) assertId(filter.clientId, 'client id')
+  const clientId = filter.clientId ?? null
+  const state = filter.state ?? null
+  const rows = await database.all<InvoicedReportRow>(sql`
+    SELECT invoice.id AS "invoiceId", invoice.number AS "number",
+      invoice.state AS "state", invoice.close_reason AS "closeReason",
+      invoice.issue_date AS "issueDate", invoice.due_date AS "dueDate",
+      client.id AS "clientId", client.name AS "clientName",
+      invoice.subject AS "subject", upper(invoice.currency) AS "currency",
+      invoice.amount_cents AS "invoicedCents",
+      coalesce((SELECT sum(payment.amount_cents) FROM invoice_payments payment
+        WHERE payment.invoice_id = invoice.id), 0) AS "paidCents",
+      invoice.due_amount_cents AS "balanceCents"
+    FROM invoices invoice
+    JOIN clients client ON client.id = invoice.client_id
+    WHERE invoice.issue_date BETWEEN ${filter.from} AND ${filter.to}
+      AND (${clientId} IS NULL OR invoice.client_id = ${clientId})
+      AND (${state} IS NULL OR invoice.state = ${state})
+    ORDER BY invoice.issue_date DESC, invoice.id DESC
+  `)
+  const totals = new Map<string, InvoicedReportTotal>()
+  for (const row of rows) {
+    const total = totals.get(row.currency) ?? {
+      currency: row.currency,
+      invoiceCount: 0,
+      invoicedCents: 0,
+      paidCents: 0,
+      balanceCents: 0,
+    }
+    total.invoiceCount += 1
+    total.invoicedCents = checkedAdd(total.invoicedCents, row.invoicedCents, 'invoiced total')
+    total.paidCents = checkedAdd(total.paidCents, row.paidCents, 'payment total')
+    total.balanceCents = checkedAdd(total.balanceCents, row.balanceCents, 'balance total')
+    totals.set(row.currency, total)
+  }
+  return {
+    from: filter.from,
+    to: filter.to,
+    clientId,
+    state,
+    totals: [...totals.values()].sort((left, right) => left.currency.localeCompare(right.currency)),
+    rows,
+  }
+}
+
+const paymentsReceivedReport = async (
+  database: Database,
+  filter: Readonly<PaymentsReceivedReportFilter>,
+): Promise<PaymentsReceivedReportRecord> => {
+  assertRange(filter)
+  if (filter.clientId !== undefined) assertId(filter.clientId, 'client id')
+  const clientId = filter.clientId ?? null
+  const rows = await database.all<PaymentReceivedReportRow>(sql`
+    SELECT payment.id AS "paymentId",
+      coalesce(substr(payment.paid_at, 1, 10), payment.paid_date) AS "paymentDate",
+      invoice.id AS "invoiceId", invoice.number AS "invoiceNumber",
+      client.id AS "clientId", client.name AS "clientName",
+      upper(payment.currency) AS "currency",
+      invoice.amount_cents AS "invoiceTotalCents",
+      payment.amount_cents AS "paymentCents", payment.provider AS "provider"
+    FROM invoice_payments payment
+    JOIN invoices invoice ON invoice.id = payment.invoice_id
+    JOIN clients client ON client.id = invoice.client_id
+    WHERE coalesce(substr(payment.paid_at, 1, 10), payment.paid_date)
+      BETWEEN ${filter.from} AND ${filter.to}
+      AND (${clientId} IS NULL OR invoice.client_id = ${clientId})
+    ORDER BY "paymentDate" DESC, payment.id DESC
+  `)
+  const totals = new Map<string, PaymentsReceivedReportTotal>()
+  for (const row of rows) {
+    const total = totals.get(row.currency) ?? {
+      currency: row.currency,
+      paymentCount: 0,
+      paymentCents: 0,
+    }
+    total.paymentCount += 1
+    total.paymentCents = checkedAdd(total.paymentCents, row.paymentCents, 'payment total')
+    totals.set(row.currency, total)
+  }
+  return {
+    from: filter.from,
+    to: filter.to,
+    clientId,
+    totals: [...totals.values()].sort((left, right) => left.currency.localeCompare(right.currency)),
+    rows,
+  }
+}
+
+interface ReceivableInvoiceRow {
+  clientId: number
+  clientName: string
+  currency: string
+  dueDate: string
+  invoicedCents: number
+  outstandingCents: number
+}
+
+const emptyReceivable = (
+  row: Pick<ReceivableInvoiceRow, 'clientId' | 'clientName' | 'currency'>,
+): ReceivablesReportRow => ({
+  ...row,
+  invoiceCount: 0,
+  invoicedCents: 0,
+  outstandingCents: 0,
+  notDueCents: 0,
+  days1To30Cents: 0,
+  days31To60Cents: 0,
+  days61To90Cents: 0,
+  days90PlusCents: 0,
+})
+
+const addReceivable = (
+  total: ReceivablesReportRow,
+  row: ReceivableInvoiceRow,
+  asOf: string,
+): void => {
+  total.invoiceCount += 1
+  total.invoicedCents = checkedAdd(total.invoicedCents, row.invoicedCents, 'receivable invoiced total')
+  total.outstandingCents = checkedAdd(
+    total.outstandingCents,
+    row.outstandingCents,
+    'receivable outstanding total',
+  )
+  const overdueDays = Math.round(
+    (Date.parse(`${asOf}T00:00:00.000Z`) - Date.parse(`${row.dueDate}T00:00:00.000Z`)) /
+      86_400_000,
+  )
+  const field =
+    overdueDays <= 0
+      ? 'notDueCents'
+      : overdueDays <= 30
+        ? 'days1To30Cents'
+        : overdueDays <= 60
+          ? 'days31To60Cents'
+          : overdueDays <= 90
+            ? 'days61To90Cents'
+            : 'days90PlusCents'
+  total[field] = checkedAdd(total[field], row.outstandingCents, 'receivable aging total')
+}
+
+const receivablesReport = async (
+  database: Database,
+  filter: Readonly<ReceivablesReportFilter>,
+): Promise<ReceivablesReportRecord> => {
+  assertDate(filter.asOf, 'report as of')
+  if (filter.clientId !== undefined) assertId(filter.clientId, 'client id')
+  const clientId = filter.clientId ?? null
+  const rows = await database.all<ReceivableInvoiceRow>(sql`
+    WITH payments_as_of AS (
+      SELECT invoice_id, sum(amount_cents) AS payment_cents
+      FROM invoice_payments
+      WHERE coalesce(substr(paid_at, 1, 10), paid_date) <= ${filter.asOf}
+      GROUP BY invoice_id
+    )
+    SELECT client.id AS "clientId", client.name AS "clientName",
+      upper(invoice.currency) AS "currency", invoice.due_date AS "dueDate",
+      invoice.amount_cents AS "invoicedCents",
+      invoice.amount_cents - coalesce(payment.payment_cents, 0) - invoice.written_off_cents
+        AS "outstandingCents"
+    FROM invoices invoice
+    JOIN clients client ON client.id = invoice.client_id
+    LEFT JOIN payments_as_of payment ON payment.invoice_id = invoice.id
+    WHERE invoice.issue_date <= ${filter.asOf}
+      AND invoice.state IN ('open', 'paid')
+      AND invoice.amount_cents - coalesce(payment.payment_cents, 0)
+        - invoice.written_off_cents > 0
+      AND (${clientId} IS NULL OR invoice.client_id = ${clientId})
+    ORDER BY client.name, client.id, invoice.currency, invoice.due_date, invoice.id
+  `)
+  const grouped = new Map<string, ReceivablesReportRow>()
+  const currencyTotals = new Map<string, ReceivablesReportRow>()
+  for (const row of rows) {
+    const key = `${row.clientId}\u0000${row.currency}`
+    const client = grouped.get(key) ?? emptyReceivable(row)
+    addReceivable(client, row, filter.asOf)
+    grouped.set(key, client)
+    const currency = currencyTotals.get(row.currency) ??
+      emptyReceivable({ clientId: 0, clientName: '', currency: row.currency })
+    addReceivable(currency, row, filter.asOf)
+    currencyTotals.set(row.currency, currency)
+  }
+  return {
+    asOf: filter.asOf,
+    clientId,
+    totals: [...currencyTotals.values()]
+      .sort((left, right) => left.currency.localeCompare(right.currency))
+      .map((total) => ({
+        currency: total.currency,
+        invoiceCount: total.invoiceCount,
+        invoicedCents: total.invoicedCents,
+        outstandingCents: total.outstandingCents,
+        notDueCents: total.notDueCents,
+        days1To30Cents: total.days1To30Cents,
+        days31To60Cents: total.days31To60Cents,
+        days61To90Cents: total.days61To90Cents,
+        days90PlusCents: total.days90PlusCents,
+      })),
+    rows: [...grouped.values()],
+  }
 }
 
 export interface UninvoicedTimeCandidateRow {
@@ -1551,6 +1890,7 @@ interface ContractorCostQueryRow {
   isContractor: number
   roundedSeconds: number
   costRateCents: number | null
+  weeklyCapacity: number
 }
 
 interface MemberHoursQueryRow {
@@ -1673,9 +2013,12 @@ const contractorCostReport = async (
       ) AS "payrollEmail",
       person.is_contractor AS "isContractor",
       entry.rounded_seconds AS "roundedSeconds",
-      entry.cost_rate_cents AS "costRateCents"
+      entry.cost_rate_cents AS "costRateCents",
+      coalesce(person.weekly_capacity, organization.weekly_capacity_default)
+        AS "weeklyCapacity"
     FROM time_entries entry
     JOIN users person ON person.id = entry.user_id
+    CROSS JOIN organizations organization
     WHERE entry.spent_date BETWEEN ${range.from} AND ${range.to}
     ORDER BY person.id, entry.id
   `)
@@ -1687,7 +2030,7 @@ const contractorCostReport = async (
     throw new Error('organization must exist before reports are read')
   }
 
-  const grouped = new Map<string, ContractorCostRow>()
+  const grouped = new Map<string, ContractorCostRow & { weeklyCapacity: number }>()
   for (const row of rows) {
     // Per person. Not per person and project currency: the money here is
     // org-currency by construction, so splitting on a billing currency would
@@ -1700,6 +2043,8 @@ const contractorCostReport = async (
       isContractor: row.isContractor === 1,
       currency,
       roundedSeconds: 0,
+      utilizationPpm: null,
+      weeklyCapacity: row.weeklyCapacity,
       costCents: 0,
       entryCount: 0,
       entriesWithoutRate: 0,
@@ -1727,7 +2072,18 @@ const contractorCostReport = async (
     }
     grouped.set(key, existing)
   }
-  return { from: range.from, to: range.to, rows: [...grouped.values()] }
+  const days = dayCount(range.from, range.to)
+  return {
+    from: range.from,
+    to: range.to,
+    rows: [...grouped.values()].map(({ weeklyCapacity, ...row }) => ({
+      ...row,
+      utilizationPpm: timeUtilizationPpm(
+        row.roundedSeconds,
+        Math.round((weeklyCapacity * days) / 7),
+      ),
+    })),
+  }
 }
 
 export interface ProfitabilityRow {
@@ -1749,6 +2105,12 @@ export interface ProfitabilityRow {
    * See `profitabilityReport` for why the second case is not a subtraction.
    */
   profitCents: number | null
+  /** Profit divided by cost, in parts per million; null without a denominator. */
+  returnOnCostPpm: number | null
+  /** Referral fees and commissions recognized in the period. */
+  revenueFeeCents: number
+  /** Portion of revenue fees intentionally classified as delivery cost. */
+  feesIncludedInDeliveryCostCents: number
   entriesWithoutBillableRate: number
   entriesWithoutCostRate: number
 }
@@ -1758,10 +2120,47 @@ export interface ProfitabilityTotals {
   revenueCents: number | null
   costCents: number | null
   profitCents: number | null
+  returnOnCostPpm: number | null
+  revenueFeeCents: number
+  feesIncludedInDeliveryCostCents: number
   entriesWithoutBillableRate: number
   entriesWithoutCostRate: number
   /** Projects left out of profit because they bill in another currency. */
   projectsNotConverted: number
+}
+
+export type ProfitabilityDimension = 'clients' | 'projects' | 'teammates' | 'tasks'
+export type ProfitabilityProjectStatus = 'all' | 'active' | 'archived'
+export type ProfitabilityBillingMethod = 'non_billable' | 'time_materials' | 'fixed_fee'
+
+export interface ProfitabilityFilter extends ReportDateRange {
+  projectStatus?: ProfitabilityProjectStatus
+  billingMethod?: ProfitabilityBillingMethod
+  managerId?: number
+  tagId?: number
+}
+
+export interface ProfitabilityDimensionRow {
+  dimensionId: number
+  dimensionName: string
+  currency: string
+  roundedSeconds: number
+  revenueCents: number | null
+  costCents: number | null
+  profitCents: number | null
+  returnOnCostPpm: number | null
+  revenueFeeCents: number
+  feesIncludedInDeliveryCostCents: number
+  entriesWithoutBillableRate: number
+  entriesWithoutCostRate: number
+  /** False when revenue and cost use different currencies. */
+  includedInHeadline: boolean
+}
+
+export interface ProfitabilityTrendRow extends ProfitabilityDimensionRow {
+  periodStart: string
+  periodEnd: string
+  current: boolean
 }
 
 export interface ProfitabilityReportRecord {
@@ -1769,7 +2168,17 @@ export interface ProfitabilityReportRecord {
   to: string
   organizationCurrency: string
   rows: ProfitabilityRow[]
+  clients: ProfitabilityDimensionRow[]
+  teammates: ProfitabilityDimensionRow[]
+  tasks: ProfitabilityDimensionRow[]
+  trend: ProfitabilityTrendRow[]
   totals: ProfitabilityTotals
+  filters: {
+    projectStatus: ProfitabilityProjectStatus
+    billingMethod: ProfitabilityBillingMethod | null
+    managerId: number | null
+    tagId: number | null
+  }
   /** The immediately preceding window of equal length, for the delta. */
   previousFrom: string
   previousTo: string
@@ -1782,11 +2191,18 @@ interface ProfitabilityQueryRow {
   projectCode: string
   clientId: number
   clientName: string
+  taskId: number
+  taskName: string
+  userId: number
+  userName: string
+  spentDate: string
   currency: string
   billable: number
   roundedSeconds: number
   billableRateCents: number | null
   costRateCents: number | null
+  feeCents: number
+  feeTreatment: 'none' | 'margin_only' | 'delivery_cost'
 }
 
 const dayCount = (from: string, to: string): number => {
@@ -1820,37 +2236,104 @@ const emptyProfitabilityTotals = (): ProfitabilityTotals => ({
   revenueCents: 0,
   costCents: 0,
   profitCents: 0,
+  returnOnCostPpm: null,
+  revenueFeeCents: 0,
+  feesIncludedInDeliveryCostCents: 0,
   entriesWithoutBillableRate: 0,
   entriesWithoutCostRate: 0,
   projectsNotConverted: 0,
 })
 
-const profitabilityRows = async (
+const returnOnCostPpm = (profitCents: number | null, costCents: number | null): number | null => {
+  if (profitCents === null || costCents === null || costCents === 0) return null
+  return Number((BigInt(profitCents) * 1_000_000n) / BigInt(costCents))
+}
+
+const profitabilityPopulation = async (
   database: Database,
   range: Readonly<ReportDateRange>,
   organizationCurrency: string,
-): Promise<ProfitabilityRow[]> => {
-  const rows = await database.all<ProfitabilityQueryRow>(sql`
+  filter: Readonly<ProfitabilityFilter>,
+): Promise<ProfitabilityQueryRow[]> => {
+  const projectStatus = filter.projectStatus ?? 'all'
+  const billingMethod = filter.billingMethod ?? null
+  const managerId = filter.managerId ?? null
+  const tagId = filter.tagId ?? null
+  return database.all<ProfitabilityQueryRow>(sql`
     SELECT project.id AS "projectId",
       project.name AS "projectName",
       coalesce(project.code, '') AS "projectCode",
       client.id AS "clientId",
       client.name AS "clientName",
+      task.id AS "taskId", task.name AS "taskName",
+      person.id AS "userId",
+      trim(person.first_name || ' ' || person.last_name) AS "userName",
+      entry.spent_date AS "spentDate",
       upper(coalesce(project.billing_currency, client.currency, ${organizationCurrency}))
         AS "currency",
       entry.billable AS "billable",
       entry.rounded_seconds AS "roundedSeconds",
       entry.billable_rate_cents AS "billableRateCents",
-      entry.cost_rate_cents AS "costRateCents"
+      entry.cost_rate_cents AS "costRateCents",
+      0 AS "feeCents", 'none' AS "feeTreatment"
     FROM time_entries entry
     JOIN projects project ON project.id = entry.project_id
     JOIN clients client ON client.id = project.client_id
+    JOIN tasks task ON task.id = entry.task_id
+    JOIN users person ON person.id = entry.user_id
     WHERE entry.spent_date BETWEEN ${range.from} AND ${range.to}
-    ORDER BY project.id, entry.id
+      AND (${projectStatus} = 'all'
+        OR (${projectStatus} = 'active' AND project.is_active = 1)
+        OR (${projectStatus} = 'archived' AND project.is_active = 0))
+      AND (${billingMethod} IS NULL OR project.billing_method = ${billingMethod})
+      AND (${managerId} IS NULL OR EXISTS (
+        SELECT 1 FROM user_assignments manager
+        WHERE manager.project_id = project.id AND manager.user_id = ${managerId}
+          AND manager.is_project_manager = 1
+      ))
+      AND (${tagId} IS NULL OR EXISTS (
+        SELECT 1 FROM project_tag_assignments tagging
+        WHERE tagging.project_id = project.id AND tagging.project_tag_id = ${tagId}
+      ))
+    UNION ALL
+    SELECT project.id AS "projectId",
+      project.name AS "projectName", coalesce(project.code, '') AS "projectCode",
+      client.id AS "clientId", client.name AS "clientName",
+      0 AS "taskId", 'Unallocated revenue fees' AS "taskName",
+      0 AS "userId", 'Unallocated revenue fees' AS "userName",
+      fee.recognized_on AS "spentDate", fee.currency AS "currency",
+      0 AS "billable", 0 AS "roundedSeconds", 0 AS "billableRateCents",
+      0 AS "costRateCents", fee.fee_cents AS "feeCents",
+      fee.treatment AS "feeTreatment"
+    FROM revenue_fees fee
+    JOIN projects project ON project.id = fee.project_id
+    JOIN clients client ON client.id = project.client_id
+    WHERE fee.recognized_on BETWEEN ${range.from} AND ${range.to}
+      AND (${projectStatus} = 'all'
+        OR (${projectStatus} = 'active' AND project.is_active = 1)
+        OR (${projectStatus} = 'archived' AND project.is_active = 0))
+      AND (${billingMethod} IS NULL OR project.billing_method = ${billingMethod})
+      AND (${managerId} IS NULL OR EXISTS (
+        SELECT 1 FROM user_assignments manager
+        WHERE manager.project_id = project.id AND manager.user_id = ${managerId}
+          AND manager.is_project_manager = 1
+      ))
+      AND (${tagId} IS NULL OR EXISTS (
+        SELECT 1 FROM project_tag_assignments tagging
+        WHERE tagging.project_id = project.id AND tagging.project_tag_id = ${tagId}
+      ))
+    ORDER BY "projectId", "spentDate"
   `)
-  const grouped = new Map<number, ProfitabilityRow>()
+}
+
+const profitabilityRows = (
+  rows: readonly ProfitabilityQueryRow[],
+  organizationCurrency: string,
+): ProfitabilityRow[] => {
+  const grouped = new Map<string, ProfitabilityRow>()
   for (const row of rows) {
-    const existing = grouped.get(row.projectId) ?? {
+    const key = `${String(row.projectId)}\u0000${row.currency}`
+    const existing = grouped.get(key) ?? {
       projectId: row.projectId,
       projectName: row.projectName,
       projectCode: row.projectCode,
@@ -1861,10 +2344,19 @@ const profitabilityRows = async (
       revenueCents: 0,
       costCents: 0,
       profitCents: 0,
+      returnOnCostPpm: null,
+      revenueFeeCents: 0,
+      feesIncludedInDeliveryCostCents: 0,
       entriesWithoutBillableRate: 0,
       entriesWithoutCostRate: 0,
     }
     existing.roundedSeconds += row.roundedSeconds
+    existing.revenueFeeCents += row.feeCents
+    if (row.feeTreatment === 'delivery_cost') {
+      existing.feesIncludedInDeliveryCostCents += row.feeCents
+      if (row.currency !== organizationCurrency) existing.costCents = null
+      else if (existing.costCents !== null) existing.costCents += row.feeCents
+    }
     // Non-billable time earns nothing and still costs: it is dead weight on the
     // margin, which is the whole reason to look at this report, so it is absent
     // from revenue and present in cost rather than skipped on both sides.
@@ -1882,7 +2374,7 @@ const profitabilityRows = async (
     } else if (existing.costCents !== null) {
       existing.costCents += trackedAmountCents(row.roundedSeconds, row.costRateCents)
     }
-    grouped.set(row.projectId, existing)
+    grouped.set(key, existing)
   }
   for (const row of grouped.values()) {
     row.profitCents =
@@ -1890,9 +2382,79 @@ const profitabilityRows = async (
       row.costCents === null ||
       row.currency !== organizationCurrency
         ? null
-        : row.revenueCents - row.costCents
+        : row.revenueCents - row.costCents -
+          (row.revenueFeeCents - row.feesIncludedInDeliveryCostCents)
+    row.returnOnCostPpm = returnOnCostPpm(row.profitCents, row.costCents)
   }
   return [...grouped.values()]
+}
+
+interface ProfitabilityFoldIdentity {
+  id: number
+  name: string
+}
+
+const profitabilityFold = (
+  rows: readonly ProfitabilityQueryRow[],
+  organizationCurrency: string,
+  identity: (row: Readonly<ProfitabilityQueryRow>) => ProfitabilityFoldIdentity,
+): ProfitabilityDimensionRow[] => {
+  const grouped = new Map<string, ProfitabilityDimensionRow>()
+  for (const row of rows) {
+    const item = identity(row)
+    const key = `${String(item.id)}\u0000${row.currency}`
+    const existing = grouped.get(key) ?? {
+      dimensionId: item.id,
+      dimensionName: item.name,
+      currency: row.currency,
+      roundedSeconds: 0,
+      revenueCents: 0,
+      costCents: 0,
+      profitCents: 0,
+      returnOnCostPpm: null,
+      revenueFeeCents: 0,
+      feesIncludedInDeliveryCostCents: 0,
+      entriesWithoutBillableRate: 0,
+      entriesWithoutCostRate: 0,
+      includedInHeadline: row.currency === organizationCurrency,
+    }
+    existing.roundedSeconds += row.roundedSeconds
+    existing.revenueFeeCents += row.feeCents
+    if (row.feeTreatment === 'delivery_cost') {
+      existing.feesIncludedInDeliveryCostCents += row.feeCents
+      if (row.currency !== organizationCurrency) existing.costCents = null
+      else if (existing.costCents !== null) existing.costCents += row.feeCents
+    }
+    if (row.billable === 1) {
+      if (row.billableRateCents === null) {
+        existing.entriesWithoutBillableRate += 1
+        existing.revenueCents = null
+      } else if (existing.revenueCents !== null) {
+        existing.revenueCents += trackedAmountCents(row.roundedSeconds, row.billableRateCents)
+      }
+    }
+    if (row.costRateCents === null) {
+      existing.entriesWithoutCostRate += 1
+      existing.costCents = null
+    } else if (existing.costCents !== null) {
+      existing.costCents += trackedAmountCents(row.roundedSeconds, row.costRateCents)
+    }
+    grouped.set(key, existing)
+  }
+  for (const row of grouped.values()) {
+    row.profitCents =
+      !row.includedInHeadline || row.revenueCents === null || row.costCents === null
+        ? null
+        : row.revenueCents - row.costCents -
+          (row.revenueFeeCents - row.feesIncludedInDeliveryCostCents)
+    row.returnOnCostPpm = returnOnCostPpm(row.profitCents, row.costCents)
+  }
+  return [...grouped.values()].sort(
+    (left, right) =>
+      left.dimensionName.localeCompare(right.dimensionName) ||
+      left.dimensionId - right.dimensionId ||
+      left.currency.localeCompare(right.currency),
+  )
 }
 
 const profitabilityTotals = (
@@ -1911,6 +2473,8 @@ const profitabilityTotals = (
       totals.projectsNotConverted += 1
       continue
     }
+    totals.revenueFeeCents += row.revenueFeeCents
+    totals.feesIncludedInDeliveryCostCents += row.feesIncludedInDeliveryCostCents
     if (row.revenueCents === null) totals.revenueCents = null
     else if (totals.revenueCents !== null) totals.revenueCents += row.revenueCents
     if (row.costCents === null) totals.costCents = null
@@ -1919,9 +2483,39 @@ const profitabilityTotals = (
   totals.profitCents =
     totals.revenueCents === null || totals.costCents === null
       ? null
-      : totals.revenueCents - totals.costCents
+      : totals.revenueCents - totals.costCents -
+        (totals.revenueFeeCents - totals.feesIncludedInDeliveryCostCents)
+  totals.returnOnCostPpm = returnOnCostPpm(totals.profitCents, totals.costCents)
   return totals
 }
+
+const monthEndDate = (month: string): string => {
+  const [year, number] = month.split('-').map(Number)
+  return new Date(Date.UTC(year!, number!, 0)).toISOString().slice(0, 10)
+}
+
+const profitabilityTrend = (
+  rows: readonly ProfitabilityQueryRow[],
+  organizationCurrency: string,
+  range: Readonly<ReportDateRange>,
+): ProfitabilityTrendRow[] =>
+  profitabilityFold(
+    rows,
+    organizationCurrency,
+    (row) => ({
+      id: Number(row.spentDate.slice(0, 4)) * 100 + Number(row.spentDate.slice(5, 7)),
+      name: row.spentDate.slice(0, 7),
+    }),
+  ).map((row) => {
+    const periodStart = `${row.dimensionName}-01`
+    const periodEnd = monthEndDate(row.dimensionName)
+    return {
+      ...row,
+      periodStart: periodStart < range.from ? range.from : periodStart,
+      periodEnd: periodEnd > range.to ? range.to : periodEnd,
+      current: range.to.startsWith(row.dimensionName),
+    }
+  })
 
 /**
  * Revenue, cost and profit per project, against the window before it.
@@ -1945,8 +2539,11 @@ const profitabilityTotals = (
  */
 const profitabilityReport = async (
   database: Database,
-  range: Readonly<ReportDateRange>,
+  range: Readonly<ProfitabilityFilter>,
 ): Promise<ProfitabilityReportRecord> => {
+  assertRange(range)
+  if (range.managerId !== undefined) assertId(range.managerId, 'manager id')
+  if (range.tagId !== undefined) assertId(range.tagId, 'tag id')
   const organization = await database.all<{ currency: string }>(
     sql`SELECT upper(currency) AS "currency" FROM organizations WHERE id = 1`,
   )
@@ -1955,16 +2552,37 @@ const profitabilityReport = async (
     throw new Error('organization must exist before reports are read')
   }
   const previous = previousProfitabilityRange(range)
-  const [rows, previousRows] = await Promise.all([
-    profitabilityRows(database, range, organizationCurrency),
-    profitabilityRows(database, previous, organizationCurrency),
+  const [population, previousPopulation] = await Promise.all([
+    profitabilityPopulation(database, range, organizationCurrency, range),
+    profitabilityPopulation(database, previous, organizationCurrency, range),
   ])
+  const rows = profitabilityRows(population, organizationCurrency)
+  const previousRows = profitabilityRows(previousPopulation, organizationCurrency)
   return {
     from: range.from,
     to: range.to,
     organizationCurrency,
     rows,
+    clients: profitabilityFold(population, organizationCurrency, (row) => ({
+      id: row.clientId,
+      name: row.clientName,
+    })),
+    teammates: profitabilityFold(population, organizationCurrency, (row) => ({
+      id: row.userId,
+      name: row.userName,
+    })),
+    tasks: profitabilityFold(population, organizationCurrency, (row) => ({
+      id: row.taskId,
+      name: row.taskName,
+    })),
+    trend: profitabilityTrend(population, organizationCurrency, range),
     totals: profitabilityTotals(rows, organizationCurrency),
+    filters: {
+      projectStatus: range.projectStatus ?? 'all',
+      billingMethod: range.billingMethod ?? null,
+      managerId: range.managerId ?? null,
+      tagId: range.tagId ?? null,
+    },
     previousFrom: previous.from,
     previousTo: previous.to,
     previousTotals: profitabilityTotals(previousRows, organizationCurrency),
@@ -2002,7 +2620,12 @@ export interface DetailedExpenseRow {
 export interface DetailedExpenseReportRecord extends ReportDateRange {
   clientId: number | null
   projectId: number | null
-  billableOnly: boolean
+  categoryId: number | null
+  userId: number | null
+  billable: boolean | null
+  reimbursable: boolean | null
+  invoiceState: 'all' | 'invoiced' | 'uninvoiced'
+  activeProjectsOnly: boolean
   rows: DetailedExpenseRow[]
   /** Per currency, because expense totals in two currencies do not add. */
   totals: { currency: string; expenseCount: number; totalCostCents: number }[]
@@ -2011,7 +2634,12 @@ export interface DetailedExpenseReportRecord extends ReportDateRange {
 export interface DetailedExpenseFilter extends ReportDateRange {
   clientId?: number
   projectId?: number
-  billableOnly?: boolean
+  categoryId?: number
+  userId?: number
+  billable?: boolean
+  reimbursable?: boolean
+  invoiceState?: 'all' | 'invoiced' | 'uninvoiced'
+  activeProjectsOnly?: boolean
 }
 
 interface DetailedExpenseQueryRow {
@@ -2056,7 +2684,15 @@ const detailedExpenseReport = async (
   }
   const clientId = filter.clientId ?? null
   const projectId = filter.projectId ?? null
-  const billableOnly = filter.billableOnly === true
+  const categoryId = filter.categoryId ?? null
+  const userId = filter.userId ?? null
+  const billable = filter.billable ?? null
+  const reimbursable = filter.reimbursable ?? null
+  const billableValue = billable === null ? null : billable ? 1 : 0
+  const reimbursableValue = reimbursable === null ? null : reimbursable ? 1 : 0
+  const invoiceState = filter.invoiceState ?? 'all'
+  const activeProjectsOnly = filter.activeProjectsOnly === true
+  const activeProjectsValue = activeProjectsOnly ? 1 : 0
   const rows = await database.all<DetailedExpenseQueryRow>(sql`
     SELECT expense.id AS "expenseId",
       expense.spent_date AS "spentDate",
@@ -2085,7 +2721,14 @@ const detailedExpenseReport = async (
     WHERE expense.spent_date BETWEEN ${filter.from} AND ${filter.to}
       AND (${clientId} IS NULL OR client.id = ${clientId})
       AND (${projectId} IS NULL OR project.id = ${projectId})
-      AND (${billableOnly ? 1 : 0} = 0 OR expense.billable = 1)
+      AND (${categoryId} IS NULL OR category.id = ${categoryId})
+      AND (${userId} IS NULL OR person.id = ${userId})
+      AND (${billableValue} IS NULL OR expense.billable = ${billableValue})
+      AND (${reimbursableValue} IS NULL OR expense.reimbursable = ${reimbursableValue})
+      AND (${invoiceState} = 'all'
+        OR (${invoiceState} = 'invoiced' AND expense.invoice_id IS NOT NULL)
+        OR (${invoiceState} = 'uninvoiced' AND expense.invoice_id IS NULL))
+      AND (${activeProjectsValue} = 0 OR project.is_active = 1)
     ORDER BY expense.spent_date DESC, expense.id DESC
   `)
   const totals = new Map<string, { currency: string; expenseCount: number; totalCostCents: number }>()
@@ -2124,7 +2767,12 @@ const detailedExpenseReport = async (
     to: filter.to,
     clientId,
     projectId,
-    billableOnly,
+    categoryId,
+    userId,
+    billable,
+    reimbursable,
+    invoiceState,
+    activeProjectsOnly,
     rows: mapped,
     totals: [...totals.values()],
   }
@@ -2146,6 +2794,7 @@ interface DetailedTimeQueryRow {
   roundedSeconds: number
   billable: number
   invoiceId: number | null
+  projectActive: number
   billableRateCents: number | null
   timeEntryId: number
   notes: string | null
@@ -2193,8 +2842,13 @@ const detailedTimeReport = async (
   assertRange(filter)
   if (filter.clientId !== undefined) assertId(filter.clientId, 'client id')
   if (filter.projectId !== undefined) assertId(filter.projectId, 'project id')
+  if (filter.taskId !== undefined) assertId(filter.taskId, 'task id')
+  if (filter.userId !== undefined) assertId(filter.userId, 'user id')
+  if (filter.roleId !== undefined) assertId(filter.roleId, 'role id')
+  if (filter.tagId !== undefined) assertId(filter.tagId, 'tag id')
   const hours = filter.hours ?? 'all'
   const grain = filter.grain ?? 'day'
+  const invoiceState = filter.invoiceState ?? 'all'
   const activeProjectsOnly = filter.activeProjectsOnly ?? false
   const rows = await database.all<DetailedTimeQueryRow>(sql`
     SELECT entry.id AS "timeEntryId", entry.notes AS "notes",
@@ -2208,6 +2862,7 @@ const detailedTimeReport = async (
       upper(coalesce(project.billing_currency, client.currency)) AS "currency",
       entry.seconds AS "seconds", entry.rounded_seconds AS "roundedSeconds",
       entry.billable AS "billable", entry.invoice_id AS "invoiceId",
+      project.is_active AS "projectActive",
       entry.billable_rate_cents AS "billableRateCents"
     FROM time_entries entry
     JOIN projects project ON project.id = entry.project_id
@@ -2218,6 +2873,22 @@ const detailedTimeReport = async (
       AND ${detailedTimeHoursFilter(hours)}
       AND ${activeProjectsOnly ? sql`project.is_active = 1` : sql`1`}
       AND ${filter.projectId === undefined ? sql`1` : sql`project.id = ${filter.projectId}`}
+      AND ${filter.taskId === undefined ? sql`1` : sql`task.id = ${filter.taskId}`}
+      AND ${filter.userId === undefined ? sql`1` : sql`person.id = ${filter.userId}`}
+      AND ${invoiceState === 'all'
+        ? sql`1`
+        : invoiceState === 'invoiced'
+          ? sql`entry.invoice_id IS NOT NULL`
+          : sql`entry.invoice_id IS NULL`}
+      AND ${filter.roleId === undefined ? sql`1` : sql`EXISTS (
+        SELECT 1 FROM user_roles role_filter
+        WHERE role_filter.user_id = person.id AND role_filter.role_id = ${filter.roleId}
+      )`}
+      AND ${filter.tagId === undefined ? sql`1` : sql`EXISTS (
+        SELECT 1 FROM project_tag_assignments tag_filter
+        WHERE tag_filter.project_id = project.id
+          AND tag_filter.project_tag_id = ${filter.tagId}
+      )`}
       AND ${clientFilter(filter.clientId)}
     ORDER BY entry.spent_date, client.name, client.id, project.name, project.id,
       task.name, task.id, person.first_name, person.last_name, person.id, entry.id
@@ -2281,6 +2952,7 @@ const detailedTimeReport = async (
       timeEntryId: grain === 'entry' ? row.timeEntryId : null,
       invoiceId: grain === 'entry' ? row.invoiceId : null,
       notes: grain === 'entry' ? row.notes : null,
+      projectActive: row.projectActive === 1,
     }
     line.seconds = checkedAdd(line.seconds, row.seconds, 'detailed time seconds')
     line.roundedSeconds = checkedAdd(
@@ -2359,6 +3031,11 @@ const detailedTimeReport = async (
       to: filter.to,
       clientId: filter.clientId ?? null,
       projectId: filter.projectId ?? null,
+      taskId: filter.taskId ?? null,
+      userId: filter.userId ?? null,
+      roleId: filter.roleId ?? null,
+      tagId: filter.tagId ?? null,
+      invoiceState,
       hours,
       grain,
       activeProjectsOnly,
@@ -2519,9 +3196,10 @@ const timeUtilizationPpm = (seconds: number, capacity: number): number | null =>
  */
 const timeReport = async (
   database: Database,
-  range: Readonly<ReportDateRange>,
+  range: Readonly<TimeReportFilter>,
 ): Promise<TimeReportRecord> => {
   assertRange(range)
+  const includeFixedFee = range.includeFixedFee === true
   const rows = await database.all<TimeReportQueryRow>(sql`
     SELECT entry.seconds AS "seconds", entry.rounded_seconds AS "roundedSeconds",
       entry.billable AS "billable", entry.billable_rate_cents AS "billableRateCents",
@@ -2544,6 +3222,7 @@ const timeReport = async (
     JOIN tasks task ON task.id = entry.task_id
     JOIN users person ON person.id = entry.user_id
     WHERE entry.spent_date BETWEEN ${range.from} AND ${range.to}
+      AND (${includeFixedFee ? 1 : 0} = 1 OR project.billing_method <> 'fixed_fee')
     ORDER BY entry.id
   `)
 
@@ -2611,6 +3290,7 @@ const timeReport = async (
   return {
     from: range.from,
     to: range.to,
+    fixedFeeIncluded: includeFixedFee,
     totals: finalizedTimeTotals(totals),
     clients: [...clients.values()]
       .map((client) => ({
@@ -2843,7 +3523,6 @@ const costRatio = (
     costRatioState: basisPoints >= alertBasisPoints ? 'over' : 'within',
   }
 }
-
 const bandedMonthReport = async (
   database: Database,
   range: Readonly<ReportDateRange>,
@@ -2991,8 +3670,39 @@ const bandedMonthReport = async (
   }
 }
 
-export const createReportRepository = (database: Database): ReportRepository => ({
-  readBandCostAlert: async () => {
+export const createReportRepository = (database: Database): ReportRepository => {
+  const saved = createSavedReportStore(database)
+  return {
+    reportDefinitionRegistry: () => ({ fields: listReportFields(), metrics: listMetrics() }),
+    listSavedReports: (input) => saved.list(input),
+    readSavedReport: (reportId, viewerUserId) => saved.read(reportId, viewerUserId),
+    createSavedReport: (input) => saved.create({
+      definition: createReportDefinition({
+        id: input.id,
+        name: input.name,
+        fields: input.fields,
+        metrics: input.metrics,
+        filters: input.filters,
+        groupBy: input.groupBy,
+        createdAt: input.createdAt,
+      }),
+      ownerUserId: input.ownerUserId,
+      presentation: input.presentation,
+    }),
+    updateSavedReport: (input) => saved.update(input),
+    shareSavedReport: (reportId, ownerUserId, userId, shared, at) => saved.setShared(reportId, ownerUserId, userId, shared, at),
+    pinSavedReport: (reportId, viewerUserId, pinned, at) => saved.setPinned(reportId, viewerUserId, pinned, at),
+    deleteSavedReport: (reportId, ownerUserId) => saved.delete(reportId, ownerUserId),
+    runSavedReport: async (reportId, viewerUserId, authority) => {
+      const report = await saved.read(reportId, viewerUserId)
+      return report === null ? null : runReportDefinition(database, report.definition, report.presentation, authority)
+    },
+    previewReport: (definition, presentation, authority) => runReportDefinition(database, definition, presentation, authority),
+    executeTimeAction: (input) => executeReportTimeAction(database, input),
+    invoiced: (filter) => invoicedReport(database, filter),
+    paymentsReceived: (filter) => paymentsReceivedReport(database, filter),
+    receivables: (filter) => receivablesReport(database, filter),
+    readBandCostAlert: async () => {
     const rows = await database.all<{ basisPoints: number }>(
       sql`SELECT band_cost_alert_basis_points AS "basisPoints" FROM organizations WHERE id = 1`,
     )
@@ -3002,7 +3712,7 @@ export const createReportRepository = (database: Database): ReportRepository => 
     }
     return basisPoints
   },
-  setBandCostAlert: async (basisPoints) => {
+    setBandCostAlert: async (basisPoints) => {
     // Checked here as well as by the column, so a caller hears which rule it
     // broke rather than a constraint name.
     if (!Number.isInteger(basisPoints) || basisPoints < 1 || basisPoints > 20_000) {
@@ -3011,19 +3721,20 @@ export const createReportRepository = (database: Database): ReportRepository => 
     await database.run(
       sql`UPDATE organizations SET band_cost_alert_basis_points = ${basisPoints} WHERE id = 1`,
     )
-  },
-  contractorCost: (range) => contractorCostReport(database, range),
-  bandedMonths: (range) => bandedMonthReport(database, range),
-  monthEndManifest: (input) => monthEndManifest(database, input),
-  profitability: (range) => profitabilityReport(database, range),
-  detailedTime: (filter) => detailedTimeReport(database, filter),
-  detailedExpense: (filter) => detailedExpenseReport(database, filter),
-  timeReport: (range) => timeReport(database, range),
-  memberHours: (filter) => memberHoursReport(database, filter),
-  uninvoiced: (filter) => uninvoicedReport(database, filter),
-  clientRollup: (clientId, range) => clientRollupReport(database, clientId, range),
-  projectBudgetSummaries: (range, viewer) =>
-    projectBudgetSummaryReport(database, range, viewer),
-  projectBudget: (projectId, range, viewer) =>
-    projectBudgetReport(database, projectId, range, viewer),
-})
+    },
+    contractorCost: (range) => contractorCostReport(database, range),
+    bandedMonths: (range) => bandedMonthReport(database, range),
+    monthEndManifest: (input) => monthEndManifest(database, input),
+    profitability: (range) => profitabilityReport(database, range),
+    detailedTime: (filter) => detailedTimeReport(database, filter),
+    detailedExpense: (filter) => detailedExpenseReport(database, filter),
+    timeReport: (range) => timeReport(database, range),
+    memberHours: (filter) => memberHoursReport(database, filter),
+    uninvoiced: (filter) => uninvoicedReport(database, filter),
+    clientRollup: (clientId, range) => clientRollupReport(database, clientId, range),
+    projectBudgetSummaries: (range, viewer) =>
+      projectBudgetSummaryReport(database, range, viewer),
+    projectBudget: (projectId, range, viewer) =>
+      projectBudgetReport(database, projectId, range, viewer),
+  }
+}

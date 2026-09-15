@@ -13581,6 +13581,884 @@
         ]
       }
     },
+    "/api/v1/report-definitions/registry": {
+      "get": {
+        "operationId": "getReportDefinitionRegistry",
+        "summary": "List report builder fields and metrics",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportDefinitionRegistryEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-definitions/registry",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/report-definitions": {
+      "get": {
+        "operationId": "listSavedReports",
+        "summary": "List report definitions visible to the acting user",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedReportListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-definitions",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "yours",
+                "shared"
+              ]
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "custom_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "createSavedReport",
+        "summary": "Save a report definition",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-definitions",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedReportInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/report-definitions/preview": {
+      "post": {
+        "operationId": "previewReportDefinition",
+        "summary": "Run an unsaved report definition",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportRunnerEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-definitions/preview",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedReportInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/report-definitions/{reportId}": {
+      "get": {
+        "operationId": "getSavedReport",
+        "summary": "Read a saved report definition",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-definitions/:reportId",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "updateSavedReport",
+        "summary": "Update a saved report at an expected version",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-definitions/:reportId",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedReportUpdate"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSavedReport",
+        "summary": "Delete an owned saved report",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-definitions/:reportId",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/report-definitions/{reportId}/duplicate": {
+      "post": {
+        "operationId": "duplicateSavedReport",
+        "summary": "Duplicate a visible report into the acting user's library",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-definitions/:reportId/duplicate",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/report-definitions/{reportId}/pin": {
+      "post": {
+        "operationId": "pinSavedReport",
+        "summary": "Pin a visible saved report",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-definitions/:reportId/pin",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "unpinSavedReport",
+        "summary": "Unpin a visible saved report",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-definitions/:reportId/pin",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/report-definitions/{reportId}/shares/{userId}": {
+      "post": {
+        "operationId": "shareSavedReport",
+        "summary": "Share an owned report with a teammate",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-definitions/:reportId/shares/:userId",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "unshareSavedReport",
+        "summary": "Revoke a teammate's report share",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-definitions/:reportId/shares/:userId",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/report-definitions/{reportId}/run": {
+      "post": {
+        "operationId": "runSavedReport",
+        "summary": "Run the exact current version of a saved report",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportRunnerEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-definitions/:reportId/run",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/reports/my-hours": {
       "get": {
         "operationId": "getMyHoursReport",
@@ -13741,6 +14619,280 @@
             "schema": {
               "type": "string",
               "format": "date"
+            }
+          },
+          {
+            "name": "include_fixed_fee",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/reports/invoiced": {
+      "get": {
+        "operationId": "getInvoicedReport",
+        "summary": "List invoices issued in a period with paid and balance amounts",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoicedReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/reports/invoiced",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "open",
+                "paid",
+                "closed"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/reports/payments-received": {
+      "get": {
+        "operationId": "getPaymentsReceivedReport",
+        "summary": "List invoice payments received in a period",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentsReceivedReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/reports/payments-received",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/reports/receivables": {
+      "get": {
+        "operationId": "getReceivablesReport",
+        "summary": "Age outstanding invoice balances by client as of a date",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReceivablesReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/reports/receivables",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "as_of",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
             }
           }
         ]
@@ -14178,6 +15330,50 @@
               "type": "string",
               "format": "date"
             }
+          },
+          {
+            "name": "project_status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "active",
+                "archived"
+              ]
+            }
+          },
+          {
+            "name": "billing_method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "non_billable",
+                "time_materials",
+                "fixed_fee"
+              ]
+            }
+          },
+          {
+            "name": "manager_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "tag_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
           }
         ]
       }
@@ -14276,7 +15472,54 @@
             }
           },
           {
-            "name": "billable_only",
+            "name": "category_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "billable",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "reimbursable",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "invoice_state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "invoiced",
+                "uninvoiced"
+              ]
+            }
+          },
+          {
+            "name": "active_projects_only",
             "in": "query",
             "required": false,
             "schema": {
@@ -14476,6 +15719,42 @@
             }
           },
           {
+            "name": "task_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "role_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "tag_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
             "name": "hours",
             "in": "query",
             "required": false,
@@ -14504,6 +15783,19 @@
             }
           },
           {
+            "name": "invoice_state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "invoiced",
+                "uninvoiced"
+              ]
+            }
+          },
+          {
             "name": "active_projects_only",
             "in": "query",
             "required": false,
@@ -14512,6 +15804,74 @@
             }
           }
         ]
+      }
+    },
+    "/api/v1/reports/detailed-time/actions": {
+      "post": {
+        "operationId": "executeDetailedTimeAction",
+        "summary": "Apply a confirmed idempotent action to selected time rows",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportTimeActionEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/reports/detailed-time/actions",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportTimeActionInput"
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/reports/client-rollups/{clientId}": {
@@ -29071,6 +30431,9 @@
                 "type": "null"
               }
             ]
+          },
+          "project_active": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -29109,6 +30472,11 @@
           "to",
           "client_id",
           "project_id",
+          "task_id",
+          "user_id",
+          "role_id",
+          "tag_id",
+          "invoice_state",
           "hours",
           "grain",
           "active_projects_only",
@@ -29151,6 +30519,58 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "role_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tag_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "invoice_state": {
+            "type": "string",
+            "enum": [
+              "all",
+              "invoiced",
+              "uninvoiced"
             ]
           },
           "hours": {
@@ -29220,6 +30640,119 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/DetailedTimeReport"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportTimeActionInput": {
+        "type": "object",
+        "required": [
+          "command_id",
+          "action",
+          "entry_ids",
+          "confirmed"
+        ],
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "mark_invoiced",
+              "mark_uninvoiced",
+              "move"
+            ]
+          },
+          "entry_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1000,
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "confirmed": {
+            "const": true
+          },
+          "invoice_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "task_id": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportTimeAction": {
+        "type": "object",
+        "required": [
+          "command_id",
+          "action",
+          "requested",
+          "changed_entry_ids",
+          "ineligible_entry_ids",
+          "replayed"
+        ],
+        "properties": {
+          "command_id": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "mark_invoiced",
+              "mark_uninvoiced",
+              "move"
+            ]
+          },
+          "requested": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "changed_entry_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "ineligible_entry_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportTimeActionEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ReportTimeAction"
           },
           "links": {
             "$ref": "#/components/schemas/Links"
@@ -29501,6 +31034,7 @@
         "required": [
           "from",
           "to",
+          "fixed_fee_included",
           "totals",
           "clients",
           "projects",
@@ -29515,6 +31049,9 @@
           "to": {
             "type": "string",
             "format": "date"
+          },
+          "fixed_fee_included": {
+            "type": "boolean"
           },
           "totals": {
             "$ref": "#/components/schemas/TimeReportTotals"
@@ -29721,6 +31258,7 @@
           "is_contractor",
           "currency",
           "rounded_seconds",
+          "utilization_ppm",
           "cost_cents",
           "cost_rate_cents",
           "cost_rate_is_mixed",
@@ -29754,6 +31292,16 @@
           "rounded_seconds": {
             "type": "integer",
             "minimum": 0
+          },
+          "utilization_ppm": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "cost_cents": {
             "anyOf": [
@@ -29821,6 +31369,798 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/ContractorCostReport"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoicedReportTotal": {
+        "type": "object",
+        "required": [
+          "currency",
+          "invoice_count"
+        ],
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "invoice_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "invoiced_cents": {
+            "type": "integer"
+          },
+          "paid_cents": {
+            "type": "integer"
+          },
+          "balance_cents": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoicedReportRow": {
+        "type": "object",
+        "required": [
+          "invoice_id",
+          "number",
+          "state",
+          "close_reason",
+          "issue_date",
+          "due_date",
+          "client_id",
+          "client_name",
+          "subject",
+          "currency"
+        ],
+        "properties": {
+          "invoice_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "number": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "open",
+              "paid",
+              "closed"
+            ]
+          },
+          "close_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "cancelled",
+                  "written_off",
+                  "source_closed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "issue_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "due_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "client_name": {
+            "type": "string"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currency": {
+            "type": "string"
+          },
+          "invoiced_cents": {
+            "type": "integer"
+          },
+          "paid_cents": {
+            "type": "integer"
+          },
+          "balance_cents": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoicedReport": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "client_id",
+          "status",
+          "totals",
+          "rows"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date"
+          },
+          "to": {
+            "type": "string",
+            "format": "date"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "draft",
+                  "open",
+                  "paid",
+                  "closed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "totals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvoicedReportTotal"
+            }
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvoicedReportRow"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoicedReportEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InvoicedReport"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PaymentsReceivedReportTotal": {
+        "type": "object",
+        "required": [
+          "currency",
+          "payment_count"
+        ],
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "payment_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "payment_cents": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PaymentReceivedReportRow": {
+        "type": "object",
+        "required": [
+          "payment_id",
+          "payment_date",
+          "invoice_id",
+          "invoice_number",
+          "client_id",
+          "client_name",
+          "currency",
+          "provider"
+        ],
+        "properties": {
+          "payment_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "payment_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "invoice_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "invoice_number": {
+            "type": "string"
+          },
+          "client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "client_name": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "invoice_total_cents": {
+            "type": "integer"
+          },
+          "payment_cents": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PaymentsReceivedReport": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "client_id",
+          "totals",
+          "rows"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date"
+          },
+          "to": {
+            "type": "string",
+            "format": "date"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "totals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaymentsReceivedReportTotal"
+            }
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaymentReceivedReportRow"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "PaymentsReceivedReportEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PaymentsReceivedReport"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReceivablesReportTotal": {
+        "type": "object",
+        "required": [
+          "currency",
+          "invoice_count"
+        ],
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "invoice_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "invoiced_cents": {
+            "type": "integer"
+          },
+          "outstanding_cents": {
+            "type": "integer"
+          },
+          "not_due_cents": {
+            "type": "integer"
+          },
+          "days_1_to_30_cents": {
+            "type": "integer"
+          },
+          "days_31_to_60_cents": {
+            "type": "integer"
+          },
+          "days_61_to_90_cents": {
+            "type": "integer"
+          },
+          "days_90_plus_cents": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReceivablesReportRow": {
+        "type": "object",
+        "required": [
+          "client_id",
+          "client_name",
+          "currency",
+          "invoice_count"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "client_name": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "invoice_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "invoiced_cents": {
+            "type": "integer"
+          },
+          "outstanding_cents": {
+            "type": "integer"
+          },
+          "not_due_cents": {
+            "type": "integer"
+          },
+          "days_1_to_30_cents": {
+            "type": "integer"
+          },
+          "days_31_to_60_cents": {
+            "type": "integer"
+          },
+          "days_61_to_90_cents": {
+            "type": "integer"
+          },
+          "days_90_plus_cents": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReceivablesReport": {
+        "type": "object",
+        "required": [
+          "as_of",
+          "client_id",
+          "totals",
+          "rows"
+        ],
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "totals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReceivablesReportTotal"
+            }
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReceivablesReportRow"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReceivablesReportEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ReceivablesReport"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportDefinitionPresentation": {
+        "type": "object",
+        "required": [
+          "result",
+          "grouped",
+          "include_zero_values"
+        ],
+        "properties": {
+          "result": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "detailed"
+            ]
+          },
+          "grouped": {
+            "type": "boolean"
+          },
+          "include_zero_values": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SavedReportInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "fields",
+          "metrics",
+          "filters",
+          "group_by",
+          "presentation"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "filters": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "group_by": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "presentation": {
+            "$ref": "#/components/schemas/ReportDefinitionPresentation"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SavedReportUpdate": {
+        "type": "object",
+        "required": [
+          "version"
+        ],
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "filters": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "group_by": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "presentation": {
+            "$ref": "#/components/schemas/ReportDefinitionPresentation"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SavedReport": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "version",
+          "fields",
+          "metrics",
+          "filters",
+          "group_by",
+          "presentation",
+          "owner",
+          "is_custom",
+          "pinned",
+          "shared",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "filters": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "group_by": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "presentation": {
+            "$ref": "#/components/schemas/ReportDefinitionPresentation"
+          },
+          "owner": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "is_custom": {
+            "type": "boolean"
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "shared": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SavedReportEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SavedReport"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SavedReportListEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SavedReport"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportRunnerResult": {
+        "type": "object",
+        "required": [
+          "definitionId",
+          "definitionVersion",
+          "state",
+          "rows"
+        ],
+        "properties": {
+          "definitionId": {
+            "type": "string"
+          },
+          "definitionVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "empty",
+              "too_many_rows"
+            ]
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportRunnerEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ReportRunnerResult"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportDefinitionRegistry": {
+        "type": "object",
+        "required": [
+          "fields",
+          "metrics"
+        ],
+        "properties": {
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportDefinitionRegistryEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ReportDefinitionRegistry"
           },
           "links": {
             "$ref": "#/components/schemas/Links"
@@ -29963,7 +32303,12 @@
           "to",
           "client_id",
           "project_id",
-          "billable_only",
+          "category_id",
+          "user_id",
+          "billable",
+          "reimbursable",
+          "invoice_state",
+          "active_projects_only",
           "totals",
           "rows"
         ],
@@ -29998,7 +32343,57 @@
               }
             ]
           },
-          "billable_only": {
+          "category_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "billable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reimbursable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "invoice_state": {
+            "type": "string",
+            "enum": [
+              "all",
+              "invoiced",
+              "uninvoiced"
+            ]
+          },
+          "active_projects_only": {
             "type": "boolean"
           },
           "totals": {
@@ -30040,7 +32435,10 @@
           "description",
           "amount_cents",
           "currency",
-          "target"
+          "target",
+          "brand_name",
+          "cost_cents",
+          "margin_cents"
         ],
         "properties": {
           "subject_type": {
@@ -30077,6 +32475,36 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "brand_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "margin_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
               },
               {
                 "type": "null"
@@ -30380,6 +32808,9 @@
           "revenue_cents",
           "cost_cents",
           "profit_cents",
+          "return_on_cost_ppm",
+          "revenue_fee_cents",
+          "fees_included_in_delivery_cost_cents",
           "entries_without_billable_rate",
           "entries_without_cost_rate"
         ],
@@ -30438,6 +32869,24 @@
               }
             ]
           },
+          "return_on_cost_ppm": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revenue_fee_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "fees_included_in_delivery_cost_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
           "entries_without_billable_rate": {
             "type": "integer",
             "minimum": 0
@@ -30456,6 +32905,9 @@
           "revenue_cents",
           "cost_cents",
           "profit_cents",
+          "return_on_cost_ppm",
+          "revenue_fee_cents",
+          "fees_included_in_delivery_cost_cents",
           "entries_without_billable_rate",
           "entries_without_cost_rate",
           "projects_not_converted"
@@ -30495,6 +32947,24 @@
               }
             ]
           },
+          "return_on_cost_ppm": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revenue_fee_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "fees_included_in_delivery_cost_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
           "entries_without_billable_rate": {
             "type": "integer",
             "minimum": 0
@@ -30510,6 +32980,185 @@
         },
         "additionalProperties": false
       },
+      "ProfitabilityDimensionRow": {
+        "type": "object",
+        "required": [
+          "dimension_id",
+          "dimension_name",
+          "currency",
+          "rounded_seconds",
+          "revenue_cents",
+          "cost_cents",
+          "profit_cents",
+          "return_on_cost_ppm",
+          "revenue_fee_cents",
+          "fees_included_in_delivery_cost_cents",
+          "entries_without_billable_rate",
+          "entries_without_cost_rate",
+          "included_in_headline"
+        ],
+        "properties": {
+          "dimension_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "dimension_name": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "rounded_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "revenue_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "profit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "return_on_cost_ppm": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revenue_fee_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "fees_included_in_delivery_cost_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "entries_without_billable_rate": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "entries_without_cost_rate": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "included_in_headline": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProfitabilityTrendRow": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ProfitabilityDimensionRow"
+          },
+          {
+            "type": "object",
+            "required": [
+              "period_start",
+              "period_end",
+              "current"
+            ],
+            "properties": {
+              "period_start": {
+                "type": "string",
+                "format": "date"
+              },
+              "period_end": {
+                "type": "string",
+                "format": "date"
+              },
+              "current": {
+                "type": "boolean"
+              }
+            }
+          }
+        ]
+      },
+      "ProfitabilityFilters": {
+        "type": "object",
+        "required": [
+          "project_status",
+          "billing_method",
+          "manager_id",
+          "tag_id"
+        ],
+        "properties": {
+          "project_status": {
+            "type": "string",
+            "enum": [
+              "all",
+              "active",
+              "archived"
+            ]
+          },
+          "billing_method": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "non_billable",
+                  "time_materials",
+                  "fixed_fee"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "manager_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tag_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "ProfitabilityReport": {
         "type": "object",
         "required": [
@@ -30517,7 +33166,12 @@
           "to",
           "organization_currency",
           "rows",
+          "clients",
+          "teammates",
+          "tasks",
+          "trend",
           "totals",
+          "filters",
           "previous_from",
           "previous_to",
           "previous_totals"
@@ -30540,8 +33194,35 @@
               "$ref": "#/components/schemas/ProfitabilityRow"
             }
           },
+          "clients": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfitabilityDimensionRow"
+            }
+          },
+          "teammates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfitabilityDimensionRow"
+            }
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfitabilityDimensionRow"
+            }
+          },
+          "trend": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfitabilityTrendRow"
+            }
+          },
           "totals": {
             "$ref": "#/components/schemas/ProfitabilityTotals"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/ProfitabilityFilters"
           },
           "previous_from": {
             "type": "string",

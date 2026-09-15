@@ -98,6 +98,9 @@ describe('what a month-end pack would do (#58)', () => {
         amountCents: 100_000,
         currency: 'USD',
         target: 'ap@kestrel.example.test',
+        brandName: null,
+        costCents: null,
+        marginCents: null,
       },
       {
         subjectType: 'invoice',
@@ -106,6 +109,9 @@ describe('what a month-end pack would do (#58)', () => {
         amountCents: 412_000,
         currency: 'USD',
         target: 'billing@northpeak.example.test',
+        brandName: null,
+        costCents: null,
+        marginCents: null,
       },
     ])
   })

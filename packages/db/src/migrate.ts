@@ -77,6 +77,10 @@ import { payoutDestinationKindMigration } from './migrations/0070_payout_destina
 import { sourceLineageMigration } from './migrations/0071_source_lineage.js'
 import { staffMagicLinksMigration } from './migrations/0072_staff_magic_links.js'
 import { emailHtmlTemplatesMigration } from './migrations/0073_email_html_templates.js'
+import { revenueFeesMigration } from './migrations/0080_revenue_fees.js'
+import { reportDeliveryIdentityMigration } from './migrations/0081_report_delivery_identity.js'
+import { savedReportsMigration } from './migrations/0082_saved_reports.js'
+import { reportTimeCommandsMigration } from './migrations/0083_report_time_commands.js'
 import { bandClaimModesMigration } from './migrations/0074_band_claim_modes.js'
 import { bandClaimScopeMigration } from './migrations/0075_band_claim_scope.js'
 import { rateRemovalMigration } from './migrations/0076_rate_removal.js'
@@ -1509,6 +1513,10 @@ const migrations = [
   { id: '0077_band_cost_alert', statements: bandCostAlertMigration },
   { id: '0078_band_claim_backfill', statements: bandClaimBackfillMigration },
   { id: '0079_rate_removal_by_kind', statements: rateRemovalByKindMigration },
+  { id: '0080_revenue_fees', statements: revenueFeesMigration },
+  { id: '0081_report_delivery_identity', statements: reportDeliveryIdentityMigration },
+  { id: '0082_saved_reports', statements: savedReportsMigration },
+  { id: '0083_report_time_commands', statements: reportTimeCommandsMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

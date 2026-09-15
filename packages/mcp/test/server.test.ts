@@ -11,6 +11,7 @@ import {
   type UserProfile,
 } from '@ezacto/api'
 import { EzactoClient } from '@conflict-hq/ezacto-client'
+import { REPORT_CAPABILITIES } from '@ezacto/core'
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client'
 import type { McpServer } from '@modelcontextprotocol/server'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -114,6 +115,31 @@ let lastUninvoicedFilter:
 let lastProjectBudgetRange: { from: string; to: string } | undefined
 
 const reportReader: ReportReader = {
+  reportDefinitionRegistry: () => ({ fields: [], metrics: [] }),
+  listSavedReports: async () => [],
+  readSavedReport: async () => null,
+  createSavedReport: async () => { throw new Error('not used') },
+  updateSavedReport: async () => 'not_found',
+  shareSavedReport: async () => false,
+  pinSavedReport: async () => false,
+  deleteSavedReport: async () => false,
+  runSavedReport: async () => null,
+  previewReport: async (definition) => ({ definitionId: definition.id, definitionVersion: definition.version, state: 'empty', rows: [] }),
+  executeTimeAction: async (input) => ({
+    commandId: input.commandId, action: input.action, requested: input.entryIds.length,
+    changedEntryIds: [], ineligibleEntryIds: input.entryIds, replayed: false,
+  }),
+  invoiced: async (filter) => ({
+    from: filter.from, to: filter.to, clientId: filter.clientId ?? null,
+    state: filter.state ?? null, totals: [], rows: [],
+  }),
+  paymentsReceived: async (filter) => ({
+    from: filter.from, to: filter.to, clientId: filter.clientId ?? null,
+    totals: [], rows: [],
+  }),
+  receivables: async (filter) => ({
+    asOf: filter.asOf, clientId: filter.clientId ?? null, totals: [], rows: [],
+  }),
   // Not exercised here; present because ReportReader requires it.
   detailedTime: async (filter) => ({
     kind: "report" as const,
@@ -122,6 +148,11 @@ const reportReader: ReportReader = {
       to: filter.to,
       clientId: filter.clientId ?? null,
       projectId: filter.projectId ?? null,
+      taskId: filter.taskId ?? null,
+      userId: filter.userId ?? null,
+      roleId: filter.roleId ?? null,
+      tagId: filter.tagId ?? null,
+      invoiceState: filter.invoiceState ?? 'all',
       hours: filter.hours ?? "all",
       grain: filter.grain ?? "day",
       activeProjectsOnly: filter.activeProjectsOnly ?? false,
@@ -144,7 +175,12 @@ const reportReader: ReportReader = {
     to: filter.to,
     clientId: filter.clientId ?? null,
     projectId: filter.projectId ?? null,
-    billableOnly: filter.billableOnly === true,
+    categoryId: filter.categoryId ?? null,
+    userId: filter.userId ?? null,
+    billable: filter.billable ?? null,
+    reimbursable: filter.reimbursable ?? null,
+    invoiceState: filter.invoiceState ?? 'all',
+    activeProjectsOnly: filter.activeProjectsOnly ?? false,
     rows: [],
     totals: [],
   }),
@@ -158,11 +194,16 @@ const reportReader: ReportReader = {
     to: range.to,
     organizationCurrency: 'USD',
     rows: [],
+    clients: [], teammates: [], tasks: [], trend: [],
+    filters: { projectStatus: 'all', billingMethod: null, managerId: null, tagId: null },
     totals: {
       roundedSeconds: 0,
       revenueCents: 0,
       costCents: 0,
       profitCents: 0,
+      returnOnCostPpm: null,
+      revenueFeeCents: 0,
+      feesIncludedInDeliveryCostCents: 0,
       entriesWithoutBillableRate: 0,
       entriesWithoutCostRate: 0,
       projectsNotConverted: 0,
@@ -174,6 +215,9 @@ const reportReader: ReportReader = {
       revenueCents: 0,
       costCents: 0,
       profitCents: 0,
+      returnOnCostPpm: null,
+      revenueFeeCents: 0,
+      feesIncludedInDeliveryCostCents: 0,
       entriesWithoutBillableRate: 0,
       entriesWithoutCostRate: 0,
       projectsNotConverted: 0,
@@ -183,6 +227,7 @@ const reportReader: ReportReader = {
   timeReport: async (range) => ({
     from: range.from,
     to: range.to,
+    fixedFeeIncluded: range.includeFixedFee === true,
     totals: {
       seconds: 0,
       roundedSeconds: 0,
@@ -507,7 +552,7 @@ describe('ezacto read-only MCP server', () => {
     lastProjectBudgetRange = undefined
   })
 
-  it('[mcp] advertises only the six bounded read tools', async () => {
+  it('[mcp] advertises the bounded reads and canonical report runner', async () => {
     harness = await protocolHarness(tokens.administrator)
     const tools = await harness.client.listTools()
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
@@ -516,7 +561,9 @@ describe('ezacto read-only MCP server', () => {
       'get_uninvoiced',
       'list_project_budgets',
       'list_projects',
+      'list_reports',
       'list_time_entries',
+      'run_report',
     ])
     for (const tool of tools.tools) {
       expect(tool.annotations).toMatchObject({
@@ -526,6 +573,76 @@ describe('ezacto read-only MCP server', () => {
         openWorldHint: true,
       })
     }
+  })
+
+  it('[mcp] lists and runs the canonical report capabilities', async () => {
+    harness = await protocolHarness(tokens.administrator)
+    const listed = await harness.client.callTool({
+      name: 'list_reports',
+      arguments: {},
+    })
+    expect(listed.isError, JSON.stringify(listed)).not.toBe(true)
+    expect(listed.structuredContent).toEqual({ reports: REPORT_CAPABILITIES })
+
+    const result = await harness.client.callTool({
+      name: 'run_report',
+      arguments: {
+        definition: 'time',
+        from: '2026-08-01',
+        to: '2026-08-31',
+        include_fixed_fee: true,
+      },
+    })
+    expect(result.isError, JSON.stringify(result)).not.toBe(true)
+    expect(result.structuredContent).toEqual(
+      await directApi(
+        tokens.administrator,
+        '/reports/time?from=2026-08-01&to=2026-08-31&include_fixed_fee=true',
+      ),
+    )
+
+    const receivables = await harness.client.callTool({
+      name: 'run_report',
+      arguments: { definition: 'receivables', as_of: '2026-08-31', client: '7' },
+    })
+    expect(receivables.isError, JSON.stringify(receivables)).not.toBe(true)
+    expect(receivables.structuredContent).toEqual(
+      await directApi(
+        tokens.administrator,
+        '/reports/receivables?as_of=2026-08-31&client_id=7',
+      ),
+    )
+
+    const detailed = await harness.client.callTool({
+      name: 'run_report',
+      arguments: {
+        definition: 'detailed-time',
+        from: '2026-08-01',
+        to: '2026-08-31',
+        task_id: 3,
+        user_id: 4,
+        role_id: 5,
+        tag_id: 6,
+        invoice_state: 'uninvoiced',
+        grain: 'entry',
+      },
+    })
+    expect(detailed.isError, JSON.stringify(detailed)).not.toBe(true)
+    expect(detailed.structuredContent).toEqual(
+      await directApi(
+        tokens.administrator,
+        '/reports/detailed-time?from=2026-08-01&to=2026-08-31&task_id=3&user_id=4&role_id=5&tag_id=6&invoice_state=uninvoiced&grain=entry',
+      ),
+    )
+
+    const missingAsOf = await harness.client.callTool({
+      name: 'run_report',
+      arguments: { definition: 'receivables' },
+    })
+    expect(missingAsOf.isError).toBe(true)
+    expect(missingAsOf.structuredContent).toEqual({
+      error: { kind: 'invalid_selection', message: 'receivables requires as_of' },
+    })
   })
 
   it('[security] preserves API serializer redaction for the bearer token profile', async () => {

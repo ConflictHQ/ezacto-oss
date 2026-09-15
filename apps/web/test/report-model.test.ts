@@ -1,10 +1,12 @@
-import type { DetailedTimeReport, DetailedTimeRow, EzactoClient, Whoami } from '@conflict-hq/ezacto-client'
+import type { ContractorCostReport, DetailedTimeReport, DetailedTimeRow, EzactoClient, Whoami } from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import {
   billablePercent,
   canReadCostReports,
   canReadFinancialReports,
+  contractorCostCsv,
   createShellApi,
+  detailedExpenseCsv,
   detailedTimeCsv,
   detailedTimeOptionsFromUrl,
   formatReportCents,
@@ -13,6 +15,7 @@ import {
   groupDetailedTimeRows,
   reportFiltersFromUrl,
   reportFiltersUrl,
+  timeReportOptionsFromUrl,
   validateReportFilters,
 } from '../src/index.js'
 
@@ -52,6 +55,11 @@ const detailedReport = (fields: Partial<DetailedTimeReport> = {}): DetailedTimeR
   to: '2026-08-31',
   client_id: null,
   project_id: null,
+  task_id: null,
+  user_id: null,
+  role_id: null,
+  tag_id: null,
+  invoice_state: 'all',
   hours: 'all',
   grain: 'day',
   active_projects_only: false,
@@ -111,6 +119,18 @@ describe('Reports Stage 1 model', () => {
         '2026-09-17',
       ),
     ).toMatchObject({ from: 'not-a-date', clientId: -1 })
+  })
+
+  it('[unit #720] carries the fixed-fee decision only on the Time report URL', () => {
+    const location = new URL(
+      'https://example.test/reports?report=time&include_fixed_fee=true',
+    )
+    const filters = reportFiltersFromUrl(location, '2026-09-10')
+    const options = timeReportOptionsFromUrl(location)
+    expect(options).toEqual({ includeFixedFee: true })
+    expect(reportFiltersUrl(filters, undefined, options)).toContain('include_fixed_fee=true')
+    expect(reportFiltersUrl({ ...filters, kind: 'uninvoiced' }, undefined, options))
+      .not.toContain('include_fixed_fee')
   })
 
   it('[unit] rejects impossible, inverted, and incomplete report ranges', () => {
@@ -226,11 +246,16 @@ describe('Reports Stage 1 model', () => {
     expect(options).toEqual({
       hours: 'uninvoiced',
       grouping: 'person',
-      activeProjectsOnly: true,
       grain: 'day',
+      activeProjectsOnly: true,
+      taskId: null,
+      userId: null,
+      roleId: null,
+      tagId: null,
+      invoiceState: 'all',
     })
     expect(reportFiltersUrl(filters, options)).toBe(
-      '/reports?report=detailed-time&from=2026-08-01&to=2026-08-31&client_id=3&project_id=9&hours=uninvoiced&group=person&active_only=true&grain=day',
+      '/reports?report=detailed-time&from=2026-08-01&to=2026-08-31&client_id=3&project_id=9&hours=uninvoiced&group=person&grain=day&active_only=true&invoice_state=all',
     )
     // An unreadable display preference falls back rather than stopping the
     // report: the range is what has to be right, the grouping is a shape.
@@ -238,13 +263,26 @@ describe('Reports Stage 1 model', () => {
       detailedTimeOptionsFromUrl(
         new URL('https://example.test/reports?hours=everything&group=colour'),
       ),
-    ).toEqual({ hours: 'all', grouping: 'date', activeProjectsOnly: false, grain: 'day' })
+    ).toEqual({
+      hours: 'all',
+      grouping: 'date',
+      grain: 'day',
+      activeProjectsOnly: false,
+      taskId: null,
+      userId: null,
+      roleId: null,
+      tagId: null,
+      invoiceState: 'all',
+    })
     // The other kinds carry none of it: a client rollup has no Show control,
     // and an address implying one would be a control that does not exist.
     expect(
       reportFiltersUrl(
         { ...filters, kind: 'client-rollup', projectId: null },
-        { hours: 'billable', grouping: 'task', activeProjectsOnly: true, grain: 'day' },
+        {
+          hours: 'billable', grouping: 'task', grain: 'day', activeProjectsOnly: true,
+          taskId: null, userId: null, roleId: null, tagId: null, invoiceState: 'all',
+        },
       ),
     ).toBe('/reports?report=client-rollup&from=2026-08-01&to=2026-08-31&client_id=3')
   })
@@ -379,6 +417,75 @@ describe('Reports Stage 1 model', () => {
     // apostrophe does, and stays visible rather than silently rewriting it.
     expect(csv).toContain('"\'=1+1"')
     expect(csv).toContain('"\'@SUM(A1)"')
+  })
+
+  it('[unit #723] exports the exact contractor payout fields and disarms formulas', () => {
+    const report: ContractorCostReport = {
+      from: '2026-08-01',
+      to: '2026-08-31',
+      rows: [
+        {
+          user_id: 11,
+          name: '=Ada Wren',
+          payroll_email: '@ada@example.test',
+          is_contractor: true,
+          currency: 'USD',
+          rounded_seconds: 5_400,
+          utilization_ppm: 250_000,
+          cost_cents: 18_750,
+          cost_rate_cents: 12_500,
+          cost_rate_is_mixed: false,
+          entry_count: 2,
+          entries_without_rate: 0,
+        },
+      ],
+    }
+
+    const csv = contractorCostCsv(report)
+    expect(csv.split('\r\n')[0]).toBe(
+      '"Type","Person","Payroll email","Hours","Utilization","Rate","Mixed rate","Entries","Unrated entries","Currency","Cost"',
+    )
+    expect(csv).toContain('"Contractor","\'=Ada Wren","\'@ada@example.test","1.50","25.00"')
+    expect(csv).toContain('"125.00","No","2","0","USD","187.50"')
+  })
+
+  it('[unit #719] exports full expense notes safely without inventing redacted amounts', () => {
+    const csv = detailedExpenseCsv({
+      from: '2026-08-01',
+      to: '2026-08-31',
+      client_id: null,
+      project_id: null,
+      category_id: null,
+      user_id: null,
+      billable: null,
+      reimbursable: null,
+      invoice_state: 'all',
+      active_projects_only: false,
+      totals: [],
+      rows: [{
+        expense_id: 201,
+        spent_date: '2026-08-13',
+        client_id: 1,
+        client_name: '=Parent',
+        project_id: 7,
+        project_name: 'Launch',
+        project_code: 'WEB',
+        category_id: 1,
+        category_name: 'Travel',
+        user_id: 1,
+        user_name: 'Ada Byron',
+        notes: '@Taxi from airport\nReceipt is attached in full.',
+        units: null,
+        billable: true,
+        reimbursable: false,
+        invoice_id: null,
+        currency: 'USD',
+      }],
+    })
+
+    expect(csv).toContain('"\'=Parent"')
+    expect(csv).toContain('"\'@Taxi from airport\nReceipt is attached in full."')
+    expect(csv).toContain('"Yes","No","","USD",""')
   })
 
   it('[unit] maps catalogs and all five reports to generated-client operations', async () => {

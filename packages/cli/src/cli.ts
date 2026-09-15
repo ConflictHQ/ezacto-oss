@@ -55,7 +55,7 @@ Commands:
   week         Show the Monday–Sunday time grid
   uninvoiced   Show uninvoiced amounts for a date range
   invoice      Generate, send, or list invoices
-  report       Run a report definition (uninvoiced, client-rollup, project-budget)
+  report       List or run a report definition
   export       Export time entries or expenses as CSV (or --verify a backup bundle)
   backup       Create a full backup bundle from a local database
   restore      Restore a backup bundle into a fresh database
@@ -71,8 +71,25 @@ Options:
   --week <yyyy-mm-dd>       A date in the week to show (default: today)
   --from <yyyy-mm-dd>       Start date for reports and exports
   --to <yyyy-mm-dd>         End date for reports and exports
+  --as-of <yyyy-mm-dd>      Receivables aging date
+  --status <state>          Invoiced status: draft, open, paid, or closed
+  --project-status <state>  Profitability projects: all, active, or archived
+  --billing-method <kind>   Profitability billing type
+  --manager-id <id>         Profitability project-manager ID
+  --tag-id <id>             Profitability project-tag ID
+  --task-id <id>            Detailed-time task ID
+  --user-id <id>            Detailed-time teammate ID
+  --role-id <id>            Detailed-time role ID
+  --invoice-state <state>   Detailed time: all, invoiced, or uninvoiced
   --client <name-or-id>     Client filter for reports and invoices
   --project <name-or-id>    Project filter (repeatable for invoice generate)
+  --include-fixed-fee       Include hourly value from fixed-fee projects
+  --hours <kind>            Detailed time: all, billable, non_billable, or uninvoiced
+  --grain <kind>            Detailed time grain: day or entry
+  --active-projects-only    Limit detailed time to active projects
+  --billable-only           Limit detailed expense to billable expenses
+  --event-type <type>       Limit activity log to one event type
+  --actor-id <id>           Limit activity log to one actor ID
   --csv                     Emit CSV instead of human-readable output
   --columns <a,b,c>         Export columns, in order (default: every exportable one)
   --time-summary <type>     Time summary type for invoice generate
@@ -340,8 +357,25 @@ export const runCli = async (
       week: { type: 'string' },
       from: { type: 'string' },
       to: { type: 'string' },
+      'as-of': { type: 'string' },
+      status: { type: 'string' },
+      'project-status': { type: 'string' },
+      'billing-method': { type: 'string' },
+      'manager-id': { type: 'string' },
+      'tag-id': { type: 'string' },
+      'task-id': { type: 'string' },
+      'user-id': { type: 'string' },
+      'role-id': { type: 'string' },
+      'invoice-state': { type: 'string' },
       client: { type: 'string' },
       project: { type: 'string', multiple: true },
+      'include-fixed-fee': { type: 'boolean', default: false },
+      hours: { type: 'string' },
+      grain: { type: 'string' },
+      'active-projects-only': { type: 'boolean', default: false },
+      'billable-only': { type: 'boolean', default: false },
+      'event-type': { type: 'string' },
+      'actor-id': { type: 'string' },
       csv: { type: 'boolean', default: false },
       columns: { type: 'string' },
       'time-summary': { type: 'string' },
@@ -455,14 +489,30 @@ export const runCli = async (
   }
   // --- money options guard for time commands ---------------------------------
 
+  const reportFilterOptions =
+    values['include-fixed-fee'] ||
+    values.hours !== undefined ||
+    values.grain !== undefined ||
+    values['active-projects-only'] ||
+    values['billable-only'] ||
+    values['event-type'] !== undefined ||
+    values['actor-id'] !== undefined ||
+    values.status !== undefined
+
   const moneyOptions =
     values.from !== undefined ||
     values.to !== undefined ||
+    values['as-of'] !== undefined ||
     values.client !== undefined ||
     (values.project !== undefined && values.project.length > 0) ||
     values.csv ||
     values['time-summary'] !== undefined ||
-    values['expense-summary'] !== undefined
+    values['expense-summary'] !== undefined ||
+    reportFilterOptions
+
+  if (reportFilterOptions && command !== 'report') {
+    throw new Error('report filter options are valid only with ez report run')
+  }
 
   // --- money / report commands -----------------------------------------------
 
@@ -567,8 +617,24 @@ export const runCli = async (
       throw new Error('time options are not valid with ez report')
     }
     const action = commandArguments[0]
+    if (action === 'list') {
+      if (commandArguments.length !== 1) throw new Error('usage: ez report list')
+      if (reportFilterOptions) {
+        throw new Error('report filter options are valid only with ez report run')
+      }
+      return printMoneyResult(
+        {
+          json: validReportDefinitions(),
+          human: validReportDefinitions().join('\n'),
+          csv: ['report', ...validReportDefinitions()].join('\n'),
+        },
+        values.json,
+        values.csv,
+        runtime,
+      )
+    }
     if (action !== 'run') {
-      throw new Error(`usage: ez report run <${validReportDefinitions().join('|')}>`)
+      throw new Error(`usage: ez report <list|run <${validReportDefinitions().join('|')}>>`)
     }
     const definition = commandArguments[1]
     if (definition === undefined) {
@@ -577,7 +643,15 @@ export const runCli = async (
     if (commandArguments.length > 2) {
       throw new Error('ez report run accepts no additional positional arguments')
     }
-    const range = requireRange()
+    if (definition === 'receivables' && values['as-of'] === undefined) {
+      throw new Error('receivables report requires --as-of')
+    }
+    if (definition !== 'receivables' && values['as-of'] !== undefined) {
+      throw new Error('--as-of is valid only with the receivables report')
+    }
+    const range = definition === 'receivables'
+      ? { from: values['as-of']!, to: values['as-of']! }
+      : requireRange()
     const selected = await selectedClient(configPath, values.org)
     const clientId = values.client !== undefined
       ? await resolveClientId(selected.client, values.client)
@@ -585,12 +659,107 @@ export const runCli = async (
     const projectId = values.project !== undefined && values.project.length > 0
       ? await resolveProjectId(selected.client, values.project[0]!)
       : undefined
+    const hours = values.hours
+    if (
+      hours !== undefined &&
+      hours !== 'all' &&
+      hours !== 'billable' &&
+      hours !== 'non_billable' &&
+      hours !== 'uninvoiced'
+    ) {
+      throw new Error('--hours must be all, billable, non_billable, or uninvoiced')
+    }
+    const grain = values.grain
+    if (grain !== undefined && grain !== 'day' && grain !== 'entry') {
+      throw new Error('--grain must be day or entry')
+    }
+    const actorId = values['actor-id'] === undefined
+      ? undefined
+      : Number(values['actor-id'])
+    if (actorId !== undefined && (!Number.isSafeInteger(actorId) || actorId <= 0)) {
+      throw new Error('--actor-id must be a positive integer')
+    }
+    const managerId = values['manager-id'] === undefined
+      ? undefined
+      : Number(values['manager-id'])
+    const tagId = values['tag-id'] === undefined ? undefined : Number(values['tag-id'])
+    const taskId = values['task-id'] === undefined ? undefined : Number(values['task-id'])
+    const userId = values['user-id'] === undefined ? undefined : Number(values['user-id'])
+    const roleId = values['role-id'] === undefined ? undefined : Number(values['role-id'])
+    for (const [name, value] of [
+      ['manager-id', managerId], ['tag-id', tagId], ['task-id', taskId],
+      ['user-id', userId], ['role-id', roleId],
+    ] as const) {
+      if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
+        throw new Error(`--${name} must be a positive integer`)
+      }
+    }
+    const projectStatus = values['project-status']
+    if (
+      projectStatus !== undefined &&
+      projectStatus !== 'all' &&
+      projectStatus !== 'active' &&
+      projectStatus !== 'archived'
+    ) throw new Error('--project-status must be all, active, or archived')
+    const billingMethod = values['billing-method']
+    if (
+      billingMethod !== undefined &&
+      billingMethod !== 'non_billable' &&
+      billingMethod !== 'time_materials' &&
+      billingMethod !== 'fixed_fee'
+    ) throw new Error('--billing-method must be non_billable, time_materials, or fixed_fee')
+    if (
+      definition !== 'profitability' &&
+      [projectStatus, billingMethod, managerId].some((value) => value !== undefined)
+    ) throw new Error('profitability filters are valid only with the profitability report')
+    const invoiceState = values['invoice-state']
+    if (
+      invoiceState !== undefined && invoiceState !== 'all' &&
+      invoiceState !== 'invoiced' && invoiceState !== 'uninvoiced'
+    ) throw new Error('--invoice-state must be all, invoiced, or uninvoiced')
+    if (
+      definition !== 'detailed-time' &&
+      [taskId, userId, roleId, invoiceState].some((value) => value !== undefined)
+    ) throw new Error('detailed-time filters are valid only with the detailed-time report')
+    if (tagId !== undefined && definition !== 'profitability' && definition !== 'detailed-time') {
+      throw new Error('--tag-id is valid only with profitability or detailed-time')
+    }
+    const invoiceStatus = values.status
+    if (
+      invoiceStatus !== undefined &&
+      invoiceStatus !== 'draft' &&
+      invoiceStatus !== 'open' &&
+      invoiceStatus !== 'paid' &&
+      invoiceStatus !== 'closed'
+    ) {
+      throw new Error('--status must be draft, open, paid, or closed')
+    }
+    if (invoiceStatus !== undefined && definition !== 'invoiced') {
+      throw new Error('--status is valid only with the invoiced report')
+    }
     return printMoneyResult(
       await runReport(selected.client, {
         definition,
         ...range,
         ...(clientId === undefined ? {} : { clientId }),
         ...(projectId === undefined ? {} : { projectId }),
+        ...(values['include-fixed-fee'] ? { includeFixedFee: true } : {}),
+        ...(hours === undefined ? {} : { hours }),
+        ...(grain === undefined ? {} : { grain }),
+        ...(values['active-projects-only'] ? { activeProjectsOnly: true } : {}),
+        ...(values['billable-only'] ? { billableOnly: true } : {}),
+        ...(values['event-type'] === undefined ? {} : { eventType: values['event-type'] }),
+        ...(actorId === undefined ? {} : { actorId }),
+        ...(values['as-of'] === undefined ? {} : { asOf: values['as-of'] }),
+        ...(invoiceStatus === undefined ? {} : { invoiceStatus }),
+        ...(projectStatus === undefined ? {} : { projectStatus }),
+        ...(billingMethod === undefined ? {} : { billingMethod }),
+        ...(managerId === undefined ? {} : { managerId }),
+        ...(tagId === undefined ? {} : { tagId }),
+        ...(taskId === undefined ? {} : { taskId }),
+        ...(userId === undefined ? {} : { userId }),
+        ...(roleId === undefined ? {} : { roleId }),
+        ...(invoiceState === undefined ? {} : { invoiceState }),
       }),
       values.json,
       values.csv,

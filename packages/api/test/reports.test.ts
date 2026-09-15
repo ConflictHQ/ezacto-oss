@@ -11,6 +11,7 @@ import {
   createReportRepository,
   DETAILED_TIME_ENTRY_LIMIT,
 } from "../../db/src/reports.js";
+import { recordInvoicePayment, deleteInvoicePayment } from "../../db/src/invoice-state.js";
 import {
   createApiApp,
   installReportRoutes,
@@ -28,12 +29,16 @@ interface Harness {
     profile?: UserProfile,
     managerGrants?: readonly string[],
     userId?: number,
+    init?: RequestInit,
   ): Promise<Response>;
   /** A body-carrying request, for the one setting these reports own. */
   post(path: string, body: unknown, profile?: UserProfile): Promise<Response>;
   /** The repository itself, for reports with no route yet. */
   reports: ReturnType<typeof createReportRepository>;
   run(sql: string, params: readonly unknown[]): Promise<void>;
+  seedAccounting(): Promise<void>;
+  recordPayment(invoiceId: number, paymentId: number, amountCents: number, paidAt: string): Promise<void>;
+  deletePayment(invoiceId: number, paymentId: number, expectedVersion: number, updatedAt: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -166,10 +171,12 @@ const createHarness = async (kind: "SQLite" | "D1"): Promise<Harness> => {
   let close: () => Promise<void>;
   let run: (sql: string, params: readonly unknown[]) => Promise<void>;
   let reports: ReturnType<typeof createReportRepository>;
+  let ledger: Parameters<typeof recordInvoicePayment>[0];
   if (kind === "SQLite") {
     const sqlite = new BetterSqlite3(":memory:");
     migrateContainer(sqlite);
-    reports = createReportRepository(createContainerDatabase(sqlite));
+    ledger = createContainerDatabase(sqlite);
+    reports = createReportRepository(ledger);
     run = async (statement, params) => {
       sqlite.prepare(statement).run(...params);
     };
@@ -184,7 +191,8 @@ const createHarness = async (kind: "SQLite" | "D1"): Promise<Harness> => {
     });
     const d1 = await miniflare.getD1Database("DB");
     await migrateD1(d1);
-    reports = createReportRepository(createD1Database(d1));
+    ledger = createD1Database(d1);
+    reports = createReportRepository(ledger);
     run = async (statement, params) => {
       await d1
         .prepare(statement)
@@ -205,10 +213,13 @@ const createHarness = async (kind: "SQLite" | "D1"): Promise<Harness> => {
       profile = "administrator",
       managerGrants = [],
       userId = 1,
+      init = {},
     ) =>
       Promise.resolve(
         app.request(`https://api.test/api/v1${path}`, {
+          ...init,
           headers: {
+            ...Object.fromEntries(new Headers(init.headers).entries()),
             origin: "https://api.test",
             "x-test-profile": profile,
             "x-test-manager-grants": managerGrants.join(","),
@@ -232,6 +243,73 @@ const createHarness = async (kind: "SQLite" | "D1"): Promise<Harness> => {
       ),
     reports,
     run,
+    seedAccounting: async () => {
+      await run(
+        `INSERT INTO clients
+          (id, name, currency, parent_client_id, created_at, updated_at)
+          VALUES (5, 'Euro customer', 'EUR', NULL, ?, ?)`,
+        [now, now],
+      );
+      await run(
+        `INSERT INTO invoices
+          (id, client_id, number, subject, currency, issue_date, due_date, state,
+           close_reason, closed_at, created_at, updated_at) VALUES
+          (301, 1, '301', 'August delivery', 'USD', '2026-08-01', '2026-08-15', 'open', NULL, NULL, ?, ?),
+          (302, 2, '302', 'September renewal', 'USD', '2026-08-05', '2026-09-15', 'open', NULL, NULL, ?, ?),
+          (303, 5, '303', 'Euro advisory', 'EUR', '2026-08-10', '2026-05-01', 'open', NULL, NULL, ?, ?),
+          (304, 1, '304', 'Draft work', 'USD', '2026-08-12', '2026-09-12', 'draft', NULL, NULL, ?, ?),
+          (305, 1, '305', 'Cancelled work', 'USD', '2026-08-13', '2026-09-13', 'closed', 'cancelled', ?, ?, ?)`,
+        [now, now, now, now, now, now, now, now, now, now, now],
+      );
+      // These fixtures exercise read reconciliation, not the invoice mutation
+      // state machine. Disable only the line-command gate in this ephemeral DB;
+      // all total-maintenance and financial-bound triggers remain active.
+      await run("DROP TRIGGER invoice_line_items_d22_closed_insert", []);
+      await run(
+        `INSERT INTO invoice_line_items
+          (id, invoice_id, position, kind, description, quantity, unit_price_cents,
+           amount_cents, created_at, updated_at) VALUES
+          (301, 301, 0, 'Service', 'Delivery', 1, 100000, 100000, ?, ?),
+          (302, 302, 0, 'Service', 'Renewal', 1, 50000, 50000, ?, ?),
+          (303, 303, 0, 'Service', 'Advisory', 1, 70000, 70000, ?, ?),
+          (304, 304, 0, 'Service', 'Draft', 1, 20000, 20000, ?, ?),
+          (305, 305, 0, 'Service', 'Cancelled', 1, 30000, 30000, ?, ?)`,
+        [now, now, now, now, now, now, now, now, now, now],
+      );
+    },
+    recordPayment: async (invoiceId, paymentId, amountCents, paidAt) => {
+      await recordInvoicePayment(ledger, {
+        invoiceId,
+        commandId: `report-payment-${paymentId}`,
+        actor: { type: "user", id: 1 },
+        authorize: async () => true,
+        expectedVersion: 0,
+        occurredAt: paidAt,
+        eventIds: [`report-payment-${paymentId}-recorded`, `report-payment-${paymentId}-state`],
+        payment: {
+          type: "manual",
+          id: paymentId,
+          currency: invoiceId === 303 ? "EUR" : "USD",
+          amountCents,
+          paidAt,
+          paidDate: null,
+          recordedByUserId: 1,
+        },
+      });
+    },
+    deletePayment: async (invoiceId, paymentId, expectedVersion, updatedAt) => {
+      await deleteInvoicePayment(ledger, {
+        invoiceId,
+        commandId: `report-payment-${paymentId}-delete`,
+        actor: { type: "user", id: 1 },
+        authorize: async () => true,
+        expectedVersion,
+        occurredAt: "2026-08-25T12:00:00.000Z",
+        eventIds: [`report-payment-${paymentId}-deleted`, `report-payment-${paymentId}-unpaid`],
+        paymentId,
+        expectedPaymentUpdatedAt: updatedAt,
+      });
+    },
     close,
   };
 };
@@ -245,6 +323,192 @@ for (const [runtime, factory] of factories) {
   describe(`report API (${runtime})`, () => {
     let harness: Harness | undefined;
     afterEach(async () => harness?.close());
+
+    it("[api #715] saves, shares, pins and reruns a live definition", async () => {
+      harness = await factory();
+      const create = await harness.request("/report-definitions", "administrator", [], 1, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "Client hours",
+          fields: [{ id: "client_name", label: "Client", visible: true }],
+          metrics: ["hours", "billable", "cost", "margin"],
+          filters: [{ field: "spent_date", operator: "between", value: ["2026-08-01", "2026-08-31"] }],
+          group_by: { dimension: "client" },
+          presentation: { result: "summary", grouped: true, include_zero_values: false },
+        }),
+      });
+      expect(create.status, await create.clone().text()).toBe(201);
+      const created = (await create.json()) as { data: { id: string; version: number } };
+      const id = created.data.id;
+      expect((await harness.request(`/report-definitions/${id}`, "accounting", [], 2)).status).toBe(404);
+      expect((await harness.request(`/report-definitions/${id}/shares/2`, "administrator", [], 1, { method: "POST" })).status).toBe(204);
+      expect((await harness.request(`/report-definitions/${id}/pin`, "accounting", [], 2, { method: "POST" })).status).toBe(204);
+      const shared = await harness.request("/report-definitions?view=shared", "accounting", [], 2);
+      expect((await shared.json()) as unknown).toMatchObject({ data: [{ id, pinned: true, shared: true }] });
+      const run = await harness.request(`/report-definitions/${id}/run`, "administrator", [], 1, { method: "POST" });
+      expect(run.status, await run.clone().text()).toBe(200);
+      const runBody = (await run.json()) as {
+        data: { state: string; rows: { label: string; metrics: { hours: { value: number } } }[] };
+      };
+      expect(runBody.data.state).toBe("ready");
+      expect(runBody.data.rows.find(({ label }) => label === "Root")).toMatchObject({
+        metrics: { hours: { value: 3600 } },
+      });
+      const conflict = await harness.request(`/report-definitions/${id}`, "administrator", [], 1, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ version: 99, name: "Stale" }),
+      });
+      expect(conflict.status).toBe(409);
+      expect((await harness.request(`/report-definitions/${id}/shares/2`, "administrator", [], 1, { method: "DELETE" })).status).toBe(204);
+      expect((await harness.request(`/report-definitions/${id}`, "accounting", [], 2)).status).toBe(404);
+    });
+
+    it("[db] reconciles invoiced, received, and aged receivable ledgers by currency", async () => {
+      harness = await factory();
+      await harness.seedAccounting();
+      const paidAt = "2026-08-20T12:00:00.000Z";
+      await harness.recordPayment(301, 901, 25_000, paidAt);
+
+      const invoiced = await harness.reports.invoiced({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+      expect(invoiced.rows).toHaveLength(5);
+      expect(invoiced.rows.find((row) => row.invoiceId === 301)).toMatchObject({
+        invoicedCents: 100_000,
+        paidCents: 25_000,
+        balanceCents: 75_000,
+      });
+      expect(invoiced.totals).toEqual([
+        {
+          currency: "EUR",
+          invoiceCount: 1,
+          invoicedCents: 70_000,
+          paidCents: 0,
+          balanceCents: 70_000,
+        },
+        {
+          currency: "USD",
+          invoiceCount: 4,
+          invoicedCents: 200_000,
+          paidCents: 25_000,
+          balanceCents: 175_000,
+        },
+      ]);
+
+      const payments = await harness.reports.paymentsReceived({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+      expect(payments.rows).toEqual([
+        expect.objectContaining({
+          paymentId: 901,
+          paymentDate: "2026-08-20",
+          invoiceId: 301,
+          invoiceTotalCents: 100_000,
+          paymentCents: 25_000,
+        }),
+      ]);
+      expect(payments.totals).toEqual([
+        { currency: "USD", paymentCount: 1, paymentCents: 25_000 },
+      ]);
+
+      const receivables = await harness.reports.receivables({ asOf: "2026-08-31" });
+      expect(receivables.totals).toEqual([
+        {
+          currency: "EUR",
+          invoiceCount: 1,
+          invoicedCents: 70_000,
+          outstandingCents: 70_000,
+          notDueCents: 0,
+          days1To30Cents: 0,
+          days31To60Cents: 0,
+          days61To90Cents: 0,
+          days90PlusCents: 70_000,
+        },
+        {
+          currency: "USD",
+          invoiceCount: 2,
+          invoicedCents: 150_000,
+          outstandingCents: 125_000,
+          notDueCents: 50_000,
+          days1To30Cents: 75_000,
+          days31To60Cents: 0,
+          days61To90Cents: 0,
+          days90PlusCents: 0,
+        },
+      ]);
+      // Draft and cancelled invoices do not become receivables. The USD total
+      // is therefore 150,000 rather than the 200,000 shown by Invoiced.
+      expect(receivables.rows.reduce((sum, row) => sum + row.invoicedCents, 0)).toBe(220_000);
+
+      await harness.deletePayment(301, 901, 1, paidAt);
+      expect((await harness.reports.paymentsReceived({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      })).rows).toEqual([]);
+      expect((await harness.reports.receivables({ asOf: "2026-08-31" })).rows
+        .find((row) => row.clientId === 1)).toMatchObject({
+          outstandingCents: 100_000,
+          days1To30Cents: 100_000,
+        });
+    }, 15_000);
+
+    it("[api] exposes accounting reports with filters and financial authorization", async () => {
+      harness = await factory();
+      await harness.seedAccounting();
+      await harness.recordPayment(301, 902, 25_000, "2026-08-20T12:00:00.000Z");
+
+      const invoicedResponse = await harness.request(
+        "/reports/invoiced?from=2026-08-01&to=2026-08-31&client_id=1&status=open",
+      );
+      expect(invoicedResponse.status).toBe(200);
+      const invoicedBody = (await invoicedResponse.json()) as { data: unknown };
+      expect(invoicedBody.data).toMatchObject({
+        client_id: 1,
+        status: "open",
+        rows: [
+          {
+            invoice_id: 301,
+            invoiced_cents: 100_000,
+            paid_cents: 25_000,
+            balance_cents: 75_000,
+          },
+        ],
+      });
+
+      const paymentsResponse = await harness.request(
+        "/reports/payments-received?from=2026-08-01&to=2026-08-31&client_id=1",
+      );
+      expect(paymentsResponse.status).toBe(200);
+      const paymentsBody = (await paymentsResponse.json()) as {
+        data: { rows: unknown[] };
+      };
+      expect(paymentsBody.data.rows[0]).toMatchObject({
+        payment_date: "2026-08-20",
+        invoice_id: 301,
+        payment_cents: 25_000,
+      });
+
+      const receivablesResponse = await harness.request(
+        "/reports/receivables?as_of=2026-08-31&client_id=1",
+      );
+      expect(receivablesResponse.status).toBe(200);
+      const receivablesBody = (await receivablesResponse.json()) as { data: unknown };
+      expect(receivablesBody.data).toMatchObject({
+        as_of: "2026-08-31",
+        client_id: 1,
+        rows: [{ client_id: 1, outstanding_cents: 75_000, days_1_to_30_cents: 75_000 }],
+      });
+
+      expect((await harness.request(
+        "/reports/receivables?as_of=2026-08-31",
+        "member",
+      )).status).toBe(403);
+      expect((await harness.request("/reports/receivables", "administrator")).status).toBe(422);
+    }, 15_000);
 
     it("[db] totals what each person cost, and refuses to total unrated hours", async () => {
       harness = await factory();
@@ -265,6 +529,7 @@ for (const [runtime, factory] of factories) {
           // investigation at four entries than at four hundred (#280).
           entryCount: 4,
           entriesWithoutRate: 0,
+          utilizationPpm: 17_742,
         }),
       ]);
 
@@ -370,6 +635,59 @@ for (const [runtime, factory] of factories) {
         clientName: "Archived holder",
       });
       expect(report.tasks[0]).toMatchObject({ taskId: 1, taskName: "Delivery" });
+    });
+
+    it("[db #720] excludes fixed-fee work by default and includes it only on the explicit predicate", async () => {
+      harness = await factory();
+      await harness.run(
+        `INSERT INTO projects
+          (id, client_id, name, code, billing_method, bill_by, fee_cents,
+           report_visibility, created_at, updated_at)
+         VALUES (5, 1, 'Fixed launch', 'FIX', 'fixed_fee', 'project', 500000,
+           'managers', ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO task_assignments
+          (id, project_id, task_id, billable, created_at, updated_at)
+         VALUES (15, 5, 1, 1, ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO user_assignments
+          (id, project_id, user_id, is_active, is_project_manager, created_at, updated_at)
+         VALUES (26, 5, 1, 1, 0, ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO time_entries
+          (id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+           spent_date, seconds, seconds_without_timer, rounded_seconds, billable, budgeted,
+           billable_rate_cents, cost_rate_cents, created_at, updated_at)
+         VALUES (105, 1, 5, 1, 26, 15, '2026-08-14', 7200, 7200, 7200, 1, 1,
+           10000, 4000, ?, ?)`,
+        [now, now],
+      );
+
+      const excluded = await harness.reports.timeReport({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+      const included = await harness.reports.timeReport({
+        from: "2026-08-01",
+        to: "2026-08-31",
+        includeFixedFee: true,
+      });
+
+      expect(excluded.fixedFeeIncluded).toBe(false);
+      expect(excluded.projects.map((project) => project.projectId)).not.toContain(5);
+      expect(excluded.totals.roundedSeconds).toBe(9900);
+      expect(included.fixedFeeIncluded).toBe(true);
+      expect(included.projects.map((project) => project.projectId)).toContain(5);
+      expect(included.totals.roundedSeconds).toBe(17_100);
+      // The displayed amount is explicitly an hourly-value fold when fixed-fee
+      // work is opted in; it is never presented as the project's fee revenue.
+      expect(included.totals.amounts[0]!.billableCents).toBe(47_173);
     });
 
     /**
@@ -618,6 +936,7 @@ for (const [runtime, factory] of factories) {
           data: {
             from: string;
             to: string;
+            fixed_fee_included: boolean;
             totals: { rounded_seconds: number; amounts?: unknown[] };
             projects: Array<{ project_code: string; amounts?: unknown[] }>;
             teammates: Array<{ utilization_ppm: number | null }>;
@@ -625,6 +944,7 @@ for (const [runtime, factory] of factories) {
         };
         expect(body.data.from).toBe("2026-08-01");
         expect(body.data.to).toBe("2026-08-31");
+        expect(body.data.fixed_fee_included).toBe(false);
         // The fixture has tracked time, so an empty report would pass every
         // assertion under it without measuring a row.
         expect(body.data.projects.length, profile).toBeGreaterThan(0);
@@ -1050,6 +1370,9 @@ for (const [runtime, factory] of factories) {
             billed_cents: number | null;
             foregone_cents: number | null;
             claimed_in_other_currency: number;
+            cost_ratio_basis_points: number | null;
+            cost_alert_basis_points: number;
+            cost_ratio_state: string;
           }[];
         };
       };
@@ -1067,6 +1390,9 @@ for (const [runtime, factory] of factories) {
       // reads as "they were charged nothing", which is a different fact.
       expect(row.billed_cents).toBeNull();
       expect(row.foregone_cents).toBeNull();
+      expect(row.cost_ratio_basis_points).toBeNull();
+      expect(row.cost_alert_basis_points).toBe(8_000);
+      expect(row.cost_ratio_state).toBe("unbilled");
       // Partial rather than low, and said so rather than implied.
       expect(row.claimed_in_other_currency).toBeGreaterThanOrEqual(0);
     });
@@ -1163,8 +1489,18 @@ for (const [runtime, factory] of factories) {
             revenue_cents: number | null;
             cost_cents: number | null;
             profit_cents: number | null;
+            return_on_cost_ppm: number | null;
           }[];
-          totals: { profit_cents: number | null; projects_not_converted: number };
+          clients: { profit_cents: number | null; included_in_headline: boolean }[];
+          teammates: { profit_cents: number | null; included_in_headline: boolean }[];
+          tasks: { profit_cents: number | null; included_in_headline: boolean }[];
+          trend: { period_start: string; period_end: string; current: boolean }[];
+          filters: { project_status: string; billing_method: string | null };
+          totals: {
+            profit_cents: number | null;
+            return_on_cost_ppm: number | null;
+            projects_not_converted: number;
+          };
         };
       };
       expect(body.data.organization_currency).toBe("USD");
@@ -1180,6 +1516,7 @@ for (const [runtime, factory] of factories) {
       expect(root.revenue_cents).toBe(10_000);
       expect(root.cost_cents).toBe(4_000);
       expect(root.profit_cents).toBe(6_000);
+      expect(root.return_on_cost_ppm).toBe(1_500_000);
 
       // Every priced row in the organization's own currency is the subtraction
       // and nothing else.
@@ -1195,6 +1532,43 @@ for (const [runtime, factory] of factories) {
         }
       }
       expect(body.data.totals.projects_not_converted).toBe(0);
+      expect(body.data.totals.return_on_cost_ppm).not.toBeNull();
+      for (const fold of [body.data.clients, body.data.teammates, body.data.tasks]) {
+        expect(fold.filter((row) => row.included_in_headline)
+          .reduce((sum, row) => sum + (row.profit_cents ?? 0), 0))
+          .toBe(body.data.totals.profit_cents);
+      }
+      expect(body.data.trend).toEqual([
+        expect.objectContaining({
+          period_start: "2026-08-01",
+          period_end: "2026-08-31",
+          current: true,
+        }),
+      ]);
+      expect(body.data.filters).toMatchObject({ project_status: "all", billing_method: null });
+
+      await harness.run(
+        `INSERT INTO project_tags (id, name, created_at, updated_at) VALUES (71, 'Priority', ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO project_tag_assignments
+          (project_id, project_tag_id, created_at, updated_at) VALUES (1, 71, ?, ?)`,
+        [now, now],
+      );
+      const filtered = await harness.request(
+        "/reports/profitability?from=2026-08-01&to=2026-08-31&project_status=active&billing_method=time_materials&manager_id=1&tag_id=71",
+      );
+      const filteredBody = (await filtered.json()) as {
+        data: { rows: { project_id: number }[]; filters: Record<string, unknown> };
+      };
+      expect(filteredBody.data.rows.map((row) => row.project_id)).toEqual([1]);
+      expect(filteredBody.data.filters).toMatchObject({
+        project_status: "active",
+        billing_method: "time_materials",
+        manager_id: 1,
+        tag_id: 71,
+      });
     });
 
     it("[unit] refuses to subtract across currencies and says how many it left out", async () => {
@@ -1272,6 +1646,82 @@ for (const [runtime, factory] of factories) {
         .filter((row) => row.currency === "USD")
         .reduce((sum, row) => sum + (row.revenue_cents ?? 0), 0);
       expect(body.data.totals.revenue_cents).toBe(usdRevenue);
+    });
+
+    it("[money #711] subtracts recognized revenue fees without inventing time or expenses", async () => {
+      harness = await factory();
+      const before = await harness.reports.profitability({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+      const beforeRoot = before.rows.find((row) => row.projectId === 1)!;
+      const contractorBefore = await harness.reports.contractorCost({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+      const expensesBefore = await harness.reports.detailedExpense({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+
+      await harness.run(
+        `INSERT INTO invoices
+          (id, client_id, number, issue_date, due_date, currency, state, created_at, updated_at)
+         VALUES
+          (711, 1, 'FEE-711', '2026-08-12', '2026-09-12', 'USD', 'draft', ?, ?),
+          (712, 1, 'FEE-712', '2026-08-13', '2026-09-13', 'USD', 'draft', ?, ?)`,
+        [now, now, now, now],
+      );
+      await harness.run(
+        `INSERT INTO revenue_fees
+          (id, project_id, invoice_id, name, basis, basis_cents, rate_ppm,
+           fee_cents, recognized_on, treatment, currency, created_at, updated_at)
+         VALUES
+          (1, 1, 711, 'Referral agreement', 'invoiced_amount', 10000, 100000,
+           1000, '2026-08-12', 'margin_only', 'USD', ?, ?),
+          (2, 1, 712, 'Delivery commission', 'invoiced_amount', 10000, 100000,
+           1000, '2026-08-13', 'delivery_cost', 'USD', ?, ?)`,
+        [now, now, now, now],
+      );
+
+      const after = await harness.reports.profitability({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      });
+      const root = after.rows.find((row) => row.projectId === 1)!;
+      expect(root).toMatchObject({
+        revenueCents: beforeRoot.revenueCents,
+        costCents: (beforeRoot.costCents ?? 0) + 1000,
+        revenueFeeCents: 2000,
+        feesIncludedInDeliveryCostCents: 1000,
+        profitCents: (beforeRoot.profitCents ?? 0) - 2000,
+      });
+      // Fees have no task or teammate. The explicit unallocated fold keeps
+      // every dimension reconcilable without attributing the commission to a
+      // person who never worked it.
+      for (const fold of [after.clients, after.teammates, after.tasks]) {
+        expect(fold.filter((row) => row.includedInHeadline)
+          .reduce((sum, row) => sum + (row.profitCents ?? 0), 0))
+          .toBe(after.totals.profitCents);
+      }
+      expect(after.tasks).toContainEqual(
+        expect.objectContaining({
+          dimensionId: 0,
+          dimensionName: "Unallocated revenue fees",
+          revenueFeeCents: 2000,
+          profitCents: -2000,
+        }),
+      );
+      // Separate storage is load-bearing: neither payroll nor the expense
+      // population changes when revenue fees are recognized.
+      expect(await harness.reports.contractorCost({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      })).toEqual(contractorBefore);
+      expect(await harness.reports.detailedExpense({
+        from: "2026-08-01",
+        to: "2026-08-31",
+      })).toEqual(expensesBefore);
     });
 
     it("[unit] blanks the side a missing rate makes incomplete, and counts it", async () => {
@@ -1376,19 +1826,53 @@ for (const [runtime, factory] of factories) {
       expect(allBody.data.totals[0]!.total_cost_cents).toBe(12_400);
 
       const billable = await harness.request(
-        "/reports/detailed-expense?from=2026-08-01&to=2026-08-31&project_id=1&billable_only=true",
+        "/reports/detailed-expense?from=2026-08-01&to=2026-08-31&project_id=1&billable=true",
       );
       const billableBody = (await billable.json()) as {
         data: {
-          billable_only: boolean;
+          billable: boolean | null;
           rows: { expense_id: number }[];
           totals: { total_cost_cents?: number }[];
         };
       };
-      expect(billableBody.data.billable_only).toBe(true);
+      expect(billableBody.data.billable).toBe(true);
       expect(billableBody.data.rows.map((row) => row.expense_id)).toEqual([201]);
       // 2500, not 12400: the total is of what survived the filter.
       expect(billableBody.data.totals[0]!.total_cost_cents).toBe(2_500);
+
+      await harness.run(
+        `UPDATE expenses SET reimbursable = 1 WHERE id = 299`,
+        [],
+      );
+      const composed = await harness.request(
+        "/reports/detailed-expense?from=2026-08-01&to=2026-08-31" +
+          "&project_id=1&category_id=1&user_id=1&billable=false" +
+          "&reimbursable=true&invoice_state=uninvoiced&active_projects_only=true",
+      );
+      expect(composed.status, await composed.clone().text()).toBe(200);
+      const composedBody = (await composed.json()) as {
+        data: {
+          category_id: number | null;
+          user_id: number | null;
+          billable: boolean | null;
+          reimbursable: boolean | null;
+          invoice_state: string;
+          active_projects_only: boolean;
+          rows: { expense_id: number; billable: boolean; reimbursable: boolean; invoice_id: number | null }[];
+        };
+      };
+      expect(composedBody.data).toMatchObject({
+        category_id: 1,
+        user_id: 1,
+        billable: false,
+        reimbursable: true,
+        invoice_state: "uninvoiced",
+        active_projects_only: true,
+      });
+      expect(composedBody.data.rows.map((row) => row.expense_id)).toContain(299);
+      expect(composedBody.data.rows.every((row) =>
+        !row.billable && row.reimbursable && row.invoice_id === null,
+      )).toBe(true);
     });
 
     it("[security] refuses the detailed expense report to profiles without reports:read", async () => {
@@ -1832,6 +2316,68 @@ for (const [runtime, factory] of factories) {
       expect(result.report.uninvoicedBillableSeconds).toBe(5400);
     });
 
+    it("[db] applies task, person, role, tag, and invoice-state filters together", async () => {
+      harness = await factory();
+      await seedDetailedDay(harness);
+      await harness.run(
+        `INSERT INTO roles (id, name, created_at, updated_at)
+         VALUES (81, 'Reporting specialist', ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO user_roles (user_id, role_id, created_at, updated_at)
+         VALUES (1, 81, ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO project_tags (id, name, created_at, updated_at)
+         VALUES (82, 'Reporting', ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO project_tag_assignments
+          (project_id, project_tag_id, created_at, updated_at)
+         VALUES (1, 82, ?, ?)`,
+        [now, now],
+      );
+
+      const result = await harness.reports.detailedTime({
+        from: "2026-08-10",
+        to: "2026-08-10",
+        projectId: 1,
+        taskId: 1,
+        userId: 1,
+        roleId: 81,
+        tagId: 82,
+        invoiceState: "uninvoiced",
+        grain: "entry",
+      });
+      if (result.kind !== "report") throw new Error("expected a report");
+
+      expect(result.report).toMatchObject({
+        taskId: 1,
+        userId: 1,
+        roleId: 81,
+        tagId: 82,
+        invoiceState: "uninvoiced",
+        grain: "entry",
+      });
+      expect(result.report.rows).toHaveLength(3);
+      expect(result.report.rows.every((row) => row.invoiceId === null)).toBe(true);
+      expect(result.report.rows.every((row) => row.projectActive)).toBe(true);
+
+      const invoiced = await harness.reports.detailedTime({
+        from: "2026-08-01",
+        to: "2026-08-31",
+        projectId: 1,
+        invoiceState: "invoiced",
+        grain: "entry",
+      });
+      if (invoiced.kind !== "report") throw new Error("expected a report");
+      expect(invoiced.report.rows).toHaveLength(1);
+      expect(invoiced.report.rows[0]).toMatchObject({ timeEntryId: 113, invoiceId: 301 });
+    });
+
     it("[db] narrows the rows to the Show control's four answers", async () => {
       harness = await factory();
       await seedDetailedDay(harness);
@@ -2103,6 +2649,51 @@ for (const [runtime, factory] of factories) {
       expect(body.data.rows[0]).toHaveProperty("roles");
     });
 
+    it("[api] exposes entry workflow fields and echoes the expanded filters", async () => {
+      harness = await factory();
+      await seedDetailedDay(harness);
+      await harness.run(
+        `INSERT INTO roles (id, name, created_at, updated_at)
+         VALUES (81, 'Reporting specialist', ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO user_roles (user_id, role_id, created_at, updated_at)
+         VALUES (1, 81, ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO project_tags (id, name, created_at, updated_at)
+         VALUES (82, 'Reporting', ?, ?)`,
+        [now, now],
+      );
+      await harness.run(
+        `INSERT INTO project_tag_assignments
+          (project_id, project_tag_id, created_at, updated_at)
+         VALUES (1, 82, ?, ?)`,
+        [now, now],
+      );
+      const response = await harness.request(
+        "/reports/detailed-time?from=2026-08-10&to=2026-08-10&project_id=1&task_id=1&user_id=1&role_id=81&tag_id=82&invoice_state=uninvoiced&grain=entry",
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { data: Record<string, unknown> & { rows: Array<Record<string, unknown>> } };
+      expect(body.data).toMatchObject({
+        task_id: 1,
+        user_id: 1,
+        role_id: 81,
+        tag_id: 82,
+        invoice_state: "uninvoiced",
+        grain: "entry",
+      });
+      expect(body.data.rows).toHaveLength(3);
+      expect(body.data.rows[0]).toMatchObject({
+        time_entry_id: 101,
+        invoice_id: null,
+        project_active: true,
+      });
+    });
+
     it("[security] refuses the detailed report to profiles without reports:read", async () => {
       harness = await factory();
       const path = "/reports/detailed-time?from=2026-08-01&to=2026-08-31";
@@ -2125,7 +2716,8 @@ for (const [runtime, factory] of factories) {
       for (const path of [
         "/reports/detailed-time?from=2026-08-01&to=2026-08-31&hours=everything",
         "/reports/detailed-time?from=2026-08-01&to=2026-08-31&active_projects_only=yes",
-        "/reports/detailed-time?from=2026-08-01&to=2026-08-31&user_id=2",
+        "/reports/detailed-time?from=2026-08-01&to=2026-08-31&user_id=0",
+        "/reports/detailed-time?from=2026-08-01&to=2026-08-31&invoice_state=pending",
       ]) {
         const response = await harness.request(path);
         expect(response.status, path).toBe(422);
@@ -2225,6 +2817,11 @@ describe("detailed time serialization", () => {
     to: "2026-08-31",
     clientId: null,
     projectId: null,
+    taskId: null,
+    userId: null,
+    roleId: null,
+    tagId: null,
+    invoiceState: "all",
     hours: "all",
     grain: "entry",
     activeProjectsOnly: false,
@@ -2263,6 +2860,7 @@ describe("detailed time serialization", () => {
         timeEntryId: 101,
         invoiceId: null,
         notes: "wrote the thing",
+        projectActive: true,
       },
     ],
   };
@@ -2325,6 +2923,7 @@ describe("time report money redaction", () => {
   const report = {
     from: "2026-08-01",
     to: "2026-08-31",
+    fixedFeeIncluded: false,
     totals,
     clients: [{ ...totals, clientId: 1, clientName: "Root" }],
     projects: [

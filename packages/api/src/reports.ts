@@ -28,6 +28,7 @@ export interface ContractorCostRowRecord {
   /** Always the organization's currency: a cost rate carries none of its own. */
   currency: string;
   roundedSeconds: number;
+  utilizationPpm: number | null;
   /** Null when any entry in the row has no cost rate. */
   costCents: number | null;
   /**
@@ -66,6 +67,9 @@ export interface ProfitabilityRowRecord {
   costCents: number | null;
   /** Null when either side is missing, or the project bills in another currency. */
   profitCents: number | null;
+  returnOnCostPpm: number | null;
+  revenueFeeCents: number;
+  feesIncludedInDeliveryCostCents: number;
   entriesWithoutBillableRate: number;
   entriesWithoutCostRate: number;
 }
@@ -75,10 +79,35 @@ export interface ProfitabilityTotals {
   revenueCents: number | null;
   costCents: number | null;
   profitCents: number | null;
+  returnOnCostPpm: number | null;
+  revenueFeeCents: number;
+  feesIncludedInDeliveryCostCents: number;
   entriesWithoutBillableRate: number;
   entriesWithoutCostRate: number;
   /** Projects left out of the headline because they bill in another currency. */
   projectsNotConverted: number;
+}
+
+export interface ProfitabilityDimensionRowRecord {
+  dimensionId: number;
+  dimensionName: string;
+  currency: string;
+  roundedSeconds: number;
+  revenueCents: number | null;
+  costCents: number | null;
+  profitCents: number | null;
+  returnOnCostPpm: number | null;
+  revenueFeeCents: number;
+  feesIncludedInDeliveryCostCents: number;
+  entriesWithoutBillableRate: number;
+  entriesWithoutCostRate: number;
+  includedInHeadline: boolean;
+}
+
+export interface ProfitabilityTrendRowRecord extends ProfitabilityDimensionRowRecord {
+  periodStart: string;
+  periodEnd: string;
+  current: boolean;
 }
 
 export interface ProfitabilityReportRecord {
@@ -86,7 +115,17 @@ export interface ProfitabilityReportRecord {
   to: string;
   organizationCurrency: string;
   rows: readonly ProfitabilityRowRecord[];
+  clients: readonly ProfitabilityDimensionRowRecord[];
+  teammates: readonly ProfitabilityDimensionRowRecord[];
+  tasks: readonly ProfitabilityDimensionRowRecord[];
+  trend: readonly ProfitabilityTrendRowRecord[];
   totals: Readonly<ProfitabilityTotals>;
+  filters: {
+    projectStatus: "all" | "active" | "archived";
+    billingMethod: "non_billable" | "time_materials" | "fixed_fee" | null;
+    managerId: number | null;
+    tagId: number | null;
+  };
   previousFrom: string;
   previousTo: string;
   previousTotals: Readonly<ProfitabilityTotals>;
@@ -114,6 +153,9 @@ export interface MonthEndItemRecord {
   amountCents?: number | null;
   currency?: string | null;
   target?: string | null;
+  brandName?: string | null;
+  costCents?: number | null;
+  marginCents?: number | null;
 }
 
 export interface MonthEndExclusionRecord {
@@ -202,7 +244,12 @@ export interface DetailedExpenseReportRecord {
   to: string;
   clientId: number | null;
   projectId: number | null;
-  billableOnly: boolean;
+  categoryId: number | null;
+  userId: number | null;
+  billable: boolean | null;
+  reimbursable: boolean | null;
+  invoiceState: "all" | "invoiced" | "uninvoiced";
+  activeProjectsOnly: boolean;
   rows: readonly DetailedExpenseRowRecord[];
   totals: readonly {
     currency: string;
@@ -346,6 +393,7 @@ export type DetailedTimeHours =
 
 /** `day` folds entries per date, task and person; `entry` is one row each. */
 export type DetailedTimeGrain = "day" | "entry";
+export type DetailedTimeInvoiceState = "all" | "invoiced" | "uninvoiced";
 
 export interface DetailedTimeRowRecord {
   spentDate: string;
@@ -379,6 +427,7 @@ export interface DetailedTimeRowRecord {
   timeEntryId: number | null;
   invoiceId: number | null;
   notes: string | null;
+  projectActive: boolean;
 }
 
 export interface DetailedTimeCurrencyRecord {
@@ -390,6 +439,11 @@ export interface DetailedTimeCurrencyRecord {
 export interface DetailedTimeReportRecord extends ReportDateRange {
   clientId: number | null;
   projectId: number | null;
+  taskId: number | null;
+  userId: number | null;
+  roleId: number | null;
+  tagId: number | null;
+  invoiceState: DetailedTimeInvoiceState;
   hours: DetailedTimeHours;
   grain: DetailedTimeGrain;
   activeProjectsOnly: boolean;
@@ -462,6 +516,7 @@ export interface TimeReportTeammateRecord extends TimeReportTotalsRecord {
 }
 
 export interface TimeReportRecord extends ReportDateRange {
+  fixedFeeIncluded: boolean;
   totals: TimeReportTotalsRecord;
   clients: readonly TimeReportClientRecord[];
   projects: readonly TimeReportProjectRecord[];
@@ -469,12 +524,164 @@ export interface TimeReportRecord extends ReportDateRange {
   teammates: readonly TimeReportTeammateRecord[];
 }
 
+export type InvoicedReportState = "draft" | "open" | "paid" | "closed";
+
+export interface InvoicedReportRowRecord {
+  invoiceId: number;
+  number: string;
+  state: InvoicedReportState;
+  closeReason: "cancelled" | "written_off" | "source_closed" | null;
+  issueDate: string;
+  dueDate: string;
+  clientId: number;
+  clientName: string;
+  subject: string | null;
+  currency: string;
+  invoicedCents: number;
+  paidCents: number;
+  balanceCents: number;
+}
+
+export interface InvoicedReportRecord extends ReportDateRange {
+  clientId: number | null;
+  state: InvoicedReportState | null;
+  totals: readonly {
+    currency: string;
+    invoiceCount: number;
+    invoicedCents: number;
+    paidCents: number;
+    balanceCents: number;
+  }[];
+  rows: readonly InvoicedReportRowRecord[];
+}
+
+export interface PaymentsReceivedReportRecord extends ReportDateRange {
+  clientId: number | null;
+  totals: readonly { currency: string; paymentCount: number; paymentCents: number }[];
+  rows: readonly {
+    paymentId: number;
+    paymentDate: string;
+    invoiceId: number;
+    invoiceNumber: string;
+    clientId: number;
+    clientName: string;
+    currency: string;
+    invoiceTotalCents: number;
+    paymentCents: number;
+    provider: string;
+  }[];
+}
+
+export interface ReceivablesReportRecord {
+  asOf: string;
+  clientId: number | null;
+  totals: readonly ReceivablesReportTotalRecord[];
+  rows: readonly (ReceivablesReportTotalRecord & {
+    clientId: number;
+    clientName: string;
+  })[];
+}
+
+export interface ReceivablesReportTotalRecord {
+  currency: string;
+  invoiceCount: number;
+  invoicedCents: number;
+  outstandingCents: number;
+  notDueCents: number;
+  days1To30Cents: number;
+  days31To60Cents: number;
+  days61To90Cents: number;
+  days90PlusCents: number;
+}
+
 export interface ProjectReportViewer {
   userId: number;
   profile: UserPrincipal["profile"];
 }
 
+interface SavedReportDefinitionRecord {
+  id: string;
+  name: string;
+  version: number;
+  fields: readonly { id: string; label: string; visible: boolean }[];
+  metrics: readonly ("hours" | "billable" | "cost" | "margin" | "utilisation" | "retainer_balance" | "retainer_burn" | "budget_consumed")[];
+  filters: readonly { field: string; operator: "eq" | "neq" | "gt" | "gte" | "lt" | "lte" | "in" | "between"; value: unknown }[];
+  groupBy: { dimension: "client" | "project" | "task" | "user" | "date"; nodeId?: number } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface SavedReportRecord {
+  definition: SavedReportDefinitionRecord;
+  ownerUserId: number;
+  ownerName: string;
+  isCustom: boolean;
+  presentation: { result: "summary" | "detailed"; grouped: boolean; includeZeroValues: boolean };
+  pinned: boolean;
+  shared: boolean;
+}
+
+interface ReportRunnerResultRecord {
+  definitionId: string;
+  definitionVersion: number;
+  state: "ready" | "empty" | "too_many_rows";
+  rows: readonly unknown[];
+}
+
+interface ReportTimeActionResultRecord {
+  commandId: string;
+  action: "mark_invoiced" | "mark_uninvoiced" | "move";
+  requested: number;
+  changedEntryIds: readonly number[];
+  ineligibleEntryIds: readonly number[];
+  replayed: boolean;
+}
+
+interface SavedReportChanges {
+  name?: string;
+  fields?: SavedReportDefinitionRecord["fields"];
+  metrics?: SavedReportDefinitionRecord["metrics"];
+  filters?: SavedReportDefinitionRecord["filters"];
+  groupBy?: SavedReportDefinitionRecord["groupBy"];
+  updatedAt: string;
+}
+
 export interface ReportReader {
+  reportDefinitionRegistry(): { fields: readonly unknown[]; metrics: readonly { id: string }[] };
+  listSavedReports(input: { viewerUserId: number; view?: "all" | "yours" | "shared"; query?: string; customOnly?: boolean }): Promise<readonly SavedReportRecord[]>;
+  readSavedReport(reportId: string, viewerUserId: number): Promise<SavedReportRecord | null>;
+  createSavedReport(input: { id: string; name: string; fields: SavedReportDefinitionRecord["fields"]; metrics: SavedReportDefinitionRecord["metrics"]; filters: SavedReportDefinitionRecord["filters"]; groupBy: SavedReportDefinitionRecord["groupBy"]; ownerUserId: number; presentation: SavedReportRecord["presentation"]; createdAt: string }): Promise<SavedReportRecord>;
+  updateSavedReport(input: { reportId: string; ownerUserId: number; expectedVersion: number; changes: SavedReportChanges; presentation?: SavedReportRecord["presentation"] }): Promise<"not_found" | "version_conflict" | SavedReportRecord>;
+  shareSavedReport(reportId: string, ownerUserId: number, userId: number, shared: boolean, at: string): Promise<boolean>;
+  pinSavedReport(reportId: string, viewerUserId: number, pinned: boolean, at: string): Promise<boolean>;
+  deleteSavedReport(reportId: string, ownerUserId: number): Promise<boolean>;
+  runSavedReport(reportId: string, viewerUserId: number, authority: { billableMoney: boolean; costMoney: boolean }): Promise<ReportRunnerResultRecord | null>;
+  previewReport(definition: SavedReportDefinitionRecord, presentation: SavedReportRecord["presentation"], authority: { billableMoney: boolean; costMoney: boolean }): Promise<ReportRunnerResultRecord>;
+  executeTimeAction(input: {
+    commandId: string;
+    actorUserId: number;
+    action: ReportTimeActionResultRecord["action"];
+    entryIds: readonly number[];
+    invoiceId?: number;
+    projectId?: number;
+    taskId?: number;
+    completedAt: string;
+  }): Promise<ReportTimeActionResultRecord | "command_conflict" | "invoice_unavailable">;
+  invoiced(filter: {
+    from: string;
+    to: string;
+    clientId?: number;
+    state?: InvoicedReportState;
+  }): Promise<InvoicedReportRecord>;
+  paymentsReceived(filter: {
+    from: string;
+    to: string;
+    clientId?: number;
+  }): Promise<PaymentsReceivedReportRecord>;
+  receivables(filter: {
+    asOf: string;
+    clientId?: number;
+  }): Promise<ReceivablesReportRecord>;
   memberHours(filter: {
     from: string;
     to: string;
@@ -487,9 +694,19 @@ export interface ReportReader {
     to: string;
     clientId?: number;
     projectId?: number;
-    billableOnly?: boolean;
+    categoryId?: number;
+    userId?: number;
+    billable?: boolean;
+    reimbursable?: boolean;
+    invoiceState?: "all" | "invoiced" | "uninvoiced";
+    activeProjectsOnly?: boolean;
   }): Promise<DetailedExpenseReportRecord>;
-  profitability(range: Readonly<ReportDateRange>): Promise<ProfitabilityReportRecord>;
+  profitability(filter: Readonly<ReportDateRange & {
+    projectStatus?: "all" | "active" | "archived";
+    billingMethod?: "non_billable" | "time_materials" | "fixed_fee";
+    managerId?: number;
+    tagId?: number;
+  }>): Promise<ProfitabilityReportRecord>;
   bandedMonths(range: Readonly<ReportDateRange>): Promise<BandedMonthReportRecord>;
   /** The organisation's cost-share threshold, in basis points (#710). */
   readBandCostAlert(): Promise<number>;
@@ -498,12 +715,17 @@ export interface ReportReader {
     periodStart: string;
     periodEnd: string;
   }): Promise<MonthEndManifestRecord>;
-  timeReport(range: Readonly<ReportDateRange>): Promise<TimeReportRecord>;
+  timeReport(filter: Readonly<ReportDateRange & { includeFixedFee?: boolean }>): Promise<TimeReportRecord>;
   detailedTime(filter: {
     from: string;
     to: string;
     clientId?: number;
     projectId?: number;
+    taskId?: number;
+    userId?: number;
+    roleId?: number;
+    tagId?: number;
+    invoiceState?: DetailedTimeInvoiceState;
     hours?: DetailedTimeHours;
     grain?: DetailedTimeGrain;
     activeProjectsOnly?: boolean;
@@ -530,6 +752,18 @@ export interface ReportReader {
 }
 
 const reportKeys = new Set(["from", "to"]);
+const profitabilityKeys = new Set([
+  ...reportKeys,
+  "project_status",
+  "billing_method",
+  "manager_id",
+  "tag_id",
+]);
+const invoicedKeys = new Set([...reportKeys, "client_id", "status"]);
+const paymentsReceivedKeys = new Set([...reportKeys, "client_id"]);
+const receivablesKeys = new Set(["as_of", "client_id"]);
+const invoicedStates: readonly InvoicedReportState[] = ["draft", "open", "paid", "closed"];
+const timeReportKeys = new Set([...reportKeys, "include_fixed_fee"]);
 // The payroll run is the one report with a file representation, so it is the
 // one that admits `format`. The strict parser refuses every key not listed, so
 // adding it anywhere else would silently accept it there too.
@@ -539,14 +773,33 @@ const uninvoicedKeys = new Set([...reportKeys, "client_id", "project_id"]);
 // this list, so `?user_id=7` is a 422 rather than a report of somebody else's
 // week -- and even if it were accepted, the repository is handed the principal.
 const myHoursKeys = new Set([...reportKeys, "project_id"]);
-const detailedExpenseKeys = new Set([...uninvoicedKeys, "billable_only"]);
+const detailedExpenseKeys = new Set([
+  ...uninvoicedKeys,
+  "category_id",
+  "user_id",
+  "billable",
+  "reimbursable",
+  "invoice_state",
+  "active_projects_only",
+]);
 const detailedTimeKeys = new Set([
   ...uninvoicedKeys,
   "hours",
+  "utilization_ppm",
   "grain",
   "active_projects_only",
+  "task_id",
+  "user_id",
+  "role_id",
+  "tag_id",
+  "invoice_state",
 ]);
 const detailedTimeGrains: readonly DetailedTimeGrain[] = ["day", "entry"];
+const detailedTimeInvoiceStates: readonly DetailedTimeInvoiceState[] = [
+  "all",
+  "invoiced",
+  "uninvoiced",
+];
 const detailedTimeHours: readonly DetailedTimeHours[] = [
   "all",
   "billable",
@@ -586,6 +839,118 @@ const rangeFrom = (
     });
   }
   return { range: { from: from!, to: to! }, params, errors };
+};
+
+const serializeInvoiced = (
+  report: Readonly<InvoicedReportRecord>,
+  viewer: Readonly<UserPrincipal>,
+) => {
+  const money = canViewMoneyField(viewer, "billable_rate");
+  return {
+    from: report.from,
+    to: report.to,
+    client_id: report.clientId,
+    status: report.state,
+    totals: report.totals.map((total) => ({
+      currency: total.currency,
+      invoice_count: total.invoiceCount,
+      ...(money
+        ? {
+            invoiced_cents: total.invoicedCents,
+            paid_cents: total.paidCents,
+            balance_cents: total.balanceCents,
+          }
+        : {}),
+    })),
+    rows: report.rows.map((row) => ({
+      invoice_id: row.invoiceId,
+      number: row.number,
+      state: row.state,
+      close_reason: row.closeReason,
+      issue_date: row.issueDate,
+      due_date: row.dueDate,
+      client_id: row.clientId,
+      client_name: row.clientName,
+      subject: row.subject,
+      currency: row.currency,
+      ...(money
+        ? {
+            invoiced_cents: row.invoicedCents,
+            paid_cents: row.paidCents,
+            balance_cents: row.balanceCents,
+          }
+        : {}),
+    })),
+  };
+};
+
+const serializePaymentsReceived = (
+  report: Readonly<PaymentsReceivedReportRecord>,
+  viewer: Readonly<UserPrincipal>,
+) => {
+  const money = canViewMoneyField(viewer, "billable_rate");
+  return {
+    from: report.from,
+    to: report.to,
+    client_id: report.clientId,
+    totals: report.totals.map((total) => ({
+      currency: total.currency,
+      payment_count: total.paymentCount,
+      ...(money ? { payment_cents: total.paymentCents } : {}),
+    })),
+    rows: report.rows.map((row) => ({
+      payment_id: row.paymentId,
+      payment_date: row.paymentDate,
+      invoice_id: row.invoiceId,
+      invoice_number: row.invoiceNumber,
+      client_id: row.clientId,
+      client_name: row.clientName,
+      currency: row.currency,
+      provider: row.provider,
+      ...(money
+        ? {
+            invoice_total_cents: row.invoiceTotalCents,
+            payment_cents: row.paymentCents,
+          }
+        : {}),
+    })),
+  };
+};
+
+const serializeReceivableTotal = (
+  total: Readonly<ReceivablesReportTotalRecord>,
+  money: boolean,
+) => ({
+  currency: total.currency,
+  invoice_count: total.invoiceCount,
+  ...(money
+    ? {
+        invoiced_cents: total.invoicedCents,
+        outstanding_cents: total.outstandingCents,
+        not_due_cents: total.notDueCents,
+        days_1_to_30_cents: total.days1To30Cents,
+        days_31_to_60_cents: total.days31To60Cents,
+        days_61_to_90_cents: total.days61To90Cents,
+        days_90_plus_cents: total.days90PlusCents,
+      }
+    : {}),
+});
+
+const serializeReceivables = (
+  report: Readonly<ReceivablesReportRecord>,
+  viewer: Readonly<UserPrincipal>,
+) => {
+  const money = canViewMoneyField(viewer, "billable_rate");
+  return {
+    as_of: report.asOf,
+    client_id: report.clientId,
+    totals: report.totals.map((total) => serializeReceivableTotal(total, money)),
+    rows: report.rows.map((row) => ({
+      client_id: row.clientId,
+      client_name: row.clientName,
+      ...serializeReceivableTotal(row, money),
+    })),
+  };
 };
 
 /**
@@ -692,6 +1057,7 @@ const CONTRACTOR_COST_COLUMNS = [
   "is_contractor",
   "currency",
   "hours",
+  "utilization_ppm",
   "cost_cents",
   "cost_rate_cents",
   "entry_count",
@@ -723,6 +1089,7 @@ const contractorCostCsv = (report: Readonly<ContractorCostReportRecord>): string
         csvCell(row.isContractor ? "true" : "false"),
         csvCell(row.currency),
         csvCell((Math.round((row.roundedSeconds / 3600) * 100) / 100).toFixed(2)),
+        csvCell(row.utilizationPpm),
         csvCell(row.costCents),
         // "mixed" rather than a blank, so a rate that moved inside the period
         // is distinguishable from one that was never set. Both are blank in
@@ -747,6 +1114,7 @@ const serializeContractorCost = (report: Readonly<ContractorCostReportRecord>) =
     is_contractor: row.isContractor,
     currency: row.currency,
     rounded_seconds: row.roundedSeconds,
+    utilization_ppm: row.utilizationPpm,
     cost_cents: row.costCents,
     cost_rate_cents: row.costRateCents,
     cost_rate_is_mixed: row.costRateIsMixed,
@@ -762,9 +1130,28 @@ const serializeProfitabilityTotals = (
   revenue_cents: totals.revenueCents,
   cost_cents: totals.costCents,
   profit_cents: totals.profitCents,
+  return_on_cost_ppm: totals.returnOnCostPpm,
+  revenue_fee_cents: totals.revenueFeeCents,
+  fees_included_in_delivery_cost_cents: totals.feesIncludedInDeliveryCostCents,
   entries_without_billable_rate: totals.entriesWithoutBillableRate,
   entries_without_cost_rate: totals.entriesWithoutCostRate,
   projects_not_converted: totals.projectsNotConverted,
+});
+
+const serializeProfitabilityDimension = (row: Readonly<ProfitabilityDimensionRowRecord>) => ({
+  dimension_id: row.dimensionId,
+  dimension_name: row.dimensionName,
+  currency: row.currency,
+  rounded_seconds: row.roundedSeconds,
+  revenue_cents: row.revenueCents,
+  cost_cents: row.costCents,
+  profit_cents: row.profitCents,
+  return_on_cost_ppm: row.returnOnCostPpm,
+  revenue_fee_cents: row.revenueFeeCents,
+  fees_included_in_delivery_cost_cents: row.feesIncludedInDeliveryCostCents,
+  entries_without_billable_rate: row.entriesWithoutBillableRate,
+  entries_without_cost_rate: row.entriesWithoutCostRate,
+  included_in_headline: row.includedInHeadline,
 });
 
 const serializeProfitability = (report: Readonly<ProfitabilityReportRecord>) => ({
@@ -782,10 +1169,28 @@ const serializeProfitability = (report: Readonly<ProfitabilityReportRecord>) => 
     revenue_cents: row.revenueCents,
     cost_cents: row.costCents,
     profit_cents: row.profitCents,
+    return_on_cost_ppm: row.returnOnCostPpm,
+    revenue_fee_cents: row.revenueFeeCents,
+    fees_included_in_delivery_cost_cents: row.feesIncludedInDeliveryCostCents,
     entries_without_billable_rate: row.entriesWithoutBillableRate,
     entries_without_cost_rate: row.entriesWithoutCostRate,
   })),
+  clients: report.clients.map(serializeProfitabilityDimension),
+  teammates: report.teammates.map(serializeProfitabilityDimension),
+  tasks: report.tasks.map(serializeProfitabilityDimension),
+  trend: report.trend.map((row) => ({
+    ...serializeProfitabilityDimension(row),
+    period_start: row.periodStart,
+    period_end: row.periodEnd,
+    current: row.current,
+  })),
   totals: serializeProfitabilityTotals(report.totals),
+  filters: {
+    project_status: report.filters.projectStatus,
+    billing_method: report.filters.billingMethod,
+    manager_id: report.filters.managerId,
+    tag_id: report.filters.tagId,
+  },
   previous_from: report.previousFrom,
   previous_to: report.previousTo,
   previous_totals: serializeProfitabilityTotals(report.previousTotals),
@@ -803,6 +1208,9 @@ const serializeMonthEnd = (manifest: Readonly<MonthEndManifestRecord>) => ({
     // Where it would go. Null is an item with nowhere to send it, which is a
     // different problem from an item that has not been sent.
     target: item.target ?? null,
+    brand_name: item.brandName ?? null,
+    cost_cents: item.costCents ?? null,
+    margin_cents: item.marginCents ?? null,
   })),
   // Carried beside the items rather than dropped: an operator looking at a
   // pack of nine when they expected eleven needs to know which two, and what
@@ -884,7 +1292,12 @@ const serializeDetailedExpense = (
     to: report.to,
     client_id: report.clientId,
     project_id: report.projectId,
-    billable_only: report.billableOnly,
+    category_id: report.categoryId,
+    user_id: report.userId,
+    billable: report.billable,
+    reimbursable: report.reimbursable,
+    invoice_state: report.invoiceState,
+    active_projects_only: report.activeProjectsOnly,
     totals: report.totals.map((total) => ({
       currency: total.currency,
       expense_count: total.expenseCount,
@@ -923,6 +1336,11 @@ const serializeDetailedTime = (
     to: report.to,
     client_id: report.clientId,
     project_id: report.projectId,
+    task_id: report.taskId,
+    user_id: report.userId,
+    role_id: report.roleId,
+    tag_id: report.tagId,
+    invoice_state: report.invoiceState,
     hours: report.hours,
     grain: report.grain,
     active_projects_only: report.activeProjectsOnly,
@@ -962,8 +1380,9 @@ const serializeDetailedTime = (
       ...(report.grain === "entry"
         ? {
             time_entry_id: row.timeEntryId,
-            invoice_id: row.invoiceId,
             notes: row.notes,
+            invoice_id: row.invoiceId,
+            project_active: row.projectActive,
           }
         : {}),
     })),
@@ -1012,6 +1431,7 @@ const serializeTimeReport = (
 ) => ({
   from: report.from,
   to: report.to,
+  fixed_fee_included: report.fixedFeeIncluded,
   totals: serializeTimeTotals(report.totals, viewer),
   clients: report.clients.map((client) => ({
     ...serializeTimeTotals(client, viewer),
@@ -1184,6 +1604,215 @@ export const installReportRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   reports: ReportReader,
 ): void => {
+  const saved = (report: SavedReportRecord) => ({
+    id: report.definition.id,
+    name: report.definition.name,
+    version: report.definition.version,
+    fields: report.definition.fields,
+    metrics: report.definition.metrics,
+    filters: report.definition.filters,
+    group_by: report.definition.groupBy,
+    presentation: {
+      result: report.presentation.result,
+      grouped: report.presentation.grouped,
+      include_zero_values: report.presentation.includeZeroValues,
+    },
+    owner: { user_id: report.ownerUserId, name: report.ownerName },
+    is_custom: report.isCustom,
+    pinned: report.pinned,
+    shared: report.shared,
+    created_at: report.definition.createdAt,
+    updated_at: report.definition.updatedAt,
+  });
+  const savedId = (value: string): string => {
+    if (!/^[A-Za-z0-9_-]{1,128}$/u.test(value)) throw notFound("saved report");
+    return value;
+  };
+  const parsePresentation = (value: unknown): SavedReportRecord["presentation"] => {
+    const record = value as Record<string, unknown> | null;
+    if (
+      record === null ||
+      (record.result !== "summary" && record.result !== "detailed") ||
+      typeof record.grouped !== "boolean" ||
+      typeof record.include_zero_values !== "boolean"
+    ) {
+      throw new ApiError({ status: 422, code: "invalid_report_definition", message: "presentation is invalid" });
+    }
+    return {
+      result: record.result,
+      grouped: record.grouped,
+      includeZeroValues: record.include_zero_values,
+    };
+  };
+  const definitionInput = (body: Record<string, unknown>) => ({
+    name: String(body.name ?? ""),
+    fields: body.fields as SavedReportDefinitionRecord["fields"],
+    metrics: body.metrics as SavedReportDefinitionRecord["metrics"],
+    filters: body.filters as SavedReportDefinitionRecord["filters"],
+    groupBy: (body.group_by ?? null) as SavedReportDefinitionRecord["groupBy"],
+  });
+  const authority = (principal: UserPrincipal) => ({
+    billableMoney: canViewMoneyField(principal, "billable_rate"),
+    costMoney: canViewMoneyField(principal, "cost_rate"),
+  });
+  const reportEnvelope = (context: { req: { url: string } }, data: unknown) => ({
+    data,
+    links: { self: new URL(context.req.url).pathname + new URL(context.req.url).search },
+  });
+
+  api.get("/report-definitions/registry", (context) => {
+    requireApiScope(context, "reports:read");
+    const registry = reports.reportDefinitionRegistry();
+    const principal = context.get("principal");
+    return context.json(reportEnvelope(context, {
+      fields: registry.fields,
+      metrics: registry.metrics.filter((metric) =>
+        metric.id !== "cost" && metric.id !== "margin" || canViewMoneyField(principal, "cost_rate")),
+    }));
+  });
+
+  api.get("/report-definitions", async (context) => {
+    requireApiScope(context, "reports:read");
+    const url = new URL(context.req.url);
+    const view = url.searchParams.get("view");
+    if (view !== null && view !== "all" && view !== "yours" && view !== "shared") {
+      throw new ApiError({ status: 422, code: "invalid_report_view", message: "view must be all, yours, or shared" });
+    }
+    const principal = context.get("principal");
+    const rows = await reports.listSavedReports({
+      viewerUserId: principal.userId,
+      ...(view === null ? {} : { view }),
+      ...(url.searchParams.has("q") ? { query: url.searchParams.get("q") ?? "" } : {}),
+      customOnly: url.searchParams.get("custom_only") === "true",
+    });
+    return context.json(reportEnvelope(context, rows.map(saved)));
+  });
+
+  api.post("/report-definitions", async (context) => {
+    requireApiScope(context, "reports:read");
+    const body = await context.req.json<Record<string, unknown>>();
+    const principal = context.get("principal");
+    const at = new Date().toISOString();
+    try {
+      const created = await reports.createSavedReport({
+        id: crypto.randomUUID(),
+        ...definitionInput(body),
+        ownerUserId: principal.userId,
+        presentation: parsePresentation(body.presentation),
+        createdAt: at,
+      });
+      return context.json(reportEnvelope(context, saved(created)), 201);
+    } catch (error) {
+      if (error instanceof TypeError || error instanceof RangeError) {
+        throw new ApiError({ status: 422, code: "invalid_report_definition", message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  api.post("/report-definitions/preview", async (context) => {
+    requireApiScope(context, "reports:read");
+    const body = await context.req.json<Record<string, unknown>>();
+    const principal = context.get("principal");
+    const at = new Date().toISOString();
+    const definition: SavedReportDefinitionRecord = {
+      id: "preview", version: 1, ...definitionInput(body), createdAt: at, updatedAt: at,
+    };
+    return context.json(reportEnvelope(context, await reports.previewReport(
+      definition,
+      parsePresentation(body.presentation),
+      authority(principal),
+    )));
+  });
+
+  api.get("/report-definitions/:reportId", async (context) => {
+    requireApiScope(context, "reports:read");
+    const principal = context.get("principal");
+    const report = await reports.readSavedReport(savedId(context.req.param("reportId")), principal.userId);
+    if (report === null) throw notFound("saved report");
+    return context.json(reportEnvelope(context, saved(report)));
+  });
+
+  api.patch("/report-definitions/:reportId", async (context) => {
+    requireApiScope(context, "reports:read");
+    const body = await context.req.json<Record<string, unknown>>();
+    const version = body.version;
+    if (!Number.isSafeInteger(version) || Number(version) < 1) {
+      throw new ApiError({ status: 422, code: "invalid_report_version", message: "version must be positive" });
+    }
+    const principal = context.get("principal");
+    const at = new Date().toISOString();
+    const changes: SavedReportChanges = {
+      updatedAt: at,
+      ...(typeof body.name === "string" ? { name: body.name } : {}),
+      ...(Array.isArray(body.fields) ? { fields: body.fields as SavedReportDefinitionRecord["fields"] } : {}),
+      ...(Array.isArray(body.metrics) ? { metrics: body.metrics as SavedReportDefinitionRecord["metrics"] } : {}),
+      ...(Array.isArray(body.filters) ? { filters: body.filters as SavedReportDefinitionRecord["filters"] } : {}),
+      ...(Object.hasOwn(body, "group_by")
+        ? { groupBy: (body.group_by ?? null) as SavedReportDefinitionRecord["groupBy"] }
+        : {}),
+    };
+    const result = await reports.updateSavedReport({
+      reportId: savedId(context.req.param("reportId")),
+      ownerUserId: principal.userId,
+      expectedVersion: Number(version),
+      changes,
+      ...(body.presentation === undefined ? {} : { presentation: parsePresentation(body.presentation) }),
+    });
+    if (result === "not_found") throw notFound("saved report");
+    if (result === "version_conflict") {
+      throw new ApiError({ status: 409, code: "report_version_conflict", message: "the saved report changed; reload before editing" });
+    }
+    return context.json(reportEnvelope(context, saved(result)));
+  });
+
+  api.delete("/report-definitions/:reportId", async (context) => {
+    requireApiScope(context, "reports:read");
+    const removed = await reports.deleteSavedReport(savedId(context.req.param("reportId")), context.get("principal").userId);
+    if (!removed) throw notFound("saved report");
+    return context.body(null, 204);
+  });
+
+  api.post("/report-definitions/:reportId/duplicate", async (context) => {
+    requireApiScope(context, "reports:read");
+    const principal = context.get("principal");
+    const source = await reports.readSavedReport(savedId(context.req.param("reportId")), principal.userId);
+    if (source === null) throw notFound("saved report");
+    const at = new Date().toISOString();
+    const copy = await reports.createSavedReport({
+      id: crypto.randomUUID(), name: `${source.definition.name} copy`, fields: source.definition.fields,
+      metrics: source.definition.metrics, filters: source.definition.filters, groupBy: source.definition.groupBy,
+      ownerUserId: principal.userId, presentation: source.presentation, createdAt: at,
+    });
+    return context.json(reportEnvelope(context, saved(copy)), 201);
+  });
+
+  for (const pinned of [true, false] as const) {
+    api.on(pinned ? "post" : "delete", "/report-definitions/:reportId/pin", async (context) => {
+      requireApiScope(context, "reports:read");
+      const ok = await reports.pinSavedReport(savedId(context.req.param("reportId")), context.get("principal").userId, pinned, new Date().toISOString());
+      if (!ok) throw notFound("saved report");
+      return context.body(null, 204);
+    });
+  }
+
+  for (const shared of [true, false] as const) {
+    api.on(shared ? "post" : "delete", "/report-definitions/:reportId/shares/:userId", async (context) => {
+      requireApiScope(context, "reports:read");
+      const ok = await reports.shareSavedReport(savedId(context.req.param("reportId")), context.get("principal").userId, resourceId(context.req.param("userId"), "user"), shared, new Date().toISOString());
+      if (!ok) throw notFound("saved report");
+      return context.body(null, 204);
+    });
+  }
+
+  api.post("/report-definitions/:reportId/run", async (context) => {
+    requireApiScope(context, "reports:read");
+    const principal = context.get("principal");
+    const result = await reports.runSavedReport(savedId(context.req.param("reportId")), principal.userId, authority(principal));
+    if (result === null) throw notFound("saved report");
+    return context.json(reportEnvelope(context, result));
+  });
+
   api.get("/reports/my-hours", async (context) => {
     // `time_entries:read`, not `reports:read`. The firm-wide reports are gated
     // to the three reporting profiles; these are the acting user's own entries
@@ -1221,9 +1850,17 @@ export const installReportRoutes = <Bindings extends object>(
 
   api.get("/reports/time", async (context) => {
     requireApiScope(context, "reports:read");
-    const parsed = rangeFrom(new URL(context.req.url), reportKeys);
+    const parsed = rangeFrom(new URL(context.req.url), timeReportKeys);
+    const includeFixedFee = queryBoolean(
+      parsed.params,
+      "include_fixed_fee",
+      parsed.errors,
+    );
     assertFields(parsed.errors);
-    const report = await reports.timeReport(parsed.range);
+    const report = await reports.timeReport({
+      ...parsed.range,
+      ...(includeFixedFee === undefined ? {} : { includeFixedFee }),
+    });
     return context.json(
       {
         data: serializeTimeReport(report, context.get("principal")),
@@ -1231,6 +1868,71 @@ export const installReportRoutes = <Bindings extends object>(
           self:
             new URL(context.req.url).pathname + new URL(context.req.url).search,
         },
+      },
+      200,
+      { "cache-control": "no-store" },
+    );
+  });
+
+  api.get("/reports/invoiced", async (context) => {
+    requireApiScope(context, "reports:read");
+    const parsed = rangeFrom(new URL(context.req.url), invoicedKeys);
+    const clientId = queryPositiveInteger(parsed.params, "client_id", parsed.errors);
+    const state = queryEnum(parsed.params, "status", invoicedStates, parsed.errors);
+    assertFields(parsed.errors);
+    const report = await reports.invoiced({
+      ...parsed.range,
+      ...(clientId === undefined ? {} : { clientId }),
+      ...(state === undefined ? {} : { state }),
+    });
+    return context.json(
+      {
+        data: serializeInvoiced(report, context.get("principal")),
+        links: { self: new URL(context.req.url).pathname + new URL(context.req.url).search },
+      },
+      200,
+      { "cache-control": "no-store" },
+    );
+  });
+
+  api.get("/reports/payments-received", async (context) => {
+    requireApiScope(context, "reports:read");
+    const parsed = rangeFrom(new URL(context.req.url), paymentsReceivedKeys);
+    const clientId = queryPositiveInteger(parsed.params, "client_id", parsed.errors);
+    assertFields(parsed.errors);
+    const report = await reports.paymentsReceived({
+      ...parsed.range,
+      ...(clientId === undefined ? {} : { clientId }),
+    });
+    return context.json(
+      {
+        data: serializePaymentsReceived(report, context.get("principal")),
+        links: { self: new URL(context.req.url).pathname + new URL(context.req.url).search },
+      },
+      200,
+      { "cache-control": "no-store" },
+    );
+  });
+
+  api.get("/reports/receivables", async (context) => {
+    requireApiScope(context, "reports:read");
+    const url = new URL(context.req.url);
+    const params = strictSearchParams(url, receivablesKeys);
+    const errors: FieldError[] = [];
+    const asOf = queryDate(params, "as_of", errors);
+    if (asOf === undefined && !params.has("as_of")) {
+      errors.push({ field: "as_of", code: "required", message: "as_of is required" });
+    }
+    const clientId = queryPositiveInteger(params, "client_id", errors);
+    assertFields(errors);
+    const report = await reports.receivables({
+      asOf: asOf!,
+      ...(clientId === undefined ? {} : { clientId }),
+    });
+    return context.json(
+      {
+        data: serializeReceivables(report, context.get("principal")),
+        links: { self: url.pathname + url.search },
       },
       200,
       { "cache-control": "no-store" },
@@ -1299,6 +2001,10 @@ export const installReportRoutes = <Bindings extends object>(
       "project_id",
       parsed.errors,
     );
+    const taskId = queryPositiveInteger(parsed.params, "task_id", parsed.errors);
+    const userId = queryPositiveInteger(parsed.params, "user_id", parsed.errors);
+    const roleId = queryPositiveInteger(parsed.params, "role_id", parsed.errors);
+    const tagId = queryPositiveInteger(parsed.params, "tag_id", parsed.errors);
     const hours = queryEnum(
       parsed.params,
       "hours",
@@ -1311,6 +2017,12 @@ export const installReportRoutes = <Bindings extends object>(
       detailedTimeGrains,
       parsed.errors,
     );
+    const invoiceState = queryEnum(
+      parsed.params,
+      "invoice_state",
+      detailedTimeInvoiceStates,
+      parsed.errors,
+    );
     const activeProjectsOnly = queryBoolean(
       parsed.params,
       "active_projects_only",
@@ -1321,8 +2033,13 @@ export const installReportRoutes = <Bindings extends object>(
       ...parsed.range,
       ...(clientId === undefined ? {} : { clientId }),
       ...(projectId === undefined ? {} : { projectId }),
+      ...(taskId === undefined ? {} : { taskId }),
+      ...(userId === undefined ? {} : { userId }),
+      ...(roleId === undefined ? {} : { roleId }),
+      ...(tagId === undefined ? {} : { tagId }),
       ...(hours === undefined ? {} : { hours }),
       ...(grain === undefined ? {} : { grain }),
+      ...(invoiceState === undefined ? {} : { invoiceState }),
       ...(activeProjectsOnly === undefined ? {} : { activeProjectsOnly }),
     });
     // 422 on the range rather than a partial body: the response has no field
@@ -1353,6 +2070,60 @@ export const installReportRoutes = <Bindings extends object>(
       200,
       { "cache-control": "no-store" },
     );
+  });
+
+  api.post("/reports/detailed-time/actions", async (context) => {
+    requireApiScope(context, "reports:read");
+    requireApiScope(context, "time_entries:write");
+    const principal = context.get("principal");
+    if (!["administrator", "accounting", "executive_manager"].includes(principal.profile)) {
+      throw new ApiError({ status: 403, code: "profile_forbidden", message: "Detailed time actions require accounting authority." });
+    }
+    const body = await context.req.json<Record<string, unknown>>();
+    if (body.confirmed !== true) {
+      throw new ApiError({ status: 422, code: "confirmation_required", message: "confirmed must be true" });
+    }
+    const action = body.action;
+    if (action !== "mark_invoiced" && action !== "mark_uninvoiced" && action !== "move") {
+      throw new ApiError({ status: 422, code: "invalid_time_action", message: "action is invalid" });
+    }
+    if (action === "mark_invoiced" || action === "mark_uninvoiced") {
+      requireApiScope(context, "invoices:write");
+    }
+    if (typeof body.command_id !== "string" || !Array.isArray(body.entry_ids)) {
+      throw new ApiError({ status: 422, code: "invalid_time_action", message: "command_id and entry_ids are required" });
+    }
+    try {
+      const result = await reports.executeTimeAction({
+        commandId: body.command_id,
+        actorUserId: principal.userId,
+        action,
+        entryIds: body.entry_ids.map(Number),
+        completedAt: new Date().toISOString(),
+        ...(body.invoice_id === undefined ? {} : { invoiceId: Number(body.invoice_id) }),
+        ...(body.project_id === undefined ? {} : { projectId: Number(body.project_id) }),
+        ...(body.task_id === undefined ? {} : { taskId: Number(body.task_id) }),
+      });
+      if (result === "command_conflict") {
+        throw new ApiError({ status: 409, code: "command_conflict", message: "command_id was already used for different inputs" });
+      }
+      if (result === "invoice_unavailable") {
+        throw new ApiError({ status: 409, code: "invoice_unavailable", message: "Only an existing draft invoice can claim selected time" });
+      }
+      return context.json(reportEnvelope(context, {
+        command_id: result.commandId,
+        action: result.action,
+        requested: result.requested,
+        changed_entry_ids: result.changedEntryIds,
+        ineligible_entry_ids: result.ineligibleEntryIds,
+        replayed: result.replayed,
+      }));
+    } catch (error) {
+      if (error instanceof TypeError || error instanceof RangeError) {
+        throw new ApiError({ status: 422, code: "invalid_time_action", message: error.message });
+      }
+      throw error;
+    }
   });
 
   /**
@@ -1505,9 +2276,29 @@ export const installReportRoutes = <Bindings extends object>(
         message: "The acting user profile cannot perform this operation.",
       });
     }
-    const parsed = rangeFrom(new URL(context.req.url), reportKeys);
+    const parsed = rangeFrom(new URL(context.req.url), profitabilityKeys);
+    const projectStatus = queryEnum(
+      parsed.params,
+      "project_status",
+      ["all", "active", "archived"] as const,
+      parsed.errors,
+    );
+    const billingMethod = queryEnum(
+      parsed.params,
+      "billing_method",
+      ["non_billable", "time_materials", "fixed_fee"] as const,
+      parsed.errors,
+    );
+    const managerId = queryPositiveInteger(parsed.params, "manager_id", parsed.errors);
+    const tagId = queryPositiveInteger(parsed.params, "tag_id", parsed.errors);
     assertFields(parsed.errors);
-    const report = await reports.profitability(parsed.range);
+    const report = await reports.profitability({
+      ...parsed.range,
+      ...(projectStatus === undefined ? {} : { projectStatus }),
+      ...(billingMethod === undefined ? {} : { billingMethod }),
+      ...(managerId === undefined ? {} : { managerId }),
+      ...(tagId === undefined ? {} : { tagId }),
+    });
     return context.json(
       {
         data: serializeProfitability(report),
@@ -1534,9 +2325,31 @@ export const installReportRoutes = <Bindings extends object>(
       "project_id",
       parsed.errors,
     );
-    const billableOnly = queryBoolean(
+    const categoryId = queryPositiveInteger(parsed.params, "category_id", parsed.errors);
+    const userId = queryPositiveInteger(parsed.params, "user_id", parsed.errors);
+    const billable = queryBoolean(
       parsed.params,
-      "billable_only",
+      "billable",
+      parsed.errors,
+    );
+    const reimbursable = queryBoolean(parsed.params, "reimbursable", parsed.errors);
+    const invoiceStateValue = parsed.params.get("invoice_state");
+    const invoiceState = invoiceStateValue === null ? undefined : invoiceStateValue;
+    if (
+      invoiceState !== undefined &&
+      invoiceState !== "all" &&
+      invoiceState !== "invoiced" &&
+      invoiceState !== "uninvoiced"
+    ) {
+      parsed.errors.push({
+        field: "invoice_state",
+        code: "invalid_enum",
+        message: "invoice_state must be all, invoiced, or uninvoiced",
+      });
+    }
+    const activeProjectsOnly = queryBoolean(
+      parsed.params,
+      "active_projects_only",
       parsed.errors,
     );
     assertFields(parsed.errors);
@@ -1544,7 +2357,15 @@ export const installReportRoutes = <Bindings extends object>(
       ...parsed.range,
       ...(clientId === undefined ? {} : { clientId }),
       ...(projectId === undefined ? {} : { projectId }),
-      ...(billableOnly === undefined ? {} : { billableOnly }),
+      ...(categoryId === undefined ? {} : { categoryId }),
+      ...(userId === undefined ? {} : { userId }),
+      ...(billable === undefined ? {} : { billable }),
+      ...(reimbursable === undefined ? {} : { reimbursable }),
+      ...(invoiceState === undefined ||
+      (invoiceState !== "all" && invoiceState !== "invoiced" && invoiceState !== "uninvoiced")
+        ? {}
+        : { invoiceState }),
+      ...(activeProjectsOnly === undefined ? {} : { activeProjectsOnly }),
     });
     return context.json(
       {

@@ -7,6 +7,7 @@ import type {
   TimeReport,
   Whoami,
 } from '@conflict-hq/ezacto-client'
+import { REPORT_CAPABILITIES } from '@ezacto/core'
 import { describe, expect, it, vi } from 'vitest'
 import { createReportsController } from '../src/reports/browser.js'
 import type { ReportWorkspaceApi } from '../src/reports/model.js'
@@ -63,6 +64,7 @@ const writeDocument = (path: string): void => {
 const emptyTimeReport: TimeReport = {
   from: '2026-08-01',
   to: '2026-08-31',
+  fixed_fee_included: false,
   totals: {
     seconds: 0,
     rounded_seconds: 0,
@@ -82,11 +84,21 @@ const emptyProfitTotals = {
   revenue_cents: 0,
   cost_cents: 0,
   profit_cents: 0,
+  return_on_cost_ppm: null,
+  revenue_fee_cents: 0,
+  fees_included_in_delivery_cost_cents: 0,
   entries_without_billable_rate: 0,
   claimed: false,
   entries_without_cost_rate: 0,
   projects_not_converted: 0,
 }
+
+const emptyProfitFilters = {
+  project_status: 'all',
+  billing_method: null,
+  manager_id: null,
+  tag_id: null,
+} as const
 
 const baseApi = (overrides: Partial<ReportWorkspaceApi> = {}): Partial<ReportWorkspaceApi> => ({
   listReportClients: vi.fn(async () => page([client(1, 'Parent'), client(2, 'Studio', { parent_client_id: 1, currency: 'EUR' })])),
@@ -131,13 +143,28 @@ const baseApi = (overrides: Partial<ReportWorkspaceApi> = {}): Partial<ReportWor
   })),
   getDetailedTimeReport: vi.fn(async () => detailedTimeReport()),
   getTimeReport: vi.fn(async () => emptyTimeReport),
+  getInvoicedReport: vi.fn(async () => ({
+    from: '2026-08-01', to: '2026-08-31', client_id: null, status: null,
+    totals: [], rows: [],
+  })),
+  getPaymentsReceivedReport: vi.fn(async () => ({
+    from: '2026-08-01', to: '2026-08-31', client_id: null, totals: [], rows: [],
+  })),
+  getReceivablesReport: vi.fn(async () => ({
+    as_of: '2026-08-31', client_id: null, totals: [], rows: [],
+  })),
   getActivityLog: vi.fn(async () => []),
   getDetailedExpenseReport: vi.fn(async () => ({
     from: '2026-08-01',
     to: '2026-08-31',
     client_id: null,
     project_id: null,
-    billable_only: false,
+    category_id: null,
+    user_id: null,
+    billable: null,
+    reimbursable: null,
+    invoice_state: 'all' as const,
+    active_projects_only: false,
     totals: [],
     rows: [],
   })),
@@ -146,6 +173,8 @@ const baseApi = (overrides: Partial<ReportWorkspaceApi> = {}): Partial<ReportWor
     to: '2026-08-31',
     organization_currency: 'USD',
     rows: [],
+    clients: [], teammates: [], tasks: [], trend: [],
+    filters: emptyProfitFilters,
     totals: emptyProfitTotals,
     previous_from: '2026-07-01',
     previous_to: '2026-07-31',
@@ -185,6 +214,11 @@ const detailedTimeReport = (
   to: '2026-08-31',
   client_id: null,
   project_id: null,
+  task_id: null,
+  user_id: null,
+  role_id: null,
+  tag_id: null,
+  invoice_state: 'all',
   hours: 'all',
   grain: 'day',
   active_projects_only: false,
@@ -675,7 +709,10 @@ describe('Reports Stage 1 browser controller', () => {
 
     expect(listReportClients).toHaveBeenCalledTimes(2)
     expect(getUninvoicedReport).toHaveBeenCalledWith(
-      { from: '2026-08-01', to: '2026-08-31' },
+      {
+        from: '2026-08-01',
+        to: '2026-08-31',
+      },
       expect.any(AbortSignal),
     )
     const results = document.querySelector('[data-report-results]')!
@@ -757,6 +794,9 @@ describe('Reports Stage 1 browser controller', () => {
     expect(tabs.map((tab) => tab.textContent)).toEqual([
       'My hours',
       'Time',
+      'Invoiced',
+      'Payments received',
+      'Receivables',
       'Uninvoiced work',
       'Detailed time',
       'Detailed expense',
@@ -766,7 +806,13 @@ describe('Reports Stage 1 browser controller', () => {
       'Profitability',
       'Contractor cost',
     ])
+    expect(
+      tabs.map((tab) => new URL(tab.href).searchParams.get('report')).sort(),
+    ).toEqual(REPORT_CAPABILITIES.map((report) => report.id).sort())
     expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual([
+      null,
+      null,
+      null,
       null,
       null,
       'page',
@@ -801,6 +847,9 @@ describe('Reports Stage 1 browser controller', () => {
       null,
       null,
       null,
+      null,
+      null,
+      null,
       'page',
       null,
       null,
@@ -809,6 +858,117 @@ describe('Reports Stage 1 browser controller', () => {
     ])
     expect(document.querySelector<HTMLElement>('[data-report-project-field]')?.hidden).toBe(true)
     session.abort()
+  })
+
+  it('[browser] renders issued invoices and preserves client and status filters', async () => {
+    writeDocument('/reports?report=invoiced&from=2026-08-01&to=2026-08-31&client_id=1&status=open')
+    const getInvoicedReport = vi.fn(async () => ({
+      from: '2026-08-01',
+      to: '2026-08-31',
+      client_id: 1,
+      status: 'open' as const,
+      totals: [{ currency: 'USD', invoice_count: 1, invoiced_cents: 100_000, paid_cents: 25_000, balance_cents: 75_000 }],
+      rows: [{
+        invoice_id: 301,
+        number: '301',
+        state: 'open' as const,
+        close_reason: null,
+        issue_date: '2026-08-01',
+        due_date: '2026-08-15',
+        client_id: 1,
+        client_name: 'Parent',
+        subject: 'August delivery',
+        currency: 'USD',
+        invoiced_cents: 100_000,
+        paid_cents: 25_000,
+        balance_cents: 75_000,
+      }],
+    }))
+    await createReportsController(baseApi({ getInvoicedReport })).activate(
+      identity('administrator'),
+      new AbortController().signal,
+      () => false,
+    )
+
+    expect(getInvoicedReport).toHaveBeenCalledWith(
+      { from: '2026-08-01', to: '2026-08-31', client_id: 1, status: 'open' },
+      expect.anything(),
+    )
+    const results = document.querySelector('[data-report-results]')!
+    expect(results.textContent).toContain('Sent')
+    expect(results.textContent).toContain('$1,000.00')
+    expect(results.textContent).toContain('$750.00')
+    expect(results.querySelector('a[href="/invoices/301"]')?.textContent).toBe('301')
+    expect(results.querySelector('a[href="/clients/1"]')?.textContent).toBe('Parent')
+    expect(document.querySelector<HTMLSelectElement>('[data-report-invoice-status]')?.value).toBe('open')
+  })
+
+  it('[browser] renders payments received with invoice and client drill-throughs', async () => {
+    writeDocument('/reports?report=payments-received&from=2026-08-01&to=2026-08-31&client_id=1')
+    const getPaymentsReceivedReport = vi.fn(async () => ({
+      from: '2026-08-01', to: '2026-08-31', client_id: 1,
+      totals: [{ currency: 'USD', payment_count: 1, payment_cents: 25_000 }],
+      rows: [{
+        payment_id: 901,
+        payment_date: '2026-08-20',
+        invoice_id: 301,
+        invoice_number: '301',
+        client_id: 1,
+        client_name: 'Parent',
+        currency: 'USD',
+        provider: 'manual',
+        invoice_total_cents: 100_000,
+        payment_cents: 25_000,
+      }],
+    }))
+    await createReportsController(baseApi({ getPaymentsReceivedReport })).activate(
+      identity('accounting'),
+      new AbortController().signal,
+      () => false,
+    )
+
+    expect(getPaymentsReceivedReport).toHaveBeenCalledWith(
+      { from: '2026-08-01', to: '2026-08-31', client_id: 1 },
+      expect.anything(),
+    )
+    const results = document.querySelector('[data-report-results]')!
+    expect(results.textContent).toContain('2026-08-20')
+    expect(results.textContent).toContain('$250.00')
+    expect(results.querySelector('a[href="/invoices/301"]')).not.toBeNull()
+  })
+
+  it('[browser] ages receivables at the selected period end without mixing currency', async () => {
+    writeDocument('/reports?report=receivables&from=2026-08-01&to=2026-08-31&client_id=1')
+    const getReceivablesReport = vi.fn(async () => ({
+      as_of: '2026-08-31',
+      client_id: 1,
+      totals: [{
+        currency: 'USD', invoice_count: 1, invoiced_cents: 100_000,
+        outstanding_cents: 75_000, not_due_cents: 0, days_1_to_30_cents: 75_000,
+        days_31_to_60_cents: 0, days_61_to_90_cents: 0, days_90_plus_cents: 0,
+      }],
+      rows: [{
+        client_id: 1, client_name: 'Parent', currency: 'USD', invoice_count: 1,
+        invoiced_cents: 100_000, outstanding_cents: 75_000, not_due_cents: 0,
+        days_1_to_30_cents: 75_000, days_31_to_60_cents: 0,
+        days_61_to_90_cents: 0, days_90_plus_cents: 0,
+      }],
+    }))
+    await createReportsController(baseApi({ getReceivablesReport })).activate(
+      identity('executive_manager'),
+      new AbortController().signal,
+      () => false,
+    )
+
+    expect(getReceivablesReport).toHaveBeenCalledWith(
+      { as_of: '2026-08-31', client_id: 1 },
+      expect.anything(),
+    )
+    const results = document.querySelector('[data-report-results]')!
+    expect(results.textContent).toContain('Outstanding balances as of 2026-08-31')
+    expect(results.textContent).toContain('1–30 days')
+    expect(results.textContent).toContain('$750.00')
+    expect(results.querySelector('a[href="/clients/1"]')?.textContent).toBe('Parent')
   })
 
   it('[security] lets an assigned member request project budget while financial kinds leave the strip', async () => {
@@ -1272,6 +1432,7 @@ describe('Reports Stage 1 browser controller', () => {
   const timeReportFixture: TimeReport = {
     from: '2026-09-01',
     to: '2026-09-30',
+    fixed_fee_included: false,
     totals: {
       // Tracked and rounded deliberately differ: on an account that rounds
       // they are two numbers, and a column reading the wrong one is invisible
@@ -1500,6 +1661,43 @@ describe('Reports Stage 1 browser controller', () => {
     session.abort()
   })
 
+  it('[browser #720] makes fixed-fee participation explicit in the control, URL, request, and result', async () => {
+    writeDocument('/reports?report=time&from=2026-09-01&to=2026-09-30')
+    const getTimeReport = vi
+      .fn()
+      .mockResolvedValueOnce(timeReportFixture)
+      .mockResolvedValueOnce({ ...timeReportFixture, fixed_fee_included: true })
+    const session = new AbortController()
+    await createReportsController(baseApi({ getTimeReport })).activate(
+      identity('administrator'), session.signal, () => false,
+    )
+
+    const field = document.querySelector<HTMLElement>('[data-report-fixed-fee-field]')!
+    const checkbox = field.querySelector<HTMLInputElement>('[data-report-fixed-fee]')!
+    expect(field.hidden).toBe(false)
+    expect(checkbox.checked).toBe(false)
+    expect(document.querySelector('[data-report-results]')?.textContent).toContain(
+      'Fixed-fee project hours are excluded',
+    )
+
+    checkbox.checked = true
+    document.querySelector<HTMLFormElement>('[data-report-form]')!.dispatchEvent(
+      new SubmitEvent('submit', { bubbles: true, cancelable: true }),
+    )
+    await vi.waitFor(() => expect(getTimeReport).toHaveBeenCalledTimes(2))
+    expect(getTimeReport).toHaveBeenLastCalledWith(
+      { from: '2026-09-01', to: '2026-09-30', include_fixed_fee: true },
+      expect.anything(),
+    )
+    expect(window.location.search).toContain('include_fixed_fee=true')
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-report-results]')?.textContent).toContain(
+        'hourly value at resolved rates, not fixed-fee revenue',
+      ),
+    )
+    session.abort()
+  })
+
   it('[security] links a teammate only where the viewer may open a person', async () => {
     // `reports:read` is accounting, executive_manager and administrator;
     // `team:read` is project_manager, people_admin, executive_manager and
@@ -1669,6 +1867,7 @@ describe('Reports Stage 1 browser controller', () => {
           is_contractor: true,
           currency: 'USD',
           rounded_seconds: 144_000,
+          utilization_ppm: 1_000_000,
           cost_cents: 400_000,
           cost_rate_cents: null,
           cost_rate_is_mixed: false,
@@ -1682,6 +1881,7 @@ describe('Reports Stage 1 browser controller', () => {
           is_contractor: false,
           currency: 'USD',
           rounded_seconds: 36_000,
+          utilization_ppm: 250_000,
           cost_cents: null,
           cost_rate_cents: null,
           cost_rate_is_mixed: false,
@@ -1695,6 +1895,7 @@ describe('Reports Stage 1 browser controller', () => {
           is_contractor: true,
           currency: 'EUR',
           rounded_seconds: 7_200,
+          utilization_ppm: 50_000,
           cost_cents: 20_000,
           cost_rate_cents: null,
           cost_rate_is_mixed: false,
@@ -1730,12 +1931,18 @@ describe('Reports Stage 1 browser controller', () => {
     const usdRows = [...usd!.querySelectorAll('tbody tr')]
     expect(usdRows[0]!.querySelector('a')?.getAttribute('href')).toBe('/team/11')
     expect(usdRows[0]!.textContent).toContain('Contractor')
-    expect(usdRows[0]!.querySelectorAll('td')[0]?.textContent).toBe('40 h')
-    expect(usdRows[0]!.querySelectorAll('td')[1]?.textContent).toBe('$4,000.00')
+    expect(usdRows[0]!.querySelectorAll('td')[0]?.textContent).toBe('ada@example.test')
+    expect(usdRows[0]!.querySelectorAll('td')[1]?.textContent).toBe('40 h')
+    expect(usdRows[0]!.querySelectorAll('td')[2]?.textContent).toBe('100%')
+    expect(usdRows[0]!.querySelectorAll('td')[4]?.textContent).toBe('20')
+    expect(usdRows[0]!.querySelectorAll('td')[5]?.textContent).toBe('$4,000.00')
+    expect(usdRows[0]!.querySelectorAll('td')[1]?.querySelector('a')?.getAttribute('href')).toBe(
+      '/reports?report=detailed-time&from=2026-08-01&to=2026-08-31&user_id=11&grain=entry',
+    )
 
     // Ten hours with no rate behind them. Neither a zero nor a bare dash: both
     // read as "nothing to pay" for work that was done.
-    const uncosted = usdRows[1]!.querySelectorAll('td')[1]!
+    const uncosted = usdRows[1]!.querySelectorAll('td')[5]!
     expect(uncosted.textContent).toContain('Not costed')
     expect(uncosted.textContent).toContain('3 entries without a cost rate')
     expect(uncosted.textContent).not.toContain('0.00')
@@ -1744,20 +1951,28 @@ describe('Reports Stage 1 browser controller', () => {
     // Hours still total -- seconds carry no rate -- but the currency's cost
     // does not, because one of its rows has no cost at all.
     const usdTotal = usd!.querySelectorAll('tfoot td')
-    expect(usdTotal[0]?.textContent).toBe('50 h')
-    expect(usdTotal[1]?.textContent).toBe('Not costed')
+    expect(usdTotal[1]?.textContent).toBe('50 h')
+    expect(usdTotal[5]?.textContent).toBe('Not costed')
     expect(usd!.querySelector('.report-warning')?.textContent).toBe(
       '3 entries across 1 person have no cost rate, so USD has no total.',
     )
 
     const eurTotal = eur!.querySelectorAll('tfoot td')
-    expect(eurTotal[0]?.textContent).toBe('2 h')
-    expect(eurTotal[1]?.textContent).toBe('€200.00')
+    expect(eurTotal[1]?.textContent).toBe('2 h')
+    expect(eurTotal[5]?.textContent).toBe('€200.00')
     expect(eur!.querySelector('.report-warning')).toBeNull()
     // The same person is in both sections and is never added across them: 42
     // hours and a combined figure are the two shapes of that mistake.
     expect(results.textContent).not.toContain('42 h')
     expect(results.textContent).not.toContain('4,200.00')
+
+    const population = document.querySelector<HTMLSelectElement>('#ez-contractor-population')!
+    population.value = 'contractors'
+    population.dispatchEvent(new Event('change'))
+    expect(getContractorCostReport).toHaveBeenCalledTimes(1)
+    expect(results.textContent).not.toContain('Grace Hall')
+    expect(results.textContent).toContain('contractors only')
+    expect(window.location.search).toContain('contractor_only=true')
     session.abort()
   })
 
@@ -1778,6 +1993,9 @@ describe('Reports Stage 1 browser controller', () => {
     expect(tabs.map((tab) => tab.textContent)).toEqual([
       'My hours',
       'Time',
+      'Invoiced',
+      'Payments received',
+      'Receivables',
       'Uninvoiced work',
       'Detailed time',
       'Detailed expense',
@@ -1796,6 +2014,9 @@ describe('Reports Stage 1 browser controller', () => {
     // surviving fallback kind is marked, and its filters are the ones shown.
     expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual([
       'page',
+      null,
+      null,
+      null,
       null,
       null,
       null,
@@ -1893,21 +2114,29 @@ describe('Reports Stage 1 browser controller', () => {
       'Detailed time report: 2026-08-01 – 2026-08-31',
     )
 
-    // The recap is counted before it is read: a four-line list that rendered
+    // The recap is counted before it is read: an eight-line list that rendered
     // empty would otherwise satisfy every assertion below it.
     const recap = results.querySelector('.report-filter-recap')!
-    expect(recap.querySelectorAll('dt')).toHaveLength(4)
+    expect(recap.querySelectorAll('dt')).toHaveLength(8)
     expect([...recap.querySelectorAll('dt')].map((term) => term.textContent)).toEqual([
       'Clients',
       'Projects',
       'Tasks',
       'Team',
+      'Role',
+      'Tag',
+      'Invoice state',
+      'Grain',
     ])
     expect([...recap.querySelectorAll('dd')].map((value) => value.textContent)).toEqual([
       'Studio',
       'All projects',
       'All tasks',
       'All people',
+      'All roles',
+      'All tags',
+      'all',
+      'Daily totals',
     ])
 
     const bands = results.querySelectorAll('.report-band-row')
@@ -1968,8 +2197,9 @@ describe('Reports Stage 1 browser controller', () => {
         from: '2026-08-01',
         to: '2026-08-31',
         hours: 'all',
-        active_projects_only: false,
         grain: 'day',
+        invoice_state: 'all',
+        active_projects_only: false,
       },
       expect.anything(),
     )
@@ -1983,8 +2213,9 @@ describe('Reports Stage 1 browser controller', () => {
         from: '2026-08-01',
         to: '2026-08-31',
         hours: 'uninvoiced',
-        active_projects_only: false,
         grain: 'day',
+        invoice_state: 'all',
+        active_projects_only: false,
       },
       expect.anything(),
     )
@@ -1998,18 +2229,79 @@ describe('Reports Stage 1 browser controller', () => {
         from: '2026-08-01',
         to: '2026-08-31',
         hours: 'uninvoiced',
-        active_projects_only: true,
         grain: 'day',
+        invoice_state: 'all',
+        active_projects_only: true,
       },
       expect.anything(),
     )
     session.abort()
   })
 
+  it('[browser #717] applies entry workflow filters and links exact time entries', async () => {
+    writeDocument(
+      '/reports?report=detailed-time&from=2026-08-01&to=2026-08-31&project_id=7&task_id=3&user_id=1&role_id=4&tag_id=5&invoice_state=uninvoiced&grain=entry&group=role',
+    )
+    const getDetailedTimeReport = vi.fn(async () =>
+      detailedTimeReport({
+        project_id: 7,
+        task_id: 3,
+        user_id: 1,
+        role_id: 4,
+        tag_id: 5,
+        invoice_state: 'uninvoiced',
+        grain: 'entry',
+        seconds: 3_600,
+        rounded_seconds: 3_600,
+        billable_seconds: 3_600,
+        uninvoiced_billable_seconds: 3_600,
+        time_entry_count: 1,
+        rows: [
+          detailedTimeRow({
+            time_entry_id: 101,
+            invoice_id: null,
+            project_active: true,
+            notes: 'Prepared the reporting pack',
+          }),
+        ],
+      }),
+    )
+    const session = new AbortController()
+    await createReportsController(baseApi({ getDetailedTimeReport })).activate(
+      identity('accounting'),
+      session.signal,
+      () => false,
+    )
+
+    expect(getDetailedTimeReport).toHaveBeenCalledWith(
+      {
+        from: '2026-08-01',
+        to: '2026-08-31',
+        project_id: 7,
+        task_id: 3,
+        user_id: 1,
+        role_id: 4,
+        tag_id: 5,
+        invoice_state: 'uninvoiced',
+        hours: 'all',
+        grain: 'entry',
+        active_projects_only: false,
+      },
+      expect.anything(),
+    )
+    const results = document.querySelector('[data-report-results]')!
+    expect(results.textContent).toContain('Prepared the reporting pack')
+    expect(results.textContent).toContain('Not claimed')
+    expect(results.querySelector('a[href="/time?entry_id=101"]')?.textContent).toBe('1.00')
+    expect(results.querySelector('.report-band-row th')?.textContent).toBe('Engineering')
+    expect(document.querySelector<HTMLSelectElement>('#ez-detailed-grain')?.value).toBe('entry')
+    expect(document.querySelector<HTMLSelectElement>('#ez-detailed-invoice-state')?.value).toBe(
+      'uninvoiced',
+    )
+    session.abort()
+  })
+
   it('[e2e] opens the entries behind a total, grouped by whether they were claimed', async () => {
-    // #708. A total nobody can open is a total nobody can check, and an
-    // unclaimed hour is three different states with three different responses
-    // -- so the screen has to show the split and then the entries under it.
     writeDocument('/reports?report=detailed-time&from=2026-08-01&to=2026-08-31')
     const getDetailedTimeReport = vi.fn(
       async (filter: { grain?: string }) =>
@@ -2047,7 +2339,6 @@ describe('Reports Stage 1 browser controller', () => {
     )
 
     const results = document.querySelector('[data-report-results]')!
-    // The split is on the screen before anything is opened.
     const facts = [...results.querySelectorAll('.report-facts dt')].map(
       (term) => term.textContent,
     )
@@ -2057,12 +2348,10 @@ describe('Reports Stage 1 browser controller', () => {
     const group = document.querySelector<HTMLSelectElement>('#ez-detailed-group')!
     group.value = 'claimed'
     group.dispatchEvent(new Event('change'))
-    // Re-queried: changing the grouping redraws the controls, so the handle
-    // taken before it points at a node no longer in the document.
     await vi.waitFor(() =>
-      expect(
-        document.querySelector<HTMLSelectElement>('#ez-detailed-group')?.value,
-      ).toBe('claimed'),
+      expect(document.querySelector<HTMLSelectElement>('#ez-detailed-group')?.value).toBe(
+        'claimed',
+      ),
     )
     const grain = document.querySelector<HTMLSelectElement>('#ez-detailed-grain')!
     grain.value = 'entry'
@@ -2079,7 +2368,6 @@ describe('Reports Stage 1 browser controller', () => {
       (cell) => cell.textContent,
     )
     expect(bands).toEqual(['Claimed by an invoice', 'Not claimed yet'])
-    // The entries themselves, with what was done and what took them.
     expect(table.textContent).toContain('wrote the thing')
     expect(table.querySelector('a[href="/invoices/301"]')).not.toBeNull()
     expect(table.textContent).toContain('Not claimed')
@@ -2235,6 +2523,8 @@ describe('Reports Stage 1 browser controller', () => {
           client_id: 1, client_name: 'Parent', currency: 'USD',
           rounded_seconds: 3600, revenue_cents: 10_000, cost_cents: 4_000,
           profit_cents: 6_000,
+          return_on_cost_ppm: 1_500_000,
+          revenue_fee_cents: 0, fees_included_in_delivery_cost_cents: 0,
           entries_without_billable_rate: 0, entries_without_cost_rate: 0,
         },
         // Losing money: this is what the report is opened to find.
@@ -2243,6 +2533,8 @@ describe('Reports Stage 1 browser controller', () => {
           client_id: 1, client_name: 'Parent', currency: 'USD',
           rounded_seconds: 7200, revenue_cents: 5_000, cost_cents: 9_000,
           profit_cents: -4_000,
+          return_on_cost_ppm: -444_444,
+          revenue_fee_cents: 0, fees_included_in_delivery_cost_cents: 0,
           entries_without_billable_rate: 0, entries_without_cost_rate: 0,
         },
         // Bills in EUR: both sides real, margin unstateable.
@@ -2251,19 +2543,25 @@ describe('Reports Stage 1 browser controller', () => {
           client_id: 2, client_name: 'Studio', currency: 'EUR',
           rounded_seconds: 3600, revenue_cents: 20_000, cost_cents: 4_000,
           profit_cents: null,
+          return_on_cost_ppm: null,
+          revenue_fee_cents: 0, fees_included_in_delivery_cost_cents: 0,
           entries_without_billable_rate: 0, entries_without_cost_rate: 0,
         },
       ],
+      clients: [], teammates: [], tasks: [], trend: [],
+      filters: emptyProfitFilters,
       totals: {
         rounded_seconds: 14_400, revenue_cents: 15_000, cost_cents: 13_000,
-        profit_cents: 2_000, entries_without_billable_rate: 0,
+        profit_cents: 2_000, return_on_cost_ppm: 153_846, entries_without_billable_rate: 0,
+        revenue_fee_cents: 0, fees_included_in_delivery_cost_cents: 0,
         entries_without_cost_rate: 0, projects_not_converted: 1,
       },
       previous_from: '2026-07-01',
       previous_to: '2026-07-31',
       previous_totals: {
         rounded_seconds: 7200, revenue_cents: 10_000, cost_cents: 9_000,
-        profit_cents: 1_000, entries_without_billable_rate: 0,
+        profit_cents: 1_000, return_on_cost_ppm: 111_111, entries_without_billable_rate: 0,
+        revenue_fee_cents: 0, fees_included_in_delivery_cost_cents: 0,
         entries_without_cost_rate: 0, projects_not_converted: 0,
       },
     }))
@@ -2275,7 +2573,7 @@ describe('Reports Stage 1 browser controller', () => {
     )
 
     expect(getProfitabilityReport).toHaveBeenCalledWith(
-      { from: '2026-08-01', to: '2026-08-31' },
+      { from: '2026-08-01', to: '2026-08-31', project_status: 'all' },
       expect.anything(),
     )
     const rows = [...document.querySelectorAll('[data-report-results] tbody tr')]
@@ -2289,16 +2587,16 @@ describe('Reports Stage 1 browser controller', () => {
     ])
     // The EUR row shows both sides and no margin -- an em dash, not a number.
     const continental = [...rows[2]!.querySelectorAll('td')].map((cell) => cell.textContent)
-    expect(continental[2]).toBe('\u20ac200.00')
+    expect(continental[1]).toBe('\u20ac200.00')
     // Cost is the organization's currency on the same line, deliberately.
-    expect(continental[3]).toBe('$40.00')
+    expect(continental[2]).toBe('$40.00')
     expect(continental[4]).toBe('\u2014')
 
     // Profit 2,000 against 1,000 the window before is +100%.
     const deltas = [...document.querySelectorAll('.report-profit-delta')].map(
       (node) => node.textContent,
     )
-    expect(deltas).toEqual(['+50%', '+44.4%', '+100%'])
+    expect(deltas).toEqual(['+50%', '+44.4%', '—', '+100%'])
 
     const warnings = [...document.querySelectorAll('.report-warning')].map(
       (node) => node.textContent ?? '',
@@ -2310,12 +2608,118 @@ describe('Reports Stage 1 browser controller', () => {
     )
   })
 
+  it('[browser #711] discloses revenue fees beside the margin they reduce', async () => {
+    writeDocument('/reports?report=profitability&from=2026-08-01&to=2026-08-31')
+    const row = {
+      project_id: 7, project_name: 'Launch', project_code: 'WEB',
+      client_id: 1, client_name: 'Parent', currency: 'USD', rounded_seconds: 3_600,
+      revenue_cents: 10_000, cost_cents: 4_000, revenue_fee_cents: 1_000,
+      fees_included_in_delivery_cost_cents: 0, profit_cents: 5_000,
+      return_on_cost_ppm: 1_250_000, entries_without_billable_rate: 0,
+      entries_without_cost_rate: 0,
+    }
+    const getProfitabilityReport = vi.fn(async () => ({
+      from: '2026-08-01', to: '2026-08-31', organization_currency: 'USD',
+      rows: [row], clients: [], teammates: [], tasks: [], trend: [],
+      filters: emptyProfitFilters,
+      totals: {
+        ...emptyProfitTotals, rounded_seconds: 3_600, revenue_cents: 10_000,
+        cost_cents: 4_000, revenue_fee_cents: 1_000, profit_cents: 5_000,
+        return_on_cost_ppm: 1_250_000,
+      },
+      previous_from: '2026-07-01', previous_to: '2026-07-31',
+      previous_totals: emptyProfitTotals,
+    }))
+    await createReportsController(baseApi({ getProfitabilityReport })).activate(
+      identity('administrator'),
+      new AbortController().signal,
+      () => false,
+    )
+
+    const results = document.querySelector('[data-report-results]')!
+    expect([...results.querySelectorAll('.report-profit-label')].map((label) => label.textContent))
+      .toContain('Revenue fees')
+    expect(results.querySelector('.report-profit-summary')?.textContent).toContain('$10.00')
+    expect([...results.querySelectorAll('thead th')].map((header) => header.textContent))
+      .toContain('Revenue fees')
+    expect(results.querySelector('tbody')?.textContent).toContain('$10.00')
+  })
+
+  it('[browser #721] filters once, renders trend, and refolds profitability without refetching', async () => {
+    writeDocument('/reports?report=profitability&from=2026-08-01&to=2026-08-31&dimension=projects&project_status=active&billing_method=fixed_fee&manager_id=4&tag_id=9')
+    const fold = {
+      dimension_id: 1,
+      dimension_name: 'Parent',
+      currency: 'USD',
+      rounded_seconds: 3_600,
+      revenue_cents: 10_000,
+      cost_cents: 4_000,
+      profit_cents: 6_000,
+      return_on_cost_ppm: 1_500_000,
+      revenue_fee_cents: 0,
+      fees_included_in_delivery_cost_cents: 0,
+      entries_without_billable_rate: 0,
+      entries_without_cost_rate: 0,
+      included_in_headline: true,
+    } as const
+    const getProfitabilityReport = vi.fn(async () => ({
+      from: '2026-08-01',
+      to: '2026-08-31',
+      organization_currency: 'USD',
+      rows: [],
+      clients: [fold],
+      teammates: [],
+      tasks: [],
+      trend: [{
+        ...fold,
+        dimension_id: 202608,
+        dimension_name: '2026-08',
+        period_start: '2026-08-01',
+        period_end: '2026-08-31',
+        current: true,
+      }],
+      filters: {
+        project_status: 'active' as const,
+        billing_method: 'fixed_fee' as const,
+        manager_id: 4,
+        tag_id: 9,
+      },
+      totals: { ...emptyProfitTotals, revenue_cents: 10_000, cost_cents: 4_000, profit_cents: 6_000, return_on_cost_ppm: 1_500_000 },
+      previous_from: '2026-07-01',
+      previous_to: '2026-07-31',
+      previous_totals: emptyProfitTotals,
+    }))
+    await createReportsController(baseApi({ getProfitabilityReport })).activate(
+      identity('administrator'),
+      new AbortController().signal,
+      () => false,
+    )
+
+    expect(getProfitabilityReport).toHaveBeenCalledWith({
+      from: '2026-08-01',
+      to: '2026-08-31',
+      project_status: 'active',
+      billing_method: 'fixed_fee',
+      manager_id: 4,
+      tag_id: 9,
+    }, expect.anything())
+    expect(document.querySelector('.report-profit-trend')?.textContent).toContain('Current')
+    const clients = [...document.querySelectorAll<HTMLButtonElement>('.report-subtabs button')]
+      .find((button) => button.textContent === 'Clients')!
+    clients.click()
+    expect(getProfitabilityReport).toHaveBeenCalledTimes(1)
+    expect(globalThis.location.search).toContain('dimension=clients')
+    expect(document.querySelector('.report-table-wrap tbody th')?.textContent).toBe('Parent')
+  })
+
   it('[security] keeps profitability to the administrator, not the financial profiles', async () => {
     for (const profile of ['accounting', 'executive_manager'] as const) {
       writeDocument('/reports?report=profitability&from=2026-08-01&to=2026-08-31')
       const getProfitabilityReport = vi.fn(async () => ({
         from: '2026-08-01', to: '2026-08-31', organization_currency: 'USD',
         rows: [], totals: emptyProfitTotals,
+        clients: [], teammates: [], tasks: [], trend: [],
+        filters: emptyProfitFilters,
         previous_from: '2026-07-01', previous_to: '2026-07-31',
         previous_totals: emptyProfitTotals,
       }))
@@ -2343,13 +2747,22 @@ describe('Reports Stage 1 browser controller', () => {
   })
 
   it('[browser #519] lists expenses and keeps each currency to its own total', async () => {
-    writeDocument('/reports?report=detailed-expense&from=2026-08-01&to=2026-08-31')
+    writeDocument(
+      '/reports?report=detailed-expense&from=2026-08-01&to=2026-08-31' +
+      '&category_id=1&expense_user_id=1&expense_billable=yes' +
+      '&expense_reimbursable=no&expense_invoice_state=uninvoiced&expense_active_only=true',
+    )
     const getDetailedExpenseReport = vi.fn(async () => ({
       from: '2026-08-01',
       to: '2026-08-31',
       client_id: null,
       project_id: null,
-      billable_only: false,
+      category_id: null,
+      user_id: null,
+      billable: null,
+      reimbursable: null,
+      invoice_state: 'all' as const,
+      active_projects_only: false,
       totals: [
         { currency: 'USD', expense_count: 2, total_cost_cents: 3_500 },
         { currency: 'EUR', expense_count: 1, total_cost_cents: 9_000 },
@@ -2359,7 +2772,7 @@ describe('Reports Stage 1 browser controller', () => {
           expense_id: 201, spent_date: '2026-08-13', client_id: 1, client_name: 'Parent',
           project_id: 7, project_name: 'Launch', project_code: 'WEB',
           category_id: 1, category_name: 'Travel', user_id: 1, user_name: 'Ada Byron',
-          notes: null, units: null, billable: true, reimbursable: false,
+          notes: 'Taxi from airport', units: null, billable: true, reimbursable: false,
           invoice_id: null, currency: 'USD', total_cost_cents: 2_500,
         },
         {
@@ -2386,7 +2799,16 @@ describe('Reports Stage 1 browser controller', () => {
     )
 
     expect(getDetailedExpenseReport).toHaveBeenCalledWith(
-      { from: '2026-08-01', to: '2026-08-31' },
+      {
+        from: '2026-08-01',
+        to: '2026-08-31',
+        category_id: 1,
+        user_id: 1,
+        billable: true,
+        reimbursable: false,
+        invoice_state: 'uninvoiced',
+        active_projects_only: true,
+      },
       expect.anything(),
     )
     const rows = [...document.querySelectorAll('[data-report-results] tbody tr')]
@@ -2397,12 +2819,19 @@ describe('Reports Stage 1 browser controller', () => {
       '2026-08-09',
     ])
     // Each amount in the currency of its own expense, never relabelled.
-    const amounts = rows.map((row) => row.querySelectorAll('td')[4]?.textContent)
+    const amounts = rows.map((row) => row.querySelectorAll('td')[5]?.textContent)
     expect(amounts).toEqual(['$25.00', '$10.00', '\u20ac90.00'])
     // Non-billable and reimbursable are facts about the expense, not money, and
     // sit beside the category rather than in the amount column.
     expect(rows[1]!.querySelectorAll('td')[2]?.textContent).toContain('Non-billable')
     expect(rows[1]!.querySelectorAll('td')[2]?.textContent).toContain('Reimbursable')
+    expect(rows[0]!.querySelectorAll('td')[4]?.textContent).toBe('Taxi from airport')
+    expect(document.querySelector('.report-filter-recap')?.textContent).toContain(
+      'Category #1 · Teammate #1 · Billable · Not reimbursable · Uninvoiced · Active projects only',
+    )
+    expect(rows[0]!.querySelector('th a')?.getAttribute('href')).toBe('/expenses/201')
+    expect(document.querySelector('[data-expense-export]')).not.toBeNull()
+    expect(document.querySelector('[data-expense-print]')).not.toBeNull()
 
     // Two currencies, two totals, never one figure over both.
     const summary = document.querySelector('.report-expense-totals')?.textContent ?? ''
@@ -2452,6 +2881,126 @@ describe('Reports Stage 1 browser controller', () => {
     const note = results.querySelector('.report-card-note')?.textContent ?? ''
     expect(note).toContain('not yet invoiced')
     expect(note).toContain('active projects')
+    session.abort()
+  })
+
+  it('[browser #713] groups uninvoiced project rows by client and carries the selection into invoice generation', async () => {
+    writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
+    const getUninvoicedReport = vi.fn(async () => ({
+      from: '2026-08-01', to: '2026-08-31', client_id: null, project_id: null,
+      totals: [{
+        currency: 'USD', rounded_seconds: 7_200, time_entry_count: 2,
+        unpriced_time_entry_count: 0, expense_count: 1,
+        time_cents: 20_000, expense_cents: 5_000, total_cents: 25_000,
+      }],
+      projects: [
+        {
+          client_id: 1, client_name: 'Parent', project_id: 7,
+          project_name: 'Launch', project_code: 'WEB',
+          totals: [{
+            currency: 'USD', rounded_seconds: 3_600, time_entry_count: 1,
+            unpriced_time_entry_count: 0, expense_count: 1,
+            time_cents: 10_000, expense_cents: 5_000, total_cents: 15_000,
+          }],
+        },
+        {
+          client_id: 2, client_name: 'Studio', project_id: 9,
+          project_name: 'Identity', project_code: '',
+          totals: [{
+            currency: 'USD', rounded_seconds: 3_600, time_entry_count: 1,
+            unpriced_time_entry_count: 0, expense_count: 0,
+            time_cents: 10_000, expense_cents: 0, total_cents: 10_000,
+          }],
+        },
+      ],
+    }))
+    const session = new AbortController()
+    await createReportsController(baseApi({ getUninvoicedReport })).activate(
+      identity('administrator'), session.signal, () => false,
+    )
+
+    const clients = [...document.querySelectorAll<HTMLElement>('.report-uninvoiced-client')]
+    expect(clients.map((client) => client.querySelector('h3')?.textContent)).toEqual([
+      'Parent', 'Studio',
+    ])
+    expect(clients[0]!.querySelector('tbody')?.textContent).toContain('Launch (WEB)')
+    expect(clients[0]!.querySelector('tbody')?.textContent).toContain('$150.00')
+    expect(clients[1]!.querySelector('tbody')?.textContent).toContain('Identity')
+    expect(clients[1]!.querySelector('tbody')?.textContent).toContain('$100.00')
+    expect(clients[0]!.querySelector<HTMLAnchorElement>('.report-row-action')?.getAttribute('href'))
+      .toBe('/invoices/new?client_id=1&project_id=7&from=2026-08-01&to=2026-08-31')
+    session.abort()
+  })
+
+  it('[security #713] does not offer invoice generation without invoice write authority', async () => {
+    writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
+    const apiTokenIdentity: Whoami = {
+      user_id: 1,
+      profile: 'accounting',
+      manager_grants: [],
+      authentication: { kind: 'token', token_id: 4, scopes: ['reports:read'] },
+    }
+    const getUninvoicedReport = vi.fn(async () => ({
+      from: '2026-08-01', to: '2026-08-31', client_id: null, project_id: null,
+      totals: [{
+        currency: 'USD', rounded_seconds: 3_600, time_entry_count: 1,
+        unpriced_time_entry_count: 0, expense_count: 0,
+        time_cents: 10_000, expense_cents: 0, total_cents: 10_000,
+      }],
+      projects: [{
+        client_id: 1, client_name: 'Parent', project_id: 7,
+        project_name: 'Launch', project_code: 'WEB',
+        totals: [{
+          currency: 'USD', rounded_seconds: 3_600, time_entry_count: 1,
+          unpriced_time_entry_count: 0, expense_count: 0,
+          time_cents: 10_000, expense_cents: 0, total_cents: 10_000,
+        }],
+      }],
+    }))
+    const session = new AbortController()
+    await createReportsController(baseApi({ getUninvoicedReport })).activate(
+      apiTokenIdentity, session.signal, () => false,
+    )
+
+    expect(document.querySelector('.report-row-action')).toBeNull()
+    session.abort()
+  })
+
+  it('[browser #715 #716] searches the saved library and builds from the server registry', async () => {
+    writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
+    const listSavedReports = vi.fn(async () => [{
+      id: 'client-hours', name: 'Client hours', version: 2,
+      fields: [{ id: 'client_name', label: 'Client', visible: true }],
+      metrics: ['hours'], filters: [{ field: 'spent_date', operator: 'between', value: [] }],
+      group_by: { dimension: 'client' },
+      presentation: { result: 'summary' as const, grouped: true, include_zero_values: false },
+      owner: { user_id: 1, name: 'Ada Byron' }, is_custom: true, pinned: true, shared: false,
+      created_at: timestamp, updated_at: timestamp,
+    }])
+    const getReportDefinitionRegistry = vi.fn(async () => ({
+      fields: [{ id: 'client_name', label: 'Client', filterable: false, groupable: true }],
+      metrics: [{ id: 'hours', label: 'Hours', unit: 'seconds', description: 'Tracked time' }],
+    }))
+    const runSavedReport = vi.fn(async () => ({
+      definitionId: 'client-hours', definitionVersion: 2, state: 'ready' as const,
+      rows: [{ label: 'Parent', metrics: { hours: { value: 3600 } }, drillThrough: '/reports?report=detailed-time' }],
+    }))
+    const session = new AbortController()
+    await createReportsController(baseApi({
+      listSavedReports, getReportDefinitionRegistry, runSavedReport,
+    })).activate(identity('administrator'), session.signal, () => false)
+
+    document.querySelector<HTMLButtonElement>('[data-saved-reports-open]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[data-saved-list]')?.textContent).toContain('Client hours'))
+    expect(document.querySelector('[data-saved-list]')?.textContent).toContain('Ada Byron · Updated 2026-09-01 · 1 filters · summary · Grouped')
+    document.querySelector<HTMLButtonElement>('[data-saved-list] article button')!.click()
+    await vi.waitFor(() => expect(runSavedReport).toHaveBeenCalledWith('client-hours', expect.anything()))
+    expect(document.querySelector('[data-report-results] a')?.getAttribute('href')).toBe('/reports?report=detailed-time')
+
+    document.querySelector<HTMLButtonElement>('[data-report-builder-open]')!.click()
+    await vi.waitFor(() => expect(getReportDefinitionRegistry).toHaveBeenCalled())
+    expect(document.querySelector<HTMLSelectElement>('[data-builder-fields]')?.options[0]?.textContent).toBe('Client')
+    expect(document.querySelector<HTMLSelectElement>('[data-builder-metrics]')?.options[0]?.textContent).toBe('Hours')
     session.abort()
   })
 })

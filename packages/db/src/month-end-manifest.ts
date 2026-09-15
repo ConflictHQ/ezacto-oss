@@ -25,6 +25,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
 import type { RunItemInput } from './scheduled-actions.js'
+import { resolveReportBrand } from './report-brands.js'
 
 type Database =
   | BetterSQLite3Database<typeof schema>
@@ -44,7 +45,7 @@ export interface MonthEndExclusion {
 export interface MonthEndManifest {
   readonly periodStart: string
   readonly periodEnd: string
-  readonly items: readonly RunItemInput[]
+  readonly items: readonly MonthEndItem[]
   /**
    * What was left out and why.
    *
@@ -53,6 +54,12 @@ export interface MonthEndManifest {
    * what to do about it -- and next month is when they can fix it.
    */
   readonly excluded: readonly MonthEndExclusion[]
+}
+
+export interface MonthEndItem extends RunItemInput {
+  readonly brandName: string | null
+  readonly costCents: number | null
+  readonly marginCents: number | null
 }
 
 interface CandidateRow {
@@ -105,7 +112,7 @@ export const monthEndManifest = async (
       }
     ORDER BY invoice.id`)
 
-  const items: RunItemInput[] = []
+  const items: MonthEndItem[] = []
   const excluded: MonthEndExclusion[] = []
   for (const row of rows) {
     // Sent, and not yet settled. A draft is unfinished; a paid or closed
@@ -126,6 +133,28 @@ export const monthEndManifest = async (
       })
       continue
     }
+    const brand = await resolveReportBrand(database, row.client_id)
+    const cost = (await database.all<{
+      entryCount: number
+      missingRates: number
+      costCents: number
+      organizationCurrency: string
+    }>(sql`
+      SELECT count(entry.id) AS "entryCount",
+        coalesce(sum(CASE WHEN entry.cost_rate_cents IS NULL THEN 1 ELSE 0 END), 0) AS "missingRates",
+        coalesce(sum(CASE WHEN entry.cost_rate_cents IS NULL THEN 0
+          ELSE CAST((entry.rounded_seconds * entry.cost_rate_cents + 1800) / 3600 AS INTEGER) END), 0)
+          AS "costCents",
+        upper(organization.currency) AS "organizationCurrency"
+      FROM organizations organization
+      LEFT JOIN time_entries entry ON entry.spent_date BETWEEN ${input.periodStart} AND ${input.periodEnd}
+        AND entry.project_id IN (SELECT project.id FROM projects project
+          WHERE project.client_id IN (SELECT descendant_id FROM client_hierarchy
+            WHERE ancestor_id = ${row.client_id}))
+      WHERE organization.id = 1`))[0]
+    const costCents = cost === undefined || cost.entryCount === 0 || cost.missingRates > 0
+      ? null
+      : cost.costCents
     items.push({
       subjectType: 'invoice',
       subjectId: row.id,
@@ -133,6 +162,12 @@ export const monthEndManifest = async (
       amountCents: row.amount_cents,
       currency: row.currency,
       target: row.recipient,
+      brandName: brand?.name ?? null,
+      costCents,
+      marginCents:
+        costCents === null || cost?.organizationCurrency !== row.currency
+          ? null
+          : row.amount_cents - costCents,
     })
   }
 

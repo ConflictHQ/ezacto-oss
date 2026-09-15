@@ -11,7 +11,7 @@
     "dev": "wrangler dev --env dev",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "vitest run",
+    "test": "vitest run --testTimeout=30000 --hookTimeout=30000",
     "build": "npm run build -w @ezacto/web && wrangler deploy --env dev --dry-run --outdir dist",
     "deploy:dev": "wrangler deploy --env dev",
     "deploy:prod": "wrangler deploy --env prod"

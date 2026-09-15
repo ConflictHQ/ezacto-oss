@@ -102,6 +102,30 @@ describe('period arithmetic', () => {
     expect(periodRange('month', '2026-01-01')).toEqual(range('2026-01-01', '2026-01-31'))
   })
 
+  it('[unit #722] cuts and steps semimonths at the 15th without losing short Februarys', () => {
+    expect(periodRange('semimonth', '2026-02-01')).toEqual(range('2026-02-01', '2026-02-15'))
+    expect(periodRange('semimonth', '2026-02-16')).toEqual(range('2026-02-16', '2026-02-28'))
+    expect(periodRange('semimonth', '2028-02-29')).toEqual(range('2028-02-16', '2028-02-29'))
+    expect(stepPeriod('semimonth', range('2026-02-01', '2026-02-15'), -1)).toEqual(
+      range('2026-01-16', '2026-01-31'),
+    )
+    expect(stepPeriod('semimonth', range('2026-02-01', '2026-02-15'), 1)).toEqual(
+      range('2026-02-16', '2026-02-28'),
+    )
+    expect(stepPeriod('semimonth', range('2028-02-16', '2028-02-29'), 1)).toEqual(
+      range('2028-03-01', '2028-03-15'),
+    )
+  })
+
+  it('[unit #722] represents all time as an unbounded logical start through today', () => {
+    const all = periodRange('all', '2026-09-10')
+    expect(all).toEqual(range('0001-01-01', '2026-09-10'))
+    expect(detectPeriodKind(all, 'monday', '2026-09-10')).toBe('all')
+    expect(stepPeriod('all', all, -1)).toEqual(all)
+    expect(stepPeriod('all', all, 1)).toEqual(all)
+    expect(periodLabel('all', all, '2026-09-10')).toBe('All time')
+  })
+
   it('[unit] cuts quarters and years on their real boundaries', () => {
     expect(periodRange('quarter', '2026-01-01')).toEqual(range('2026-01-01', '2026-03-31'))
     expect(periodRange('quarter', '2026-03-31')).toEqual(range('2026-01-01', '2026-03-31'))
@@ -171,6 +195,8 @@ describe('period arithmetic', () => {
     expect(detectPeriodKind(range('2025-04-13', '2025-04-19'), 'sunday')).toBe('week')
     expect(detectPeriodKind(range('2025-04-12', '2025-04-18'), 'saturday')).toBe('week')
     expect(detectPeriodKind(range('2026-02-01', '2026-02-28'))).toBe('month')
+    expect(detectPeriodKind(range('2026-02-01', '2026-02-15'))).toBe('semimonth')
+    expect(detectPeriodKind(range('2026-02-16', '2026-02-28'))).toBe('semimonth')
     expect(detectPeriodKind(range('2026-01-01', '2026-03-31'))).toBe('quarter')
     expect(detectPeriodKind(range('2026-01-01', '2026-12-31'))).toBe('year')
     // Month-to-date, which is what the reports screen opens on.
@@ -340,6 +366,28 @@ describe('period control', () => {
     expect(ui.onChange).toHaveBeenLastCalledWith(range('2026-07-01', '2026-09-30'), 'quarter')
   })
 
+  it('[browser #722] offers semimonth and all time, and all time has no arrows', () => {
+    const ui = mount({ today: '2026-09-10' })
+    ui.kindSelect.value = 'semimonth'
+    ui.kindSelect.dispatchEvent(new Event('change'))
+    expect(ui.control.range()).toEqual(range('2026-09-01', '2026-09-15'))
+    expect(ui.summary.textContent).toBe('This half-month: 1 – 15 Sep 2026')
+    ui.next.click()
+    expect(ui.control.range()).toEqual(range('2026-09-16', '2026-09-30'))
+
+    ui.kindSelect.value = 'all'
+    ui.kindSelect.dispatchEvent(new Event('change'))
+    expect(ui.control.range()).toEqual(range('0001-01-01', '2026-09-10'))
+    expect(ui.summary.textContent).toBe('All time')
+    expect(ui.previous.hidden).toBe(true)
+    expect(ui.next.hidden).toBe(true)
+    expect(ui.custom.hidden).toBe(true)
+    expect(ui.onChange).toHaveBeenLastCalledWith(
+      range('0001-01-01', '2026-09-10'),
+      'all',
+    )
+  })
+
   it('[browser] opens the dates for a custom range without moving or reloading it', () => {
     const ui = mount({ today: '2026-09-10' })
     ui.control.setRange(range('2026-09-01', '2026-09-30'))
@@ -353,7 +401,7 @@ describe('period control', () => {
     // Typing re-labels; asking the server is the screen's own decision.
     ui.to.value = '2026-09-15'
     ui.to.dispatchEvent(new Event('change'))
-    expect(ui.summary.textContent).toBe('1 – 15 Sep 2026')
+    expect(ui.summary.textContent).toBe('This half-month: 1 – 15 Sep 2026')
     expect(ui.onChange).not.toHaveBeenCalled()
     expect(ui.control.range()).toEqual(range('2026-09-01', '2026-09-15'))
   })

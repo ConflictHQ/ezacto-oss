@@ -422,7 +422,6 @@ describe('the cycle a banded period runs on', () => {
     expect(rows[0]!.foregoneCents).toBe(500_000)
   })
 })
-
 /**
  * Issue 710. Under a fixed amount the question that decides whether a band is
  * priced right is what it cost to deliver against what was charged. A band

@@ -112,6 +112,11 @@ export const organizations = sqliteTable(
       .notNull()
       .default(false),
     timeEntryNotesMinimumLength: integer('time_entry_notes_minimum_length').notNull().default(1),
+    reportNotesClientVisibleDefault: integer('report_notes_client_visible_default', {
+      mode: 'boolean',
+    })
+      .notNull()
+      .default(true),
     timeRounding: text('time_rounding', {
       enum: ['none', 'nearest_6', 'nearest_15', 'nearest_30', 'up_6', 'up_15', 'up_30'],
     })
@@ -695,6 +700,66 @@ export const userCostRates = sqliteTable('user_cost_rates', rateColumns(), (tabl
   check('user_cost_rates_amount_nonnegative', sql`${table.amountCents} >= 0`),
 ])
 
+/** Client-facing document identity; intentionally separate from deployment brand_assets. */
+export const reportBrands = sqliteTable('report_brands', {
+  id: integer('id').primaryKey(),
+  name: text('name').notNull(),
+  logoUrl: text('logo_url'),
+  primaryColor: text('primary_color'),
+  accentColor: text('accent_color'),
+  ...timestamps,
+})
+
+export const savedReports = sqliteTable(
+  'saved_reports',
+  {
+    id: text('id').primaryKey(),
+    ownerUserId: integer('owner_user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    definitionJson: text('definition_json').notNull(),
+    version: integer('version').notNull(),
+    isCustom: integer('is_custom', { mode: 'boolean' }).notNull().default(true),
+    presentationJson: text('presentation_json').notNull(),
+    ...timestamps,
+  },
+  (table) => [index('saved_reports_owner_updated').on(table.ownerUserId, table.updatedAt)],
+)
+
+export const savedReportShares = sqliteTable(
+  'saved_report_shares',
+  {
+    reportId: text('report_id').notNull().references(() => savedReports.id, { onDelete: 'cascade' }),
+    userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.reportId, table.userId] }),
+    index('saved_report_shares_user').on(table.userId, table.reportId),
+  ],
+)
+
+export const savedReportPins = sqliteTable(
+  'saved_report_pins',
+  {
+    reportId: text('report_id').notNull().references(() => savedReports.id, { onDelete: 'cascade' }),
+    userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.reportId, table.userId] })],
+)
+
+export const reportTimeCommands = sqliteTable(
+  'report_time_commands',
+  {
+    commandId: text('command_id').primaryKey(),
+    actorUserId: integer('actor_user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+    fingerprint: text('fingerprint').notNull(),
+    action: text('action', { enum: ['mark_invoiced', 'mark_uninvoiced', 'move'] }).notNull(),
+    resultJson: text('result_json').notNull(),
+    completedAt: text('completed_at').notNull(),
+  },
+  (table) => [index('report_time_commands_actor_completed').on(table.actorUserId, table.completedAt)],
+)
+
 export const clients = sqliteTable(
   'clients',
   {
@@ -722,6 +787,9 @@ export const clients = sqliteTable(
     defaultTax2Pct: real('default_tax2_pct'),
     defaultDiscountPct: real('default_discount_pct'),
     budgetCents: integer('budget_cents'),
+    reportBrandId: integer('report_brand_id').references(() => reportBrands.id, {
+      onDelete: 'restrict',
+    }),
     ...timestamps,
   },
   (table) => [
@@ -2958,6 +3026,59 @@ export const invoicePayments = sqliteTable(
   ],
 )
 
+export const revenueFees = sqliteTable(
+  'revenue_fees',
+  {
+    id: integer('id').primaryKey(),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'restrict' }),
+    invoiceId: integer('invoice_id').references(() => invoices.id, { onDelete: 'restrict' }),
+    paymentId: integer('payment_id').references(() => invoicePayments.id, {
+      onDelete: 'restrict',
+    }),
+    name: text('name').notNull(),
+    basis: text('basis', { enum: ['invoiced_amount', 'collected_amount'] }).notNull(),
+    basisCents: integer('basis_cents').notNull(),
+    ratePpm: integer('rate_ppm').notNull(),
+    feeCents: integer('fee_cents').notNull(),
+    recognizedOn: text('recognized_on').notNull(),
+    treatment: text('treatment', { enum: ['margin_only', 'delivery_cost'] })
+      .notNull()
+      .default('margin_only'),
+    currency: text('currency').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    index('revenue_fees_project_recognized').on(table.projectId, table.recognizedOn),
+    uniqueIndex('revenue_fees_invoice_agreement_unique')
+      .on(table.invoiceId, table.name)
+      .where(sql`${table.invoiceId} is not null`),
+    uniqueIndex('revenue_fees_payment_agreement_unique')
+      .on(table.paymentId, table.name)
+      .where(sql`${table.paymentId} is not null`),
+    check('revenue_fees_name_nonblank', nonBlankText(table.name)),
+    check('revenue_fees_basis_cents_bound', sql`${table.basisCents} between 0 and 9000000000000`),
+    check('revenue_fees_rate_bound', sql`${table.ratePpm} between 0 and 1000000`),
+    check('revenue_fees_fee_cents_bound', sql`${table.feeCents} between 0 and 9000000000000`),
+    check('revenue_fees_recognized_date', sql`date(${table.recognizedOn}, '+0 days') is ${table.recognizedOn}`),
+    check(
+      'revenue_fees_source_shape',
+      sql`(${table.basis} = 'invoiced_amount' and ${table.invoiceId} is not null and ${table.paymentId} is null)
+        or (${table.basis} = 'collected_amount' and ${table.paymentId} is not null and ${table.invoiceId} is null)`,
+    ),
+    check(
+      'revenue_fees_amount_matches_rate',
+      sql`${table.feeCents} = cast((${table.basisCents} * ${table.ratePpm} + 500000) / 1000000 as integer)`,
+    ),
+    check(
+      'revenue_fees_currency',
+      sql`length(${table.currency}) = 3 and ${table.currency} = upper(${table.currency})
+        and ${table.currency} not glob '*[^A-Z]*'`,
+    ),
+  ],
+)
+
 export const invoiceFinancialCalculation = sqliteView('invoice_financial_calculation', {
   invoiceId: integer('invoice_id').notNull(),
   discountAmountCents: integer('discount_amount_cents').notNull(),
@@ -3404,6 +3525,7 @@ export const timeEntries = sqliteTable(
     startedTime: text('started_time'),
     endedTime: text('ended_time'),
     notes: text('notes'),
+    clientVisible: integer('client_visible', { mode: 'boolean' }),
     billable: integer('billable', { mode: 'boolean' }).notNull(),
     budgeted: integer('budgeted', { mode: 'boolean' }).notNull().default(false),
     billableRateCents: integer('billable_rate_cents'),

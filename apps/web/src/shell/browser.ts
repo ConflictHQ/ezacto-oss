@@ -957,6 +957,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const authenticatedShell = required<HTMLElement>('[data-authenticated-shell]')
   const invoiceGenerationPage =
     document.documentElement.dataset.appView === 'invoice-generation'
+  // The week grid also mounts behind the invoice wizard and normalizes its own
+  // `week` parameter while catalogs load. Keep the report handoff before that
+  // concurrent navigation can replace the address we arrived on.
+  const invoiceGenerationPrefill = new URL(globalThis.location.href).searchParams
   const invoiceListPage = document.documentElement.dataset.appView === 'invoice-list'
   const invoiceDetailPage = document.documentElement.dataset.appView === 'invoice-detail'
   const invoiceRecurringPage =
@@ -2845,7 +2849,36 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       // draft invoice generated from the default.
       const today = localDate()
       invoicePeriod.setRange({ from: `${today.slice(0, 8)}01`, to: today })
+      const prefill = invoiceGenerationPrefill
+      const prefilledClientId = Number(prefill.get('client_id'))
+      if (
+        Number.isSafeInteger(prefilledClientId) &&
+        prefilledClientId > 0 &&
+        clients.some((client) => client.id === prefilledClientId)
+      ) {
+        invoiceClient.value = String(prefilledClientId)
+      }
+      const prefilledFrom = prefill.get('from') ?? ''
+      const prefilledTo = prefill.get('to') ?? ''
+      if (
+        isCalendarDay(prefilledFrom) &&
+        isCalendarDay(prefilledTo) &&
+        prefilledFrom <= prefilledTo
+      ) {
+        invoicePeriod.setRange({ from: prefilledFrom, to: prefilledTo })
+      }
       renderInvoiceProjects()
+      const prefilledProjectId = Number(prefill.get('project_id'))
+      if (Number.isSafeInteger(prefilledProjectId) && prefilledProjectId > 0) {
+        const projectInputs = [
+          ...invoiceProjects.querySelectorAll<HTMLInputElement>('input[name="project"]'),
+        ]
+        if (projectInputs.some((input) => Number(input.value) === prefilledProjectId)) {
+          for (const input of projectInputs) {
+            input.checked = Number(input.value) === prefilledProjectId
+          }
+        }
+      }
       if (clients.length === 0) {
         invoiceResult.textContent = 'Create an active client before generating an invoice.'
         setInvoiceFormPending(false)

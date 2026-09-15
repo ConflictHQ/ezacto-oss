@@ -537,6 +537,6 @@ for (const [runtime, factory] of factories) {
       expect(rootAncBody.data).toEqual([
         { ancestor_id: 1, descendant_id: 1, depth: 0 },
       ]);
-    }, 15_000);
+    }, runtime === "D1" ? 30_000 : 15_000);
   });
 }

@@ -43,6 +43,31 @@ const tokenService: ApiTokenService = {
 }
 
 const reports: ReportReader = {
+  reportDefinitionRegistry: () => ({ fields: [], metrics: [] }),
+  listSavedReports: async () => [],
+  readSavedReport: async () => null,
+  createSavedReport: async () => { throw new Error('not used') },
+  updateSavedReport: async () => 'not_found',
+  shareSavedReport: async () => false,
+  pinSavedReport: async () => false,
+  deleteSavedReport: async () => false,
+  runSavedReport: async () => null,
+  previewReport: async (definition) => ({ definitionId: definition.id, definitionVersion: definition.version, state: 'empty', rows: [] }),
+  executeTimeAction: async (input) => ({
+    commandId: input.commandId, action: input.action, requested: input.entryIds.length,
+    changedEntryIds: [], ineligibleEntryIds: input.entryIds, replayed: false,
+  }),
+  invoiced: async (filter) => ({
+    from: filter.from, to: filter.to, clientId: filter.clientId ?? null,
+    state: filter.state ?? null, totals: [], rows: [],
+  }),
+  paymentsReceived: async (filter) => ({
+    from: filter.from, to: filter.to, clientId: filter.clientId ?? null,
+    totals: [], rows: [],
+  }),
+  receivables: async (filter) => ({
+    asOf: filter.asOf, clientId: filter.clientId ?? null, totals: [], rows: [],
+  }),
   // Not exercised here; present because ReportReader requires it.
   detailedTime: async (filter) => ({
     kind: "report" as const,
@@ -51,6 +76,11 @@ const reports: ReportReader = {
       to: filter.to,
       clientId: filter.clientId ?? null,
       projectId: filter.projectId ?? null,
+      taskId: filter.taskId ?? null,
+      userId: filter.userId ?? null,
+      roleId: filter.roleId ?? null,
+      tagId: filter.tagId ?? null,
+      invoiceState: filter.invoiceState ?? 'all',
       hours: filter.hours ?? "all",
       grain: filter.grain ?? 'day',
       activeProjectsOnly: filter.activeProjectsOnly ?? false,
@@ -73,7 +103,12 @@ const reports: ReportReader = {
     to: filter.to,
     clientId: filter.clientId ?? null,
     projectId: filter.projectId ?? null,
-    billableOnly: filter.billableOnly === true,
+    categoryId: filter.categoryId ?? null,
+    userId: filter.userId ?? null,
+    billable: filter.billable ?? null,
+    reimbursable: filter.reimbursable ?? null,
+    invoiceState: filter.invoiceState ?? 'all',
+    activeProjectsOnly: filter.activeProjectsOnly ?? false,
     rows: [],
     totals: [],
   }),
@@ -87,11 +122,16 @@ const reports: ReportReader = {
     to: range.to,
     organizationCurrency: 'USD',
     rows: [],
+    clients: [], teammates: [], tasks: [], trend: [],
+    filters: { projectStatus: 'all', billingMethod: null, managerId: null, tagId: null },
     totals: {
       roundedSeconds: 0,
       revenueCents: 0,
       costCents: 0,
       profitCents: 0,
+      returnOnCostPpm: null,
+      revenueFeeCents: 0,
+      feesIncludedInDeliveryCostCents: 0,
       entriesWithoutBillableRate: 0,
       entriesWithoutCostRate: 0,
       projectsNotConverted: 0,
@@ -103,6 +143,9 @@ const reports: ReportReader = {
       revenueCents: 0,
       costCents: 0,
       profitCents: 0,
+      returnOnCostPpm: null,
+      revenueFeeCents: 0,
+      feesIncludedInDeliveryCostCents: 0,
       entriesWithoutBillableRate: 0,
       entriesWithoutCostRate: 0,
       projectsNotConverted: 0,
@@ -112,6 +155,7 @@ const reports: ReportReader = {
   timeReport: async (range) => ({
     from: range.from,
     to: range.to,
+    fixedFeeIncluded: range.includeFixedFee === true,
     totals: {
       seconds: 0,
       roundedSeconds: 0,

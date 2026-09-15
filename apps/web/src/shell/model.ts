@@ -1306,6 +1306,27 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  getInvoicedReport: async (filter, signal) =>
+    (
+      await client.getInvoicedReport({
+        query: filter,
+        ...withSignal(signal),
+      })
+    ).data,
+  getPaymentsReceivedReport: async (filter, signal) =>
+    (
+      await client.getPaymentsReceivedReport({
+        query: filter,
+        ...withSignal(signal),
+      })
+    ).data,
+  getReceivablesReport: async (filter, signal) =>
+    (
+      await client.getReceivablesReport({
+        query: filter,
+        ...withSignal(signal),
+      })
+    ).data,
   getUninvoicedReport: async (filter, signal) =>
     (
       await client.getUninvoicedReport({
@@ -1334,6 +1355,34 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  getReportDefinitionRegistry: async (signal) =>
+    (await client.getReportDefinitionRegistry(withSignal(signal))).data,
+  listSavedReports: async (filter, signal) =>
+    (await client.listSavedReports({ query: filter, ...withSignal(signal) })).data,
+  createSavedReport: async (input, signal) =>
+    (await client.createSavedReport({ body: input, ...withSignal(signal) })).data,
+  previewReportDefinition: async (input, signal) =>
+    (await client.previewReportDefinition({ body: input, ...withSignal(signal) })).data,
+  runSavedReport: async (reportId, signal) =>
+    (await client.runSavedReport({ reportId, ...withSignal(signal) })).data,
+  pinSavedReport: async (reportId, signal) => {
+    await client.pinSavedReport({ reportId, ...withSignal(signal) })
+  },
+  unpinSavedReport: async (reportId, signal) => {
+    await client.unpinSavedReport({ reportId, ...withSignal(signal) })
+  },
+  duplicateSavedReport: async (reportId, signal) =>
+    (await client.duplicateSavedReport({ reportId, ...withSignal(signal) })).data,
+  updateSavedReport: async (reportId, input, signal) =>
+    (await client.updateSavedReport({ reportId, body: input, ...withSignal(signal) })).data,
+  deleteSavedReport: async (reportId, signal) => {
+    await client.deleteSavedReport({ reportId, ...withSignal(signal) })
+  },
+  shareSavedReport: async (reportId, userId, signal) => {
+    await client.shareSavedReport({ reportId, userId, ...withSignal(signal) })
+  },
+  executeDetailedTimeAction: async (input, signal) =>
+    (await client.executeDetailedTimeAction({ body: input, ...withSignal(signal) })).data,
   getClientRollupReport: async (clientId, filter, signal) =>
     (
       await client.getClientRollupReport({

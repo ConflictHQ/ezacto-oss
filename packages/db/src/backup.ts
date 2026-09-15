@@ -5,10 +5,15 @@
  */
 
 const SCHEMA_VERSION = 1
-const BUNDLE_VERSION = '0031'
+const BUNDLE_VERSION = '0035'
 
 const BACKUP_TABLES = [
   'organizations',
+  'report_brands',
+  'saved_reports',
+  'saved_report_shares',
+  'saved_report_pins',
+  'report_time_commands',
   'users',
   'user_emails',
   'user_roles',
@@ -35,6 +40,7 @@ const BACKUP_TABLES = [
   'invoice_item_categories',
   'invoice_messages',
   'invoice_payments',
+  'revenue_fees',
   'invoice_number_sequence',
   'invoice_command_ledger',
   'estimates',

@@ -115,6 +115,29 @@ export interface ReportField {
   readonly visible: boolean
 }
 
+export interface ReportFieldDefinition {
+  readonly id: string
+  readonly label: string
+  readonly filterable: boolean
+  readonly groupable: boolean
+}
+
+const fieldDefinitions: readonly ReportFieldDefinition[] = [
+  { id: 'client_id', label: 'Client ID', filterable: true, groupable: false },
+  { id: 'client_name', label: 'Client', filterable: false, groupable: true },
+  { id: 'project_id', label: 'Project ID', filterable: true, groupable: false },
+  { id: 'project_name', label: 'Project', filterable: false, groupable: true },
+  { id: 'task_id', label: 'Task ID', filterable: true, groupable: false },
+  { id: 'task_name', label: 'Task', filterable: false, groupable: true },
+  { id: 'user_id', label: 'Teammate ID', filterable: true, groupable: false },
+  { id: 'user_name', label: 'Teammate', filterable: false, groupable: true },
+  { id: 'spent_date', label: 'Date', filterable: true, groupable: true },
+  { id: 'billable', label: 'Billable', filterable: true, groupable: false },
+] as const
+
+const fieldById = new Map(fieldDefinitions.map((field) => [field.id, field]))
+export const listReportFields = (): readonly ReportFieldDefinition[] => [...fieldDefinitions]
+
 export type FilterOperator = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'between'
 
 export interface ReportFilter {
@@ -191,12 +214,16 @@ const validateField = (field: ReportField, index: number): void => {
   if (typeof field.visible !== 'boolean') {
     throw new TypeError(`fields[${index}].visible must be a boolean`)
   }
+  if (!fieldById.has(field.id)) throw new RangeError(`fields[${index}].id is not registered`)
 }
 
 const validateFilter = (filter: ReportFilter, index: number): void => {
   assertNonBlank(filter.field, `filters[${index}].field`)
   if (!validOperators.includes(filter.operator)) {
     throw new RangeError(`filters[${index}].operator is not a recognized operator`)
+  }
+  if (fieldById.get(filter.field)?.filterable !== true) {
+    throw new RangeError(`filters[${index}].field is not filterable`)
   }
 }
 

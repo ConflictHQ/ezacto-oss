@@ -1,4 +1,8 @@
-import { canViewMoneyField } from '@ezacto/core'
+import {
+  REPORT_CAPABILITIES,
+  canViewMoneyField,
+  type ReportCapabilityId,
+} from '@ezacto/core'
 import type {
   ActivityLog,
   ClientRollupReport,
@@ -7,26 +11,26 @@ import type {
   DetailedTimeReport,
   DetailedTimeRow,
   GeneralResource,
+  InvoicedReport,
   MyHoursReport,
+  PaymentsReceivedReport,
   ProfitabilityReport,
   ProjectBudgetReport,
+  ReceivablesReport,
+  ReportDefinitionRegistry,
+  ReportRunnerResult,
+  ReportTimeAction,
+  ReportTimeActionInput,
+  SavedReport,
+  SavedReportInput,
+  SavedReportUpdate,
   TimeReport,
   UninvoicedReport,
   Whoami,
 } from '@conflict-hq/ezacto-client'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 
-export type ReportKind =
-  | 'my-hours'
-  | 'time'
-  | 'uninvoiced'
-  | 'client-rollup'
-  | 'project-budget'
-  | 'contractor-cost'
-  | 'detailed-time'
-  | 'activity-log'
-  | 'profitability'
-  | 'detailed-expense'
+export type ReportKind = ReportCapabilityId
 
 /**
  * The Time report's four sub-tabs. They are folds of one response, so the tab
@@ -48,10 +52,11 @@ export type DetailedTimeGrouping =
   | 'project'
   | 'task'
   | 'person'
+  | 'role'
   | 'claimed'
 
 /**
- * The three controls that sit above the detailed table rather than in the
+ * The controls that sit above the detailed table rather than in the
  * filter card, kept out of `ReportFilters` because only one kind has them and a
  * shared shape carrying four unused fields on every other report is how a
  * filter ends up half-applied. They travel in the address all the same: a
@@ -60,17 +65,48 @@ export type DetailedTimeGrouping =
 export interface DetailedTimeOptions {
   readonly hours: DetailedTimeHours
   readonly grouping: DetailedTimeGrouping
+  readonly grain: DetailedTimeReport['grain']
   readonly activeProjectsOnly: boolean
-  /**
-   * The drill-through (#708). `day` is the folded grain the table has always
-   * drawn; `entry` asks the same question of the same range and gets one line
-   * per time entry, with its notes and the invoice that claimed it.
-   *
-   * A total nobody can open is a total nobody can check, and grouping is a
-   * re-fold of whatever rows came back -- so switching the grain under a
-   * grouping puts the entries behind each band directly under that band.
-   */
-  readonly grain: DetailedTimeGrain
+  readonly taskId: number | null
+  readonly userId: number | null
+  readonly roleId: number | null
+  readonly tagId: number | null
+  readonly invoiceState: DetailedTimeReport['invoice_state']
+}
+
+export interface TimeReportOptions {
+  readonly includeFixedFee: boolean
+}
+
+export type InvoicedReportStatus = 'draft' | 'open' | 'paid' | 'closed'
+
+export interface InvoicedReportOptions {
+  readonly status: InvoicedReportStatus | null
+}
+
+export type ProfitabilityDimension = 'clients' | 'projects' | 'teammates' | 'tasks'
+export type ProfitabilityProjectStatus = 'all' | 'active' | 'archived'
+export type ProfitabilityBillingMethod = 'non_billable' | 'time_materials' | 'fixed_fee'
+
+export interface ProfitabilityOptions {
+  readonly dimension: ProfitabilityDimension
+  readonly projectStatus: ProfitabilityProjectStatus
+  readonly billingMethod: ProfitabilityBillingMethod | null
+  readonly managerId: number | null
+  readonly tagId: number | null
+}
+
+export type DetailedExpenseChoice = 'all' | 'yes' | 'no'
+export type DetailedExpenseInvoiceState = 'all' | 'invoiced' | 'uninvoiced'
+
+/** Every predicate owned by Detailed expense, kept URL-stable for audit links and print. */
+export interface DetailedExpenseOptions {
+  readonly categoryId: number | null
+  readonly userId: number | null
+  readonly billable: DetailedExpenseChoice
+  readonly reimbursable: DetailedExpenseChoice
+  readonly invoiceState: DetailedExpenseInvoiceState
+  readonly activeProjectsOnly: boolean
 }
 
 /**
@@ -133,6 +169,18 @@ export interface ReportCatalogPage {
 }
 
 export interface ReportWorkspaceApi {
+  getReportDefinitionRegistry?(signal?: AbortSignal): Promise<ReportDefinitionRegistry>
+  listSavedReports?(filter: { view?: 'all' | 'yours' | 'shared'; q?: string; custom_only?: boolean }, signal?: AbortSignal): Promise<readonly SavedReport[]>
+  createSavedReport?(input: SavedReportInput, signal?: AbortSignal): Promise<SavedReport>
+  previewReportDefinition?(input: SavedReportInput, signal?: AbortSignal): Promise<ReportRunnerResult>
+  runSavedReport?(reportId: string, signal?: AbortSignal): Promise<ReportRunnerResult>
+  pinSavedReport?(reportId: string, signal?: AbortSignal): Promise<void>
+  unpinSavedReport?(reportId: string, signal?: AbortSignal): Promise<void>
+  duplicateSavedReport?(reportId: string, signal?: AbortSignal): Promise<SavedReport>
+  updateSavedReport?(reportId: string, input: SavedReportUpdate, signal?: AbortSignal): Promise<SavedReport>
+  deleteSavedReport?(reportId: string, signal?: AbortSignal): Promise<void>
+  shareSavedReport?(reportId: string, userId: number, signal?: AbortSignal): Promise<void>
+  executeDetailedTimeAction?(input: ReportTimeActionInput, signal?: AbortSignal): Promise<ReportTimeAction>
   /**
    * Only `week_start_day` is wanted, and only so the period control can tell a
    * whole week from an arbitrary seven days. Optional because a build without
@@ -186,7 +234,14 @@ export interface ReportWorkspaceApi {
     signal?: AbortSignal,
   ): Promise<ContractorCostReport>
   getProfitabilityReport?(
-    filter: { readonly from: string; readonly to: string },
+    filter: {
+      readonly from: string
+      readonly to: string
+      readonly project_status?: ProfitabilityProjectStatus
+      readonly billing_method?: ProfitabilityBillingMethod
+      readonly manager_id?: number
+      readonly tag_id?: number
+    },
     signal?: AbortSignal,
   ): Promise<ProfitabilityReport>
   getDetailedExpenseReport?(
@@ -195,6 +250,12 @@ export interface ReportWorkspaceApi {
       readonly to: string
       readonly client_id?: number
       readonly project_id?: number
+      readonly category_id?: number
+      readonly user_id?: number
+      readonly billable?: boolean
+      readonly reimbursable?: boolean
+      readonly invoice_state?: DetailedExpenseInvoiceState
+      readonly active_projects_only?: boolean
     },
     signal?: AbortSignal,
   ): Promise<DetailedExpenseReport>
@@ -204,6 +265,11 @@ export interface ReportWorkspaceApi {
       readonly to: string
       readonly client_id?: number
       readonly project_id?: number
+      readonly task_id?: number
+      readonly user_id?: number
+      readonly role_id?: number
+      readonly tag_id?: number
+      readonly invoice_state?: DetailedTimeReport['invoice_state']
       readonly hours?: DetailedTimeHours
       readonly active_projects_only?: boolean
       readonly grain?: DetailedTimeGrain
@@ -219,9 +285,34 @@ export interface ReportWorkspaceApi {
    * they are one dataset and asking four times invites four answers.
    */
   getTimeReport(
-    filter: { readonly from: string; readonly to: string },
+    filter: {
+      readonly from: string
+      readonly to: string
+      readonly include_fixed_fee?: boolean
+    },
     signal?: AbortSignal,
   ): Promise<TimeReport>
+  getInvoicedReport?(
+    filter: {
+      readonly from: string
+      readonly to: string
+      readonly client_id?: number
+      readonly status?: InvoicedReportStatus
+    },
+    signal?: AbortSignal,
+  ): Promise<InvoicedReport>
+  getPaymentsReceivedReport?(
+    filter: {
+      readonly from: string
+      readonly to: string
+      readonly client_id?: number
+    },
+    signal?: AbortSignal,
+  ): Promise<PaymentsReceivedReport>
+  getReceivablesReport?(
+    filter: { readonly as_of: string; readonly client_id?: number },
+    signal?: AbortSignal,
+  ): Promise<ReceivablesReport>
 }
 
 export interface ReportFilters {
@@ -233,18 +324,9 @@ export interface ReportFilters {
   readonly tab: TimeReportTab
 }
 
-const reportKinds = new Set<ReportKind>([
-  'my-hours',
-  'time',
-  'uninvoiced',
-  'client-rollup',
-  'project-budget',
-  'contractor-cost',
-  'detailed-time',
-  'activity-log',
-  'profitability',
-  'detailed-expense',
-])
+const reportKinds = new Set<ReportKind>(
+  REPORT_CAPABILITIES.map((report) => report.id),
+)
 
 const timeReportTabs = new Set<TimeReportTab>([
   'clients',
@@ -341,6 +423,7 @@ const detailedTimeGroupings: ReadonlySet<string> = new Set<DetailedTimeGrouping>
   'project',
   'task',
   'person',
+  'role',
   'claimed',
 ])
 
@@ -353,20 +436,100 @@ const detailedTimeGroupings: ReadonlySet<string> = new Set<DetailedTimeGrouping>
 export const detailedTimeOptionsFromUrl = (url: URL): DetailedTimeOptions => {
   const hours = url.searchParams.get('hours')
   const grouping = url.searchParams.get('group')
+  const grain = url.searchParams.get('grain')
+  const invoiceState = url.searchParams.get('invoice_state')
   return {
-    grain: url.searchParams.get('grain') === 'entry' ? 'entry' : 'day',
     hours: hours !== null && detailedTimeHours.has(hours) ? (hours as DetailedTimeHours) : 'all',
     grouping:
       grouping !== null && detailedTimeGroupings.has(grouping)
         ? (grouping as DetailedTimeGrouping)
         : 'date',
+    grain: grain === 'entry' ? 'entry' : 'day',
     activeProjectsOnly: url.searchParams.get('active_only') === 'true',
+    taskId: positiveId(url.searchParams.get('task_id')),
+    userId: positiveId(url.searchParams.get('user_id')),
+    roleId: positiveId(url.searchParams.get('role_id')),
+    tagId: positiveId(url.searchParams.get('tag_id')),
+    invoiceState:
+      invoiceState === 'invoiced' || invoiceState === 'uninvoiced' ? invoiceState : 'all',
+  }
+}
+
+export const timeReportOptionsFromUrl = (url: URL): TimeReportOptions => ({
+  includeFixedFee: url.searchParams.get('include_fixed_fee') === 'true',
+})
+
+const invoicedStatuses = new Set<InvoicedReportStatus>(['draft', 'open', 'paid', 'closed'])
+
+export const invoicedReportOptionsFromUrl = (url: URL): InvoicedReportOptions => {
+  const status = url.searchParams.get('status')
+  return {
+    status:
+      status !== null && invoicedStatuses.has(status as InvoicedReportStatus)
+        ? (status as InvoicedReportStatus)
+        : null,
+  }
+}
+
+const profitabilityDimensions = new Set<ProfitabilityDimension>([
+  'clients',
+  'projects',
+  'teammates',
+  'tasks',
+])
+const profitabilityStatuses = new Set<ProfitabilityProjectStatus>(['all', 'active', 'archived'])
+const profitabilityBillingMethods = new Set<ProfitabilityBillingMethod>([
+  'non_billable',
+  'time_materials',
+  'fixed_fee',
+])
+
+export const profitabilityOptionsFromUrl = (url: URL): ProfitabilityOptions => {
+  const dimension = url.searchParams.get('dimension')
+  const projectStatus = url.searchParams.get('project_status')
+  const billingMethod = url.searchParams.get('billing_method')
+  return {
+    dimension:
+      dimension !== null && profitabilityDimensions.has(dimension as ProfitabilityDimension)
+        ? (dimension as ProfitabilityDimension)
+        : 'projects',
+    projectStatus:
+      projectStatus !== null && profitabilityStatuses.has(projectStatus as ProfitabilityProjectStatus)
+        ? (projectStatus as ProfitabilityProjectStatus)
+        : 'all',
+    billingMethod:
+      billingMethod !== null && profitabilityBillingMethods.has(billingMethod as ProfitabilityBillingMethod)
+        ? (billingMethod as ProfitabilityBillingMethod)
+        : null,
+    managerId: positiveId(url.searchParams.get('manager_id')),
+    tagId: positiveId(url.searchParams.get('tag_id')),
+  }
+}
+
+export const detailedExpenseOptionsFromUrl = (url: URL): DetailedExpenseOptions => {
+  const choice = (name: string): DetailedExpenseChoice => {
+    const value = url.searchParams.get(name)
+    return value === 'yes' || value === 'no' ? value : 'all'
+  }
+  const invoiceState = url.searchParams.get('expense_invoice_state')
+  return {
+    categoryId: positiveId(url.searchParams.get('category_id')),
+    userId: positiveId(url.searchParams.get('expense_user_id')),
+    billable: choice('expense_billable'),
+    reimbursable: choice('expense_reimbursable'),
+    invoiceState:
+      invoiceState === 'invoiced' || invoiceState === 'uninvoiced' ? invoiceState : 'all',
+    activeProjectsOnly: url.searchParams.get('expense_active_only') === 'true',
   }
 }
 
 export const reportFiltersUrl = (
   filters: Readonly<ReportFilters>,
   options?: Readonly<DetailedTimeOptions>,
+  timeOptions?: Readonly<TimeReportOptions>,
+  invoicedOptions?: Readonly<InvoicedReportOptions>,
+  profitabilityOptions?: Readonly<ProfitabilityOptions>,
+  expenseOptions?: Readonly<DetailedExpenseOptions>,
 ): string => {
   const params = new URLSearchParams({
     report: filters.kind,
@@ -375,8 +538,12 @@ export const reportFiltersUrl = (
   })
   if (
     (filters.kind === 'uninvoiced' ||
+      filters.kind === 'invoiced' ||
+      filters.kind === 'payments-received' ||
+      filters.kind === 'receivables' ||
       filters.kind === 'client-rollup' ||
-      filters.kind === 'detailed-time') &&
+      filters.kind === 'detailed-time' ||
+      filters.kind === 'detailed-expense') &&
     filters.clientId !== null
   ) {
     params.set('client_id', String(filters.clientId))
@@ -385,7 +552,8 @@ export const reportFiltersUrl = (
     (filters.kind === 'uninvoiced' ||
       filters.kind === 'project-budget' ||
       filters.kind === 'my-hours' ||
-      filters.kind === 'detailed-time') &&
+      filters.kind === 'detailed-time' ||
+      filters.kind === 'detailed-expense') &&
     filters.projectId !== null
   ) {
     params.set('project_id', String(filters.projectId))
@@ -393,8 +561,44 @@ export const reportFiltersUrl = (
   if (filters.kind === 'detailed-time' && options !== undefined) {
     params.set('hours', options.hours)
     params.set('group', options.grouping)
-    params.set('active_only', String(options.activeProjectsOnly))
     params.set('grain', options.grain)
+    params.set('active_only', String(options.activeProjectsOnly))
+    if (options.taskId !== null && options.taskId > 0) params.set('task_id', String(options.taskId))
+    if (options.userId !== null && options.userId > 0) params.set('user_id', String(options.userId))
+    if (options.roleId !== null && options.roleId > 0) params.set('role_id', String(options.roleId))
+    if (options.tagId !== null && options.tagId > 0) params.set('tag_id', String(options.tagId))
+    params.set('invoice_state', options.invoiceState)
+  }
+  if (filters.kind === 'time' && timeOptions?.includeFixedFee === true) {
+    params.set('include_fixed_fee', 'true')
+  }
+  if (filters.kind === 'invoiced' && invoicedOptions?.status != null) {
+    params.set('status', invoicedOptions.status)
+  }
+  if (filters.kind === 'profitability' && profitabilityOptions !== undefined) {
+    params.set('dimension', profitabilityOptions.dimension)
+    params.set('project_status', profitabilityOptions.projectStatus)
+    if (profitabilityOptions.billingMethod !== null) {
+      params.set('billing_method', profitabilityOptions.billingMethod)
+    }
+    if (profitabilityOptions.managerId !== null && profitabilityOptions.managerId > 0) {
+      params.set('manager_id', String(profitabilityOptions.managerId))
+    }
+    if (profitabilityOptions.tagId !== null && profitabilityOptions.tagId > 0) {
+      params.set('tag_id', String(profitabilityOptions.tagId))
+    }
+  }
+  if (filters.kind === 'detailed-expense' && expenseOptions !== undefined) {
+    if (expenseOptions.categoryId !== null && expenseOptions.categoryId > 0) {
+      params.set('category_id', String(expenseOptions.categoryId))
+    }
+    if (expenseOptions.userId !== null && expenseOptions.userId > 0) {
+      params.set('expense_user_id', String(expenseOptions.userId))
+    }
+    params.set('expense_billable', expenseOptions.billable)
+    params.set('expense_reimbursable', expenseOptions.reimbursable)
+    params.set('expense_invoice_state', expenseOptions.invoiceState)
+    params.set('expense_active_only', String(expenseOptions.activeProjectsOnly))
   }
   // Only the Time report has sub-tabs, so only it carries one. A `tab` left on
   // every other kind's address would be a parameter that does nothing, and the
@@ -474,6 +678,10 @@ const bandKey = (
       return { key: `task:${row.task_id}`, label: row.task_name }
     case 'person':
       return { key: `person:${row.user_id}`, label: row.user_name }
+    case 'role': {
+      const label = row.roles.length === 0 ? 'No role' : row.roles.join(', ')
+      return { key: `role:${label}`, label }
+    }
     case 'claimed':
       // Two bands, and the wording matters: an unclaimed hour on a banded
       // project is not "uninvoiced". It is work a band will absorb at the next
@@ -558,6 +766,82 @@ const looksNumeric = (value: string): boolean => /^-?\d+(?:\.\d+)?$/u.test(value
 const csvCell = (value: string): string => {
   const guarded = !looksNumeric(value) && /^[=+\-@\t\r]/u.test(value) ? `'${value}` : value
   return `"${guarded.replaceAll('"', '""')}"`
+}
+
+/** The payroll handoff, in the same row order and units as the browser report. */
+export const contractorCostCsv = (report: Readonly<ContractorCostReport>): string => {
+  const header = [
+    'Type',
+    'Person',
+    'Payroll email',
+    'Hours',
+    'Utilization',
+    'Rate',
+    'Mixed rate',
+    'Entries',
+    'Unrated entries',
+    'Currency',
+    'Cost',
+  ]
+  const lines = [header.map(csvCell).join(',')]
+  for (const row of report.rows) {
+    lines.push(
+      [
+        row.is_contractor ? 'Contractor' : 'Employee',
+        row.name,
+        row.payroll_email ?? '',
+        decimalHours(row.rounded_seconds),
+        row.utilization_ppm === null ? '' : (row.utilization_ppm / 10_000).toFixed(2),
+        row.cost_rate_cents === null ? '' : (row.cost_rate_cents / 100).toFixed(2),
+        row.cost_rate_is_mixed ? 'Yes' : 'No',
+        String(row.entry_count),
+        String(row.entries_without_rate),
+        row.currency,
+        row.cost_cents === null ? '' : (row.cost_cents / 100).toFixed(2),
+      ].map(csvCell).join(','),
+    )
+  }
+  return `${lines.join('\r\n')}\r\n`
+}
+
+/** Every expense row on screen, including its full note and invoice state. */
+export const detailedExpenseCsv = (report: Readonly<DetailedExpenseReport>): string => {
+  const header = [
+    'Expense ID',
+    'Date',
+    'Client',
+    'Project',
+    'Category',
+    'Person',
+    'Notes',
+    'Units',
+    'Billable',
+    'Reimbursable',
+    'Invoice ID',
+    'Currency',
+    'Amount',
+  ]
+  const lines = [header.map(csvCell).join(',')]
+  for (const row of report.rows) {
+    lines.push(
+      [
+        String(row.expense_id),
+        row.spent_date,
+        row.client_name,
+        row.project_code === '' ? row.project_name : `[${row.project_code}] ${row.project_name}`,
+        row.category_name,
+        row.user_name,
+        row.notes ?? '',
+        row.units === null ? '' : String(row.units),
+        row.billable ? 'Yes' : 'No',
+        row.reimbursable ? 'Yes' : 'No',
+        row.invoice_id === null ? '' : String(row.invoice_id),
+        row.currency,
+        row.total_cost_cents === undefined ? '' : (row.total_cost_cents / 100).toFixed(2),
+      ].map(csvCell).join(','),
+    )
+  }
+  return `${lines.join('\r\n')}\r\n`
 }
 
 /**

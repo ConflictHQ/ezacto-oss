@@ -1950,6 +1950,7 @@ export type DetailedTimeRow = {
   "time_entry_id"?: number;
   "invoice_id"?: number | null;
   "notes"?: string | null;
+  "project_active"?: boolean;
 };
 
 export type DetailedTimeCurrencyTotal = {
@@ -1963,6 +1964,11 @@ export type DetailedTimeReport = {
   "to": string;
   "client_id": number | null;
   "project_id": number | null;
+  "task_id": number | null;
+  "user_id": number | null;
+  "role_id": number | null;
+  "tag_id": number | null;
+  "invoice_state": "all" | "invoiced" | "uninvoiced";
   "hours": "all" | "billable" | "non_billable" | "uninvoiced" | "claimed" | "unclaimed";
   "grain": "day" | "entry";
   "active_projects_only": boolean;
@@ -1979,6 +1985,30 @@ export type DetailedTimeReport = {
 
 export type DetailedTimeReportEnvelope = {
   "data": DetailedTimeReport;
+  "links": Links;
+};
+
+export type ReportTimeActionInput = {
+  "command_id": string;
+  "action": "mark_invoiced" | "mark_uninvoiced" | "move";
+  "entry_ids": Array<number>;
+  "confirmed": true;
+  "invoice_id"?: number;
+  "project_id"?: number;
+  "task_id"?: number;
+};
+
+export type ReportTimeAction = {
+  "command_id": string;
+  "action": "mark_invoiced" | "mark_uninvoiced" | "move";
+  "requested": number;
+  "changed_entry_ids": Array<number>;
+  "ineligible_entry_ids": Array<number>;
+  "replayed": boolean;
+};
+
+export type ReportTimeActionEnvelope = {
+  "data": ReportTimeAction;
   "links": Links;
 };
 
@@ -2050,6 +2080,7 @@ export type TimeReportTeammateRow = {
 export type TimeReport = {
   "from": string;
   "to": string;
+  "fixed_fee_included": boolean;
   "totals": TimeReportTotals;
   "clients": Array<TimeReportClientRow>;
   "projects": Array<TimeReportProjectRow>;
@@ -2103,6 +2134,7 @@ export type ContractorCostRow = {
   "is_contractor": boolean;
   "currency": string;
   "rounded_seconds": number;
+  "utilization_ppm": number | null;
   "cost_cents": number | null;
   "cost_rate_cents": number | null;
   "cost_rate_is_mixed": boolean;
@@ -2118,6 +2150,213 @@ export type ContractorCostReport = {
 
 export type ContractorCostReportEnvelope = {
   "data": ContractorCostReport;
+  "links": Links;
+};
+
+export type InvoicedReportTotal = {
+  "currency": string;
+  "invoice_count": number;
+  "invoiced_cents"?: number;
+  "paid_cents"?: number;
+  "balance_cents"?: number;
+};
+
+export type InvoicedReportRow = {
+  "invoice_id": number;
+  "number": string;
+  "state": "draft" | "open" | "paid" | "closed";
+  "close_reason": "cancelled" | "written_off" | "source_closed" | null;
+  "issue_date": string;
+  "due_date": string;
+  "client_id": number;
+  "client_name": string;
+  "subject": string | null;
+  "currency": string;
+  "invoiced_cents"?: number;
+  "paid_cents"?: number;
+  "balance_cents"?: number;
+};
+
+export type InvoicedReport = {
+  "from": string;
+  "to": string;
+  "client_id": number | null;
+  "status": "draft" | "open" | "paid" | "closed" | null;
+  "totals": Array<InvoicedReportTotal>;
+  "rows": Array<InvoicedReportRow>;
+};
+
+export type InvoicedReportEnvelope = {
+  "data": InvoicedReport;
+  "links": Links;
+};
+
+export type PaymentsReceivedReportTotal = {
+  "currency": string;
+  "payment_count": number;
+  "payment_cents"?: number;
+};
+
+export type PaymentReceivedReportRow = {
+  "payment_id": number;
+  "payment_date": string;
+  "invoice_id": number;
+  "invoice_number": string;
+  "client_id": number;
+  "client_name": string;
+  "currency": string;
+  "provider": string;
+  "invoice_total_cents"?: number;
+  "payment_cents"?: number;
+};
+
+export type PaymentsReceivedReport = {
+  "from": string;
+  "to": string;
+  "client_id": number | null;
+  "totals": Array<PaymentsReceivedReportTotal>;
+  "rows": Array<PaymentReceivedReportRow>;
+};
+
+export type PaymentsReceivedReportEnvelope = {
+  "data": PaymentsReceivedReport;
+  "links": Links;
+};
+
+export type ReceivablesReportTotal = {
+  "currency": string;
+  "invoice_count": number;
+  "invoiced_cents"?: number;
+  "outstanding_cents"?: number;
+  "not_due_cents"?: number;
+  "days_1_to_30_cents"?: number;
+  "days_31_to_60_cents"?: number;
+  "days_61_to_90_cents"?: number;
+  "days_90_plus_cents"?: number;
+};
+
+export type ReceivablesReportRow = {
+  "client_id": number;
+  "client_name": string;
+  "currency": string;
+  "invoice_count": number;
+  "invoiced_cents"?: number;
+  "outstanding_cents"?: number;
+  "not_due_cents"?: number;
+  "days_1_to_30_cents"?: number;
+  "days_31_to_60_cents"?: number;
+  "days_61_to_90_cents"?: number;
+  "days_90_plus_cents"?: number;
+};
+
+export type ReceivablesReport = {
+  "as_of": string;
+  "client_id": number | null;
+  "totals": Array<ReceivablesReportTotal>;
+  "rows": Array<ReceivablesReportRow>;
+};
+
+export type ReceivablesReportEnvelope = {
+  "data": ReceivablesReport;
+  "links": Links;
+};
+
+export type ReportDefinitionPresentation = {
+  "result": "summary" | "detailed";
+  "grouped": boolean;
+  "include_zero_values": boolean;
+};
+
+export type SavedReportInput = {
+  "name": string;
+  "fields": Array<{
+  [key: string]: unknown;
+}>;
+  "metrics": Array<string>;
+  "filters": Array<{
+  [key: string]: unknown;
+}>;
+  "group_by": {
+  [key: string]: unknown;
+} | null;
+  "presentation": ReportDefinitionPresentation;
+};
+
+export type SavedReportUpdate = {
+  "version": number;
+  "name"?: string;
+  "fields"?: Array<{
+  [key: string]: unknown;
+}>;
+  "metrics"?: Array<string>;
+  "filters"?: Array<{
+  [key: string]: unknown;
+}>;
+  "group_by"?: {
+  [key: string]: unknown;
+} | null;
+  "presentation"?: ReportDefinitionPresentation;
+};
+
+export type SavedReport = {
+  "id": string;
+  "name": string;
+  "version": number;
+  "fields": Array<{
+  [key: string]: unknown;
+}>;
+  "metrics": Array<string>;
+  "filters": Array<{
+  [key: string]: unknown;
+}>;
+  "group_by": {
+  [key: string]: unknown;
+} | null;
+  "presentation": ReportDefinitionPresentation;
+  "owner": {
+  [key: string]: unknown;
+};
+  "is_custom": boolean;
+  "pinned": boolean;
+  "shared": boolean;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type SavedReportEnvelope = {
+  "data": SavedReport;
+  "links": Links;
+};
+
+export type SavedReportListEnvelope = {
+  "data": Array<SavedReport>;
+};
+
+export type ReportRunnerResult = {
+  "definitionId": string;
+  "definitionVersion": number;
+  "state": "ready" | "empty" | "too_many_rows";
+  "rows": Array<{
+  [key: string]: unknown;
+}>;
+};
+
+export type ReportRunnerEnvelope = {
+  "data": ReportRunnerResult;
+  "links": Links;
+};
+
+export type ReportDefinitionRegistry = {
+  "fields": Array<{
+  [key: string]: unknown;
+}>;
+  "metrics": Array<{
+  [key: string]: unknown;
+}>;
+};
+
+export type ReportDefinitionRegistryEnvelope = {
+  "data": ReportDefinitionRegistry;
   "links": Links;
 };
 
@@ -2153,7 +2392,12 @@ export type DetailedExpenseReport = {
   "to": string;
   "client_id": number | null;
   "project_id": number | null;
-  "billable_only": boolean;
+  "category_id": number | null;
+  "user_id": number | null;
+  "billable": boolean | null;
+  "reimbursable": boolean | null;
+  "invoice_state": "all" | "invoiced" | "uninvoiced";
+  "active_projects_only": boolean;
   "totals": Array<DetailedExpenseTotal>;
   "rows": Array<DetailedExpenseRow>;
 };
@@ -2170,6 +2414,9 @@ export type MonthEndItem = {
   "amount_cents": number | null;
   "currency": string | null;
   "target": string | null;
+  "brand_name": string | null;
+  "cost_cents": number | null;
+  "margin_cents": number | null;
 };
 
 export type MonthEndExclusion = {
@@ -2245,6 +2492,9 @@ export type ProfitabilityRow = {
   "revenue_cents": number | null;
   "cost_cents": number | null;
   "profit_cents": number | null;
+  "return_on_cost_ppm": number | null;
+  "revenue_fee_cents": number;
+  "fees_included_in_delivery_cost_cents": number;
   "entries_without_billable_rate": number;
   "entries_without_cost_rate": number;
 };
@@ -2254,9 +2504,41 @@ export type ProfitabilityTotals = {
   "revenue_cents": number | null;
   "cost_cents": number | null;
   "profit_cents": number | null;
+  "return_on_cost_ppm": number | null;
+  "revenue_fee_cents": number;
+  "fees_included_in_delivery_cost_cents": number;
   "entries_without_billable_rate": number;
   "entries_without_cost_rate": number;
   "projects_not_converted": number;
+};
+
+export type ProfitabilityDimensionRow = {
+  "dimension_id": number;
+  "dimension_name": string;
+  "currency": string;
+  "rounded_seconds": number;
+  "revenue_cents": number | null;
+  "cost_cents": number | null;
+  "profit_cents": number | null;
+  "return_on_cost_ppm": number | null;
+  "revenue_fee_cents": number;
+  "fees_included_in_delivery_cost_cents": number;
+  "entries_without_billable_rate": number;
+  "entries_without_cost_rate": number;
+  "included_in_headline": boolean;
+};
+
+export type ProfitabilityTrendRow = (ProfitabilityDimensionRow) & ({
+  "period_start": string;
+  "period_end": string;
+  "current": boolean;
+});
+
+export type ProfitabilityFilters = {
+  "project_status": "all" | "active" | "archived";
+  "billing_method": "non_billable" | "time_materials" | "fixed_fee" | null;
+  "manager_id": number | null;
+  "tag_id": number | null;
 };
 
 export type ProfitabilityReport = {
@@ -2264,7 +2546,12 @@ export type ProfitabilityReport = {
   "to": string;
   "organization_currency": string;
   "rows": Array<ProfitabilityRow>;
+  "clients": Array<ProfitabilityDimensionRow>;
+  "teammates": Array<ProfitabilityDimensionRow>;
+  "tasks": Array<ProfitabilityDimensionRow>;
+  "trend": Array<ProfitabilityTrendRow>;
   "totals": ProfitabilityTotals;
+  "filters": ProfitabilityFilters;
   "previous_from": string;
   "previous_to": string;
   "previous_totals": ProfitabilityTotals;
@@ -4324,6 +4611,127 @@ export class EzactoClient {
     });
   }
 
+  async getReportDefinitionRegistry(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ReportDefinitionRegistryEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ReportDefinitionRegistryEnvelope>("GET", "/api/v1/report-definitions/registry", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listSavedReports(args: { query?: { "view"?: "all" | "yours" | "shared"; "q"?: string; "custom_only"?: boolean }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<SavedReportListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<SavedReportListEnvelope>("GET", "/api/v1/report-definitions", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createSavedReport(args: { body: SavedReportInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<SavedReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<SavedReportEnvelope>("POST", "/api/v1/report-definitions", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async previewReportDefinition(args: { body: SavedReportInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<ReportRunnerEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ReportRunnerEnvelope>("POST", "/api/v1/report-definitions/preview", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getSavedReport(args: { "reportId": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<SavedReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<SavedReportEnvelope>("GET", "/api/v1/report-definitions/:reportId".replace(":reportId", encodeURIComponent(String(args["reportId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateSavedReport(args: { "reportId": string; body: SavedReportUpdate; signal?: AbortSignal; headers?: HeadersInit }): Promise<SavedReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<SavedReportEnvelope>("PATCH", "/api/v1/report-definitions/:reportId".replace(":reportId", encodeURIComponent(String(args["reportId"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async deleteSavedReport(args: { "reportId": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/report-definitions/:reportId".replace(":reportId", encodeURIComponent(String(args["reportId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async duplicateSavedReport(args: { "reportId": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<SavedReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<SavedReportEnvelope>("POST", "/api/v1/report-definitions/:reportId/duplicate".replace(":reportId", encodeURIComponent(String(args["reportId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async pinSavedReport(args: { "reportId": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/api/v1/report-definitions/:reportId/pin".replace(":reportId", encodeURIComponent(String(args["reportId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async unpinSavedReport(args: { "reportId": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/report-definitions/:reportId/pin".replace(":reportId", encodeURIComponent(String(args["reportId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async shareSavedReport(args: { "reportId": string; "userId": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/api/v1/report-definitions/:reportId/shares/:userId".replace(":reportId", encodeURIComponent(String(args["reportId"]))).replace(":userId", encodeURIComponent(String(args["userId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async unshareSavedReport(args: { "reportId": string; "userId": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/report-definitions/:reportId/shares/:userId".replace(":reportId", encodeURIComponent(String(args["reportId"]))).replace(":userId", encodeURIComponent(String(args["userId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async runSavedReport(args: { "reportId": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<ReportRunnerEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ReportRunnerEnvelope>("POST", "/api/v1/report-definitions/:reportId/run".replace(":reportId", encodeURIComponent(String(args["reportId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
   async getMyHoursReport(args: { query: { "from": string; "to": string; "project_id"?: number }; signal?: AbortSignal; headers?: HeadersInit }): Promise<MyHoursReportEnvelope> {
     const headers = new Headers(args.headers);
 
@@ -4334,10 +4742,40 @@ export class EzactoClient {
     });
   }
 
-  async getTimeReport(args: { query: { "from": string; "to": string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimeReportEnvelope> {
+  async getTimeReport(args: { query: { "from": string; "to": string; "include_fixed_fee"?: boolean }; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimeReportEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<TimeReportEnvelope>("GET", "/api/v1/reports/time", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getInvoicedReport(args: { query: { "from": string; "to": string; "client_id"?: number; "status"?: "draft" | "open" | "paid" | "closed" }; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoicedReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoicedReportEnvelope>("GET", "/api/v1/reports/invoiced", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getPaymentsReceivedReport(args: { query: { "from": string; "to": string; "client_id"?: number }; signal?: AbortSignal; headers?: HeadersInit }): Promise<PaymentsReceivedReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PaymentsReceivedReportEnvelope>("GET", "/api/v1/reports/payments-received", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getReceivablesReport(args: { query: { "as_of": string; "client_id"?: number }; signal?: AbortSignal; headers?: HeadersInit }): Promise<ReceivablesReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ReceivablesReportEnvelope>("GET", "/api/v1/reports/receivables", {
       query: args.query,
       signal: args.signal,
       headers,
@@ -4393,7 +4831,7 @@ export class EzactoClient {
     });
   }
 
-  async getProfitabilityReport(args: { query: { "from": string; "to": string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<ProfitabilityReportEnvelope> {
+  async getProfitabilityReport(args: { query: { "from": string; "to": string; "project_status"?: "all" | "active" | "archived"; "billing_method"?: "non_billable" | "time_materials" | "fixed_fee"; "manager_id"?: number; "tag_id"?: number }; signal?: AbortSignal; headers?: HeadersInit }): Promise<ProfitabilityReportEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<ProfitabilityReportEnvelope>("GET", "/api/v1/reports/profitability", {
@@ -4403,7 +4841,7 @@ export class EzactoClient {
     });
   }
 
-  async getDetailedExpenseReport(args: { query: { "from": string; "to": string; "client_id"?: number; "project_id"?: number; "billable_only"?: boolean }; signal?: AbortSignal; headers?: HeadersInit }): Promise<DetailedExpenseReportEnvelope> {
+  async getDetailedExpenseReport(args: { query: { "from": string; "to": string; "client_id"?: number; "project_id"?: number; "category_id"?: number; "user_id"?: number; "billable"?: boolean; "reimbursable"?: boolean; "invoice_state"?: "all" | "invoiced" | "uninvoiced"; "active_projects_only"?: boolean }; signal?: AbortSignal; headers?: HeadersInit }): Promise<DetailedExpenseReportEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<DetailedExpenseReportEnvelope>("GET", "/api/v1/reports/detailed-expense", {
@@ -4423,11 +4861,21 @@ export class EzactoClient {
     });
   }
 
-  async getDetailedTimeReport(args: { query: { "from": string; "to": string; "client_id"?: number; "project_id"?: number; "hours"?: "all" | "billable" | "non_billable" | "uninvoiced" | "claimed" | "unclaimed"; "grain"?: "day" | "entry"; "active_projects_only"?: boolean }; signal?: AbortSignal; headers?: HeadersInit }): Promise<DetailedTimeReportEnvelope> {
+  async getDetailedTimeReport(args: { query: { "from": string; "to": string; "client_id"?: number; "project_id"?: number; "task_id"?: number; "user_id"?: number; "role_id"?: number; "tag_id"?: number; "hours"?: "all" | "billable" | "non_billable" | "uninvoiced" | "claimed" | "unclaimed"; "grain"?: "day" | "entry"; "invoice_state"?: "all" | "invoiced" | "uninvoiced"; "active_projects_only"?: boolean }; signal?: AbortSignal; headers?: HeadersInit }): Promise<DetailedTimeReportEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<DetailedTimeReportEnvelope>("GET", "/api/v1/reports/detailed-time", {
       query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async executeDetailedTimeAction(args: { body: ReportTimeActionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<ReportTimeActionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ReportTimeActionEnvelope>("POST", "/api/v1/reports/detailed-time/actions", {
+      body: args.body,
       signal: args.signal,
       headers,
     });
