@@ -618,6 +618,11 @@ beforeAll(async () => {
     conditions: ['development'],
     format: 'esm',
     platform: 'browser',
+    // Left to workerd rather than bundled (#743): the Sentry Cloudflare SDK
+    // imports node:async_hooks for per-request isolation, which the runtime
+    // provides under the nodejs_als compatibility flag. esbuild at
+    // platform: browser cannot resolve it and must not try.
+    external: ['node:async_hooks'],
     target: 'es2022',
     write: false,
   })
@@ -628,6 +633,8 @@ beforeAll(async () => {
       RELEASE: 'money-isolation-test',
     },
     compatibilityDate: '2026-08-06',
+    // The Sentry SDK's per-request isolation needs AsyncLocalStorage (#743).
+    compatibilityFlags: ['nodejs_als'],
     d1Databases: ['DB'],
     r2Buckets: ['ATTACHMENTS'],
     modules: true,

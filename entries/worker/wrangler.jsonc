@@ -3,6 +3,8 @@
   "name": "replace-me-worker-name",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-26",
+  // AsyncLocalStorage for @sentry/cloudflare's request isolation.
+  "compatibility_flags": ["nodejs_als"],
 
   // Closed deliberately. The default *.workers.dev subdomain serves the SAME
   // worker with nothing in front of it — an unauthenticated side door past

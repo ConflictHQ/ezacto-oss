@@ -21,7 +21,8 @@
     "@ezacto/db": "0.0.0",
     "@ezacto/integrations": "0.0.0",
     "@ezacto/mailer": "0.0.0",
-    "@ezacto/web": "0.0.0"
+    "@ezacto/web": "0.0.0",
+    "@sentry/cloudflare": "^10.74.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260826.1",

@@ -153,6 +153,8 @@ export type AppEnv = Env & {
 
 export type WorkerEnv = AppEnv & {
   DB: D1Database
+  /** Sentry DSN. Absent means error reporting is off (a no-op wrapper). */
+  SENTRY_DSN?: string
   /** Content-addressed attachment objects. Metadata remains in DB. */
   ATTACHMENTS?: R2Bucket
   API_CURSOR_SIGNING_KEY: string

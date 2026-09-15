@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/cloudflare'
 import type { QueuedEmailJob } from '@ezacto/mailer'
 import { createApp, type WorkerEnv } from './app.js'
 import { isDataRequest } from './data-request.js'
@@ -188,4 +189,17 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
   },
 }
 
-export default worker
+// Crash/error reporting for the fetch, queue and scheduled handlers. Inert
+// until an instance sets the SENTRY_DSN secret, so it is a no-op by default and
+// on self-hosted deployments. PII scrubbed; errors only (no tracing quota).
+export default Sentry.withSentry<WorkerEnv, QueuedEmailJob>(
+  (env: WorkerEnv) => ({
+    dsn: env.SENTRY_DSN,
+    enabled: Boolean(env.SENTRY_DSN),
+    environment: env.ENVIRONMENT,
+    release: env.RELEASE,
+    sendDefaultPii: false,
+    tracesSampleRate: 0,
+  }),
+  worker,
+)
