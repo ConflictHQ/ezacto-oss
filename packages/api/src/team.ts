@@ -680,6 +680,53 @@ export const installTeamRoutes = <Bindings extends object>(
     }
   })
 
+  /**
+   * Take back a rate nobody meant to add (#727).
+   *
+   * A DELETE rather than a correcting append, because appending leaves the
+   * wrong row in the history for ever -- and leaves no remedy at all when the
+   * mistaken rate starts earlier than anything that could correct it, since
+   * rates may only be appended forward.
+   *
+   * Which rates may go is the schema's decision, not this route's: only the
+   * current one, and only while nothing has been priced from it. A rule stated
+   * here would be a rule the next caller does not have.
+   */
+  api.delete('/team/people/:id/rates/:rateId', async (context) => {
+    const principal = requireSessionPrincipal(context)
+    await requireEnabled(options)
+    const userId = resourceId(context.req.param('id'), 'person')
+    await ensureVisible(options, principal, userId)
+    const rateId = resourceId(context.req.param('rateId'), 'rate')
+    const body = await objectBody(context)
+    const errors: FieldError[] = []
+    noUnknown(body, new Set(['expected_version', 'kind']), errors)
+    const version = expectedVersion(body, errors)
+    const kind = body.kind
+    if (kind !== 'billable' && kind !== 'cost') {
+      errors.push({ field: 'kind', code: 'invalid_enum', message: 'kind must be billable or cost' })
+    }
+    // The same authority that may add one. Somebody who can set a rate can
+    // unset the one they just set; anything narrower would leave the person who
+    // made the mistake unable to undo it.
+    const canWrite = principal.profile === 'administrator' ||
+      (kind === 'billable' && principal.profile === 'project_manager' && principal.managerGrants.includes('billable_rates_manager'))
+    if (!canWrite) {
+      throw new ApiError({ status: 403, code: 'profile_forbidden', message: 'The acting user profile cannot change this rate.' })
+    }
+    if (errors.length > 0) throw validationError(errors)
+    const commandKind = kind === 'billable' ? 'person.billable_rate.remove' : 'person.cost_rate.remove'
+    try {
+      const receipt = await options.repository.removeRate(
+        command(commandId(context), commandKind, userId, version, principal, options.clock()),
+        { kind: kind as 'billable' | 'cost', rateId },
+      )
+      return context.json(receiptEnvelope(receipt))
+    } catch (error) {
+      return translate(error)
+    }
+  })
+
   api.post('/team/people/:id/rates', async (context) => {
     const principal = requireSessionPrincipal(context)
     await requireEnabled(options)

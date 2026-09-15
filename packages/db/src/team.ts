@@ -837,6 +837,46 @@ export const createTeamRepository = (database: Database): TeamRepository => {
       ])
     },
 
+    async removeRate(command, input) {
+      const table = input.kind === 'billable' ? 'user_billable_rates' : 'user_cost_rates'
+      const inputFingerprint = await fingerprint({
+        targetUserId: command.targetUserId,
+        commandKind: command.commandKind,
+        expectedVersion: command.expectedVersion,
+        input,
+      })
+      // Scoped to the person the command names as well as to the row, so a rate
+      // id from another person's history cannot be removed by aiming this at
+      // somebody whose version you happen to hold.
+      return executeCommand(client, command, input, [
+        {
+          query: `UPDATE users SET version = version + 1, team_write_token = ?, updated_at = ?
+            WHERE id = ? AND version = ? RETURNING id`,
+          bindings: [
+            writeToken(command),
+            command.occurredAt,
+            command.targetUserId,
+            command.expectedVersion,
+          ],
+        },
+        {
+          query: `DELETE FROM ${table}
+            WHERE id = ? AND user_id = ?
+              AND EXISTS (SELECT 1 FROM users
+                WHERE id = ? AND version = ? AND team_write_token = ?)
+            RETURNING id`,
+          bindings: [
+            input.rateId,
+            command.targetUserId,
+            command.targetUserId,
+            command.expectedVersion + 1,
+            writeToken(command),
+          ],
+        },
+        receiptInsert(command, inputFingerprint),
+      ])
+    },
+
     listRoles: () => namedRelations(client, 'roles', 'user_roles', 'role_id'),
     listDepartments: () =>
       namedRelations(client, 'departments', 'user_departments', 'department_id'),

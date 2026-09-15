@@ -15,7 +15,7 @@ import {
 } from "../src/index.js";
 
 interface RequestOptions {
-  method?: "GET" | "PATCH" | "POST";
+  method?: "DELETE" | "GET" | "PATCH" | "POST";
   body?: unknown;
   profile?: UserProfile;
   userId?: number;
@@ -497,6 +497,114 @@ for (const [runtime, factory] of factories) {
       expect(await harness.rows<{ version: number }>("SELECT version FROM users WHERE id = 4")).toEqual(
         [{ version: 1 }],
       );
+    });
+
+    it("[e2e:rate-change] takes back a rate nobody meant to add, and reopens what it displaced", async () => {
+      // #727. Adding a rate ends the one before it, so a misclick on the wrong
+      // section of the screen silently replaces a live rate with a different
+      // number. Appending a correction leaves the wrong row in the history for
+      // ever -- and is no remedy at all when the mistake starts earlier than
+      // anything that could correct it, since rates only append forward.
+      harness = await factory();
+      const added = await harness.request("/team/people/4/rates", {
+        method: "POST",
+        body: {
+          expected_version: 0,
+          kind: "billable",
+          amount_cents: 12550,
+          start_date: "2026-09-01",
+        },
+        idempotencyKey: "team.rate.mistake",
+      });
+      expect(added.status, await added.clone().text()).toBe(201);
+      const rateId = ((await added.json()) as { data: { resource_id: number } }).data
+        .resource_id;
+
+      const removed = await harness.request(`/team/people/4/rates/${rateId}`, {
+        method: "DELETE",
+        body: { expected_version: 1, kind: "billable" },
+        idempotencyKey: "team.rate.undo",
+      });
+      expect(removed.status, await removed.clone().text()).toBe(200);
+
+      // Not merely gone: the rate it closed is current again, or taking away
+      // the mistake would leave the damage.
+      expect(
+        await harness.rows<{
+          id: number;
+          amount_cents: number;
+          start_date: string;
+          end_date: string | null;
+        }>(
+          `SELECT id, amount_cents, start_date, end_date FROM user_billable_rates
+           WHERE user_id = 4 ORDER BY start_date`,
+        ),
+      ).toEqual([
+        { id: 1, amount_cents: 10000, start_date: "2026-01-01", end_date: null },
+      ]);
+    });
+
+    it("[money] refuses to remove a rate that has priced work", async () => {
+      // A rate that did its job is history, and a history that can be edited is
+      // one that cannot explain the money it produced. The schema decides this,
+      // not the route, so a second caller cannot skip the rule.
+      harness = await factory();
+      const added = await harness.request("/team/people/4/rates", {
+        method: "POST",
+        body: {
+          expected_version: 0,
+          kind: "cost",
+          amount_cents: 5000,
+          start_date: "2026-09-01",
+        },
+        idempotencyKey: "team.rate.used",
+      });
+      const rateId = ((await added.json()) as { data: { resource_id: number } }).data
+        .resource_id;
+      await harness.run(
+        `INSERT INTO time_entry_rate_reprices
+          (id, time_entry_id, cost_rate_cents, reason, repriced_at)
+         VALUES (1, 2, 5000, 'applied the new rate', '2026-09-30T12:00:00.000Z')`,
+      );
+
+      const refused = await harness.request(`/team/people/4/rates/${rateId}`, {
+        method: "DELETE",
+        body: { expected_version: 1, kind: "cost" },
+        idempotencyKey: "team.rate.used.undo",
+      });
+      expect(refused.status).not.toBe(200);
+      expect(
+        await harness.rows<{ n: number }>(
+          `SELECT count(*) AS n FROM user_cost_rates WHERE user_id = 4`,
+        ),
+      ).toEqual([{ n: 2 }]);
+    });
+
+    it("[security] refuses to remove a rate the acting profile could not have set", async () => {
+      harness = await factory();
+      const added = await harness.request("/team/people/4/rates", {
+        method: "POST",
+        body: {
+          expected_version: 0,
+          kind: "cost",
+          amount_cents: 5000,
+          start_date: "2026-09-01",
+        },
+        idempotencyKey: "team.rate.guarded",
+      });
+      const rateId = ((await added.json()) as { data: { resource_id: number } }).data
+        .resource_id;
+      // A billable-rates manager may set billable rates and not cost ones, so
+      // they must not be able to unset a cost one either.
+      const refused = await harness.request(`/team/people/4/rates/${rateId}`, {
+        method: "DELETE",
+        body: { expected_version: 1, kind: "cost" },
+        idempotencyKey: "team.rate.guarded.undo",
+        userId: 3,
+        profile: "project_manager",
+        managerGrants: ["billable_rates_manager"],
+      });
+      expect(refused.status).toBe(403);
     });
 
     it("allows exactly one same-version command even when timestamps are identical", async () => {

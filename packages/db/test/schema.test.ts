@@ -650,9 +650,13 @@ for (const [runtime, factory] of factories) {
       await expect(
         db.run(`UPDATE user_billable_rates SET amount_cents = 1 WHERE amount_cents = 12500`),
       ).rejects.toThrow(/append-only/)
+      // Narrowed by #727 rather than dropped: a closed period is money somebody
+      // was charged under and still cannot be removed. Only the current rate
+      // can, and only while nothing has been priced from it -- which is what
+      // makes a misclick undoable without making history editable.
       await expect(
-        db.run(`DELETE FROM user_billable_rates WHERE amount_cents = 12500`),
-      ).rejects.toThrow(/append-only/)
+        db.run(`DELETE FROM user_billable_rates WHERE amount_cents = 10000`),
+      ).rejects.toThrow(/only the current rate may be removed/)
       await expect(
         db.run(
           `INSERT INTO user_billable_rates (user_id, amount_cents, start_date, end_date, created_at, updated_at)

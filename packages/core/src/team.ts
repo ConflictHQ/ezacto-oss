@@ -166,6 +166,8 @@ export type TeamCommandKind =
   | 'person.notifications.update'
   | 'person.billable_rate.append'
   | 'person.cost_rate.append'
+  | 'person.billable_rate.remove'
+  | 'person.cost_rate.remove'
 
 export interface TeamCommand {
   commandId: string
@@ -226,6 +228,19 @@ export interface TeamRepository {
   appendRate(
     command: Readonly<TeamCommand>,
     input: Readonly<{ kind: TeamRateKind; amountCents: number; startDate: string | null }>,
+  ): Promise<TeamCommandReceipt>
+  /**
+   * Take back a rate that was never meant to be added (#727).
+   *
+   * Only the current one, and only while nothing has been priced from it: the
+   * schema decides both, because a rule that lives in a caller is a rule the
+   * next caller does not have. Removing it reopens whatever it displaced --
+   * adding a rate ends the one before it, so taking the addition away has to
+   * put that one back or the mistake is only half undone.
+   */
+  removeRate(
+    command: Readonly<TeamCommand>,
+    input: Readonly<{ kind: TeamRateKind; rateId: number }>,
   ): Promise<TeamCommandReceipt>
   listRoles(): Promise<readonly TeamNamedRelation[]>
   listDepartments(): Promise<readonly TeamNamedRelation[]>

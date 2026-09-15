@@ -95,8 +95,9 @@ export const renderTeamPages = (view?: string): string => `
 
       <section class="team-person-panel" id="team-panel-rates" role="tabpanel" aria-labelledby="team-tab-rates" data-team-panel="rates" hidden>
         <header><div><p class="eyebrow">Effective-dated</p><h2>Rates</h2></div></header>
-        <p>Rates are append-only. A new effective date closes the preceding period without rewriting history.</p>
+        <p>A new effective date closes the preceding period without rewriting history. The current rate can be removed while nothing has been priced from it, which puts back the rate it replaced; once it has priced work it stays.</p>
         <p class="hint" data-team-rates-redacted hidden>Rate history is not available to your permission profile.</p>
+        <p class="form-result" data-team-rates-result role="status" aria-live="polite"></p>
         <div class="team-rate-columns">
           <section data-team-billable-section><header><h3>Billable rates</h3><button type="button" data-team-add-rate="billable">Add rate</button></header><div data-team-billable-rates></div></section>
           <section data-team-cost-section><header><h3>Cost rates</h3><button type="button" data-team-add-rate="cost">Add rate</button></header><div data-team-cost-rates></div></section>

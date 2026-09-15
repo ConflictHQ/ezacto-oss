@@ -1957,6 +1957,24 @@ const teamOperations: ApiContractOperation[] = [
     sessionOnly: true,
     parameters: [path("id"), header("Idempotency-Key")],
   },
+  {
+    // A removal rather than a correcting append, because appending leaves the
+    // wrong row in the history for ever -- and is no remedy at all when the
+    // mistaken rate starts earlier than anything that could correct it, since
+    // rates may only be appended forward. Which rates may go is the schema's
+    // decision: only the current one, and only while nothing was priced from it.
+    method: "delete",
+    path: "/api/v1/team/people/:id/rates/:rateId",
+    operationId: "removeTeamPersonRate",
+    summary: "Remove a person rate that has priced nothing",
+    tag: "team",
+    responseStatus: 200,
+    responseSchema: "TeamCommandReceiptEnvelope",
+    requestSchema: "TeamRateRemovalInput",
+    requestRequired: true,
+    sessionOnly: true,
+    parameters: [path("id"), path("rateId"), header("Idempotency-Key")],
+  },
 ];
 
 export const apiContractOperations: readonly ApiContractOperation[] = [
@@ -3932,6 +3950,23 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       kind: { type: "string", enum: ["billable", "cost"] },
       amount_cents: { type: "integer", minimum: 0 },
       start_date: nullable(dateSchema),
+    },
+    additionalProperties: false,
+  },
+  /**
+   * Taking back a rate nobody meant to add (#727).
+   *
+   * No amount and no date: the rate being removed is named by the path, and a
+   * body that restated it would be a second place for the two to disagree.
+   * `kind` says which table, and is checked against what the acting profile may
+   * set, so somebody who may not set a cost rate may not unset one either.
+   */
+  TeamRateRemovalInput: {
+    type: "object",
+    required: ["expected_version", "kind"],
+    properties: {
+      expected_version: { type: "integer", minimum: 0 },
+      kind: { type: "string", enum: ["billable", "cost"] },
     },
     additionalProperties: false,
   },
