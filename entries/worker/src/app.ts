@@ -80,6 +80,7 @@ import {
   type OidcTransactionStorePort,
   type OidcAppCodeStorePort,
   type StaffMagicLinkMailer,
+  type BandClaimBackfillPort,
   type StaffMagicLinkStorePort,
   type StaffUserDirectory,
   type PasswordAuthService,
@@ -269,6 +270,7 @@ export interface RuntimeServices {
    * definition through the same object the Generate button uses.
    */
   recurringInvoices: RecurringInvoiceEngine
+  bandClaimBackfill: BandClaimBackfillPort
   reports: ReportReader
   /** The organisation's name, read fresh: `GET /api/v1/brand` and the mailers. */
   organizationName(): Promise<string>
@@ -481,6 +483,7 @@ export const createApp = (
               service: services.moneyResources,
               generation: services.invoiceGeneration,
               recurringGeneration: services.recurringInvoices,
+              bandClaimBackfill: services.bandClaimBackfill,
               ...(services.organizationMailer === undefined
                 ? {}
                 : {

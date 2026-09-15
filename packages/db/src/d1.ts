@@ -321,6 +321,7 @@ export {
   type RecurringGenerationPrincipal,
   type RecurringInvoiceEngine,
 } from './recurring-invoice-engine.js'
+export { backfillBandClaims } from './band-claim-backfill.js'
 export { captureActivityEvent } from './activity-log.js'
 export { createD1ReminderScheduler } from './reminders.js'
 

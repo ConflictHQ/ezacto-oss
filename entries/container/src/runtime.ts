@@ -22,6 +22,7 @@ import {
   createContainerSessionStore,
   createContainerSsoProvisioningDomainStore,
   createContainerTwoFactorStore,
+  backfillBandClaims,
   createRecurringInvoiceEngine,
   createContainerReminderScheduler,
   captureActivityEvent,
@@ -87,7 +88,11 @@ import {
   type HttpEmailProvider,
 } from '@ezacto/mailer'
 import { SmtpMailer } from '@ezacto/mailer/smtp'
-import type { BrandAssetSurface, InstanceThemeSurface } from '@ezacto/api'
+import type {
+  BandClaimBackfillPort,
+  BrandAssetSurface,
+  InstanceThemeSurface,
+} from '@ezacto/api'
 import type { AppEnv, RuntimeServices } from '../../worker/src/app.js'
 import {
   createBillMirrorSubscriber,
@@ -639,6 +644,13 @@ export const createContainerRuntime = async (
       },
       invoiceGeneration: createInvoiceGenerationService(drizzle),
       recurringInvoices: createRecurringInvoiceEngine(drizzle),
+      // #712. The container runs the same routes as the worker, so it carries
+      // the same reader -- a backfill that worked only on one of them would be
+      // an operation whose availability depended on where you happened to run.
+      bandClaimBackfill: {
+        backfill: (input: Parameters<BandClaimBackfillPort['backfill']>[0]) =>
+          backfillBandClaims(drizzle, input),
+      },
       activity: {
         capture: async (request) => {
           await captureActivityEvent(drizzle, request)

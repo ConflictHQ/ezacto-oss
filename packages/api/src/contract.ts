@@ -1015,6 +1015,23 @@ const moneyOperations: ApiContractOperation[] = [
     parameters: [path("id")],
   })),
   {
+    // Filling in the claims a band was issued too early to make (#712).
+    // Rehearsal is the default: a call writes nothing unless it says `apply`,
+    // because the figures this moves are large enough that nobody should
+    // approve them from a description. The invoices are named rather than
+    // inferred -- a definition's own invoices are not reliably linked to it.
+    method: "post",
+    path: "/api/v1/recurring-invoices/:id/claim-backfill",
+    operationId: "backfillRecurringInvoiceClaims",
+    summary: "Rehearse or apply the claims a band was issued too early to make",
+    tag: "recurring-invoices",
+    responseStatus: 200,
+    responseSchema: "BandClaimBackfillEnvelope",
+    requestSchema: "BandClaimBackfillInput",
+    requestRequired: true,
+    parameters: [path("id"), idempotency],
+  },
+  {
     method: "post",
     path: "/api/v1/recurring-invoices/:id/generations",
     operationId: "generateRecurringInvoice",
@@ -5858,6 +5875,79 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   RecurringInvoicePage: page("RecurringInvoice"),
+  BandClaimBackfillInput: {
+    type: "object",
+    required: ["invoice_ids"],
+    properties: {
+      // Named, never inferred: an import can leave a definition's link null on
+      // invoices that plainly belong to the band, so inferring the list would
+      // silently do the wrong amount of work.
+      invoice_ids: { type: "array", items: integerSchema, minItems: 1 },
+      // Optional: absent takes what the definition says it claims, which is
+      // configuration rather than a guess.
+      project_ids: { type: "array", items: integerSchema },
+      // Absent rehearses. A run writes nothing unless it says so.
+      apply: booleanSchema,
+    },
+    additionalProperties: false,
+  },
+  BandClaimBackfillLine: {
+    type: "object",
+    required: [
+      "invoice_id",
+      "number",
+      "issue_date",
+      "state",
+      "amount_cents",
+      "entry_count",
+      "seconds",
+      "billable_value_cents",
+      "entries_without_billable_rate",
+      "foregone_billable_cents",
+    ],
+    properties: {
+      invoice_id: integerSchema,
+      number: stringSchema,
+      issue_date: dateSchema,
+      state: stringSchema,
+      amount_cents: signedIntegerSchema,
+      entry_count: { type: "integer", minimum: 0 },
+      seconds: signedIntegerSchema,
+      // Value at list of what this invoice would absorb, and how much of it
+      // could not be priced -- so a low figure is readable as partial rather
+      // than as a band that absorbed little.
+      billable_value_cents: signedIntegerSchema,
+      entries_without_billable_rate: { type: "integer", minimum: 0 },
+      foregone_billable_cents: signedIntegerSchema,
+    },
+    additionalProperties: false,
+  },
+  BandClaimBackfill: {
+    type: "object",
+    required: [
+      "run_id",
+      "applied",
+      "invoices",
+      "remaining_entry_count",
+      "remaining_seconds",
+    ],
+    properties: {
+      run_id: stringSchema,
+      applied: booleanSchema,
+      invoices: { type: "array", items: reference("BandClaimBackfillLine") },
+      // Still unbilled on those projects afterwards: work no named invoice
+      // covers, which belongs to the next generation rather than to this run.
+      remaining_entry_count: { type: "integer", minimum: 0 },
+      remaining_seconds: signedIntegerSchema,
+    },
+    additionalProperties: false,
+  },
+  BandClaimBackfillEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("BandClaimBackfill") },
+    additionalProperties: false,
+  },
   RecurringInvoiceInput: {
     type: "object",
     required: [

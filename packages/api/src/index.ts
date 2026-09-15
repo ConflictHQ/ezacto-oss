@@ -136,6 +136,7 @@ export {
   type InvoiceGenerationCommand,
   type InvoiceGenerationExpenseSummary,
   type InvoiceGenerationPort,
+  type BandClaimBackfillPort,
   type RecurringGenerationPort,
   type InvoiceGenerationRequest,
   type InvoiceGenerationTimeSummary,
