@@ -5,29 +5,26 @@
  */
 
 const SCHEMA_VERSION = 1
-const BUNDLE_VERSION = '0036'
+const BUNDLE_VERSION = '0037'
 
 /**
- * Tables the bundle deliberately leaves out, and the only reason it leaves
- * anything out.
+ * Tables a restore should skip, and why. Note what this is *not*: it is not a
+ * list of tables to leave out of the bundle. The bundle takes everything.
  *
- * Everything else is discovered from the database itself. A hand-written list
- * of tables to *include* is a list that silently falls behind the schema, and
- * it did: the deployed export carried 51 tables, this file said 57, and the
- * database had 127. Nobody noticed, because a backup that omits a table looks
- * exactly like a backup that does not.
+ * Those are two different decisions and conflating them was the earlier
+ * mistake. Capturing is cheap and a backup is a record -- leaving a table out
+ * destroys evidence you may want later, and "who held a session when this
+ * happened" is exactly the question an incident asks. Loading is where the
+ * judgement lives: restoring these would revive a session somebody revoked, a
+ * password-reset link somebody already spent, a sign-in code already used.
  *
- * So the question this constant answers is the narrow one -- what is worthless
- * or harmful to restore -- and a new table is backed up by default. Getting
- * that wrong costs a few kilobytes; getting the old question wrong cost six
- * tables of real data, including the row naming the organization's owner.
+ * So they are captured, and named here so the restore can skip them.
  */
-const EXCLUDED_TABLES: ReadonlySet<string> = new Set([
-  // Re-applied from source on first boot. Restoring it would tell a fresh
+const EPHEMERAL_TABLES: readonly string[] = [
+  // Re-applied from source on first boot. Loading it would tell a fresh
   // database it had already run migrations it has not run.
   '_ezacto_migrations',
-  // Live credentials, bound to a browser or a redirect that no longer exists.
-  // Restoring them signs nobody in; it only carries bearer material forward.
+  // Live credentials. Loading them revives what was deliberately killed.
   'sessions',
   'contact_sessions',
   'auth_tokens',
@@ -39,10 +36,15 @@ const EXCLUDED_TABLES: ReadonlySet<string> = new Set([
   'oidc_app_codes',
   'oidc_transactions',
   'quickbooks_oauth_states',
-])
+]
 
 /**
- * Every table the database has, minus the exclusions, in a stable order.
+ * Every table the database has, in a stable order.
+ *
+ * Discovered rather than listed. The bundle used to carry a hand-written list
+ * of tables to include, so every migration that added one silently narrowed the
+ * backup: production exported 51 tables, the source said 57, the database had
+ * 127. A backup missing a table looks exactly like a backup that is not.
  *
  * Sorted because the manifest is checksummed and compared between runs: a
  * bundle whose table order drifted with SQLite's catalog would look changed
@@ -64,9 +66,7 @@ const backupTables = async (database: D1Database): Promise<readonly string[]> =>
         ORDER BY name`,
     )
     .all<{ name: string }>()
-  return results
-    .map((row) => row.name)
-    .filter((name) => !EXCLUDED_TABLES.has(name))
+  return results.map((row) => row.name)
 }
 
 export interface BackupObjectStore {
@@ -80,6 +80,12 @@ export interface BackupManifest {
   tables: Record<string, { row_count: number; sha256: string }>
   table_count: number
   total_rows: number
+  /**
+   * Tables present in this bundle that a restore should not load. Carried here
+   * rather than left to a reader of the source, because the bundle outlives the
+   * version of ezacto that wrote it.
+   */
+  restore_skips: readonly string[]
 }
 
 export interface BackupRunRecord {
@@ -130,8 +136,16 @@ and API-token hashes. It has to — an instance whose people cannot sign in has
 not been restored — but it means these files are exactly as sensitive as the
 database they came from, and more portable. Store them accordingly.
 
-Live sessions, sign-in links and OAuth transactions are deliberately *not*
-here. They would sign nobody in and only carry bearer material forward.
+## Tables to skip when loading
+
+Everything the database had is here, including live sessions, sign-in links and
+OAuth transactions. They are kept because a backup is a record and you may want
+to know who held a session when something happened -- but **do not load them**.
+Doing so revives a session somebody revoked, a password-reset link somebody
+already spent, a sign-in code already used.
+
+\`manifest.json\` names them in \`restore_skips\`, so whatever loads these CSVs can
+read the list rather than carry its own copy of it.
 
 ## Files
 
@@ -196,6 +210,9 @@ export const exportBundle = async (
     exported_at: exportedAt,
     tables,
     table_count: backedUp.length,
+    // Carried in the manifest rather than left to a reader of the source: the
+    // bundle outlives the version of ezacto that wrote it.
+    restore_skips: EPHEMERAL_TABLES.filter((table) => backedUp.includes(table)),
     total_rows: totalRows,
   }
 
@@ -296,7 +313,7 @@ export const shouldRunNightlyBackup = async (
 }
 
 export {
-  EXCLUDED_TABLES,
+  EPHEMERAL_TABLES,
   backupTables,
   SCHEMA_VERSION,
   BUNDLE_VERSION,
