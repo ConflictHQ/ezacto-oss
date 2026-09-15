@@ -3,6 +3,7 @@ import { Miniflare } from 'miniflare'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   authenticateApiToken,
+  createApiTokenStore,
   issueApiToken,
   listApiTokens,
   revokeApiToken,
@@ -511,6 +512,58 @@ for (const [runtime, factory] of factories) {
         }),
       ).rejects.toThrow(/active user profile cannot grant/)
       expect(await listApiTokens(db.database, 7)).toEqual([] as ApiTokenMetadata[])
+    })
+
+    describe('demo lifetime ceiling', () => {
+      const DAY = 24 * 60 * 60 * 1000
+      const capped = (db: Harness) =>
+        createApiTokenStore(db.database, { now: () => createdAt, maxLifetimeMs: DAY })
+
+      it('[security] expires a token the caller asked to keep forever', async () => {
+        // The demo publishes the credentials that mint these, so "no expiry" is
+        // not a thing a caller there gets to choose. Saying nothing and saying
+        // null are the two ways to ask for forever; both land on the ceiling.
+        const db = await setup()
+        const store = capped(db)
+        const silent = await store.issue({ userId: 7, name: 'Toolbar', scopes: ['reports:read'] })
+        const explicit = await store.issue({
+          userId: 7,
+          name: 'Toolbar again',
+          scopes: ['reports:read'],
+          expiresAt: null,
+        })
+
+        const ceiling = new Date(Date.parse(createdAt) + DAY).toISOString()
+        expect(silent.expiresAt).toBe(ceiling)
+        expect(explicit.expiresAt).toBe(ceiling)
+        expect(await authenticateApiToken(db.database, silent.token, ceiling)).toBeNull()
+      })
+
+      it('[unit] keeps a shorter expiry the caller asked for', async () => {
+        // A ceiling is a maximum, not a schedule. Someone who wants five minutes
+        // gets five minutes.
+        const db = await setup()
+        const sooner = '2026-08-28T13:00:00.000Z'
+        const issued = await capped(db).issue({
+          userId: 7,
+          name: 'Brief',
+          scopes: ['reports:read'],
+          expiresAt: sooner,
+        })
+
+        expect(issued.expiresAt).toBe(sooner)
+      })
+
+      it('[unit] leaves an ordinary instance without a ceiling', async () => {
+        // Every deployment that is not the demo issues tokens that live until
+        // someone revokes them, which is what the product has always done.
+        const db = await setup()
+        const issued = await createApiTokenStore(db.database, {
+          now: () => createdAt,
+        }).issue({ userId: 7, name: 'Forever', scopes: ['reports:read'] })
+
+        expect(issued.expiresAt).toBeNull()
+      })
     })
   })
 }

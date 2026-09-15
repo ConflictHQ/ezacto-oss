@@ -1761,6 +1761,18 @@ export const appleProvider = (env: AppEnv): AppleProviderConfig | null => {
 export const demoDeployment = (env: AppEnv): boolean =>
   env.ENVIRONMENT !== 'prod' && env.DEMO_MODE === 'true'
 
+/**
+ * Longest an API token minted on the demo may live.
+ *
+ * ezacto.io publishes its own credentials, so a token issued there is one that
+ * any visitor could have made, and the browser extension asks for exactly such
+ * a token to put the timer on a toolbar. A day is the cadence the demo is
+ * rebuilt on: long enough that a sitting is never interrupted, short enough
+ * that nothing minted during one outlives it. Ordinary instances have no
+ * ceiling -- see `createApiTokenStore`.
+ */
+export const DEMO_API_TOKEN_MAX_LIFETIME_MS = 24 * 60 * 60 * 1000
+
 /** The accounts a demo prints on its own sign-in page, and nothing anywhere else. */
 export const publishedDemoAccounts = (env: AppEnv): readonly DemoSignInAccount[] | undefined =>
   demoDeployment(env)

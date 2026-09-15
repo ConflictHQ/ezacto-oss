@@ -95,7 +95,12 @@ import {
 } from "@ezacto/mailer";
 import { createInvoiceDocumentPort } from './invoice-documents.js';
 import type { RuntimeServices } from "./app.js";
-import { cloudflareAccessConfig, type WorkerEnv } from "./app.js";
+import {
+  cloudflareAccessConfig,
+  DEMO_API_TOKEN_MAX_LIFETIME_MS,
+  demoDeployment,
+  type WorkerEnv,
+} from "./app.js";
 import {
   createBillMirrorSubscriber,
   createBillRuntime,
@@ -811,7 +816,12 @@ export const createRuntimeServices = async (
     bootstrap: (input) => bootstrapInstanceD1(database, input),
     enrollOwnerPassword: (input) =>
       enrollInstanceOwnerPasswordD1(database, input),
-    tokens: createApiTokenStore(drizzle),
+    // The demo hands its credentials to strangers, so a token minted there gets
+    // a ceiling; everywhere else a token lives until someone revokes it.
+    tokens: createApiTokenStore(
+      drizzle,
+      demoDeployment(env) ? { maxLifetimeMs: DEMO_API_TOKEN_MAX_LIFETIME_MS } : {},
+    ),
     generalResources: createGeneralResourceRepository(drizzle),
     clientTree: {
       ancestors: (clientId) => listClientAncestors(drizzle, clientId),
