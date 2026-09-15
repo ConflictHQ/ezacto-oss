@@ -601,6 +601,14 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
         <div><p class="eyebrow">Organization policy</p><h2 id="lock-policy-title">Time and expense locks</h2></div>
         <p>Deadline and manual locks remain in force until explicitly unlocked.</p>
       </header>
+      <form class="org-timezone-form" data-org-timezone-form>
+        <label>Organization timezone
+          <input name="timezone" type="text" list="timezone-options" data-org-timezone autocomplete="off" maxlength="128" required>
+        </label>
+        <p class="field-hint">The day tracked work is filed on for anyone who has not set their own, and the timezone deadlines below are read in.</p>
+        <button type="submit" data-org-timezone-submit>Save timezone</button>
+        <p class="form-result" data-org-timezone-result aria-live="polite"></p>
+      </form>
       <form class="lock-policy-form" data-lock-policy-form>
         <label class="lock-policy-toggle"><input name="autoLock" type="checkbox" data-lock-policy-auto>Automatically lock completed weeks</label>
         <label>Deadline day
@@ -612,7 +620,6 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
           </select>
         </label>
         <label>Deadline time<input name="deadlineTime" type="time" data-lock-policy-time required></label>
-        <label>Organization timezone<input name="timezone" type="text" data-lock-policy-timezone autocomplete="off" maxlength="128" required></label>
         <button class="primary-action" type="submit" data-lock-policy-submit>Save policy</button>
       </form>
       <form class="manual-lock-form" data-manual-lock-form>
@@ -818,7 +825,17 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
     <header><h2 id="menu-title">Navigate</h2><button type="button" data-dialog-close aria-label="Close">×</button></header>
     <nav aria-label="Mobile primary">${navigation}</nav>
     <nav class="secondary-nav" data-secondary-nav aria-label="More">${foldedNavigation}</nav>
+    <form class="profile-timezone-form" data-profile-timezone-form>
+      <p class="eyebrow">Your timezone</p>
+      <label>Your timezone
+        <input name="timezone" type="text" list="timezone-options" data-profile-timezone autocomplete="off" maxlength="128" required>
+      </label>
+      <p class="field-hint" data-profile-timezone-hint></p>
+      <button type="submit" data-profile-timezone-submit>Save timezone</button>
+      <p class="form-result" data-profile-timezone-result aria-live="polite"></p>
+    </form>
   </dialog>
+  <datalist id="timezone-options" data-timezone-options></datalist>
   <dialog class="row-dialog" data-row-dialog aria-labelledby="row-title">
     <form data-row-form>
       <header><div><p class="eyebrow">Timesheet row</p><h2 id="row-title">Add project and task</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>

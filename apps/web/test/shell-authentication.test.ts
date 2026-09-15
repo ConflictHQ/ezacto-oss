@@ -545,19 +545,34 @@ describe('native browser authentication', () => {
 
     const automatic = document.querySelector<HTMLInputElement>('[data-lock-policy-auto]')!
     automatic.checked = false
-    document.querySelector<HTMLInputElement>('[data-lock-policy-timezone]')!.value = 'UTC'
     document
       .querySelector<HTMLFormElement>('[data-lock-policy-form]')!
       .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    // Issue 757. The deadline save no longer carries the organization timezone,
+    // so saving a deadline cannot quietly rewrite the zone every entry is filed
+    // in -- and the zone is reachable without setting a deadline at all.
     await vi.waitFor(() =>
       expect(updateTimesheetLockPolicy).toHaveBeenCalledWith(
-        expect.objectContaining({ auto_lock: false, timezone: 'UTC' }),
+        { auto_lock: false, timesheet_deadline: { day: 'monday', time: '17:00' } },
         expect.any(AbortSignal),
       ),
     )
     await vi.waitFor(() =>
       expect(document.querySelector('[data-lock-policy-result]')?.textContent).toContain(
         'Automatic locking disabled',
+      ),
+    )
+
+    // The organization timezone is its own setting with its own save.
+    document.querySelector<HTMLInputElement>('[data-org-timezone]')!.value =
+      'America/Costa_Rica'
+    document
+      .querySelector<HTMLFormElement>('[data-org-timezone-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() =>
+      expect(updateTimesheetLockPolicy).toHaveBeenCalledWith(
+        { timezone: 'America/Costa_Rica' },
+        expect.any(AbortSignal),
       ),
     )
 

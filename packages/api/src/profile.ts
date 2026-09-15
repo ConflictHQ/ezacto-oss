@@ -12,6 +12,12 @@ import { validationError, type FieldError } from './errors.js'
  */
 
 export interface ProfileRepositoryPort {
+  /**
+   * The stored value, which is 'UTC' for anyone who has never set one. The
+   * control that reads this shows "not set" for that, because it is: the
+   * organization zone is what actually decides their day until they choose.
+   */
+  readTimezone(userId: number): Promise<string | null>
   updateTimezone(userId: number, timezone: string, occurredAt: string): Promise<void>
 }
 
@@ -50,6 +56,20 @@ export const installProfileRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   options: ProfileRouteOptions,
 ): void => {
+  api.get('/profile', async (context) => {
+    requireApiScope(context, 'time_entries:read')
+    const principal = context.get('principal')
+    const timezone = await options.repository.readTimezone(principal.userId)
+    return context.json(
+      {
+        data: { user_id: principal.userId, timezone: timezone ?? 'UTC' },
+        links: { self: '/api/v1/profile' },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
   api.patch('/profile', async (context) => {
     requireApiScope(context, 'time_entries:write')
     const principal = context.get('principal')

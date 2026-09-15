@@ -67,6 +67,7 @@ import {
   setBillDelivery,
   createQuickBooksMirrorSource,
   createQuickBooksStore,
+  readUserTimezone,
   updateUserTimezone,
 } from '@ezacto/db'
 import {
@@ -528,6 +529,7 @@ export const createContainerRuntime = async (
         timesheetLockPolicy,
       ),
       profile: {
+        readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
         updateTimezone: async (userId, timezone, occurredAt) => {
           await updateUserTimezone(drizzle, userId, timezone, occurredAt)
         },

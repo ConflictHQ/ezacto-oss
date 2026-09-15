@@ -23,7 +23,7 @@ const session: SessionMetadata = {
 const issuedToken = `ezacto_session_abcdefghijklmnop_${'A'.repeat(43)}`
 const at = '2026-09-14T00:00:00.000Z'
 
-const createHarness = () => {
+const createHarness = (stored: string | null = 'UTC') => {
   const store: SessionStorePort = {
     issue: vi.fn(async () => ({ token: issuedToken, session })),
     authenticate: vi.fn(async (presented) =>
@@ -45,16 +45,19 @@ const createHarness = () => {
   const updateTimezone = vi.fn<ProfileRepositoryPort['updateTimezone']>(
     async () => undefined,
   )
+  const readTimezone = vi.fn<ProfileRepositoryPort['readTimezone']>(
+    async () => stored,
+  )
   const app = createApiApp({
     authentication: { sessions },
     installApi: (api) =>
       installProfileRoutes(api, {
-        repository: { updateTimezone },
+        repository: { readTimezone, updateTimezone },
         clock: () => at,
       }),
   })
   const cookie = `${SESSION_COOKIE_NAME}=${issuedToken}`
-  return { app, updateTimezone, cookie }
+  return { app, readTimezone, updateTimezone, cookie }
 }
 
 const patch = (
@@ -105,5 +108,31 @@ describe('self-service profile timezone', () => {
     expect(res.status).toBeGreaterThanOrEqual(401)
     expect(res.status).toBeLessThan(404)
     expect(updateTimezone).not.toHaveBeenCalled()
+  })
+})
+
+describe('reading your own profile', () => {
+  it('[unit] answers with the stored timezone', async () => {
+    const { app, cookie } = createHarness('America/Costa_Rica')
+    const response = await app.request('/api/v1/profile', { headers: { cookie } })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      data: { user_id: 7, timezone: 'America/Costa_Rica' },
+    })
+  })
+
+  it("[unit] answers 'UTC' for someone who has never set one", async () => {
+    // Which is the column default, and means "unset": the organization zone is
+    // what actually decides their day until they choose.
+    const { app, cookie } = createHarness(null)
+    const response = await app.request('/api/v1/profile', { headers: { cookie } })
+    expect(await response.json()).toMatchObject({ data: { timezone: 'UTC' } })
+  })
+
+  it('[security] refuses an unauthenticated read', async () => {
+    const { app, readTimezone } = createHarness()
+    const response = await app.request('/api/v1/profile')
+    expect(response.status).toBe(401)
+    expect(readTimezone).not.toHaveBeenCalled()
   })
 })

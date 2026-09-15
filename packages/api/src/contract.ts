@@ -2536,6 +2536,15 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     sessionOnly: true,
   },
   {
+    method: "get",
+    path: "/api/v1/profile",
+    operationId: "getProfile",
+    summary: "The signed-in user's own profile",
+    tag: "profile",
+    responseStatus: 200,
+    responseSchema: "ProfileEnvelope",
+  },
+  {
     method: "patch",
     path: "/api/v1/profile",
     operationId: "updateProfile",
