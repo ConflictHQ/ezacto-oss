@@ -121,6 +121,23 @@ export const appendUserRate = async (
   await database.insert(table).values(rate)
 }
 
+/**
+ * A person's own timezone, for the self-service control that sets it. The column
+ * default is 'UTC', which means "never set" rather than "chose UTC" -- callers
+ * that need the effective zone must still fall back to the organization's.
+ */
+export const readUserTimezone = async (
+  database: Database,
+  userId: number,
+): Promise<string | null> => {
+  const [row] = await database
+    .select()
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1)
+  return row?.timezone ?? null
+}
+
 export const updateUserTimezone = async (
   database: Database,
   userId: number,

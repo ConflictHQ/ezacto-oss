@@ -18,6 +18,7 @@ import {
 import { type ChildLineage } from './jsonl.js'
 import { readManifest, type Manifest } from './manifest.js'
 import { RESOURCES } from './resources.js'
+import { normalizeTimezone } from './timezone.js'
 import { acquireSnapshotLock, releaseSnapshotLock } from './snapshot-lock.js'
 import {
   accessRoles,
@@ -403,6 +404,7 @@ export interface LoadAnomaly {
     | 'receipt_download_missing'
     | 'duplicate_user_squashed'
     | 'duplicate_row_merged'
+    | 'timezone_unmapped'
   detail: string
 }
 
@@ -2658,6 +2660,23 @@ const rowStatements = (
         throw new Error('users.access_roles must be an array of strings')
       }
       const mapped = accessRoles(sourceRoles as string[])
+      // Harvest's timezone is a Rails display name ("Central America", "Warsaw"),
+      // which `Intl` refuses. Storing one is issue 755: the repository preferred
+      // the personal zone, threw, and fell back to UTC -- discarding a working
+      // organization zone for every imported person at once.
+      //
+      // An unmappable value becomes 'UTC', which is this column's "unset", so the
+      // organization zone decides the day. That is the right answer for someone
+      // whose preference we could not read, and it is recorded rather than silent.
+      const zone = normalizeTimezone(stringValue(row, 'timezone'), 'UTC')
+      if (zone.unmapped !== undefined) {
+        anomalies.push({
+          resource: 'users',
+          source_id: harvestId,
+          kind: 'timezone_unmapped',
+          detail: `${zone.unmapped} is not an IANA timezone; filed against the organization`,
+        })
+      }
       const user = insertByHarvestId(
         'users',
         [
@@ -2682,7 +2701,7 @@ const rowStatements = (
           requiredText(row, 'first_name'),
           requiredText(row, 'last_name'),
           stringValue(row, 'telephone'),
-          stringValue(row, 'timezone', 'UTC'),
+          zone.timezone,
           bool(row, 'is_contractor') ? 1 : 0,
           bool(row, 'is_active', true) ? 1 : 0,
           bool(row, 'has_access_to_all_future_projects') ? 1 : 0,

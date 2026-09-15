@@ -3280,6 +3280,15 @@ export class EzactoClient {
     });
   }
 
+  async getProfile(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ProfileEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ProfileEnvelope>("GET", "/api/v1/profile", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
   async updateProfile(args: { body: ProfilePatch; signal?: AbortSignal; headers?: HeadersInit }): Promise<ProfileEnvelope> {
     const headers = new Headers(args.headers);
 

@@ -204,6 +204,12 @@ export interface ShellApi
     id: number,
     signal?: AbortSignal,
   ): Promise<TimesheetSubmission>
+  /** The signed-in user's own timezone, for the self-service control (issue 757). */
+  getProfile?(signal?: AbortSignal): Promise<{ user_id: number; timezone: string }>
+  updateProfile?(
+    timezone: string,
+    signal?: AbortSignal,
+  ): Promise<{ user_id: number; timezone: string }>
   getTimesheetLockPolicy?(signal?: AbortSignal): Promise<TimesheetLockPolicy>
   updateTimesheetLockPolicy?(
     input: TimesheetLockPolicyPatch,
@@ -2034,6 +2040,9 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  getProfile: async (signal) => (await client.getProfile(withSignal(signal))).data,
+  updateProfile: async (timezone, signal) =>
+    (await client.updateProfile({ body: { timezone }, ...withSignal(signal) })).data,
   getTimesheetLockPolicy: async (signal) =>
     (await client.getTimesheetLockPolicy(withSignal(signal))).data,
   updateTimesheetLockPolicy: async (input, signal) =>

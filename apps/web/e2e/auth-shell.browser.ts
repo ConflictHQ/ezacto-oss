@@ -2784,7 +2784,25 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
   await policyPanel.locator('[data-lock-policy-auto]').uncheck()
   await policyPanel.locator('[data-lock-policy-day]').selectOption('friday')
   await policyPanel.locator('[data-lock-policy-time]').fill('16:45')
-  await policyPanel.locator('[data-lock-policy-timezone]').fill('America/Costa_Rica')
+
+  // Issue 757. The organization timezone saves on its own: it used to be a field
+  // on this form, so an instance that wanted a timezone and no automatic locking
+  // could not set one at all.
+  await policyPanel.locator('[data-org-timezone]').fill('America/Costa_Rica')
+  const timezoneSaved = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/timesheet-lock-policy' &&
+      response.request().method() === 'PATCH',
+  )
+  await policyPanel.getByRole('button', { name: 'Save timezone' }).click()
+  const timezoneResponse = await timezoneSaved
+  expect(timezoneResponse.ok()).toBe(true)
+  // The timezone alone -- no deadline rides along, so saving one cannot quietly
+  // rewrite the other.
+  expect(timezoneResponse.request().postDataJSON()).toEqual({
+    timezone: 'America/Costa_Rica',
+  })
+
   const policySaved = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === '/api/v1/timesheet-lock-policy' &&
@@ -2796,7 +2814,6 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
   expect(policyResponse.request().postDataJSON()).toEqual({
     auto_lock: false,
     timesheet_deadline: { day: 'friday', time: '16:45' },
-    timezone: 'America/Costa_Rica',
   })
   expect(await policyResponse.json()).toMatchObject({
     data: {

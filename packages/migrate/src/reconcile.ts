@@ -28,9 +28,10 @@ export type ReconciliationGapId =
   | 'migration-spec-7-sub-cent-unit-prices'
   | 'migration-spec-7-estimates-module-disabled'
   | 'migration-spec-7-duplicate-harvest-accounts'
-  // Not a documented spec gap like the others: a defect in the tooling, cited
-  // so the report names what is wrong rather than staying quiet about it.
+  // Not documented spec gaps like the others: defects in the tooling, cited so
+  // the report names what is wrong rather than staying quiet about it.
   | 'issue-407-load-is-add-only'
+  | 'issue-757-timezone-display-names'
 
 export interface ReconciliationGapCitation {
   id: ReconciliationGapId
@@ -76,6 +77,11 @@ const MIGRATION_SPEC_GAP_CITATIONS = {
     id: 'migration-spec-7-duplicate-harvest-accounts',
     reference: 'docs/migration-spec.md §7: Two Harvest accounts for one person.',
   },
+  timezoneDisplayNames: {
+    id: 'issue-757-timezone-display-names',
+    reference:
+      'issue 757: Harvest stores a Rails timezone display name, which Intl refuses; an unmappable one files against the organization zone.',
+  },
 } as const satisfies Record<string, ReconciliationGapCitation>
 
 /**
@@ -91,6 +97,9 @@ const ACCEPTED_ANOMALY_CITATIONS: Readonly<Record<string, ReconciliationGapCitat
   unresolved_estimate_reference: MIGRATION_SPEC_GAP_CITATIONS.estimatesModuleDisabled,
   duplicate_user_squashed: MIGRATION_SPEC_GAP_CITATIONS.duplicateHarvestAccounts,
   duplicate_row_merged: MIGRATION_SPEC_GAP_CITATIONS.duplicateHarvestAccounts,
+  // Not a lost row: the person loads, and only their display preference is
+  // dropped. Recording it uncited would read as a missing person.
+  timezone_unmapped: MIGRATION_SPEC_GAP_CITATIONS.timezoneDisplayNames,
 }
 
 export interface ReconciliationReport {

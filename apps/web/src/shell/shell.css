@@ -2618,6 +2618,7 @@
   margin: 0;
   color: var(--ez-muted);
 }
+.org-timezone-form,
 .lock-policy-form,
 .manual-lock-form {
   display: grid;
@@ -2629,11 +2630,14 @@
   border-radius: var(--ez-radius);
   background: var(--ez-surface);
 }
+.org-timezone-form label,
 .lock-policy-form label,
 .manual-lock-form label {
   display: grid;
   gap: 6px;
 }
+.org-timezone-form input,
+.org-timezone-form button,
 .lock-policy-form input:not([type='checkbox']),
 .lock-policy-form select,
 .manual-lock-form input,
@@ -6130,4 +6134,40 @@ dialog textarea {
 }
 .calendar-total {
   font-weight: 600;
+}
+
+/* Issue 757. The organization timezone is its own setting rather than a field on
+   the lock-policy form, and a person can set their own from the global menu. */
+.org-timezone-form .field-hint,
+.org-timezone-form .form-result {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.profile-timezone-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ez-border);
+}
+
+.profile-timezone-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.profile-timezone-form input,
+.profile-timezone-form button {
+  min-height: 44px;
+}
+
+.profile-timezone-form .field-hint,
+.profile-timezone-form .form-result {
+  margin: 0;
+}
+
+.profile-timezone-form .form-result:empty,
+.org-timezone-form .form-result:empty {
+  display: none;
 }

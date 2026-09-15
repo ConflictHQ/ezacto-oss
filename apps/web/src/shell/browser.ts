@@ -1219,7 +1219,16 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const lockPolicyAuto = required<HTMLInputElement>('[data-lock-policy-auto]')
   const lockPolicyDay = required<HTMLSelectElement>('[data-lock-policy-day]')
   const lockPolicyTime = required<HTMLInputElement>('[data-lock-policy-time]')
-  const lockPolicyTimezone = required<HTMLInputElement>('[data-lock-policy-timezone]')
+  const orgTimezone = required<HTMLInputElement>('[data-org-timezone]')
+  const orgTimezoneForm = required<HTMLFormElement>('[data-org-timezone-form]')
+  const orgTimezoneSubmit = required<HTMLButtonElement>('[data-org-timezone-submit]')
+  const orgTimezoneResult = required<HTMLElement>('[data-org-timezone-result]')
+  const profileTimezone = required<HTMLInputElement>('[data-profile-timezone]')
+  const profileTimezoneForm = required<HTMLFormElement>('[data-profile-timezone-form]')
+  const profileTimezoneSubmit = required<HTMLButtonElement>('[data-profile-timezone-submit]')
+  const profileTimezoneResult = required<HTMLElement>('[data-profile-timezone-result]')
+  const profileTimezoneHint = required<HTMLElement>('[data-profile-timezone-hint]')
+  const timezoneOptions = required<HTMLDataListElement>('[data-timezone-options]')
   const lockPolicySubmit = required<HTMLButtonElement>('[data-lock-policy-submit]')
   const manualLockForm = required<HTMLFormElement>('[data-manual-lock-form]')
   const manualLockThrough = required<HTMLInputElement>('[data-manual-lock-through]')
@@ -2351,7 +2360,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     lockPolicyAuto.checked = lockPolicy.auto_lock
     lockPolicyDay.value = lockPolicy.timesheet_deadline?.day ?? 'monday'
     lockPolicyTime.value = lockPolicy.timesheet_deadline?.time ?? '17:00'
-    lockPolicyTimezone.value = lockPolicy.timezone
+    if (document.activeElement !== orgTimezone) orgTimezone.value = lockPolicy.timezone
     lockPolicySubmit.disabled = lockPolicyTransitionPending
     manualLockSubmit.disabled = lockPolicyTransitionPending
     if (manualLockThrough.value === '') manualLockThrough.value = localDate()
@@ -3693,9 +3702,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       minimumNoteLength: snapshot.catalog.timeEntryOptions[0]?.minimum_note_length ?? 0,
     })
   })
-  required<HTMLButtonElement>('[data-menu-trigger]').addEventListener('click', () =>
-    open(menuDialog),
-  )
+  required<HTMLButtonElement>('[data-menu-trigger]').addEventListener('click', () => {
+    loadProfileTimezone()
+    open(menuDialog)
+  })
   required<HTMLButtonElement>('[data-add-row-trigger]').addEventListener('click', () => {
     if (currentIdentity !== null) open(rowDialog)
   })
@@ -4420,9 +4430,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const autoLock = lockPolicyAuto.checked
     const day = lockPolicyDay.value
     const time = lockPolicyTime.value
-    const timezone = lockPolicyTimezone.value.trim()
-    if (timezone === '' || time === '') {
-      lockPolicyResult.textContent = 'Enter a deadline time and organization timezone.'
+    if (time === '') {
+      lockPolicyResult.textContent = 'Enter a deadline time.'
       return
     }
     if (
@@ -4445,7 +4454,6 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         {
           auto_lock: autoLock,
           timesheet_deadline: { day, time },
-          timezone,
         },
         operation.signal,
       )
@@ -4463,6 +4471,112 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         if (!isSessionCurrent(operation)) return
         lockPolicyTransitionPending = false
         renderLockPolicy()
+      })
+  })
+
+  // Issue 757. Both timezone settings existed only as free-text boxes -- one
+  // buried in the lock-policy form, one on the team page -- so setting either
+  // meant knowing IANA spelling by heart. `Intl` knows the whole list; offer it.
+  const fillTimezoneOptions = (): void => {
+    const supported = (
+      Intl as typeof Intl & { supportedValuesOf?: (key: string) => string[] }
+    ).supportedValuesOf
+    // Older engines have no enumeration API. The inputs stay free text, which is
+    // exactly what they were before, so nothing is lost by the list being absent.
+    if (supported === undefined) return
+    timezoneOptions.replaceChildren(
+      ...supported('timeZone').map((zone) => {
+        const option = document.createElement('option')
+        option.value = zone
+        return option
+      }),
+    )
+  }
+  fillTimezoneOptions()
+
+  // The organization timezone saves on its own. It used to ride along with the
+  // lock deadline, so an instance that wanted a timezone and no automatic
+  // locking could not set one at all -- the form refused to submit without a
+  // deadline time. The API has always accepted a timezone-only patch.
+  orgTimezoneForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const operation = sessionOperation()
+    if (operation === null || api.updateTimesheetLockPolicy === undefined) return
+    const timezone = orgTimezone.value.trim()
+    if (timezone === '') {
+      orgTimezoneResult.textContent = 'Enter an organization timezone.'
+      return
+    }
+    orgTimezoneSubmit.disabled = true
+    orgTimezoneResult.textContent = 'Saving timezone…'
+    void api
+      .updateTimesheetLockPolicy({ timezone }, operation.signal)
+      .then(async () => {
+        if (!(await refresh(operation))) return
+        orgTimezoneResult.textContent = `Saved. Tracked work files on the day it is in ${timezone}.`
+      })
+      .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
+        orgTimezoneResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (!isSessionCurrent(operation)) return
+        orgTimezoneSubmit.disabled = false
+      })
+  })
+
+  // A person's own timezone. `PATCH /profile` has existed since the timer bug
+  // was fixed but nothing in the shell ever called it, so the only way to set
+  // one was for an administrator to edit that person on the team page.
+  const loadProfileTimezone = (): void => {
+    const operation = sessionOperation()
+    if (operation === null || api.getProfile === undefined) return
+    void api
+      .getProfile(operation.signal)
+      .then((profile) => {
+        if (!isSessionCurrent(operation)) return
+        if (document.activeElement === profileTimezone) return
+        // 'UTC' is this column's "unset", not a choice: say so rather than
+        // showing a zone the person never picked.
+        const unset = profile.timezone === 'UTC'
+        profileTimezone.value = unset ? '' : profile.timezone
+        profileTimezone.placeholder = unset ? 'Using the organization timezone' : ''
+        profileTimezoneHint.textContent = unset
+          ? 'Not set. Your work files on the organization timezone.'
+          : 'Your work files on the day it is where you are.'
+      })
+      .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
+        profileTimezoneResult.textContent = messageFor(error)
+      })
+  }
+
+  profileTimezoneForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const operation = sessionOperation()
+    if (operation === null || api.updateProfile === undefined) return
+    const timezone = profileTimezone.value.trim()
+    if (timezone === '') {
+      profileTimezoneResult.textContent = 'Enter a timezone.'
+      return
+    }
+    profileTimezoneSubmit.disabled = true
+    profileTimezoneResult.textContent = 'Saving timezone…'
+    void api
+      .updateProfile(timezone, operation.signal)
+      .then(async (profile) => {
+        if (!isSessionCurrent(operation)) return
+        profileTimezoneResult.textContent = `Saved. Your work files on the day it is in ${profile.timezone}.`
+        profileTimezoneHint.textContent = 'Your work files on the day it is where you are.'
+        await refresh(operation)
+      })
+      .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
+        profileTimezoneResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (!isSessionCurrent(operation)) return
+        profileTimezoneSubmit.disabled = false
       })
   })
 
