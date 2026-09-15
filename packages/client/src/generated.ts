@@ -2675,7 +2675,7 @@ export type ModuleListEnvelope = {
 };
 
 export type SignInMethodState = {
-  "method": "password" | "magic_link" | "google" | "github";
+  "method": "password" | "magic_link" | "google" | "github" | "apple";
   "configured": boolean;
   "enabled": boolean;
 };

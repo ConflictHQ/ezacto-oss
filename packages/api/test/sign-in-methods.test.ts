@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   createApiApp,
   createSignInMethodPolicy,
+  installAppleRoutes,
   installPasswordAuthRoutes,
   installSignInMethodRoutes,
   type PasswordAuthService,
@@ -51,6 +52,7 @@ const service = (
     ['magic_link', initial.magic_link ?? true],
     ['google', initial.google ?? true],
     ['github', initial.github ?? true],
+    ['apple', initial.apple ?? true],
   ])
   const list = async (): Promise<readonly SignInMethodState[]> =>
     [...state].map(([method, enabled]) => ({ method, enabled }))
@@ -110,6 +112,7 @@ describe('the sign-in method setting', () => {
       { method: 'magic_link', configured: false, enabled: true },
       { method: 'google', configured: true, enabled: false },
       { method: 'github', configured: false, enabled: true },
+      { method: 'apple', configured: false, enabled: true },
     ])
   })
 
@@ -294,5 +297,67 @@ describe('switching a sign-in method off', () => {
     })
     expect(await policy.isLive('password', {})).toBe(true)
     expect(await policy.isLive('google', {})).toBe(true)
+  })
+})
+
+describe('the Apple route under the setting', () => {
+  // Apple draws no button on the sign-in card, so switching it off has to stop
+  // the route -- there is no control to hide. That is the whole point of the
+  // setting enforcing server-side rather than in the markup.
+  const appleHarness = (enabled: boolean) => {
+    const sessions = { issue: vi.fn(async () => ({ setCookie: 'x=y' })) }
+    const verify = vi.fn(async () => ({
+      subject: 'apple-subject',
+      email: 'ada@example.test',
+      emailVerified: true,
+    }))
+    const app = createApiApp({
+      installApp: (app) => {
+        installAppleRoutes(app, {
+          identities: {
+            resolveProvider: vi.fn(async () => ({
+              status: 'active' as const,
+              matchedBy: 'verified_email' as const,
+              userId: 42,
+              profile: 'administrator' as const,
+              managerGrants: [] as string[],
+            })),
+          },
+          sessions,
+          provider: () => ({ clientId: 'com.example.app' }),
+          verifier: { verify },
+          policy: createSignInMethodPolicy({
+            service: { list: async () => [{ method: 'apple', enabled }] },
+            configured: () => ['apple'],
+          }),
+        })
+      },
+    })
+    return { app, sessions, verify }
+  }
+
+  const postToken = (app: ReturnType<typeof createApiApp>) =>
+    app.request('/auth/apple', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identityToken: 'a.b.c' }),
+    })
+
+  it('[security] refuses before verifying the token when it is switched off', async () => {
+    const { app, sessions, verify } = appleHarness(false)
+    const response = await postToken(app)
+    expect(response.status).toBe(404)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'sign_in_method_unavailable' },
+    })
+    // Refused before the credential is read, as every other family is.
+    expect(verify).not.toHaveBeenCalled()
+    expect(sessions.issue).not.toHaveBeenCalled()
+  })
+
+  it('[security] still signs in while it is on', async () => {
+    const { app, sessions } = appleHarness(true)
+    expect((await postToken(app)).status).toBe(200)
+    expect(sessions.issue).toHaveBeenCalledWith(42)
   })
 })

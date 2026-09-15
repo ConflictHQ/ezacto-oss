@@ -17,13 +17,19 @@ type SignInMethodDatabase =
   | DrizzleD1Database<typeof schema>
 type NativeClient = BetterSqlite3.Database | D1Database
 
-export type SignInMethod = 'password' | 'magic_link' | 'google' | 'github'
+export type SignInMethod =
+  | 'password'
+  | 'magic_link'
+  | 'google'
+  | 'github'
+  | 'apple'
 
 export const SIGN_IN_METHODS: readonly SignInMethod[] = [
   'password',
   'magic_link',
   'google',
   'github',
+  'apple',
 ]
 
 export const isSignInMethod = (value: string): value is SignInMethod =>
@@ -39,6 +45,7 @@ interface RawRow {
   magic_link: number | null
   google: number | null
   github: number | null
+  apple: number | null
 }
 
 /**
@@ -68,7 +75,8 @@ const select = `SELECT
   COALESCE(json_extract(sign_in_methods, '$.password'), 1) AS password,
   COALESCE(json_extract(sign_in_methods, '$.magic_link'), 1) AS magic_link,
   COALESCE(json_extract(sign_in_methods, '$.google'), 1) AS google,
-  COALESCE(json_extract(sign_in_methods, '$.github'), 1) AS github
+  COALESCE(json_extract(sign_in_methods, '$.github'), 1) AS github,
+  COALESCE(json_extract(sign_in_methods, '$.apple'), 1) AS apple
 FROM organizations WHERE id = 1`
 
 const toStates = (row: RawRow): readonly SignInMethodState[] =>
@@ -99,7 +107,10 @@ const usableSelect = `SELECT
   ) AS google,
   EXISTS (
     SELECT 1 FROM user_identities WHERE user_id = ? AND provider = 'github'
-  ) AS github`
+  ) AS github,
+  EXISTS (
+    SELECT 1 FROM user_identities WHERE user_id = ? AND provider = 'apple'
+  ) AS apple`
 
 export class SignInMethodRepository {
   readonly #client: NativeClient
@@ -118,12 +129,12 @@ export class SignInMethodRepository {
     if (!Number.isSafeInteger(userId) || userId < 1) {
       throw new RangeError('sign-in method user id must be a positive safe integer')
     }
-    const row = await first<RawRow>(this.#client, usableSelect, [
-      userId,
-      userId,
-      userId,
-      userId,
-    ])
+    const row = await first<RawRow>(
+      this.#client,
+      usableSelect,
+      // One binding per EXISTS in `usableSelect`.
+      Array.from({ length: SIGN_IN_METHODS.length }, () => userId),
+    )
     if (row === null) return []
     return SIGN_IN_METHODS.filter((method) => row[method] === 1)
   }

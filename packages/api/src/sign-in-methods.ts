@@ -22,13 +22,19 @@ import { assertFields, readObjectBody, unknownFieldErrors } from './resources/su
  * once, and the recovery is database surgery.
  */
 
-export type SignInMethod = 'password' | 'magic_link' | 'google' | 'github'
+export type SignInMethod =
+  | 'password'
+  | 'magic_link'
+  | 'google'
+  | 'github'
+  | 'apple'
 
 export const SIGN_IN_METHODS: readonly SignInMethod[] = [
   'password',
   'magic_link',
   'google',
   'github',
+  'apple',
 ]
 
 export interface SignInMethodState {

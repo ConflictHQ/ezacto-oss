@@ -12,6 +12,10 @@ import {
 } from 'jose'
 import type { ApiContext } from './context.js'
 import { ApiError, readJsonBody, validationError } from './errors.js'
+import {
+  signInMethodUnavailable,
+  type SignInMethodPolicy,
+} from './sign-in-methods.js'
 
 /** Application-owned provider key recorded against the linked identity. */
 export const APPLE_PROVIDER_KEY = 'apple'
@@ -93,6 +97,12 @@ export interface AppleRouteOptions<Bindings extends object> {
    * test injects a fake to exercise the route without real crypto.
    */
   verifier?: AppleIdentityTokenVerifier
+  /**
+   * Issue 761. Apple draws no button on the sign-in card -- the app holds the
+   * platform prompt -- but it is a way in, so an operator switching it off has
+   * to stop the route rather than a control that was never there.
+   */
+  policy?: SignInMethodPolicy
 }
 
 const appleError = (
@@ -328,6 +338,12 @@ export const installAppleRoutes = <Bindings extends object>(
   }
 
   app.post('/auth/apple', async (context) => {
+    if (
+      options.policy !== undefined &&
+      !(await options.policy.isLive('apple', context.env))
+    ) {
+      signInMethodUnavailable()
+    }
     const configured = options.provider(context.env)
     if (configured === null) {
       throw appleError(

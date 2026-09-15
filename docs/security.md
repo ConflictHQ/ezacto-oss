@@ -6,13 +6,14 @@ changing the tests that assert it.
 
 ## Which sign-in methods are live
 
-Four methods exist: `password`, `magic_link`, `google` and `github`. A method is
-live only when **both** of these hold, and they are deliberately separate
-states:
+Five methods exist: `password`, `magic_link`, `google`, `github` and `apple`. A
+method is live only when **both** of these hold, and they are deliberately
+separate states:
 
 - **Configured** — the deployment supplies what the method needs. Google and
-  GitHub need a client id and secret; the emailed sign-in link needs
-  `MAGIC_LINK_SIGNING_KEY`. Password needs nothing, so it is always configured.
+  GitHub need a client id and secret; Apple needs `APPLE_CLIENT_ID`; the emailed
+  sign-in link needs `MAGIC_LINK_SIGNING_KEY`. Password needs nothing, so it is
+  always configured.
 - **Enabled** — an administrator has not switched it off, at
   **Settings → Company → Ways in** (`/api/v1/admin/sign-in-methods`).
 
@@ -39,6 +40,11 @@ database surgery. So it refuses rather than warns:
 - **Switching on what the deployment never configured.**
   `409 sign_in_method_not_configured`. The fix is a deployment change, not
   another click.
+
+Apple is the one method with no button on the sign-in card: the mobile app holds
+the platform prompt and posts the identity token to `POST /auth/apple`. It is
+listed and switchable all the same — there is no control to hide, so switching it
+off has to stop the route, and it does.
 
 ### Running SSO only
 

@@ -44,6 +44,7 @@ describe('the sign-in method setting', () => {
       { method: 'magic_link', enabled: true },
       { method: 'google', enabled: true },
       { method: 'github', enabled: true },
+      { method: 'apple', enabled: true },
     ])
   })
 
@@ -54,6 +55,7 @@ describe('the sign-in method setting', () => {
       { method: 'magic_link', enabled: true },
       { method: 'google', enabled: true },
       { method: 'github', enabled: true },
+      { method: 'apple', enabled: true },
     ])
     // The column holds the one decision, not a snapshot of all four.
     const stored = sqlite!
@@ -104,5 +106,16 @@ describe('the sign-in method setting', () => {
   it('[api] refuses a user id that is not one', async () => {
     const repository = seed()
     await expect(repository.usableBy(0)).rejects.toBeInstanceOf(RangeError)
+  })
+
+  it('[security] counts an Apple identity as a way in', async () => {
+    // Apple draws no button on the sign-in card -- the app holds the platform
+    // prompt -- so it is easy to forget it is a way in at all. The lockout
+    // guard has to see it, or it would refuse a change that is in fact safe.
+    const repository = seed(`
+      INSERT INTO user_identities (user_id, provider, provider_subject, created_at, updated_at)
+        VALUES (1, 'apple', 'sub-apple', '${at}', '${at}');
+    `)
+    expect(await repository.usableBy(1)).toEqual(['apple'])
   })
 })

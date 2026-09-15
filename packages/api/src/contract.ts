@@ -7588,7 +7588,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       method: {
         type: "string",
-        enum: ["password", "magic_link", "google", "github"],
+        enum: ["password", "magic_link", "google", "github", "apple"],
       },
       // Two states, deliberately separate: the deployment supplies the
       // credentials, the operator supplies the permission, and an
