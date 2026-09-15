@@ -211,7 +211,7 @@ const patchModule = async (
 }
 
 interface SignInMethodState {
-  readonly method: 'password' | 'magic_link' | 'google' | 'github'
+  readonly method: 'password' | 'magic_link' | 'google' | 'github' | 'apple'
   readonly configured: boolean
   readonly enabled: boolean
 }
@@ -275,6 +275,9 @@ const signInMethodLabels: Record<SignInMethodState['method'], string> = {
   magic_link: 'Sign-in link by email',
   google: 'Google',
   github: 'GitHub',
+  // No button on the sign-in card: the app holds Apple's own prompt and posts
+  // the identity token back. It is listed because it is still a way in.
+  apple: 'Apple (in the mobile app)',
 }
 
 const renderSignInMethodCard = (state: SignInMethodState): string => {

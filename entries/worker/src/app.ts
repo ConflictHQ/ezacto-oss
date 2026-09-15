@@ -729,6 +729,7 @@ export const createApp = (
         // identity resolver and session issuer, so it needs no store of its
         // own. Configured off (404) until APPLE_CLIENT_ID names an audience.
         installAppleRoutes(app, {
+          policy: signInPolicy,
           identities: services.identities,
           sessions: services.sessions,
           provider: (env) => appleProvider(env),
@@ -1803,6 +1804,10 @@ export const deployedSignInMethods = (
     methods.push('magic_link')
   }
   for (const provider of configuredSignInProviders(env)) methods.push(provider)
+  // Apple is not in `configuredSignInProviders`: that list is the browser
+  // buttons the sign-in card draws, and Apple arrives through the native app
+  // prompt instead. It is still a way in, so the setting has to list it.
+  if (appleProvider(env) !== null) methods.push('apple')
   return methods
 }
 

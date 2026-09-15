@@ -34044,7 +34044,8 @@
               "password",
               "magic_link",
               "google",
-              "github"
+              "github",
+              "apple"
             ]
           },
           "configured": {
