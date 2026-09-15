@@ -194,6 +194,9 @@ export const deploySecretPayload = (environment) => {
     // has removed it again -- leaving the documented way to give an instance its
     // first credential working only until the next deploy.
     EZACTO_BOOTSTRAP_TOKEN: optionalCredential(environment.EZACTO_BOOTSTRAP_TOKEN),
+    // Error reporting. Absent means Sentry is off; still rendered explicitly so
+    // `secret bulk` does not drop it and a removed DSN actually clears.
+    SENTRY_DSN: optionalCredential(environment.SENTRY_DSN),
   }
 }
 
