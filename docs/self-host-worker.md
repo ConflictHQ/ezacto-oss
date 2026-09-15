@@ -104,7 +104,8 @@ partial pair stops deployment before it mutates the Worker:
 | Feature | GitHub environment configuration |
 | --- | --- |
 | Google OIDC | secrets `OIDC_GOOGLE_CLIENT_ID` and `OIDC_GOOGLE_CLIENT_SECRET` |
-| Client portal | secret `MAGIC_LINK_SIGNING_KEY`, 32 random bytes as unpadded base64url, in the same format as `API_CURSOR_SIGNING_KEY` and validated the same way before the deploy sends it. Without it the portal routes are not mounted at all, so every magic link a client is sent answers 404. This is deliberate -- a portal that hands out sessions under a weak or absent secret must not look the same as one that is switched off -- but it does mean the portal ships off unless you set this |
+| Staff magic-link sign-in | secret `MAGIC_LINK_SIGNING_KEY`, 32 random bytes as unpadded base64url, in the same format as `API_CURSOR_SIGNING_KEY` and validated the same way before the deploy sends it. Without it the staff magic-link routes are not mounted at all. This is deliberate -- a route that hands out sessions under a weak or absent secret must not look the same as one that is switched off |
+| In-app client portal | secret `PORTAL_MAGIC_LINK_SIGNING_KEY`, same format, **separate key on purpose**. Contact sign-in served from this worker, which is off unless you set it. It shared the staff key until the two were split, so turning staff magic-link on also mounted a contact-auth surface nobody asked for. Note that setting this mounts the routes but does not make them send: no runtime composes a portal mailer yet, so the request leg answers 503 until one is written |
 | Cloudflare Access | variables `ACCESS_TEAM_DOMAIN` and `ACCESS_POLICY_AUD` |
 | AWS SES | secrets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`; variables `SES_REGION`, `SES_FROM`, optional `SES_CONFIGURATION_SET` |
 

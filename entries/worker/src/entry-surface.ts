@@ -96,18 +96,31 @@ export const WORKER_ONLY_ROUTES: readonly string[] = ['get /api/v1/backup/status
 /** Mounted by the container and not by the Worker. */
 export const CONTAINER_ONLY_ROUTES: readonly string[] = []
 
-/** Mounted only where a magic-link signing key is configured, in either entry. */
+/**
+ * Contact sign-in for the in-app portal, mounted only where
+ * `PORTAL_MAGIC_LINK_SIGNING_KEY` is configured -- which is nowhere by default.
+ *
+ * It used to share `MAGIC_LINK_SIGNING_KEY` with the staff routes below, on the
+ * reasoning that a second flag would always equal the first. That stopped being
+ * true: `clients.conflict.media` runs its own portal worker with its own tokens,
+ * its own store and its own mailer, so a deployment wants staff magic-link on
+ * and this off. One key switching on two unrelated features is how that becomes
+ * a surprise.
+ *
+ * Nothing in either repo calls these. They are kept rather than deleted because
+ * central portal auth here is still a direction worth having open.
+ *
+ * Setting the key mounts them; it does not make them work. No runtime composes
+ * a `MagicLinkDelivery` mailer, so the request leg answers 503 until one is
+ * written -- `staff-magic-link-email.ts` is the model.
+ */
 export const PORTAL_ROUTES: readonly string[] = [
   'post /portal/magic-link',
   'get /portal/verify',
   'get /portal/statements',
 ]
 
-/**
- * Staff magic-link sign-in, gated on the very same key as the portal set: one
- * `MAGIC_LINK_SIGNING_KEY` turns both on, so they share the `portal` flag
- * rather than inventing a second one that is always equal to the first.
- */
+/** Staff magic-link sign-in, gated on `MAGIC_LINK_SIGNING_KEY` alone. */
 export const STAFF_MAGIC_LINK_ROUTES: readonly string[] = [
   'post /auth/magic-link',
   'get /auth/magic-link/verify',

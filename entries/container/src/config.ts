@@ -17,6 +17,8 @@ export interface ContainerConfig {
    * than serve them with a weak one. Same rule as the Worker's.
    */
   magicLinkSigningKey?: Uint8Array
+  /** Contact sign-in for the in-app portal. Its own key; absent means off. */
+  portalMagicLinkSigningKey?: Uint8Array
   /**
    * Intuit credentials. Both are required together: without them the QuickBooks
    * routes are not mounted, because a connect button that cannot connect is
@@ -155,6 +157,7 @@ export const readContainerConfig = (
   const appleClientId = optional(environment, 'APPLE_CLIENT_ID', 1_024)
   const bootstrapToken = optional(environment, 'EZACTO_BOOTSTRAP_TOKEN', 512)
   const magicLinkKey = optional(environment, 'MAGIC_LINK_SIGNING_KEY', 128)
+  const portalMagicLinkKey = optional(environment, 'PORTAL_MAGIC_LINK_SIGNING_KEY', 128)
   const stripeApiKey = optional(environment, 'STRIPE_API_KEY', 512)
   const stripeWebhookSecret = optional(environment, 'STRIPE_WEBHOOK_SECRET', 512)
   const billDevKey = optional(environment, 'BILL_DEV_KEY', 512)
@@ -231,6 +234,9 @@ export const readContainerConfig = (
     ...(magicLinkKey === undefined
       ? {}
       : { magicLinkSigningKey: signingKey(magicLinkKey) }),
+    ...(portalMagicLinkKey === undefined
+      ? {}
+      : { portalMagicLinkSigningKey: signingKey(portalMagicLinkKey) }),
     ...(stripeApiKey === undefined
       ? {}
       : {

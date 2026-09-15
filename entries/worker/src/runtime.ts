@@ -526,6 +526,14 @@ export const createRuntimeServices = async (
     env.MAGIC_LINK_SIGNING_KEY === undefined || env.MAGIC_LINK_SIGNING_KEY === ""
       ? undefined
       : parseCursorSigningKey(env.MAGIC_LINK_SIGNING_KEY);
+  // Its own key, not the staff one. Sharing `MAGIC_LINK_SIGNING_KEY` meant
+  // turning staff magic-link on also turned on a contact-auth surface that the
+  // standalone portal worker superseded and nothing calls.
+  const portalMagicLinkSigningKey =
+    env.PORTAL_MAGIC_LINK_SIGNING_KEY === undefined ||
+    env.PORTAL_MAGIC_LINK_SIGNING_KEY === ""
+      ? undefined
+      : parseCursorSigningKey(env.PORTAL_MAGIC_LINK_SIGNING_KEY);
   await ensureRuntimeDatabaseReady(database);
   const drizzle = createD1Database(database);
   const timesheetLockPolicy = createTimesheetLockPolicyRepository(drizzle);
@@ -901,7 +909,7 @@ export const createRuntimeServices = async (
         )?.address ?? `user-${userId}`,
       issuer: env.BRAND_NAME === undefined || env.BRAND_NAME === "" ? "ezacto" : env.BRAND_NAME,
     }),
-    ...(magicLinkSigningKey === undefined
+    ...(portalMagicLinkSigningKey === undefined
       ? {}
       : {
           portalAuth: {
@@ -914,7 +922,7 @@ export const createRuntimeServices = async (
                     .all()).results as never[],
               },
               store: createD1MagicLinkStore(database),
-              signingKey: magicLinkSigningKey,
+              signingKey: portalMagicLinkSigningKey,
             }),
             sessions: createPortalSessionService(createD1ContactSessionStore(database)),
             sessionStore: createD1ContactSessionStore(database),
