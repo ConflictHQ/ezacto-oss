@@ -29,6 +29,8 @@ interface Harness {
     managerGrants?: readonly string[],
     userId?: number,
   ): Promise<Response>;
+  /** A body-carrying request, for the one setting these reports own. */
+  post(path: string, body: unknown, profile?: UserProfile): Promise<Response>;
   /** The repository itself, for reports with no route yet. */
   reports: ReturnType<typeof createReportRepository>;
   run(sql: string, params: readonly unknown[]): Promise<void>;
@@ -212,6 +214,20 @@ const createHarness = async (kind: "SQLite" | "D1"): Promise<Harness> => {
             "x-test-manager-grants": managerGrants.join(","),
             "x-test-user-id": String(userId),
           },
+        }),
+      ),
+    post: (path, body, profile = "administrator") =>
+      Promise.resolve(
+        app.request(`https://api.test/api/v1${path}`, {
+          method: "POST",
+          headers: {
+            origin: "https://api.test",
+            "content-type": "application/json",
+            "x-test-profile": profile,
+            "x-test-manager-grants": "",
+            "x-test-user-id": "1",
+          },
+          body: JSON.stringify(body),
         }),
       ),
     reports,
@@ -1053,6 +1069,81 @@ for (const [runtime, factory] of factories) {
       expect(row.foregone_cents).toBeNull();
       // Partial rather than low, and said so rather than implied.
       expect(row.claimed_in_other_currency).toBeGreaterThanOrEqual(0);
+    });
+
+    it("[money] serves the cost guardrail as a state, and refuses a ratio it cannot stand behind", async () => {
+      // #710. A missing cost rate must not read as zero cost: it would put the
+      // numerator lower and the deal would look healthier exactly where the
+      // data is least trustworthy. The state is on the row rather than being a
+      // colour on a screen, so a caller that is not the screen can act on it.
+      harness = await factory();
+      const response = await harness.request(
+        "/reports/banded-months?from=2026-08-01&to=2026-08-31",
+      );
+      expect(response.status, await response.clone().text()).toBe(200);
+      const body = (await response.json()) as {
+        data: {
+          rows: {
+            cost_ratio_basis_points: number | null;
+            cost_alert_basis_points: number;
+            cost_ratio_state: string;
+            billed_cents: number | null;
+            entries_without_cost_rate: number;
+          }[];
+        };
+      };
+      const row = body.data.rows[0]!;
+      expect(row.cost_alert_basis_points).toBe(8000);
+      expect(["within", "over", "unpriced", "unbilled"]).toContain(row.cost_ratio_state);
+      // Nothing has claimed this fixture's month, so there is no denominator --
+      // which is a different answer from being comfortably inside the band.
+      expect(row.billed_cents).toBeNull();
+      expect(row.cost_ratio_state).toBe("unbilled");
+      expect(row.cost_ratio_basis_points).toBeNull();
+    });
+
+    it("[money] reads and sets the organisation threshold the ratio is judged against", async () => {
+      // A column nobody can set is a column that only ever holds its default,
+      // which is the defect #485 catalogued.
+      harness = await factory();
+      const initial = await harness.request("/reports/band-cost-alert");
+      expect(initial.status).toBe(200);
+      expect(((await initial.json()) as { data: { basis_points: number } }).data).toEqual({
+        basis_points: 8000,
+      });
+
+      const set = await harness.post("/reports/band-cost-alert", { basis_points: 6500 });
+      expect(set.status, await set.clone().text()).toBe(200);
+      expect(((await set.json()) as { data: { basis_points: number } }).data).toEqual({
+        basis_points: 6500,
+      });
+
+      // And the report is judged against the new line, not the old one.
+      const report = await harness.request(
+        "/reports/banded-months?from=2026-08-01&to=2026-08-31",
+      );
+      const rows = ((await report.json()) as {
+        data: { rows: { cost_alert_basis_points: number }[] };
+      }).data.rows;
+      expect(rows[0]!.cost_alert_basis_points).toBe(6500);
+
+      for (const value of [0, 20001, 1.5, "80", null]) {
+        const refused = await harness.post("/reports/band-cost-alert", {
+          basis_points: value,
+        });
+        expect(refused.status, JSON.stringify(value)).toBe(422);
+      }
+    });
+
+    it("[security] refuses the cost guardrail to a profile that may not read cost", async () => {
+      // A ratio is the cost figure with one division applied; serving it to a
+      // profile refused the cost itself would hand back the same fact
+      // rearranged.
+      harness = await factory();
+      const path = "/reports/banded-months?from=2026-08-01&to=2026-08-31";
+      for (const profile of ["member", "project_manager", "people_admin"] as const) {
+        expect((await harness.request(path, profile)).status, profile).toBe(403);
+      }
     });
 
     it("[unit] states revenue, cost and margin per project against the window before", async () => {

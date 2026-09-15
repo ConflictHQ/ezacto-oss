@@ -65,6 +65,7 @@ const definition = (overrides: Partial<RecurringInvoice> = {}): RecurringInvoice
   claim_ceiling_seconds: null,
   claim_ceiling_cents: null,
   claim_scope: 'billable',
+  cost_alert_basis_points: null,
   created_at: timestamp,
   updated_at: timestamp,
   ...overrides,
@@ -324,6 +325,7 @@ describe('recurring definition editor input', () => {
       claim_ceiling_seconds: null,
       claim_ceiling_cents: null,
       claim_scope: 'billable',
+      cost_alert_basis_points: null,
     })
   })
 
@@ -604,6 +606,7 @@ describe('a banded engagement, from the form (#484)', () => {
       claim_ceiling_seconds: 1_440_000,
       claim_ceiling_cents: null,
       claim_scope: 'billable',
+      cost_alert_basis_points: null,
     })
     expect(
       recurringDefinitionInput(
@@ -638,6 +641,7 @@ describe('a banded engagement, from the form (#484)', () => {
       claim_ceiling_seconds: null,
       claim_ceiling_cents: null,
       claim_scope: 'billable',
+      cost_alert_basis_points: null,
     })
   })
 
@@ -683,6 +687,48 @@ describe('a banded engagement, from the form (#484)', () => {
         banded({ claimsProjectIds: [], claimScope: 'tracked' }) as never,
       ).claim_scope,
     ).toBe('billable')
+  })
+
+  it('[money] sends a cost alert in basis points, from the per cent somebody typed', () => {
+    // #710. The deal is discussed in per cent -- "we are fine under eighty" --
+    // and stored in basis points, because the threshold is compared against a
+    // ratio of two money amounts and a float invites a comparison that answers
+    // differently depending on which side rounded.
+    expect(
+      recurringDefinitionInput(banded({ costAlertPercent: '80' }) as never),
+    ).toMatchObject({ cost_alert_basis_points: 8_000 })
+    expect(
+      recurringDefinitionInput(banded({ costAlertPercent: '77.5' }) as never),
+    ).toMatchObject({ cost_alert_basis_points: 7_750 })
+    // Blank takes the organisation default rather than storing a number nobody
+    // chose.
+    expect(
+      recurringDefinitionInput(banded({ costAlertPercent: '' }) as never)
+        .cost_alert_basis_points,
+    ).toBeNull()
+    expect(
+      recurringFormValuesFromDefinition(
+        definition({ claims_project_ids: [7], cost_alert_basis_points: 7_750 }),
+      ).costAlertPercent,
+    ).toBe('77.50')
+  })
+
+  it('[unit] refuses a cost alert the column could not hold, rather than rounding it', () => {
+    // A third decimal place would come back as a different number than was
+    // typed, which is a setting that quietly disagrees with itself.
+    for (const percent of ['80.255', 'eighty', '0', '201']) {
+      expect(() =>
+        recurringDefinitionInput(banded({ costAlertPercent: percent }) as never),
+      ).toThrow()
+    }
+  })
+
+  it('[money] drops a cost alert left behind on a definition that claims nothing', () => {
+    expect(
+      recurringDefinitionInput(
+        banded({ claimsProjectIds: [], costAlertPercent: '80' }) as never,
+      ).cost_alert_basis_points,
+    ).toBeNull()
   })
 
   it('[unit] renders a ceiling that is not whole hours as something it can read back', () => {

@@ -13825,6 +13825,130 @@
         ]
       }
     },
+    "/api/v1/reports/band-cost-alert": {
+      "get": {
+        "operationId": "getBandCostAlert",
+        "summary": "Read the organisation cost-share threshold for banded work",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BandCostAlertEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/reports/band-cost-alert",
+        "x-ezacto-generate-client": true
+      },
+      "post": {
+        "operationId": "setBandCostAlert",
+        "summary": "Set the organisation cost-share threshold for banded work",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BandCostAlertEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/reports/band-cost-alert",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BandCostAlertInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/reports/profitability": {
       "get": {
         "operationId": "getProfitabilityReport",
@@ -28043,6 +28167,7 @@
           "claim_ceiling_seconds",
           "claim_ceiling_cents",
           "claim_scope",
+          "cost_alert_basis_points",
           "created_at",
           "updated_at"
         ],
@@ -28136,6 +28261,18 @@
             "enum": [
               "billable",
               "tracked"
+            ]
+          },
+          "cost_alert_basis_points": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "created_at": {
@@ -28347,6 +28484,18 @@
             "enum": [
               "billable",
               "tracked"
+            ]
+          },
+          "cost_alert_basis_points": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              },
+              {
+                "type": "null"
+              }
             ]
           }
         },
@@ -29700,7 +29849,10 @@
           "entries_without_cost_rate",
           "claimed_in_other_currency",
           "billed_cents",
-          "foregone_cents"
+          "foregone_cents",
+          "cost_ratio_basis_points",
+          "cost_alert_basis_points",
+          "cost_ratio_state"
         ],
         "properties": {
           "period_start": {
@@ -29783,6 +29935,30 @@
                 "type": "null"
               }
             ]
+          },
+          "cost_ratio_basis_points": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost_alert_basis_points": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "cost_ratio_state": {
+            "type": "string",
+            "enum": [
+              "within",
+              "over",
+              "unpriced",
+              "unbilled"
+            ]
           }
         },
         "additionalProperties": false
@@ -29824,6 +30000,46 @@
           },
           "links": {
             "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BandCostAlert": {
+        "type": "object",
+        "required": [
+          "basis_points"
+        ],
+        "properties": {
+          "basis_points": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20000
+          }
+        },
+        "additionalProperties": false
+      },
+      "BandCostAlertEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/BandCostAlert"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BandCostAlertInput": {
+        "type": "object",
+        "required": [
+          "basis_points"
+        ],
+        "properties": {
+          "basis_points": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20000
           }
         },
         "additionalProperties": false
