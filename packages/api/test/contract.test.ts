@@ -28,6 +28,7 @@ import {
   installOidcRoutes,
   installOutboxRoutes,
   installPasswordAuthRoutes,
+  installTwoFactorChallengeRoutes,
   installReportRoutes,
   installProfileRoutes,
   installSessionRoutes,
@@ -147,6 +148,11 @@ const documentedApp = () =>
         sessions: { issue: unavailable },
         deploymentMailer: authMailer,
         clientKey: () => "contract-fixture",
+      });
+      // Mounted wherever the second factor is composed, which both runtimes do.
+      installTwoFactorChallengeRoutes(app, {
+        gate: twoFactor,
+        sessions: { issue: unavailable },
       });
     },
     installApi: (api) => {

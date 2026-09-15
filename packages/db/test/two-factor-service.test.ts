@@ -49,10 +49,24 @@ const store = (
   const recorder: Recorder = { spentSteps: [], spentCodes: [], enrolled: [] }
   return {
     recorder,
-    enrolment: async () => ({ userId: 1, secret, confirmedAt, lastUsedStep: null }),
+    enrolment: async () => ({
+      userId: 1,
+      secret,
+      confirmedAt,
+      lastUsedStep: null,
+      failedAttempts: 0,
+      lockedUntil: null,
+    }),
     beginEnrolment: async (input) => {
       recorder.enrolled.push(input)
-      return { userId: input.userId, secret: input.secret, confirmedAt: null, lastUsedStep: null }
+      return {
+        userId: input.userId,
+        secret: input.secret,
+        confirmedAt: null,
+        lastUsedStep: null,
+        failedAttempts: 0,
+        lockedUntil: null,
+      }
     },
     confirmEnrolment: async () => true,
     spendTotpStep: async (_userId, step) => {
@@ -66,6 +80,11 @@ const store = (
     },
     unusedRecoveryCodeCount: async () => 8,
     disable: async () => true,
+    recordFailedVerification: async () => null,
+    clearFailedVerifications: async () => {},
+    createChallenge: async () => 'created',
+    consumeChallenge: async () => null,
+    challengeHolder: async () => null,
     ...overrides,
   }
 }

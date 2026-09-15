@@ -18,6 +18,7 @@ import {
   secondIdentity,
   secondPrincipal,
   submitSignIn,
+  submitTwoFactorCode,
   timestamp,
   type AuthPrincipal,
   type GeneralResource,
@@ -891,5 +892,136 @@ describe('native browser authentication', () => {
       ),
     )
     expect(document.querySelector('[data-approval-select="32"]')).toBeNull()
+  })
+})
+
+/**
+ * Issue 731. The shell used to treat any resolved sign-in as a session and go
+ * straight on to load the week; against an enrolled user that is a whoami with
+ * no cookie, which reads to the person as a password that did not work.
+ */
+describe('the second factor in the shell', () => {
+  const challenged = {
+    status: 'two_factor_required' as const,
+    challenge: 'C'.repeat(43),
+    expires_at: '2026-09-09T12:05:00.000Z',
+  }
+
+  const twoFactorForm = () =>
+    document.querySelector<HTMLFormElement>('[data-two-factor-form]')!
+  const signInFormElement = () =>
+    document.querySelector<HTMLFormElement>('[data-sign-in-form]')!
+
+  it('[security] opens the code step instead of loading the shell', async () => {
+    renderBrowserShell()
+    const base = browserApi()
+    const api = {
+      ...base,
+      signIn: vi.fn(async () => challenged),
+      whoami: vi.fn(async () => {
+        throw authenticationError(401, 'unauthenticated')
+      }),
+      completeTwoFactorChallenge: vi.fn(async () => undefined),
+    }
+    await mountShell(api as unknown as ShellApi)
+    // The boot check already ran and found no session; what matters is that
+    // the sign-in does not go on to try again.
+    const checksBeforeSignIn = api.whoami.mock.calls.length
+
+    submitSignIn('ada@example.test', 'correct horse battery staple')
+    await vi.waitFor(() => expect(twoFactorForm().hidden).toBe(false))
+    expect(signInFormElement().hidden).toBe(true)
+    // The shell is never asked to load: there is no session behind this.
+    expect(api.whoami.mock.calls).toHaveLength(checksBeforeSignIn)
+  })
+
+  it('[security] sends the challenge the sign-in named, and then loads', async () => {
+    renderBrowserShell()
+    const base = browserApi()
+    const api = {
+      ...base,
+      signIn: vi.fn(async () => challenged),
+      completeTwoFactorChallenge: vi.fn(async () => undefined),
+    }
+    await mountShell(api as unknown as ShellApi)
+
+    submitSignIn('ada@example.test', 'correct horse battery staple')
+    await vi.waitFor(() => expect(twoFactorForm().hidden).toBe(false))
+
+    submitTwoFactorCode('123456')
+    await vi.waitFor(() =>
+      expect(api.completeTwoFactorChallenge).toHaveBeenCalledWith(
+        { code: '123456', challenge: challenged.challenge },
+        expect.any(AbortSignal),
+      ),
+    )
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector<HTMLElement>('[data-current-user-id]')!.textContent,
+      ).toBe(String(identity.user_id)),
+    )
+    expect(twoFactorForm().hidden).toBe(true)
+  })
+
+  it('[security] keeps the code step open when the code is wrong', async () => {
+    renderBrowserShell()
+    const base = browserApi()
+    const api = {
+      ...base,
+      signIn: vi.fn(async () => challenged),
+      completeTwoFactorChallenge: vi.fn(async () => {
+        throw authenticationError(401, 'invalid_two_factor_code')
+      }),
+    }
+    await mountShell(api as unknown as ShellApi)
+
+    submitSignIn('ada@example.test', 'correct horse battery staple')
+    await vi.waitFor(() => expect(twoFactorForm().hidden).toBe(false))
+    submitTwoFactorCode('000000')
+
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector<HTMLElement>('[data-two-factor-result]')!.textContent,
+      ).toContain('incorrect'),
+    )
+    // A typo costs a retry, not the password.
+    expect(twoFactorForm().hidden).toBe(false)
+    expect(signInFormElement().hidden).toBe(true)
+  })
+
+  it('[security] returns to the password when the challenge has expired', async () => {
+    renderBrowserShell()
+    const base = browserApi()
+    const api = {
+      ...base,
+      signIn: vi.fn(async () => challenged),
+      completeTwoFactorChallenge: vi.fn(async () => {
+        throw authenticationError(401, 'two_factor_challenge_invalid')
+      }),
+    }
+    await mountShell(api as unknown as ShellApi)
+
+    submitSignIn('ada@example.test', 'correct horse battery staple')
+    await vi.waitFor(() => expect(twoFactorForm().hidden).toBe(false))
+    submitTwoFactorCode('123456')
+
+    await vi.waitFor(() => expect(signInFormElement().hidden).toBe(false))
+    expect(twoFactorForm().hidden).toBe(true)
+    expect(
+      document.querySelector<HTMLElement>('[data-sign-in-result]')!.textContent,
+    ).toContain('expired')
+  })
+
+  it('[security] an unenrolled sign-in never sees the code step', async () => {
+    renderBrowserShell()
+    await mountShell(browserApi())
+
+    submitSignIn('ada@example.test', 'correct horse battery staple')
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector<HTMLElement>('[data-current-user-id]')!.textContent,
+      ).toBe(String(identity.user_id)),
+    )
+    expect(twoFactorForm().hidden).toBe(true)
   })
 })

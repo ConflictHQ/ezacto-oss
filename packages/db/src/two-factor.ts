@@ -25,6 +25,10 @@ export interface TotpEnrolment {
   /** Null until a code proved the user's authenticator holds the same seed. */
   confirmedAt: string | null
   lastUsedStep: number | null
+  /** Wrong codes since the last accepted one, across every surface that asks. */
+  failedAttempts: number
+  /** Set once the count hits the ceiling; until it passes, no code is read. */
+  lockedUntil: string | null
 }
 
 export interface NewRecoveryCode {
@@ -57,6 +61,24 @@ export class TwoFactorEnrolmentLockedError extends Error {
   }
 }
 
+/**
+ * What a sign-in holds instead of a session while it waits for the second
+ * factor. It names the user and nothing else: presenting it proves only that
+ * the primary credential was accepted a few minutes ago.
+ */
+export interface TwoFactorChallenge {
+  userId: number
+}
+
+export interface CreateTwoFactorChallengeInput {
+  userId: number
+  tokenHash: string
+  expiresAt: string
+  createdAt: string
+  /** Expired or already-consumed rows at or before this instant are swept first. */
+  cleanupBefore: string
+}
+
 export interface TwoFactorStore {
   enrolment(userId: number): Promise<TotpEnrolment | null>
   beginEnrolment(input: BeginEnrolmentInput, now: string): Promise<TotpEnrolment>
@@ -79,6 +101,29 @@ export interface TwoFactorStore {
   unusedRecoveryCodeCount(userId: number): Promise<number>
   /** Removes the enrolment and every code with it. False when there was nothing to remove. */
   disable(userId: number): Promise<boolean>
+  /**
+   * Records a wrong code, against a pending enrolment as much as a confirmed
+   * one. Returns the resulting lock instant once the count reaches
+   * `maxAttempts`, and null while there are guesses left. The count and the
+   * comparison live in the UPDATE so concurrent guesses cannot each read the
+   * same old value and each decide they were under the ceiling.
+   */
+  recordFailedVerification(
+    userId: number,
+    now: string,
+    maxAttempts: number,
+    lockMs: number,
+  ): Promise<string | null>
+  /** Clears the count and any lock; run after a code is accepted. */
+  clearFailedVerifications(userId: number, now: string): Promise<void>
+  createChallenge(input: CreateTwoFactorChallengeInput): Promise<'created' | 'collision'>
+  /**
+   * Verify-and-consume in one UPDATE, so one challenge cannot become two
+   * sessions. Null when the token is unknown, already spent, or expired.
+   */
+  consumeChallenge(tokenHash: string, now: string): Promise<TwoFactorChallenge | null>
+  /** The challenge's user without spending it, for the code check that precedes the spend. */
+  challengeHolder(tokenHash: string, now: string): Promise<TwoFactorChallenge | null>
 }
 
 /**
@@ -110,6 +155,12 @@ interface EnrolmentRow {
   secret: string
   confirmedAt: string | null
   lastUsedStep: number | null
+  failedAttempts: number
+  lockedUntil: string | null
+}
+
+interface ChallengeRow {
+  userId: number
 }
 
 interface RecoveryCodeRow {
@@ -135,6 +186,28 @@ const assertCanonicalTimestamp = (value: string): string => {
   return value
 }
 
+const assertCeiling = (value: number): number => {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new RangeError('a two-factor attempt ceiling must be a positive safe integer')
+  }
+  return value
+}
+
+const assertDuration = (value: number): number => {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new RangeError('a two-factor lock duration must be a positive safe integer')
+  }
+  return value
+}
+
+const challenge = (row: ChallengeRow | undefined): TwoFactorChallenge | null => {
+  if (row === undefined) return null
+  if (!Number.isSafeInteger(row.userId) || row.userId < 1) {
+    throw new Error('two-factor challenge store returned a malformed user id')
+  }
+  return { userId: row.userId }
+}
+
 const assertStep = (step: number): number => {
   if (!Number.isSafeInteger(step) || step < 0) {
     throw new RangeError('a TOTP step must be a non-negative safe integer')
@@ -143,7 +216,8 @@ const assertStep = (step: number): number => {
 }
 
 const enrolmentQuery = `SELECT user_id AS userId, secret,
-    confirmed_at AS confirmedAt, last_used_step AS lastUsedStep
+    confirmed_at AS confirmedAt, last_used_step AS lastUsedStep,
+    failed_attempts AS failedAttempts, locked_until AS lockedUntil
   FROM user_totp_enrolments WHERE user_id = ?`
 
 const recoveryCodeQuery = `SELECT id, selector, version,
@@ -169,11 +243,13 @@ const discardPendingCodes = `DELETE FROM user_recovery_codes
   RETURNING id`
 
 const insertEnrolment = `INSERT INTO user_totp_enrolments
-    (user_id, secret, confirmed_at, last_used_step, created_at, updated_at)
-  SELECT ?, ?, NULL, NULL, ?, ?
+    (user_id, secret, confirmed_at, last_used_step, created_at, updated_at,
+     failed_attempts, locked_until)
+  SELECT ?, ?, NULL, NULL, ?, ?, 0, NULL
   WHERE NOT EXISTS (SELECT 1 FROM user_totp_enrolments WHERE user_id = ?)
   RETURNING user_id AS userId, secret, confirmed_at AS confirmedAt,
-    last_used_step AS lastUsedStep`
+    last_used_step AS lastUsedStep, failed_attempts AS failedAttempts,
+    locked_until AS lockedUntil`
 
 const insertRecoveryCode = `INSERT INTO user_recovery_codes
     (user_id, selector, algorithm, version, memory_kib, time_cost, parallelism,
@@ -192,6 +268,8 @@ const enrolment = (row: EnrolmentRow | null): TotpEnrolment | null =>
         secret: row.secret,
         confirmedAt: row.confirmedAt,
         lastUsedStep: row.lastUsedStep,
+        failedAttempts: row.failedAttempts,
+        lockedUntil: row.lockedUntil,
       }
 
 const recoveryCode = (row: RecoveryCodeRow | null): StoredRecoveryCode | null =>
@@ -301,9 +379,110 @@ const createTwoFactorStore = (database: PortableDatabase): TwoFactorStore => ({
         query: `DELETE FROM user_recovery_codes WHERE user_id = ? RETURNING id`,
         bindings: [userId],
       },
+      // The enrolment is gone, so nothing is left to challenge for; a live
+      // challenge would otherwise sit there naming a user with no factor.
+      {
+        query: `DELETE FROM two_factor_challenges WHERE user_id = ? RETURNING id`,
+        bindings: [userId],
+      },
     ])
     return rows[0]?.length === 1
   },
+
+  recordFailedVerification: async (userId, now, maxAttempts, lockMs) => {
+    const timestamp = assertCanonicalTimestamp(now)
+    const ceiling = assertCeiling(maxAttempts)
+    const duration = assertDuration(lockMs)
+    const unlockAt = new Date(Date.parse(timestamp) + duration).toISOString()
+    const rows = await database.atomic([
+      {
+        // The count and the lock move together. Reaching the ceiling sets the
+        // lock and returns the count to zero, so the next window starts clean
+        // rather than locking again on the first wrong code after it lifts.
+        query: `UPDATE user_totp_enrolments
+            SET failed_attempts = CASE
+                  WHEN failed_attempts + 1 >= ? THEN 0
+                  ELSE failed_attempts + 1
+                END,
+              locked_until = CASE
+                  WHEN failed_attempts + 1 >= ? THEN ?
+                  ELSE locked_until
+                END,
+              updated_at = ?
+          WHERE user_id = ?
+          RETURNING locked_until AS lockedUntil`,
+        bindings: [ceiling, ceiling, unlockAt, timestamp, userId],
+      },
+    ])
+    const row = rows[0]?.[0] as { lockedUntil?: string | null } | undefined
+    const lockedUntil = row?.lockedUntil ?? null
+    return lockedUntil !== null && Date.parse(lockedUntil) > Date.parse(timestamp)
+      ? lockedUntil
+      : null
+  },
+
+  clearFailedVerifications: async (userId, now) => {
+    await database.atomic([
+      {
+        query: `UPDATE user_totp_enrolments
+            SET failed_attempts = 0, locked_until = NULL, updated_at = ?
+          WHERE user_id = ? AND (failed_attempts > 0 OR locked_until IS NOT NULL)
+          RETURNING user_id AS userId`,
+        bindings: [assertCanonicalTimestamp(now), userId],
+      },
+    ])
+  },
+
+  createChallenge: async ({ userId, tokenHash, expiresAt, createdAt, cleanupBefore }) => {
+    const created = assertCanonicalTimestamp(createdAt)
+    const expires = assertCanonicalTimestamp(expiresAt)
+    const sweep = assertCanonicalTimestamp(cleanupBefore)
+    if (Date.parse(expires) <= Date.parse(created)) {
+      throw new RangeError('a two-factor challenge must expire after it is created')
+    }
+    const rows = await database.atomic([
+      {
+        query: `DELETE FROM two_factor_challenges
+          WHERE julianday(expires_at) <= julianday(?)
+            OR (consumed_at IS NOT NULL AND julianday(consumed_at) <= julianday(?))
+          RETURNING id`,
+        bindings: [created, sweep],
+      },
+      {
+        query: `INSERT INTO two_factor_challenges
+            (user_id, token_hash, expires_at, consumed_at, created_at, updated_at)
+          VALUES (?, ?, ?, NULL, ?, ?)
+          ON CONFLICT(token_hash) DO NOTHING
+          RETURNING id`,
+        bindings: [userId, tokenHash, expires, created, created],
+      },
+    ])
+    return rows[1]?.length === 1 ? 'created' : 'collision'
+  },
+
+  consumeChallenge: async (tokenHash, now) => {
+    const timestamp = assertCanonicalTimestamp(now)
+    const rows = await database.atomic([
+      {
+        query: `UPDATE two_factor_challenges SET consumed_at = ?, updated_at = ?
+          WHERE token_hash = ? AND consumed_at IS NULL
+            AND julianday(expires_at) > julianday(?)
+          RETURNING user_id AS userId`,
+        bindings: [timestamp, timestamp, tokenHash, timestamp],
+      },
+    ])
+    return challenge(rows[0]?.[0] as unknown as ChallengeRow | undefined)
+  },
+
+  challengeHolder: async (tokenHash, now) =>
+    challenge(
+      (await database.first<ChallengeRow>(
+        `SELECT user_id AS userId FROM two_factor_challenges
+          WHERE token_hash = ? AND consumed_at IS NULL
+            AND julianday(expires_at) > julianday(?)`,
+        [tokenHash, assertCanonicalTimestamp(now)],
+      )) ?? undefined,
+    ),
 })
 
 export const createContainerTwoFactorStore = (

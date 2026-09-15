@@ -812,6 +812,20 @@ const createPasswordAuthService = (
           RETURNING id`,
         bindings: [timestamp, timestamp, prepared.selector, prepared.secretHash, nonce],
       },
+      {
+        // A two-factor challenge is a session this sign-in has not collected
+        // yet, so a reset that revokes the sessions has to take the promises of
+        // sessions with it. Otherwise the old password's last sign-in is still
+        // redeemable for minutes after the password stopped existing.
+        query: `DELETE FROM two_factor_challenges
+          WHERE user_id = (
+            SELECT email.user_id FROM auth_tokens token
+            JOIN user_emails email ON email.id = token.user_email_id
+            WHERE token.selector = ? AND token.secret_hash = ? AND token.used_nonce = ?
+          )
+          RETURNING id`,
+        bindings: [prepared.selector, prepared.secretHash, nonce],
+      },
     ])
     const consumed = rows[0]?.[0] as { userEmailId?: number } | undefined
     const updated = rows[1]?.[0] as { userId?: number } | undefined

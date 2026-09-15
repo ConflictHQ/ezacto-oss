@@ -3447,6 +3447,18 @@ dialog h2,
 .sign-in-form .primary-action {
   width: 100%;
 }
+/* Leaving a half-finished second factor has to be as reachable as finishing
+   it: the alternative is a person stuck on a code they cannot produce. */
+.sign-in-restart {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--ez-muted);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
 .auth-result {
   min-height: 20px;
   margin: 0;

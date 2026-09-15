@@ -28,6 +28,7 @@ const GUIDES = [
   ['instance-theme', 'docs/instance-theme.md', 'Instance theme'],
   ['attachment-storage', 'docs/attachment-storage.md', 'Attachment storage'],
   ['quickbooks-setup', 'docs/quickbooks-setup.md', 'QuickBooks setup'],
+  ['security', 'docs/security.md', 'Security decisions'],
   ['testing-strategy', 'docs/testing-strategy.md', 'Testing strategy'],
   ['cutover-runbook', 'docs/cutover-runbook.md', 'Cutover runbook'],
   ['contributing', 'CONTRIBUTING.md', 'Contributing'],

@@ -2,6 +2,10 @@ import type { Context, Hono } from 'hono'
 import type { ApiContext } from './context.js'
 import { ApiError, readJsonBody, validationError } from './errors.js'
 import type { OidcAppCodeStorePort } from './oidc.js'
+import {
+  issueSessionOrChallenge,
+  type TwoFactorGate,
+} from './two-factor-challenge.js'
 
 export const STAFF_MAGIC_LINK_TTL_MS = 10 * 60 * 1_000
 export const STAFF_MAGIC_LINK_THROTTLE_MS = 60 * 1_000
@@ -59,6 +63,11 @@ export interface StaffMagicLinkRouteOptions<Bindings extends object> {
   users: StaffUserDirectory
   magicLinks: StaffMagicLinkStorePort
   sessions: StaffSessionIssuer
+  /**
+   * Issue 731. A magic link is a credential this instance issued and verified,
+   * so an enrolled user still owes a code before the link becomes a session.
+   */
+  twoFactor?: TwoFactorGate
   /** Reused OIDC app-code store: bridges a tapped link to the native app. */
   appCodes: OidcAppCodeStorePort
   /**
@@ -268,9 +277,19 @@ export const installStaffMagicLinkRoutes = <Bindings extends object>(
       target.searchParams.set('code', appCode)
       return noStoreRedirect(context, target.href)
     }
-    const session = await options.sessions.issue(redemption.userId)
-    context.header('set-cookie', session.setCookie, { append: true })
-    return noStoreRedirect(context, '/')
+    // The challenge token rides in the HttpOnly cookie the gate sets, never in
+    // the location: a redirect URL reaches the referrer header, the history and
+    // any proxy log. The query flag carries no credential -- it only tells the
+    // shell to open on the code step instead of the password form.
+    const challenge = await issueSessionOrChallenge(
+      context,
+      {
+        ...(options.twoFactor === undefined ? {} : { gate: options.twoFactor }),
+        sessions: options.sessions,
+      },
+      redemption.userId,
+    )
+    return noStoreRedirect(context, challenge === null ? '/' : '/?two_factor=1')
   })
 
   app.post('/auth/magic-link/exchange', async (context) => {
@@ -307,9 +326,27 @@ export const installStaffMagicLinkRoutes = <Bindings extends object>(
       STAFF_MAGIC_LINK_MAX_CODE_ATTEMPTS
     )
     if (redemption === null) throw invalid
-    const session = await options.sessions.issue(redemption.userId)
-    context.header('set-cookie', session.setCookie, { append: true })
+    const challenge = await issueSessionOrChallenge(
+      context,
+      {
+        ...(options.twoFactor === undefined ? {} : { gate: options.twoFactor }),
+        sessions: options.sessions,
+      },
+      redemption.userId,
+    )
     context.header('cache-control', 'no-store')
+    if (challenge !== null) {
+      return context.json(
+        {
+          data: {
+            status: challenge.status,
+            challenge: challenge.token,
+            expires_at: challenge.expiresAt,
+          },
+        },
+        200,
+      )
+    }
     return context.json({ data: { ok: true } }, 200)
   })
 }

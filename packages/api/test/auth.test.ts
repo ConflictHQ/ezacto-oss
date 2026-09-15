@@ -658,6 +658,18 @@ const twoFactorService = (): TwoFactorService => {
       remaining = 0
       return 'disabled'
     },
+    // The gate half of the interface. These routes never call it; it is here
+    // because the type refuses to describe a factor that can be enrolled and
+    // not enforced, which is the shape issue 731 was.
+    isEnrolled: async () => state === 'enabled',
+    issueChallenge: async () => ({
+      token: 'A'.repeat(43),
+      expiresAt: '2026-09-01T00:05:00.000Z',
+    }),
+    redeemChallenge: async (_token, code) =>
+      code === acceptedCode
+        ? { status: 'accepted' as const, userId: 42 }
+        : { status: 'rejected' as const },
   }
 }
 

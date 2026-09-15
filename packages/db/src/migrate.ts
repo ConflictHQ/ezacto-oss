@@ -81,6 +81,7 @@ import { revenueFeesMigration } from './migrations/0080_revenue_fees.js'
 import { reportDeliveryIdentityMigration } from './migrations/0081_report_delivery_identity.js'
 import { savedReportsMigration } from './migrations/0082_saved_reports.js'
 import { reportTimeCommandsMigration } from './migrations/0083_report_time_commands.js'
+import { twoFactorChallengesMigration } from './migrations/0084_two_factor_challenges.js'
 import { bandClaimModesMigration } from './migrations/0074_band_claim_modes.js'
 import { bandClaimScopeMigration } from './migrations/0075_band_claim_scope.js'
 import { rateRemovalMigration } from './migrations/0076_rate_removal.js'
@@ -1517,6 +1518,7 @@ const migrations = [
   { id: '0081_report_delivery_identity', statements: reportDeliveryIdentityMigration },
   { id: '0082_saved_reports', statements: savedReportsMigration },
   { id: '0083_report_time_commands', statements: reportTimeCommandsMigration },
+  { id: '0084_two_factor_challenges', statements: twoFactorChallengesMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

@@ -7,6 +7,10 @@ import {
   validationError,
   type FieldError,
 } from './errors.js'
+import {
+  issueSessionOrChallenge,
+  type TwoFactorGate,
+} from './two-factor-challenge.js'
 
 export type AuthTokenKind = 'verify_email' | 'password_reset'
 
@@ -67,6 +71,12 @@ export interface PasswordSessionIssuer {
 export interface PasswordAuthRouteOptions {
   service: PasswordAuthService
   sessions: PasswordSessionIssuer
+  /**
+   * Issue 731. Absent only where the deployment composes no two-factor
+   * service; where it is present, an enrolled user gets a challenge here and
+   * no session until a code answers it.
+   */
+  twoFactor?: TwoFactorGate
   /** Deployment-brand sender used for every authentication email. */
   deploymentMailer?: AuthMailer
   clientKey(request: Request): string
@@ -260,11 +270,34 @@ export const installPasswordAuthRoutes = <Bindings extends object>(
           message: 'Verify this email address before signing in.',
         })
       }
-      const session = await options.sessions.issue(
+      // The credential version is checked as the session is issued, so an
+      // enrolled user's version is carried on the challenge rather than
+      // dropped: `redeemChallenge` issues without it, and a password changed
+      // during the challenge revokes every session the change touches anyway.
+      const challenge = await issueSessionOrChallenge(
+        context,
+        {
+          ...(options.twoFactor === undefined ? {} : { gate: options.twoFactor }),
+          sessions: {
+            issue: (userId) =>
+              options.sessions.issue(userId, result.credentialVersion),
+          },
+        },
         result.principal.userId,
-        result.credentialVersion,
       )
-      context.header('set-cookie', session.setCookie, { append: true })
+      if (challenge !== null) {
+        return context.json(
+          {
+            data: {
+              status: challenge.status,
+              challenge: challenge.token,
+              expires_at: challenge.expiresAt,
+            },
+          },
+          200,
+          { 'cache-control': 'no-store' },
+        )
+      }
       return context.json(
         {
           data: {

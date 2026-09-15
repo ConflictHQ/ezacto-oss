@@ -570,7 +570,12 @@ describe('OpenID Connect browser authentication', () => {
 class MemoryAppCodes implements OidcAppCodeStorePort {
   private readonly rows = new Map<
     string,
-    { userId: number; expiresAt: string; consumedAt: string | null }
+    {
+      provider: string
+      userId: number
+      expiresAt: string
+      consumedAt: string | null
+    }
   >()
 
   async create(input: {
@@ -583,6 +588,7 @@ class MemoryAppCodes implements OidcAppCodeStorePort {
   }): Promise<'created' | 'collision'> {
     if (this.rows.has(input.codeHash)) return 'collision'
     this.rows.set(input.codeHash, {
+      provider: input.provider,
       userId: input.userId,
       expiresAt: input.expiresAt,
       consumedAt: null,
@@ -593,7 +599,7 @@ class MemoryAppCodes implements OidcAppCodeStorePort {
   async consume(
     codeHash: string,
     now: string,
-  ): Promise<{ userId: number } | null> {
+  ): Promise<{ userId: number; provider: string } | null> {
     const row = this.rows.get(codeHash)
     if (
       row === undefined ||
@@ -603,7 +609,7 @@ class MemoryAppCodes implements OidcAppCodeStorePort {
       return null
     }
     this.rows.set(codeHash, { ...row, consumedAt: now })
-    return { userId: row.userId }
+    return { userId: row.userId, provider: row.provider }
   }
 }
 

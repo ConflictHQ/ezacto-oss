@@ -7,6 +7,10 @@ import {
 import * as oauth from 'oauth4webapi'
 import type { ApiContext } from './context.js'
 import { ApiError, readJsonBody, validationError } from './errors.js'
+import {
+  issueSessionOrChallenge,
+  type TwoFactorGate,
+} from './two-factor-challenge.js'
 
 export const OIDC_STATE_COOKIE_NAME = '__Host-ezacto_oidc_state'
 // Marks a sign-in started from the native app (`?flow=app`). It rides alongside
@@ -71,7 +75,10 @@ export interface OidcAppCodeStorePort {
     createdAt: string
     cleanupBefore: string
   }): Promise<'created' | 'collision'>
-  consume(codeHash: string, now: string): Promise<{ userId: number } | null>
+  consume(
+    codeHash: string,
+    now: string,
+  ): Promise<{ userId: number; provider: string } | null>
 }
 
 export type OidcClientAuthentication = 'client_secret_basic' | 'client_secret_post'
@@ -103,6 +110,16 @@ export interface OidcRouteOptions<Bindings extends object> {
   // `appRedirectUri` instead of issuing a browser session.
   appCodes?: OidcAppCodeStorePort
   appRedirectUri?: string
+  /**
+   * Issue 731. The exchange is shared: it redeems codes minted by a federated
+   * sign-in and codes minted by the staff magic link. The gate applies to the
+   * second kind only -- see `localAppCodeProviders` -- because a federated
+   * assertion carries whatever factor policy the identity provider enforced,
+   * and this instance can neither add to it nor audit it.
+   */
+  twoFactor?: TwoFactorGate
+  /** Provider keys whose app codes stand for a credential this instance verified. */
+  localAppCodeProviders?: readonly string[]
 }
 
 interface NormalizedProvider {
@@ -729,9 +746,31 @@ export const installOidcRoutes = <Bindings extends object>(
         'The sign-in code is invalid, already used, or expired.',
       )
     }
-    const session = await options.sessions.issue(consumed.userId)
-    context.header('set-cookie', session.setCookie, { append: true })
+    const local = (options.localAppCodeProviders ?? []).includes(consumed.provider)
+    const challenge = await issueSessionOrChallenge(
+      context,
+      {
+        ...(options.twoFactor === undefined || !local
+          ? {}
+          : { gate: options.twoFactor }),
+        sessions: options.sessions,
+      },
+      consumed.userId,
+    )
     setRedirectHeaders(context)
+    if (challenge !== null) {
+      return context.json(
+        {
+          data: {
+            status: challenge.status,
+            challenge: challenge.token,
+            expires_at: challenge.expiresAt,
+          },
+        },
+        200,
+        { 'cache-control': 'no-store' },
+      )
+    }
     return context.json({ data: { ok: true } }, 200, {
       'cache-control': 'no-store',
     })
