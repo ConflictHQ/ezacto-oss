@@ -775,6 +775,11 @@ export type TeamRateInput = {
   "start_date": string | null;
 };
 
+export type TeamRateRemovalInput = {
+  "expected_version": number;
+  "kind": "billable" | "cost";
+};
+
 export type TeamCommandReceipt = {
   "target_user_id": number;
   "version": number;
@@ -4881,6 +4886,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
     if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<TeamCommandReceiptEnvelope>("POST", "/api/v1/team/people/:id/rates".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async removeTeamPersonRate(args: { "id": number; "rateId": number; "Idempotency-Key": string; body: TeamRateRemovalInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TeamCommandReceiptEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<TeamCommandReceiptEnvelope>("DELETE", "/api/v1/team/people/:id/rates/:rateId".replace(":id", encodeURIComponent(String(args["id"]))).replace(":rateId", encodeURIComponent(String(args["rateId"]))), {
       body: args.body,
       signal: args.signal,
       headers,

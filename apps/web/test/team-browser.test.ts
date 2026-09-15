@@ -955,6 +955,86 @@ describe('Team browser controller', () => {
     expect(updateTeamPersonNotifications).not.toHaveBeenCalled()
   })
 
+  it('[e2e:rate-change] takes back a misclicked rate and shows the one it displaced reopened', async () => {
+    // #727. Adding a rate ends the one before it, so a misclick on the wrong
+    // section replaces a live rate with a different number. Removing it has to
+    // put the displaced one back, or taking away the mistake leaves the damage.
+    writeDocument('team-person')
+    let current = person({
+      version: 4,
+      billable_rates: [
+        { ...person().billable_rates![0]!, end_date: '2026-08-31' },
+        {
+          id: 2,
+          user_id: 1,
+          amount_cents: 12_501,
+          start_date: '2026-09-01',
+          end_date: null,
+          created_at: timestamp,
+          updated_at: timestamp,
+        },
+      ],
+    })
+    const removeTeamPersonRate = vi.fn<
+      (
+        id: number,
+        rateId: number,
+        commandId: string,
+        input: { readonly expected_version: number; readonly kind: 'billable' | 'cost' },
+      ) => Promise<ReturnType<typeof receipt>>
+    >(async () => {
+      current = person({ version: 5 })
+      return receipt(5)
+    })
+    const controller = createTeamDirectoryController({
+      getTeamPerson: vi.fn(async () => current),
+      getTeamCatalog: vi.fn(async () => catalog),
+      appendTeamPersonRate: vi.fn(),
+      removeTeamPersonRate,
+    })
+    await controller.activate(identity(), new AbortController().signal, () => false)
+
+    const table = document.querySelector('[data-team-billable-rates]')!
+    const buttons = table.querySelectorAll<HTMLButtonElement>('[data-team-remove-rate]')
+    // Only the current rate carries one: a closed period is money somebody was
+    // charged, and the schema refuses to remove it.
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0]!.dataset['teamRateId']).toBe('2')
+    buttons[0]!.click()
+
+    await vi.waitFor(() => expect(removeTeamPersonRate).toHaveBeenCalled())
+    expect(removeTeamPersonRate.mock.calls[0]![1]).toBe(2)
+    expect(removeTeamPersonRate.mock.calls[0]![3]).toEqual({
+      expected_version: 4,
+      kind: 'billable',
+    })
+    await vi.waitFor(() => {
+      const rates = document.querySelector('[data-team-billable-rates]')?.textContent ?? ''
+      expect(rates).toContain('2026-01-01 – Ongoing')
+      expect(rates).not.toContain('125.01/hour')
+    })
+  })
+
+  it('[unit] draws no remove control when the API it is talking to has none', async () => {
+    // A shell can outlive the API it renders against. A button whose only
+    // possible answer is 404 is worse than no button, so the control appears
+    // only where the call exists.
+    writeDocument('team-person')
+    const controller = createTeamDirectoryController({
+      getTeamPerson: vi.fn(async () => person()),
+      getTeamCatalog: vi.fn(async () => catalog),
+      appendTeamPersonRate: vi.fn(),
+    })
+    await controller.activate(identity(), new AbortController().signal, () => false)
+
+    // The rate history is drawn -- this is not passing because the table is
+    // missing -- and it carries no remove control.
+    expect(document.querySelector('[data-team-billable-rates] table')).not.toBeNull()
+    expect(
+      document.querySelectorAll('[data-team-billable-rates] [data-team-remove-rate]'),
+    ).toHaveLength(0)
+  })
+
   it('[e2e:rate-change] retries one idempotent command and displays the server-closed prior period', async () => {
     writeDocument('team-person')
     let current = person()

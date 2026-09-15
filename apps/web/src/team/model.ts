@@ -90,6 +90,18 @@ export interface TeamDirectoryApi {
     input: TeamRateInput,
     signal?: AbortSignal,
   ): Promise<TeamCommandReceipt>
+  /**
+   * Take back a rate nobody meant to add (#727). Optional, because a shell
+   * built against an API that predates it must still draw the rate history --
+   * without the control, rather than with one that answers 404.
+   */
+  removeTeamPersonRate?(
+    id: number,
+    rateId: number,
+    commandId: string,
+    input: { readonly expected_version: number; readonly kind: 'billable' | 'cost' },
+    signal?: AbortSignal,
+  ): Promise<TeamCommandReceipt>
 }
 
 export interface TeamCapabilities {

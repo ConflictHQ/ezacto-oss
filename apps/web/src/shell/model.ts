@@ -1251,6 +1251,16 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  removeTeamPersonRate: async (id, rateId, commandId, body, signal) =>
+    (
+      await client.removeTeamPersonRate({
+        id,
+        rateId,
+        'Idempotency-Key': commandId,
+        body,
+        ...withSignal(signal),
+      })
+    ).data,
   listProjectClients: (cursor, signal) =>
     client.listClients({
       query: {

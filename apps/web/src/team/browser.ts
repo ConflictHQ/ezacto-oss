@@ -178,6 +178,10 @@ export const createTeamDirectoryController = (
   const rateForm = required<HTMLFormElement>('[data-team-rate-form]')
   const rateTitle = required<HTMLElement>('[data-team-rate-title]')
   const rateResult = required<HTMLElement>('[data-team-rate-result]')
+  // Beside the tables rather than inside the add-rate dialog: a removal is
+  // started from the table with no dialog open, so a message in the dialog
+  // would be one nobody sees.
+  const ratesResult = required<HTMLElement>('[data-team-rates-result]')
   const rateSubmit = required<HTMLButtonElement>('[data-team-rate-submit]')
   const deactivateDialog = required<HTMLDialogElement>('[data-team-deactivate-dialog]')
   const deactivateForm = required<HTMLFormElement>('[data-team-deactivate-form]')
@@ -839,7 +843,11 @@ export const createTeamDirectoryController = (
     )
   }
 
-  const rateTable = (values: readonly UserRate[]): HTMLElement => {
+  const rateTable = (
+    values: readonly UserRate[],
+    kind: 'billable' | 'cost',
+    removable: boolean,
+  ): HTMLElement => {
     if (values.length === 0) {
       const empty = document.createElement('p')
       empty.className = 'team-empty'
@@ -852,7 +860,7 @@ export const createTeamDirectoryController = (
     caption.textContent = 'Effective-dated rate history'
     const head = document.createElement('thead')
     const heading = document.createElement('tr')
-    for (const label of ['Period', 'Rate']) {
+    for (const label of removable ? ['Period', 'Rate', ''] : ['Period', 'Rate']) {
       const cell = document.createElement('th')
       cell.scope = 'col'
       cell.textContent = label
@@ -871,10 +879,68 @@ export const createTeamDirectoryController = (
       // durations and stay on screen.
       markMoney(amount)
       row.append(period, amount)
+      if (removable) {
+        const actions = document.createElement('td')
+        // Only the current rate. A closed one is a period somebody was charged
+        // under, and the schema refuses to remove it -- so offering a button
+        // that cannot work would be worse than offering none.
+        if (value.end_date === null) {
+          const remove = document.createElement('button')
+          remove.type = 'button'
+          remove.dataset['teamRemoveRate'] = kind
+          remove.dataset['teamRateId'] = String(value.id)
+          remove.textContent = 'Remove'
+          remove.disabled = mutationPending
+          actions.append(remove)
+        }
+        row.append(actions)
+      }
       body.append(row)
     }
     table.append(caption, head, body)
     return table
+  }
+
+  /**
+   * Take back a rate nobody meant to add (#727).
+   *
+   * No confirmation dialog: the schema only admits a rate that has priced
+   * nothing, so the button cannot destroy anything anybody was charged under,
+   * and a prompt guarding a reversible action trains people to dismiss the
+   * prompts that guard the others. What it *can* do is put back the rate this
+   * one displaced, which is the point.
+   */
+  const removeRate = (button: HTMLButtonElement): void => {
+    const active = currentSession()
+    const current = person
+    const kind = button.dataset['teamRemoveRate'] === 'cost' ? 'cost' : 'billable'
+    const rateId = Number(button.dataset['teamRateId'])
+    if (
+      active === null ||
+      current === null ||
+      mutationPending ||
+      !Number.isSafeInteger(rateId) ||
+      api.removeTeamPersonRate === undefined ||
+      (kind === 'billable' && !active.capabilities.canAppendBillableRate) ||
+      (kind === 'cost' && !active.capabilities.canAppendCostRate)
+    ) {
+      return
+    }
+    void mutate(
+      active,
+      `rate-remove-${kind}`,
+      ratesResult,
+      'Removing rate…',
+      `${kind === 'billable' ? 'Billable' : 'Cost'} rate removed.`,
+      (id) =>
+        api.removeTeamPersonRate!(
+          current.id,
+          rateId,
+          id,
+          { expected_version: current.version, kind },
+          active.signal,
+        ),
+    )
   }
 
   const renderRates = (active: ActiveSession, value: TeamPerson): void => {
@@ -884,10 +950,41 @@ export const createTeamDirectoryController = (
     costSection.hidden = !costVisible
     required<HTMLElement>('[data-team-rates-redacted]').hidden =
       billableVisible || costVisible
+    // A remove control only where the acting profile could have added one, and
+    // only when the shell is talking to an API that knows how.
+    const canRemove = api.removeTeamPersonRate !== undefined
     billableRates.replaceChildren(
-      ...(billableVisible ? [rateTable(value.billable_rates ?? [])] : []),
+      ...(billableVisible
+        ? [
+            rateTable(
+              value.billable_rates ?? [],
+              'billable',
+              canRemove && active.capabilities.canAppendBillableRate,
+            ),
+          ]
+        : []),
     )
-    costRates.replaceChildren(...(costVisible ? [rateTable(value.cost_rates ?? [])] : []))
+    costRates.replaceChildren(
+      ...(costVisible
+        ? [
+            rateTable(
+              value.cost_rates ?? [],
+              'cost',
+              canRemove && active.capabilities.canAppendCostRate,
+            ),
+          ]
+        : []),
+    )
+    for (const button of billableRates.querySelectorAll<HTMLButtonElement>(
+      '[data-team-remove-rate]',
+    )) {
+      button.addEventListener('click', () => removeRate(button))
+    }
+    for (const button of costRates.querySelectorAll<HTMLButtonElement>(
+      '[data-team-remove-rate]',
+    )) {
+      button.addEventListener('click', () => removeRate(button))
+    }
     const billableAdd = required<HTMLButtonElement>('[data-team-add-rate="billable"]')
     const costAdd = required<HTMLButtonElement>('[data-team-add-rate="cost"]')
     billableAdd.hidden = !active.capabilities.canAppendBillableRate
