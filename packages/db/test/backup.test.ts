@@ -1,7 +1,8 @@
 import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
-  BACKUP_TABLES,
+  EXCLUDED_TABLES,
+  backupTables,
   completeBackupRun,
   exportBundle,
   failBackupRun,
@@ -48,6 +49,74 @@ describe('backup module', () => {
     return context
   }
 
+  /**
+   * The defect this replaces. The bundle carried a hand-written list of tables
+   * to include, so every migration that added a table silently narrowed the
+   * backup: the deployed export held 51 tables, the source said 57, and the
+   * database had 127. A backup missing a table looks exactly like a backup that
+   * is not, which is why it went unnoticed.
+   */
+  describe('what the bundle covers', () => {
+    it('[security] covers every table the database has, minus the stated exclusions', async () => {
+      const { database } = await withDatabase()
+      const present = (
+        await database
+          .prepare(
+            `SELECT name FROM sqlite_master
+              WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'`,
+          )
+          .all<{ name: string }>()
+      ).results.map((row) => row.name)
+
+      const covered = await backupTables(database)
+      expect(
+        present.filter((name) => !covered.includes(name) && !EXCLUDED_TABLES.has(name)),
+      ).toEqual([])
+      for (const excluded of EXCLUDED_TABLES) expect(covered).not.toContain(excluded)
+    })
+
+    it('[unit] orders tables stably, so an unchanged database yields an unchanged manifest', async () => {
+      // The manifest is checksummed and compared between runs. Order drifting
+      // with SQLite's catalog would read as a change when nothing changed.
+      const { database } = await withDatabase()
+      const covered = await backupTables(database)
+      expect([...covered]).toEqual([...covered].sort())
+    })
+
+    it('[security] keeps what a restore needs to let anyone back in', async () => {
+      // An instance whose people cannot sign in has not been restored. These
+      // carry credential material, which is why RESTORE.md says the bundle must
+      // be handled exactly like the database it came from.
+      const { database } = await withDatabase()
+      const covered = await backupTables(database)
+      for (const table of [
+        'users',
+        'user_emails',
+        'user_passwords',
+        'user_identities',
+        'user_totp_enrolments',
+        'user_recovery_codes',
+        'api_tokens',
+        'organization_owner',
+      ]) {
+        expect(covered, table).toContain(table)
+      }
+    })
+
+    it('[security] leaves out what would only carry live bearer material forward', async () => {
+      const { database } = await withDatabase()
+      const covered = await backupTables(database)
+      for (const table of [
+        'sessions',
+        'auth_tokens',
+        'oidc_transactions',
+        '_ezacto_migrations',
+      ]) {
+        expect(covered, table).not.toContain(table)
+      }
+    })
+  })
+
   describe('exportBundle', () => {
     it('exports all tables as CSV with manifest and RESTORE.md', async () => {
       const { database } = await withDatabase()
@@ -61,12 +130,13 @@ describe('backup module', () => {
       const manifest = await exportBundle(database, store, 'backups/2026-09-01/')
 
       expect(manifest.schema_version).toBe(1)
-      expect(manifest.bundle_version).toBe('0035')
+      expect(manifest.bundle_version).toBe('0036')
       expect(manifest.exported_at).toMatch(/^\d{4}-\d{2}-\d{2}T/)
-      expect(manifest.table_count).toBe(BACKUP_TABLES.length)
+      const expected = await backupTables(database)
+      expect(manifest.table_count).toBe(expected.length)
       expect(typeof manifest.total_rows).toBe('number')
 
-      for (const table of BACKUP_TABLES) {
+      for (const table of expected) {
         const key = `backups/2026-09-01/tables/${table}.csv`
         expect(objects.has(key)).toBe(true)
         const csv = objects.get(key)!
