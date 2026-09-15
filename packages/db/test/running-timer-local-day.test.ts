@@ -28,14 +28,14 @@ afterEach(() => {
 // already Sunday the 13th in UTC.
 const EVENING = '2026-09-13T05:14:58.220Z'
 
-const fixture = async (timezone: string) => {
+const fixture = async (timezone: string, userTimezone?: string) => {
   const database = new BetterSqlite3(':memory:')
   await migrateContainer(database)
   database.exec(`
     INSERT INTO organizations (name, modules, timezone, time_entry_mode, created_at, updated_at)
       VALUES ('CONFLICT', '{"time":true}', '${timezone}', 'duration', '${at}', '${at}');
-    INSERT INTO users (id, first_name, last_name, profile, is_active, manager_grants, created_at, updated_at)
-      VALUES (1, 'R.', 'Adeyemi', 'administrator', 1, '[]', '${at}', '${at}');
+    INSERT INTO users (id, first_name, last_name, profile, is_active, manager_grants, timezone, created_at, updated_at)
+      VALUES (1, 'R.', 'Adeyemi', 'administrator', 1, '[]', '${userTimezone ?? 'UTC'}', '${at}', '${at}');
     INSERT INTO clients (id, name, currency, created_at, updated_at)
       VALUES (1, 'Kestrel Environmental', 'USD', '${at}', '${at}');
     INSERT INTO projects (id, client_id, name, code, is_active, billing_method, created_at, updated_at)
@@ -107,6 +107,32 @@ describe('the day a running timer is filed on', () => {
         utcBoundary(EVENING),
       ),
     ).rejects.toMatchObject({ reasonCode: 'timer_owned', field: 'spent_date' })
+    // This case builds two fixtures, so it migrates twice; give it room.
+  }, 20000)
+
+  it("[money] follows the user's own timezone over the organization's", async () => {
+    // The organization runs on UTC but the person tracking is at UTC-6. Their
+    // evening session is still the 12th for them, and that is the day it files.
+    const tracked = await fixture('UTC', 'America/Costa_Rica')
+    const entry = await tracked.createTimeEntry(
+      1,
+      { projectId: 1, taskId: 1 },
+      utcBoundary(EVENING),
+    )
+    expect(entry.spentDate).toBe('2026-09-12')
+    expect(entry.timerStartedAt).toBe(EVENING)
+  })
+
+  it('[money] a user still on the UTC default defers to the organization', async () => {
+    // The user timezone column defaults to 'UTC'; that is "unset", so the
+    // organization timezone decides the day.
+    const tracked = await fixture('America/Costa_Rica', 'UTC')
+    const entry = await tracked.createTimeEntry(
+      1,
+      { projectId: 1, taskId: 1 },
+      utcBoundary(EVENING),
+    )
+    expect(entry.spentDate).toBe('2026-09-12')
   })
 
   it('[money] rolls the other way east of UTC', async () => {

@@ -370,6 +370,21 @@ export class DrizzleTrackedResourceRepository {
     return settings
   }
 
+  // The local day a timer is filed under belongs to the person tracking it. We
+  // prefer that user's own timezone; a user who has never set one (the 'UTC'
+  // column default) defers to the organization timezone, which in turn defaults
+  // to 'UTC'. This keeps prior behaviour for anyone without a personal zone
+  // while letting a user in another zone file on their own day.
+  async #effectiveTimezone(userId: number, settings: TimeSettings): Promise<string> {
+    const [user] = await this.#database
+      .select()
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1)
+    if (user?.timezone && user.timezone !== 'UTC') return user.timezone
+    return settings.timezone
+  }
+
   async timeEntrySettings(): Promise<OrganizationTimeEntrySettings> {
     const settings = await this.#timeSettings()
     return {
@@ -827,10 +842,11 @@ export class DrizzleTrackedResourceRepository {
     // evening, so a 23:14 Saturday session lands on Sunday and a Sunday-evening
     // session lands in next week's timesheet entirely (issue 651).
     //
-    // The refusals below already claimed to be about "the current
-    // organization-local date". Nothing applied a timezone until now, so they
-    // described a rule the code did not implement.
-    const local = localBoundary(boundary, settings.timezone)
+    // The refusals below are about the current local date. Nothing applied a
+    // timezone until issue 651; the day now follows the user's zone, falling
+    // back to the organization's.
+    const zone = await this.#effectiveTimezone(userId, settings)
+    const local = localBoundary(boundary, zone)
     const assignment = await this.#resolveTimeAssignment(userId, input.projectId, input.taskId)
     const base = {
       userId,
