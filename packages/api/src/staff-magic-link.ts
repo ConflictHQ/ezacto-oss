@@ -6,6 +6,10 @@ import {
   issueSessionOrChallenge,
   type TwoFactorGate,
 } from './two-factor-challenge.js'
+import {
+  signInMethodUnavailable,
+  type SignInMethodPolicy,
+} from './sign-in-methods.js'
 
 export const STAFF_MAGIC_LINK_TTL_MS = 10 * 60 * 1_000
 export const STAFF_MAGIC_LINK_THROTTLE_MS = 60 * 1_000
@@ -68,6 +72,8 @@ export interface StaffMagicLinkRouteOptions<Bindings extends object> {
    * so an enrolled user still owes a code before the link becomes a session.
    */
   twoFactor?: TwoFactorGate
+  /** Issue 761. All three legs go together when the operator switches it off. */
+  policy?: SignInMethodPolicy
   /** Reused OIDC app-code store: bridges a tapped link to the native app. */
   appCodes: OidcAppCodeStorePort
   /**
@@ -155,8 +161,15 @@ export const installStaffMagicLinkRoutes = <Bindings extends object>(
   const now = options.now ?? (() => new Date().toISOString())
   const appRedirectUri =
     options.appRedirectUri ?? DEFAULT_STAFF_MAGIC_LINK_APP_REDIRECT_URI
+  const assertLive = async (bindings: unknown): Promise<void> => {
+    if (options.policy === undefined) return
+    if (!(await options.policy.isLive('magic_link', bindings))) {
+      signInMethodUnavailable()
+    }
+  }
 
   app.post('/auth/magic-link', async (context) => {
+    await assertLive(context.env)
     // A deployment-level state, identical for every address, so returning it
     // before the lookup leaks nothing about who has an account.
     if (options.mailer === undefined) {
@@ -236,6 +249,7 @@ export const installStaffMagicLinkRoutes = <Bindings extends object>(
   })
 
   app.get('/auth/magic-link/verify', async (context) => {
+    await assertLive(context.env)
     const token = context.req.query('token')
     if (typeof token !== 'string' || !tokenPattern.test(token)) {
       throw new ApiError({
@@ -293,6 +307,7 @@ export const installStaffMagicLinkRoutes = <Bindings extends object>(
   })
 
   app.post('/auth/magic-link/exchange', async (context) => {
+    await assertLive(context.env)
     const body = await readJsonBody<unknown>(context, { maxBytes: 4 * 1024 })
     if (typeof body !== 'object' || body === null || Array.isArray(body)) {
       throw validationError([

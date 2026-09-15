@@ -21,6 +21,7 @@ import {
   createInvoiceGenerationService,
   createReportRepository,
   createModuleSettingsRepository,
+  createSignInMethodRepository,
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
   createTeamRepository,
@@ -847,6 +848,7 @@ export const createRuntimeServices = async (
       return row?.enabled === 1 || row?.enabled === true;
     },
     moduleSettings: createModuleSettingsRepository(drizzle),
+    signInMethods: createSignInMethodRepository(drizzle),
     organizationName,
     ssoProvisioningDomains: createD1SsoProvisioningDomainStore(database),
     // The #520 organisation setting, read the same way the other two module

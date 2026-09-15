@@ -4,6 +4,49 @@ The policy behind the authentication code, written down where the code can cite
 it. Each section names the routes it governs; changing a decision here means
 changing the tests that assert it.
 
+## Which sign-in methods are live
+
+Four methods exist: `password`, `magic_link`, `google` and `github`. A method is
+live only when **both** of these hold, and they are deliberately separate
+states:
+
+- **Configured** — the deployment supplies what the method needs. Google and
+  GitHub need a client id and secret; the emailed sign-in link needs
+  `MAGIC_LINK_SIGNING_KEY`. Password needs nothing, so it is always configured.
+- **Enabled** — an administrator has not switched it off, at
+  **Settings → Company → Ways in** (`/api/v1/admin/sign-in-methods`).
+
+An instance that has never touched the setting has every configured method
+enabled, so upgrading changes nothing.
+
+Switching a method off stops its routes, not just its buttons. Every leg of the
+family goes with it — for password that is sign-in, signup, both reset legs and
+email verification — and each answers `404 sign_in_method_unavailable` before
+reading the presented credential, so a switched-off method is not a place to
+test whether an address has an account.
+
+### What the setting refuses
+
+It can empty the set of ways into an instance, and the recovery from that is
+database surgery. So it refuses rather than warns:
+
+- **The last one standing.** `409 last_sign_in_method`.
+- **The one you yourself use.** `409 would_lock_out_administrator`. What counts
+  is evidence, not eligibility: a password on file, a verified address for the
+  emailed link, or a provider identity linked by a previous sign-in. If you
+  intend to run SSO only, sign in with the provider once first — that links the
+  identity — and then switch password off.
+- **Switching on what the deployment never configured.**
+  `409 sign_in_method_not_configured`. The fix is a deployment change, not
+  another click.
+
+### Running SSO only
+
+For a deployment whose people all arrive through an identity provider, the
+password path is the one nobody watches. Switching it off closes it. Until you
+do, it is guarded by one factor unless the user separately enrolled the second —
+see below.
+
 ## Two-factor authentication
 
 A user enrols through `POST /api/v1/two-factor` and proves the seed with
@@ -40,7 +83,9 @@ for: one place to revoke access.
 
 **If you self-host and want a second factor on every sign-in, configure it at
 the identity provider.** That is the only place it can be enforced for
-federated accounts, and it is the place that can revoke it.
+federated accounts, and it is the place that can revoke it. The other half of
+that posture is switching the password method off entirely — see *Running SSO
+only* above — so there is no local path left for the factor to miss.
 
 ### The challenge
 

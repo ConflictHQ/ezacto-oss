@@ -11,6 +11,12 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p class="form-result module-settings-status" data-module-settings-status role="status" aria-live="polite">Loading modules…</p>
       <section class="module-settings-list" data-module-settings-list aria-label="Modules"></section>
     </section>
+    <section class="settings-section" data-settings-section="sign-in" aria-labelledby="settings-sign-in-title">
+      <header><h2 id="settings-sign-in-title">Ways in</h2>
+      <p>Which sign-in methods this instance offers. A method needs two things to be live: credentials in the deployment, and your permission here. Switching one off stops its routes, not just its buttons &mdash; anyone part-way through it is turned away. You cannot switch off the last one standing, or the last one you yourself can use.</p></header>
+      <p class="form-result" data-settings-sign-in-status role="status" aria-live="polite">Loading sign-in methods&hellip;</p>
+      <section class="module-settings-list" data-settings-sign-in-list aria-label="Sign-in methods" hidden></section>
+    </section>
     <section class="settings-section" data-settings-section="time" aria-labelledby="settings-time-title">
       <header><h2 id="settings-time-title">Time tracking</h2>
       <p>How the week grid reads and what a time entry has to say. The notes policy is enforced on every entry, including ones the API writes.</p></header>

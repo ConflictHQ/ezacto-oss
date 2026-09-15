@@ -892,4 +892,41 @@ describe('S-1 through S-5 application shell', () => {
     // Not a log line just because a word starts with those letters.
     expect(quickAddPreview('logistics')).toBeNull()
   })
+
+  it('[security] offers the password form only while the method is on', () => {
+    // Issue 761. Hiding markup is not a control -- the routes refuse
+    // independently -- but a page that offers a way in the server would turn
+    // away is a page that reads as broken.
+    const live = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      signInProviders: ['google'],
+    })
+    expect(live).toMatch(/data-password-entry>/u)
+    expect(live).toContain('or use your password')
+
+    const off = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      signInProviders: ['google'],
+      passwordSignIn: false,
+    })
+    // The Google button survives; the credential fields do not.
+    expect(off).toContain('data-oidc-provider="google"')
+    expect(off).toMatch(/data-password-entry hidden>/u)
+    // The divider introduces the password form, so with no form it would
+    // announce a choice the page is not offering.
+    expect(off).not.toContain('or use your password')
+  })
+
+  it('[security] says so when no way in is left rather than drawing a blank card', () => {
+    const stranded = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      signInProviders: [],
+      passwordSignIn: false,
+    })
+    expect(stranded).toContain('Sign-in is unavailable')
+    expect(stranded).toContain('An administrator has to enable one')
+  })
 })

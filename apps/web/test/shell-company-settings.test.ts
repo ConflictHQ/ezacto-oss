@@ -19,15 +19,24 @@ import {
 describe('company settings', () => {
   // The modules list predates the shell api and still fetches for itself, so a
   // company page that never resolves it leaves every section behind a spinner.
+  // Both admin endpoints the company page reads directly rather than through
+  // the typed client. Keyed by path, so the sign-in section does not get handed
+  // the module payload and draw cards for methods that do not exist.
   const stubModulesEndpoint = (): void => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        json: async () => ({ data: [{ module: 'expenses', enabled: true }] }),
-        text: async () => '',
-      })),
+      vi.fn(async (input: unknown) => {
+        const path = String(input)
+        const data = path.includes('/admin/sign-in-methods')
+          ? [{ method: 'password', configured: true, enabled: true }]
+          : [{ module: 'expenses', enabled: true }]
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data }),
+          text: async () => JSON.stringify({ data }),
+        }
+      }),
     )
   }
 

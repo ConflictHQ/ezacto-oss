@@ -32,6 +32,7 @@ import {
   createMoneyResourceRepository,
   createReportRepository,
   createModuleSettingsRepository,
+  createSignInMethodRepository,
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
   createTeamRepository,
@@ -666,6 +667,7 @@ export const createContainerRuntime = async (
       },
       reports: createReportRepository(drizzle),
       moduleSettings: createModuleSettingsRepository(drizzle),
+      signInMethods: createSignInMethodRepository(drizzle),
       organizationName,
       ssoProvisioningDomains:
         createContainerSsoProvisioningDomainStore(database),

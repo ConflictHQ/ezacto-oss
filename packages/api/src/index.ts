@@ -112,6 +112,17 @@ export {
   type TwoFactorStatus,
 } from './auth.js'
 export {
+  createSignInMethodPolicy,
+  installSignInMethodRoutes,
+  signInMethodUnavailable,
+  SIGN_IN_METHODS,
+  type SignInMethod,
+  type SignInMethodPolicy,
+  type SignInMethodRouteOptions,
+  type SignInMethodService,
+  type SignInMethodState,
+} from './sign-in-methods.js'
+export {
   installTwoFactorChallengeRoutes,
   issueSessionOrChallenge,
   TWO_FACTOR_CHALLENGE_COOKIE,

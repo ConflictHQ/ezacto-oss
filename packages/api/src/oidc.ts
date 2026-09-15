@@ -11,6 +11,11 @@ import {
   issueSessionOrChallenge,
   type TwoFactorGate,
 } from './two-factor-challenge.js'
+import {
+  signInMethodUnavailable,
+  type SignInMethod,
+  type SignInMethodPolicy,
+} from './sign-in-methods.js'
 
 export const OIDC_STATE_COOKIE_NAME = '__Host-ezacto_oidc_state'
 // Marks a sign-in started from the native app (`?flow=app`). It rides alongside
@@ -120,6 +125,13 @@ export interface OidcRouteOptions<Bindings extends object> {
   twoFactor?: TwoFactorGate
   /** Provider keys whose app codes stand for a credential this instance verified. */
   localAppCodeProviders?: readonly string[]
+  /**
+   * Issue 761. Applied per provider key, since the operator switches Google off
+   * without switching off whatever else is configured. The exchange is not
+   * gated: it redeems a code minted by a sign-in that was allowed at the time,
+   * and refusing it there would strand a sign-in halfway rather than prevent one.
+   */
+  policy?: SignInMethodPolicy
 }
 
 interface NormalizedProvider {
@@ -464,7 +476,15 @@ export const installOidcRoutes = <Bindings extends object>(
 ): void => {
   const now = options.now ?? (() => new Date().toISOString())
 
+  const assertLive = async (key: string, bindings: unknown): Promise<void> => {
+    if (options.policy === undefined) return
+    if (!(await options.policy.isLive(key as SignInMethod, bindings))) {
+      signInMethodUnavailable()
+    }
+  }
+
   app.get('/auth/oidc/:provider', async (context) => {
+    await assertLive(context.req.param('provider'), context.env)
     const key = context.req.param('provider')
     const provider = providerFor(key, context, options)
     const redirectUri = callbackUri(key, provider)
@@ -540,6 +560,7 @@ export const installOidcRoutes = <Bindings extends object>(
   })
 
   app.get('/auth/oidc/:provider/callback', async (context) => {
+    await assertLive(context.req.param('provider'), context.env)
     context.header('set-cookie', clearStateCookie(), { append: true })
     const appFlow =
       options.appCodes !== undefined && appFlowRequested(context.req.raw)

@@ -210,6 +210,95 @@ const patchModule = async (
   return envelope.data
 }
 
+interface SignInMethodState {
+  readonly method: 'password' | 'magic_link' | 'google' | 'github'
+  readonly configured: boolean
+  readonly enabled: boolean
+}
+
+/**
+ * The API's own words, not the transport's. Every refusal here is a guard an
+ * operator has to act on -- "you have not signed in with any of the remaining
+ * methods" is the whole message -- and `Failed to update (409): {...}` throws
+ * that away.
+ */
+const refusal = (body: string, fallback: string): string => {
+  try {
+    const parsed = JSON.parse(body) as { error?: { message?: unknown } }
+    const message = parsed.error?.message
+    return typeof message === 'string' && message !== '' ? message : fallback
+  } catch {
+    return fallback
+  }
+}
+
+const fetchSignInMethods = async (
+  signal?: AbortSignal,
+): Promise<readonly SignInMethodState[]> => {
+  const response = await globalThis.fetch('/api/v1/admin/sign-in-methods', {
+    credentials: 'same-origin',
+    ...withSignal(signal),
+  })
+  if (!response.ok) {
+    const text = await response.text().catch(() => '')
+    throw new Error(refusal(text, 'Sign-in methods could not be loaded.'))
+  }
+  const envelope = (await response.json()) as { data: readonly SignInMethodState[] }
+  return envelope.data
+}
+
+const patchSignInMethod = async (
+  method: string,
+  enabled: boolean,
+  signal?: AbortSignal,
+): Promise<readonly SignInMethodState[]> => {
+  const response = await globalThis.fetch(
+    `/api/v1/admin/sign-in-methods/${method}`,
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+      credentials: 'same-origin',
+      ...withSignal(signal),
+    },
+  )
+  if (!response.ok) {
+    const text = await response.text().catch(() => '')
+    throw new Error(refusal(text, 'That sign-in method could not be changed.'))
+  }
+  const envelope = (await response.json()) as { data: readonly SignInMethodState[] }
+  return envelope.data
+}
+
+const signInMethodLabels: Record<SignInMethodState['method'], string> = {
+  password: 'Email and password',
+  magic_link: 'Sign-in link by email',
+  google: 'Google',
+  github: 'GitHub',
+}
+
+const renderSignInMethodCard = (state: SignInMethodState): string => {
+  const label = signInMethodLabels[state.method]
+  // An unconfigured method is shown rather than hidden, and its toggle is
+  // disabled: "this deployment has no credentials for it" is the answer an
+  // administrator came here for, and an absent row answers nothing.
+  const note = state.configured
+    ? state.enabled
+      ? 'Live. People can sign in this way.'
+      : 'Switched off. The routes refuse it.'
+    : 'Not configured in this deployment, so it cannot be switched on here.'
+  return (
+    `<article class="module-settings-card" data-sign-in-card="${state.method}">` +
+    `<header class="module-settings-card-header">` +
+    `<div><h2>${label}</h2><p class="module-code">${state.method}</p></div>` +
+    `<label class="module-toggle"><input type="checkbox" data-sign-in-toggle="${state.method}"${state.enabled ? ' checked' : ''}${state.configured ? '' : ' disabled'}><span>${state.enabled ? 'Enabled' : 'Disabled'}</span></label>` +
+    `</header>` +
+    `<p class="module-settings-warning">${note}</p>` +
+    `<p class="form-result" data-sign-in-result="${state.method}" role="status" aria-live="polite"></p>` +
+    `</article>`
+  )
+}
+
 const renderModuleCard = (state: ModuleState): string => {
   const description = moduleDescriptions[state.module]
   const label = description?.label ?? state.module
@@ -231,6 +320,8 @@ export const createModuleSettingsController = (
 ): ModuleSettingsController => {
   const status = required<HTMLElement>('[data-module-settings-status]')
   const list = required<HTMLElement>('[data-module-settings-list]')
+  const signInStatus = required<HTMLElement>('[data-settings-sign-in-status]')
+  const signInList = required<HTMLElement>('[data-settings-sign-in-list]')
   const timeStatus = required<HTMLElement>('[data-settings-time-status]')
   const timeFacts = required<HTMLElement>('[data-settings-time-facts]')
   const noteForm = required<HTMLFormElement>('[data-note-settings-form]')
@@ -1343,6 +1434,59 @@ export const createModuleSettingsController = (
         loadBrandAssets(identity, active),
         loadSsoDomains(identity, active),
       ])
+
+      // Painted whole on every change rather than patched in place: switching
+      // one method off can be what makes another one's toggle the last one
+      // standing, and a card that still offers a switch the server would now
+      // refuse is worse than a redraw.
+      const paintSignInMethods = (states: readonly SignInMethodState[]): void => {
+        signInStatus.textContent = ''
+        signInList.hidden = false
+        signInList.innerHTML = states.map(renderSignInMethodCard).join('')
+        for (const toggle of signInList.querySelectorAll<HTMLInputElement>(
+          '[data-sign-in-toggle]',
+        )) {
+          toggle.addEventListener('change', async () => {
+            const method = toggle.dataset.signInToggle!
+            const result = signInList.querySelector<HTMLElement>(
+              `[data-sign-in-result="${method}"]`,
+            )
+            const span = toggle.parentElement?.querySelector('span')
+            toggle.disabled = true
+            if (result) result.textContent = 'Saving…'
+            try {
+              const updated = await patchSignInMethod(method, toggle.checked, signal)
+              active.present(() => paintSignInMethods(updated))
+            } catch (error) {
+              active.presentFailure(error, () => {
+                // The refusal is the point, so the checkbox goes back to what
+                // the server still believes and the reason stays on screen.
+                toggle.checked = !toggle.checked
+                if (span) span.textContent = toggle.checked ? 'Enabled' : 'Disabled'
+                toggle.disabled = false
+                if (result) {
+                  result.textContent =
+                    error instanceof Error
+                      ? error.message
+                      : 'That sign-in method could not be changed.'
+                }
+              })
+            }
+          })
+        }
+      }
+
+      try {
+        const methods = await fetchSignInMethods(signal)
+        active.present(() => paintSignInMethods(methods))
+      } catch (error) {
+        active.presentFailure(error, () => {
+          signInStatus.textContent =
+            error instanceof Error
+              ? error.message
+              : 'Sign-in methods could not be loaded.'
+        })
+      }
 
       try {
         const modules = await fetchModules(signal)

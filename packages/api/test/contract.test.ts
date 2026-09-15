@@ -28,6 +28,7 @@ import {
   installOidcRoutes,
   installOutboxRoutes,
   installPasswordAuthRoutes,
+  installSignInMethodRoutes,
   installTwoFactorChallengeRoutes,
   installReportRoutes,
   installProfileRoutes,
@@ -309,6 +310,15 @@ const documentedApp = () =>
         clientKey: () => "contract-fixture",
       });
       installTwoFactorRoutes(api, twoFactor);
+      installSignInMethodRoutes(api, {
+        service: {
+          list: async () => [],
+          usableBy: async () => [],
+          setEnabled: async () => [],
+        },
+        configured: () => [],
+        clock: () => "2026-08-28T12:00:00.000Z",
+      });
       installTeamRoutes(api, {
         repository: team,
         cursorSigningKey: new Uint8Array(32),
