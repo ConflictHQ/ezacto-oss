@@ -1835,6 +1835,37 @@ export type RecurringInvoicePage = {
   "page": PageMetadata;
 };
 
+export type BandClaimBackfillInput = {
+  "invoice_ids": Array<number>;
+  "project_ids"?: Array<number>;
+  "apply"?: boolean;
+};
+
+export type BandClaimBackfillLine = {
+  "invoice_id": number;
+  "number": string;
+  "issue_date": string;
+  "state": string;
+  "amount_cents": number;
+  "entry_count": number;
+  "seconds": number;
+  "billable_value_cents": number;
+  "entries_without_billable_rate": number;
+  "foregone_billable_cents": number;
+};
+
+export type BandClaimBackfill = {
+  "run_id": string;
+  "applied": boolean;
+  "invoices": Array<BandClaimBackfillLine>;
+  "remaining_entry_count": number;
+  "remaining_seconds": number;
+};
+
+export type BandClaimBackfillEnvelope = {
+  "data": BandClaimBackfill;
+};
+
 export type RecurringInvoiceInput = {
   "client_id": number;
   "subject_template": string;
@@ -4050,6 +4081,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<void>("DELETE", "/api/v1/recurring-invoices/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async backfillRecurringInvoiceClaims(args: { "id": number; "Idempotency-Key": string; body: BandClaimBackfillInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<BandClaimBackfillEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<BandClaimBackfillEnvelope>("POST", "/api/v1/recurring-invoices/:id/claim-backfill".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });

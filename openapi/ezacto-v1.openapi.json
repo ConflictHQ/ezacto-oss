@@ -11779,6 +11779,93 @@
         ]
       }
     },
+    "/api/v1/recurring-invoices/{id}/claim-backfill": {
+      "post": {
+        "operationId": "backfillRecurringInvoiceClaims",
+        "summary": "Rehearse or apply the claims a band was issued too early to make",
+        "tags": [
+          "recurring-invoices"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BandClaimBackfillEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/recurring-invoices/:id/claim-backfill",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BandClaimBackfillInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/recurring-invoices/{id}/generations": {
       "post": {
         "operationId": "generateRecurringInvoice",
@@ -28382,6 +28469,129 @@
           },
           "page": {
             "$ref": "#/components/schemas/PageMetadata"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BandClaimBackfillInput": {
+        "type": "object",
+        "required": [
+          "invoice_ids"
+        ],
+        "properties": {
+          "invoice_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "minItems": 1
+          },
+          "project_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "apply": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BandClaimBackfillLine": {
+        "type": "object",
+        "required": [
+          "invoice_id",
+          "number",
+          "issue_date",
+          "state",
+          "amount_cents",
+          "entry_count",
+          "seconds",
+          "billable_value_cents",
+          "entries_without_billable_rate",
+          "foregone_billable_cents"
+        ],
+        "properties": {
+          "invoice_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "number": {
+            "type": "string"
+          },
+          "issue_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "state": {
+            "type": "string"
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "seconds": {
+            "type": "integer"
+          },
+          "billable_value_cents": {
+            "type": "integer"
+          },
+          "entries_without_billable_rate": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "foregone_billable_cents": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BandClaimBackfill": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "applied",
+          "invoices",
+          "remaining_entry_count",
+          "remaining_seconds"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "applied": {
+            "type": "boolean"
+          },
+          "invoices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BandClaimBackfillLine"
+            }
+          },
+          "remaining_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "remaining_seconds": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BandClaimBackfillEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/BandClaimBackfill"
           }
         },
         "additionalProperties": false

@@ -591,12 +591,52 @@ export interface RecurringGenerationPort {
   }>;
 }
 
+/**
+ * Filling in the claims a band was issued too early to make (#712).
+ *
+ * A port rather than a direct call, like every other engine this module
+ * reaches: the API package holds no dependency on the database package, and the
+ * seam is the shape both sides agree on.
+ *
+ * `apply` is the caller's, and defaults to false everywhere -- the figures this
+ * moves are large enough that nobody should approve them from a description.
+ */
+export interface BandClaimBackfillPort {
+  backfill(input: {
+    invoiceIds: readonly number[];
+    projectIds: readonly number[];
+    actorUserId: number;
+    runId: string;
+    occurredAt: string;
+    recurringInvoiceId: number | null;
+    apply: boolean;
+  }): Promise<{
+    runId: string;
+    applied: boolean;
+    invoices: readonly {
+      invoiceId: number;
+      number: string;
+      issueDate: string;
+      state: string;
+      amountCents: number;
+      entryCount: number;
+      seconds: number;
+      billableValueCents: number;
+      entriesWithoutBillableRate: number;
+      foregoneBillableCents: number;
+    }[];
+    remainingEntryCount: number;
+    remainingSeconds: number;
+  }>;
+}
+
 export interface MoneyResourceRouteOptions {
   service: MoneyResourceService;
   cursorSigningKey: Uint8Array;
   clock?: () => string;
   generation?: InvoiceGenerationPort;
   recurringGeneration?: RecurringGenerationPort;
+  bandClaimBackfill?: BandClaimBackfillPort;
   invoiceDelivery?: {
     configuration: Pick<
       EmailConfigurationService,
@@ -3177,6 +3217,133 @@ const installRecurring = <Bindings extends object>(
       return translateMoneyError(error);
     }
   });
+  /**
+   * Filling in the claims a band was issued too early to make (#712).
+   *
+   * Rehearsal is the default: a call writes nothing unless it says `apply`,
+   * because the figures are large enough that nobody should approve them from
+   * a description. The actor comes from the session rather than the body, so
+   * the audit rows name who really did it.
+   *
+   * The invoices are named rather than inferred. A definition's own invoices
+   * are not reliably linked to it -- an import can leave the link null on
+   * invoices that plainly belong to the band -- so inferring the list would
+   * silently do the wrong amount of work. The projects may be left out, and
+   * then come from what the definition says it claims, which is configuration
+   * rather than a guess.
+   */
+  api.post("/recurring-invoices/:id/claim-backfill", async (context) => {
+    const principal = requireWrite(context);
+    const id = resourceId(context.req.param("id"), "recurring invoice");
+    if (options.bandClaimBackfill === undefined) {
+      throw new ApiError({
+        status: 503,
+        code: "service_unavailable",
+        message: "Claim backfill is not available in this deployment.",
+      });
+    }
+    const definition = await options.service.getRecurring(id);
+    if (definition === null) throw notFound("recurring invoice");
+    const body = await readObjectBody(context);
+    const errors = unknownFieldErrors(
+      body,
+      new Set(["invoice_ids", "project_ids", "apply"]),
+    );
+    const ids = (field: string): number[] => {
+      const raw = body[field];
+      if (raw === undefined || raw === null) return [];
+      if (!Array.isArray(raw)) {
+        errors.push({
+          field,
+          code: "invalid",
+          message: `${field} must be an array of positive integers.`,
+        });
+        return [];
+      }
+      for (const entry of raw) {
+        if (!Number.isSafeInteger(entry) || (entry as number) <= 0) {
+          errors.push({
+            field,
+            code: "invalid",
+            message: `Every ${field} entry must be a positive integer.`,
+          });
+          return [];
+        }
+      }
+      return [...new Set(raw as number[])];
+    };
+    const invoiceIds = ids("invoice_ids");
+    if (invoiceIds.length === 0) {
+      errors.push({
+        field: "invoice_ids",
+        code: "invalid",
+        message: "Name the invoices to fill; they are not inferred.",
+      });
+    }
+    let projectIds = ids("project_ids");
+    if (projectIds.length === 0) {
+      const claimed = (definition as { claims_project_ids?: readonly number[] | null })
+        .claims_project_ids;
+      if (claimed !== undefined && claimed !== null) projectIds = [...claimed];
+    }
+    if (projectIds.length === 0) {
+      errors.push({
+        field: "project_ids",
+        code: "invalid",
+        message:
+          "Name the projects the band covers, or set them on the definition first.",
+      });
+    }
+    const apply = body["apply"];
+    if (apply !== undefined && typeof apply !== "boolean") {
+      errors.push({
+        field: "apply",
+        code: "invalid",
+        message: "apply must be true or false.",
+      });
+    }
+    assertFields(errors);
+    try {
+      const report = await options.bandClaimBackfill.backfill({
+        invoiceIds,
+        projectIds,
+        actorUserId: principal.userId,
+        // The idempotency key names the run, so the audit rows a run wrote can
+        // be read back together and a retry is recognisable as one.
+        runId: idempotencyKey(context),
+        occurredAt: options.clock(),
+        recurringInvoiceId: id,
+        apply: apply === true,
+      });
+      return context.json(
+        {
+          data: {
+            run_id: report.runId,
+            applied: report.applied,
+            remaining_entry_count: report.remainingEntryCount,
+            remaining_seconds: report.remainingSeconds,
+            invoices: report.invoices.map((line) => ({
+              invoice_id: line.invoiceId,
+              number: line.number,
+              issue_date: line.issueDate,
+              state: line.state,
+              amount_cents: line.amountCents,
+              entry_count: line.entryCount,
+              seconds: line.seconds,
+              billable_value_cents: line.billableValueCents,
+              entries_without_billable_rate: line.entriesWithoutBillableRate,
+              foregone_billable_cents: line.foregoneBillableCents,
+            })),
+          },
+        },
+        200,
+        { "cache-control": "no-store" },
+      );
+    } catch (error) {
+      return translateMoneyError(error);
+    }
+  });
+
   api.post("/recurring-invoices/:id/generations", async (context) => {
     const principal = requireWrite(context);
     const id = resourceId(context.req.param("id"), "recurring invoice");

@@ -34,6 +34,7 @@ import {
   createD1MagicLinkStore,
   createMagicLinkService,
   createD1TwoFactorStore,
+  backfillBandClaims,
   createRecurringInvoiceEngine,
   createD1ReminderScheduler,
   captureActivityEvent,
@@ -64,7 +65,7 @@ import {
   setOrganizationThankYouPolicy,
   setBillDelivery,
 } from "@ezacto/db/d1";
-import { createPortalSessionService } from "@ezacto/api";
+import { createPortalSessionService, type BandClaimBackfillPort } from "@ezacto/api";
 import {
   createApiSessionService,
   createCloudflareAccessSessionResolver,
@@ -809,6 +810,12 @@ export const createRuntimeServices = async (
     moneyResources,
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     recurringInvoices: createRecurringInvoiceEngine(drizzle),
+    // #712. Adapted rather than passed through: the port declares the shape the
+    // route needs, and the reader takes the database as its first argument.
+    bandClaimBackfill: {
+      backfill: (input: Parameters<BandClaimBackfillPort['backfill']>[0]) =>
+        backfillBandClaims(drizzle, input),
+    },
     // Sign-ins, token grants and revocations, exports and restores. Without
     // this the activity log can answer what happened to an invoice and not who
     // signed in and took a copy of the database. The capture result is the

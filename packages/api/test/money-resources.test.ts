@@ -7,6 +7,7 @@ import {
   createD1Database,
 } from "../../db/src/adapters.js";
 import { migrateContainer, migrateD1 } from "../../db/src/migrate.js";
+import { backfillBandClaims } from "../../db/src/band-claim-backfill.js";
 import {
   createMoneyResourceRepository,
   type MoneyResourceDatabase,
@@ -105,10 +106,13 @@ const containerDatabase = (): TestDatabase => {
     },
   });
   return {
-    orm: {
-      ...createContainerDatabase(sqlite),
+    // Assigned onto the instance rather than spread into a new object: a
+    // spread copies own enumerable properties and leaves every prototype
+    // method behind, so anything reaching for drizzle's own query methods got
+    // "database.all is not a function" instead of a row.
+    orm: Object.assign(createContainerDatabase(sqlite), {
       $client: observed,
-    } as MoneyResourceDatabase,
+    }) as MoneyResourceDatabase,
     trace,
     run: async (statement, ...params) => {
       sqlite.prepare(statement).run(...params);
@@ -588,6 +592,12 @@ const harness = async (
           "money-resource-cursor-key-32-byte",
         ),
         clock: () => currentTime,
+        // The real reader against the real migrated database (#712). A stub
+        // here would prove the route calls something and nothing about whether
+        // the claim it reports is the claim the schema permits.
+        bandClaimBackfill: {
+          backfill: (input) => backfillBandClaims(database.orm as never, input),
+        },
         ...(onGenerate === undefined
           ? {}
           : {
@@ -3285,6 +3295,191 @@ for (const [runtime, factory] of factories) {
         );
         expect(response.status, name).toBe(422);
       }
+    });
+
+    /**
+     * A banded invoice with an hour behind it that nothing has claimed.
+     *
+     * The seed has projects and invoices but no tracked time, because nothing
+     * else in this file needs any -- so the backfill brings its own, along with
+     * the task and assignments a time entry cannot exist without.
+     */
+    const seedBandedInvoice = async (test: Harness): Promise<number> => {
+      await test.database.run(
+        `INSERT INTO tasks (id, name, billable_by_default, is_default, is_active,
+                            created_at, updated_at)
+         VALUES (1, 'Advisory', 1, 1, 1, ?, ?)`,
+        seedTime,
+        seedTime,
+      );
+      await test.database.run(
+        `INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+         VALUES (1, 1, 1, ?, ?)`,
+        seedTime,
+        seedTime,
+      );
+      await test.database.run(
+        `INSERT INTO task_assignments (id, project_id, task_id, billable,
+                                       created_at, updated_at)
+         VALUES (1, 1, 1, 1, ?, ?)`,
+        seedTime,
+        seedTime,
+      );
+      // Dated before the invoice's issue date, or the schema refuses the claim
+      // as work the invoice was raised before.
+      await test.database.run(
+        `INSERT INTO time_entries (
+          id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+          spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+          billable_rate_cents, created_at, updated_at
+        ) VALUES (1, 1, 1, 1, 1, 1, '2026-07-20', 3600, 3600, 3600, 1, 25000, ?, ?)`,
+        seedTime,
+        seedTime,
+      );
+      return 1;
+    };
+
+    /**
+     * Issue 712. A band issued before it carried its claim setting claimed
+     * nothing, and nothing could correct it afterwards. The correction is an
+     * operation somebody runs, so it needs a surface: a reader with no route
+     * is the same defect as a column with no control.
+     */
+    it("[money] rehearses a claim backfill without writing, then applies it once", async () => {
+      const test = await setup();
+      const band = await test.request(
+        "/api/v1/recurring-invoices",
+        jsonRequest(
+          "POST",
+          {
+            client_id: 1,
+            subject_template: "Banded team",
+            notes_template: "",
+            every_n_months: 1,
+            day_of_month: 10,
+            next_issue_on: "2026-10-10",
+            amount_config: {
+              schema_version: 1,
+              type: "fixed_lines",
+              line_items: [
+                {
+                  kind: "Service",
+                  description: null,
+                  quantity: 1,
+                  unit_price_cents: 9_368_500,
+                  taxed: false,
+                  taxed2: false,
+                  project_id: null,
+                },
+              ],
+            },
+            can_draw_from_retainer_id: null,
+            claims_project_ids: [1],
+          },
+          "backfill-band",
+        ),
+      );
+      expect(band.status, await band.clone().text()).toBe(201);
+      const definitionId = (await responseData<{ id: number }>(band)).id;
+
+      const invoiceId = await seedBandedInvoice(test);
+      const path = `/api/v1/recurring-invoices/${definitionId}/claim-backfill`;
+      const body = (response: Response) =>
+        response.json() as Promise<{
+          data: {
+            applied: boolean;
+            invoices: { invoice_id: number; entry_count: number }[];
+          };
+        }>;
+
+      // Rehearsal is the default: no `apply`, nothing written.
+      const rehearsal = await test.request(
+        path,
+        jsonRequest("POST", { invoice_ids: [invoiceId] }, "backfill-dry"),
+      );
+      expect(rehearsal.status, await rehearsal.clone().text()).toBe(200);
+      const dry = await body(rehearsal);
+      expect(dry.data.applied).toBe(false);
+      expect(dry.data.invoices[0]!.entry_count).toBeGreaterThan(0);
+      expect(
+        await test.database.rows<{ count: number }>(
+          "SELECT count(*) AS count FROM time_entry_claim_backfills",
+        ),
+      ).toEqual([{ count: 0 }]);
+
+      const applied = await body(
+        await test.request(
+          path,
+          jsonRequest(
+            "POST",
+            { invoice_ids: [invoiceId], apply: true },
+            "backfill-apply",
+          ),
+        ),
+      );
+      expect(applied.data.applied).toBe(true);
+      expect(applied.data.invoices[0]!.entry_count).toBe(
+        dry.data.invoices[0]!.entry_count,
+      );
+
+      // And again is a no-op, which is the property that makes this safe to
+      // retry rather than a thing to be careful with.
+      const again = await body(
+        await test.request(
+          path,
+          jsonRequest(
+            "POST",
+            { invoice_ids: [invoiceId], apply: true },
+            "backfill-again",
+          ),
+        ),
+      );
+      expect(again.data.invoices[0]!.entry_count).toBe(0);
+    });
+
+    it("[money] refuses a backfill that names no invoice", async () => {
+      // Named rather than inferred: a definition's own invoices are not
+      // reliably linked to it, so inferring would silently do the wrong amount
+      // of work and report success.
+      const test = await setup();
+      const band = await test.request(
+        "/api/v1/recurring-invoices",
+        jsonRequest(
+          "POST",
+          {
+            client_id: 1,
+            subject_template: "Banded team",
+            notes_template: "",
+            every_n_months: 1,
+            day_of_month: 10,
+            next_issue_on: "2026-10-10",
+            amount_config: {
+              schema_version: 1,
+              type: "fixed_lines",
+              line_items: [
+                {
+                  kind: "Service",
+                  description: null,
+                  quantity: 1,
+                  unit_price_cents: 9_368_500,
+                  taxed: false,
+                  taxed2: false,
+                  project_id: null,
+                },
+              ],
+            },
+            can_draw_from_retainer_id: null,
+            claims_project_ids: [1],
+          },
+          "backfill-band-2",
+        ),
+      );
+      const definitionId = (await responseData<{ id: number }>(band)).id;
+      const refused = await test.request(
+        `/api/v1/recurring-invoices/${definitionId}/claim-backfill`,
+        jsonRequest("POST", { invoice_ids: [] }, "backfill-empty"),
+      );
+      expect(refused.status).toBe(422);
     });
 
     it("[api] validates recurring definitions and exposes complete CRUD", async () => {
