@@ -175,11 +175,46 @@ session somebody revoked.
   themselves stay in R2 and nothing copies them.
 - **Attachment bytes**, still — see above. That gap is unchanged.
 
-### The off-site copy
+### Where a backup lands
 
-The SQL dump is also deposited in S3, in the operator's own AWS account, because
-a backup that shares a provider with the thing it backs up is one account
-suspension away from being no backup at all.
+One layout, decided in one place so three destinations cannot drift:
+
+```
+<instance-fqdn>/backups/YYYY/MM/backup-DD-HHMMSS.sql.gz[.gpg]
+<instance-fqdn>/backups/YYYY/MM/backup-DD-HHMMSS.manifest.json
+```
+
+Namespaced by instance, so one bucket can hold several and a restore never has
+to guess which book it is holding. Foldered by month, so a listing reads as a
+calendar rather than a heap.
+
+### Encryption
+
+Every copy that leaves Cloudflare is encrypted; the R2 copy is not.
+
+The passphrase is symmetric rather than a keypair, and that is a considered
+choice, not a shortcut: the runner builds the plaintext dump itself, so guarding
+against "CI can decrypt" would buy nothing at all. What the encryption buys is
+that the bytes sitting in somebody else's storage are unreadable to anyone who
+reaches that bucket.
+
+R2 stays plaintext for the same reason it is the primary: it already shares a
+trust boundary with the live database, and it is the copy you reach for first. A
+lost passphrase should cost you the off-site copies, never all of them at once.
+
+Where no passphrase is configured the off-site copies still go, plaintext, with
+a warning. Refusing to deposit a backup would trade a real one for a tidy rule.
+
+### The off-site copies
+
+The SQL dump is also deposited in S3 and in GCS, in the operator's own accounts,
+and a fortnight of nights is kept as a GitHub artifact. A backup that shares a
+provider with the thing it backs up is one account suspension away from being no
+backup at all; three providers is three suspensions.
+
+Each off-site leg runs whenever the dump itself succeeded, independently of the
+others. If R2 fails we are holding a good dump and an empty bucket, which is the
+moment the off-site copies are worth most.
 
 CI reaches it through GitHub OIDC rather than a stored key, and the role is
 deliberately narrow in two ways:
@@ -196,7 +231,5 @@ The off-site leg runs whenever the dump itself succeeded, not only when the R2
 upload did. If R2 fails we are holding a good dump and an empty bucket, which is
 the moment the off-site copy is worth most.
 
-The bucket blocks public access and encrypts at rest, but the object itself is
-plaintext SQL: anyone with read access to that bucket can read the book.
-Encrypting before upload — to a key CI does not hold — would fix that, and is
-not yet done.
+The S3 bucket blocks public access and encrypts at rest, and the object on top of
+that is encrypted with the passphrase above.

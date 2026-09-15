@@ -56,6 +56,14 @@ jobs:
       AWS_BACKUP_ROLE_ARN: ${{ vars.AWS_BACKUP_ROLE_ARN }}
       AWS_BACKUP_BUCKET: ${{ vars.AWS_BACKUP_BUCKET }}
       AWS_BACKUP_REGION: ${{ vars.AWS_BACKUP_REGION }}
+      GCS_BACKUP_BUCKET: ${{ vars.GCS_BACKUP_BUCKET }}
+      # Namespaces every key, so one bucket can hold several instances without
+      # a restore ever having to guess which book it is looking at.
+      INSTANCE_FQDN: ${{ vars.PROD_HOST }}
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+      # Mapped into env purely so the steps below can test for its presence:
+      # the secrets context is not dependable in a step-level `if`.
+      HAS_GCS_KEY: ${{ secrets.GCS_BACKUP_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -114,6 +122,37 @@ jobs:
           sha256sum dump.sql.gz | cut -d' ' -f1 > dump.sql.gz.sha256
           echo "compressed_bytes=$(wc -c < dump.sql.gz | tr -d ' ')" >> "$GITHUB_ENV"
           echo "sha256=$(cat dump.sql.gz.sha256)" >> "$GITHUB_ENV"
+          # The key layout, decided once so three destinations cannot drift:
+          #   <instance>/backups/YYYY/MM/backup-DD-HHMMSS.*
+          # Namespaced by instance, foldered by month, and the filename carries
+          # the day and time -- so a directory listing reads as a calendar and a
+          # restore never has to guess which instance it is holding.
+          fqdn="${INSTANCE_FQDN:-unknown-instance}"
+          echo "key_prefix=${fqdn}/backups/$(date -u +%Y/%m)" >> "$GITHUB_ENV"
+          echo "key_name=backup-$(date -u +%d-%H%M%S)" >> "$GITHUB_ENV"
+
+      # Encrypted for every copy that leaves Cloudflare, and only those.
+      #
+      # A symmetric passphrase rather than a keypair, because the runner builds
+      # the plaintext dump itself: guarding against "CI can decrypt" would buy
+      # nothing. What this buys is that the bytes sitting in somebody else's
+      # storage are unreadable to anyone who reaches that bucket.
+      #
+      # The R2 copy stays plaintext deliberately. It shares a trust boundary
+      # with the live database already, and it is the copy you reach for first
+      # -- a lost passphrase should cost you the off-site copies, never all of
+      # them at once.
+      - name: encrypt — for the copies that leave
+        id: encrypt
+        if: env.BACKUP_PASSPHRASE != ''
+        run: |
+          set -euo pipefail
+          printf '%s' "$BACKUP_PASSPHRASE" | gpg --batch --yes --quiet \
+            --passphrase-fd 0 --symmetric --cipher-algo AES256 \
+            --output dump.sql.gz.gpg dump.sql.gz
+          test -s dump.sql.gz.gpg
+          echo "encrypted_bytes=$(wc -c < dump.sql.gz.gpg | tr -d ' ')" >> "$GITHUB_ENV"
+          echo "::notice::encrypted for off-site ($(wc -c < dump.sql.gz.gpg | tr -d ' ') bytes)"
 
       # Straight from the runner to R2. Deliberately never an Actions artifact:
       # this file is every client, person, rate and invoice in the book, and an
@@ -122,9 +161,8 @@ jobs:
       - name: upload — to R2, under this run's date
         run: |
           set -euo pipefail
-          day=$(date -u +%Y-%m-%d)
           stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          prefix="sql/${day}"
+          prefix="${key_prefix}"
           cat > manifest.json <<JSON
           {
             "kind": "d1-sql-dump",
@@ -138,15 +176,16 @@ jobs:
             "uncompressed_bytes": ${uncompressed_bytes},
             "compressed_bytes": ${compressed_bytes},
             "sha256": "${sha256}",
+            "key": "${key_prefix}/${key_name}",
             "restore_d1": "gunzip dump.sql.gz && wrangler d1 execute <database> --remote --file dump.sql",
             "restore_anywhere": "gunzip -c dump.sql.gz | sqlite3 restored.sqlite"
           }
           JSON
-          npx --yes wrangler@4.131.1 r2 object put "${R2_BUCKET}/${prefix}/dump.sql.gz" \
+          npx --yes wrangler@4.131.1 r2 object put "${R2_BUCKET}/${prefix}/${key_name}.sql.gz" \
             --file dump.sql.gz --content-type application/gzip --remote
-          npx --yes wrangler@4.131.1 r2 object put "${R2_BUCKET}/${prefix}/manifest.json" \
+          npx --yes wrangler@4.131.1 r2 object put "${R2_BUCKET}/${prefix}/${key_name}.manifest.json" \
             --file manifest.json --content-type application/json --remote
-          echo "::notice::wrote ${prefix}/dump.sql.gz (${compressed_bytes} bytes, ${tables} tables)"
+          echo "::notice::wrote ${prefix}/${key_name}.sql.gz (${compressed_bytes} bytes, ${tables} tables)"
 
       # A copy outside Cloudflare, because a backup that shares a provider with
       # the thing it backs up is one account suspension from being no backup at
@@ -156,7 +195,7 @@ jobs:
       # worked. If R2 fails we are holding a good dump and an empty bucket,
       # which is the moment an off-site copy is worth most -- skipping it there
       # would turn one failure into no backup at all.
-      - name: off-site — deposit a copy in S3
+      - name: off-site — assume the S3 deposit role
         if: always() && steps.compress.outcome == 'success' && env.AWS_BACKUP_ROLE_ARN != '' && env.AWS_BACKUP_BUCKET != ''
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -164,26 +203,78 @@ jobs:
           aws-region: ${{ env.AWS_BACKUP_REGION }}
           role-session-name: ezacto-backup-${{ github.run_id }}
 
-      - name: off-site — upload
+      - name: off-site — upload to S3
         if: always() && steps.compress.outcome == 'success' && env.AWS_BACKUP_ROLE_ARN != '' && env.AWS_BACKUP_BUCKET != ''
         run: |
           set -euo pipefail
-          day=$(date -u +%Y-%m-%d)
           # The role holds s3:PutObject and nothing else -- no read, no delete,
           # no list. CI can deposit a backup and can never retrieve or destroy
           # one, and the bucket is versioned, so the worst a compromised run can
           # do is add objects nobody asked for.
-          aws s3 cp dump.sql.gz "s3://${AWS_BACKUP_BUCKET}/sql/${day}/dump.sql.gz"
+          #
+          # Encrypted where one exists. Refusing to deposit an unencrypted copy
+          # would trade a real backup for a tidy rule; saying which went is the
+          # honest middle.
+          if [ -f dump.sql.gz.gpg ]; then
+            body=dump.sql.gz.gpg; suffix=.sql.gz.gpg
+          else
+            body=dump.sql.gz; suffix=.sql.gz
+            echo "::warning::no BACKUP_PASSPHRASE; the off-site copy is plaintext"
+          fi
+          aws s3 cp "$body" "s3://${AWS_BACKUP_BUCKET}/${key_prefix}/${key_name}${suffix}"
           # Written by the R2 step. If that died first the dump still goes; a
           # copy without its manifest beats no copy.
           if [ -f manifest.json ]; then
-            aws s3 cp manifest.json "s3://${AWS_BACKUP_BUCKET}/sql/${day}/manifest.json"
+            aws s3 cp manifest.json "s3://${AWS_BACKUP_BUCKET}/${key_prefix}/${key_name}.manifest.json"
           else
             echo "::warning::manifest missing; deposited the dump alone"
           fi
-          echo "::notice::off-site copy deposited under sql/${day}/"
+          echo "::notice::off-site copy deposited at ${key_prefix}/${key_name}${suffix}"
+
+      # A third home, on a third provider. Same reasoning as S3 and the same
+      # condition: whenever there is a dump, whether or not the earlier legs
+      # worked. Skipped entirely until GCS_BACKUP_BUCKET and a service-account
+      # key exist, so the workflow is complete before the infrastructure is.
+      - name: off-site — authenticate to GCS
+        if: always() && steps.compress.outcome == 'success' && env.GCS_BACKUP_BUCKET != '' && env.HAS_GCS_KEY == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCS_BACKUP_KEY }}
+
+      - name: off-site — the gcloud CLI
+        if: always() && steps.compress.outcome == 'success' && env.GCS_BACKUP_BUCKET != '' && env.HAS_GCS_KEY == 'true'
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: off-site — upload to GCS
+        if: always() && steps.compress.outcome == 'success' && env.GCS_BACKUP_BUCKET != '' && env.HAS_GCS_KEY == 'true'
+        run: |
+          set -euo pipefail
+          if [ -f dump.sql.gz.gpg ]; then
+            body=dump.sql.gz.gpg; suffix=.sql.gz.gpg
+          else
+            body=dump.sql.gz; suffix=.sql.gz
+            echo "::warning::no BACKUP_PASSPHRASE; the GCS copy is plaintext"
+          fi
+          gcloud storage cp "$body" "gs://${GCS_BACKUP_BUCKET}/${key_prefix}/${key_name}${suffix}"
+          if [ -f manifest.json ]; then
+            gcloud storage cp manifest.json "gs://${GCS_BACKUP_BUCKET}/${key_prefix}/${key_name}.manifest.json"
+          fi
+          echo "::notice::GCS copy deposited at ${key_prefix}/${key_name}${suffix}"
+
+      # A handful of recent nights kept where the run itself lives, so a quick
+      # look needs no cloud console at all. Encrypted like the other off-site
+      # copies -- an artifact is a third party's storage with its own access
+      # list, and the passphrase is what makes that unremarkable.
+      - name: keep a few nights on GitHub
+        if: always() && steps.encrypt.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-${{ env.key_name }}
+          path: dump.sql.gz.gpg
+          retention-days: 14
+          if-no-files-found: error
 
       # The dump outlives the runner; nothing of it should.
       - name: shred the local copies
         if: always()
-        run: rm -f dump.sql dump.sql.gz dump.sql.gz.sha256 manifest.json
+        run: rm -f dump.sql dump.sql.gz dump.sql.gz.gpg dump.sql.gz.sha256 manifest.json
