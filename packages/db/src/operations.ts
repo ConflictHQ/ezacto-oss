@@ -10,6 +10,7 @@ import {
   userBillableRates,
   userCostRates,
   userEmails,
+  users,
 } from './schema.js'
 
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
@@ -118,6 +119,18 @@ export const appendUserRate = async (
 ): Promise<void> => {
   const table = kind === 'billable' ? userBillableRates : userCostRates
   await database.insert(table).values(rate)
+}
+
+export const updateUserTimezone = async (
+  database: Database,
+  userId: number,
+  timezone: string,
+  updatedAt: string,
+): Promise<void> => {
+  await database
+    .update(users)
+    .set({ timezone, updatedAt })
+    .where(eq(users.id, userId))
 }
 
 export const verifyUserEmail = async (

@@ -29,6 +29,7 @@ import {
   installOutboxRoutes,
   installPasswordAuthRoutes,
   installReportRoutes,
+  installProfileRoutes,
   installSessionRoutes,
   installSsoDomainRoutes,
   installTwoFactorRoutes,
@@ -60,6 +61,10 @@ import {
 } from "../src/index.js";
 
 const unavailable = () => Promise.reject(new Error("contract fixture only"));
+const profileRepository = new Proxy(
+  {},
+  { get: () => unavailable },
+) as never;
 const generalRepository = new Proxy(
   {},
   { get: () => unavailable },
@@ -146,6 +151,10 @@ const documentedApp = () =>
     },
     installApi: (api) => {
       installSessionRoutes(api, sessions);
+      installProfileRoutes(api, {
+        repository: profileRepository,
+        clock: () => "2026-01-01T00:00:00.000Z",
+      });
       installQuickBooksRoutes(api, {
         clientId: () => "contract-fixture",
         callbackUrl: () => "https://app.example.test/cb",

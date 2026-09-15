@@ -938,6 +938,20 @@ export type TimeEntryNoteSettingsEnvelope = {
   "links": Links;
 };
 
+export type Profile = {
+  "user_id": number;
+  "timezone": string;
+};
+
+export type ProfilePatch = {
+  "timezone"?: string;
+};
+
+export type ProfileEnvelope = {
+  "data": Profile;
+  "links": Links;
+};
+
 export type TimeEntryOption = {
   "project_id": number;
   "task_id": number;
@@ -2974,6 +2988,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<ApiTokenEnvelope>("DELETE", "/api/v1/api-tokens/:tokenId".replace(":tokenId", encodeURIComponent(String(args["tokenId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateProfile(args: { body: ProfilePatch; signal?: AbortSignal; headers?: HeadersInit }): Promise<ProfileEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ProfileEnvelope>("PATCH", "/api/v1/profile", {
+      body: args.body,
       signal: args.signal,
       headers,
     });

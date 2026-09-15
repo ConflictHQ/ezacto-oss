@@ -2386,6 +2386,17 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     parameters: [path("tokenId")],
     sessionOnly: true,
   },
+  {
+    method: "patch",
+    path: "/api/v1/profile",
+    operationId: "updateProfile",
+    summary: "Update the signed-in user's own profile",
+    tag: "profile",
+    responseStatus: 200,
+    responseSchema: "ProfileEnvelope",
+    requestSchema: "ProfilePatch",
+    requestRequired: true,
+  },
   ...generalOperations(),
   ...rateOperations(),
   ...timeEntryOperations,
@@ -4233,6 +4244,24 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   TimeEntryNoteSettingsEnvelope: envelope("TimeEntryNoteSettings"),
+  Profile: {
+    type: "object",
+    required: ["user_id", "timezone"],
+    properties: {
+      user_id: integerSchema,
+      timezone: { type: "string", minLength: 1 },
+    },
+    additionalProperties: false,
+  },
+  ProfilePatch: {
+    type: "object",
+    minProperties: 1,
+    properties: {
+      timezone: { type: "string", minLength: 1 },
+    },
+    additionalProperties: false,
+  },
+  ProfileEnvelope: envelope("Profile"),
   TimeEntryOption: {
     type: "object",
     required: ["project_id", "task_id", "minimum_note_length"],

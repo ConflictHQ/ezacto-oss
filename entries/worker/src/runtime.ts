@@ -4,6 +4,7 @@ import {
   enrollInstanceOwnerPasswordD1,
   createApiTokenStore,
   createD1Database,
+  updateUserTimezone,
   createD1IdentityStore,
   createD1OidcTransactionStore,
   createD1OidcAppCodeStore,
@@ -829,6 +830,11 @@ export const createRuntimeServices = async (
       drizzle,
       timesheetLockPolicy,
     ),
+    profile: {
+      updateTimezone: async (userId, timezone, occurredAt) => {
+        await updateUserTimezone(drizzle, userId, timezone, occurredAt);
+      },
+    },
     isExpensesModuleEnabled: async () => {
       const row = await database
         .prepare(

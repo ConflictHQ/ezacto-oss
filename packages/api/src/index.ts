@@ -300,6 +300,11 @@ export {
 export * from './resources/index.js'
 export { serializeMany, serializeOne, type Serializer } from './serializer.js'
 export {
+  installProfileRoutes,
+  type ProfileRepositoryPort,
+  type ProfileRouteOptions,
+} from './profile.js'
+export {
   createApiSessionService,
   installSessionRoutes,
   SESSION_COOKIE_NAME,

@@ -36,6 +36,7 @@ import {
   installPasswordAuthRoutes,
   installPublicBrandAssetRoutes,
   installReportRoutes,
+  installProfileRoutes,
   installSessionRoutes,
   installSsoDomainRoutes,
   installTrackedResourceRoutes,
@@ -89,6 +90,7 @@ import {
   type SsoProvisioningDomainService,
   type UserEmailService,
   type TrackedResourceRepository,
+  type ProfileRepositoryPort,
   type TimesheetApprovalService,
   type TimesheetLockPolicyService,
   type TeamRouteOptions,
@@ -243,6 +245,7 @@ export interface RuntimeServices {
   clientTree: ClientTreeReader
   team: TeamRouteOptions['repository']
   trackedResources: TrackedResourceRepository
+  profile: ProfileRepositoryPort
   isExpensesModuleEnabled(): Promise<boolean>
   moduleSettings: ModuleSettingsService
   /** The domains SSO may provision a user for, and their DNS challenges (#270). */
@@ -437,6 +440,10 @@ export const createApp = (
           },
           installApi: (api) => {
             installSessionRoutes(api, services.sessions)
+            installProfileRoutes(api, {
+              repository: services.profile,
+              clock: () => systemClock.now().instant,
+            })
             installEmailLogRoutes(api, services.emailLog)
             installEmailHealthRoutes(api, services.emailLog)
             installEmailConfigurationRoutes(api, {
