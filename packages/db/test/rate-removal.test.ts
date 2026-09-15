@@ -56,18 +56,24 @@ const rate = (
       '${createdAt}', '${createdAt}')`)
 }
 
+/**
+ * An hour priced for cost by default, because the tests below are mostly about
+ * the cost table. A rate only holds an entry that carries a figure of its own
+ * kind, so an entry with no cost rate is no evidence about a cost rate (#746).
+ */
 const entry = (
   database: BetterSqlite3.Database,
   id: number,
   spentDate: string,
   createdAt: string,
+  costRateCents: number | null = 4_000,
 ): void => {
   database.exec(`
     INSERT INTO time_entries (id, user_id, project_id, task_id, user_assignment_id,
                               task_assignment_id, spent_date, seconds, seconds_without_timer,
-                              rounded_seconds, billable, created_at, updated_at)
+                              rounded_seconds, billable, cost_rate_cents, created_at, updated_at)
     VALUES (${id}, 1, 1, 1, 1, 1, '${spentDate}', 3600, 3600, 3600, 1,
-      '${createdAt}', '${createdAt}')`)
+      ${costRateCents === null ? 'NULL' : costRateCents}, '${createdAt}', '${createdAt}')`)
 }
 
 const rows = (database: BetterSqlite3.Database, table = 'user_cost_rates') =>
@@ -196,6 +202,16 @@ describe('removing a rate', () => {
     )
   })
 
+  it('[money] takes no evidence from an entry carrying no figure of that kind', async () => {
+    // An entry that was never priced for cost cannot be what a cost rate
+    // priced, whenever it was created.
+    const database = await fixture()
+    rate(database, 1, 10_000, '2026-09-14', later)
+    entry(database, 1, '2026-09-14', '2026-09-14T13:00:00.000Z', null)
+    database.exec(`DELETE FROM user_cost_rates WHERE id = 1`)
+    expect(rows(database)).toEqual([])
+  })
+
   it('[unit] does not lock a rate because somebody edited a note afterwards', async () => {
     // `updated_at` moves for reasons that are not pricing. A rate that becomes
     // permanent because a colleague fixed a typo is the original problem
@@ -209,6 +225,57 @@ describe('removing a rate', () => {
       updated_at = '2026-09-14T14:00:00.000Z' WHERE id = 1`)
     database.exec(`DELETE FROM user_cost_rates WHERE id = 1`)
     expect(rows(database)).toEqual([])
+  })
+
+  it('[money] does not let a cost-priced hour hold a billable rate hostage', async () => {
+    // The case that appeared in practice (#746): two non-billable entries
+    // carrying only a cost rate made a mistyped *billable* rate permanent. A
+    // guard blind to which kind of rate an entry actually took refuses for a
+    // reason that is not true, and a rule that refuses untruthfully is one
+    // people route around.
+    const database = await fixture()
+    rate(database, 1, 10_000, '2026-09-14', later, 'user_billable_rates')
+    rate(database, 2, 10_000, '2026-09-14', later, 'user_cost_rates')
+    // Non-billable, no billable rate, priced only for cost -- created after
+    // both rates, so the old guard blocked both removals.
+    database.exec(`
+      INSERT INTO time_entries (id, user_id, project_id, task_id, user_assignment_id,
+                                task_assignment_id, spent_date, seconds,
+                                seconds_without_timer, rounded_seconds, billable,
+                                billable_rate_cents, cost_rate_cents, created_at, updated_at)
+      VALUES (1, 1, 1, 1, 1, 1, '2026-09-14', 4500, 4500, 4500, 0,
+        NULL, 10000, '2026-09-14T14:00:00.000Z', '2026-09-14T14:00:00.000Z')`)
+
+    // The billable rate never priced it, so it comes out.
+    database.exec(`DELETE FROM user_billable_rates WHERE id = 1`)
+    expect(rows(database, 'user_billable_rates')).toEqual([])
+    // The cost rate did price it, so it stays -- the guard still has teeth.
+    expect(() => database.exec(`DELETE FROM user_cost_rates WHERE id = 2`)).toThrow(
+      /priced work cannot be removed/u,
+    )
+  })
+
+  it('[money] reads a reprice as evidence only about the kind it moved', async () => {
+    // A reprice that moved the cost figure says nothing about the billable
+    // rate, in either direction -- so both the new and the previous column of
+    // that kind count, and neither counts for the other kind.
+    const database = await fixture()
+    entry(database, 1, '2026-09-14', '2026-09-14T09:00:00.000Z')
+    rate(database, 1, 10_000, '2026-09-14', later, 'user_billable_rates')
+    rate(database, 2, 10_000, '2026-09-14', later, 'user_cost_rates')
+    database.exec(`
+      INSERT INTO time_entry_rate_reprices
+        (id, time_entry_id, previous_cost_rate_cents, cost_rate_cents, reason, repriced_at)
+      VALUES (1, 1, 4000, NULL, 'cleared the cost rate', '2026-09-14T15:00:00.000Z')`)
+
+    // Cost was touched, so the cost rate is held even though the new value is
+    // null -- clearing a figure is still having priced it.
+    expect(() => database.exec(`DELETE FROM user_cost_rates WHERE id = 2`)).toThrow(
+      /priced work cannot be removed/u,
+    )
+    // Billable was not touched by that reprice, so its rate is free.
+    database.exec(`DELETE FROM user_billable_rates WHERE id = 1`)
+    expect(rows(database, 'user_billable_rates')).toEqual([])
   })
 
   it('[money] refuses a rate from the middle of the history', async () => {

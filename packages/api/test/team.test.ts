@@ -580,6 +580,45 @@ for (const [runtime, factory] of factories) {
       ).toEqual([{ n: 2 }]);
     });
 
+    it("[money] says why a rate cannot be removed instead of answering 500", async () => {
+      // #746. The trigger states its reason in plain words and the caller was
+      // getting "The request could not be completed" -- the same answer it gets
+      // when the server has fallen over. A rule that refuses without explaining
+      // is barely better than one that fails.
+      harness = await factory();
+      const added = await harness.request("/team/people/4/rates", {
+        method: "POST",
+        body: {
+          expected_version: 0,
+          kind: "cost",
+          amount_cents: 5000,
+          start_date: "2026-09-01",
+        },
+        idempotencyKey: "team.rate.explains",
+      });
+      const rateId = ((await added.json()) as { data: { resource_id: number } }).data
+        .resource_id;
+      // An hour this rate priced, so removal is genuinely refused.
+      await harness.run(
+        `INSERT INTO time_entry_rate_reprices
+          (id, time_entry_id, previous_cost_rate_cents, cost_rate_cents, reason, repriced_at)
+         VALUES (1, 2, 4000, 5000, 'applied the new rate', '2026-09-30T12:00:00.000Z')`,
+      );
+
+      const refused = await harness.request(`/team/people/4/rates/${rateId}`, {
+        method: "DELETE",
+        body: { expected_version: 1, kind: "cost" },
+        idempotencyKey: "team.rate.explains.undo",
+      });
+      expect(refused.status).toBe(409);
+      const body = (await refused.json()) as {
+        error: { message: string };
+      };
+      // The reason, not a shrug.
+      expect(body.error.message).toMatch(/priced work cannot be removed/u);
+      expect(body.error.message).not.toMatch(/could not be completed/u);
+    });
+
     it("[security] refuses to remove a rate the acting profile could not have set", async () => {
       harness = await factory();
       const added = await harness.request("/team/people/4/rates", {

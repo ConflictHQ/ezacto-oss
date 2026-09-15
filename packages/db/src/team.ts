@@ -460,6 +460,17 @@ const translateMutationError = (error: unknown): never => {
   ) {
     throw new TeamError('invalid_input', message)
   }
+  // The rate-removal rules (#727). Without these a deliberate refusal reached
+  // the caller as "The request could not be completed", which is the same
+  // answer the caller gets when the server has fallen over -- so a rule that
+  // states its reason in plain words arrived saying nothing at all.
+  if (
+    lower.includes('only the current rate may be removed') ||
+    lower.includes('priced work cannot be removed') ||
+    lower.includes('rates are append-only')
+  ) {
+    throw new TeamError('state_conflict', message)
+  }
   throw error
 }
 
