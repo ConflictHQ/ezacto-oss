@@ -104,7 +104,12 @@ import {
 type GridView = 'desktop' | 'phone'
 
 interface CellSaveState {
-  readonly state: 'dirty' | 'saving' | 'saved' | 'retry'
+  // `removed` is `saved` for a commit that deleted the entry (issue 753). Typing
+  // zero removes an entry outright, note and all, and said nothing afterwards
+  // -- a destructive action indistinguishable from saving a number. It stays
+  // possible, because it is how people correct a week quickly, and it now
+  // reports what it did.
+  readonly state: 'dirty' | 'saving' | 'saved' | 'retry' | 'removed'
   readonly rawValue: string
   readonly message?: string
   readonly notes?: string | null
@@ -449,6 +454,17 @@ const renderCellControl = (
   input.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return
     event.preventDefault()
+    // Alt+Enter opens the cell rather than saving it (issue 753). The editor is
+    // where a note is written and an entry removed, and until now nothing
+    // reached it from the keyboard at all: the control that opens it is
+    // deliberately outside the tab sequence, so a week row is seven stops
+    // rather than fourteen. A modifier on the stop the cell already has keeps
+    // that property and still lets somebody who never touches a mouse edit a
+    // note or delete an entry.
+    if (event.altKey) {
+      handlers.openEntry(cell, view)
+      return
+    }
     void handlers.commit(input, cell, view, next)
   })
   wrapper.append(input)
@@ -471,7 +487,13 @@ const renderCellControl = (
   note.title = cell.isLocked
     ? (cell.lockedReason ?? noteAction)
     : (currentNotes ?? (minimumNoteLength > 0 ? noteHint(minimumNoteLength) : cell.entries.length === 0 ? 'Add time' : 'Add note'))
-  note.textContent = currentNotes === null ? '+' : '•'
+  // A pencil rather than a bare glyph (issue 753). `+` and `•` beside a number read
+  // as punctuation, and the account owner concluded from this screen that the
+  // product could not edit a note or remove an entry -- when both have always
+  // been one click away here. The mark says "there is something to open"; the
+  // label and title say what.
+  note.textContent = cell.isLocked ? 'ℹ' : '✎'
+  note.dataset.hasNote = currentNotes === null ? 'false' : 'true'
   // Every cell already has a tab stop: its input. Putting the note and retry
   // affordances in the sequence made a week row fourteen stops to cross when
   // seven is the whole point of a grid. Both stay reachable by click and by
@@ -505,10 +527,12 @@ const renderCellControl = (
               ? 'Saved'
               : state?.state === 'dirty'
                 ? 'Unsaved'
-              : cell.entries.length === 1 &&
-                    timeEntryNoteLength(currentNotes) < minimumNoteLength
-                  ? 'Note required'
-                  : ''
+              : state?.state === 'removed'
+                ? (state.message ?? 'Entry removed')
+                : cell.entries.length === 1 &&
+                      timeEntryNoteLength(currentNotes) < minimumNoteLength
+                    ? 'Note required'
+                    : ''
   wrapper.append(status)
 
   if (cell.isLocked) {
@@ -1080,6 +1104,25 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const entrySubmit = required<HTMLButtonElement>('[data-entry-submit]')
   const stopTimer = required<HTMLButtonElement>('[data-stop-timer]')
   const deleteEntry = required<HTMLButtonElement>('[data-entry-delete]')
+  const weekRemoved = required<HTMLElement>('[data-week-removed]')
+  let removalTimer: ReturnType<typeof setTimeout> | undefined
+  /**
+   * Say what a removal took (issue 753).
+   *
+   * Clearing a cell deletes the entry and its note, and said nothing at all --
+   * indistinguishable from having saved a number, and the note only missed
+   * later. It clears itself because it describes an event rather than a state,
+   * and a notice that outlives its event becomes furniture people stop reading.
+   */
+  const announceRemoval = (message: string): void => {
+    weekRemoved.textContent = message
+    weekRemoved.hidden = false
+    if (removalTimer !== undefined) clearTimeout(removalTimer)
+    removalTimer = setTimeout(() => {
+      weekRemoved.textContent = ''
+      weekRemoved.hidden = true
+    }, 8_000)
+  }
   const invoiceForm = required<HTMLFormElement>('[data-invoice-generation-form]')
   /**
    * The From/To pair the generation fieldset used to carry, as the shared
@@ -3374,7 +3417,21 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       focusCell({ key: cell.key, view })
       return false
     }
-    cellStates.set(cell.key, { state: 'saved', rawValue })
+    // A commit that zeroed a cell holding an entry removed it, note and all.
+    // Saying so is the whole difference between a correction and a loss
+    // somebody discovers later (issue 753).
+    //
+    // Announced above the grid rather than on the cell, because removing the
+    // last entry of a row takes the row with it -- and a message on a cell that
+    // no longer exists is a message nobody reads.
+    const removed = cell.entries.length > 0 && parseCellSeconds(rawValue) === 0
+    if (removed) {
+      const hadNote = timeEntryNoteLength(notesForCell(cell, current)) > 0
+      announceRemoval(
+        `Removed ${formatCellHours(cell.totalSeconds, snapshot?.timeEntrySettings.time_format ?? 'decimal')} on ${dayLabel(cell.date)}${hadNote ? ', and its note' : ''}.`,
+      )
+    }
+    cellStates.set(cell.key, { state: removed ? 'removed' : 'saved', rawValue })
     try {
       await refresh(operation, focus)
     } catch (error) {

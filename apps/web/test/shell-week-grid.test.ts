@@ -1106,6 +1106,111 @@ describe('week-grid browser behavior', () => {
     expect(api.entries).toHaveLength(0)
   })
 
+  it('[browser #753] opens the editor from the keyboard without costing a tab stop', async () => {
+    // #496 gave the dialog a delete button and a note field. Nothing reached it
+    // from the keyboard: Enter on a cell commits, and the control that opens it
+    // is deliberately outside the tab sequence so a week row is seven stops
+    // rather than fourteen. Alt+Enter uses the stop the cell already has.
+    renderBrowserShell()
+    const api = browserApi()
+    api.entries.splice(
+      0,
+      api.entries.length,
+      timeEntry(1, {
+        project_id: 1,
+        task_id: 1,
+        spent_date: '2026-08-28',
+        seconds: 3_600,
+        notes: 'Reachable by keyboard',
+      }),
+    )
+    await mountShell(api)
+
+    const cell = await vi.waitFor(() => {
+      const found = document.querySelector<HTMLInputElement>(
+        '[data-week-grid] input[data-cell-key="1:1:2026-08-28"]',
+      )
+      expect(found).not.toBeNull()
+      return found!
+    })
+    cell.focus()
+    cell.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', altKey: true, bubbles: true }),
+    )
+
+    const dialog = document.querySelector<HTMLDialogElement>('[data-entry-dialog]')!
+    expect(dialog.open).toBe(true)
+    // The note is there to edit and the entry is there to remove -- the two
+    // things the screen appeared not to offer.
+    expect(document.querySelector<HTMLTextAreaElement>('[data-entry-note-input]')!.value).toBe(
+      'Reachable by keyboard',
+    )
+    expect(document.querySelector<HTMLButtonElement>('[data-entry-delete]')!.hidden).toBe(false)
+  })
+
+  it('[unit #753] keeps a week row at one tab stop per day', async () => {
+    // The property the keyboard path was built around. Putting the opener in
+    // the tab sequence would double a row's stops, which is what the grid
+    // exists to avoid.
+    renderBrowserShell()
+    const api = browserApi()
+    await mountShell(api)
+
+    const row = await vi.waitFor(() => {
+      const found = document.querySelector('[data-week-grid-rows] tr')
+      expect(found).not.toBeNull()
+      return found!
+    })
+    const stops = [...row.querySelectorAll<HTMLElement>('input, button, select, a[href]')].filter(
+      (element) => element.tabIndex >= 0,
+    )
+    // Seven days, seven stops. The opener beside each cell is reachable by
+    // click and by Alt+Enter, and is deliberately not an eighth through
+    // fourteenth stop on the way across a week.
+    expect(stops).toHaveLength(7)
+  })
+
+  it('[money #753] says what clearing a cell to zero removed', async () => {
+    // Typing zero deletes the entry and its note. It stays possible, because
+    // it is how a week gets corrected quickly, but it used to report nothing at
+    // all -- indistinguishable from having saved a number.
+    renderBrowserShell()
+    const api = browserApi()
+    api.entries.splice(
+      0,
+      api.entries.length,
+      timeEntry(1, {
+        project_id: 1,
+        task_id: 1,
+        spent_date: '2026-08-28',
+        seconds: 3_600,
+        notes: 'Worth knowing this went',
+      }),
+    )
+    await mountShell(api)
+
+    const cell = await vi.waitFor(() => {
+      const found = document.querySelector<HTMLInputElement>(
+        '[data-week-grid] input[data-cell-key="1:1:2026-08-28"]',
+      )
+      expect(found).not.toBeNull()
+      return found!
+    })
+    edit(cell, '0')
+    cell.blur()
+
+    await vi.waitFor(() => expect(api.deleteTimeEntry).toHaveBeenCalled())
+    await vi.waitFor(() => {
+      // Above the grid, not on the cell: removing the last entry of a row takes
+      // the row with it, and a message on a cell that no longer exists is one
+      // nobody reads.
+      const notice = document.querySelector<HTMLElement>('[data-week-removed]')
+      expect(notice?.hidden).toBe(false)
+      // Names the note, because losing one silently is the part that costs.
+      expect(notice?.textContent).toMatch(/Removed .* and its note/i)
+    })
+  })
+
   it('[security #496] opens a billed entry to be read, and offers no way to delete it', async () => {
     renderBrowserShell()
     const api = browserApi()

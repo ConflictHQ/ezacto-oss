@@ -4277,14 +4277,56 @@ button[data-auth-action]:disabled {
 .week-cell[data-cell-state="running"] .cell-status {
   color: var(--ez-live-text);
 }
+.week-hint {
+  margin: 0 0 12px;
+  color: var(--ez-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.week-removed {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--ez-border);
+  background: var(--ez-surface);
+  color: var(--ez-data);
+  font-size: 12px;
+}
+.week-hint kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--ez-border);
+  border-radius: 3px;
+  background: var(--ez-surface);
+  color: var(--ez-data);
+  font:
+    11px/1 var(--ez-font-mono),
+    monospace;
+}
+
+/* Reads as a control rather than punctuation (issue 753). Transparent and
+   borderless beside a bordered input, a bare glyph looked like decoration --
+   the account owner read this screen and concluded the product could not edit
+   a note or remove an entry, when both have always been one click away here. */
 .cell-note {
   width: 24px;
   height: 30px;
   padding: 0;
-  border: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
   background: transparent;
-  color: var(--ez-data);
+  color: var(--ez-muted);
   font-weight: 700;
+  cursor: pointer;
+}
+.cell-note:hover:not(:disabled),
+.cell-note:focus-visible {
+  border-color: var(--ez-border);
+  background: var(--ez-surface);
+  color: var(--ez-data);
+}
+/* A cell that already carries a note says so at rest, so an entry worth
+   opening is distinguishable from an empty day without hovering every cell. */
+.cell-note[data-has-note="true"] {
+  color: var(--ez-data);
 }
 .cell-note:disabled {
   color: var(--ez-border);
