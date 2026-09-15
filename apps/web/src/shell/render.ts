@@ -540,6 +540,8 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
           <strong data-week-total>—</strong>
         </div>
       </header>
+      <p class="week-hint" data-week-hint>Open any cell with its <span aria-hidden="true">✎</span> button, or <kbd>Alt</kbd>+<kbd>Enter</kbd> while it has focus, to edit the note or delete the entry. Clearing a cell to zero removes its entry.</p>
+      <p class="week-removed" data-week-removed role="status" aria-live="polite" hidden></p>
       <aside class="timesheet-status" data-timesheet-status hidden aria-live="polite">
         <div>
           <p class="eyebrow">Timesheet approval</p>

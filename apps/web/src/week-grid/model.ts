@@ -230,6 +230,13 @@ export const parseCellSeconds = (rawValue: string): number => {
     throw new Error('use decimal hours or H:MM')
   }
   const seconds = Math.round(Number(value) * 3_600)
+  // Zero is an instruction, not a duration (issue 753). An empty cell has always
+  // meant "remove this entry" and returned 0 above; a typed `0` meant the same
+  // thing to every person who typed it and threw "must be between 1 second and
+  // 24 hours" instead -- so the delete branch downstream was unreachable by the
+  // one gesture people actually used, and the grid offered no way to remove an
+  // entry at all.
+  if (seconds === 0) return 0
   if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 86_400) {
     throw new Error('cell duration must be between 1 second and 24 hours')
   }
