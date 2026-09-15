@@ -1,7 +1,6 @@
 import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
-  EXCLUDED_TABLES,
   backupTables,
   completeBackupRun,
   exportBundle,
@@ -57,7 +56,7 @@ describe('backup module', () => {
    * is not, which is why it went unnoticed.
    */
   describe('what the bundle covers', () => {
-    it('[security] covers every table the database has, minus the stated exclusions', async () => {
+    it('[security] covers every table the database has, with nothing left out', async () => {
       const { database } = await withDatabase()
       const present = (
         await database
@@ -69,10 +68,8 @@ describe('backup module', () => {
       ).results.map((row) => row.name)
 
       const covered = await backupTables(database)
-      expect(
-        present.filter((name) => !covered.includes(name) && !EXCLUDED_TABLES.has(name)),
-      ).toEqual([])
-      for (const excluded of EXCLUDED_TABLES) expect(covered).not.toContain(excluded)
+      // Capturing is cheap and a backup is a record. Nothing is held back.
+      expect([...covered].sort()).toEqual([...present].sort())
     })
 
     it('[unit] orders tables stably, so an unchanged database yields an unchanged manifest', async () => {
@@ -103,18 +100,26 @@ describe('backup module', () => {
       }
     })
 
-    it('[security] leaves out what would only carry live bearer material forward', async () => {
+    it('[security] captures the ephemeral tables but tells a restore to skip them', async () => {
+      // Two different decisions, and conflating them was the earlier mistake.
+      // Leaving sessions out of the bundle destroys the record of who held one;
+      // loading them back would revive what somebody deliberately revoked.
       const { database } = await withDatabase()
       const covered = await backupTables(database)
-      for (const table of [
-        'sessions',
-        'auth_tokens',
-        'oidc_transactions',
-        '_ezacto_migrations',
-      ]) {
-        expect(covered, table).not.toContain(table)
+      const objects = new Map<string, string>()
+      const manifest = await exportBundle(
+        database,
+        { async put(key, body) { objects.set(key, body) } },
+        'backups/2026-09-01/',
+      )
+      for (const table of ['sessions', 'auth_tokens', 'oidc_transactions', '_ezacto_migrations']) {
+        expect(covered, table).toContain(table)
+        expect(objects.has(`backups/2026-09-01/tables/${table}.csv`), table).toBe(true)
+        expect(manifest.restore_skips, table).toContain(table)
       }
-    })
+      // And the skip list never names a table the bundle does not carry.
+      for (const skipped of manifest.restore_skips) expect(covered).toContain(skipped)
+    }, 20000)
   })
 
   describe('exportBundle', () => {
@@ -130,7 +135,7 @@ describe('backup module', () => {
       const manifest = await exportBundle(database, store, 'backups/2026-09-01/')
 
       expect(manifest.schema_version).toBe(1)
-      expect(manifest.bundle_version).toBe('0036')
+      expect(manifest.bundle_version).toBe('0037')
       expect(manifest.exported_at).toMatch(/^\d{4}-\d{2}-\d{2}T/)
       const expected = await backupTables(database)
       expect(manifest.table_count).toBe(expected.length)
@@ -206,6 +211,7 @@ describe('backup module', () => {
         tables: { organizations: { row_count: 1, sha256: 'a'.repeat(64) } },
         table_count: 1,
         total_rows: 1,
+        restore_skips: [],
       }
 
       await completeBackupRun(database, runId, manifest, 'backups/2026-09-01/', laterTimestamp)

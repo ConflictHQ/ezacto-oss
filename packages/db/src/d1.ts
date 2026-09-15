@@ -273,7 +273,7 @@ export {
   type InstanceOwnerPasswordResult,
 } from './instance-bootstrap.js'
 export {
-  EXCLUDED_TABLES,
+  EPHEMERAL_TABLES,
   backupTables,
   BUNDLE_VERSION,
   completeBackupRun,
