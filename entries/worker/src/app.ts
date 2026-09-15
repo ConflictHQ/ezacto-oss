@@ -32,6 +32,7 @@ import {
   installMoneyResourceRoutes,
   installOidcRoutes,
   installStaffMagicLinkRoutes,
+  installTwoFactorChallengeRoutes,
   installOutboxRoutes,
   installPasswordAuthRoutes,
   installPublicBrandAssetRoutes,
@@ -645,6 +646,15 @@ export const createApp = (
           ...(services.oidcAppCodes === undefined
             ? {}
             : { appCodes: services.oidcAppCodes }),
+          // The exchange redeems app codes from both federated sign-ins and the
+          // staff magic link; only the second kind is a credential this
+          // instance verified, so only it is gated.
+          ...(services.twoFactor === undefined
+            ? {}
+            : {
+                twoFactor: services.twoFactor,
+                localAppCodeProviders: ['magic-link'],
+              }),
         })
         installGitHubRoutes(app, {
           transactions: services.oidcTransactions,
@@ -657,12 +667,24 @@ export const createApp = (
         installPasswordAuthRoutes(app, {
           service: services.passwordAuth,
           sessions: services.sessions,
+          ...(services.twoFactor === undefined
+            ? {}
+            : { twoFactor: services.twoFactor }),
           ...(services.deploymentAuthMailer === undefined
             ? {}
             : { deploymentMailer: services.deploymentAuthMailer }),
           clientKey: (request) =>
             request.headers.get('cf-connecting-ip') ?? 'unknown-client',
         })
+        // The leg that turns a challenge into a session. It mounts with the
+        // factor itself, so there is no configuration in which a sign-in can be
+        // challenged and then have nowhere to answer.
+        if (services.twoFactor !== undefined) {
+          installTwoFactorChallengeRoutes(app, {
+            gate: services.twoFactor,
+            sessions: services.sessions,
+          })
+        }
         if (services.portalAuth !== undefined) {
           installMagicLinkRoutes(app, services.portalAuth)
         }
@@ -677,6 +699,9 @@ export const createApp = (
             magicLinks: services.staffMagicLinks.store,
             sessions: services.sessions,
             appCodes: services.oidcAppCodes,
+            ...(services.twoFactor === undefined
+              ? {}
+              : { twoFactor: services.twoFactor }),
             ...(services.staffMagicLinks.mailer === undefined
               ? {}
               : { mailer: services.staffMagicLinks.mailer }),

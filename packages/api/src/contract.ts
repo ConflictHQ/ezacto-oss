@@ -2231,8 +2231,22 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     summary: "Authenticate a verified email and password",
     tag: "authentication",
     responseStatus: 200,
-    responseSchema: "AuthPrincipalEnvelope",
+    // Two shapes, because an enrolled user is not signed in yet: a principal
+    // and a session cookie, or a two-factor challenge and no session at all.
+    responseSchema: "SignInResultEnvelope",
     requestSchema: "PasswordSignInInput",
+    requestRequired: true,
+    public: true,
+  },
+  {
+    method: "post",
+    path: "/auth/two-factor/challenge",
+    operationId: "completeTwoFactorChallenge",
+    summary: "Answer a two-factor challenge and receive the session",
+    tag: "authentication",
+    responseStatus: 200,
+    responseSchema: "TwoFactorChallengeAcceptedEnvelope",
+    requestSchema: "TwoFactorChallengeInput",
     requestRequired: true,
     public: true,
   },
@@ -8008,6 +8022,50 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     // A TOTP code or a recovery code. Which one is the server's business:
     // saying so here would tell an attacker which kind was just refused.
     properties: { code: stringSchema },
+    additionalProperties: false,
+  },
+  // Issue 731. What a sign-in returns instead of a principal when the user has
+  // a confirmed second factor. No session accompanies it.
+  TwoFactorChallengeIssued: {
+    type: "object",
+    required: ["status", "challenge", "expires_at"],
+    properties: {
+      status: { type: "string", enum: ["two_factor_required"] },
+      // Also set as an HttpOnly cookie. Named here for clients that keep none.
+      challenge: stringSchema,
+      expires_at: stringSchema,
+    },
+    additionalProperties: false,
+  },
+  TwoFactorChallengeInput: {
+    type: "object",
+    required: ["code"],
+    properties: {
+      code: stringSchema,
+      // Omitted by anything that kept the cookie the sign-in set.
+      challenge: stringSchema,
+    },
+    additionalProperties: false,
+  },
+  TwoFactorChallengeAccepted: {
+    type: "object",
+    required: ["status"],
+    properties: { status: { type: "string", enum: ["authenticated"] } },
+    additionalProperties: false,
+  },
+  TwoFactorChallengeAcceptedEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("TwoFactorChallengeAccepted") },
+    additionalProperties: false,
+  },
+  SignInResult: {
+    oneOf: [reference("AuthPrincipal"), reference("TwoFactorChallengeIssued")],
+  },
+  SignInResultEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("SignInResult") },
     additionalProperties: false,
   },
   UserEmailInput: {

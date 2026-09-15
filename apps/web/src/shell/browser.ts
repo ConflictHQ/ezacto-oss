@@ -365,6 +365,42 @@ const signInMessage = (error: unknown): string => {
   return 'Sign-in could not be completed. Try again.'
 }
 
+/**
+ * Issue 731. The sign-in response is one of two shapes, and only one of them
+ * comes with a session. Reading the status is what keeps a challenged sign-in
+ * from being mistaken for a successful one.
+ */
+const isTwoFactorRequired = (
+  result: unknown,
+): result is { status: 'two_factor_required'; challenge: string } =>
+  typeof result === 'object' &&
+  result !== null &&
+  (result as { status?: unknown }).status === 'two_factor_required' &&
+  typeof (result as { challenge?: unknown }).challenge === 'string'
+
+/** `expired` means the challenge itself is gone, so the password step returns. */
+const twoFactorMessage = (
+  error: unknown,
+): { text: string; expired: boolean } => {
+  if (!(error instanceof EzactoApiError)) {
+    return { text: 'Verification is unavailable right now. Try again.', expired: false }
+  }
+  const code = apiErrorCode(error)
+  if (code === 'two_factor_challenge_invalid') {
+    return { text: 'That sign-in expired. Enter your password again.', expired: true }
+  }
+  if (code === 'two_factor_locked' || error.status === 429) {
+    return {
+      text: 'Too many incorrect codes. Wait a few minutes and try again.',
+      expired: false,
+    }
+  }
+  if (code === 'invalid_two_factor_code') {
+    return { text: 'That code is incorrect. Try again.', expired: false }
+  }
+  return { text: 'Verification could not be completed. Try again.', expired: false }
+}
+
 const profileLabel = (profile: Whoami['profile']): string =>
   profile.replaceAll('_', ' ')
 
@@ -1071,6 +1107,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const signInPassword = required<HTMLInputElement>('[name="password"]')
   const signInSubmit = required<HTMLButtonElement>('[data-sign-in-submit]')
   const signInResult = required<HTMLElement>('[data-sign-in-result]')
+  const twoFactorForm = required<HTMLFormElement>('[data-two-factor-form]')
+  const twoFactorCode = required<HTMLInputElement>('#ez-two-factor-code')
+  const twoFactorSubmit = required<HTMLButtonElement>('[data-two-factor-submit]')
+  const twoFactorCancel = required<HTMLButtonElement>('[data-two-factor-cancel]')
+  const twoFactorResult = required<HTMLElement>('[data-two-factor-result]')
   const currentIdentityPanel = required<HTMLElement>('[data-current-identity]')
   const logout = required<HTMLButtonElement>('[data-logout]')
   const logoutResult = required<HTMLElement>('[data-logout-result]')
@@ -1282,6 +1323,14 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   let currentIdentity: Whoami | null = null
   let signingIn = false
   let signingOut = false
+  /**
+   * Issue 731. Set once a sign-in comes back asking for a second factor. The
+   * string is the challenge token for clients that keep no cookies; the empty
+   * string means the token is in the HttpOnly cookie the server set, which is
+   * how the magic-link redirect lands here. Null means no challenge is open.
+   */
+  let pendingChallenge: string | null = null
+  let verifyingSecondFactor = false
   let authGeneration = 0
   let authController = new AbortController()
   let invoiceCatalog: {
@@ -1396,7 +1445,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     authGateway.dataset.state = 'signed-out'
     authGateway.setAttribute('aria-busy', 'false')
     authChecking.hidden = true
-    signInForm.hidden = false
+    // Whichever step is showing, exactly one of the two is: a password form
+    // beside a code form is an invitation to answer the wrong one.
+    signInForm.hidden = pendingChallenge !== null
+    twoFactorForm.hidden = pendingChallenge === null
     document.documentElement.dataset.authState = 'signed-out'
     document.title = signedOutDocumentTitle
   }
@@ -1408,11 +1460,44 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     authGateway.setAttribute('aria-busy', 'false')
     authChecking.hidden = true
     signInForm.hidden = true
+    twoFactorForm.hidden = true
     authenticatedShell.hidden = false
     authenticatedShell.inert = false
     authenticatedShell.setAttribute('aria-busy', 'false')
     document.documentElement.dataset.authState = 'authenticated'
     document.title = authenticatedDocumentTitle
+  }
+
+  const setTwoFactorPending = (pending: boolean): void => {
+    twoFactorSubmit.disabled = pending
+    twoFactorSubmit.textContent = pending ? 'Verifying…' : 'Verify'
+    twoFactorForm.setAttribute('aria-busy', String(pending))
+  }
+
+  /**
+   * `challenge` is the token for a client that keeps no cookies, or the empty
+   * string when the server already set the HttpOnly one -- which is the case
+   * for every browser, including the magic-link redirect that lands here with
+   * no sign-in response to read at all.
+   */
+  const openTwoFactorStep = (challenge: string): void => {
+    pendingChallenge = challenge
+    signInResult.textContent = ''
+    twoFactorResult.textContent = ''
+    twoFactorCode.value = ''
+    verifyingSecondFactor = false
+    setTwoFactorPending(false)
+    showSignedOutScreen()
+    twoFactorCode.focus()
+  }
+
+  const closeTwoFactorStep = (message: string): void => {
+    pendingChallenge = null
+    verifyingSecondFactor = false
+    setTwoFactorPending(false)
+    twoFactorForm.reset()
+    twoFactorResult.textContent = ''
+    transitionSignedOut(message)
   }
 
   const setSignInPending = (pending: boolean): void => {
@@ -1424,6 +1509,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
 
   const clearFormState = (): void => {
     signInForm.reset()
+    twoFactorForm.reset()
     commandForm.reset()
     entryForm.reset()
     rowForm.reset()
@@ -4978,8 +5064,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       signInPassword.value = ''
     }
     void request
-      .then(async () => {
+      .then(async (result) => {
         if (!isGenerationCurrent(operation)) return
+        // An enrolled user is not signed in yet. There is no session cookie in
+        // this response, so going on to load the shell would 401 and read as a
+        // failed password.
+        if (isTwoFactorRequired(result)) {
+          openTwoFactorStep(result.challenge)
+          return
+        }
         await loadAuthenticatedShell(operation)
       })
       .catch((error: unknown) => {
@@ -4991,6 +5084,54 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         signingIn = false
         setSignInPending(false)
       })
+  })
+
+  twoFactorForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    if (verifyingSecondFactor || pendingChallenge === null) return
+    const code = twoFactorCode.value.trim()
+    if (code === '') {
+      twoFactorResult.textContent = 'Enter the code from your authenticator app.'
+      return
+    }
+    const complete = api.completeTwoFactorChallenge
+    if (complete === undefined) {
+      twoFactorResult.textContent =
+        'This instance cannot complete two-factor sign-in. Contact your administrator.'
+      return
+    }
+    const challenge = pendingChallenge
+    const operation = beginAuthGeneration(null)
+    verifyingSecondFactor = true
+    setTwoFactorPending(true)
+    twoFactorResult.textContent = 'Verifying…'
+    void complete(
+      { code, ...(challenge === '' ? {} : { challenge }) },
+      operation.signal,
+    )
+      .then(async () => {
+        if (!isGenerationCurrent(operation)) return
+        pendingChallenge = null
+        await loadAuthenticatedShell(operation)
+      })
+      .catch((error: unknown) => {
+        if (!isGenerationCurrent(operation)) return
+        const message = twoFactorMessage(error)
+        // A dead challenge cannot be answered; the only way on is the password.
+        if (message.expired) closeTwoFactorStep(message.text)
+        else twoFactorResult.textContent = message.text
+      })
+      .finally(() => {
+        if (!isGenerationCurrent(operation)) return
+        verifyingSecondFactor = false
+        setTwoFactorPending(false)
+        twoFactorCode.value = ''
+      })
+  })
+
+  twoFactorCancel.addEventListener('click', () => {
+    if (verifyingSecondFactor) return
+    closeTwoFactorStep('Sign in to load and edit your week.')
   })
 
   logout.addEventListener('click', () => {
@@ -5092,6 +5233,17 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       if (chosen !== 'comfortable' && chosen !== 'compact') return
       syncDensityChoice(density.set(chosen))
     })
+  }
+
+  // A magic link answered by an enrolled user lands here with a challenge
+  // cookie and no session. The cookie is HttpOnly, so the redirect says so with
+  // a flag -- it names no credential, and the token stays out of the URL.
+  const landedOnChallenge =
+    new URLSearchParams(globalThis.location.search).get('two_factor') === '1'
+  if (landedOnChallenge) {
+    globalThis.history.replaceState(null, '', globalThis.location.pathname)
+    openTwoFactorStep('')
+    return
   }
 
   const initialOperation = currentAuthOperation(null)

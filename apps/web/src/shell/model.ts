@@ -1,7 +1,6 @@
 import {
   EzactoClient,
   EzactoApiError,
-  type AuthPrincipal,
   type Expense,
   type GeneralResource,
   type Invoice,
@@ -9,6 +8,7 @@ import {
   type InvoiceTransitionInput,
   type PasswordSignInInput,
   type Session,
+  type SignInResult,
   type TimeEntry,
   type TimeEntryInput,
   type TimeEntryOption,
@@ -87,7 +87,19 @@ export interface ShellApi
     Partial<TeamDirectoryApi>,
     Partial<CompanySettingsApi> {
   whoami(signal?: AbortSignal): Promise<Whoami>
-  signIn(credentials: PasswordSignInInput, signal?: AbortSignal): Promise<AuthPrincipal>
+  /**
+   * Issue 731: an enrolled user is not signed in yet. The challenge answer
+   * carries no principal, so the caller has to read the status rather than
+   * assume the session landed.
+   */
+  signIn(
+    credentials: PasswordSignInInput,
+    signal?: AbortSignal,
+  ): Promise<SignInResult>
+  completeTwoFactorChallenge?(
+    input: { readonly code: string; readonly challenge?: string },
+    signal?: AbortSignal,
+  ): Promise<void>
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
   listProjects(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listClients?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
@@ -940,6 +952,15 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   },
   signIn: async (credentials, signal) => {
     return (await client.signIn({ body: credentials, ...withSignal(signal) })).data
+  },
+  completeTwoFactorChallenge: async (input, signal) => {
+    await client.completeTwoFactorChallenge({
+      body: {
+        code: input.code,
+        ...(input.challenge === undefined ? {} : { challenge: input.challenge }),
+      },
+      ...withSignal(signal),
+    })
   },
   logoutCurrentSession: async (signal) => {
     const current = (await client.listSessions(withSignal(signal))).data.find(

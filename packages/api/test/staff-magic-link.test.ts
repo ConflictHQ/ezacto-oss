@@ -73,17 +73,20 @@ class MemoryMagicLinks implements StaffMagicLinkStorePort {
 }
 
 class MemoryAppCodes implements OidcAppCodeStorePort {
-  readonly codes = new Map<string, number>()
-  async create(input: { codeHash: string; userId: number }) {
+  readonly codes = new Map<string, { userId: number; provider: string }>()
+  async create(input: { codeHash: string; userId: number; provider: string }) {
     if (this.codes.has(input.codeHash)) return 'collision' as const
-    this.codes.set(input.codeHash, input.userId)
+    this.codes.set(input.codeHash, {
+      userId: input.userId,
+      provider: input.provider,
+    })
     return 'created' as const
   }
   async consume(codeHash: string) {
-    const userId = this.codes.get(codeHash)
-    if (userId === undefined) return null
+    const code = this.codes.get(codeHash)
+    if (code === undefined) return null
     this.codes.delete(codeHash)
-    return { userId }
+    return code
   }
 }
 

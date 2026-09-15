@@ -112,6 +112,14 @@ export {
   type TwoFactorStatus,
 } from './auth.js'
 export {
+  installTwoFactorChallengeRoutes,
+  issueSessionOrChallenge,
+  TWO_FACTOR_CHALLENGE_COOKIE,
+  type TwoFactorChallengeRouteOptions,
+  type TwoFactorChallengeVerdict,
+  type TwoFactorGate,
+} from './two-factor-challenge.js'
+export {
   createQueuedAuthMailer,
   type AuthEmailTemplate,
   type AuthEmailTemplateSource,

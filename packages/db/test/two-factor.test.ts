@@ -115,6 +115,7 @@ for (const [runtime, factory] of factories) {
 
     beforeEach(async () => {
       await harness.execute(`DELETE FROM user_recovery_codes`)
+      await harness.execute(`DELETE FROM two_factor_challenges`)
       await harness.execute(`DELETE FROM user_totp_enrolments`)
     })
 
@@ -123,7 +124,14 @@ for (const [runtime, factory] of factories) {
     it('[api] enrols pending, and stays pending until a code proves it', async () => {
       expect(await harness.store.enrolment(1)).toBeNull()
       const pending = await harness.store.beginEnrolment({ userId: 1, secret, codes }, created)
-      expect(pending).toEqual({ userId: 1, secret, confirmedAt: null, lastUsedStep: null })
+      expect(pending).toEqual({
+        userId: 1,
+        secret,
+        confirmedAt: null,
+        lastUsedStep: null,
+        failedAttempts: 0,
+        lockedUntil: null,
+      })
       expect(await harness.store.unusedRecoveryCodeCount(1)).toBe(2)
 
       expect(await harness.store.confirmEnrolment(1, 100, later)).toBe(true)
@@ -132,6 +140,8 @@ for (const [runtime, factory] of factories) {
         secret,
         confirmedAt: later,
         lastUsedStep: 100,
+        failedAttempts: 0,
+        lockedUntil: null,
       })
       // Confirmation is once. A second one would reset the replay guard.
       expect(await harness.store.confirmEnrolment(1, 500, later)).toBe(false)
@@ -172,6 +182,101 @@ for (const [runtime, factory] of factories) {
     it('[api] refuses to spend a step against an unproved enrolment', async () => {
       await harness.store.beginEnrolment({ userId: 1, secret, codes }, created)
       expect(await harness.store.spendTotpStep(1, 100, later)).toBe(false)
+    })
+
+    it('[security] locks the factor once the wrong codes reach the ceiling', async () => {
+      // Issue 735. Three codes are valid per thirty seconds out of a million,
+      // and the check is a cheap HMAC, so the guesses have to be counted or the
+      // second factor is a formality.
+      await harness.store.beginEnrolment({ userId: 1, secret, codes }, created)
+      await harness.store.confirmEnrolment(1, 100, created)
+
+      for (let attempt = 1; attempt < 5; attempt += 1) {
+        expect(await harness.store.recordFailedVerification(1, created, 5, 900_000)).toBeNull()
+        expect(await harness.store.enrolment(1)).toMatchObject({
+          failedAttempts: attempt,
+          lockedUntil: null,
+        })
+      }
+      const lockedUntil = await harness.store.recordFailedVerification(1, created, 5, 900_000)
+      expect(lockedUntil).toBe('2026-09-08T10:15:00.000Z')
+      // The count restarts with the lock, so the window that follows gets its
+      // own budget rather than locking again on the first wrong code.
+      expect(await harness.store.enrolment(1)).toMatchObject({
+        failedAttempts: 0,
+        lockedUntil,
+      })
+
+      await harness.store.clearFailedVerifications(1, later)
+      expect(await harness.store.enrolment(1)).toMatchObject({
+        failedAttempts: 0,
+        lockedUntil: null,
+      })
+    })
+
+    it('[security] counts wrong codes against a pending enrolment too', async () => {
+      // The confirm route checks a code against a seed the presenter chose. It
+      // is the cheapest place to measure how the check behaves, so it counts.
+      await harness.store.beginEnrolment({ userId: 1, secret, codes }, created)
+      expect(await harness.store.recordFailedVerification(1, created, 2, 900_000)).toBeNull()
+      expect(await harness.store.recordFailedVerification(1, created, 2, 900_000)).toBe(
+        '2026-09-08T10:15:00.000Z',
+      )
+    })
+
+    it('[security] turns one challenge into exactly one session', async () => {
+      // Issue 731. The consume is the authority: two requests holding the same
+      // challenge both verify the same code, and only one may become a session.
+      const tokenHash = 'a'.repeat(64)
+      expect(
+        await harness.store.createChallenge({
+          userId: 1,
+          tokenHash,
+          expiresAt: later,
+          createdAt: created,
+          cleanupBefore: '2026-09-08T09:00:00.000Z',
+        }),
+      ).toBe('created')
+
+      // Reading the holder leaves the challenge standing, so a mistyped code
+      // costs a retry rather than the password.
+      expect(await harness.store.challengeHolder(tokenHash, created)).toEqual({ userId: 1 })
+      expect(await harness.store.challengeHolder(tokenHash, created)).toEqual({ userId: 1 })
+
+      expect(await harness.store.consumeChallenge(tokenHash, created)).toEqual({ userId: 1 })
+      expect(await harness.store.consumeChallenge(tokenHash, created)).toBeNull()
+      expect(await harness.store.challengeHolder(tokenHash, created)).toBeNull()
+    })
+
+    it('[security] refuses an expired challenge and an unknown one alike', async () => {
+      const tokenHash = 'b'.repeat(64)
+      await harness.store.createChallenge({
+        userId: 1,
+        tokenHash,
+        expiresAt: later,
+        createdAt: created,
+        cleanupBefore: '2026-09-08T09:00:00.000Z',
+      })
+      const afterExpiry = '2026-09-08T10:05:00.001Z'
+      expect(await harness.store.challengeHolder(tokenHash, afterExpiry)).toBeNull()
+      expect(await harness.store.consumeChallenge(tokenHash, afterExpiry)).toBeNull()
+      expect(await harness.store.challengeHolder('c'.repeat(64), created)).toBeNull()
+    })
+
+    it('[security] drops the challenges of a user who removed the factor', async () => {
+      // A challenge outliving the enrolment would name a user with no second
+      // factor, and redeeming it would be a sign-in nothing checked.
+      await harness.store.beginEnrolment({ userId: 1, secret, codes }, created)
+      await harness.store.confirmEnrolment(1, 100, created)
+      await harness.store.createChallenge({
+        userId: 1,
+        tokenHash: 'd'.repeat(64),
+        expiresAt: later,
+        createdAt: created,
+        cleanupBefore: '2026-09-08T09:00:00.000Z',
+      })
+      expect(await harness.store.disable(1)).toBe(true)
+      expect(await harness.store.challengeHolder('d'.repeat(64), created)).toBeNull()
     })
 
     it('[e2e:first-run] a recovery code gets one person in exactly once', async () => {

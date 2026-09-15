@@ -462,6 +462,19 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
           <p class="auth-result" data-sign-in-result role="status" aria-live="polite"></p>
           ${demoCredentials(options.demoAccounts ?? [])}
         </form>
+        <form class="sign-in-form" data-two-factor-form method="post" action="/auth/two-factor/challenge" hidden>
+          <div class="auth-heading">
+            <p class="eyebrow">One more step</p>
+            <h2 id="two-factor-title">Enter your verification code</h2>
+            <p>Open your authenticator app, or use one of your recovery codes.</p>
+          </div>
+          <label for="ez-two-factor-code">Verification code
+            <input id="ez-two-factor-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" spellcheck="false" autocapitalize="off" required>
+          </label>
+          <button class="primary-action" type="submit" data-two-factor-submit>Verify</button>
+          <button class="sign-in-restart" type="button" data-two-factor-cancel>Start over</button>
+          <p class="auth-result" data-two-factor-result role="status" aria-live="polite"></p>
+        </form>
         <noscript>${renderEmptyState('JavaScript is required', `The ${escapeHtml(brand)} app uses JavaScript to establish and protect your session.`)}</noscript>
       </div>
       <p class="auth-build-stamp">${escapeHtml(options.environment)} · ${escapeHtml(shortRelease)}</p>

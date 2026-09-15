@@ -2909,6 +2909,31 @@ export type TwoFactorCodeInput = {
   "code": string;
 };
 
+export type TwoFactorChallengeIssued = {
+  "status": "two_factor_required";
+  "challenge": string;
+  "expires_at": string;
+};
+
+export type TwoFactorChallengeInput = {
+  "code": string;
+  "challenge"?: string;
+};
+
+export type TwoFactorChallengeAccepted = {
+  "status": "authenticated";
+};
+
+export type TwoFactorChallengeAcceptedEnvelope = {
+  "data": TwoFactorChallengeAccepted;
+};
+
+export type SignInResult = AuthPrincipal | TwoFactorChallengeIssued;
+
+export type SignInResultEnvelope = {
+  "data": SignInResult;
+};
+
 export type UserEmailInput = {
   "email": string;
 };
@@ -3032,10 +3057,20 @@ export class EzactoClient {
     });
   }
 
-  async signIn(args: { body: PasswordSignInInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<AuthPrincipalEnvelope> {
+  async signIn(args: { body: PasswordSignInInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<SignInResultEnvelope> {
     const headers = new Headers(args.headers);
 
-    return this.request<AuthPrincipalEnvelope>("POST", "/auth/sign-in", {
+    return this.request<SignInResultEnvelope>("POST", "/auth/sign-in", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async completeTwoFactorChallenge(args: { body: TwoFactorChallengeInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TwoFactorChallengeAcceptedEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TwoFactorChallengeAcceptedEnvelope>("POST", "/auth/two-factor/challenge", {
       body: args.body,
       signal: args.signal,
       headers,

@@ -482,6 +482,13 @@ export const deferred = <Value>() => {
   }
 }
 
+export const submitTwoFactorCode = (code: string): void => {
+  document.querySelector<HTMLInputElement>('#ez-two-factor-code')!.value = code
+  document
+    .querySelector<HTMLFormElement>('[data-two-factor-form]')!
+    .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+}
+
 export const submitSignIn = (email: string, password: string): void => {
   const emailInput = document.querySelector<HTMLInputElement>('[name="email"]')!
   const passwordInput = document.querySelector<HTMLInputElement>('[name="password"]')!

@@ -8,6 +8,7 @@ import {
   validationError,
   type FieldError,
 } from './errors.js'
+import type { TwoFactorGate } from './two-factor-challenge.js'
 
 export interface ApiTokenMetadata {
   id: number
@@ -492,18 +493,25 @@ export interface TwoFactorEnrolmentOffer {
   recoveryCodes: readonly string[]
 }
 
-export interface TwoFactorService {
+/**
+ * The settings surface and the sign-in gate are one interface on purpose. A
+ * deployment that can enrol a factor can enforce it; there is no shape of this
+ * type that offers the first without the second, which is how issue 731
+ * happened -- the enrolment routes were wired and the enforcement had nowhere
+ * to be wired to.
+ */
+export interface TwoFactorService extends TwoFactorGate {
   status(userId: number): Promise<TwoFactorStatus>
   beginEnrolment(userId: number): Promise<TwoFactorEnrolmentOffer>
   confirmEnrolment(
     userId: number,
     code: string,
-  ): Promise<'enabled' | 'rejected' | 'not_pending'>
+  ): Promise<'enabled' | 'rejected' | 'not_pending' | 'locked'>
   /** `code` is a TOTP code or a recovery code; the service decides which. */
   disable(
     userId: number,
     code: string,
-  ): Promise<'disabled' | 'rejected' | 'not_enrolled'>
+  ): Promise<'disabled' | 'rejected' | 'not_enrolled' | 'locked'>
 }
 
 const twoFactorStatusData = (status: TwoFactorStatus) => ({
@@ -555,6 +563,19 @@ const rejectedCode = (): never => {
     status: 401,
     code: 'invalid_two_factor_code',
     message: 'The verification code is invalid.',
+  })
+}
+
+/**
+ * Deliberately says nothing about how long, and nothing about which code was
+ * wrong. The ceiling is shared across every surface that reads a code, so a
+ * precise answer here would be a free measurement of it.
+ */
+export const lockedCode = (): never => {
+  throw new ApiError({
+    status: 429,
+    code: 'two_factor_locked',
+    message: 'Too many incorrect verification codes. Try again later.',
   })
 }
 
@@ -611,6 +632,7 @@ export const installTwoFactorRoutes = <Bindings extends object>(
     const principal = requireSessionPrincipal(context)
     const code = await presentedCode(context)
     const result = await service.confirmEnrolment(principal.userId, code)
+    if (result === 'locked') lockedCode()
     if (result === 'rejected') rejectedCode()
     if (result === 'not_pending') {
       throw new ApiError({
@@ -633,6 +655,7 @@ export const installTwoFactorRoutes = <Bindings extends object>(
     const principal = requireSessionPrincipal(context)
     const code = await presentedCode(context)
     const result = await service.disable(principal.userId, code)
+    if (result === 'locked') lockedCode()
     if (result === 'rejected') rejectedCode()
     if (result === 'not_enrolled') {
       throw new ApiError({

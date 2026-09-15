@@ -338,7 +338,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AuthPrincipalEnvelope"
+                  "$ref": "#/components/schemas/SignInResultEnvelope"
                 }
               }
             }
@@ -379,6 +379,67 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PasswordSignInInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/two-factor/challenge": {
+      "post": {
+        "operationId": "completeTwoFactorChallenge",
+        "summary": "Answer a two-factor challenge and receive the session",
+        "tags": [
+          "authentication"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TwoFactorChallengeAcceptedEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/auth/two-factor/challenge",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TwoFactorChallengeInput"
               }
             }
           }
@@ -34777,6 +34838,93 @@
         "properties": {
           "code": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TwoFactorChallengeIssued": {
+        "type": "object",
+        "required": [
+          "status",
+          "challenge",
+          "expires_at"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "two_factor_required"
+            ]
+          },
+          "challenge": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TwoFactorChallengeInput": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "challenge": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TwoFactorChallengeAccepted": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "authenticated"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "TwoFactorChallengeAcceptedEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TwoFactorChallengeAccepted"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SignInResult": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AuthPrincipal"
+          },
+          {
+            "$ref": "#/components/schemas/TwoFactorChallengeIssued"
+          }
+        ]
+      },
+      "SignInResultEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SignInResult"
           }
         },
         "additionalProperties": false
