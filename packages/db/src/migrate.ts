@@ -82,6 +82,7 @@ import { bandClaimScopeMigration } from './migrations/0075_band_claim_scope.js'
 import { rateRemovalMigration } from './migrations/0076_rate_removal.js'
 import { bandCostAlertMigration } from './migrations/0077_band_cost_alert.js'
 import { bandClaimBackfillMigration } from './migrations/0078_band_claim_backfill.js'
+import { rateRemovalByKindMigration } from './migrations/0079_rate_removal_by_kind.js'
 
 const ledger = `CREATE TABLE IF NOT EXISTS _ezacto_migrations (
   id TEXT PRIMARY KEY, applied_at TEXT NOT NULL, statements_sha256 TEXT
@@ -1507,6 +1508,7 @@ const migrations = [
   { id: '0076_rate_removal', statements: rateRemovalMigration },
   { id: '0077_band_cost_alert', statements: bandCostAlertMigration },
   { id: '0078_band_claim_backfill', statements: bandClaimBackfillMigration },
+  { id: '0079_rate_removal_by_kind', statements: rateRemovalByKindMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges
