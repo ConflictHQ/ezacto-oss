@@ -1,0 +1,147 @@
+# A full SQL dump of the database — schema, indexes, triggers and every row —
+# taken nightly and kept forever.
+#
+# This exists beside the Worker's nightly CSV bundle rather than replacing it,
+# because the two fail differently and neither is sufficient alone:
+#
+#   - The CSV bundle carries rows and no schema. It is portable (open a table in
+#     any spreadsheet) and it needs no credentials, because the Worker writes it
+#     from its own R2 binding. Restoring from it means rebuilding the schema from
+#     the ezacto source first.
+#   - This dump is the whole database as SQL, restorable with
+#     `wrangler d1 execute --file`. It cannot come from the Worker: D1's export
+#     is an account-level API call and no Worker holds an API token.
+#
+# So: same data, two formats, two code paths, two schedules. A bug in one is
+# unlikely to be a bug in the other, which is the only property that makes a
+# second backup worth its cost.
+#
+# Nothing here ever deletes. There is no retention step and no lifecycle rule to
+# add one: a day's dump is a few megabytes, a year is a few gigabytes, and the
+# storage costs less per month than the time spent deciding what to throw away.
+name: backup-sql
+
+on:
+  schedule:
+    # An hour after the Worker's own 03:00 export, so the two never contend for
+    # the same database and a bad night is obvious in the ordering.
+    - cron: '0 4 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# Never two dumps of one database at once, and a queued run waits rather than
+# cancelling: a half-finished upload that got cancelled is the one outcome worse
+# than a missed night.
+concurrency:
+  group: backup-sql-prod
+  cancel-in-progress: false
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    # Prod only. The dev environment carries none of these variables, and a
+    # choice that cannot work is worse than no choice.
+    environment: prod
+    env:
+      ENVIRONMENT: prod
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_NAME: ${{ vars.PROD_D1_DATABASE_NAME }}
+      R2_BUCKET: ${{ vars.PROD_R2_BUCKET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      # Resolved before anything runs. A dump written to the wrong bucket, or
+      # taken of the wrong database, is worse than no dump: it looks like one.
+      - name: guard — this run knows which database it is dumping
+        run: |
+          if [ -z "$D1_DATABASE_NAME" ] || [ -z "$R2_BUCKET" ]; then
+            echo "::error::set PROD_D1_DATABASE_NAME and PROD_R2_BUCKET on the ${ENVIRONMENT} environment"
+            exit 1
+          fi
+          echo "dumping $D1_DATABASE_NAME into $R2_BUCKET"
+
+      - name: export — the whole database as SQL
+        run: |
+          npx --yes wrangler@4.131.1 d1 export "$D1_DATABASE_NAME" \
+            --remote --output dump.sql -y
+
+      # A truncated or empty dump uploads just as happily as a good one and is
+      # discovered only when somebody needs it. These are the cheap questions
+      # worth asking while the answer still costs nothing.
+      - name: verify — the dump is a database and not a stub
+        run: |
+          set -euo pipefail
+          test -s dump.sql || { echo "::error::dump.sql is empty"; exit 1; }
+          tables=$(grep -c '^CREATE TABLE' dump.sql || true)
+          indexes=$(grep -c '^CREATE INDEX\|^CREATE TRIGGER' dump.sql || true)
+          rows=$(grep -c '^INSERT INTO' dump.sql || true)
+          bytes=$(wc -c < dump.sql | tr -d ' ')
+          echo "tables=$tables indexes+triggers=$indexes inserts=$rows bytes=$bytes"
+          if [ "$tables" -lt 50 ]; then
+            echo "::error::only $tables CREATE TABLE statements; the schema is incomplete"
+            exit 1
+          fi
+          # The schema is the whole reason this dump exists beside the CSV one.
+          if [ "$indexes" -lt 1 ]; then
+            echo "::error::no indexes or triggers; this is not a full dump"
+            exit 1
+          fi
+          {
+            echo "tables=$tables"
+            echo "indexes_and_triggers=$indexes"
+            echo "insert_statements=$rows"
+            echo "uncompressed_bytes=$bytes"
+          } >> "$GITHUB_ENV"
+
+      - name: compress and checksum
+        run: |
+          set -euo pipefail
+          gzip -9 -c dump.sql > dump.sql.gz
+          sha256sum dump.sql.gz | cut -d' ' -f1 > dump.sql.gz.sha256
+          echo "compressed_bytes=$(wc -c < dump.sql.gz | tr -d ' ')" >> "$GITHUB_ENV"
+          echo "sha256=$(cat dump.sql.gz.sha256)" >> "$GITHUB_ENV"
+
+      # Straight from the runner to R2. Deliberately never an Actions artifact:
+      # this file is every client, person, rate and invoice in the book, and an
+      # artifact is a second copy in a third place with its own retention and its
+      # own access list.
+      - name: upload — to R2, under this run's date
+        run: |
+          set -euo pipefail
+          day=$(date -u +%Y-%m-%d)
+          stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          prefix="sql/${day}"
+          cat > manifest.json <<JSON
+          {
+            "kind": "d1-sql-dump",
+            "environment": "${ENVIRONMENT}",
+            "database": "${D1_DATABASE_NAME}",
+            "exported_at": "${stamp}",
+            "release": "${GITHUB_SHA}",
+            "tables": ${tables},
+            "indexes_and_triggers": ${indexes_and_triggers},
+            "insert_statements": ${insert_statements},
+            "uncompressed_bytes": ${uncompressed_bytes},
+            "compressed_bytes": ${compressed_bytes},
+            "sha256": "${sha256}",
+            "restore_d1": "gunzip dump.sql.gz && wrangler d1 execute <database> --remote --file dump.sql",
+            "restore_anywhere": "gunzip -c dump.sql.gz | sqlite3 restored.sqlite"
+          }
+          JSON
+          npx --yes wrangler@4.131.1 r2 object put "${R2_BUCKET}/${prefix}/dump.sql.gz" \
+            --file dump.sql.gz --content-type application/gzip --remote
+          npx --yes wrangler@4.131.1 r2 object put "${R2_BUCKET}/${prefix}/manifest.json" \
+            --file manifest.json --content-type application/json --remote
+          echo "::notice::wrote ${prefix}/dump.sql.gz (${compressed_bytes} bytes, ${tables} tables)"
+
+      # The dump outlives the runner; nothing of it should.
+      - name: shred the local copies
+        if: always()
+        run: rm -f dump.sql dump.sql.gz dump.sql.gz.sha256 manifest.json

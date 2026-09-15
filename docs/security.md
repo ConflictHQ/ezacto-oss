@@ -134,3 +134,45 @@ selector does not answer faster than a wrong code.
 If both the authenticator and the recovery codes are lost, an administrator has
 to remove the enrolment directly in the database — there is no self-service
 reset, because a reset a stranger can trigger is not a second factor.
+
+## Backups
+
+Two of them, in different formats, from different code paths, on different
+schedules. Neither is sufficient alone and a bug in one is unlikely to be a bug
+in the other, which is the only property that makes the second worth its cost.
+
+| | written by | at | carries | restores with |
+| --- | --- | --- | --- | --- |
+| CSV bundle | the Worker, from its own R2 binding | 03:00 UTC | every table's rows, per-table SHA-256, a manifest | rebuild the schema from source, then import the CSVs |
+| SQL dump | a scheduled GitHub Action, via D1's export API | 04:00 UTC | the whole database — schema, indexes, triggers, rows | `wrangler d1 execute --file`, or `sqlite3` directly |
+
+The Worker cannot produce the SQL dump: D1's export is an account-level API call
+and no Worker holds an API token. The Action cannot produce the CSV bundle
+without reaching into the database itself. Hence one of each.
+
+**Nothing is ever deleted.** There is no retention step in either path and no
+lifecycle rule to add one. A night's SQL dump compresses to a couple of
+megabytes, so a year of them is a few gigabytes, and the storage costs less per
+month than the time spent deciding what to throw away.
+
+### What the bundles carry
+
+Both carry credential material — password hashes, authenticator seeds,
+recovery-code hashes, API-token hashes. That is deliberate: an instance whose
+people cannot sign in has not been restored. It means both are exactly as
+sensitive as the database they came from, and more portable. The SQL dump never
+becomes a GitHub Actions artifact for that reason; it goes from the runner
+straight to R2.
+
+The CSV bundle's manifest names the tables a restore should skip
+(`restore_skips`) — live sessions, sign-in links and OAuth transactions, which
+are captured because a backup is a record but would, if reloaded, revive a
+session somebody revoked.
+
+### What they do not carry
+
+- **Attachment bytes.** Both back up the attachment *metadata*; the files
+  themselves stay in R2 and nothing copies them.
+- **A second home.** Both land in the same R2 bucket as the attachments, so a
+  bucket lost is both copies lost. The live database survives that, but a
+  genuine off-site copy would be somewhere else entirely.
