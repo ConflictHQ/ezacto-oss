@@ -64,6 +64,13 @@ export const deploySecretPayload = (environment) => {
     environment.MAGIC_LINK_SIGNING_KEY,
     'MAGIC_LINK_SIGNING_KEY',
   )
+  // Its own key on purpose: staff magic-link and the in-app contact portal are
+  // unrelated features, and one secret switching on both is how a deployment
+  // gets a surface it did not ask for.
+  const portalMagicLink = optionalSigningKey(
+    environment.PORTAL_MAGIC_LINK_SIGNING_KEY,
+    'PORTAL_MAGIC_LINK_SIGNING_KEY',
+  )
   const clientId = optionalCredential(environment.OIDC_GOOGLE_CLIENT_ID)
   const clientSecret = optionalCredential(environment.OIDC_GOOGLE_CLIENT_SECRET)
   if ((clientId === null) !== (clientSecret === null)) {
@@ -159,6 +166,7 @@ export const deploySecretPayload = (environment) => {
   return {
     API_CURSOR_SIGNING_KEY: cursor,
     MAGIC_LINK_SIGNING_KEY: magicLink,
+    PORTAL_MAGIC_LINK_SIGNING_KEY: portalMagicLink,
     OIDC_GOOGLE_CLIENT_ID: clientId,
     OIDC_GOOGLE_CLIENT_SECRET: clientSecret,
     APPLE_CLIENT_ID: appleClientId,

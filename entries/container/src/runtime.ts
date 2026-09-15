@@ -731,7 +731,7 @@ export const createContainerRuntime = async (
       // secret -- they hand out sessions, so "configured badly" and "not
       // configured" must not look the same. Absent here, the container simply
       // had no portal at all (#374).
-      ...(config.magicLinkSigningKey === undefined
+      ...(config.portalMagicLinkSigningKey === undefined
         ? {}
         : {
             portalAuth: {
@@ -741,7 +741,7 @@ export const createContainerRuntime = async (
                     database.prepare(query.sql).all(...query.params) as never[],
                 },
                 store: createContainerMagicLinkStore(database),
-                signingKey: config.magicLinkSigningKey,
+                signingKey: config.portalMagicLinkSigningKey,
               }),
               sessions: createPortalSessionService(
                 createContainerContactSessionStore(database),

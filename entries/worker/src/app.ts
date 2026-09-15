@@ -179,6 +179,14 @@ export type WorkerEnv = AppEnv & {
    * than serve them with a weak one.
    */
   MAGIC_LINK_SIGNING_KEY?: string
+  /**
+   * Contact sign-in for the in-app portal, separate from the staff key above.
+   * Absent everywhere by default: `clients.conflict.media` runs its own portal
+   * worker with its own tokens and mailer, so nothing needs these routes today.
+   * Kept switchable because central portal auth here is a direction worth
+   * leaving open -- see PORTAL_ROUTES for what setting it does and does not do.
+   */
+  PORTAL_MAGIC_LINK_SIGNING_KEY?: string
   /** Bound together with a provider implementation; absent deployments fail auth email closed. */
   EMAIL_QUEUE?: Queue<QueuedEmailJob>
   /** Optional Cloudflare Access provider; both values are required together. */

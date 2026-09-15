@@ -532,7 +532,7 @@ describe('container runtime composition', () => {
   // The portal was mounted nowhere: `services.portalAuth` was optional and no
   // runtime set it, so the magic-link routes existed in the codebase and in no
   // deployment. The Worker wires it now; this is the container's half.
-  it('[contract] serves the portal where a magic-link key is configured, and not where it is absent', async () => {
+  it('[contract] serves the portal on its own key, and not on the staff one', async () => {
     const root = await temporary()
     const withoutKey = await createContainerRuntime(config(root), {
       emailProvider: provider([]),
@@ -548,9 +548,27 @@ describe('container runtime composition', () => {
       await withoutKey.close()
     }
 
+    // The staff key alone does not bring the portal with it. It used to: one
+    // secret gated both, so turning staff magic-link on also mounted a contact
+    // surface the standalone portal worker had already superseded.
+    const staffOnly = await temporary()
+    const withStaffKey = await createContainerRuntime(
+      { ...config(staffOnly), magicLinkSigningKey: new Uint8Array(32).fill(0x21) },
+      { emailProvider: provider([]) },
+    )
+    try {
+      const mounted = mountedApiRoutes(
+        createApp(withStaffKey.services, withStaffKey.brandAssets, withStaffKey.instanceTheme).routes,
+      )
+      expect(mounted).toContain('post /auth/magic-link')
+      expect(mounted).not.toContain('post /portal/magic-link')
+    } finally {
+      await withStaffKey.close()
+    }
+
     const keyed = await temporary()
     const withKey = await createContainerRuntime(
-      { ...config(keyed), magicLinkSigningKey: new Uint8Array(32).fill(0x21) },
+      { ...config(keyed), portalMagicLinkSigningKey: new Uint8Array(32).fill(0x21) },
       { emailProvider: provider([]) },
     )
     try {
@@ -558,10 +576,12 @@ describe('container runtime composition', () => {
       expect(mounted).toContain('post /portal/magic-link')
       expect(mounted).toContain('get /portal/verify')
       expect(mounted).toContain('get /portal/statements')
+      // And the portal key does not drag the staff routes in either.
+      expect(mounted).not.toContain('post /auth/magic-link')
     } finally {
       await withKey.close()
     }
-  }, 30_000)
+  }, 40_000)
 
   it('[security] refuses a db.sqlite symlink before opening it', async () => {
     const root = await temporary()
