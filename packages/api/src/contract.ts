@@ -1074,6 +1074,34 @@ const moduleSettingsOperations: ApiContractOperation[] = [
   },
 ];
 
+// Issue 761. Which ways in the instance offers, as an administrator setting
+// rather than three separate deploy secrets.
+const signInMethodOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/admin/sign-in-methods",
+    operationId: "listSignInMethods",
+    summary: "List sign-in methods with their configured and enabled states",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "SignInMethodListEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "patch",
+    path: "/api/v1/admin/sign-in-methods/:method",
+    operationId: "updateSignInMethod",
+    summary: "Switch a sign-in method on or off",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "SignInMethodListEnvelope",
+    requestSchema: "ModulePatch",
+    requestRequired: true,
+    sessionOnly: true,
+    parameters: [stringPath("method")],
+  },
+];
+
 /**
  * Backup status. Mounted only where the deployment composes a reader, which the
  * Worker does and the container does not -- the container's backups are the
@@ -2579,6 +2607,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...attachmentContractOperations,
   ...reportOperations,
   ...moduleSettingsOperations,
+  ...signInMethodOperations,
   ...backupOperations,
   ...quickBooksOperations,
   ...wiseOperations,
@@ -7549,6 +7578,31 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     required: ["data", "links"],
     properties: {
       data: { type: "array", items: reference("ModuleState") },
+      links: reference("Links"),
+    },
+    additionalProperties: false,
+  },
+  SignInMethodState: {
+    type: "object",
+    required: ["method", "configured", "enabled"],
+    properties: {
+      method: {
+        type: "string",
+        enum: ["password", "magic_link", "google", "github"],
+      },
+      // Two states, deliberately separate: the deployment supplies the
+      // credentials, the operator supplies the permission, and an
+      // administrator needs to tell "never set up" from "switched off".
+      configured: booleanSchema,
+      enabled: booleanSchema,
+    },
+    additionalProperties: false,
+  },
+  SignInMethodListEnvelope: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: { type: "array", items: reference("SignInMethodState") },
       links: reference("Links"),
     },
     additionalProperties: false,

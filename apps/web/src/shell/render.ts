@@ -103,6 +103,13 @@ export interface AppShellOptions {
   readonly tabs?: readonly ShellTab[]
   readonly signInProviders?: readonly SignInProvider[]
   /**
+   * Whether the email-and-password form is offered (issue 761). Default true,
+   * because that is how every deployment behaved before the setting existed.
+   * The routes refuse independently; this only stops the page offering a way in
+   * that would be turned away.
+   */
+  readonly passwordSignIn?: boolean
+  /**
    * Sign-in credentials printed on the page. Only a demo deployment ever
    * supplies them, and only a deployment whose database is rebuilt nightly has
    * any business doing so.
@@ -328,7 +335,10 @@ const hrefFor = (section: (typeof sections)[number] | (typeof foldedSections)[nu
           ? '/invoices'
           : `/${section.toLocaleLowerCase('en-US')}`
 
-const providerSignIn = (providers: readonly SignInProvider[]): string => {
+const providerSignIn = (
+  providers: readonly SignInProvider[],
+  passwordSignIn: boolean,
+): string => {
   const links: string[] = []
   if (providers.includes('google')) {
     links.push(
@@ -344,10 +354,25 @@ const providerSignIn = (providers: readonly SignInProvider[]): string => {
   return (
     `<div class="oidc-entry" data-oidc-entry>` +
     links.join('') +
-    `<span class="auth-divider" aria-hidden="true">or use your password</span>` +
+    // The divider introduces the password form. With no form under it, it
+    // would announce a choice the page is not offering.
+    (passwordSignIn
+      ? `<span class="auth-divider" aria-hidden="true">or use your password</span>`
+      : '') +
     `</div>`
   )
 }
+
+/**
+ * What the card says when the operator has switched every way in off and the
+ * deployment configured none. Better than a blank card: somebody has to be
+ * told to go and fix the setting, and the sign-in page is where they are.
+ */
+const noSignInMethod = (brand: string): string =>
+  renderEmptyState(
+    'Sign-in is unavailable',
+    `No sign-in method is switched on for this ${escapeHtml(brand)} instance. An administrator has to enable one before anybody can sign in.`,
+  )
 
 /**
  * The credentials panel a demo deployment publishes on its own front page.
@@ -406,6 +431,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const view = options.view ?? 'time'
   const b = resolveDeploymentBrand(options.brand)
   const brand = b.name
+  const passwordSignIn = options.passwordSignIn ?? true
   const resumeSession = options.sessionCookiePresent === true
   const shortRelease = options.release.slice(0, 7)
   const navLink = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
@@ -451,16 +477,19 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
             <h2 id="sign-in-title">Sign in to ${escapeHtml(brand)}</h2>
             <p>Use your account to continue to your workspace.</p>
           </div>
-          ${providerSignIn(options.signInProviders ?? [])}
-          <label for="ez-sign-in-email">Email
-            <input id="ez-sign-in-email" name="email" type="email" inputmode="email" autocomplete="username" required>
-          </label>
-          <label for="ez-sign-in-password">Password
-            <input id="ez-sign-in-password" name="password" type="password" autocomplete="current-password" required>
-          </label>
-          <button class="primary-action" type="submit" data-sign-in-submit>Sign in</button>
-          <p class="auth-result" data-sign-in-result role="status" aria-live="polite"></p>
-          ${demoCredentials(options.demoAccounts ?? [])}
+          ${providerSignIn(options.signInProviders ?? [], passwordSignIn)}
+          <div class="password-entry" data-password-entry${passwordSignIn ? '' : ' hidden'}>
+            <label for="ez-sign-in-email">Email
+              <input id="ez-sign-in-email" name="email" type="email" inputmode="email" autocomplete="username" required>
+            </label>
+            <label for="ez-sign-in-password">Password
+              <input id="ez-sign-in-password" name="password" type="password" autocomplete="current-password" required>
+            </label>
+            <button class="primary-action" type="submit" data-sign-in-submit>Sign in</button>
+            <p class="auth-result" data-sign-in-result role="status" aria-live="polite"></p>
+            ${demoCredentials(options.demoAccounts ?? [])}
+          </div>
+          ${passwordSignIn || (options.signInProviders ?? []).length > 0 ? '' : noSignInMethod(brand)}
         </form>
         <form class="sign-in-form" data-two-factor-form method="post" action="/auth/two-factor/challenge" hidden>
           <div class="auth-heading">

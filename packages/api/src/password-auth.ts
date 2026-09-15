@@ -11,6 +11,10 @@ import {
   issueSessionOrChallenge,
   type TwoFactorGate,
 } from './two-factor-challenge.js'
+import {
+  signInMethodUnavailable,
+  type SignInMethodPolicy,
+} from './sign-in-methods.js'
 
 export type AuthTokenKind = 'verify_email' | 'password_reset'
 
@@ -77,6 +81,13 @@ export interface PasswordAuthRouteOptions {
    * no session until a code answers it.
    */
   twoFactor?: TwoFactorGate
+  /**
+   * Issue 761. When the operator has switched the password method off, the
+   * whole family goes with it -- signing in, signing up, and the reset legs
+   * that mint a password. Absent where no policy is composed, which leaves the
+   * routes mounted exactly as they always were.
+   */
+  policy?: SignInMethodPolicy
   /** Deployment-brand sender used for every authentication email. */
   deploymentMailer?: AuthMailer
   clientKey(request: Request): string
@@ -201,7 +212,17 @@ export const installPasswordAuthRoutes = <Bindings extends object>(
   app: Hono<ApiContext<Bindings>>,
   options: PasswordAuthRouteOptions,
 ): void => {
+  // Checked inside each handler rather than at mount, because the setting can
+  // change under a running instance and a route decided once at startup would
+  // keep answering for as long as the isolate lived. Hiding the form is not
+  // enough either way: a hidden form is still a mounted endpoint.
+  const assertLive = async (bindings: unknown): Promise<void> => {
+    if (options.policy === undefined) return
+    if (!(await options.policy.isLive('password', bindings))) signInMethodUnavailable()
+  }
+
   app.post('/auth/signup', async (context) => {
+    await assertLive(context.env)
     const body = await exactStringBody(context, [
       'organization_name',
       'first_name',
@@ -232,6 +253,7 @@ export const installPasswordAuthRoutes = <Bindings extends object>(
   })
 
   app.post('/auth/verify-email', async (context) => {
+    await assertLive(context.env)
     const body = await exactStringBody(context, ['token'])
     try {
       const verified = await options.service.verifyEmail(
@@ -249,6 +271,7 @@ export const installPasswordAuthRoutes = <Bindings extends object>(
   })
 
   app.post('/auth/sign-in', async (context) => {
+    await assertLive(context.env)
     const body = await exactStringBody(context, ['email', 'password'])
     try {
       const result = await options.service.signIn({
@@ -314,6 +337,7 @@ export const installPasswordAuthRoutes = <Bindings extends object>(
   })
 
   app.post('/auth/password/forgot', async (context) => {
+    await assertLive(context.env)
     const body = await exactStringBody(context, ['email'])
     try {
       const mailer = requireMailer(options.deploymentMailer)
@@ -334,6 +358,7 @@ export const installPasswordAuthRoutes = <Bindings extends object>(
   })
 
   app.post('/auth/password/reset', async (context) => {
+    await assertLive(context.env)
     const body = await exactStringBody(context, ['token', 'password'])
     try {
       const reset = await options.service.resetPassword(

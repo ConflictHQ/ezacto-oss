@@ -2674,6 +2674,17 @@ export type ModuleListEnvelope = {
   "links": Links;
 };
 
+export type SignInMethodState = {
+  "method": "password" | "magic_link" | "google" | "github";
+  "configured": boolean;
+  "enabled": boolean;
+};
+
+export type SignInMethodListEnvelope = {
+  "data": Array<SignInMethodState>;
+  "links": Links;
+};
+
 export type SsoDomain = {
   "id": number;
   "domain": string;
@@ -4968,6 +4979,25 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<ModuleListEnvelope>("PATCH", "/api/v1/admin/modules/:module".replace(":module", encodeURIComponent(String(args["module"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listSignInMethods(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<SignInMethodListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<SignInMethodListEnvelope>("GET", "/api/v1/admin/sign-in-methods", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateSignInMethod(args: { "method": string; body: ModulePatch; signal?: AbortSignal; headers?: HeadersInit }): Promise<SignInMethodListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<SignInMethodListEnvelope>("PATCH", "/api/v1/admin/sign-in-methods/:method".replace(":method", encodeURIComponent(String(args["method"]))), {
       body: args.body,
       signal: args.signal,
       headers,

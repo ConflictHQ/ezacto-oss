@@ -7,6 +7,10 @@ import {
 import * as oauth from 'oauth4webapi'
 import type { ApiContext } from './context.js'
 import { ApiError } from './errors.js'
+import {
+  signInMethodUnavailable,
+  type SignInMethodPolicy,
+} from './sign-in-methods.js'
 
 export const GITHUB_PROVIDER_KEY = 'github'
 export const GITHUB_AUTHORIZATION_ENDPOINT = 'https://github.com/login/oauth/authorize'
@@ -73,6 +77,8 @@ export interface GitHubRouteOptions<Bindings extends object> {
   provider(bindings: Bindings): GitHubProviderConfig | null
   clientKey(request: Request): string
   now?: () => string
+  /** Issue 761. Absent leaves the routes mounted exactly as they always were. */
+  policy?: SignInMethodPolicy
 }
 
 interface NormalizedConfig {
@@ -316,7 +322,13 @@ export const installGitHubRoutes = <Bindings extends object>(
 ): void => {
   const now = options.now ?? (() => new Date().toISOString())
 
+  const assertLive = async (bindings: unknown): Promise<void> => {
+    if (options.policy === undefined) return
+    if (!(await options.policy.isLive('github', bindings))) signInMethodUnavailable()
+  }
+
   app.get('/auth/github', async (context) => {
+    await assertLive(context.env)
     const configured = options.provider(context.env)
     if (configured === null) {
       throw githubError(404, 'github_provider_not_found', 'The GitHub identity provider is not configured.')
@@ -394,6 +406,7 @@ export const installGitHubRoutes = <Bindings extends object>(
   })
 
   app.get('/auth/github/callback', async (context) => {
+    await assertLive(context.env)
     context.header('set-cookie', clearStateCookie(), { append: true })
     const configured = options.provider(context.env)
     if (configured === null) {

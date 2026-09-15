@@ -107,6 +107,12 @@ export {
   type ModuleName,
   type ModuleState,
 } from './module-settings.js'
+export {
+  createSignInMethodRepository,
+  SIGN_IN_METHODS,
+  type SignInMethod,
+  type SignInMethodState,
+} from './sign-in-methods.js'
 export { createReportRepository, type ReportRepository } from './reports.js'
 export { createD1IdentityStore, type IdentityStore, type IdentityStoreOptions } from './identity.js'
 export {

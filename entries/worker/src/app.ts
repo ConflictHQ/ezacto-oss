@@ -28,6 +28,8 @@ import {
   installGeneralResourceRoutes,
   installMagicLinkRoutes,
   installModuleSettingsRoutes,
+  installSignInMethodRoutes,
+  createSignInMethodPolicy,
   installGitHubRoutes,
   installMoneyResourceRoutes,
   installOidcRoutes,
@@ -71,6 +73,8 @@ import {
   type ApiSessionService,
   type GeneralResourceRouteOptions,
   type ModuleSettingsService,
+  type SignInMethod,
+  type SignInMethodService,
   type EmailConfigurationRouteOptions,
   type MagicLinkRouteOptions,
   type ActivityRecorder,
@@ -251,6 +255,8 @@ export interface RuntimeServices {
   profile: ProfileRepositoryPort
   isExpensesModuleEnabled(): Promise<boolean>
   moduleSettings: ModuleSettingsService
+  /** Which ways in are switched on (issue 761). */
+  signInMethods: SignInMethodService
   /** The domains SSO may provision a user for, and their DNS challenges (#270). */
   ssoProvisioningDomains: SsoProvisioningDomainService
   /**
@@ -416,14 +422,37 @@ export const createApp = (
    * own `style-src`, so it links a stylesheet, and it only links one where
    * there is a palette to serve.
    */
+  /**
+   * Everything every shell page needs, resolved in one place -- including which
+   * ways in the sign-in card may offer (issue 761). Folding the sign-in surface
+   * in here rather than leaving each page to call `configuredSignInProviders`
+   * is what keeps twenty-six render sites from drifting apart on the question
+   * of whether a method is live.
+   */
   const shellChrome = async (env: AppEnv) => {
-    const [brand, themed] = await Promise.all([
+    const [brand, themed, enabled] = await Promise.all([
       shellBrand(env),
       instanceTheme === undefined
         ? Promise.resolve(null)
         : instanceTheme.read(env),
+      services === undefined
+        ? Promise.resolve(null)
+        : services.signInMethods.list(),
     ])
-    return { brand, instanceTheme: themed !== null }
+    const live = (method: SignInMethod): boolean =>
+      enabled === null ||
+      (enabled.find((state) => state.method === method)?.enabled ?? true)
+    return {
+      brand,
+      instanceTheme: themed !== null,
+      signInProviders: configuredSignInProviders(env).filter((provider) =>
+        live(provider),
+      ),
+      // The form is markup, and hiding markup is not a control -- the routes
+      // refuse independently. This only stops the page offering a way in that
+      // would be turned away.
+      passwordSignIn: live('password'),
+    }
   }
 
   return createApiApp<AppEnv>({
@@ -567,6 +596,11 @@ export const createApp = (
               service: services.moduleSettings,
               clock: () => systemClock.now().instant,
             })
+            installSignInMethodRoutes(api, {
+              service: services.signInMethods,
+              configured: (bindings) => deployedSignInMethods(bindings as WorkerEnv),
+              clock: () => systemClock.now().instant,
+            })
             // Mounted only where the entry composes a brand surface, the way
             // the attachment routes are mounted only where object storage is
             // bound: without one there is nowhere for a mark to go.
@@ -636,11 +670,19 @@ export const createApp = (
         installWiseWebhookRoute(app, services.wiseWebhook)
       }
       if (services !== undefined) {
+        // One policy object, consulted by every sign-in family. Composing it
+        // here rather than per route is what keeps "configured" and "enabled"
+        // from being combined four slightly different ways.
+        const signInPolicy = createSignInMethodPolicy({
+          service: services.signInMethods,
+          configured: (bindings) => deployedSignInMethods(bindings as WorkerEnv),
+        })
         installOidcRoutes(app, {
           transactions: services.oidcTransactions,
           identities: services.identities,
           sessions: services.sessions,
           provider: oidcProvider,
+          policy: signInPolicy,
           clientKey: (request) =>
             request.headers.get('cf-connecting-ip') ?? 'unknown-client',
           ...(services.oidcAppCodes === undefined
@@ -661,12 +703,14 @@ export const createApp = (
           identities: services.identities,
           sessions: services.sessions,
           provider: (env) => githubProvider(env),
+          policy: signInPolicy,
           clientKey: (request) =>
             request.headers.get('cf-connecting-ip') ?? 'unknown-client',
         })
         installPasswordAuthRoutes(app, {
           service: services.passwordAuth,
           sessions: services.sessions,
+          policy: signInPolicy,
           ...(services.twoFactor === undefined
             ? {}
             : { twoFactor: services.twoFactor }),
@@ -699,6 +743,7 @@ export const createApp = (
             magicLinks: services.staffMagicLinks.store,
             sessions: services.sessions,
             appCodes: services.oidcAppCodes,
+            policy: signInPolicy,
             ...(services.twoFactor === undefined
               ? {}
               : { twoFactor: services.twoFactor }),
@@ -892,7 +937,6 @@ export const createApp = (
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
             ...(await shellChrome(context.env)),
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -918,7 +962,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Home',
             view: 'dashboard',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -941,7 +984,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Invoices',
             view: 'invoice-generation',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -964,7 +1006,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Approvals',
             view: 'timesheet-approvals',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -988,7 +1029,6 @@ export const createApp = (
             activeSection: 'Invoices',
             view: 'invoice-list',
             tabs: invoiceTabs('invoice-list'),
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1017,7 +1057,6 @@ export const createApp = (
             activeSection: 'Invoices',
             view: 'invoice-recurring',
             tabs: invoiceTabs('invoice-recurring'),
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1041,7 +1080,6 @@ export const createApp = (
             activeSection: 'Invoices',
             view: 'invoice-retainers',
             tabs: invoiceTabs('invoice-retainers'),
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1068,7 +1106,6 @@ export const createApp = (
             activeSection: 'Invoices',
             view: 'invoice-estimates',
             tabs: invoiceTabs('invoice-estimates'),
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1098,7 +1135,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Clients',
             view: 'client-list',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1121,7 +1157,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Projects',
             view: 'project-list',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1144,7 +1179,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Team',
             view: 'team-list',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1167,7 +1201,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Tasks',
             view: 'task-list',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1191,7 +1224,6 @@ export const createApp = (
             activeSection: 'Reports',
             view: 'reports',
             tabs: reportKindTabs(context.req.query('report') ?? null),
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1214,7 +1246,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Expenses',
             view: 'expense-list',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1237,7 +1268,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Expenses',
             view: 'expense-categories',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1263,7 +1293,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Settings',
             view: 'settings-user',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1285,7 +1314,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Settings',
             view: 'settings-company',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1308,7 +1336,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Settings',
             view: 'settings-templates',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1331,7 +1358,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Settings',
             view: 'settings-roles',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1354,7 +1380,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Settings',
             view: 'settings-activity',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1389,7 +1414,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Expenses',
             view: 'expense-detail',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1420,7 +1444,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Projects',
             view: 'project-detail',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1451,7 +1474,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Team',
             view: 'team-person',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1482,7 +1504,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Clients',
             view: 'client-detail',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1513,7 +1534,6 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Invoices',
             view: 'invoice-detail',
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1545,7 +1565,6 @@ export const createApp = (
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
             ...(await shellChrome(context.env)),
-            signInProviders: configuredSignInProviders(context.env),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
             view: 'not-found',
@@ -1730,6 +1749,22 @@ export const configuredSignInProviders = (
     // Same fail-closed policy as Google above.
   }
   return providers
+}
+
+/**
+ * What this deployment has credentials for, which is the other half of whether
+ * a sign-in method may run (issue 761). Password needs nothing configured --
+ * it is native -- so it is always available and only the setting decides it.
+ */
+export const deployedSignInMethods = (
+  env: AppEnv & { MAGIC_LINK_SIGNING_KEY?: string },
+): readonly SignInMethod[] => {
+  const methods: SignInMethod[] = ['password']
+  if (env.MAGIC_LINK_SIGNING_KEY !== undefined && env.MAGIC_LINK_SIGNING_KEY !== '') {
+    methods.push('magic_link')
+  }
+  for (const provider of configuredSignInProviders(env)) methods.push(provider)
+  return methods
 }
 
 type BootstrapBody = Omit<InstanceBootstrapInput, 'token'>
