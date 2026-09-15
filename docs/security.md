@@ -173,6 +173,30 @@ session somebody revoked.
 
 - **Attachment bytes.** Both back up the attachment *metadata*; the files
   themselves stay in R2 and nothing copies them.
-- **A second home.** Both land in the same R2 bucket as the attachments, so a
-  bucket lost is both copies lost. The live database survives that, but a
-  genuine off-site copy would be somewhere else entirely.
+- **Attachment bytes**, still — see above. That gap is unchanged.
+
+### The off-site copy
+
+The SQL dump is also deposited in S3, in the operator's own AWS account, because
+a backup that shares a provider with the thing it backs up is one account
+suspension away from being no backup at all.
+
+CI reaches it through GitHub OIDC rather than a stored key, and the role is
+deliberately narrow in two ways:
+
+- **Trust** is scoped to `repo:<owner>/<repo>:environment:prod`, not to the
+  repository generally and not to a branch. Only a job that declares the prod
+  environment can assume it, so the environment's protection rules gate AWS
+  access too, and nothing from a fork can reach it.
+- **Permission** is `s3:PutObject` and nothing else. No read, no delete, no
+  list. CI can deposit a backup and can never retrieve or destroy one. The
+  bucket is versioned, so the worst a compromised run can do is add objects.
+
+The off-site leg runs whenever the dump itself succeeded, not only when the R2
+upload did. If R2 fails we are holding a good dump and an empty bucket, which is
+the moment the off-site copy is worth most.
+
+The bucket blocks public access and encrypts at rest, but the object itself is
+plaintext SQL: anyone with read access to that bucket can read the book.
+Encrypting before upload — to a key CI does not hold — would fix that, and is
+not yet done.

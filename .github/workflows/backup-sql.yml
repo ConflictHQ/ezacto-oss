@@ -30,6 +30,9 @@ on:
 
 permissions:
   contents: read
+  # The OIDC token the S3 deposit trades for a role. Nothing else needs it, and
+  # a workflow that can mint one for any purpose is a workflow worth scoping.
+  id-token: write
 
 # Never two dumps of one database at once, and a queued run waits rather than
 # cancelling: a half-finished upload that got cancelled is the one outcome worse
@@ -50,6 +53,9 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       D1_DATABASE_NAME: ${{ vars.PROD_D1_DATABASE_NAME }}
       R2_BUCKET: ${{ vars.PROD_R2_BUCKET }}
+      AWS_BACKUP_ROLE_ARN: ${{ vars.AWS_BACKUP_ROLE_ARN }}
+      AWS_BACKUP_BUCKET: ${{ vars.AWS_BACKUP_BUCKET }}
+      AWS_BACKUP_REGION: ${{ vars.AWS_BACKUP_REGION }}
     steps:
       - uses: actions/checkout@v4
 
@@ -101,6 +107,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: compress and checksum
+        id: compress
         run: |
           set -euo pipefail
           gzip -9 -c dump.sql > dump.sql.gz
@@ -140,6 +147,41 @@ jobs:
           npx --yes wrangler@4.131.1 r2 object put "${R2_BUCKET}/${prefix}/manifest.json" \
             --file manifest.json --content-type application/json --remote
           echo "::notice::wrote ${prefix}/dump.sql.gz (${compressed_bytes} bytes, ${tables} tables)"
+
+      # A copy outside Cloudflare, because a backup that shares a provider with
+      # the thing it backs up is one account suspension from being no backup at
+      # all.
+      #
+      # Conditioned on the dump existing rather than on the R2 upload having
+      # worked. If R2 fails we are holding a good dump and an empty bucket,
+      # which is the moment an off-site copy is worth most -- skipping it there
+      # would turn one failure into no backup at all.
+      - name: off-site — deposit a copy in S3
+        if: always() && steps.compress.outcome == 'success' && env.AWS_BACKUP_ROLE_ARN != '' && env.AWS_BACKUP_BUCKET != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_BACKUP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_BACKUP_REGION }}
+          role-session-name: ezacto-backup-${{ github.run_id }}
+
+      - name: off-site — upload
+        if: always() && steps.compress.outcome == 'success' && env.AWS_BACKUP_ROLE_ARN != '' && env.AWS_BACKUP_BUCKET != ''
+        run: |
+          set -euo pipefail
+          day=$(date -u +%Y-%m-%d)
+          # The role holds s3:PutObject and nothing else -- no read, no delete,
+          # no list. CI can deposit a backup and can never retrieve or destroy
+          # one, and the bucket is versioned, so the worst a compromised run can
+          # do is add objects nobody asked for.
+          aws s3 cp dump.sql.gz "s3://${AWS_BACKUP_BUCKET}/sql/${day}/dump.sql.gz"
+          # Written by the R2 step. If that died first the dump still goes; a
+          # copy without its manifest beats no copy.
+          if [ -f manifest.json ]; then
+            aws s3 cp manifest.json "s3://${AWS_BACKUP_BUCKET}/sql/${day}/manifest.json"
+          else
+            echo "::warning::manifest missing; deposited the dump alone"
+          fi
+          echo "::notice::off-site copy deposited under sql/${day}/"
 
       # The dump outlives the runner; nothing of it should.
       - name: shred the local copies
