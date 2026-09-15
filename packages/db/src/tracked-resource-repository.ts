@@ -331,6 +331,22 @@ const isRunning = (entry: TimeEntry): boolean =>
  * `instant` is untouched -- it is the moment, and the moment is not local to
  * anybody. Only the calendar fields move.
  */
+/**
+ * Whether a calendar can actually use this zone.
+ *
+ * The same test the profile route applies on write. It is applied on read as
+ * well because the rows that predate that route were imported from a system
+ * that stored display names, and those are still in the table.
+ */
+const usableTimezone = (zone: string): boolean => {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: zone }).format(new Date(0))
+    return true
+  } catch {
+    return false
+  }
+}
+
 const localBoundary = (
   boundary: TimeBoundary,
   timezone: string | null,
@@ -381,7 +397,19 @@ export class DrizzleTrackedResourceRepository {
       .from(users)
       .where(eq(users.id, userId))
       .limit(1)
-    if (user?.timezone && user.timezone !== 'UTC') return user.timezone
+    // A personal zone only wins if it is one a calendar can actually use.
+    //
+    // Imported people carry Harvest's display names -- "Central America",
+    // "Warsaw" -- which `Intl` refuses. Preferring them unconditionally threw
+    // downstream, and the catch there fell all the way back to UTC: so this
+    // discarded a working organisation zone and restored the very bug it was
+    // written to fix, for every imported person at once.
+    //
+    // The organisation zone is the right floor. It is the answer everyone had
+    // before personal zones existed, and it is set.
+    if (user?.timezone && user.timezone !== 'UTC' && usableTimezone(user.timezone)) {
+      return user.timezone
+    }
     return settings.timezone
   }
 

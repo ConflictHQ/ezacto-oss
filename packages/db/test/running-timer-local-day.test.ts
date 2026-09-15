@@ -135,6 +135,36 @@ describe('the day a running timer is filed on', () => {
     expect(entry.spentDate).toBe('2026-09-12')
   })
 
+  it('[money] a timezone a calendar cannot use defers to the organization, not to UTC', async () => {
+    // The regression this exists to stop. People imported from Harvest carry
+    // its display names -- "Central America", "Warsaw" -- which `Intl` refuses.
+    // Preferring one unconditionally threw downstream and the catch there fell
+    // all the way back to UTC, which discarded a working organization zone and
+    // restored the wrong-day bug for every imported person at once.
+    const tracked = await fixture('America/Costa_Rica', 'Central America')
+    const entry = await tracked.createTimeEntry(
+      1,
+      { projectId: 1, taskId: 1 },
+      utcBoundary(EVENING),
+    )
+    // The organization's day, which is the answer everybody had before
+    // personal timezones existed.
+    expect(entry.spentDate).toBe('2026-09-12')
+  })
+
+  it('[unit] an unusable organization timezone still files rather than refusing', async () => {
+    // A settings problem is not a reason to refuse a timer. With no usable zone
+    // anywhere the entry files on the UTC day, which is wrong but is what it
+    // was before any of this and is better than losing the session.
+    const tracked = await fixture('Central America', 'Warsaw')
+    const entry = await tracked.createTimeEntry(
+      1,
+      { projectId: 1, taskId: 1 },
+      utcBoundary(EVENING),
+    )
+    expect(entry.spentDate).toBe('2026-09-13')
+  })
+
   it('[money] rolls the other way east of UTC', async () => {
     // 22:40Z on the 12th is already the 13th in Tokyo, so the same bug files an
     // entry a day early rather than a day late.
