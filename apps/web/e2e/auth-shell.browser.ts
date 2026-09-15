@@ -629,6 +629,25 @@ test('[e2e:rate-change] adds a dated rate through the real worker and shows the 
       await expect(billable).toContainText('2026-08-30 – Ongoing')
       await expect(billable).toContainText('125.01/hour')
       await expectNoPageOverflow(page)
+
+      // #727. Adding a rate ends the one before it, so a misclick on the wrong
+      // section silently replaces a live rate with a different number. The
+      // remove control is offered only on the current rate -- a closed period
+      // is money somebody was charged under -- and taking it back has to put
+      // the displaced one back, or removing the mistake leaves the damage.
+      const removals = billable.getByRole('button', { name: 'Remove', exact: true })
+      await expect(removals).toHaveCount(1)
+      const removed = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname.startsWith('/api/v1/team/people/1/rates/') &&
+          response.request().method() === 'DELETE',
+      )
+      await removals.click()
+      expect((await removed).status()).toBe(200)
+
+      await expect(billable).toContainText('2026-08-01 – Ongoing')
+      await expect(billable).not.toContainText('125.01/hour')
+      await expectNoPageOverflow(page)
     } finally {
       expect((await fixture('team-rate-reset')).status()).toBe(204)
       expect((await fixture('team-rate-assert-clean')).status()).toBe(204)

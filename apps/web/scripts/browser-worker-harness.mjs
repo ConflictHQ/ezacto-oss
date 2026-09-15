@@ -172,20 +172,58 @@ const teamRateState = async () => ({
   ),
 })
 
-const rateDeleteTrigger = (table) => `CREATE TRIGGER ${table}_append_only_delete
-  BEFORE DELETE ON ${table}
-  BEGIN SELECT RAISE(ABORT, 'rates are append-only'); END`
+// Reinstated verbatim from 0076 after the fixture has cleared its rows. The
+// rules are narrower than the blanket refusal they replaced (#727), so a
+// harness that put the old one back would leave the database describing a
+// schema the migrations do not produce.
+const rateDeleteTriggers = (table) => [
+  `CREATE TRIGGER ${table}_delete_current_only BEFORE DELETE ON ${table}
+    WHEN OLD.end_date IS NOT NULL
+    BEGIN SELECT RAISE(ABORT, 'only the current rate may be removed'); END`,
+  `CREATE TRIGGER ${table}_delete_unpriced_only BEFORE DELETE ON ${table}
+    WHEN EXISTS (
+      SELECT 1 FROM time_entries entry
+      WHERE entry.user_id = OLD.user_id
+        AND entry.spent_date >= coalesce(OLD.start_date, '0000-01-01')
+        AND (
+          entry.created_at > OLD.created_at
+          OR EXISTS (
+            SELECT 1 FROM time_entry_rate_reprices reprice
+            WHERE reprice.time_entry_id = entry.id
+              AND reprice.repriced_at > OLD.created_at
+          )
+        )
+    )
+    BEGIN SELECT RAISE(ABORT, 'a rate that has priced work cannot be removed'); END`,
+  // The insert closed the rate before it, so a delete puts that one back. The
+  // fixture clears whole tables, so this fires with nothing left to reopen --
+  // correct either way, and dropped and restored with the rest so the schema it
+  // leaves behind is the schema the migrations describe.
+  `CREATE TRIGGER ${table}_reopen_previous AFTER DELETE ON ${table} BEGIN
+    UPDATE ${table} SET end_date = NULL
+    WHERE id = (
+      SELECT id FROM ${table} WHERE user_id = OLD.user_id
+      ORDER BY coalesce(start_date, '0000-01-01') DESC LIMIT 1
+    );
+  END`,
+]
 const receiptDeleteTrigger = `CREATE TRIGGER team_command_ledger_reject_delete
   BEFORE DELETE ON team_command_ledger
   BEGIN SELECT RAISE(ABORT, 'team command receipts are append-only'); END`
 
 const clearTeamRateRows = async () => {
   for (const table of ['user_billable_rates', 'user_cost_rates']) {
-    await run(`DROP TRIGGER ${table}_append_only_delete`)
+    for (const trigger of [
+      `${table}_delete_current_only`,
+      `${table}_delete_unpriced_only`,
+      `${table}_reopen_previous`,
+    ]) {
+      await run(`DROP TRIGGER ${trigger}`)
+    }
     try {
       await run(`DELETE FROM ${table} WHERE user_id = 1`)
     } finally {
-      await run(rateDeleteTrigger(table))
+      for (const statement of rateDeleteTriggers(table)) await run(statement)
     }
   }
   await run('DROP TRIGGER team_command_ledger_reject_delete')
