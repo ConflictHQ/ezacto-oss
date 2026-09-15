@@ -5,67 +5,69 @@
  */
 
 const SCHEMA_VERSION = 1
-const BUNDLE_VERSION = '0035'
+const BUNDLE_VERSION = '0036'
 
-const BACKUP_TABLES = [
-  'organizations',
-  'report_brands',
-  'saved_reports',
-  'saved_report_shares',
-  'saved_report_pins',
-  'report_time_commands',
-  'users',
-  'user_emails',
-  'user_roles',
-  'user_departments',
-  'departments',
-  'roles',
-  'clients',
-  'contacts',
-  'projects',
-  'project_tags',
-  'project_tag_assignments',
-  'project_milestones',
-  'tasks',
-  'task_assignments',
-  'user_assignments',
-  'teammate_assignments',
-  'user_billable_rates',
-  'user_cost_rates',
-  'time_entries',
-  'expenses',
-  'expense_categories',
-  'invoices',
-  'invoice_line_items',
-  'invoice_item_categories',
-  'invoice_messages',
-  'invoice_payments',
-  'revenue_fees',
-  'invoice_number_sequence',
-  'invoice_command_ledger',
-  'estimates',
-  'estimate_line_items',
-  'estimate_item_categories',
-  'estimate_messages',
-  'estimate_command_ledger',
-  'recurring_invoices',
-  'retainers',
-  'retainer_ledger',
-  'bank_deposits',
-  'payment_provider_accounts',
-  'attachments',
-  'file_objects',
-  'resource_create_commands',
-  'timesheet_submissions',
-  'timesheet_bulk_approval_commands',
-  'timesheet_bulk_approval_command_items',
-  'timesheet_lock_windows',
-  'email_log',
-  'event_outbox',
-  'backup_runs',
-  'sso_provisioning_domains',
-  'brand_assets',
-] as const
+/**
+ * Tables the bundle deliberately leaves out, and the only reason it leaves
+ * anything out.
+ *
+ * Everything else is discovered from the database itself. A hand-written list
+ * of tables to *include* is a list that silently falls behind the schema, and
+ * it did: the deployed export carried 51 tables, this file said 57, and the
+ * database had 127. Nobody noticed, because a backup that omits a table looks
+ * exactly like a backup that does not.
+ *
+ * So the question this constant answers is the narrow one -- what is worthless
+ * or harmful to restore -- and a new table is backed up by default. Getting
+ * that wrong costs a few kilobytes; getting the old question wrong cost six
+ * tables of real data, including the row naming the organization's owner.
+ */
+const EXCLUDED_TABLES: ReadonlySet<string> = new Set([
+  // Re-applied from source on first boot. Restoring it would tell a fresh
+  // database it had already run migrations it has not run.
+  '_ezacto_migrations',
+  // Live credentials, bound to a browser or a redirect that no longer exists.
+  // Restoring them signs nobody in; it only carries bearer material forward.
+  'sessions',
+  'contact_sessions',
+  'auth_tokens',
+  'auth_first_run',
+  'auth_rate_limits',
+  'magic_link_tokens',
+  'staff_magic_links',
+  'two_factor_challenges',
+  'oidc_app_codes',
+  'oidc_transactions',
+  'quickbooks_oauth_states',
+])
+
+/**
+ * Every table the database has, minus the exclusions, in a stable order.
+ *
+ * Sorted because the manifest is checksummed and compared between runs: a
+ * bundle whose table order drifted with SQLite's catalog would look changed
+ * when nothing had changed.
+ *
+ * The enrolment seeds, password hashes and API-token hashes are all in here.
+ * That is deliberate and it is the whole point of a restore: an instance whose
+ * people cannot sign in has not been restored. It does mean the bundle carries
+ * credential material and has to be handled exactly like the database it came
+ * from -- RESTORE.md says so.
+ */
+const backupTables = async (database: D1Database): Promise<readonly string[]> => {
+  const { results } = await database
+    .prepare(
+      `SELECT name FROM sqlite_master
+        WHERE type = 'table'
+          AND name NOT LIKE 'sqlite_%'
+          AND name NOT LIKE '_cf_%'
+        ORDER BY name`,
+    )
+    .all<{ name: string }>()
+  return results
+    .map((row) => row.name)
+    .filter((name) => !EXCLUDED_TABLES.has(name))
+}
 
 export interface BackupObjectStore {
   put(key: string, body: string): Promise<void>
@@ -120,6 +122,17 @@ This backup was produced by ezacto's nightly export (D18 L1). Each table is
 a CSV file with a header row. You can open these in any spreadsheet, import
 them into any database, or use the ezacto CLI to restore.
 
+## Handle this like the database itself
+
+The bundle carries everything a working instance needs, and that includes the
+credential material: password hashes, authenticator seeds, recovery-code hashes
+and API-token hashes. It has to — an instance whose people cannot sign in has
+not been restored — but it means these files are exactly as sensitive as the
+database they came from, and more portable. Store them accordingly.
+
+Live sessions, sign-in links and OAuth transactions are deliberately *not*
+here. They would sign nobody in and only carry bearer material forward.
+
 ## Files
 
 - \`tables/<name>.csv\` — one file per table, UTF-8, RFC 4180 CSV.
@@ -158,7 +171,8 @@ export const exportBundle = async (
   const tables: BackupManifest['tables'] = {}
   let totalRows = 0
 
-  for (const table of BACKUP_TABLES) {
+  const backedUp = await backupTables(database)
+  for (const table of backedUp) {
     const { results } = await database
       .prepare(`SELECT * FROM ${table}`)
       .all<Record<string, unknown>>()
@@ -181,7 +195,7 @@ export const exportBundle = async (
     bundle_version: BUNDLE_VERSION,
     exported_at: exportedAt,
     tables,
-    table_count: BACKUP_TABLES.length,
+    table_count: backedUp.length,
     total_rows: totalRows,
   }
 
@@ -281,4 +295,12 @@ export const shouldRunNightlyBackup = async (
   return results.length === 0
 }
 
-export { BACKUP_TABLES, SCHEMA_VERSION, BUNDLE_VERSION, escapeCsvField, toCsvRow, sha256Hex }
+export {
+  EXCLUDED_TABLES,
+  backupTables,
+  SCHEMA_VERSION,
+  BUNDLE_VERSION,
+  escapeCsvField,
+  toCsvRow,
+  sha256Hex,
+}
