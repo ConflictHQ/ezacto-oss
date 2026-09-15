@@ -246,6 +246,13 @@ interface RecurringInput {
    * setting existed.
    */
   claimScope: "billable" | "tracked";
+  /**
+   * The cost share this engagement is read against (#710), in basis points --
+   * 8000 is 80%. Null takes the organisation's default: deals differ, and a
+   * single global number would be either too loose to catch anything or tight
+   * enough to cry wolf.
+   */
+  costAlertBasisPoints: number | null;
   occurredAt: string;
 }
 
@@ -2952,6 +2959,13 @@ const claimValues = (
    * setting existed.
    */
   claimScope: "billable" | "tracked";
+  /**
+   * The cost share this engagement is read against (#710), in basis points --
+   * 8000 is 80%. Null takes the organisation's default: deals differ, and a
+   * single global number would be either too loose to catch anything or tight
+   * enough to cry wolf.
+   */
+  costAlertBasisPoints: number | null;
 } => {
   const rawMode = body["claim_mode"];
   const mode =
@@ -3021,11 +3035,25 @@ const claimValues = (
       message: "A claim scope must name the projects it claims from.",
     });
   }
+  const alert =
+    integerValue(body, "cost_alert_basis_points", errors, {
+      nullable: true,
+      minimum: 1,
+      maximum: 20_000,
+    }) ?? null;
+  if (alert !== null && body["claims_project_ids"] == null) {
+    errors.push({
+      field: "claims_project_ids",
+      code: "invalid",
+      message: "A cost alert must name the projects it claims from.",
+    });
+  }
   return {
     claimMode: mode ?? "all",
     claimCeilingSeconds: seconds,
     claimCeilingCents: cents,
     claimScope: scope ?? "billable",
+    costAlertBasisPoints: alert,
   };
 };
 
@@ -3047,6 +3075,7 @@ const parseRecurring = (
     "claim_ceiling_seconds",
     "claim_ceiling_cents",
     "claim_scope",
+    "cost_alert_basis_points",
   ]);
   const errors = unknownFieldErrors(body, allowed);
   const amountConfig = body.amount_config;
@@ -3102,6 +3131,7 @@ const parseRecurring = (
     claimCeilingSeconds: value.claimCeilingSeconds,
     claimCeilingCents: value.claimCeilingCents,
     claimScope: value.claimScope,
+    costAlertBasisPoints: value.costAlertBasisPoints,
     occurredAt: value.occurredAt,
   };
 };

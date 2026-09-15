@@ -387,6 +387,13 @@ export interface RecurringInvoiceResource {
    * setting existed, and is the default for that reason.
    */
   claim_scope: 'billable' | 'tracked'
+  /**
+   * The cost share this engagement is read against (#710), in basis points.
+   * Null takes the organisation's default -- deals differ, and a single global
+   * number would be either too loose to catch anything or tight enough to cry
+   * wolf.
+   */
+  cost_alert_basis_points: number | null
   created_at: string
   updated_at: string
 }
@@ -410,6 +417,7 @@ export interface RecurringInvoiceInput {
   claimCeilingSeconds?: number | null
   claimCeilingCents?: number | null
   claimScope?: 'billable' | 'tracked'
+  costAlertBasisPoints?: number | null
   occurredAt: string
 }
 
@@ -985,7 +993,7 @@ export type CompleteRecurringOutcome =
 const recurringSelect = `SELECT id, client_id, subject_template, notes_template,
   every_n_months, day_of_month, next_issue_on, amount_config,
   can_draw_from_retainer_id, claims_project_ids, claim_mode, claim_ceiling_seconds,
-  claim_ceiling_cents, claim_scope,
+  claim_ceiling_cents, claim_scope, cost_alert_basis_points,
   created_at, updated_at
   FROM recurring_invoices
   WHERE definition_status = 'complete'`
@@ -2095,6 +2103,7 @@ export class MoneyResourceRepository {
         claim_ceiling_seconds: input.claimCeilingSeconds ?? null,
         claim_ceiling_cents: input.claimCeilingCents ?? null,
         claim_scope: input.claimScope ?? 'billable',
+        cost_alert_basis_points: input.costAlertBasisPoints ?? null,
       },
     })
     const expected = {
@@ -2119,6 +2128,7 @@ export class MoneyResourceRepository {
       claim_ceiling_seconds: input.claimCeilingSeconds ?? null,
       claim_ceiling_cents: input.claimCeilingCents ?? null,
       claim_scope: input.claimScope ?? 'billable',
+      cost_alert_basis_points: input.costAlertBasisPoints ?? null,
       created_at: input.occurredAt,
       updated_at: input.occurredAt,
     }
@@ -2130,8 +2140,8 @@ export class MoneyResourceRepository {
             every_n_months, day_of_month, next_issue_on, amount_config,
             can_draw_from_retainer_id, claims_project_ids,
             claim_mode, claim_ceiling_seconds, claim_ceiling_cents, claim_scope,
-            created_at, updated_at
-          ) VALUES (?, ?, 'complete', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            cost_alert_basis_points, created_at, updated_at
+          ) VALUES (?, ?, 'complete', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           params: [
             input.resourceId,
             input.clientId,
@@ -2147,6 +2157,7 @@ export class MoneyResourceRepository {
             input.claimCeilingSeconds ?? null,
             input.claimCeilingCents ?? null,
             input.claimScope ?? 'billable',
+            input.costAlertBasisPoints ?? null,
             input.occurredAt,
             input.occurredAt,
           ],
@@ -2199,7 +2210,7 @@ export class MoneyResourceRepository {
         notes_template = ?, every_n_months = ?, day_of_month = ?, next_issue_on = ?,
         amount_config = ?, can_draw_from_retainer_id = ?, claims_project_ids = ?,
         claim_mode = ?, claim_ceiling_seconds = ?, claim_ceiling_cents = ?,
-        claim_scope = ?, updated_at = ?
+        claim_scope = ?, cost_alert_basis_points = ?, updated_at = ?
         WHERE id = ? AND definition_status = 'complete'`,
       params: [
         input.clientId,
@@ -2215,6 +2226,7 @@ export class MoneyResourceRepository {
         input.claimCeilingSeconds ?? null,
         input.claimCeilingCents ?? null,
         input.claimScope ?? 'billable',
+        input.costAlertBasisPoints ?? null,
         input.occurredAt,
         id,
       ],
@@ -2335,7 +2347,7 @@ export class MoneyResourceRepository {
           notes_template = ?, every_n_months = ?, day_of_month = ?, next_issue_on = ?,
           amount_config = ?, can_draw_from_retainer_id = ?, claims_project_ids = ?,
           claim_mode = ?, claim_ceiling_seconds = ?, claim_ceiling_cents = ?,
-          claim_scope = ?, updated_at = ?, definition_status = 'complete'
+          claim_scope = ?, cost_alert_basis_points = ?, updated_at = ?, definition_status = 'complete'
           WHERE id = ? AND definition_status = 'incomplete'`,
         params: [
           input.clientId,
@@ -2351,6 +2363,7 @@ export class MoneyResourceRepository {
           input.claimCeilingSeconds ?? null,
           input.claimCeilingCents ?? null,
           input.claimScope ?? 'billable',
+          input.costAlertBasisPoints ?? null,
           input.occurredAt,
           id,
         ],
@@ -2398,6 +2411,15 @@ export class MoneyResourceRepository {
     }
     if ((input.claimScope ?? 'billable') !== 'billable' && input.claimsProjectIds === null) {
       throw new TypeError('a claim scope must name the projects it claims from')
+    }
+    const alert = input.costAlertBasisPoints
+    if (alert !== undefined && alert !== null) {
+      if (!Number.isInteger(alert) || alert < 1 || alert > 20_000) {
+        throw new TypeError('costAlertBasisPoints must be a whole number of basis points from 1 to 20000')
+      }
+      if (input.claimsProjectIds === null) {
+        throw new TypeError('a cost alert must name the projects it claims from')
+      }
     }
     if (input.subjectTemplate.trim().length === 0) {
       throw new TypeError('subjectTemplate must be non-empty')

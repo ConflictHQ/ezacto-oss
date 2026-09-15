@@ -1,5 +1,5 @@
 import { canViewMoneyField } from "@ezacto/core";
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import { requireApiScope } from "./auth.js";
 import type { ApiContext, UserPrincipal } from "./context.js";
 import { ApiError, type FieldError } from "./errors.js";
@@ -157,6 +157,17 @@ export interface BandedMonthRowRecord {
   claimedInOtherCurrency: number;
   billedCents: number | null;
   foregoneCents: number | null;
+  /**
+   * What the period cost to deliver as a share of what it charged, in basis
+   * points (#710). Null wherever either side is missing, never a smaller
+   * number: an entry with no cost rate contributes nothing to the numerator, so
+   * counting it as free would make the deal look healthier exactly where the
+   * data is least trustworthy.
+   */
+  costRatioBasisPoints: number | null;
+  costAlertBasisPoints: number;
+  /** A state, not a colour, so a caller that is not a screen can act on it. */
+  costRatioState: "within" | "over" | "unpriced" | "unbilled";
 }
 
 export interface BandedMonthReportRecord {
@@ -480,6 +491,9 @@ export interface ReportReader {
   }): Promise<DetailedExpenseReportRecord>;
   profitability(range: Readonly<ReportDateRange>): Promise<ProfitabilityReportRecord>;
   bandedMonths(range: Readonly<ReportDateRange>): Promise<BandedMonthReportRecord>;
+  /** The organisation's cost-share threshold, in basis points (#710). */
+  readBandCostAlert(): Promise<number>;
+  setBandCostAlert(basisPoints: number): Promise<void>;
   monthEndManifest(input: {
     periodStart: string;
     periodEnd: string;
@@ -824,6 +838,9 @@ const serializeBandedMonths = (report: Readonly<BandedMonthReportRecord>) => ({
     claimed_in_other_currency: row.claimedInOtherCurrency,
     billed_cents: row.billedCents,
     foregone_cents: row.foregoneCents,
+    cost_ratio_basis_points: row.costRatioBasisPoints,
+    cost_alert_basis_points: row.costAlertBasisPoints,
+    cost_ratio_state: row.costRatioState,
   })),
 });
 
@@ -1412,6 +1429,63 @@ export const installReportRoutes = <Bindings extends object>(
             new URL(context.req.url).pathname + new URL(context.req.url).search,
         },
       },
+      200,
+      { "cache-control": "no-store" },
+    );
+  });
+
+  /**
+   * The line every band's cost is read against (#710).
+   *
+   * Beside the report rather than in a settings module of its own: it is one
+   * number, it exists only because this report compares against it, and the
+   * caller who may read the ratio is the caller who needs to set the line. Same
+   * cost authority as the report for the same reason -- a threshold on a figure
+   * you may not see tells you about the figure.
+   */
+  const assertCostReader = (context: Context<ApiContext<Bindings>>): void => {
+    requireApiScope(context, "reports:read");
+    if (!canViewMoneyField(context.get("principal"), "cost_rate")) {
+      throw new ApiError({
+        status: 403,
+        code: "profile_forbidden",
+        message: "The acting user profile cannot perform this operation.",
+      });
+    }
+  };
+
+  api.get("/reports/band-cost-alert", async (context) => {
+    assertCostReader(context);
+    return context.json(
+      { data: { basis_points: await reports.readBandCostAlert() } },
+      200,
+      { "cache-control": "no-store" },
+    );
+  });
+
+  api.post("/reports/band-cost-alert", async (context) => {
+    assertCostReader(context);
+    const body = (await context.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const basisPoints = body["basis_points"];
+    const errors: FieldError[] = [];
+    // Basis points, not a percentage: this is compared against a ratio of two
+    // money amounts, and a float threshold invites a comparison that answers
+    // differently depending on which side rounded.
+    if (
+      !Number.isSafeInteger(basisPoints) ||
+      (basisPoints as number) < 1 ||
+      (basisPoints as number) > 20_000
+    ) {
+      errors.push({
+        field: "basis_points",
+        code: "invalid_integer",
+        message: "basis_points must be a whole number from 1 to 20000.",
+      });
+    }
+    assertFields(errors);
+    await reports.setBandCostAlert(basisPoints as number);
+    return context.json(
+      { data: { basis_points: await reports.readBandCostAlert() } },
       200,
       { "cache-control": "no-store" },
     );

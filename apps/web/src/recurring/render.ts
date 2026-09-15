@@ -137,6 +137,8 @@ export const renderRecurringPage = (view?: string): string => `
             <option value="billable">Billable hours only</option>
             <option value="tracked">Every hour tracked on those projects</option>
           </select><span class="hint">Under a flat amount the client bought the period. Count every tracked hour if internal work is logged against the client's project, or the band reads as cheaper to deliver than it was.</span></label>
+          <label>Warn above<span class="hint">Optional. Cost as a share of what the band charges, in per cent. Blank uses the organisation default.</span><input data-recurring-editor-cost-alert inputmode="decimal" autocomplete="off" placeholder="80"></label>
+          <p class="hint">A period containing an hour with no cost rate reports no ratio at all rather than a lower one — an unpriced hour is not a free one, and a band that looked healthy because of missing data is the failure this guards against.</p>
           <label>Claims<select data-recurring-editor-claim-mode>
             <option value="all">Every uninvoiced hour on those projects</option>
             <option value="ceiling">Up to a limit, then bill the rest as usual</option>

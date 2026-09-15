@@ -1804,6 +1804,7 @@ export type RecurringInvoice = {
   "claim_ceiling_seconds": number | null;
   "claim_ceiling_cents": number | null;
   "claim_scope": "billable" | "tracked";
+  "cost_alert_basis_points": number | null;
   "created_at": string;
   "updated_at": string;
 };
@@ -1848,6 +1849,7 @@ export type RecurringInvoiceInput = {
   "claim_ceiling_seconds"?: number | null;
   "claim_ceiling_cents"?: number | null;
   "claim_scope"?: "billable" | "tracked";
+  "cost_alert_basis_points"?: number | null;
 };
 
 export type MyHoursProject = {
@@ -2159,6 +2161,9 @@ export type BandedMonthRow = {
   "claimed_in_other_currency": number;
   "billed_cents": number | null;
   "foregone_cents": number | null;
+  "cost_ratio_basis_points": number | null;
+  "cost_alert_basis_points": number;
+  "cost_ratio_state": "within" | "over" | "unpriced" | "unbilled";
 };
 
 export type BandedMonthReport = {
@@ -2170,6 +2175,18 @@ export type BandedMonthReport = {
 export type BandedMonthReportEnvelope = {
   "data": BandedMonthReport;
   "links": Links;
+};
+
+export type BandCostAlert = {
+  "basis_points": number;
+};
+
+export type BandCostAlertEnvelope = {
+  "data": BandCostAlert;
+};
+
+export type BandCostAlertInput = {
+  "basis_points": number;
 };
 
 export type ProfitabilityRow = {
@@ -4287,6 +4304,25 @@ export class EzactoClient {
 
     return this.request<BandedMonthReportEnvelope>("GET", "/api/v1/reports/banded-months", {
       query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getBandCostAlert(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<BandCostAlertEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BandCostAlertEnvelope>("GET", "/api/v1/reports/band-cost-alert", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setBandCostAlert(args: { body: BandCostAlertInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<BandCostAlertEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BandCostAlertEnvelope>("POST", "/api/v1/reports/band-cost-alert", {
+      body: args.body,
       signal: args.signal,
       headers,
     });

@@ -559,6 +559,25 @@ export interface BandedMonthRow {
    */
   billedCents: number | null
   foregoneCents: number | null
+  /**
+   * What the period cost to deliver as a share of what it charged, in basis
+   * points (#710). 8000 is 80%.
+   *
+   * Null wherever either side is missing, never a smaller number: an entry with
+   * no cost rate contributes nothing to the numerator, so counting it as free
+   * would make the deal look *healthier* exactly where the data is least
+   * trustworthy. `costRatioState` says which side was missing, and the two
+   * `entriesWithout...` counts say how much.
+   */
+  costRatioBasisPoints: number | null
+  /** The threshold that applied, from the definition or the organisation. */
+  costAlertBasisPoints: number
+  /**
+   * A state, not a colour: a caller that is not a screen has to be able to act
+   * on it. `unpriced` and `unbilled` are the two different reasons there is no
+   * ratio, and neither of them is "fine".
+   */
+  costRatioState: 'within' | 'over' | 'unpriced' | 'unbilled'
 }
 
 export interface BandedMonthReportRecord {
@@ -581,6 +600,16 @@ interface BandedMonthQueryRow {
 }
 
 export interface ReportRepository {
+  /**
+   * The organisation's cost-share threshold, in basis points (#710).
+   *
+   * The writer sits beside the readers that use it rather than in a settings
+   * module of its own: it is one number, it exists only because the banded
+   * report compares against it, and a caller that can read the ratio is the
+   * caller that needs to set the line it is read against.
+   */
+  readBandCostAlert(): Promise<number>
+  setBandCostAlert(basisPoints: number): Promise<void>
   contractorCost(range: Readonly<ReportDateRange>): Promise<ContractorCostReportRecord>
   bandedMonths(range: Readonly<ReportDateRange>): Promise<BandedMonthReportRecord>
   /**
@@ -2649,6 +2678,13 @@ export interface ClaimCycle {
   dayOfMonth: number
   everyNMonths: number
   /**
+   * The cost share this engagement is read against (#710), where it sets its
+   * own. Deals differ -- a band that is mostly senior time runs at a different
+   * ratio from one that is mostly delivery -- so a single global number would
+   * be either too loose to catch anything or tight enough to cry wolf.
+   */
+  costAlertBasisPoints: number | null
+  /**
    * A month the definition genuinely issues in, as a month index.
    *
    * Carried because a cycle longer than a month has a *phase* as well as a
@@ -2682,9 +2718,11 @@ const readClaimCycles = async (database: Database): Promise<Map<number, ClaimCyc
     everyNMonths: number
     nextIssueOn: string
     claimsProjectIds: string
+    costAlertBasisPoints: number | null
   }>(sql`
     SELECT id, day_of_month AS "dayOfMonth", every_n_months AS "everyNMonths",
-      next_issue_on AS "nextIssueOn", claims_project_ids AS "claimsProjectIds"
+      next_issue_on AS "nextIssueOn", claims_project_ids AS "claimsProjectIds",
+      cost_alert_basis_points AS "costAlertBasisPoints"
     FROM recurring_invoices
     WHERE definition_status = 'complete' AND claims_project_ids IS NOT NULL
     ORDER BY id
@@ -2708,6 +2746,7 @@ const readClaimCycles = async (database: Database): Promise<Map<number, ClaimCyc
           dayOfMonth: definition.dayOfMonth,
           everyNMonths: definition.everyNMonths,
           anchorMonthIndex: monthIndex(definition.nextIssueOn),
+          costAlertBasisPoints: definition.costAlertBasisPoints,
         })
       }
     }
@@ -2770,17 +2809,58 @@ const monthIndex = (date: string): number =>
 const nextDay = (date: string): string =>
   new Date(Date.parse(`${date}T00:00:00.000Z`) + 86_400_000).toISOString().slice(0, 10)
 
+/**
+ * What a period cost to deliver as a share of what it charged (#710).
+ *
+ * The part that must not be got wrong: a missing cost rate is not zero cost. An
+ * entry with no rate contributes nothing to the numerator, so a ratio computed
+ * over incomplete cost comes out *lower* -- the deal looks healthier than it is,
+ * in exactly the case where the data is least trustworthy. A ratio over
+ * incomplete cost is therefore no ratio at all, and the state says which side
+ * was missing rather than leaving a number with a footnote.
+ *
+ * A period nothing has billed is the other missing side, and a different
+ * answer: there is no denominator yet, which is not the same as being fine.
+ */
+const costRatio = (
+  costValueCents: number | null,
+  billedCents: number | null,
+  alertBasisPoints: number,
+): Pick<BandedMonthRow, 'costRatioBasisPoints' | 'costRatioState'> => {
+  if (costValueCents === null) {
+    return { costRatioBasisPoints: null, costRatioState: 'unpriced' }
+  }
+  // Zero is a real amount charged and dividing by it has no answer, so it reads
+  // as unbilled rather than as an infinite ratio.
+  if (billedCents === null || billedCents === 0) {
+    return { costRatioBasisPoints: null, costRatioState: 'unbilled' }
+  }
+  const basisPoints = Math.round((costValueCents * 10_000) / billedCents)
+  return {
+    costRatioBasisPoints: basisPoints,
+    // At the threshold is over it: a band sitting exactly on the number
+    // somebody set as the limit is the one they asked to be told about.
+    costRatioState: basisPoints >= alertBasisPoints ? 'over' : 'within',
+  }
+}
+
 const bandedMonthReport = async (
   database: Database,
   range: Readonly<ReportDateRange>,
 ): Promise<BandedMonthReportRecord> => {
-  const organization = await database.all<{ currency: string }>(
-    sql`SELECT upper(currency) AS "currency" FROM organizations WHERE id = 1`,
+  const organization = await database.all<{
+    currency: string
+    bandCostAlertBasisPoints: number
+  }>(
+    sql`SELECT upper(currency) AS "currency",
+      band_cost_alert_basis_points AS "bandCostAlertBasisPoints"
+      FROM organizations WHERE id = 1`,
   )
   const organizationCurrency = organization[0]?.currency
   if (organizationCurrency === undefined) {
     throw new Error('organization must exist before reports are read')
   }
+  const organizationAlertBasisPoints = organization[0]!.bandCostAlertBasisPoints
 
   // The project's currency, not the organization's. Every other report in this
   // file resolves it this way, and this one did not: it labelled every row with
@@ -2850,6 +2930,12 @@ const bandedMonthReport = async (
         billedCents: null,
         foregoneCents: null,
         claimedInOtherCurrency: 0,
+        // Filled once the row's totals are known; the threshold is resolved
+        // here because it belongs to the engagement, not to the entry.
+        costRatioBasisPoints: null,
+        costAlertBasisPoints:
+          cycles.get(row.projectId)?.costAlertBasisPoints ?? organizationAlertBasisPoints,
+        costRatioState: 'unbilled',
         claimed: new Set<number>(),
       }
       grouped.set(key, bucket)
@@ -2885,25 +2971,47 @@ const bandedMonthReport = async (
       // report was quietly breaking. Excluded ones are counted rather than
       // dropped, so a total that looks low says why.
       const totals = claimedInvoices.filter((invoice) => invoice.currency === bucket.currency)
+      // Null rather than zero when nothing has claimed the period: an unbilled
+      // period is not a band priced at nothing.
+      const billedCents =
+        totals.length === 0
+          ? null
+          : totals.reduce((sum, invoice) => sum + invoice.amountCents, 0)
       return {
         ...bucket,
         claimedInOtherCurrency: claimedInvoices.length - totals.length,
-        // Null rather than zero when nothing has claimed the month: an unbilled
-        // month is not a band priced at nothing.
-        billedCents:
-          totals.length === 0
-            ? null
-            : totals.reduce((sum, invoice) => sum + invoice.amountCents, 0),
+        billedCents,
         foregoneCents:
           totals.length === 0
             ? null
             : totals.reduce((sum, invoice) => sum + invoice.foregoneCents, 0),
+        ...costRatio(bucket.costValueCents, billedCents, bucket.costAlertBasisPoints),
       }
     }),
   }
 }
 
 export const createReportRepository = (database: Database): ReportRepository => ({
+  readBandCostAlert: async () => {
+    const rows = await database.all<{ basisPoints: number }>(
+      sql`SELECT band_cost_alert_basis_points AS "basisPoints" FROM organizations WHERE id = 1`,
+    )
+    const basisPoints = rows[0]?.basisPoints
+    if (basisPoints === undefined) {
+      throw new Error('organization must exist before reports are read')
+    }
+    return basisPoints
+  },
+  setBandCostAlert: async (basisPoints) => {
+    // Checked here as well as by the column, so a caller hears which rule it
+    // broke rather than a constraint name.
+    if (!Number.isInteger(basisPoints) || basisPoints < 1 || basisPoints > 20_000) {
+      throw new TypeError('band cost alert must be from 1 to 20000 basis points')
+    }
+    await database.run(
+      sql`UPDATE organizations SET band_cost_alert_basis_points = ${basisPoints} WHERE id = 1`,
+    )
+  },
   contractorCost: (range) => contractorCostReport(database, range),
   bandedMonths: (range) => bandedMonthReport(database, range),
   monthEndManifest: (input) => monthEndManifest(database, input),

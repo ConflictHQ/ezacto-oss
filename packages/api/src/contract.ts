@@ -1731,6 +1731,30 @@ const reportOperations: ApiContractOperation[] = [
     parameters: [...requiredReportRange],
   },
   {
+    // The line every band's cost is read against (#710). Beside the report
+    // rather than in a settings module of its own: it is one number, it exists
+    // only because this report compares against it, and the caller who may read
+    // the ratio is the caller who needs to set the line.
+    method: "get",
+    path: "/api/v1/reports/band-cost-alert",
+    operationId: "getBandCostAlert",
+    summary: "Read the organisation cost-share threshold for banded work",
+    tag: "reports",
+    responseStatus: 200,
+    responseSchema: "BandCostAlertEnvelope",
+  },
+  {
+    method: "post",
+    path: "/api/v1/reports/band-cost-alert",
+    operationId: "setBandCostAlert",
+    summary: "Set the organisation cost-share threshold for banded work",
+    tag: "reports",
+    responseStatus: 200,
+    responseSchema: "BandCostAlertEnvelope",
+    requestSchema: "BandCostAlertInput",
+    requestRequired: true,
+  },
+  {
     method: "get",
     path: "/api/v1/reports/profitability",
     operationId: "getProfitabilityReport",
@@ -5736,6 +5760,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "claim_ceiling_seconds",
       "claim_ceiling_cents",
       "claim_scope",
+      "cost_alert_basis_points",
       "created_at",
       "updated_at",
     ],
@@ -5785,6 +5810,17 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
        * the setting existed.
        */
       claim_scope: { type: "string", enum: ["billable", "tracked"] },
+      /**
+       * The cost share this engagement is read against (#710), in basis points
+       * -- 8000 is 80%. Null takes the organisation's default: deals differ, so
+       * a single global number would be either too loose to catch anything or
+       * tight enough to cry wolf.
+       */
+      cost_alert_basis_points: nullable({
+        type: "integer",
+        minimum: 1,
+        maximum: 20000,
+      }),
       created_at: timestampSchema,
       updated_at: timestampSchema,
     },
@@ -5878,6 +5914,17 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
        * the setting existed.
        */
       claim_scope: { type: "string", enum: ["billable", "tracked"] },
+      /**
+       * The cost share this engagement is read against (#710), in basis points
+       * -- 8000 is 80%. Null takes the organisation's default: deals differ, so
+       * a single global number would be either too loose to catch anything or
+       * tight enough to cry wolf.
+       */
+      cost_alert_basis_points: nullable({
+        type: "integer",
+        minimum: 1,
+        maximum: 20000,
+      }),
     },
     additionalProperties: false,
   },
@@ -6429,6 +6476,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "claimed_in_other_currency",
       "billed_cents",
       "foregone_cents",
+      "cost_ratio_basis_points",
+      "cost_alert_basis_points",
+      "cost_ratio_state",
     ],
     properties: {
       // The billing cycle, not the calendar month (#709). Generation takes
@@ -6461,6 +6511,24 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // is not a band priced at zero.
       billed_cents: nullable(signedIntegerSchema),
       foregone_cents: nullable(signedIntegerSchema),
+      // What the period cost to deliver as a share of what it charged (#710).
+      // 8000 is 80%. Basis points rather than a percentage because this is
+      // compared against a ratio of two money amounts, and a float threshold
+      // invites a comparison that answers differently depending on which side
+      // rounded.
+      //
+      // Null wherever either side is missing, never a smaller number: an entry
+      // with no cost rate contributes nothing to the numerator, so counting it
+      // as free would make the deal look healthier exactly where the data is
+      // least trustworthy. `cost_ratio_state` says which side was missing.
+      cost_ratio_basis_points: nullable({ type: "integer", minimum: 0 }),
+      cost_alert_basis_points: { type: "integer", minimum: 1 },
+      // A state, not a colour: a caller that is not a screen has to be able to
+      // act on it, and neither `unpriced` nor `unbilled` means "fine".
+      cost_ratio_state: {
+        type: "string",
+        enum: ["within", "over", "unpriced", "unbilled"],
+      },
     },
     additionalProperties: false,
   },
@@ -6475,6 +6543,31 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   BandedMonthReportEnvelope: envelope("BandedMonthReport"),
+  // Basis points rather than a percentage, because this is compared against a
+  // ratio of two money amounts and a float threshold invites a comparison that
+  // answers differently depending on which side rounded. 8000 is 80%.
+  BandCostAlert: {
+    type: "object",
+    required: ["basis_points"],
+    properties: {
+      basis_points: { type: "integer", minimum: 1, maximum: 20000 },
+    },
+    additionalProperties: false,
+  },
+  BandCostAlertEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("BandCostAlert") },
+    additionalProperties: false,
+  },
+  BandCostAlertInput: {
+    type: "object",
+    required: ["basis_points"],
+    properties: {
+      basis_points: { type: "integer", minimum: 1, maximum: 20000 },
+    },
+    additionalProperties: false,
+  },
   ProfitabilityRow: {
     type: "object",
     required: [

@@ -422,3 +422,133 @@ describe('the cycle a banded period runs on', () => {
     expect(rows[0]!.foregoneCents).toBe(500_000)
   })
 })
+
+/**
+ * Issue 710. Under a fixed amount the question that decides whether a band is
+ * priced right is what it cost to deliver against what was charged. A band
+ * comfortably under is healthy, one approaching is a deal to renegotiate, and
+ * one over is being delivered at a loss nobody has noticed.
+ *
+ * The part that must not be got wrong is the missing cost rate. An entry with
+ * no rate contributes nothing to the numerator, so a ratio over incomplete cost
+ * comes out lower -- the deal looks healthier than it is, exactly where the data
+ * is least trustworthy.
+ */
+describe('reading a band against its cost threshold', () => {
+  const banded = (amountCents: number, issueDate = '2026-08-31') => {
+    sqlite!.exec(`
+      INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date, state,
+                            foregone_billable_cents, created_at, updated_at)
+        VALUES (920, 1, '920', 'USD', '${issueDate}', '2026-09-30', 'draft', 0, '${at}', '${at}');
+      INSERT INTO invoice_line_items (invoice_id, position, kind, description, quantity,
+                                      unit_price_cents, amount_cents, created_at, updated_at)
+        VALUES (920, 0, 'Service', 'Banded team', 1, ${amountCents}, ${amountCents},
+                '${at}', '${at}')`)
+  }
+
+  it('[money] states cost as a share of what the same period charged', async () => {
+    const reports = await fixture()
+    banded(1_000_000)
+    // 40 hours at $100 cost = $4,000 against $10,000 charged: 40%.
+    entry('2026-08-10', 144_000, 25_000, 10_000, 1, 920)
+    const [row] = (await reports.bandedMonths(august)).rows
+    expect(row).toMatchObject({
+      billedCents: 1_000_000,
+      costValueCents: 400_000,
+      costRatioBasisPoints: 4_000,
+      costAlertBasisPoints: 8_000,
+      costRatioState: 'within',
+    })
+  })
+
+  it('[money] answers no ratio at all when an entry could not be priced', async () => {
+    // Not a smaller ratio. Counting the unpriced hour as free would put this
+    // period at 40% and inside the threshold, which is the failure the whole
+    // issue is about.
+    const reports = await fixture()
+    banded(1_000_000)
+    entry('2026-08-10', 144_000, 25_000, 10_000, 1, 920)
+    entry('2026-08-11', 144_000, 25_000, null, 1, 920)
+    const [row] = (await reports.bandedMonths(august)).rows
+    expect(row).toMatchObject({
+      costValueCents: null,
+      costRatioBasisPoints: null,
+      costRatioState: 'unpriced',
+      // And says how much it could not price, rather than leaving a number
+      // with a footnote.
+      entriesWithoutCostRate: 1,
+    })
+  })
+
+  it('[money] calls a period over when it reaches the threshold, not only past it', async () => {
+    // A band sitting exactly on the number somebody set as the limit is the one
+    // they asked to be told about.
+    const reports = await fixture()
+    banded(1_000_000)
+    // 80 hours at $100 cost = $8,000 against $10,000: exactly 80%.
+    entry('2026-08-10', 288_000, 25_000, 10_000, 1, 920)
+    const [row] = (await reports.bandedMonths(august)).rows
+    expect(row).toMatchObject({ costRatioBasisPoints: 8_000, costRatioState: 'over' })
+  })
+
+  it('[unit] takes the threshold from the engagement, falling back to the organisation', async () => {
+    // Deals differ: a band that is mostly senior time runs at a different ratio
+    // from one that is mostly delivery, so one global number would either catch
+    // nothing or cry wolf.
+    const reports = await fixture()
+    banded(1_000_000)
+    entry('2026-08-10', 180_000, 25_000, 10_000, 1, 920)
+    expect((await reports.bandedMonths(august)).rows[0]).toMatchObject({
+      costRatioBasisPoints: 5_000,
+      costAlertBasisPoints: 8_000,
+      costRatioState: 'within',
+    })
+
+    sqlite!.exec(`UPDATE organizations SET band_cost_alert_basis_points = 6000 WHERE id = 1`)
+    expect((await reports.bandedMonths(august)).rows[0]).toMatchObject({
+      costAlertBasisPoints: 6_000,
+      costRatioState: 'within',
+    })
+
+    sqlite!.exec(`
+      INSERT INTO recurring_invoices
+        (id, client_id, definition_status, subject_template, notes_template,
+         every_n_months, day_of_month, next_issue_on, amount_config,
+         claims_project_ids, cost_alert_basis_points, created_at, updated_at)
+      VALUES (1, 1, 'complete', 'Banded team', '', 1, 1, '2026-10-01',
+        '${JSON.stringify({
+          schema_version: 1,
+          type: 'fixed_lines',
+          line_items: [
+            {
+              kind: 'Service',
+              description: 'Band',
+              quantity: 1,
+              unit_price_cents: 1_000_000,
+              taxed: false,
+              taxed2: false,
+              project_id: null,
+            },
+          ],
+        })}',
+        '[1]', 4000, '${at}', '${at}')`)
+    // The engagement's own threshold wins, and 50% is now over it.
+    expect((await reports.bandedMonths(august)).rows[0]).toMatchObject({
+      costAlertBasisPoints: 4_000,
+      costRatioState: 'over',
+    })
+  })
+
+  it('[money] separates a period nothing has billed from one that is fine', async () => {
+    // No denominator yet is not the same as healthy, and a caller that treated
+    // the two alike would report an unbilled month as a band in good shape.
+    const reports = await fixture()
+    entry('2026-08-10', 144_000, 25_000, 10_000)
+    const [row] = (await reports.bandedMonths(august)).rows
+    expect(row).toMatchObject({
+      billedCents: null,
+      costRatioBasisPoints: null,
+      costRatioState: 'unbilled',
+    })
+  })
+})

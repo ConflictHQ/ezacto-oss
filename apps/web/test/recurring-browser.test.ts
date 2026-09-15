@@ -47,6 +47,7 @@ const managed: RecurringInvoice = {
   claim_ceiling_seconds: null,
   claim_ceiling_cents: null,
   claim_scope: 'billable',
+  cost_alert_basis_points: null,
   created_at: timestamp,
   updated_at: timestamp,
 }
@@ -558,6 +559,7 @@ describe('Recurring workspace controller', () => {
         claim_ceiling_seconds: null,
         claim_ceiling_cents: null,
         claim_scope: 'billable',
+        cost_alert_basis_points: null,
       },
       expect.any(String),
       expect.any(AbortSignal),

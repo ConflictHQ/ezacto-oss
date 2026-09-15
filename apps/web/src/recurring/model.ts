@@ -408,6 +408,12 @@ export interface RecurringDefinitionFormValues {
    * counted against what the band paid for.
    */
   readonly claimScope: 'billable' | 'tracked'
+  /**
+   * The cost share this engagement is read against (#710), typed as a
+   * percentage because that is how the deal is discussed -- "we are fine under
+   * eighty". Empty takes the organisation's default.
+   */
+  readonly costAlertPercent: string
   readonly importTime: boolean
   readonly timeSummary: string
   readonly importExpenses: boolean
@@ -649,17 +655,23 @@ const claimCeilingBody = (
   claim_ceiling_seconds: number | null
   claim_ceiling_cents: number | null
   claim_scope: 'billable' | 'tracked'
+  cost_alert_basis_points: number | null
 } => {
   // A band that claims nothing carries none of these settings: the API refuses
   // them on a definition with no projects, and a stale value left in a hidden
   // box is not something the operator asked for.
   const scope = values.claimsProjectIds.length === 0 ? 'billable' : values.claimScope
+  const alert =
+    values.claimsProjectIds.length === 0 || values.costAlertPercent.trim() === ''
+      ? null
+      : costAlertBasisPoints(values.costAlertPercent)
   if (values.claimsProjectIds.length === 0 || values.claimMode === 'all') {
     return {
       claim_mode: 'all',
       claim_ceiling_seconds: null,
       claim_ceiling_cents: null,
       claim_scope: scope,
+      cost_alert_basis_points: alert,
     }
   }
   return values.claimCeilingUnit === 'money'
@@ -668,13 +680,43 @@ const claimCeilingBody = (
         claim_ceiling_seconds: null,
         claim_ceiling_cents: wholeNumberAbove(values.claimCeiling, 'Claims up to'),
         claim_scope: scope,
+        cost_alert_basis_points: alert,
       }
     : {
         claim_mode: 'ceiling',
         claim_ceiling_seconds: parseDurationSeconds(values.claimCeiling),
         claim_ceiling_cents: null,
         claim_scope: scope,
+        cost_alert_basis_points: alert,
       }
+}
+
+/**
+ * A percentage as somebody types it, into the basis points the API stores.
+ *
+ * Two decimal places and no more: 80.25% is 8025 basis points, and a third
+ * would be a figure the column cannot hold coming back as a different number
+ * than was typed.
+ */
+const costAlertBasisPoints = (raw: string): number => {
+  const value = Number(raw.trim().replace(/%$/u, ''))
+  if (!Number.isFinite(value)) {
+    throw new TypeError('Cost alert must be a percentage, like 80 or 77.5.')
+  }
+  const basisPoints = Math.round(value * 100)
+  if (basisPoints !== value * 100) {
+    throw new TypeError('Cost alert takes at most two decimal places.')
+  }
+  if (basisPoints < 1 || basisPoints > 20_000) {
+    throw new TypeError('Cost alert must be between 0.01% and 200%.')
+  }
+  return basisPoints
+}
+
+/** Basis points back into the percentage somebody typed. */
+export const recurringPercentInput = (basisPoints: number): string => {
+  const percent = basisPoints / 100
+  return Number.isInteger(percent) ? String(percent) : percent.toFixed(2)
 }
 
 /**
@@ -728,6 +770,7 @@ export const recurringBlankFormValues = (): RecurringDefinitionFormValues => ({
   claimCeilingUnit: 'time',
   claimCeiling: '',
   claimScope: 'billable',
+  costAlertPercent: '',
   importTime: true,
   timeSummary: 'project',
   importExpenses: false,
@@ -771,6 +814,10 @@ export const recurringFormValuesFromDefinition = (
           ? ''
           : recurringDurationInput(definition.claim_ceiling_seconds),
     claimScope: definition.claim_scope === 'tracked' ? ('tracked' as const) : ('billable' as const),
+    costAlertPercent:
+      definition.cost_alert_basis_points === null
+        ? ''
+        : recurringPercentInput(definition.cost_alert_basis_points),
   }
   if (config.type === 'fixed_lines') {
     return {
