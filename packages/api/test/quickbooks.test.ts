@@ -1,6 +1,11 @@
 import { Hono } from 'hono'
 import { describe, expect, it, vi } from 'vitest'
-import { installQuickBooksRoutes, type QuickBooksService } from '../src/quickbooks.js'
+import {
+  installQuickBooksRoutes,
+  installQuickBooksWebhookRoute,
+  type QuickBooksService,
+} from '../src/quickbooks.js'
+import { createApiApp } from '../src/index.js'
 import { ApiError, errorResponse } from '../src/errors.js'
 
 type Principal = { userId: number; profile: string } | null
@@ -50,6 +55,24 @@ const app = (quickBooks: QuickBooksService, principal: Principal = { userId: 1, 
   installQuickBooksRoutes(instance as never, quickBooks)
   return instance
 }
+
+/**
+ * The webhook on the surface it actually ships on: `createApiApp`, with the
+ * authentication middleware in front of /api/v1, and no session or bearer of
+ * any kind -- which is what Intuit sends.
+ *
+ * #739. The harness above mounts the router on a bare Hono with a principal
+ * already set, so it never reproduced the condition that broke this: under
+ * /api/v1 the middleware answered a bearer-less, same-origin-less POST with
+ * 403 before the HMAC verifier ran, and the shipped payment sync received
+ * nothing. A test that stands in for Intuit has to use the real app.
+ */
+const shippedApp = (quickBooks: QuickBooksService) =>
+  createApiApp({
+    installApp(app) {
+      installQuickBooksWebhookRoute(app, quickBooks)
+    },
+  })
 
 describe('the connect button', () => {
   it('[api] hands back an authorize URL carrying the state it just issued', async () => {
@@ -174,9 +197,38 @@ describe('the callback', () => {
   })
 })
 
+describe('the webhook on the shipped surface', () => {
+  const intuitDelivers = (quickBooks: QuickBooksService, path: string) =>
+    shippedApp(quickBooks).request(`http://localhost${path}`, {
+      method: 'POST',
+      body: '{"eventNotifications":[]}',
+      headers: { 'intuit-signature': 'a-signature' },
+    })
+
+  it('[security] reaches the signature check with no session and no origin', async () => {
+    const quickBooks = service()
+    const response = await intuitDelivers(quickBooks, '/webhooks/quickbooks')
+    expect(response.status).toBe(200)
+    expect(quickBooks.receiveWebhook).toHaveBeenCalledWith({
+      payload: '{"eventNotifications":[]}',
+      signature: 'a-signature',
+    })
+  })
+
+  it('[security] is not under /api/v1, where authentication refuses it first', async () => {
+    const quickBooks = service()
+    const response = await intuitDelivers(quickBooks, '/api/v1/integrations/quickbooks/webhook')
+    expect(response.status).not.toBe(200)
+    // The point is that the verifier is never consulted there.
+    expect(quickBooks.receiveWebhook).not.toHaveBeenCalled()
+  })
+})
+
 describe('the webhook endpoint', () => {
+  // Through the real app at the route it ships on, not a bare router: the
+  // whole of #739 was that the two disagreed.
   const deliver = (quickBooks: QuickBooksService, signature: string | null) =>
-    app(quickBooks, null).request('/integrations/quickbooks/webhook', {
+    shippedApp(quickBooks).request('http://localhost/webhooks/quickbooks', {
       method: 'POST',
       body: '{"eventNotifications":[]}',
       ...(signature === null ? {} : { headers: { 'intuit-signature': signature } }),

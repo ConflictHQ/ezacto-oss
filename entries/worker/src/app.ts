@@ -55,6 +55,7 @@ import {
   installStripeRoutes,
   installStripeWebhookRoute,
   installQuickBooksRoutes,
+  installQuickBooksWebhookRoute,
   installWiseRoutes,
   installWiseWebhookRoute,
   installTimesheetLockPolicyRoutes,
@@ -687,6 +688,13 @@ export const createApp = (
       // surface and the signature is the authorisation.
       if (services?.stripe !== undefined) {
         installStripeWebhookRoute(app, services.stripe)
+      }
+      // Intuit has no session with us either, and the signature is the
+      // authorisation. It lived under /api/v1 until #739, where the
+      // authentication middleware refused every delivery before the verifier
+      // ran, so the payment sync received nothing.
+      if (services?.quickBooks !== undefined) {
+        installQuickBooksWebhookRoute(app, services.quickBooks)
       }
       // Wise likewise has no session with us, so the signature is the whole of
       // the authorisation and this sits beside Stripe's rather than under the

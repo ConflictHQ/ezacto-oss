@@ -364,6 +364,7 @@ export {
 } from './user-emails.js'
 export {
   installQuickBooksRoutes,
+  installQuickBooksWebhookRoute,
   type QuickBooksConnectionStatus,
   type QuickBooksService,
   type QuickBooksTokenSet,

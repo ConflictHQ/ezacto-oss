@@ -16857,57 +16857,6 @@
         ]
       }
     },
-    "/api/v1/integrations/quickbooks/webhook": {
-      "post": {
-        "operationId": "receiveQuickBooksWebhook",
-        "summary": "Entity changes pushed by Intuit, authorised by signature alone",
-        "tags": [
-          "integrations"
-        ],
-        "security": [],
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/MalformedRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/AuthenticationRequired"
-          },
-          "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
-          },
-          "404": {
-            "$ref": "#/components/responses/ResourceNotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/StateConflict"
-          },
-          "413": {
-            "$ref": "#/components/responses/PayloadTooLarge"
-          },
-          "422": {
-            "$ref": "#/components/responses/ValidationFailed"
-          },
-          "429": {
-            "$ref": "#/components/responses/RateLimited"
-          },
-          "503": {
-            "$ref": "#/components/responses/ServiceUnavailable"
-          }
-        },
-        "x-ezacto-runtime-path": "/api/v1/integrations/quickbooks/webhook",
-        "x-ezacto-generate-client": false
-      }
-    },
     "/api/v1/integrations/wise": {
       "get": {
         "operationId": "getWiseConnection",
