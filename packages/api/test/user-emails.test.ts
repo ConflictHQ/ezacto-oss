@@ -36,12 +36,15 @@ const createApp = (
   addEmail: UserEmailService['addEmail'],
   enqueued: AuthDelivery[] = [],
   mailer?: AuthMailer,
+  /** Who the target is. Only an administrator may be handed an address by
+   *  someone else, so the route has to ask (#730). */
+  profiles: Record<number, string> = {},
 ) =>
   createApiApp({
     authentication,
     installApi(api) {
       installUserEmailRoutes(api, {
-        service: { addEmail },
+        service: { addEmail, profileOf: async (userId) => profiles[userId] ?? 'member' },
         deploymentMailer:
           mailer ??
           ({
@@ -68,6 +71,71 @@ const post = (
   })
 
 describe('user email API', () => {
+  // #730. Adding an address to someone is the first half of signing in as
+  // them: the verification mail goes to the new address, and a verified
+  // address reaches password reset and identity linking. A people_admin who
+  // could point one at an administrator could reset their way into that
+  // account, and the real administrator would be locked out.
+  it('refuses a people_admin adding an address to an administrator', async () => {
+    const calls: unknown[] = []
+    const app = createApp(
+      async (input) => {
+        calls.push(input)
+        return { kind: 'verify_email', to: input.email, token: 't', expiresAt: '2026-01-01T00:00:00.000Z' }
+      },
+      [],
+      undefined,
+      { 1: 'administrator' },
+    )
+    const response = await post(app, '/api/v1/users/1/emails', { email: 'attacker@evil.example' }, {
+      'x-test-profile': 'people_admin',
+      'x-test-user': '9',
+    })
+    expect(response.status).toBe(403)
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe('profile_forbidden')
+    // The refusal has to happen before the store is reached: a pending row and
+    // a mailed token are most of the attack on their own.
+    expect(calls).toEqual([])
+  })
+
+  it('still lets a people_admin add an address to an ordinary person', async () => {
+    const calls: { userId: number }[] = []
+    const app = createApp(
+      async (input) => {
+        calls.push(input)
+        return { kind: 'verify_email', to: input.email, token: 't', expiresAt: '2026-01-01T00:00:00.000Z' }
+      },
+      [],
+      undefined,
+      { 4: 'member' },
+    )
+    const response = await post(app, '/api/v1/users/4/emails', { email: 'work@example.com' }, {
+      'x-test-profile': 'people_admin',
+      'x-test-user': '9',
+    })
+    expect(response.status).toBe(202)
+    expect(calls).toHaveLength(1)
+  })
+
+  it('lets an administrator add an address to another administrator', async () => {
+    const calls: unknown[] = []
+    const app = createApp(
+      async (input) => {
+        calls.push(input)
+        return { kind: 'verify_email', to: input.email, token: 't', expiresAt: '2026-01-01T00:00:00.000Z' }
+      },
+      [],
+      undefined,
+      { 1: 'administrator' },
+    )
+    const response = await post(app, '/api/v1/users/1/emails', { email: 'second@example.com' }, {
+      'x-test-profile': 'administrator',
+      'x-test-user': '2',
+    })
+    expect(response.status).toBe(202)
+    expect(calls).toHaveLength(1)
+  })
+
   it('[api] adds a second address for the person themselves and mails the verification', async () => {
     const enqueued: AuthDelivery[] = []
     const seen: unknown[] = []
