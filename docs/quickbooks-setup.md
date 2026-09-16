@@ -123,8 +123,15 @@ review — worth starting before you need it rather than on the day you do.
    company to your instance.
 5. ezacto exchanges the code for tokens and stores them against that realm.
 
-From then on invoices mirror out, and payments recorded in QuickBooks come back
-over the webhook.
+From then on invoices mirror out when they are sent, and payments travel both
+ways: one recorded in QuickBooks comes back over the webhook, and one recorded
+here (**Mark paid**, or **Record payment**) is filed against the mirrored
+invoice in QuickBooks as a Payment. That payment carries the ezacto receipt id
+as its reference number (`ez-<id>`), which is how a retry finds what an earlier
+run made and how a bookkeeper tells the two systems' receipts apart. An invoice
+that was never mirrored is mirrored first, then paid. A receipt that arrived
+from QuickBooks is never sent back, and an edit or deletion of a payment here is
+not copied out: the linked payment is the bookkeeper's pointer.
 
 ## Sandbox companies
 
