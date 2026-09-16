@@ -7,6 +7,8 @@ import { assertFields, readObjectBody, resourceId, unknownFieldErrors } from './
 
 export interface UserEmailService {
   addEmail(input: { userId: number; email: string; clientKey: string }): Promise<AuthDelivery>
+  /** The target's profile, or null when there is no such active user. */
+  profileOf(userId: number): Promise<string | null>
 }
 
 export interface UserEmailRouteOptions {
@@ -75,6 +77,23 @@ export const installUserEmailRoutes = <Bindings extends object>(
         code: 'profile_forbidden',
         message: 'Only the person themselves or a people administrator can add an address.',
       })
+    }
+    // Adding an address to someone is the first half of signing in as them:
+    // the verification mail goes to the new address, and once verified that
+    // address reaches password reset and identity linking. So a people_admin
+    // may furnish ordinary people, but may not point an address at an
+    // administrator and reset their way in (#730). Only an administrator may
+    // touch an administrator, which is the same rule the resource route
+    // already applies to replacing an address.
+    if (principal.userId !== userId && principal.profile !== 'administrator') {
+      const target = await options.service.profileOf(userId)
+      if (target === 'administrator') {
+        throw new ApiError({
+          status: 403,
+          code: 'profile_forbidden',
+          message: 'Only an administrator can add an address to an administrator.',
+        })
+      }
     }
     const body = await readObjectBody(context)
     const errors = unknownFieldErrors(body, bodyKeys)

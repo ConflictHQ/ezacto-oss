@@ -62,6 +62,13 @@ export interface PasswordAuthService {
    * has is touched.
    */
   addEmail(input: AddUserEmailInput): Promise<AuthDelivery>
+  /**
+   * The profile of an active user, or null when there is no such user. The
+   * email routes need it to refuse an add aimed at an administrator (#730):
+   * adding an address to someone is the first half of signing in as them, so
+   * who the target is has to be part of the authorisation decision.
+   */
+  profileOf(userId: number): Promise<string | null>
   verifyEmail(token: string, clientKey: string): Promise<ResolvedUserIdentity>
   signIn(input: PasswordSignInInput): Promise<PasswordSignInResult>
   requestPasswordReset(email: string, clientKey: string): Promise<AuthDelivery | null>
@@ -511,6 +518,15 @@ const createPasswordAuthService = (
       translateFirstRun(error)
     }
     return { kind: 'verify_email', to: email, token: material.token, expiresAt }
+  },
+
+  profileOf: async (userId) => {
+    if (!Number.isSafeInteger(userId) || userId < 1) return null
+    const row = await database.first<{ profile: string }>(
+      'SELECT profile FROM users WHERE id = ? AND is_active = 1',
+      [userId],
+    )
+    return row === null ? null : row.profile
   },
 
   addEmail: async (input) => {

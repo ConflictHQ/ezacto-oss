@@ -6,10 +6,10 @@ export interface StaffUser {
 
 export interface StaffUserDirectory {
   /**
-   * The active staff user for an address, or null. Resolves the same way the
-   * password routes do -- a non-invalidated address on an active user,
-   * preferring a verified address -- so magic-link sign-in reaches exactly the
-   * accounts password sign-in and reset already do, and no others.
+   * The active staff user for an address, or null. Resolves the way password
+   * reset does -- a verified, non-invalidated address on an active user -- so
+   * magic-link sign-in reaches exactly the accounts password sign-in and reset
+   * already do, and no others.
    */
   findByEmail(email: string): Promise<StaffUser | null>
 }
@@ -18,17 +18,24 @@ interface UserRow {
   userId: number
 }
 
-// Mirrors the resolution the password service uses (packages/db password-auth):
-// an address that has not been invalidated, on an active user, verified address
-// first. Delivery to the address is the proof of control, so an unverified but
-// present address is still reachable, exactly as a password reset is.
+// Mirrors the resolution password reset uses (packages/db password-auth):
+// a VERIFIED, non-invalidated address on an active user.
+//
+// The verified check is the whole security of this path (#730). Delivery to an
+// address proves control of that address, not that the address belongs to the
+// account it hangs off: anyone who can add a pending address to a user could
+// otherwise have a link minting that user's session mailed to themselves. An
+// unverified row is a claim; only verification settles it. Password reset,
+// OIDC linking and Cloudflare Access all require it, and this used to be the
+// one sign-in path that did not.
 const lookup = `SELECT user.id AS userId
   FROM user_emails email
   JOIN users user ON user.id = email.user_id
   WHERE lower(email.address) = lower(?)
     AND email.invalidated_at IS NULL
+    AND email.verified_at IS NOT NULL
     AND user.is_active = 1
-  ORDER BY email.verified_at IS NOT NULL DESC, email.id
+  ORDER BY email.id
   LIMIT 1`
 
 const staffUser = (row: UserRow | undefined): StaffUser | null => {
