@@ -36,6 +36,7 @@ afterEach(async () => {
 const config = (root: string): ContainerConfig => ({
   host: '127.0.0.1',
   port: 3000,
+  trustedProxyHops: 0,
   dataDirectory: root,
   databasePath: join(root, 'db.sqlite'),
   attachmentDirectory: join(root, 'attachments'),

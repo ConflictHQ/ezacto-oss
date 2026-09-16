@@ -4,6 +4,12 @@ import type { AppEnv } from '../../worker/src/app.js'
 export interface ContainerConfig {
   host: string
   port: number
+  /**
+   * How many proxies sit in front, for reading X-Forwarded-For (#729). Zero,
+   * the default, ignores the header: behind no proxy it is pure forgery, and a
+   * caller who can pick their own rate-limit bucket has no rate limit.
+   */
+  trustedProxyHops: number
   dataDirectory: string
   databasePath: string
   attachmentDirectory: string
@@ -128,6 +134,14 @@ const port = (value: string | undefined): number => {
   return parsed
 }
 
+const trustedProxyHops = (value: string | undefined): number => {
+  if (value === undefined || value.trim() === '') return 0
+  if (!/^[0-9]{1,2}$/u.test(value.trim())) {
+    throw new TypeError('TRUSTED_PROXY_HOPS must be a whole number of proxies')
+  }
+  return Number(value.trim())
+}
+
 const dataDirectory = (value: string | undefined): string => {
   const candidate = value ?? '/data'
   if (
@@ -223,6 +237,7 @@ export const readContainerConfig = (
   return {
     host: optional(environment, 'HOST', 255) ?? '0.0.0.0',
     port: port(environment.PORT),
+    trustedProxyHops: trustedProxyHops(environment.TRUSTED_PROXY_HOPS),
     dataDirectory: directory,
     databasePath: `${directory}/db.sqlite`,
     attachmentDirectory: `${directory}/attachments`,

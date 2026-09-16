@@ -102,7 +102,33 @@ docker run --detach \
 ```
 
 Configure the reverse proxy to forward `https://time.example.com` to
-`http://127.0.0.1:3000`. Give container shutdown at least 30 seconds; Ezacto
+`http://127.0.0.1:3000`.
+
+### Tell Ezacto how many proxies are in front
+
+Behind a proxy, every request arrives from the proxy's address, and Ezacto rate
+limits sign-in by client address. Left unset, that means **one shared bucket for
+the whole instance**: ten sign-in attempts per fifteen minutes between all your
+people, so one person retyping a password can lock everybody out, and a single
+attacker can do it deliberately.
+
+Set the number of proxies between the internet and the container:
+
+```dotenv
+TRUSTED_PROXY_HOPS=1
+```
+
+With that, Ezacto counts that many entries in from the right of
+`X-Forwarded-For` and rate limits per visitor. One is right for a single Caddy,
+nginx or Traefik in front. Add one for each additional hop, a CDN in front of
+your proxy being the usual second.
+
+**Set it only if the container is genuinely unreachable except through those
+proxies.** `X-Forwarded-For` is a request header like any other, so anything
+that can reach the container directly can choose its own value and therefore its
+own rate-limit bucket, which is no rate limit at all. That is why the default is
+`0`, which ignores the header completely. Publishing on `127.0.0.1` as above is
+what makes the setting safe. Give container shutdown at least 30 seconds; Ezacto
 stops accepting requests, drains queued SMTP work within its budget, checkpoints
 SQLite WAL, and closes the database before exit.
 
