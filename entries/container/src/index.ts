@@ -7,6 +7,7 @@ import {
 import { createApp } from '../../worker/src/app.js'
 import { readContainerConfig, type ContainerConfig } from './config.js'
 import { createContainerRuntime } from './runtime.js'
+import { clientAddress } from './client-address.js'
 
 const externalRequest = (
   request: Request,
@@ -18,10 +19,17 @@ const externalRequest = (
   url.protocol = publicOrigin.protocol
   url.host = publicOrigin.host
   const external = new Request(url, request)
+  // Deleted first, always: whatever arrived is the caller's to claim, and the
+  // one we set is the only one the app may believe.
+  const forwardedFor = external.headers.get('x-forwarded-for')
   external.headers.delete('cf-connecting-ip')
   external.headers.set(
     'cf-connecting-ip',
-    bindings.incoming.socket.remoteAddress ?? 'unknown-client',
+    clientAddress(
+      forwardedFor,
+      bindings.incoming.socket.remoteAddress,
+      config.trustedProxyHops,
+    ),
   )
   return external
 }
