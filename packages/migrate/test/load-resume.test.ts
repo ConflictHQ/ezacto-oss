@@ -265,6 +265,29 @@ const clearD1LoadCheckpoints = async (database: D1Database): Promise<void> => {
   }
 }
 
+/**
+ * Issue 745. Eight red deploys came from one line of miniflare, not from us.
+ *
+ * `ProxyClient.getProxy` registers every client-side proxy in a
+ * `FinalizationRegistry` keyed by the *server-side* address, and finalizing one
+ * sends `FREE <address>`, which deletes that heap entry outright. Two proxies
+ * can hold the same address -- this test drives thousands of short-lived ones
+ * over a handful of D1 bindings -- so collecting a duplicate frees an entry a
+ * live reference still needs. The next hydrate then trips
+ * `assert(heapValue !== undefined)` in
+ * `miniflare/src/workers/core/proxy.worker.ts`, and it reaches vitest as a bare
+ * `AssertionError: false == true` with no diff, because miniflare is asserting,
+ * not us. It only shows up where garbage collection is under pressure, which is
+ * why it is a CI-only failure on the slowest shard.
+ *
+ * Retry that and nothing else. A convergence failure -- the thing this test
+ * exists to catch -- still fails on the first attempt, undiluted.
+ */
+const MINIFLARE_PROXY_HEAP_ATTEMPTS = 3
+
+const isMiniflareProxyHeapLoss = (error: unknown): boolean =>
+  error instanceof Error && (error.stack ?? '').includes('core/proxy.worker.ts')
+
 const miniflareOptions = (persistencePath: string) => ({
   modules: true as const,
   script: 'export default { fetch() { return new Response("ok") } }',
@@ -428,90 +451,110 @@ describe('idempotent load and resume', () => {
   }, 60_000)
 
   it('[unit] D1 resumes after an adapter restart and converges duplicate deliveries and replay', async () => {
-    const persistencePath = join(dir, 'miniflare')
-    const digest = await checksum(snapshotDir)
-    let miniflare = new Miniflare(miniflareOptions(persistencePath))
-    let clean = await miniflare.getD1Database('CLEAN')
-    let resumed = await miniflare.getD1Database('RESUMED')
-    await Promise.all([migrateD1(clean), migrateD1(resumed)])
-    await loadD1ToCompletion(clean, snapshotDir, digest)
-
-    let checkpoint: LoadChunkResult | null = null
-    for (let attempt = 0; attempt < 500; attempt += 1) {
-      const result = await loadNextChunk({
-        database: createD1Database(resumed),
-        snapshotDir,
-        immutableSnapshotSha256: digest,
-        maxRows: 1,
-        maxStatements: 20,
-      })
-      if (result.resource === 'projects' && result.loadedRows === 1) {
-        checkpoint = result
-        break
+    // Issue 745. Each attempt gets its own D1, so a retry starts from nothing
+    // loaded, exactly as the first attempt did.
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await resumeAcrossAdapterRestart(join(dir, `miniflare-${attempt}`), snapshotDir)
+        return
+      } catch (error) {
+        if (attempt === MINIFLARE_PROXY_HEAP_ATTEMPTS || !isMiniflareProxyHeapLoss(error))
+          throw error
       }
     }
-    expect(checkpoint).not.toBeNull()
-    await miniflare.dispose()
+  }, 540_000)
+})
 
-    // A fresh Miniflare instance removes every process-local admission/cache
-    // witness while retaining only the D1 database and immutable snapshot.
-    miniflare = new Miniflare(miniflareOptions(persistencePath))
-    clean = await miniflare.getD1Database('CLEAN')
-    resumed = await miniflare.getD1Database('RESUMED')
-    try {
-      const duplicate = await Promise.all([
-        loadNextChunk({
-          database: createD1Database(resumed),
-          snapshotDir,
-          immutableSnapshotSha256: digest,
-          maxRows: 1,
-          maxStatements: 20,
-        }),
-        loadNextChunk({
-          database: createD1Database(resumed),
-          snapshotDir,
-          immutableSnapshotSha256: digest,
-          maxRows: 1,
-          maxStatements: 20,
-        }),
-      ])
-      expect(duplicate.map((result) => result.snapshotSha256)).toEqual([digest, digest])
-      await loadD1ToCompletion(resumed, snapshotDir, digest)
-      expect(await loadOutcome(d1Rows(resumed))).toEqual(await loadOutcome(d1Rows(clean)))
+/**
+ * The restart half of the test above, as one attempt over a fresh persistence
+ * path.
+ */
+const resumeAcrossAdapterRestart = async (
+  persistencePath: string,
+  snapshotDir: string,
+): Promise<void> => {
+  const digest = await checksum(snapshotDir)
+  let miniflare = new Miniflare(miniflareOptions(persistencePath))
+  let clean = await miniflare.getD1Database('CLEAN')
+  let resumed = await miniflare.getD1Database('RESUMED')
+  await Promise.all([migrateD1(clean), migrateD1(resumed)])
+  await loadD1ToCompletion(clean, snapshotDir, digest)
 
-      const beforeOutcome = await loadOutcome(d1Rows(resumed))
-      const beforeIdentities = await protectedIdentities(d1Rows(resumed))
-      const completeRetry = await loadNextChunk({
+  let checkpoint: LoadChunkResult | null = null
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    const result = await loadNextChunk({
+      database: createD1Database(resumed),
+      snapshotDir,
+      immutableSnapshotSha256: digest,
+      maxRows: 1,
+      maxStatements: 20,
+    })
+    if (result.resource === 'projects' && result.loadedRows === 1) {
+      checkpoint = result
+      break
+    }
+  }
+  expect(checkpoint).not.toBeNull()
+  await miniflare.dispose()
+
+  // A fresh Miniflare instance removes every process-local admission/cache
+  // witness while retaining only the D1 database and immutable snapshot.
+  miniflare = new Miniflare(miniflareOptions(persistencePath))
+  clean = await miniflare.getD1Database('CLEAN')
+  resumed = await miniflare.getD1Database('RESUMED')
+  try {
+    const duplicate = await Promise.all([
+      loadNextChunk({
         database: createD1Database(resumed),
         snapshotDir,
         immutableSnapshotSha256: digest,
         maxRows: 1,
         maxStatements: 20,
-      })
-      expect(completeRetry).toMatchObject({ complete: true, loadedRows: 0 })
+      }),
+      loadNextChunk({
+        database: createD1Database(resumed),
+        snapshotDir,
+        immutableSnapshotSha256: digest,
+        maxRows: 1,
+        maxStatements: 20,
+      }),
+    ])
+    expect(duplicate.map((result) => result.snapshotSha256)).toEqual([digest, digest])
+    await loadD1ToCompletion(resumed, snapshotDir, digest)
+    expect(await loadOutcome(d1Rows(resumed))).toEqual(await loadOutcome(d1Rows(clean)))
 
-      await clearD1LoadCheckpoints(resumed)
-      await loadD1ToCompletion(resumed, snapshotDir, digest)
-      expect(await loadOutcome(d1Rows(resumed))).toEqual(beforeOutcome)
-      expect(await protectedIdentities(d1Rows(resumed))).toEqual(beforeIdentities)
-      expect(
-        await resumed.prepare('SELECT count(*) AS count FROM _ezacto_load_anomalies').first(),
-      ).toEqual({ count: 1 })
-      const progress = await readLoadProgress(createD1Database(resumed))
-      expect(progress).toHaveLength(LOAD_RESOURCES.length)
-      // Named rather than counted (issue 620). These were `.every(...)` and
-      // failed as a bare `false == true`, which says a resource did not
-      // converge without saying which -- so every flake cost a re-run to learn
-      // anything at all. The diff now carries the resource and its counts.
-      expect(progress.filter((resource) => !resource.completed).map((r) => r.resource)).toEqual([])
-      expect(
-        progress
-          .filter((resource) => resource.rowsLoaded !== resource.totalRows)
-          .map((r) => ({ resource: r.resource, loaded: r.rowsLoaded, total: r.totalRows })),
-      ).toEqual([])
-      await expectNoPendingLoadWork(d1Rows(resumed))
-    } finally {
-      await miniflare.dispose()
-    }
-  }, 180_000)
-})
+    const beforeOutcome = await loadOutcome(d1Rows(resumed))
+    const beforeIdentities = await protectedIdentities(d1Rows(resumed))
+    const completeRetry = await loadNextChunk({
+      database: createD1Database(resumed),
+      snapshotDir,
+      immutableSnapshotSha256: digest,
+      maxRows: 1,
+      maxStatements: 20,
+    })
+    expect(completeRetry).toMatchObject({ complete: true, loadedRows: 0 })
+
+    await clearD1LoadCheckpoints(resumed)
+    await loadD1ToCompletion(resumed, snapshotDir, digest)
+    expect(await loadOutcome(d1Rows(resumed))).toEqual(beforeOutcome)
+    expect(await protectedIdentities(d1Rows(resumed))).toEqual(beforeIdentities)
+    expect(
+      await resumed.prepare('SELECT count(*) AS count FROM _ezacto_load_anomalies').first(),
+    ).toEqual({ count: 1 })
+    const progress = await readLoadProgress(createD1Database(resumed))
+    expect(progress).toHaveLength(LOAD_RESOURCES.length)
+    // Named rather than counted (issue 620). These were `.every(...)` and
+    // failed as a bare `false == true`, which says a resource did not
+    // converge without saying which -- so every flake cost a re-run to learn
+    // anything at all. The diff now carries the resource and its counts.
+    expect(progress.filter((resource) => !resource.completed).map((r) => r.resource)).toEqual([])
+    expect(
+      progress
+        .filter((resource) => resource.rowsLoaded !== resource.totalRows)
+        .map((r) => ({ resource: r.resource, loaded: r.rowsLoaded, total: r.totalRows })),
+    ).toEqual([])
+    await expectNoPendingLoadWork(d1Rows(resumed))
+  } finally {
+    await miniflare.dispose()
+  }
+}
