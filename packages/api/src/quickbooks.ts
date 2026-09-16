@@ -207,18 +207,31 @@ export const installQuickBooksRoutes = <Bindings extends object>(
     return context.body(null, 204)
   })
 
-  /**
-   * Intuit's deliveries. Unauthenticated by nature -- Intuit has no session --
-   * so the signature is the whole of the authorization, and it is checked
-   * before the body is parsed as anything but text.
-   *
-   * Always 200 once the signature holds, even where the change is not ours.
-   * Intuit retries a non-2xx, and retrying a delivery we have correctly decided
-   * to ignore is work that can never succeed. A refusal is a 401, which is the
-   * one case where a retry is not what we want either, but is the honest answer
-   * to an unsigned request.
-   */
-  api.post('/integrations/quickbooks/webhook', async (context) => {
+}
+
+/**
+ * Intuit's deliveries, on the app router rather than the API router.
+ *
+ * Unauthenticated by nature -- Intuit has no session with us -- so the
+ * signature is the whole of the authorization, and it is checked before the
+ * body is parsed as anything but text. That is exactly why it cannot live
+ * under /api/v1: every request there goes through apiAuthenticationMiddleware,
+ * which answered a bearer-less, same-origin-less POST with 403
+ * csrf_origin_mismatch before the HMAC verifier ever ran (#739). The shipped
+ * QuickBooks payment sync could not receive a single webhook. Stripe and Wise
+ * were already mounted here for the same reason.
+ *
+ * Always 200 once the signature holds, even where the change is not ours.
+ * Intuit retries a non-2xx, and retrying a delivery we have correctly decided
+ * to ignore is work that can never succeed. A refusal is a 401, which is the
+ * one case where a retry is not what we want either, but is the honest answer
+ * to an unsigned request.
+ */
+export const installQuickBooksWebhookRoute = <Bindings extends object>(
+  app: Hono<ApiContext<Bindings>>,
+  service: Readonly<QuickBooksService>,
+): void => {
+  app.post('/webhooks/quickbooks', async (context) => {
     const payload = await context.req.text()
     const result = await service.receiveWebhook({
       payload,

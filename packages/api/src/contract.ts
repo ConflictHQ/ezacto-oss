@@ -1189,16 +1189,6 @@ const quickBooksOperations: ApiContractOperation[] = [
     parameters: [query("code"), query("state"), query("realmId")],
     generateClient: false,
   },
-  {
-    method: "post",
-    path: "/api/v1/integrations/quickbooks/webhook",
-    operationId: "receiveQuickBooksWebhook",
-    summary: "Entity changes pushed by Intuit, authorised by signature alone",
-    tag: "integrations",
-    responseStatus: 200,
-    public: true,
-    generateClient: false,
-  },
 ];
 
 /**
