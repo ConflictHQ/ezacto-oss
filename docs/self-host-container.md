@@ -52,6 +52,15 @@ Generate the signing key without writing raw bytes to disk:
 node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))"
 ```
 
+The SMTP values are checked once at startup, and a failure there is a warning
+rather than a refusal: the instance starts, logs the endpoint it could not
+reach, and retries from the queue. That is deliberate — an instance that runs
+and cannot send beats one that will not run, and a mail server that goes down
+must not stop a restart. It also means you can bring an instance up to look at
+it before you have a mail server, which is what the example above does:
+`smtp.example.com` is the reserved documentation domain and will never deliver.
+Replace it before anybody relies on mail arriving.
+
 `APP_BASE_URL` must be the exact public HTTPS origin; only literal `localhost`
 may use HTTP. Percent-encode reserved characters in the SMTP username and
 password. Optional Google login requires both `OIDC_GOOGLE_CLIENT_ID` and

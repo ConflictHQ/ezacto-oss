@@ -2,7 +2,7 @@ import { mkdtemp, realpath, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { migrationIds } from '@ezacto/db'
 import { apiContractOperations } from '@ezacto/api'
 import type { EmailMessage, HttpEmailProvider } from '@ezacto/mailer'
@@ -644,4 +644,53 @@ describe('container runtime composition', () => {
     resolveProvider()
     await new Promise((resolve) => setTimeout(resolve, 0))
   })
+})
+
+describe('outbound mail and startup', () => {
+  /**
+   * Issue 782. The startup path awaited an SMTP handshake and let it throw, so
+   * an instance could not start unless mail already worked -- and could not
+   * restart while a mail server was down. The documented example config points
+   * at `smtp.example.com`, which has no SMTP host by design, so following the
+   * self-host guide literally produced a container that exited.
+   */
+  it('[ops] starts when outbound mail is unreachable, and says so', async () => {
+    const root = await temporary()
+    const warnings: string[] = []
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...args) => {
+      warnings.push(args.join(' '))
+    })
+    try {
+      const withPassword = {
+        ...config(root),
+        smtp: {
+          url: 'smtps://postmaster:hunter2@smtp.example.test:465',
+          from: 'billing@example.test',
+        },
+      }
+      const runtime = await createContainerRuntime(withPassword, {
+        emailProvider: provider([]),
+        verifyEmailProvider: async () => {
+          throw new Error('getaddrinfo ENOTFOUND smtp.example.test')
+        },
+      })
+      try {
+        // Started, and the rest of the instance is composed rather than
+        // half-built: a running instance that cannot send beats one that will
+        // not run.
+        expect(runtime.services).toBeDefined()
+      } finally {
+        await runtime.close()
+      }
+    } finally {
+      warn.mockRestore()
+    }
+
+    const reported = warnings.join('\n')
+    expect(reported).toContain('not reachable')
+    // The endpoint, so the operator knows where to look.
+    expect(reported).toContain('smtp.example.test:465')
+    // And never the credential: SMTP_URL carries a password.
+    expect(reported).not.toContain('hunter2')
+  }, 30_000)
 })

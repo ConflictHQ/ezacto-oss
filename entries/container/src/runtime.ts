@@ -234,6 +234,20 @@ export interface ContainerRuntimeOptions {
  * Attests only the exact SMTP mailbox already validated from deployment
  * configuration. This is not a DNS or provider verification claim.
  */
+/**
+ * Host and port only. `SMTP_URL` carries a password, so the URL itself must
+ * never reach a log line, and an operator diagnosing unreachable mail needs the
+ * endpoint rather than the credential anyway.
+ */
+const smtpEndpoint = (url: string): string => {
+  try {
+    const parsed = new URL(url)
+    return parsed.port === '' ? parsed.hostname : `${parsed.hostname}:${parsed.port}`
+  } catch {
+    return 'the configured SMTP server'
+  }
+}
+
 export const createSmtpSenderIdentityVerifier = (
   from: string,
 ): NonNullable<RuntimeServices['senderIdentityVerifier']> => {
@@ -334,7 +348,24 @@ export const createContainerRuntime = async (
     const verify =
       options.verifyEmailProvider ??
       (smtp instanceof SmtpMailer ? () => smtp.verify() : undefined)
-    if (verify !== undefined) await verify()
+    // Checked at startup because a wrong password is worth hearing about now
+    // rather than at the first invoice -- but never fatal. Refusing to boot
+    // over unreachable mail means a mail server that goes down at the wrong
+    // moment stops the instance from coming back, and it means nobody can
+    // evaluate ezacto without standing up SMTP first. An instance that runs and
+    // cannot send beats an instance that does not run: the queue and the email
+    // log exist precisely so a send can fail and be retried.
+    if (verify !== undefined) {
+      try {
+        await verify()
+      } catch (error) {
+        console.warn(
+          `ezacto: outbound mail is not reachable at ${smtpEndpoint(config.smtp.url)} ` +
+            `(${error instanceof Error ? error.name : 'unknown error'}). ` +
+            'The instance is starting; mail will be retried from the queue.',
+        )
+      }
+    }
     queue = new ContainerEmailQueue(emailLog, smtp)
     const queuedMailer = createQueuedMailer(emailLog, queue)
     // One service behind two ports: the password routes take it whole, the
