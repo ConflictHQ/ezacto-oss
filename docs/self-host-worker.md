@@ -146,8 +146,15 @@ an additional boundary, not a replacement for reviewing the tracked config.
 
 ## 4. Create the first owner
 
-After the deployment is healthy, run `bootstrap instance` once with the exact
-organization and owner identity:
+Do this as soon as the deployment is healthy. A new instance has no accounts, and
+the first account to claim first run becomes the administrator, so until you have
+claimed it anyone who can reach the Worker can. The claim is permanent once made:
+an unverified claim is not currently released, so a stranger who signs up first
+leaves the bootstrap token as the only way in.
+
+The bootstrap workflow below is that claim, which is why it comes before anything
+public. After the deployment is healthy, run `bootstrap instance` once with the
+exact organization and owner identity:
 
 ```sh
 gh workflow run bootstrap-instance.yml --ref main \
