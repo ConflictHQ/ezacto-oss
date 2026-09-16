@@ -1447,6 +1447,11 @@ export const createApp = (
       // The URL this page shipped under. Redirect rather than delete: someone
       // has it bookmarked, and a 404 to tidy a route table is a poor trade.
       app.get('/settings/modules', (context) => context.redirect('/settings/company', 301))
+      // Where the QuickBooks consent screen sends an operator back to. It never
+      // existed as a page of its own; it is the accounting section (issue 800).
+      app.get('/settings/integrations', (context) =>
+        context.redirect('/settings/company#integrations', 301),
+      )
 
       app.get('/expenses/:expenseId', async (context) => {
         const rawExpenseId = context.req.param('expenseId')

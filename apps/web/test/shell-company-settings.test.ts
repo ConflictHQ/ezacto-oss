@@ -147,6 +147,36 @@ describe('company settings', () => {
     vi.unstubAllGlobals()
   })
 
+  it('[browser #800] shows one section at a time, chosen by the hash, and links each one', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    globalThis.location.hash = '#integrations'
+    await mountShell(companyApi())
+
+    const visible = (): string[] =>
+      [...document.querySelectorAll<HTMLElement>('[data-settings-section]')]
+        .filter((section) => !section.hidden)
+        .map((section) => section.dataset.settingsSection!)
+    // Where the QuickBooks consent screen sends an operator back to: the
+    // accounting section, and only it.
+    expect(visible()).toEqual(['integrations'])
+    const current = document.querySelector<HTMLElement>('[data-settings-section-link][aria-current="page"]')!
+    expect(current.dataset.settingsSectionLink).toBe('integrations')
+
+    // The strip is plain anchors; following one is a hash change.
+    globalThis.location.hash = '#sso'
+    globalThis.dispatchEvent(new Event('hashchange'))
+    expect(visible()).toEqual(['sso'])
+
+    // Payouts is not offered until the deployment has the Wise routes, and a
+    // stale link to it opens the first section rather than a blank page.
+    expect(document.querySelector<HTMLElement>('[data-settings-section-link="payouts"]')!.hidden).toBe(true)
+    globalThis.location.hash = '#payouts'
+    globalThis.dispatchEvent(new Event('hashchange'))
+    expect(visible()).toEqual(['modules'])
+    globalThis.location.hash = ''
+  })
+
   it('[unit] shows the instance configuration the endpoints already served', async () => {
     // Every setting on this page had an endpoint and no reader: the notes
     // policy, the tracking mode, the address this instance sends as and how
@@ -920,6 +950,17 @@ describe('company settings', () => {
   })
 
 describe('the payout connection on company settings (issues 421, 543)', () => {
+    // The company page shows one section at a time, chosen by the hash (issue
+    // 800), so these open on Payouts the way an operator reading it would. Set
+    // after the render, which puts the page's own URL in place.
+    const openOnPayouts = (): void => {
+      renderBrowserShell({ view: 'settings-company' })
+      globalThis.location.hash = '#payouts'
+    }
+    afterEach(() => {
+      globalThis.location.hash = ''
+    })
+
     const wiseApi = (
       connection: {
         configured: boolean
@@ -940,7 +981,7 @@ describe('the payout connection on company settings (issues 421, 543)', () => {
   
     it('[money] says which profile pays and how many people it can pay', async () => {
       stubModulesEndpoint()
-      renderBrowserShell({ view: 'settings-company' })
+      openOnPayouts()
       await mountShell(
         wiseApi({
           configured: true,
@@ -970,7 +1011,7 @@ describe('the payout connection on company settings (issues 421, 543)', () => {
       // Money still leaves without a signing key. What stops is anything ever
       // saying whether it arrived, and that is invisible from everywhere else.
       stubModulesEndpoint()
-      renderBrowserShell({ view: 'settings-company' })
+      openOnPayouts()
       await mountShell(
         wiseApi({
           configured: true,
@@ -992,7 +1033,7 @@ describe('the payout connection on company settings (issues 421, 543)', () => {
       // A healthy connection with an empty recipient list reads as working right
       // up until payday.
       stubModulesEndpoint()
-      renderBrowserShell({ view: 'settings-company' })
+      openOnPayouts()
       await mountShell(
         wiseApi({
           configured: true,
@@ -1012,7 +1053,7 @@ describe('the payout connection on company settings (issues 421, 543)', () => {
   
     it('says so plainly when the deployment has no Wise token', async () => {
       stubModulesEndpoint()
-      renderBrowserShell({ view: 'settings-company' })
+      openOnPayouts()
       await mountShell(wiseApi({ configured: false, connection: null }))
   
       await vi.waitFor(() =>
@@ -1028,7 +1069,7 @@ describe('the payout connection on company settings (issues 421, 543)', () => {
       // member before any section loads, and this holds that: no section, and
       // Wise is never asked.
       stubModulesEndpoint()
-      renderBrowserShell({ view: 'settings-company' })
+      openOnPayouts()
       const getWiseConnection = vi.fn(async () => ({ configured: true, connection: null }))
       await mountShell({
         ...companyApi(),
@@ -1042,7 +1083,7 @@ describe('the payout connection on company settings (issues 421, 543)', () => {
 
     it('hides the section entirely in a build without the Wise routes', async () => {
       stubModulesEndpoint()
-      renderBrowserShell({ view: 'settings-company' })
+      openOnPayouts()
       await mountShell(companyApi())
   
       expect(section().hidden).toBe(true)
