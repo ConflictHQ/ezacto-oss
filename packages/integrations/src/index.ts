@@ -179,12 +179,20 @@ export {
 export {
   inboundPayments,
   mirrorInvoice,
+  mirrorPayment,
+  paymentPayload,
+  paymentRefNumber,
   type InboundPayment,
   type MirrorInvoiceInput,
   type MirrorLink,
   type MirrorLinkKind,
   type MirrorLinkStore,
   type MirrorOutcome,
+  type MirrorPayment,
+  type MirrorPaymentInput,
+  type MirrorPaymentLinkStore,
+  type MirrorPaymentOutcome,
+  type MirrorPaymentQuickBooks,
   type MirrorQuickBooks,
 } from './quickbooks/mirror.js'
 export {

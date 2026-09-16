@@ -81,6 +81,11 @@ describe('worker entry', () => {
     const moved = await app.request('/settings/modules', {}, env)
     expect(moved.status).toBe(301)
     expect(moved.headers.get('location')).toBe('/settings/company')
+    // Where Intuit's consent screen sends an operator back to (issue 800). It
+    // was a 404 for as long as the QuickBooks runtime has named it.
+    const integrations = await app.request('/settings/integrations', {}, env)
+    expect(integrations.status).toBe(301)
+    expect(integrations.headers.get('location')).toBe('/settings/company#integrations')
   })
 
   it('[unit] marks no primary section on a page outside the primary nav', async () => {

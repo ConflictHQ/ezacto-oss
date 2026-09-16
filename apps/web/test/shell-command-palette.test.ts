@@ -192,6 +192,34 @@ describe('command palette browser behavior', () => {
     ).toBe('true')
   })
 
+  it('[browser #800] text size is chosen on the You page, applied at once, and kept', async () => {
+    renderBrowserShell({ view: 'settings-user' })
+    await mountShell(browserApi())
+
+    const larger = document.querySelector<HTMLButtonElement>('[data-text-size-choice="larger"]')!
+    expect(document.documentElement.dataset.textSize).toBeUndefined()
+    expect(
+      document
+        .querySelector<HTMLButtonElement>('[data-text-size-choice="default"]')
+        ?.getAttribute('aria-pressed'),
+    ).toBe('true')
+
+    larger.click()
+
+    expect(document.documentElement.dataset.textSize).toBe('larger')
+    expect(larger.getAttribute('aria-pressed')).toBe('true')
+    expect(globalThis.localStorage.getItem('ezacto.text-size')).toBe('larger')
+
+    // The next load reads it back before anything else paints, like density.
+    renderBrowserShell({ view: 'settings-user', preserveStorage: true })
+    await mountShell(browserApi())
+    expect(document.documentElement.dataset.textSize).toBe('larger')
+
+    // Back to the default removes the attribute rather than naming it.
+    document.querySelector<HTMLButtonElement>('[data-text-size-choice="default"]')!.click()
+    expect(document.documentElement.dataset.textSize).toBeUndefined()
+  })
+
 
   it('[browser #539] shows a duration example the account would actually accept', async () => {
     // The served HTML carried a literal "1:30". On a decimal account that is a

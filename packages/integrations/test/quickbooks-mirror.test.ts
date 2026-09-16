@@ -5,8 +5,13 @@ import { mirrorPrivateNote } from '../src/quickbooks/mapping.js'
 import {
   inboundPayments,
   mirrorInvoice,
+  mirrorPayment,
+  paymentPayload,
   type MirrorLink,
   type MirrorLinkKind,
+  type MirrorPayment,
+  type MirrorPaymentInput,
+  type MirrorPaymentQuickBooks,
   type MirrorQuickBooks,
 } from '../src/quickbooks/mirror.js'
 
@@ -286,5 +291,107 @@ describe('reading a payment back', () => {
     // 33.33 * 100 is 3332.9999... in binary floating point. Truncating loses a
     // cent on a real payment.
     expect(inboundPayments(odd, resolve)[0]!.amountCents).toBe(3_333)
+  })
+})
+
+describe('sending a payment out (issue 799)', () => {
+  const payment: MirrorPayment = { id: 9, amountCents: 250_000, paidOn: '2026-09-20', provider: 'manual' }
+
+  const paymentLinks = (seed: Record<number, MirrorLink> = {}) => {
+    const rows = new Map<number, MirrorLink>(
+      Object.entries(seed).map(([id, link]) => [Number(id), link]),
+    )
+    return {
+      rows,
+      readPaymentLink: vi.fn(async (id: number) => rows.get(id) ?? null),
+      savePaymentLink: vi.fn(async (id: number, link: MirrorLink) => {
+        rows.set(id, link)
+      }),
+    }
+  }
+
+  const paymentQuickBooks = (
+    overrides: Partial<MirrorPaymentQuickBooks> = {},
+  ): MirrorPaymentQuickBooks => ({
+    findPaymentByRefNumber: vi.fn(async () => null),
+    createPayment: vi.fn(async () => ({ Id: 'qb-pay-9', SyncToken: '0', TotalAmt: 2500 })),
+    ...overrides,
+  })
+
+  const input = (
+    links = paymentLinks(),
+    quickBooks = paymentQuickBooks(),
+    override: Partial<MirrorPayment> = {},
+  ): MirrorPaymentInput => ({
+    payment: { ...payment, ...override },
+    invoiceQuickBooksId: 'qb-inv-7',
+    customerQuickBooksId: 'qb-2',
+    links,
+    quickBooks,
+  })
+
+  it('[unit] files the receipt against the mirrored invoice and records the link', async () => {
+    const links = paymentLinks()
+    const qb = paymentQuickBooks()
+    expect(await mirrorPayment(input(links, qb))).toEqual({ kind: 'created', quickBooksId: 'qb-pay-9' })
+    expect(qb.createPayment).toHaveBeenCalledWith({
+      CustomerRef: { value: 'qb-2' },
+      TotalAmt: 2500,
+      TxnDate: '2026-09-20',
+      PaymentRefNum: 'ez-9',
+      Line: [{ Amount: 2500, LinkedTxn: [{ TxnId: 'qb-inv-7', TxnType: 'Invoice' }] }],
+    })
+    expect(links.rows.get(9)).toEqual({ quickBooksId: 'qb-pay-9', syncToken: '0' })
+  })
+
+  it('[security] a payment that came from QuickBooks is never sent back', async () => {
+    const qb = paymentQuickBooks()
+    expect(await mirrorPayment(input(paymentLinks(), qb, { provider: 'quickbooks' }))).toMatchObject({
+      kind: 'refused',
+    })
+    expect(qb.createPayment).not.toHaveBeenCalled()
+    expect(qb.findPaymentByRefNumber).not.toHaveBeenCalled()
+  })
+
+  it('[security] a redelivery finds the link and sends nothing', async () => {
+    const qb = paymentQuickBooks()
+    const links = paymentLinks({ 9: { quickBooksId: 'qb-pay-9', syncToken: '1' } })
+    expect(await mirrorPayment(input(links, qb))).toEqual({ kind: 'linked', quickBooksId: 'qb-pay-9' })
+    expect(qb.createPayment).not.toHaveBeenCalled()
+  })
+
+  it('[security] a run that created the payment and lost the link adopts it by reference', async () => {
+    const links = paymentLinks()
+    const qb = paymentQuickBooks({
+      findPaymentByRefNumber: vi.fn(async (ref: string) =>
+        ref === 'ez-9' ? { Id: 'qb-pay-9', SyncToken: '2', TotalAmt: 2500 } : null,
+      ),
+    })
+    expect(await mirrorPayment(input(links, qb))).toEqual({ kind: 'adopted', quickBooksId: 'qb-pay-9' })
+    expect(qb.createPayment).not.toHaveBeenCalled()
+    expect(links.rows.get(9)).toEqual({ quickBooksId: 'qb-pay-9', syncToken: '2' })
+  })
+
+  it('[unit] a refund is refused rather than filed as a negative receipt', async () => {
+    const qb = paymentQuickBooks()
+    expect(await mirrorPayment(input(paymentLinks(), qb, { amountCents: -100 }))).toMatchObject({
+      kind: 'refused',
+    })
+    expect(qb.createPayment).not.toHaveBeenCalled()
+  })
+
+  it('[unit] states the amount as an exact decimal, and omits the date it does not have', () => {
+    expect(
+      paymentPayload({
+        payment: { id: 3, amountCents: 3333, paidOn: null, provider: 'manual' },
+        invoiceQuickBooksId: 'qb-inv-1',
+        customerQuickBooksId: 'qb-1',
+      }),
+    ).toEqual({
+      CustomerRef: { value: 'qb-1' },
+      TotalAmt: 33.33,
+      PaymentRefNum: 'ez-3',
+      Line: [{ Amount: 33.33, LinkedTxn: [{ TxnId: 'qb-inv-1', TxnType: 'Invoice' }] }],
+    })
   })
 })
