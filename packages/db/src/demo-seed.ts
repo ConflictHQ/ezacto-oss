@@ -101,10 +101,13 @@ export interface DemoAccount {
   readonly describes: string
 }
 
+/** Bootstrap always takes id 1, and the published administrator is that user. */
+export const DEMO_OWNER_USER_ID = 1
+
 export const demoAccounts: readonly DemoAccount[] = [
   {
     label: 'Administrator',
-    userId: 1,
+    userId: DEMO_OWNER_USER_ID,
     email: 'admin@ezacto.io',
     password: 'folding-forks-admin',
     describes: 'Everything: team, projects, invoices, reports, settings.',
@@ -451,6 +454,22 @@ export const demoSeedStatements = (
       })
       assignmentId += 1
     }
+  }
+
+  // The published owner account is user 1, created by bootstrap rather than by
+  // the cast above, so the loop that assigns everyone to everything misses it.
+  // Left out, the account the sign-in page hands a visitor -- and the one the
+  // store reviewers are told to use -- cannot file a single entry: the API
+  // answers `project_assignment_required` and a time tracker looks broken.
+  for (const project of projects) {
+    statements.push({
+      text: `INSERT INTO user_assignments
+        (id, project_id, user_id, is_active, is_project_manager, use_default_rates,
+         hourly_rate_cents, created_at, updated_at)
+        VALUES (?, ?, ?, 1, 1, 0, ?, ?, ?)`,
+      bindings: [assignmentId, project.id, DEMO_OWNER_USER_ID, project.rate, now, now],
+    })
+    assignmentId += 1
   }
 
   const taskAssignment = new Map<string, number>()

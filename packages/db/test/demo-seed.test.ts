@@ -1,6 +1,7 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { describe, expect, it } from 'vitest'
 import {
+  DEMO_OWNER_USER_ID,
   demoAccounts,
   demoClientProjects,
   demoRetainers,
@@ -29,6 +30,17 @@ const seeded = (years = 0.5) => {
        VALUES (1, 'Folding Forks', '{}', ?, ?)`,
     )
     .run(now, now)
+  // The seed never runs on an empty instance: wipeAndSeedDemo bootstraps the
+  // owner first, and the seed now assigns that user to every project. Standing
+  // the row up here is what makes those inserts reachable by a foreign key.
+  client
+    .prepare(
+      `INSERT INTO users
+         (id, first_name, last_name, timezone, is_contractor, is_active,
+          weekly_capacity, profile, manager_grants, created_at, updated_at)
+       VALUES (?, 'Demo', 'Administrator', 'UTC', 0, 1, 126000, 'administrator', '[]', ?, ?)`,
+    )
+    .run(DEMO_OWNER_USER_ID, now, now)
   const statements = demoSeedStatements({ now, years })
   client.transaction(() => {
     for (const statement of statements) {
@@ -48,7 +60,8 @@ describe('demo seed', () => {
     // rather than against a fixture that agrees with it by construction.
     const client = sharedDemo()
 
-    expect(count(client, 'users')).toBe(20)
+    // Twenty invented people, plus the owner the fixture bootstraps ahead of them.
+    expect(count(client, 'users')).toBe(21)
     expect(count(client, 'clients')).toBe(8)
     expect(count(client, 'projects')).toBe(16)
     expect(count(client, 'tasks')).toBe(6)
@@ -85,12 +98,32 @@ describe('demo seed', () => {
   })
 
   it('[unit] leaves the bootstrapped owner its own id', () => {
-    // instance-bootstrap creates user 1 and nothing else. A seed that competed
-    // for low ids would collide with the owner of any real instance it ran on.
+    // instance-bootstrap creates user 1 and nothing else. The fixture lays that
+    // row down first, so a seed that competed for low ids would now fail on the
+    // primary key rather than quietly displace the owner of a real instance.
     const client = sharedDemo()
-    const lowest = client.prepare('SELECT min(id) AS id FROM users').get() as { id: number }
+    const lowest = client
+      .prepare('SELECT min(id) AS id FROM users WHERE id <> ?')
+      .get(DEMO_OWNER_USER_ID) as { id: number }
 
     expect(lowest.id).toBeGreaterThan(1)
+  })
+
+  it('[unit] assigns the published owner to every project', () => {
+    // The sign-in page hands every visitor admin@ezacto.io, and the app store
+    // review notes send the reviewers to it. That user comes from bootstrap
+    // rather than from the invented cast, so the loop that assigns everyone to
+    // everything walks straight past it. Without these rows the account cannot
+    // file a single entry -- the API answers `project_assignment_required` --
+    // and a time tracker that will not track time reads as broken.
+    const client = sharedDemo()
+    const assigned = (
+      client
+        .prepare('SELECT count(*) AS n FROM user_assignments WHERE user_id = ?')
+        .get(DEMO_OWNER_USER_ID) as { n: number }
+    ).n
+
+    expect(assigned).toBe(count(client, 'projects'))
   })
 
   it('[unit] produces the same demo twice', () => {
