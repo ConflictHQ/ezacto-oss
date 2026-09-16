@@ -6,6 +6,7 @@ import type {
   HttpEmailProvider,
 } from "./index.js";
 import { EmailProviderTerminalError } from "./provider-errors.js";
+import { formatAddress } from "./address.js";
 
 export interface SesMailerConfig {
   accessKeyId: string;
@@ -156,7 +157,9 @@ const recipientAddress = (recipient: EmailRecipient): string => {
     throw new RangeError("SES recipient email is invalid");
   if (recipient.name === undefined) return email;
   const name = bounded(recipient.name, "SES recipient name", 200);
-  return `${name} <${email}>`;
+  // #738. The name is arbitrary user text; unquoted, a comma in it splits one
+  // recipient into two and an angle bracket moves the mailbox.
+  return formatAddress(email, name);
 };
 
 const record = (value: unknown): Record<string, unknown> =>
