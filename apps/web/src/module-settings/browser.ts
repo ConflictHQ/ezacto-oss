@@ -1097,6 +1097,16 @@ export const createModuleSettingsController = (
     const read = api.getWiseConnection
     if (read === undefined) return
     wiseSection.hidden = false
+    // Available now, so the section strip may offer it. The shell re-applies
+    // the chosen section on the same event it follows for the hash, which
+    // hides this one again unless it is the one chosen (issue 800).
+    wiseSection.removeAttribute('data-settings-unavailable')
+    for (const link of document.querySelectorAll<HTMLElement>(
+      '[data-settings-section-link="payouts"]',
+    )) {
+      link.hidden = false
+    }
+    globalThis.dispatchEvent(new Event('hashchange'))
     try {
       const state = await read(active.signal)
       active.present(() => {

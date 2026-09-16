@@ -1,10 +1,28 @@
+import { COMPANY_SETTINGS_SECTIONS } from '../settings-sections.js'
+
+/**
+ * One link per section, and one section shown at a time (issue 800). The
+ * choice lives in the hash, so this is plain anchors: the shell listens for
+ * the change and the browser's back button already does the right thing.
+ * Payouts starts hidden with its section and is revealed by the controller
+ * that knows whether Wise is configured.
+ */
+const renderCompanySectionStrip = (): string =>
+  `<nav class="tabstrip view-switch settings-sections" aria-label="Company settings sections" data-settings-sections>` +
+  COMPANY_SETTINGS_SECTIONS.map(
+    (section) =>
+      `<a href="#${section.id}" data-settings-section-link="${section.id}"${section.id === 'payouts' ? ' hidden' : ''}>${section.label}</a>`,
+  ).join('') +
+  `</nav>`
+
 export const renderModuleSettingsPage = (view?: string): string => `
-  <main class="app-content module-settings-workspace page--document" data-module-settings-page${view === 'settings-company' ? '' : ' hidden'}>
+  <main class="app-content module-settings-workspace page--settings" data-module-settings-page${view === 'settings-company' ? '' : ' hidden'}>
     <header class="context-row module-settings-header">
       <div><p class="eyebrow">Settings</p><h1>Company</h1></div>
     </header>
     ${renderSettingsTabs('company')}
     <p class="module-settings-intro">How this instance is configured. Everything here applies to everyone in the organization.</p>
+    ${renderCompanySectionStrip()}
     <section class="settings-section" data-settings-section="modules" aria-labelledby="settings-modules-title">
       <header><h2 id="settings-modules-title">Modules</h2>
       <p>Enable or disable modules for your organization. Disabling a module hides its navigation and returns 404 from its API endpoints. Existing data (submissions, approvals, audit history) is preserved.</p></header>
@@ -38,7 +56,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <div class="settings-table" data-settings-sender-identities hidden></div>
       <dl class="settings-facts" data-settings-email-reputation hidden></dl>
     </section>
-    <section class="settings-section" data-settings-section="payouts" data-settings-wise aria-labelledby="settings-wise-title" hidden>
+    <section class="settings-section" data-settings-section="payouts" data-settings-wise data-settings-unavailable aria-labelledby="settings-wise-title" hidden>
       <header><h2 id="settings-wise-title">Payouts</h2>
       <p>Which Wise profile money leaves from, how many people it can currently pay, and whether Wise can tell this instance what became of a transfer. The token itself stays in the deployment; what is shown here is the state it produces.</p></header>
       <p class="form-result" data-settings-wise-status role="status" aria-live="polite">Loading payout connection…</p>
@@ -100,7 +118,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p class="form-result" data-sso-domain-result role="status" aria-live="polite"></p>
     </section>
   </main>
-  <main class="app-content module-settings-workspace page--document" data-settings-user-page${view === 'settings-user' ? '' : ' hidden'}>
+  <main class="app-content module-settings-workspace page--settings" data-settings-user-page${view === 'settings-user' ? '' : ' hidden'}>
     <header class="context-row module-settings-header">
       <div><p class="eyebrow">Settings</p><h1>You</h1></div>
     </header>
@@ -182,6 +200,16 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <div class="settings-density-choice" role="group" aria-label="Row density">
         <button type="button" data-density-choice="comfortable" aria-pressed="true">Comfortable</button>
         <button type="button" data-density-choice="compact" aria-pressed="false">Compact</button>
+      </div>
+    </section>
+    <section class="settings-density" aria-labelledby="settings-text-size-heading">
+      <h2 id="settings-text-size-heading">Text size</h2>
+      <p class="hint">How large the type is, everywhere in the app. Yours and this machine's, like row density; the documents your clients receive are not affected.</p>
+      <div class="settings-density-choice" role="group" aria-label="Text size">
+        <button type="button" data-text-size-choice="small" aria-pressed="false">Small</button>
+        <button type="button" data-text-size-choice="default" aria-pressed="true">Default</button>
+        <button type="button" data-text-size-choice="large" aria-pressed="false">Large</button>
+        <button type="button" data-text-size-choice="larger" aria-pressed="false">Larger</button>
       </div>
     </section>
   </main>`

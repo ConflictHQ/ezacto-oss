@@ -178,10 +178,12 @@ describe('D16 theme token contract', () => {
       }
     }
     expect(containers.length).toBeGreaterThan(0)
+    // Three measures: grid for tables, document for prose, and settings for
+    // the pages that carry forms and fact lists at a width between (issue 800).
+    const measures = ['page--grid', 'page--document', 'page--settings']
     for (const container of containers) {
-      const grid = container.includes('page--grid')
-      const document = container.includes('page--document')
-      expect(grid !== document, container).toBe(true)
+      const declared = measures.filter((measure) => container.includes(measure))
+      expect(declared, container).toHaveLength(1)
     }
   })
 

@@ -33,6 +33,23 @@
 }
 
 /*
+ * Text size (issue 800). Every size below is a pixel literal, so the honest way
+ * to scale the type is to scale the whole shell: `zoom` does that without
+ * touching the literals, keeps layout math intact, and leaves the browser's own
+ * zoom for the chrome. Documents a client receives render in their own shell
+ * and do not inherit it.
+ */
+[data-text-size='small'] {
+  zoom: 0.9;
+}
+[data-text-size='large'] {
+  zoom: 1.125;
+}
+[data-text-size='larger'] {
+  zoom: 1.25;
+}
+
+/*
  * The icon set. Every icon is a 20px square drawn on a 20-unit grid in the
  * colour of the text beside it, which is why an icon inside a control that
  * changes colour on hover or on disable changes with it, and why none of them
@@ -90,6 +107,14 @@
 
 .page--document {
   width: min(720px, 100%);
+  margin-inline: auto;
+}
+
+/* The settings pages carry tables, toggles and fact lists rather than prose,
+   and at the document width they wrapped (issue 800). Wide enough for a table,
+   bounded so a 4K window does not stretch a form across it. */
+.page--settings {
+  width: min(1100px, 100%);
   margin-inline: auto;
 }
 
@@ -3550,6 +3575,21 @@ dialog h2,
 
 .settings-tabs {
   margin-bottom: 16px;
+}
+
+/* The company page's section strip: the same segmented control the calendar
+   uses for its view modes, because it is the same thing -- one screen, one
+   part of it at a time -- and not a second level of navigation. */
+.settings-sections {
+  height: auto;
+  padding: 0;
+  margin-bottom: 8px;
+  border-bottom: 0;
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+.settings-sections a {
+  min-height: 32px;
 }
 
 .settings-facts {

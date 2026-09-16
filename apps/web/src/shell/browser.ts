@@ -15,6 +15,12 @@ import {
   type TwoFactorStatus,
 } from '@conflict-hq/ezacto-client'
 import { browserDensityStore, createDensityRuntime, type Density } from '../density.js'
+import {
+  DEFAULT_COMPANY_SETTINGS_SECTION,
+  applySettingsSection,
+  resolveSettingsSection,
+} from '../settings-sections.js'
+import { browserTextSizeStore, createTextSizeRuntime, type TextSize, textSizes } from '../text-size.js'
 import { browserThemeStore, createThemeRuntime } from '../theme-preference.js'
 import { renderDataTable } from '../components/data-table.js'
 import { defaultTheme, themeManifest } from '../theme.js'
@@ -5191,6 +5197,48 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   }
   syncDensityChoice(density.start())
+
+  // Text size, beside density and for the same reason (issue 800): a display
+  // preference with nothing to wait for, applied before the session resolves.
+  const textSize = createTextSizeRuntime({
+    store: browserTextSizeStore(globalThis.localStorage),
+    target: document.documentElement,
+  })
+  const syncTextSizeChoice = (current: TextSize): void => {
+    for (const button of document.querySelectorAll<HTMLButtonElement>(
+      '[data-text-size-choice]',
+    )) {
+      button.setAttribute('aria-pressed', String(button.dataset.textSizeChoice === current))
+    }
+  }
+  syncTextSizeChoice(textSize.start())
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-text-size-choice]')) {
+    button.addEventListener('click', () => {
+      const chosen = button.dataset.textSizeChoice
+      if (chosen === undefined || !(textSizes as readonly string[]).includes(chosen)) return
+      syncTextSizeChoice(textSize.set(chosen as TextSize))
+    })
+  }
+
+  // The company settings page shows one section at a time, chosen by the hash
+  // (issue 800). Every section stays in the document for the controllers that
+  // find their elements at construction; only `hidden` moves. A section the
+  // page has marked unavailable -- Payouts, until Wise is configured -- falls
+  // back to the first, so a stale link opens a page and not a blank one.
+  if (moduleSettingsPage) {
+    const sections = [...document.querySelectorAll<HTMLElement>('[data-settings-section]')]
+    const links = [...document.querySelectorAll<HTMLElement>('[data-settings-section-link]')]
+    const unavailable = (section: HTMLElement): boolean =>
+      section.hasAttribute('data-settings-unavailable')
+    const showSection = (): void => {
+      let current = resolveSettingsSection(globalThis.location.hash)
+      const chosen = sections.find((section) => section.dataset.settingsSection === current)
+      if (chosen !== undefined && unavailable(chosen)) current = DEFAULT_COMPANY_SETTINGS_SECTION
+      applySettingsSection(current, sections, links, unavailable)
+    }
+    showSection()
+    globalThis.addEventListener('hashchange', showSection)
+  }
 
   // The theme runtime resolved a stored choice against an organization default
   // and kept the document theme separate from it, and nothing had ever
