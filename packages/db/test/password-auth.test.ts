@@ -283,6 +283,104 @@ for (const [runtime, factory] of factories) {
       ).rejects.toBeInstanceOf(FirstRunSignupUnavailableError)
     })
 
+    /**
+     * #780. A claim nobody ever verified used to be permanent: whoever posted
+     * to /auth/signup first owned the instance for ever, even if they never
+     * opened the mail, and the real operator's only route back was the
+     * database.
+     */
+    describe('an abandoned first-run claim', () => {
+      let abandoned: Harness
+
+      beforeAll(async () => {
+        abandoned = await factory()
+        await abandoned.service.signup({
+          organizationName: 'Squatter Org',
+          firstName: 'First',
+          lastName: 'Claimant',
+          email: 'squatter@example.test',
+          password,
+          clientKey: '198.51.100.50',
+        })
+      })
+
+      afterAll(async () => abandoned.close())
+
+      it('transfers to the next claimant, rewriting the identity in place', async () => {
+        const verification = await abandoned.service.signup({
+          organizationName: 'Real Studio',
+          firstName: 'Avery',
+          lastName: 'Ng',
+          email: 'real@example.test',
+          password: replacementPassword,
+          clientKey: '198.51.100.51',
+        })
+        expect(verification).toMatchObject({ kind: 'verify_email', to: 'real@example.test' })
+        expect(
+          await abandoned.rows(`SELECT name FROM organizations WHERE id = 1`),
+        ).toEqual([{ name: 'Real Studio' }])
+        expect(
+          await abandoned.rows(
+            `SELECT first_name AS firstName, last_name AS lastName FROM users WHERE id = 1`,
+          ),
+        ).toEqual([{ firstName: 'Avery', lastName: 'Ng' }])
+        expect(
+          await abandoned.rows(`SELECT address FROM user_emails WHERE id = 1`),
+        ).toEqual([{ address: 'real@example.test' }])
+      })
+
+      it('[security] leaves the first claimant no way back in', async () => {
+        // Their verification mail is still in their inbox. If the token
+        // survived the transfer they could open it afterwards and verify an
+        // address that is no longer theirs.
+        expect(
+          await abandoned.rows(
+            `SELECT count(*) AS live FROM auth_tokens
+             WHERE user_email_id = 1 AND kind = 'verify_email' AND used_at IS NULL`,
+          ),
+        ).toEqual([{ live: 1 }])
+        expect(
+          await abandoned.rows(`SELECT address FROM user_emails WHERE id = 1`),
+        ).toEqual([{ address: 'real@example.test' }])
+      })
+
+      it('[security] keeps exactly one owner throughout, which is why it transfers rather than deletes', async () => {
+        expect(
+          await abandoned.rows(`SELECT user_id AS userId FROM organization_owner WHERE id = 1`),
+        ).toEqual([{ userId: 1 }])
+        expect(
+          await abandoned.rows(`SELECT is_owner AS isOwner FROM users WHERE id = 1`),
+        ).toEqual([{ isOwner: 1 }])
+      })
+
+      it('[security] stops being transferable the moment an address is verified', async () => {
+        const verified = await factory()
+        const claim = await verified.service.signup({
+          organizationName: 'Settled Org',
+          firstName: 'Settled',
+          lastName: 'Owner',
+          email: 'settled@example.test',
+          password,
+          clientKey: '198.51.100.60',
+        })
+        await verified.service.verifyEmail(claim.token, '198.51.100.60')
+        await expect(
+          verified.service.signup({
+            organizationName: 'Too Late',
+            firstName: 'Too',
+            lastName: 'Late',
+            email: 'toolate@example.test',
+            password,
+            clientKey: '198.51.100.61',
+          }),
+        ).rejects.toBeInstanceOf(FirstRunSignupUnavailableError)
+        expect(
+          await verified.rows(`SELECT name FROM organizations WHERE id = 1`),
+        ).toEqual([{ name: 'Settled Org' }])
+        await verified.close()
+      })
+    })
+
     it('[unit] rate-limits attempt buckets and resets at the exact window boundary', async () => {
       harness.setNow('2026-08-30T00:00:00.000Z')
       for (let attempt = 0; attempt < 5; attempt += 1) {

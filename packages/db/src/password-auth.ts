@@ -446,6 +446,112 @@ const createPasswordAuthService = (
     const material = await issueToken('verify_email')
     const claimNonce = randomBase64Url(12)
     const expiresAt = futureTimestamp(timestamp, verifyTokenTtlMs)
+
+    /**
+     * #780. A claim nobody ever verified is transferred rather than refused.
+     *
+     * The abandoned rows cannot be deleted and should not be: the schema writes
+     * organization_owner as soon as the first user exists and refuses every
+     * delete, so a sweep fails on a foreign key. Organization 1 and user 1 keep
+     * their identity and are rewritten for the new claimant instead, which
+     * keeps "exactly one owner" true at every point.
+     *
+     * Every statement is guarded on the claim, and the claim itself on the
+     * safety predicate: no address anywhere has ever been verified. A verified
+     * address is the only route to a session and a session the only route to
+     * creating anything else, so its absence proves nothing exists that the
+     * abandoned signup did not write. The trigger enforces the same predicate,
+     * so a future caller cannot forget it.
+     */
+    const reclaimable = await database.first<{ present: number }>(
+      `SELECT 1 AS present FROM auth_first_run
+       WHERE id = 1 AND completed_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM user_emails WHERE verified_at IS NOT NULL)`,
+    )
+    if (reclaimable !== null) {
+      try {
+        const rows = await database.atomic([
+          {
+            query: `UPDATE auth_first_run SET claim_nonce = ?, updated_at = ?
+              WHERE id = 1 AND completed_at IS NULL
+                AND NOT EXISTS (SELECT 1 FROM user_emails WHERE verified_at IS NOT NULL)
+              RETURNING id`,
+            bindings: [claimNonce, timestamp],
+          },
+          {
+            // The previous claimant's verification mail is still in their
+            // inbox. Left alive, they could open it after the transfer and
+            // verify an address that is no longer theirs, taking the instance
+            // back from the person who just claimed it.
+            // RETURNING because the container adapter reads every statement
+            // with .all(), which better-sqlite3 refuses for one that returns
+            // nothing. The rows are not inspected; the sweep may legitimately
+            // find none, where the old token had already expired.
+            query: `DELETE FROM auth_tokens
+              WHERE user_email_id = 1
+                AND EXISTS (SELECT 1 FROM auth_first_run WHERE id = 1 AND claim_nonce = ?)
+              RETURNING id`,
+            bindings: [claimNonce],
+          },
+          {
+            query: `UPDATE organizations SET name = ?, updated_at = ?
+              WHERE id = 1
+                AND EXISTS (SELECT 1 FROM auth_first_run WHERE id = 1 AND claim_nonce = ?)
+              RETURNING id`,
+            bindings: [organizationName, timestamp, claimNonce],
+          },
+          {
+            query: `UPDATE users SET first_name = ?, last_name = ?, updated_at = ?
+              WHERE id = 1
+                AND EXISTS (SELECT 1 FROM auth_first_run WHERE id = 1 AND claim_nonce = ?)
+              RETURNING id`,
+            bindings: [firstName, lastName, timestamp, claimNonce],
+          },
+          {
+            query: `UPDATE user_emails
+              SET address = ?, verified_at = NULL, is_primary = 0,
+                  invalidated_at = NULL, updated_at = ?
+              WHERE id = 1
+                AND EXISTS (SELECT 1 FROM auth_first_run WHERE id = 1 AND claim_nonce = ?)
+              RETURNING id`,
+            bindings: [email, timestamp, claimNonce],
+          },
+          {
+            query: `UPDATE user_passwords
+              SET credential_version = credential_version + 1, algorithm = ?, version = ?,
+                  iterations = NULL, memory_kib = ?, time_cost = ?, parallelism = ?,
+                  salt = ?, password_hash = ?, updated_at = ?
+              WHERE user_id = 1
+                AND EXISTS (SELECT 1 FROM auth_first_run WHERE id = 1 AND claim_nonce = ?)
+              RETURNING user_id AS userId`,
+            bindings: [
+              password.algorithm,
+              password.version,
+              password.memoryKiB,
+              password.timeCost,
+              password.parallelism,
+              password.salt,
+              password.passwordHash,
+              timestamp,
+              claimNonce,
+            ],
+          },
+          tokenInsert(material, 'verify_email', 1, expiresAt, timestamp),
+        ])
+        // Every statement but the token sweep speaks for exactly one row; the
+        // sweep may legitimately find none, where the old token had expired.
+        const [claim, , organization, user, userEmail, userPassword, token] = rows
+        for (const result of [claim, organization, user, userEmail, userPassword, token]) {
+          if (result?.length !== 1) {
+            throw new Error('first-run claim transfer did not rewrite complete identity state')
+          }
+        }
+      } catch (error) {
+        translateFirstRun(error)
+      }
+      return { kind: 'verify_email', to: email, token: material.token, expiresAt }
+    }
+
     try {
       const rows = await database.atomic([
         {
