@@ -46,6 +46,14 @@ ENVIRONMENT=production
 RELEASE=YOUR_REVIEWED_COMMIT
 ```
 
+Add `EZACTO_BOOTSTRAP_TOKEN` as well if you intend to create the owner over the
+API rather than through the sign-up form. Step 4 explains the choice, which is
+worth making before the instance is reachable rather than after.
+
+```dotenv
+EZACTO_BOOTSTRAP_TOKEN=REPLACE_WITH_32_RANDOM_BYTES_AS_BASE64URL
+```
+
 Generate the signing key without writing raw bytes to disk:
 
 ```sh
@@ -113,10 +121,48 @@ printing its value.
 
 ## 4. Create the owner
 
+A new instance has no accounts, and the first account to claim first run becomes
+the administrator. Until you have claimed it, anyone who can reach
+`APP_BASE_URL` can. Pick one of the two paths below before the instance is
+publicly reachable.
+
+The claim is permanent once made: an unverified claim is not currently released,
+so a stranger who signs up first leaves you with no route in except the bootstrap
+token below, or editing the database by hand.
+
+### Either: the sign-up form, immediately
+
 Open `APP_BASE_URL`, use the sign-up form, and follow the SMTP verification link.
 The first verified account creates the organization and becomes its
-administrator. Sign in, create a client and project, and record a test entry
-before inviting anyone else.
+administrator. Do this as soon as the container is healthy, before you point
+public DNS at it or open the firewall.
+
+### Or: the bootstrap token, at your leisure
+
+Set `EZACTO_BOOTSTRAP_TOKEN` in the environment file before the first start.
+While it is set, two authenticated endpoints create the owner without the
+sign-up form or an inbox:
+
+```sh
+curl -sS -X POST "$APP_BASE_URL/__ezacto/bootstrap" \
+  -H "authorization: Bearer $EZACTO_BOOTSTRAP_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"organization_name":"Example Co","owner_first_name":"Ada",
+       "owner_last_name":"Lovelace","owner_email":"ada@example.com"}'
+
+curl -sS -X POST "$APP_BASE_URL/__ezacto/bootstrap/owner-password" \
+  -H "authorization: Bearer $EZACTO_BOOTSTRAP_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"password":"a long passphrase you have not used elsewhere"}'
+```
+
+Both answer `503` when the variable is unset, so the surface does not exist on an
+instance that never enabled it. **Remove `EZACTO_BOOTSTRAP_TOKEN` from the
+environment file and restart once you can sign in.** It is first-owner
+authority, and it should not outlive the setup that needed it.
+
+Either way, sign in, create a client and project, and record a test entry before
+inviting anyone else.
 
 ## Updates
 
