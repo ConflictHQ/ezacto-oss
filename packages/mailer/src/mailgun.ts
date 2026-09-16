@@ -5,6 +5,7 @@ import type {
   EmailRecipient,
   HttpEmailProvider,
 } from "./index.js";
+import { formatAddress } from "./address.js";
 
 export interface MailgunConfig {
   apiKey: string;
@@ -94,7 +95,9 @@ const recipientAddress = (recipient: EmailRecipient): string => {
     throw new RangeError("Mailgun recipient email is invalid");
   if (recipient.name === undefined) return email;
   const name = bounded(recipient.name, "Mailgun recipient name", 200);
-  return `${name} <${email}>`;
+  // #738. The name is arbitrary user text; unquoted, a comma in it splits one
+  // recipient into two and an angle bracket moves the mailbox.
+  return formatAddress(email, name);
 };
 
 const safeLatency = (started: number, completed: number): number => {

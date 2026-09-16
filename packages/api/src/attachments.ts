@@ -613,6 +613,14 @@ export const installAttachmentRoutes = <Bindings extends object>(
           "content-type": record.contentType,
           "content-length": String(record.byteSize),
           "content-disposition": contentDisposition(record.name),
+          // #737. The content type here is whatever the uploader claimed, and
+          // an uploader is any user who can attach a file. Without nosniff a
+          // browser is free to re-type the bytes by looking at them, so a file
+          // uploaded as an innocuous type and containing markup can be served
+          // back as HTML on this origin, where a session cookie lives.
+          // Attachments already download rather than display, so nothing legit
+          // depends on sniffing.
+          "x-content-type-options": "nosniff",
         },
       });
     });

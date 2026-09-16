@@ -224,6 +224,11 @@ describe("owner-scoped attachment routes", () => {
       expect(downloaded.headers.get("content-disposition")).toContain(
         "filename*=UTF-8''",
       );
+      // #737. The content type is whatever the uploader claimed, and an
+      // uploader is any user who can attach a file. Without nosniff a browser
+      // may re-type the bytes by looking at them and render markup as HTML on
+      // this origin, where a session cookie lives.
+      expect(downloaded.headers.get("x-content-type-options")).toBe("nosniff");
       expect(await downloaded.text()).toBe("owner scoped bytes");
 
       const crossParent = await runtime.request(
