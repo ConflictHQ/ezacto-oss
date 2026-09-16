@@ -119,6 +119,18 @@ export interface QuickBooksStore {
     syncToken: string
     now: string
   }): Promise<void>
+  /** A receipt of ours and the QuickBooks payment it became (issue 799). */
+  readPaymentLink(input: {
+    realmId: string
+    paymentId: number
+  }): Promise<{ quickBooksId: string; syncToken: string; mirroredAt: string } | null>
+  savePaymentLink(input: {
+    realmId: string
+    paymentId: number
+    quickBooksId: string
+    syncToken: string
+    now: string
+  }): Promise<void>
   /**
    * Records a delivery and says whether this caller is the one that should act
    * on it. A second delivery of the same change answers false rather than
@@ -247,6 +259,28 @@ export const createQuickBooksStore = (database: Database): QuickBooksStore => ({
           created_at, updated_at)
        VALUES (${input.realmId}, ${input.kind}, ${input.ezactoId}, ${input.quickBooksId}, ${input.syncToken}, ${input.now}, ${input.now}, ${input.now})
        ON CONFLICT(realm_id, kind, ezacto_id) DO UPDATE SET
+         sync_token = excluded.sync_token,
+         mirrored_at = excluded.mirrored_at,
+         updated_at = excluded.updated_at`)
+  },
+  readPaymentLink: async (input) => {
+    const rows = await database.all<{
+      quickbooks_id: string
+      sync_token: string
+      mirrored_at: string
+    }>(sql`SELECT quickbooks_id, sync_token, mirrored_at
+       FROM quickbooks_payment_links
+       WHERE realm_id = ${input.realmId} AND payment_id = ${input.paymentId}`)
+    const row = rows[0]
+    return row === undefined
+      ? null
+      : { quickBooksId: row.quickbooks_id, syncToken: row.sync_token, mirroredAt: row.mirrored_at }
+  },
+  savePaymentLink: async (input) => {
+    await database.run(sql`INSERT INTO quickbooks_payment_links
+         (realm_id, payment_id, quickbooks_id, sync_token, mirrored_at, created_at, updated_at)
+       VALUES (${input.realmId}, ${input.paymentId}, ${input.quickBooksId}, ${input.syncToken}, ${input.now}, ${input.now}, ${input.now})
+       ON CONFLICT(realm_id, payment_id) DO UPDATE SET
          sync_token = excluded.sync_token,
          mirrored_at = excluded.mirrored_at,
          updated_at = excluded.updated_at`)

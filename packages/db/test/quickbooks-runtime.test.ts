@@ -2,11 +2,13 @@ import BetterSqlite3 from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MirrorClient, MirrorInvoice } from "@ezacto/integrations";
 import {
+  createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
   type QuickBooksMirrorSource,
   type QuickBooksRuntime,
 } from "@ezacto/integrations";
 import { createContainerDatabase } from "../src/adapters.js";
+import { recordInvoicePayment } from "../src/invoice-state.js";
 import { migrateContainer } from "../src/migrate.js";
 import { createQuickBooksStore } from "../src/quickbooks.js";
 
@@ -120,7 +122,8 @@ const runtime = async (
              (2, 'Northpeak', 'USD', '${t(0)}', '${t(0)}');
     INSERT INTO invoices
       (id, client_id, number, currency, issue_date, due_date, state, created_at, updated_at)
-      VALUES (41, 2, '1315', 'USD', '2026-09-11', '2026-10-11', 'draft', '${t(0)}', '${t(0)}');
+      VALUES (41, 2, '1315', 'USD', '2026-09-11', '2026-10-11', 'draft', '${t(0)}', '${t(0)}'),
+             (42, 2, '1316', 'USD', '2026-09-11', '2026-10-11', 'open', '${t(0)}', '${t(0)}');
   `);
   const store = createQuickBooksStore(createContainerDatabase(sqlite));
   const built = createQuickBooksRuntime({
@@ -424,5 +427,159 @@ describe("payments coming back", () => {
     expect(
       await service.receiveWebhook({ payload, signature: await sign(payload) }),
     ).toMatchObject({ accepted: false });
+  });
+});
+
+describe("payments going out (issue 799)", () => {
+  const connected = async (store: ReturnType<typeof createQuickBooksStore>): Promise<void> => {
+    await store.saveConnection({
+      realmId: "realm-a",
+      accessToken: "access-1",
+      refreshToken: "refresh-1",
+      accessTokenExpiresAt: t(59),
+      refreshTokenExpiresAt: t(59),
+      scope: "com.intuit.quickbooks.accounting",
+      connectedByUserId: 1,
+      companyName: "Sandbox Company",
+      now: t(1),
+    });
+  };
+
+  /** Mark paid, as the settle button does it: the whole balance, today, no note. */
+  const markPaid = async (paymentId: number, provider: "manual" = "manual"): Promise<void> => {
+    await recordInvoicePayment(createContainerDatabase(sqlite!), {
+      invoiceId: 42,
+      commandId: `record-${String(paymentId)}`,
+      actor: { type: "user", id: 1 },
+      authorize: async () => true,
+      expectedVersion: 0,
+      occurredAt: t(2),
+      eventIds: [`evt-${String(paymentId)}-a`, `evt-${String(paymentId)}-b`],
+      payment: {
+        type: provider,
+        id: paymentId,
+        currency: "USD",
+        amountCents: 250_000,
+        paidAt: null,
+        paidDate: "2026-09-20",
+        notes: null,
+        recordedByUserId: 1,
+      },
+    });
+  };
+
+  /** The events the command wrote, as the outbox would hand them to a subscriber. */
+  const outboxEvents = () =>
+    sqlite!
+      .prepare(
+        `SELECT aggregate_type, aggregate_id, event_type, payload_json
+         FROM event_outbox WHERE aggregate_id = 42 ORDER BY aggregate_sequence`,
+      )
+      .all() as { aggregate_type: string; aggregate_id: number; event_type: string; payload_json: string }[];
+
+  const invoiceRoutes = [
+    { match: /\/query\?/u, body: { QueryResponse: {} } },
+    { match: /\/customer\?/u, body: customerResponse },
+    { match: /\/invoice\?/u, body: { Invoice: { Id: "qb-inv-8", SyncToken: "0" } } },
+  ];
+  const paymentRoute = {
+    match: /\/payment\?/u,
+    method: "POST",
+    body: (sent: Record<string, unknown>) => ({
+      Payment: { Id: "qb-pay-9", SyncToken: "0", TotalAmt: sent["TotalAmt"], PaymentRefNum: sent["PaymentRefNum"] },
+    }),
+  };
+
+  const invoice42 = { ...invoice, id: 42, number: "1316" };
+
+  it("[e2e] mark paid on a mirrored invoice files one receipt against it, once", async () => {
+    const fetchImpl = intuit([paymentRoute, ...invoiceRoutes]);
+    const built = await runtime(fetchImpl, source({ readInvoice: vi.fn(async () => invoice42) }));
+    await connected(built.store);
+    await built.mirror(42);
+    await markPaid(9);
+
+    const subscriber = createQuickBooksMirrorSubscriber(built);
+    const deliver = async () => {
+      for (const event of outboxEvents()) {
+        await subscriber.deliver({
+          aggregateType: event.aggregate_type,
+          aggregateId: event.aggregate_id,
+          eventType: event.event_type,
+          payload: JSON.parse(event.payload_json) as Record<string, unknown>,
+        });
+      }
+    };
+    await deliver();
+    // Once more, as the outbox does after a timeout. The link is what stops
+    // the second delivery filing a second receipt.
+    await deliver();
+
+    const sent = fetchImpl.mock.calls
+      .map((call) => call[0])
+      .filter((request) => request.method === "POST" && request.url.includes("/payment?"));
+    expect(sent).toHaveLength(1);
+    expect(await sent[0]!.clone().json()).toEqual({
+      CustomerRef: { value: "qb-2" },
+      TotalAmt: 2500,
+      TxnDate: "2026-09-20",
+      PaymentRefNum: "ez-9",
+      Line: [{ Amount: 2500, LinkedTxn: [{ TxnId: "qb-inv-8", TxnType: "Invoice" }] }],
+    });
+    expect(await built.store.readPaymentLink({ realmId: "realm-a", paymentId: 9 })).toMatchObject({
+      quickBooksId: "qb-pay-9",
+    });
+    // The event set the command wrote is what the subscriber was fed, so this
+    // is also the statement that `payment.recorded` carries the receipt.
+    expect(outboxEvents().map((event) => event.event_type)).toEqual(["payment.recorded", "invoice.paid"]);
+  });
+
+  it("[e2e] an invoice never mirrored is mirrored first, then paid", async () => {
+    const fetchImpl = intuit([paymentRoute, ...invoiceRoutes]);
+    const built = await runtime(fetchImpl, source({ readInvoice: vi.fn(async () => invoice42) }));
+    await connected(built.store);
+    await markPaid(9);
+
+    const outcome = await built.mirrorPayment({
+      invoiceId: 42,
+      payment: { id: 9, amountCents: 250_000, paidOn: "2026-09-20", provider: "manual" },
+    });
+    expect(outcome).toEqual({ kind: "created", quickBooksId: "qb-pay-9" });
+    expect(await built.store.readLink({ realmId: "realm-a", kind: "invoice", ezactoId: 42 })).toMatchObject({
+      quickBooksId: "qb-inv-8",
+    });
+    const order = fetchImpl.mock.calls
+      .map((call) => call[0])
+      .filter((request) => request.method === "POST")
+      .map((request) => new URL(request.url).pathname.split("/").at(-1));
+    expect(order.at(-1)).toBe("payment");
+    expect(order.indexOf("invoice")).toBeLessThan(order.indexOf("payment"));
+  });
+
+  it("[security] refuses without a connection and sends nothing", async () => {
+    const fetchImpl = intuit([]);
+    const built = await runtime(fetchImpl);
+    await markPaid(9);
+    expect(
+      await built.mirrorPayment({
+        invoiceId: 42,
+        payment: { id: 9, amountCents: 250_000, paidOn: "2026-09-20", provider: "manual" },
+      }),
+    ).toMatchObject({ kind: "refused" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("[security] the link table refuses a receipt that does not exist", async () => {
+    const built = await runtime(intuit([]));
+    await expect(
+      built.store.savePaymentLink({
+        realmId: "realm-a",
+        paymentId: 999,
+        quickBooksId: "qb-pay-x",
+        syncToken: "0",
+        now: t(3),
+      }),
+    ).rejects.toThrow();
+    expect(await built.store.readPaymentLink({ realmId: "realm-a", paymentId: 999 })).toBeNull();
   });
 });
