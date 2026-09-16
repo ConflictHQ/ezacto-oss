@@ -60,3 +60,44 @@ describe('container outbox scheduler', () => {
     await scheduler.close()
   })
 })
+
+describe('work before the drain (issue 801)', () => {
+  it('[unit] runs the hook first, so what it enqueues goes out in the same pass', async () => {
+    const order: string[] = []
+    const drain = vi.fn(async () => {
+      order.push('drain')
+      return summary
+    })
+    const scheduler = new ContainerOutboxScheduler({ drain } as unknown as OutboxService, {
+      intervalMs: 100,
+      beforeDrain: async () => {
+        order.push('reminders')
+      },
+    })
+    await scheduler.drain()
+    expect(order).toEqual(['reminders', 'drain'])
+    await scheduler.close()
+  })
+
+  it('[unit] a hook that fails is reported like a drain that fails, and the next tick still runs', async () => {
+    vi.useFakeTimers()
+    const reportError = vi.fn()
+    const drain = vi.fn(async () => summary)
+    let attempts = 0
+    const scheduler = new ContainerOutboxScheduler({ drain } as unknown as OutboxService, {
+      intervalMs: 100,
+      reportError,
+      beforeDrain: async () => {
+        attempts += 1
+        if (attempts === 1) throw new RangeError('reminder clock')
+      },
+    })
+    scheduler.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(reportError).toHaveBeenCalledWith('RangeError')
+    expect(drain).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(drain).toHaveBeenCalledTimes(1)
+    await scheduler.close()
+  })
+})

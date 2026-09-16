@@ -108,6 +108,24 @@ export const emailTemplateVariables = [
     compatibility: "native",
   },
   {
+    // The two facts a reminder is about and an invoice email is not: what is
+    // still owed, and how late it is (issue 801). Harvest's reminder said
+    // "Invoice 1293 is 14 days past due" and named the amount due, not the
+    // amount billed, and a template that cannot say either is not a reminder.
+    name: "invoice_due_amount",
+    token: "%invoice_due_amount%",
+    description: "Amount still owed on the invoice",
+    kinds: ["reminder"],
+    compatibility: "native",
+  },
+  {
+    name: "invoice_days_past_due",
+    token: "%invoice_days_past_due%",
+    description: "Days since the invoice was due",
+    kinds: ["reminder"],
+    compatibility: "native",
+  },
+  {
     name: "client_name",
     token: "%client_name%",
     description: "Billable client name",

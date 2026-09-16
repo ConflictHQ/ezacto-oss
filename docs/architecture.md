@@ -25,4 +25,7 @@
   webhooks) and reconciliation shape (Mercury: reference tokens, suggested-match
   queue, unmatched state). **We never hold funds. No billing code exists here.**
 - **Jobs:** Cloudflare Queues on Workers / in-process queue in container, one
-  interface. Reminders are scheduled jobs cancelled on payment, not cron scans.
+  interface. Payment reminders are rows booked when an invoice is sent (from
+  the invoice's own policy, the organisation default, or the date named on the
+  send) and cancelled on payment; the daily cron on Workers, or the outbox tick
+  in the container, sends the ones that have come due and books the next.

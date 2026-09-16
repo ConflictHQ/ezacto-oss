@@ -85,6 +85,7 @@ import { twoFactorChallengesMigration } from './migrations/0084_two_factor_chall
 import { signInMethodsMigration } from './migrations/0085_sign_in_methods.js'
 import { transferableFirstRunClaimMigration } from './migrations/0086_transferable_first_run_claim.js'
 import { quickBooksPaymentLinksMigration } from './migrations/0087_quickbooks_payment_links.js'
+import { invoiceReminderDeliveriesMigration } from './migrations/0088_invoice_reminder_deliveries.js'
 import { bandClaimModesMigration } from './migrations/0074_band_claim_modes.js'
 import { bandClaimScopeMigration } from './migrations/0075_band_claim_scope.js'
 import { rateRemovalMigration } from './migrations/0076_rate_removal.js'
@@ -1528,6 +1529,7 @@ const migrations = [
     statements: transferableFirstRunClaimMigration,
   },
   { id: '0087_quickbooks_payment_links', statements: quickBooksPaymentLinksMigration },
+  { id: '0088_invoice_reminder_deliveries', statements: invoiceReminderDeliveriesMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

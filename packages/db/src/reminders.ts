@@ -100,15 +100,40 @@ const scheduleReminder = async (
   event: Readonly<OutboxEventRecord>,
   context: Readonly<OutboxSubscriberContext>,
 ): Promise<void> => {
-  const invoice = await database.first<InvoiceReminderContext>(
-    `SELECT due_date AS "dueDate", reminder_policy AS "reminderPolicy"
-     FROM invoices WHERE id = ?`,
+  // The invoice's own policy where it has one, the organisation's default
+  // where it does not (issue 801). Read at send time rather than copied onto
+  // the invoice, so a default switched on today governs an invoice raised
+  // yesterday and sent tomorrow.
+  const invoice = await database.first<InvoiceReminderContext & { sendReminderOn: string | null }>(
+    `SELECT invoice.due_date AS "dueDate",
+            COALESCE(invoice.reminder_policy, organization.reminder_policy) AS "reminderPolicy",
+            (SELECT message.send_reminder_on FROM invoice_messages message
+              WHERE message.invoice_id = invoice.id AND message.event_type = 'send'
+              ORDER BY message.id DESC LIMIT 1) AS "sendReminderOn"
+     FROM invoices invoice
+     LEFT JOIN organizations organization ON organization.id = (
+       SELECT id FROM organizations ORDER BY id LIMIT 1
+     )
+     WHERE invoice.id = ?`,
     [event.aggregateId],
   )
   if (invoice === null) return
-  const policy = parseReminderPolicy(invoice.reminderPolicy)
+  const namedDate =
+    invoice.sendReminderOn !== null && /^\d{4}-\d{2}-\d{2}$/.test(invoice.sendReminderOn)
+      ? invoice.sendReminderOn
+      : null
+  // A date named on the send is a decision even where no policy exists: the
+  // composer has offered "send a reminder on" since the invoice screen shipped,
+  // and an operator who picked one expects mail on it. Without a policy to
+  // continue on, it repeats weekly until the invoice settles.
+  const policy =
+    parseReminderPolicy(invoice.reminderPolicy) ??
+    (namedDate === null ? null : { first_after_days: 0, every_days: 7 })
   if (policy === null) return
-  const scheduledAt = addDays(invoice.dueDate, policy.first_after_days)
+  // The named date wins over the policy's own offset, which is the answer for a
+  // send that did not choose.
+  const scheduledAt =
+    namedDate === null ? addDays(invoice.dueDate, policy.first_after_days) : addDays(namedDate, 0)
   await database.run(
     `INSERT INTO scheduled_reminders (
       invoice_id, scheduled_at, interval_days, status, template,

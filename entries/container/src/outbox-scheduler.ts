@@ -5,6 +5,12 @@ export const CONTAINER_OUTBOX_POLL_INTERVAL_MS = 15_000
 export interface ContainerOutboxSchedulerOptions {
   intervalMs?: number
   reportError?: (name: string) => void
+  /**
+   * Work that produces outbox events and mail, run before each drain so what
+   * it enqueues goes out in the same pass. The reminder processor (issue 801)
+   * is the one caller; the container has no cron to give it.
+   */
+  beforeDrain?: () => Promise<unknown>
 }
 
 export class ContainerOutboxScheduler {
@@ -28,7 +34,10 @@ export class ContainerOutboxScheduler {
     this.#reportError =
       options.reportError ??
       ((name) => console.error(`ezacto outbox drain failed: ${name}`))
+    this.#beforeDrain = options.beforeDrain
   }
+
+  readonly #beforeDrain: (() => Promise<unknown>) | undefined
 
   start(): void {
     if (this.#closed || this.#timer !== undefined) return
@@ -42,7 +51,9 @@ export class ContainerOutboxScheduler {
       return Promise.reject(new Error('container outbox scheduler is closed'))
     }
     if (this.#active !== undefined) return this.#active
-    const active = this.#service.drain()
+    const before = this.#beforeDrain
+    const active =
+      before === undefined ? this.#service.drain() : before().then(() => this.#service.drain())
     this.#active = active
     void active.then(
       () => {

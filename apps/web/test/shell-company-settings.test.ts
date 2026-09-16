@@ -131,6 +131,10 @@ describe('company settings', () => {
     })),
     removeSsoDomain: vi.fn(async () => undefined),
     getBackupStatus: vi.fn(async () => backupStatusPayload),
+    getInvoiceReminders: vi.fn(async () => ({ first_after_days: 3, every_days: 7 })),
+    updateInvoiceReminders: vi.fn(
+      async (policy: { first_after_days: number; every_days: number } | null) => policy,
+    ),
     getEmailHealth: vi.fn(async () => ({
       reputation: {
         sent: 412,
@@ -145,6 +149,43 @@ describe('company settings', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  it('[browser #801] shows the payment reminder default, saves a change, and switches it off', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    globalThis.location.hash = '#reminders'
+    const api = companyApi()
+    await mountShell(api)
+
+    const form = document.querySelector<HTMLFormElement>('[data-reminder-settings-form]')!
+    const enabled = document.querySelector<HTMLInputElement>('[data-reminder-settings-enabled]')!
+    const first = document.querySelector<HTMLInputElement>('[data-reminder-settings-first]')!
+    const every = document.querySelector<HTMLInputElement>('[data-reminder-settings-every]')!
+    const result = document.querySelector<HTMLElement>('[data-reminder-settings-result]')!
+    await vi.waitFor(() => expect(form.hidden).toBe(false))
+    expect(enabled.checked).toBe(true)
+    expect(first.value).toBe('3')
+    expect(every.value).toBe('7')
+
+    first.value = '14'
+    every.value = '14'
+    form.requestSubmit()
+    await vi.waitFor(() => expect(result.textContent).toBe('Saved.'))
+    expect(api.updateInvoiceReminders).toHaveBeenLastCalledWith(
+      { first_after_days: 14, every_days: 14 },
+      expect.any(AbortSignal),
+    )
+
+    // Off sends null, and the numbers grey out rather than vanish: what the
+    // default would be when switched back on is still worth seeing.
+    enabled.checked = false
+    enabled.dispatchEvent(new Event('change'))
+    expect(first.disabled).toBe(true)
+    form.requestSubmit()
+    await vi.waitFor(() => expect(result.textContent).toBe('Saved. Payment reminders are off.'))
+    expect(api.updateInvoiceReminders).toHaveBeenLastCalledWith(null, expect.any(AbortSignal))
+    globalThis.location.hash = ''
   })
 
   it('[browser #800] shows one section at a time, chosen by the hash, and links each one', async () => {

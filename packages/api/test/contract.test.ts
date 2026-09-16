@@ -10,6 +10,7 @@ import {
   installPayoutAccountRoutes,
   installInvoiceDocumentPreferenceRoutes,
   installThankYouPreferenceRoutes,
+  installReminderSettingsRoutes,
   installRecurringRepairRoutes,
   installInvoiceTimeClaimRoutes,
   installStripeRoutes,
@@ -276,6 +277,10 @@ const documentedApp = () =>
         readOrganizationThankYou: async () => false,
         setOrganizationThankYou: async () => undefined,
       } as never);
+      installReminderSettingsRoutes(api, {
+        readOrganizationReminderPolicy: async () => null,
+        setOrganizationReminderPolicy: async () => undefined,
+      });
       installInvoiceTimeClaimRoutes(api, {
         releaseInvoicedTime: async () => ({ kind: "released", released: 0 }),
       });
