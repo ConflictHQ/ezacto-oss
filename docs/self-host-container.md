@@ -140,8 +140,10 @@ public DNS at it or open the firewall.
 ### Or: the bootstrap token, at your leisure
 
 Set `EZACTO_BOOTSTRAP_TOKEN` in the environment file before the first start.
-While it is set, two authenticated endpoints create the owner without the
-sign-up form or an inbox:
+**While it is set, `/auth/signup` is not served at all**, so the race described
+above cannot happen: there is no form for a stranger to reach, and the window
+never opens rather than merely being short. Two authenticated endpoints create
+the owner without the sign-up form or an inbox:
 
 ```sh
 curl -sS -X POST "$APP_BASE_URL/__ezacto/bootstrap" \
@@ -184,22 +186,3 @@ volume's sole reference, and refuses a non-empty or already-attached target.
 It is a complete recovery mechanism for this one-container layout, but it is not
 the portable D18 logical export promised by issue #28: it has no per-table CSV
 files and is not a Worker-to-container escape bundle.
-
-## Claim the instance before anybody else does
-
-`POST /auth/signup` is how an instance is claimed: the first request creates the
-organization and its administrator, and **the claim is permanent**. Between the
-moment the hostname resolves and the moment you sign up, whoever reaches it
-first becomes the owner — and if they abandon it without verifying, the claim
-still stands and the real operator has no route back that does not involve the
-database.
-
-Two ways to close that window, and you want one of them:
-
-- **Set `EZACTO_BOOTSTRAP_TOKEN` before the first deploy.** While it is set,
-  `/auth/signup` is not served at all, and you claim the instance through the
-  bootstrap endpoint instead. This is the option to prefer: the window never
-  opens.
-- **Or sign up immediately**, before announcing the hostname to anyone.
-
-There is no third option where you deploy, get to it tomorrow, and are fine.

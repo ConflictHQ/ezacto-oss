@@ -152,6 +152,10 @@ claimed it anyone who can reach the Worker can. The claim is permanent once made
 an unverified claim is not currently released, so a stranger who signs up first
 leaves the bootstrap token as the only way in.
 
+**While `EZACTO_BOOTSTRAP_TOKEN` is set, `/auth/signup` is not served at all**,
+so an instance deployed with one configured is never claimable by a stranger:
+the window never opens rather than merely being short.
+
 The bootstrap workflow below is that claim, which is why it comes before anything
 public. After the deployment is healthy, run `bootstrap instance` once with the
 exact organization and owner identity:
@@ -198,22 +202,3 @@ D1 Time Travel is an in-place database undo, not a complete Ezacto backup. It
 does not copy the R2 attachment bucket or produce the vendor-independent D18
 bundle. Read [RESTORE.md](../RESTORE.md) before an incident. The portable Worker
 backup and restore path remains unavailable until issues #28 and #37 land.
-
-## Claim the instance before anybody else does
-
-`POST /auth/signup` is how an instance is claimed: the first request creates the
-organization and its administrator, and **the claim is permanent**. Between the
-moment the hostname resolves and the moment you sign up, whoever reaches it
-first becomes the owner — and if they abandon it without verifying, the claim
-still stands and the real operator has no route back that does not involve the
-database.
-
-Two ways to close that window, and you want one of them:
-
-- **Set `EZACTO_BOOTSTRAP_TOKEN` before the first deploy.** While it is set,
-  `/auth/signup` is not served at all, and you claim the instance through the
-  bootstrap endpoint instead. This is the option to prefer: the window never
-  opens.
-- **Or sign up immediately**, before announcing the hostname to anyone.
-
-There is no third option where you deploy, get to it tomorrow, and are fine.
