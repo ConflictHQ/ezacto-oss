@@ -60,6 +60,20 @@ export interface ApiTokenStore {
 
 export interface CreateApiTokenStoreOptions {
   now?: () => string
+  /**
+   * Longest a token issued through this store may live, in milliseconds.
+   *
+   * The public demo prints its own sign-in credentials, so anyone at all can
+   * mint a token there. A ceiling is what keeps one from outliving the visit
+   * that made it -- the nightly wipe is not that guarantee, because the wipe is
+   * a property of how the demo is rebuilt today rather than of the credential.
+   *
+   * A caller asking for longer, or for no expiry at all, is capped rather than
+   * refused: the ceiling is the deployment's business, and a client that could
+   * be talked out of it would not be one. Absent means no ceiling, which is
+   * what every ordinary instance wants.
+   */
+  maxLifetimeMs?: number
 }
 
 interface TokenRow {
@@ -396,12 +410,42 @@ export const authenticateApiToken = async (
   }
 }
 
+/**
+ * The expiry a token is actually written with. Without a ceiling this is
+ * whatever the caller asked for; with one it is the sooner of the two, and a
+ * caller who asked for nothing gets the ceiling rather than forever.
+ */
+const cappedExpiry = (
+  requested: string | null | undefined,
+  createdAt: string,
+  maxLifetimeMs: number | undefined,
+): string | null | undefined => {
+  if (maxLifetimeMs === undefined) return requested
+  const ceiling = new Date(Date.parse(createdAt) + maxLifetimeMs).toISOString()
+  if (requested === null || requested === undefined) return ceiling
+  return Date.parse(requested) < Date.parse(ceiling) ? requested : ceiling
+}
+
 export const createApiTokenStore = (
   database: Database,
-  { now = () => new Date().toISOString() }: CreateApiTokenStoreOptions = {},
+  {
+    now = () => new Date().toISOString(),
+    maxLifetimeMs,
+  }: CreateApiTokenStoreOptions = {},
 ): ApiTokenStore => ({
   authenticate: (token) => authenticateApiToken(database, token, now()),
-  issue: (input) => issueApiToken(database, { ...input, createdAt: now() }),
+  issue: (input) => {
+    const createdAt = now()
+    // Spread rather than assigned: `exactOptionalPropertyTypes` makes an
+    // explicit `undefined` a different thing from an absent key, and only the
+    // absent key means "the caller said nothing".
+    const expiresAt = cappedExpiry(input.expiresAt, createdAt, maxLifetimeMs)
+    return issueApiToken(database, {
+      ...input,
+      createdAt,
+      ...(expiresAt === undefined ? {} : { expiresAt }),
+    })
+  },
   list: (userId) => listApiTokens(database, userId),
   revoke: (userId, tokenId) => revokeApiToken(database, { userId, tokenId, revokedAt: now() }),
 })
