@@ -18,6 +18,7 @@ import {
   exchangeAuthorizationCode,
   inboundPayments,
   mirrorInvoice,
+  mirrorPayment,
   parseWebhookNotification,
   refreshAccessToken,
   revokeConnection,
@@ -25,6 +26,8 @@ import {
   type MirrorClient,
   type MirrorInvoice,
   type MirrorOutcome,
+  type MirrorPayment,
+  type MirrorPaymentOutcome,
 } from "../index.js";
 
 
@@ -126,6 +129,17 @@ export interface QuickBooksConnectionStore {
     syncToken: string;
     now: string;
   }): Promise<void>;
+  readPaymentLink(input: {
+    realmId: string;
+    paymentId: number;
+  }): Promise<{ quickBooksId: string; syncToken: string } | null>;
+  savePaymentLink(input: {
+    realmId: string;
+    paymentId: number;
+    quickBooksId: string;
+    syncToken: string;
+    now: string;
+  }): Promise<void>;
   claimWebhookDelivery(input: {
     realmId: string;
     entityName: string;
@@ -205,6 +219,14 @@ export interface QuickBooksRuntime {
   readonly service: QuickBooksService;
   /** Mirrors one invoice, or says why it could not. Used by the outbox subscriber. */
   mirror(invoiceId: number): Promise<MirrorOutcome>;
+  /**
+   * Copies one payment recorded here onto the mirrored invoice, mirroring the
+   * invoice first where it never was. Used by the same subscriber (issue 799).
+   */
+  mirrorPayment(input: {
+    invoiceId: number;
+    payment: MirrorPayment;
+  }): Promise<MirrorPaymentOutcome>;
 }
 
 export const createQuickBooksRuntime = (
@@ -320,6 +342,70 @@ export const createQuickBooksRuntime = (
       },
       quickBooks: client,
       allowOnlinePayment: connection.allowOnlinePayment,
+    });
+  };
+
+  const mirrorPaymentOnto = async (input: {
+    invoiceId: number;
+    payment: MirrorPayment;
+  }): Promise<MirrorPaymentOutcome> => {
+    const connection = await store.readConnection();
+    if (connection === null) {
+      return { kind: "refused", reason: "QuickBooks is not connected" };
+    }
+    // The invoice first, always. Where it was mirrored this is one link read;
+    // where it never was -- sent before the connection existed, or refused
+    // then -- the payment has nothing to settle until it is.
+    const invoiceLink = await store.readLink({
+      realmId: connection.realmId,
+      kind: "invoice",
+      ezactoId: input.invoiceId,
+    });
+    let invoiceQuickBooksId = invoiceLink?.quickBooksId ?? null;
+    if (invoiceQuickBooksId === null) {
+      const mirrored = await mirror(input.invoiceId);
+      if (mirrored.kind === "refused") return mirrored;
+      invoiceQuickBooksId = mirrored.quickBooksId;
+    }
+    const invoice = await source.readInvoice(input.invoiceId);
+    if (invoice === null) {
+      return { kind: "refused", reason: "the invoice no longer exists" };
+    }
+    const customerLink = await store.readLink({
+      realmId: connection.realmId,
+      kind: "customer",
+      ezactoId: invoice.clientId,
+    });
+    if (customerLink === null) {
+      return { kind: "refused", reason: "the invoice's client is not mirrored" };
+    }
+    const client = await authorizedClient();
+    if (client === null) {
+      return { kind: "refused", reason: "QuickBooks is not connected" };
+    }
+    const realmId = connection.realmId;
+    return mirrorPayment({
+      payment: input.payment,
+      invoiceQuickBooksId,
+      customerQuickBooksId: customerLink.quickBooksId,
+      links: {
+        readPaymentLink: async (paymentId) => {
+          const link = await store.readPaymentLink({ realmId, paymentId });
+          return link === null
+            ? null
+            : { quickBooksId: link.quickBooksId, syncToken: link.syncToken };
+        },
+        savePaymentLink: async (paymentId, link) => {
+          await store.savePaymentLink({
+            realmId,
+            paymentId,
+            quickBooksId: link.quickBooksId,
+            syncToken: link.syncToken,
+            now: options.now().toISOString(),
+          });
+        },
+      },
+      quickBooks: client,
     });
   };
 
@@ -502,7 +588,7 @@ export const createQuickBooksRuntime = (
     },
   };
 
-  return { service, mirror };
+  return { service, mirror, mirrorPayment: mirrorPaymentOnto };
 };
 
 /**
@@ -521,18 +607,64 @@ export const createQuickBooksMirrorSubscriber = (
   runtime: Readonly<QuickBooksRuntime>,
 ): {
   readonly id: "quickbooks_mirror";
-  deliver(event: Readonly<{ eventType: string; aggregateType: string; aggregateId: number }>): Promise<void>;
+  deliver(
+    event: Readonly<{
+      eventType: string;
+      aggregateType: string;
+      aggregateId: number;
+      payload?: Readonly<Record<string, unknown>>;
+    }>,
+  ): Promise<void>;
 } => ({
   id: "quickbooks_mirror",
   async deliver(event) {
-    if (event.aggregateType !== "invoice" || event.eventType !== "invoice.sent") return;
-    const outcome = await runtime.mirror(event.aggregateId);
-    if (outcome.kind === "refused") {
-      // A refusal is a decision, not a failure: no connection, or a document in
-      // QuickBooks this mirror did not write. Retrying cannot change either, so
-      // it is recorded rather than thrown -- the outbox would otherwise retry
-      // it until it gave up and called a correct decision an error.
+    if (event.aggregateType !== "invoice") return;
+    if (event.eventType === "invoice.sent") {
+      const outcome = await runtime.mirror(event.aggregateId);
+      if (outcome.kind === "refused") {
+        // A refusal is a decision, not a failure: no connection, or a document in
+        // QuickBooks this mirror did not write. Retrying cannot change either, so
+        // it is recorded rather than thrown -- the outbox would otherwise retry
+        // it until it gave up and called a correct decision an error.
+        return;
+      }
       return;
     }
+    // `payment.recorded` and only that: an edit or a deletion here has no
+    // counterpart a mirror can be trusted to apply to somebody's books, and is
+    // left to the bookkeeper with the link as their pointer (issue 799).
+    if (event.eventType !== "payment.recorded") return;
+    const payment = recordedPayment(event.payload);
+    if (payment === null) return;
+    await runtime.mirrorPayment({ invoiceId: event.aggregateId, payment });
   },
 });
+
+/**
+ * The receipt as the event carries it: `payload.payment.after` is the
+ * post-write snapshot the invoice command path emits with every payment event.
+ * Anything short of that shape is not a payment this can copy, and is left.
+ */
+const recordedPayment = (
+  payload: Readonly<Record<string, unknown>> | undefined,
+): MirrorPayment | null => {
+  const envelope = payload?.["payment"];
+  if (typeof envelope !== "object" || envelope === null) return null;
+  const after = (envelope as Record<string, unknown>)["after"];
+  if (typeof after !== "object" || after === null) return null;
+  const row = after as Record<string, unknown>;
+  const id = row["id"];
+  const amountCents = row["amount_cents"];
+  const provider = row["provider"];
+  if (!Number.isSafeInteger(id) || !Number.isSafeInteger(amountCents)) return null;
+  if (typeof provider !== "string") return null;
+  const paidDate = row["paid_date"];
+  const paidAt = row["paid_at"];
+  const paidOn =
+    typeof paidDate === "string"
+      ? paidDate
+      : typeof paidAt === "string"
+        ? paidAt.slice(0, 10)
+        : null;
+  return { id: id as number, amountCents: amountCents as number, provider, paidOn };
+};

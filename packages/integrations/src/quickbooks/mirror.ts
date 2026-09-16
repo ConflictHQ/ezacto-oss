@@ -164,6 +164,104 @@ export const mirrorInvoice = async (
   }
 }
 
+/** A payment recorded here, as the mirror needs to see it. */
+export interface MirrorPayment {
+  readonly id: number
+  readonly amountCents: number
+  /** The day the money arrived, where the record carries one. */
+  readonly paidOn: string | null
+  /** Which system recorded it: `manual`, `stripe`, `quickbooks`, ... */
+  readonly provider: string
+}
+
+export interface MirrorPaymentLinkStore {
+  readPaymentLink(paymentId: number): Promise<MirrorLink | null>
+  savePaymentLink(paymentId: number, link: MirrorLink): Promise<void>
+}
+
+/** The half of the QuickBooks client a payment mirror uses. */
+export interface MirrorPaymentQuickBooks {
+  findPaymentByRefNumber(refNumber: string): Promise<QuickBooksPayment | null>
+  createPayment(input: Record<string, unknown>): Promise<QuickBooksPayment>
+}
+
+export type MirrorPaymentOutcome =
+  | MirrorOutcome
+  /** Already mirrored by an earlier delivery; nothing was sent. */
+  | { readonly kind: 'linked'; readonly quickBooksId: string }
+
+export interface MirrorPaymentInput {
+  readonly payment: MirrorPayment
+  /** The QuickBooks invoice the payment settles, already mirrored. */
+  readonly invoiceQuickBooksId: string
+  /** The QuickBooks customer that invoice is filed against. */
+  readonly customerQuickBooksId: string
+  readonly links: MirrorPaymentLinkStore
+  readonly quickBooks: MirrorPaymentQuickBooks
+}
+
+/**
+ * The reference stamped on the QuickBooks payment. Ours, so a retry can find
+ * what an earlier run made, and visible in QuickBooks so a bookkeeper can tell
+ * which receipt here it came from.
+ */
+export const paymentRefNumber = (paymentId: number): string => `ez-${String(paymentId)}`
+
+/** Cents to the decimal QuickBooks reads, exactly: 12345 -> 123.45. */
+const decimalAmount = (cents: number): number => Number((cents / 100).toFixed(2))
+
+export const paymentPayload = (
+  input: Pick<MirrorPaymentInput, 'payment' | 'invoiceQuickBooksId' | 'customerQuickBooksId'>,
+): Record<string, unknown> => ({
+  CustomerRef: { value: input.customerQuickBooksId },
+  TotalAmt: decimalAmount(input.payment.amountCents),
+  ...(input.payment.paidOn === null ? {} : { TxnDate: input.payment.paidOn }),
+  PaymentRefNum: paymentRefNumber(input.payment.id),
+  Line: [
+    {
+      Amount: decimalAmount(input.payment.amountCents),
+      LinkedTxn: [{ TxnId: input.invoiceQuickBooksId, TxnType: 'Invoice' }],
+    },
+  ],
+})
+
+/**
+ * Copying one payment recorded here onto the mirrored invoice in QuickBooks.
+ *
+ * A payment QuickBooks itself recorded is refused: it arrived through the
+ * webhook and sending it back would settle the invoice twice. Everything else
+ * follows the invoice's own sequence -- link, then adopt by reference, then
+ * create -- so a redelivery after a crash finds what the first run made.
+ */
+export const mirrorPayment = async (
+  input: Readonly<MirrorPaymentInput>,
+): Promise<MirrorPaymentOutcome> => {
+  if (input.payment.provider === 'quickbooks') {
+    return { kind: 'refused', reason: 'the payment came from QuickBooks' }
+  }
+  if (input.payment.amountCents <= 0) {
+    return { kind: 'refused', reason: 'QuickBooks takes receipts, not refunds' }
+  }
+  const link = await input.links.readPaymentLink(input.payment.id)
+  if (link !== null) return { kind: 'linked', quickBooksId: link.quickBooksId }
+
+  const found = await input.quickBooks.findPaymentByRefNumber(paymentRefNumber(input.payment.id))
+  if (found !== null) {
+    await input.links.savePaymentLink(input.payment.id, {
+      quickBooksId: found.Id,
+      syncToken: found.SyncToken,
+    })
+    return { kind: 'adopted', quickBooksId: found.Id }
+  }
+
+  const created = await input.quickBooks.createPayment(paymentPayload(input))
+  await input.links.savePaymentLink(input.payment.id, {
+    quickBooksId: created.Id,
+    syncToken: created.SyncToken,
+  })
+  return { kind: 'created', quickBooksId: created.Id }
+}
+
 export interface InboundPayment {
   /** Our invoice, resolved from the QuickBooks invoice the payment is against. */
   readonly ezactoInvoiceId: number

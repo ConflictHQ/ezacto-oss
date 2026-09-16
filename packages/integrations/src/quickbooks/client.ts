@@ -290,6 +290,27 @@ export class QuickBooksClient {
     return object(body['Invoice'], 'Invoice') as unknown as QuickBooksInvoice
   }
 
+  /**
+   * A payment this mirror made earlier, found by the reference it stamped on
+   * it. Looked up before creating for the same reason invoices are found by
+   * DocNumber: a run that created the payment and failed before recording the
+   * link must adopt it, not make a second one.
+   */
+  async findPaymentByRefNumber(refNumber: string): Promise<QuickBooksPayment | null> {
+    const rows = await this.query<QuickBooksPayment>(
+      `SELECT * FROM Payment WHERE PaymentRefNum = ${quote(refNumber)}`,
+      'Payment',
+    )
+    return rows[0] ?? null
+  }
+
+  async createPayment(input: Record<string, unknown>): Promise<QuickBooksPayment> {
+    const body = await this.#send(
+      this.#request('/payment', { method: 'POST', body: JSON.stringify(input) }),
+    )
+    return object(body['Payment'], 'Payment') as unknown as QuickBooksPayment
+  }
+
   async readPayment(id: string): Promise<QuickBooksPayment | null> {
     try {
       const body = await this.#send(
