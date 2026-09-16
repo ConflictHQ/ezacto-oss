@@ -510,3 +510,47 @@ describe("generated ezacto client", () => {
     }).toBeDefined();
   });
 });
+
+/**
+ * #772. Every test above hands the client its own arrow `fetch`, so the
+ * default path -- `globalThis.fetch` -- was never exercised and shipped
+ * broken: the client stores whatever it is given on the instance and later
+ * calls it as `this.fetchImplementation(...)`, which hands a browser's fetch
+ * the client as its receiver. Browsers refuse that outright, so every request
+ * from a page or an extension threw "Illegal invocation" and nothing reached
+ * the instance.
+ *
+ * These stand in for a browser by refusing any receiver but the global, the
+ * way a real `fetch` does.
+ */
+describe("fetch receiver", () => {
+  const strictFetch = function (this: unknown, input: RequestInfo | URL, init?: RequestInit) {
+    if (this !== undefined && this !== globalThis) {
+      throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
+    }
+    return app.fetch(new Request(input as RequestInfo, init));
+  };
+
+  it("calls the default globalThis.fetch with the global as its receiver", async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = strictFetch as typeof globalThis.fetch;
+    try {
+      const client = new EzactoClient({
+        baseUrl: "http://localhost/",
+        token: "generated-client-test",
+      });
+      await expect(client.getWhoami()).resolves.toBeDefined();
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("also protects a caller who supplies a bare, unbound fetch", async () => {
+    const client = new EzactoClient({
+      baseUrl: "http://localhost/",
+      token: "generated-client-test",
+      fetch: strictFetch as typeof globalThis.fetch,
+    });
+    await expect(client.getWhoami()).resolves.toBeDefined();
+  });
+});
