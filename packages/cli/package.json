@@ -1,7 +1,7 @@
 {
   "name": "@conflict-hq/ezacto-cli",
-  "version": "0.1.1",
-  "description": "ez \u2014 the native ezacto command-line client.",
+  "version": "0.1.2",
+  "description": "ez — the native ezacto command-line client.",
   "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
@@ -45,7 +45,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@conflict-hq/ezacto-client": "^0.1.1",
+    "@conflict-hq/ezacto-client": "^0.1.2",
     "@ezacto/core": "0.0.0",
     "better-sqlite3": "^13.0.3"
   },
