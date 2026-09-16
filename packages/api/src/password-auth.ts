@@ -88,6 +88,19 @@ export interface PasswordAuthRouteOptions {
    * routes mounted exactly as they always were.
    */
   policy?: SignInMethodPolicy
+  /**
+   * Issue 732. Whether first-run signup is closed for this deployment.
+   *
+   * `/auth/signup` claims the instance: it creates organization 1 and user 1 as
+   * administrator, and the claim is permanent. On a freshly deployed instance
+   * that is a race between the operator and whoever finds the hostname first,
+   * and the loser has no route back that does not involve the database.
+   *
+   * An operator who has set a bootstrap token has said they will claim the
+   * instance through it. Closing this route is what makes that a statement
+   * rather than a hope.
+   */
+  firstRunClosed?: (bindings: unknown) => boolean
   /** Deployment-brand sender used for every authentication email. */
   deploymentMailer?: AuthMailer
   clientKey(request: Request): string
@@ -223,6 +236,16 @@ export const installPasswordAuthRoutes = <Bindings extends object>(
 
   app.post('/auth/signup', async (context) => {
     await assertLive(context.env)
+    if (options.firstRunClosed?.(context.env) === true) {
+      throw new ApiError({
+        status: 404,
+        code: 'signup_unavailable',
+        // Says the route is not here, not that a claim already exists: which of
+        // those it is would tell an unauthenticated caller whether an instance
+        // is still unclaimed, and that is the thing worth racing for.
+        message: 'First-run signup is not available on this instance.',
+      })
+    }
     const body = await exactStringBody(context, [
       'organization_name',
       'first_name',

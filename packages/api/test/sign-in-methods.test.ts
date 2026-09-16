@@ -206,7 +206,12 @@ describe('the sign-in method setting', () => {
 })
 
 const passwordService = (): PasswordAuthService => ({
-  signup: vi.fn(),
+  signup: vi.fn(async () => ({
+    kind: 'verify_email' as const,
+    to: 'ada@example.test',
+    token: 'ezacto_verify_abcdefghijklmnop_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi1234567',
+    expiresAt: '2026-09-16T12:00:00.000Z',
+  })),
   verifyEmail: vi.fn(),
   signIn: vi.fn(async () => ({
     status: 'authenticated' as const,
@@ -359,5 +364,68 @@ describe('the Apple route under the setting', () => {
     const { app, sessions } = appleHarness(true)
     expect((await postToken(app)).status).toBe(200)
     expect(sessions.issue).toHaveBeenCalledWith(42)
+  })
+})
+
+describe('first-run signup and the bootstrap token', () => {
+  // Issue 732. `/auth/signup` claims the instance -- organization 1, user 1 as
+  // administrator -- and the claim is permanent. On a freshly deployed instance
+  // that is a race between the operator and whoever finds the hostname first.
+  const harness = (closed: boolean) => {
+    const service = passwordService()
+    const sessions = { issue: vi.fn(async () => ({ setCookie: 'x=y' })) }
+    const app = createApiApp({
+      installApp: (app) => {
+        installPasswordAuthRoutes(app, {
+          service,
+          sessions,
+          firstRunClosed: () => closed,
+          deploymentMailer: {
+            assertAvailable: async () => undefined,
+            enqueue: async () => undefined,
+          },
+          clientKey: () => 'test-client',
+        })
+      },
+    })
+    return { app, service }
+  }
+
+  const signup = (app: ReturnType<typeof createApiApp>) =>
+    app.request('/auth/signup', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        organization_name: 'Kestrel Environmental',
+        first_name: 'Ada',
+        last_name: 'Okonkwo',
+        email: 'ada@example.test',
+        password: 'correct horse battery staple',
+      }),
+    })
+
+  it('[security] refuses to claim the instance when a bootstrap token is set', async () => {
+    const { app, service } = harness(true)
+    const response = await signup(app)
+    expect(response.status).toBe(404)
+    expect(await response.json()).toMatchObject({ error: { code: 'signup_unavailable' } })
+    // Refused before the service is reached, so no claim, no mail, no rate-limit
+    // bucket spent on a caller who was never going to be allowed.
+    expect(service.signup).not.toHaveBeenCalled()
+  })
+
+  it('[security] says the route is absent rather than that the instance is taken', async () => {
+    // Distinguishing "already claimed" from "not offered" would tell an
+    // unauthenticated caller whether an instance is still unclaimed, and that
+    // is precisely the thing worth racing for.
+    const { app } = harness(true)
+    const body = (await (await signup(app)).json()) as { error: { message: string } }
+    expect(body.error.message).not.toMatch(/already|claimed|taken|exists/i)
+  })
+
+  it('[api] still claims where no bootstrap token closes it', async () => {
+    const { app, service } = harness(false)
+    expect((await signup(app)).status).toBe(202)
+    expect(service.signup).toHaveBeenCalled()
   })
 })
