@@ -178,6 +178,7 @@ const bodyFor = <Bindings extends object>(
 export const errorResponse = <Bindings extends object>(
   error: Error,
   context: Context<ApiContext<Bindings>>,
+  report?: (error: Error, requestId: string) => void,
 ): Response => {
   if (error instanceof ApiError && error.status < 500) {
     return context.json(
@@ -190,10 +191,21 @@ export const errorResponse = <Bindings extends object>(
   // needs to find it again: the request id the client was handed, and the
   // error itself. Without this line a 500 in production is a request id that
   // points at nothing (issue 802).
+  const requestId = String(context.get('requestId'))
   console.error(
-    `[api] internal error request_id=${String(context.get('requestId'))} ${context.req.method} ${new URL(context.req.url).pathname}`,
+    `[api] internal error request_id=${requestId} ${context.req.method} ${new URL(context.req.url).pathname}`,
     error,
   )
+  // And the crash reporter, where the entry supplies one (issue 807): the
+  // exception is handled here, so a reporter wrapped around the entry never
+  // sees it on its own. A reporter that throws must not turn one 500 into
+  // another, so it is held at arm's length.
+  try {
+    report?.(error, requestId)
+  } catch {
+    // Reported to the log above already; the reporter's own failure is not
+    // this request's problem.
+  }
   return context.json(
     bodyFor(context, 'internal_error', 'The request could not be completed.', []),
     error instanceof ApiError ? error.status : 500,
