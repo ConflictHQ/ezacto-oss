@@ -746,6 +746,13 @@ export const createApp = (
           service: services.passwordAuth,
           sessions: services.sessions,
           policy: signInPolicy,
+          // Issue 732. An operator who set a bootstrap token has said they will
+          // claim this instance through it; leaving the open route mounted
+          // beside that is a race they did not agree to run.
+          firstRunClosed: (bindings) => {
+            const token = (bindings as AppEnv).EZACTO_BOOTSTRAP_TOKEN
+            return token !== undefined && token !== ''
+          },
           ...(services.twoFactor === undefined
             ? {}
             : { twoFactor: services.twoFactor }),
