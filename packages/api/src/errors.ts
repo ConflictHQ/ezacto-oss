@@ -186,6 +186,14 @@ export const errorResponse = <Bindings extends object>(
       { 'cache-control': 'no-store' },
     )
   }
+  // The body says nothing, on purpose. The log says everything the operator
+  // needs to find it again: the request id the client was handed, and the
+  // error itself. Without this line a 500 in production is a request id that
+  // points at nothing (issue 802).
+  console.error(
+    `[api] internal error request_id=${String(context.get('requestId'))} ${context.req.method} ${new URL(context.req.url).pathname}`,
+    error,
+  )
   return context.json(
     bodyFor(context, 'internal_error', 'The request could not be completed.', []),
     error instanceof ApiError ? error.status : 500,
