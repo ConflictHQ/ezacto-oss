@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiError,
   createApiApp,
@@ -234,6 +234,38 @@ for (const [runtime, requestFor] of runtimeFactories) {
           fields: [],
         },
         request_id: response.headers.get('x-request-id'),
+      })
+    })
+
+    describe('logging what the envelope hides', () => {
+      afterEach(() => {
+        vi.restoreAllMocks()
+      })
+
+      it('[ops] writes one log line per internal error carrying the request id (issue 802)', async () => {
+        const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+        const response = await request('/api/v1/explode')
+        expect(response.status).toBe(500)
+        const requestId = response.headers.get('x-request-id')
+        expect(logged).toHaveBeenCalledTimes(1)
+        const [line, error] = logged.mock.calls[0]!
+        expect(String(line)).toContain(`request_id=${String(requestId)}`)
+        expect(String(line)).toContain('GET /api/v1/explode')
+        expect((error as Error).message).toBe(
+          'internal-debug-detail-must-never-reach-the-response',
+        )
+      })
+
+      it('[ops] does not log an answer below 500: a refusal is not a failure', async () => {
+        const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+        const response = await request('/api/v1/validate', {
+          method: 'POST',
+          headers: { origin: 'http://localhost', 'content-type': 'application/json' },
+          body: JSON.stringify({}),
+        })
+        expect(response.status).toBeGreaterThanOrEqual(400)
+        expect(response.status).toBeLessThan(500)
+        expect(logged).not.toHaveBeenCalled()
       })
     })
 
