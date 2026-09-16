@@ -218,6 +218,7 @@ export {
   createPortalSessionService,
   installMagicLinkRoutes,
   PORTAL_SESSION_COOKIE_NAME,
+  portalSessionCookie,
   type ContactLookup,
   type MagicLinkDelivery,
   type MagicLinkMailer,

@@ -27,6 +27,13 @@ export interface ContactLookup {
 export interface MagicLinkService {
   /** Look up a contact by email address. */
   findContactByEmail(email: string): Promise<ContactLookup | null>
+  /**
+   * Whether this address was already sent a link that is still live. #734: the
+   * route is unauthenticated, so without a throttle anyone could have us mail
+   * a known contact as fast as they could post. Optional so a deployment that
+   * has not wired it keeps working, but the runtime does wire it.
+   */
+  hasActiveLink?(email: string): Promise<boolean>
   /** Generate a magic-link token for the contact. */
   createToken(contact: ContactLookup): Promise<{
     token: string
@@ -125,6 +132,16 @@ export const installMagicLinkRoutes = <Bindings extends object>(
     // Always return 202 to prevent email enumeration.
     const contact = await options.service.findContactByEmail(email)
     if (contact === null) {
+      return context.json(
+        { data: { status: 'magic_link_sent' as const } },
+        202,
+        { 'cache-control': 'no-store' },
+      )
+    }
+
+    // One live link per address at a time. Answer 202 either way: which of the
+    // two reasons it was, is exactly what an enumerator wants to learn.
+    if ((await options.service.hasActiveLink?.(contact.email)) === true) {
       return context.json(
         { data: { status: 'magic_link_sent' as const } },
         202,
@@ -331,7 +348,7 @@ export const createPortalSessionService = (
   },
 })
 
-const portalSessionCookie = (token: string, absoluteExpiresAt: string): string => {
+export const portalSessionCookie = (token: string, absoluteExpiresAt: string): string => {
   if (!/^ezacto_portal_[A-Za-z0-9_-]{16}_[A-Za-z0-9_-]{43}$/.test(token)) {
     throw new Error('contact session store returned malformed bearer material')
   }
@@ -339,7 +356,17 @@ const portalSessionCookie = (token: string, absoluteExpiresAt: string): string =
   if (!Number.isFinite(expires.valueOf())) {
     throw new Error('contact session store returned malformed absolute expiry')
   }
-  return `${PORTAL_SESSION_COOKIE_NAME}=${token}; Path=/portal; Expires=${expires.toUTCString()}; HttpOnly; Secure; SameSite=Lax`
+  // #733. Path must be `/` because the name carries the `__Host-` prefix, and
+  // that prefix is a promise to the browser: Secure, no Domain, Path=/. A
+  // `__Host-` cookie on any other path is dropped outright by Chrome, Firefox
+  // and Safari, so `Path=/portal` meant portal sign-in could never complete in
+  // a real browser. It failed closed, but it failed.
+  //
+  // Widening the path costs nothing here and the prefix is worth keeping: it
+  // is what stops a subdomain setting this cookie. The name is already
+  // distinct from the staff cookie, and apiAuthenticationMiddleware refuses a
+  // contact principal on /api/v1 regardless of which path sent it.
+  return `${PORTAL_SESSION_COOKIE_NAME}=${token}; Path=/; Expires=${expires.toUTCString()}; HttpOnly; Secure; SameSite=Lax`
 }
 
 const sha256Hex = async (value: string): Promise<string> => {

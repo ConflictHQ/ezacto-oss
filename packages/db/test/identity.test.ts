@@ -262,7 +262,15 @@ for (const [runtime, factory] of factories) {
       ])
     })
 
-    it('[security] never links an unverified provider email to an existing user', async () => {
+    /**
+     * #736. This used to assert that an unverified claim was merely not
+     * *linked*: it still provisioned a fresh user holding the address
+     * unverified. That is the squat -- an address is unique while it lives, so
+     * the real owner could never add it afterwards. A verified provisioning
+     * domain says the domain is ours, not that this claimant is who they say,
+     * and provisioning now refuses exactly as linking already did.
+     */
+    it('[security] never links or provisions from an unverified provider email', async () => {
       await insertUser(2)
       await insertEmail(2, 2, 'shared@example.test', true, true)
       const result = await harness.store.resolveProvider(
@@ -272,16 +280,30 @@ for (const [runtime, factory] of factories) {
           emailVerified: false,
         }),
       )
-      expect(result).toMatchObject({ userId: 3, matchedBy: 'created' })
+      expect(result).toEqual({ status: 'provisioning_not_permitted' })
+      // The existing owner's row is untouched, and no squatting row appears.
       expect(
         await harness.rows<{ user_id: number; verified_at: string | null }>(
           `SELECT user_id, verified_at FROM user_emails
            WHERE lower(address) = 'shared@example.test' ORDER BY user_id`,
         ),
-      ).toEqual([
-        { user_id: 2, verified_at: timestamp },
-        { user_id: 3, verified_at: null },
-      ])
+      ).toEqual([{ user_id: 2, verified_at: timestamp }])
+    })
+
+    it('[security] provisions nobody from an unverified claim at an unknown address', async () => {
+      const result = await harness.store.resolveProvider(
+        assertion({
+          subject: 'fresh-subject',
+          email: 'nobody@example.test',
+          emailVerified: false,
+        }),
+      )
+      expect(result).toEqual({ status: 'provisioning_not_permitted' })
+      expect(
+        await harness.rows<{ id: number }>(
+          `SELECT id FROM user_emails WHERE lower(address) = 'nobody@example.test'`,
+        ),
+      ).toEqual([])
     })
 
     it('[unit] keeps a provider subject attached after its asserted email changes', async () => {

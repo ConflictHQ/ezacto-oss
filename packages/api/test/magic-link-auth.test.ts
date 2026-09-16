@@ -10,6 +10,7 @@ import {
   type PortalSessionStore,
   type PortalStatementReader,
   type PortalInvoiceSummary,
+  portalSessionCookie,
 } from '../src/index.js'
 
 const portalToken =
@@ -58,7 +59,7 @@ const magicLinkService: MagicLinkService = {
 
 const portalSessions: PortalSessionIssuer = {
   issue: vi.fn(async () => ({
-    setCookie: `__Host-ezacto_portal=${portalToken}; Path=/portal; Expires=Thu, 08 Sep 2026 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax`,
+    setCookie: `__Host-ezacto_portal=${portalToken}; Path=/; Expires=Thu, 08 Sep 2026 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax`,
     sessionId: '42',
   })),
 }
@@ -85,12 +86,12 @@ const mailer = {
   enqueue: async (delivery: MagicLinkDelivery) => void deliveries.push(delivery),
 }
 
-const createHarness = () => {
+const createHarness = (serviceOverride?: Partial<MagicLinkService>) => {
   deliveries.length = 0
   const app = createApiApp({
     installApp(app) {
       installMagicLinkRoutes(app, {
-        service: magicLinkService,
+        service: { ...magicLinkService, ...serviceOverride },
         sessions: portalSessions,
         sessionStore,
         mailer,
@@ -138,6 +139,34 @@ describe('magic-link authentication routes', () => {
     expect(await response.json()).toEqual({ data: { status: 'magic_link_sent' } })
     // No delivery should be enqueued for unknown contact
     expect(deliveries).toHaveLength(0)
+  })
+
+  /**
+   * #734. The route is unauthenticated, so without a throttle anyone could
+   * have us mail a known contact as fast as they could post, and every request
+   * left a row behind for good.
+   */
+  it('[security] does not mail again while a link for that address is still live', async () => {
+    const app = createHarness({ hasActiveLink: async () => true })
+    const response = await post(app, '/portal/magic-link', { email: 'alice@acme.test' })
+    expect(response.status).toBe(202)
+    expect(deliveries).toHaveLength(0)
+  })
+
+  it('[security] answers the throttled case exactly as the unknown-address case', async () => {
+    const throttled = await post(
+      createHarness({ hasActiveLink: async () => true }),
+      '/portal/magic-link',
+      { email: 'alice@acme.test' },
+    )
+    const unknown = await post(createHarness(), '/portal/magic-link', {
+      email: 'nobody@example.com',
+    })
+    // Same status, same body, same headers: which of the two it was is exactly
+    // what an enumerator is asking.
+    expect(throttled.status).toBe(unknown.status)
+    expect(await throttled.json()).toEqual(await unknown.json())
+    expect(throttled.headers.get('cache-control')).toBe(unknown.headers.get('cache-control'))
   })
 
   it('[api] POST /portal/magic-link rejects missing email', async () => {
@@ -303,5 +332,36 @@ describe('composite session resolver', () => {
     const request = new Request('https://example.com/')
     const principal = await composite.resolve(request)
     expect(principal).toBeNull()
+  })
+})
+
+/**
+ * #733. The cookie string used to be asserted only through a hand-written fake
+ * in this file, so the real builder's `Path` was never checked and shipped
+ * broken. These call the builder itself.
+ *
+ * `__Host-` is a promise to the browser: Secure, no Domain, Path=/. A cookie
+ * carrying the prefix and breaking any part of it is dropped outright by
+ * Chrome, Firefox and Safari, so the portal could never sign anyone in.
+ */
+describe('portal session cookie', () => {
+  const cookie = () => portalSessionCookie(`ezacto_portal_${'a'.repeat(16)}_${'b'.repeat(43)}`, '2026-09-08T00:00:00.000Z')
+
+  it('satisfies every __Host- requirement, so a browser will actually store it', () => {
+    const value = cookie()
+    expect(value.startsWith('__Host-')).toBe(true)
+    expect(value).toContain('; Path=/;')
+    expect(value).not.toMatch(/; Path=\/[^;]/)
+    expect(value).toContain('; Secure')
+    expect(value).not.toContain('Domain=')
+  })
+
+  it('stays HttpOnly and SameSite=Lax', () => {
+    expect(cookie()).toContain('; HttpOnly')
+    expect(cookie()).toContain('; SameSite=Lax')
+  })
+
+  it('refuses malformed bearer material rather than setting a cookie', () => {
+    expect(() => portalSessionCookie('not-a-portal-token', '2026-09-08T00:00:00.000Z')).toThrow()
   })
 })

@@ -120,6 +120,14 @@ const createUser = (
         SELECT 1 FROM sso_provisioning_domains domain
         WHERE domain.domain = ? AND domain.verified_at IS NOT NULL
       )
+      -- #736. The linking branch above already refuses an unverified claim;
+      -- provisioning did not, so a provider that lets someone set an
+      -- unverified address at a verified provisioning domain would hand a
+      -- stranger a member account holding that address. The real owner could
+      -- then never add it, because an address is unique while it lives. A
+      -- verified provisioning domain says the domain is ours, not that this
+      -- claimant is who they say.
+      AND ? = 1
     RETURNING id AS userId`,
   bindings: [
     userId,
@@ -130,6 +138,7 @@ const createUser = (
     input.provider,
     input.subject,
     input.provisioningDomain,
+    input.emailVerified ? 1 : 0,
   ],
   }
 }

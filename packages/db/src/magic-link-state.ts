@@ -37,6 +37,13 @@ export interface MagicLinkConsumeResult {
 export interface MagicLinkStore {
   create(input: MagicLinkCreateInput): Promise<MagicLinkRecord>
   consume(jti: string): Promise<MagicLinkConsumeResult | null>
+  /**
+   * Whether this address already has an unused, unexpired link issued since
+   * `since`. The portal throttle (#734): without it, an unauthenticated caller
+   * could have us mail any known contact as fast as it could post, and every
+   * request left a row behind for good.
+   */
+  hasActiveLink(contactEmail: string, now: string, since: string): Promise<boolean>
 }
 
 export interface MagicLinkStoreOptions {
@@ -79,6 +86,15 @@ const createMagicLinkStore = (
     assertCanonicalTimestamp(timestamp)
     const rows = await database.atomic([
       {
+        // Sweep before inserting, the way the staff store does. Nothing else
+        // ever deleted from this table, so it grew one row per request for
+        // ever, including every request that was never clicked.
+        query: `DELETE FROM magic_link_tokens
+          WHERE julianday(expires_at) <= julianday(?)
+             OR used_at IS NOT NULL`,
+        bindings: [timestamp],
+      },
+      {
         query: `INSERT INTO magic_link_tokens (
             jti, contact_email, contact_id, client_id, token_hash,
             expires_at, used_at, created_at
@@ -97,11 +113,27 @@ const createMagicLinkStore = (
         ],
       },
     ])
-    const row = rows[0]?.[0] as unknown as MagicLinkRecord | undefined
+    const row = rows[1]?.[0] as unknown as MagicLinkRecord | undefined
     if (row === undefined) {
       throw new Error('magic link token insert did not return a row')
     }
     return row
+  },
+
+  hasActiveLink: async (contactEmail, now, since) => {
+    assertCanonicalTimestamp(now)
+    assertCanonicalTimestamp(since)
+    const rows = await database.atomic([
+      {
+        query: `SELECT 1 AS present FROM magic_link_tokens
+          WHERE lower(contact_email) = lower(?) AND used_at IS NULL
+            AND julianday(expires_at) > julianday(?)
+            AND julianday(created_at) >= julianday(?)
+          LIMIT 1`,
+        bindings: [contactEmail, now, since],
+      },
+    ])
+    return (rows[0]?.length ?? 0) > 0
   },
 
   consume: async (jti) => {
@@ -132,10 +164,16 @@ export const createContainerMagicLinkStore = (
   const portable: PortableDatabase = {
     atomic: async (operations) => {
       const run = database.transaction(() =>
-        operations.map(
-          ({ query, bindings }) =>
-            database.prepare(query).all(...bindings) as Record<string, unknown>[],
-        ),
+        operations.map(({ query, bindings }) => {
+          const statement = database.prepare(query)
+          // better-sqlite3 refuses .all() on a statement that returns nothing,
+          // which the sweep added in #734 is. Same shape as the staff store.
+          if (!statement.reader) {
+            statement.run(...bindings)
+            return []
+          }
+          return statement.all(...bindings) as Record<string, unknown>[]
+        }),
       )
       return run()
     },
