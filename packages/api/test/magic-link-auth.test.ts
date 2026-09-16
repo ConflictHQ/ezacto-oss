@@ -10,6 +10,7 @@ import {
   type PortalSessionStore,
   type PortalStatementReader,
   type PortalInvoiceSummary,
+  portalSessionCookie,
 } from '../src/index.js'
 
 const portalToken =
@@ -58,7 +59,7 @@ const magicLinkService: MagicLinkService = {
 
 const portalSessions: PortalSessionIssuer = {
   issue: vi.fn(async () => ({
-    setCookie: `__Host-ezacto_portal=${portalToken}; Path=/portal; Expires=Thu, 08 Sep 2026 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax`,
+    setCookie: `__Host-ezacto_portal=${portalToken}; Path=/; Expires=Thu, 08 Sep 2026 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax`,
     sessionId: '42',
   })),
 }
@@ -303,5 +304,36 @@ describe('composite session resolver', () => {
     const request = new Request('https://example.com/')
     const principal = await composite.resolve(request)
     expect(principal).toBeNull()
+  })
+})
+
+/**
+ * #733. The cookie string used to be asserted only through a hand-written fake
+ * in this file, so the real builder's `Path` was never checked and shipped
+ * broken. These call the builder itself.
+ *
+ * `__Host-` is a promise to the browser: Secure, no Domain, Path=/. A cookie
+ * carrying the prefix and breaking any part of it is dropped outright by
+ * Chrome, Firefox and Safari, so the portal could never sign anyone in.
+ */
+describe('portal session cookie', () => {
+  const cookie = () => portalSessionCookie(`ezacto_portal_${'a'.repeat(16)}_${'b'.repeat(43)}`, '2026-09-08T00:00:00.000Z')
+
+  it('satisfies every __Host- requirement, so a browser will actually store it', () => {
+    const value = cookie()
+    expect(value.startsWith('__Host-')).toBe(true)
+    expect(value).toContain('; Path=/;')
+    expect(value).not.toMatch(/; Path=\/[^;]/)
+    expect(value).toContain('; Secure')
+    expect(value).not.toContain('Domain=')
+  })
+
+  it('stays HttpOnly and SameSite=Lax', () => {
+    expect(cookie()).toContain('; HttpOnly')
+    expect(cookie()).toContain('; SameSite=Lax')
+  })
+
+  it('refuses malformed bearer material rather than setting a cookie', () => {
+    expect(() => portalSessionCookie('not-a-portal-token', '2026-09-08T00:00:00.000Z')).toThrow()
   })
 })

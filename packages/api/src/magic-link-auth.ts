@@ -331,7 +331,7 @@ export const createPortalSessionService = (
   },
 })
 
-const portalSessionCookie = (token: string, absoluteExpiresAt: string): string => {
+export const portalSessionCookie = (token: string, absoluteExpiresAt: string): string => {
   if (!/^ezacto_portal_[A-Za-z0-9_-]{16}_[A-Za-z0-9_-]{43}$/.test(token)) {
     throw new Error('contact session store returned malformed bearer material')
   }
@@ -339,7 +339,17 @@ const portalSessionCookie = (token: string, absoluteExpiresAt: string): string =
   if (!Number.isFinite(expires.valueOf())) {
     throw new Error('contact session store returned malformed absolute expiry')
   }
-  return `${PORTAL_SESSION_COOKIE_NAME}=${token}; Path=/portal; Expires=${expires.toUTCString()}; HttpOnly; Secure; SameSite=Lax`
+  // #733. Path must be `/` because the name carries the `__Host-` prefix, and
+  // that prefix is a promise to the browser: Secure, no Domain, Path=/. A
+  // `__Host-` cookie on any other path is dropped outright by Chrome, Firefox
+  // and Safari, so `Path=/portal` meant portal sign-in could never complete in
+  // a real browser. It failed closed, but it failed.
+  //
+  // Widening the path costs nothing here and the prefix is worth keeping: it
+  // is what stops a subdomain setting this cookie. The name is already
+  // distinct from the staff cookie, and apiAuthenticationMiddleware refuses a
+  // contact principal on /api/v1 regardless of which path sent it.
+  return `${PORTAL_SESSION_COOKIE_NAME}=${token}; Path=/; Expires=${expires.toUTCString()}; HttpOnly; Secure; SameSite=Lax`
 }
 
 const sha256Hex = async (value: string): Promise<string> => {
