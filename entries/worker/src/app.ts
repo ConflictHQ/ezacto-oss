@@ -2,6 +2,7 @@ import type { BillRuntime, QuickBooksService, WiseRuntime } from "@ezacto/integr
 import type {
   InvoiceDocumentPreferenceService,
   ThankYouPreferenceService,
+  ReminderSettingsService,
   RecurringRepairService,
   InvoiceTimeClaimService,
   StripeService,
@@ -50,6 +51,7 @@ import {
   installPayoutAccountRoutes,
   installInvoiceDocumentPreferenceRoutes,
   installThankYouPreferenceRoutes,
+  installReminderSettingsRoutes,
   installRecurringRepairRoutes,
   installInvoiceTimeClaimRoutes,
   installStripeRoutes,
@@ -364,6 +366,16 @@ export interface RuntimeServices {
   invoiceTimeClaims?: InvoiceTimeClaimService
   invoiceDocumentPreference?: InvoiceDocumentPreferenceService
   thankYouPreference?: ThankYouPreferenceService
+  /** The organisation's default payment reminder policy (issue 801). */
+  reminderSettings?: ReminderSettingsService
+  /**
+   * Sends the reminders that have come due. Called from the daily cron in the
+   * Worker and from the outbox tick in the container; either way it is the
+   * only thing that turns a scheduled row into mail.
+   */
+  reminders?: {
+    processDue(now: string): Promise<{ examined: number; sent: number; scheduled: number }>
+  }
   recurringRepair?: RecurringRepairService
   bill?: BillRuntime
   /**
@@ -605,6 +617,9 @@ export const createApp = (
             }
             if (services.thankYouPreference !== undefined) {
               installThankYouPreferenceRoutes(api, services.thankYouPreference)
+            }
+            if (services.reminderSettings !== undefined) {
+              installReminderSettingsRoutes(api, services.reminderSettings)
             }
             if (services.payoutAccounts !== undefined) {
               installPayoutAccountRoutes(api, services.payoutAccounts)

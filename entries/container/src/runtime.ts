@@ -61,6 +61,9 @@ import {
   releaseInvoicedTimeEntries,
   recordCheckoutPayment,
   createThankYouPort,
+  createReminderPort,
+  readOrganizationReminderPolicy,
+  setOrganizationReminderPolicy,
   readThankYouPreference,
   readOrganizationThankYouPolicy,
   setInvoiceThankYouPolicy,
@@ -518,6 +521,56 @@ export const createContainerRuntime = async (
       now: () => new Date().toISOString(),
     })
 
+    // The reminder an overdue invoice sends (issue 801): the same port the
+    // Worker composes, driven from the outbox tick below rather than a cron,
+    // because the container has no other clock.
+    const reminderPort = createReminderPort({
+      database: drizzle,
+      configuration: emailConfiguration,
+      invoices: {
+        read: async (invoiceId: number) => {
+          const context = await moneyResources.getInvoiceDeliveryContext(invoiceId)
+          return context === null ? null : thankYouInvoiceFromDeliveryContext(context)
+        },
+        paymentUrl: async (invoiceId: number) => {
+          const result = await stripe.paymentLink(invoiceId)
+          return result.kind === 'linked' ? result.url : null
+        },
+      },
+      now: () => new Date().toISOString(),
+    })
+    const processDueReminders = (now: string) =>
+      reminders.processReminders({
+        now,
+        send: async (reminder) => {
+          const message = await reminderPort.prepare(reminder)
+          if (message === null) throw new Error('reminder has nothing to send')
+          if (organizationMailer?.enqueuePersisted === undefined) {
+            throw new Error('reminder durable enqueue is unavailable')
+          }
+          await organizationMailer.enqueuePersisted(
+            message.deliveryId,
+            {
+              senderIdentityId: message.senderIdentityId,
+              senderIdentityVersion: message.senderIdentityVersion,
+              senderEvidenceVersion: message.senderEvidenceVersion,
+              from: { email: message.fromEmail, name: message.fromName },
+              ...(message.replyToEmail === null ? {} : { replyTo: [{ email: message.replyToEmail }] }),
+            },
+            {
+              to: message.to.map((person) =>
+                person.name === '' ? { email: person.email } : { email: person.email, name: person.name },
+              ),
+              template: `reminder:${String(message.templateVersion)}`,
+              subject: message.subject,
+              text: message.textBody,
+              ...(message.htmlBody === null ? {} : { html: message.htmlBody }),
+              related: { type: 'invoice', id: reminder.invoiceId },
+            },
+          )
+        },
+      })
+
     const outbox = createContainerOutboxService(database, {
       additionalSubscribers: [
         createInvoiceEmailOutboxSubscriber(moneyResources, organizationMailer),
@@ -535,7 +588,12 @@ export const createContainerRuntime = async (
         .get() as { name: string } | undefined
       return row?.name ?? 'Ezacto'
     }
-    outboxScheduler = new ContainerOutboxScheduler(outbox)
+    outboxScheduler = new ContainerOutboxScheduler(outbox, {
+      // Reminders that have come due go out on the same tick the outbox
+      // drains, before it, so the sends they enqueue are drained in the same
+      // pass. Cheap when nothing is due: one indexed read.
+      beforeDrain: () => processDueReminders(new Date().toISOString()),
+    })
     const objects = await createDiskAttachmentObjectStore(
       config.attachmentDirectory,
     )
@@ -664,6 +722,12 @@ export const createContainerRuntime = async (
         readOrganizationThankYou: () => readOrganizationThankYouPolicy(drizzle),
         setOrganizationThankYou: (enabled: boolean) =>
           setOrganizationThankYouPolicy(drizzle, enabled),
+      },
+      reminders: { processDue: processDueReminders },
+      reminderSettings: {
+        readOrganizationReminderPolicy: () => readOrganizationReminderPolicy(drizzle),
+        setOrganizationReminderPolicy: (policy) =>
+          setOrganizationReminderPolicy(drizzle, policy, new Date().toISOString()),
       },
       // The same seam the Worker composes: both entries must answer this route
       // or `entry-surface.ts` fails the one that does and the one that does not.

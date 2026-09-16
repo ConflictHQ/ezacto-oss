@@ -57,6 +57,26 @@ export interface WisePayoutConnection {
   } | null
 }
 
+/** The organisation default payment reminder policy, or null for off (issue 801). */
+export type ReminderPolicySetting = {
+  readonly first_after_days: number
+  readonly every_days: number
+} | null
+
+/**
+ * The form's three fields as one policy. Off wins over whatever the numbers
+ * say, and a blank number while on is a validation failure for the server to
+ * name rather than a zero to guess at.
+ */
+export const reminderPolicyFromForm = (input: {
+  readonly enabled: boolean
+  readonly firstAfterDays: string
+  readonly everyDays: string
+}): ReminderPolicySetting =>
+  input.enabled
+    ? { first_after_days: Number(input.firstAfterDays), every_days: Number(input.everyDays) }
+    : null
+
 export interface CompanySettingsApi {
   getTimeEntrySettings(signal?: AbortSignal): Promise<TimeEntrySettings>
   getTimeEntryNoteSettings(signal?: AbortSignal): Promise<TimeEntryNoteSettings>
@@ -64,6 +84,16 @@ export interface CompanySettingsApi {
     patch: TimeEntryNoteSettingsPatch,
     signal?: AbortSignal,
   ): Promise<TimeEntryNoteSettings>
+  /**
+   * The organisation's default payment reminder policy (issue 801). `null` is
+   * reminders off. Optional because only a build with the reminder routes
+   * serves it, and a section that cannot be saved says so rather than failing.
+   */
+  getInvoiceReminders?(signal?: AbortSignal): Promise<ReminderPolicySetting>
+  updateInvoiceReminders?(
+    policy: ReminderPolicySetting,
+    signal?: AbortSignal,
+  ): Promise<ReminderPolicySetting>
   getEmailHealth(signal?: AbortSignal): Promise<EmailHealth>
   /**
    * Backup runs. Optional because only a deployment that composes a reader

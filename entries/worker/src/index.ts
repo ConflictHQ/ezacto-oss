@@ -192,6 +192,14 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
         new Date(controller.scheduledTime).toISOString().slice(0, 10),
         { type: 'system' },
       )
+      // Payment reminders that have come due (issue 801). Daily, like the
+      // generation above and for the same reason: a reminder is due on a
+      // date. The mail it enqueues is drained below in the same invocation.
+      // `now` rather than `scheduledTime`: the rows carry their own due date,
+      // and the message says how late the invoice is today.
+      if (services.reminders !== undefined) {
+        await services.reminders.processDue(new Date().toISOString())
+      }
     }
     // Refuses on any deployment that is not the demo, so this line is safe to
     // read as unconditional. See `runDemoMaintenance`.

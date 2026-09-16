@@ -387,5 +387,6 @@ export {
 export * from './thank-you-subscriber.js'
 
 export * from './thank-you-preference.js'
+export * from './reminder-settings.js'
 
 export * from './recurring-repair.js'

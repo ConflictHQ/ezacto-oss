@@ -235,7 +235,7 @@ export const renderInvoiceDetail = (
   reminderLine.textContent =
     reminder === null
       ? ''
-      : `Planned payment reminder date: ${dateLabel(reminder)}. Delivery is not scheduled yet.`
+      : `Payment reminder planned for ${dateLabel(reminder)}; further reminders follow the organization's cadence, or weekly, until paid.`
   reminderLine.hidden = reminder === null
 
   const lines = required<HTMLTableSectionElement>('[data-invoice-detail-lines]')

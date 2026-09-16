@@ -38,6 +38,22 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <div class="settings-table" data-settings-sender-identities hidden></div>
       <dl class="settings-facts" data-settings-email-reputation hidden></dl>
     </section>
+    <section class="settings-section" data-settings-section="reminders" aria-labelledby="settings-reminders-title">
+      <header><h2 id="settings-reminders-title">Payment reminders</h2>
+      <p>What an open invoice sends once it is past due, until it is paid, written off or cancelled. This is the default for every invoice sent from now on; an invoice with a policy of its own keeps it. The wording is the reminder template under Templates, and each reminder goes to whoever was sent the invoice.</p></header>
+      <p class="form-result" data-settings-reminders-status role="status" aria-live="polite">Loading payment reminders…</p>
+      <form class="settings-form" data-reminder-settings-form hidden>
+        <label class="settings-toggle"><input name="enabled" type="checkbox" data-reminder-settings-enabled>Send payment reminders for overdue invoices</label>
+        <label>First reminder, days after the due date
+          <input name="first_after_days" type="number" min="0" max="3650" step="1" inputmode="numeric" data-reminder-settings-first required>
+        </label>
+        <label>Then every, days
+          <input name="every_days" type="number" min="1" max="365" step="1" inputmode="numeric" data-reminder-settings-every required>
+        </label>
+        <button class="primary-action" type="submit" data-reminder-settings-submit>Save payment reminders</button>
+      </form>
+      <p class="form-result" data-reminder-settings-result role="status" aria-live="polite"></p>
+    </section>
     <section class="settings-section" data-settings-section="payouts" data-settings-wise aria-labelledby="settings-wise-title" hidden>
       <header><h2 id="settings-wise-title">Payouts</h2>
       <p>Which Wise profile money leaves from, how many people it can currently pay, and whether Wise can tell this instance what became of a transfer. The token itself stays in the deployment; what is shown here is the state it produces.</p></header>

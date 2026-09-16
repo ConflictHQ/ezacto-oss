@@ -1527,6 +1527,28 @@ const invoiceThankYouPreferenceOperations: ApiContractOperation[] = [
     responseSchema: "OrganizationInvoiceThankYouEnvelope",
     sessionOnly: true,
   },
+  {
+    method: "get",
+    path: "/api/v1/settings/invoice-reminders",
+    operationId: "getOrganizationInvoiceReminders",
+    summary: "The default payment reminder policy for overdue invoices",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "OrganizationInvoiceRemindersEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/invoice-reminders",
+    operationId: "setOrganizationInvoiceReminders",
+    summary: "Set, or switch off, the default payment reminder policy",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "OrganizationInvoiceRemindersEnvelope",
+    requestSchema: "OrganizationInvoiceRemindersInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
 ];
 
 const invoiceDocumentPreferenceOperations: ApiContractOperation[] = [
@@ -7885,6 +7907,40 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         type: "object",
         required: ["auto_thank_you"],
         properties: { auto_thank_you: { type: "boolean" } },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  ReminderPolicy: {
+    type: "object",
+    required: ["first_after_days", "every_days"],
+    properties: {
+      first_after_days: { type: "integer", minimum: 0, maximum: 3650 },
+      every_days: { type: "integer", minimum: 1, maximum: 365 },
+    },
+    additionalProperties: false,
+  },
+  OrganizationInvoiceRemindersInput: {
+    type: "object",
+    required: ["reminder_policy"],
+    properties: {
+      reminder_policy: { anyOf: [{ $ref: "#/components/schemas/ReminderPolicy" }, { type: "null" }] },
+    },
+    additionalProperties: false,
+  },
+  OrganizationInvoiceRemindersEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["reminder_policy"],
+        properties: {
+          reminder_policy: {
+            anyOf: [{ $ref: "#/components/schemas/ReminderPolicy" }, { type: "null" }],
+          },
+        },
         additionalProperties: false,
       },
     },

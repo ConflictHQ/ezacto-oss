@@ -18656,6 +18656,124 @@
         "x-ezacto-generate-client": true
       }
     },
+    "/api/v1/settings/invoice-reminders": {
+      "get": {
+        "operationId": "getOrganizationInvoiceReminders",
+        "summary": "The default payment reminder policy for overdue invoices",
+        "tags": [
+          "money"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationInvoiceRemindersEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/settings/invoice-reminders",
+        "x-ezacto-generate-client": true
+      },
+      "post": {
+        "operationId": "setOrganizationInvoiceReminders",
+        "summary": "Set, or switch off, the default payment reminder policy",
+        "tags": [
+          "money"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationInvoiceRemindersEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/settings/invoice-reminders",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationInvoiceRemindersInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/recurring-invoices/incomplete": {
       "get": {
         "operationId": "listIncompleteRecurringInvoices",
@@ -34590,6 +34708,73 @@
             "properties": {
               "auto_thank_you": {
                 "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReminderPolicy": {
+        "type": "object",
+        "required": [
+          "first_after_days",
+          "every_days"
+        ],
+        "properties": {
+          "first_after_days": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3650
+          },
+          "every_days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 365
+          }
+        },
+        "additionalProperties": false
+      },
+      "OrganizationInvoiceRemindersInput": {
+        "type": "object",
+        "required": [
+          "reminder_policy"
+        ],
+        "properties": {
+          "reminder_policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReminderPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "OrganizationInvoiceRemindersEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "reminder_policy"
+            ],
+            "properties": {
+              "reminder_policy": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ReminderPolicy"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "additionalProperties": false

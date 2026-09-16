@@ -62,6 +62,9 @@ import {
   releaseInvoicedTimeEntries,
   recordCheckoutPayment,
   createThankYouPort,
+  createReminderPort,
+  readOrganizationReminderPolicy,
+  setOrganizationReminderPolicy,
   readThankYouPreference,
   readOrganizationThankYouPolicy,
   setInvoiceThankYouPolicy,
@@ -799,6 +802,59 @@ export const createRuntimeServices = async (
     now: () => new Date().toISOString(),
   });
 
+  // The reminder an overdue invoice sends (issue 801). The scheduler above
+  // books and cancels rows; this is what turns a row that has come due into a
+  // message, and `processDueReminders` below is the only caller.
+  const reminderPort = createReminderPort({
+    database: drizzle,
+    configuration: emailConfiguration,
+    invoices: {
+      read: async (invoiceId: number) => {
+        const context = await moneyResources.getInvoiceDeliveryContext(invoiceId);
+        return context === null ? null : thankYouInvoiceFromDeliveryContext(context);
+      },
+      paymentUrl: async (invoiceId: number) => {
+        const result = await stripe.paymentLink(invoiceId);
+        return result.kind === "linked" ? result.url : null;
+      },
+    },
+    now: () => new Date().toISOString(),
+  });
+  const processDueReminders = (now: string) =>
+    reminders.processReminders({
+      now,
+      send: async (reminder) => {
+        const message = await reminderPort.prepare(reminder);
+        // Nothing to send is an answer the port has already recorded the
+        // reason for -- the row is left pending and looked at again tomorrow,
+        // by which time the sender or the template may exist.
+        if (message === null) throw new Error("reminder has nothing to send");
+        if (organizationMailer?.enqueuePersisted === undefined) {
+          throw new Error("reminder durable enqueue is unavailable");
+        }
+        await organizationMailer.enqueuePersisted(
+          message.deliveryId,
+          {
+            senderIdentityId: message.senderIdentityId,
+            senderIdentityVersion: message.senderIdentityVersion,
+            senderEvidenceVersion: message.senderEvidenceVersion,
+            from: { email: message.fromEmail, name: message.fromName },
+            ...(message.replyToEmail === null ? {} : { replyTo: [{ email: message.replyToEmail }] }),
+          },
+          {
+            to: message.to.map((person) =>
+              person.name === "" ? { email: person.email } : { email: person.email, name: person.name },
+            ),
+            template: `reminder:${String(message.templateVersion)}`,
+            subject: message.subject,
+            text: message.textBody,
+            ...(message.htmlBody === null ? {} : { html: message.htmlBody }),
+            related: { type: "invoice", id: reminder.invoiceId },
+          },
+        );
+      },
+    });
+
   const outbox = createD1OutboxService(database, {
     additionalSubscribers: [
       createInvoiceEmailOutboxSubscriber(
@@ -831,6 +887,12 @@ export const createRuntimeServices = async (
     moneyResources,
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     recurringInvoices: createRecurringInvoiceEngine(drizzle),
+    reminders: { processDue: processDueReminders },
+    reminderSettings: {
+      readOrganizationReminderPolicy: () => readOrganizationReminderPolicy(drizzle),
+      setOrganizationReminderPolicy: (policy) =>
+        setOrganizationReminderPolicy(drizzle, policy, new Date().toISOString()),
+    },
     // #712. Adapted rather than passed through: the port declares the shape the
     // route needs, and the reader takes the database as its first argument.
     bandClaimBackfill: {

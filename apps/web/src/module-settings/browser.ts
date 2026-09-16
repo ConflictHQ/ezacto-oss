@@ -15,6 +15,7 @@ import {
   themeSlotCopy,
   themeSlotGroups,
   noteSettingsPatch,
+  reminderPolicyFromForm,
   ratePercentage,
   senderVerificationLabel,
   ssoDomainStatus,
@@ -367,6 +368,13 @@ export const createModuleSettingsController = (
   const ssoInput = required<HTMLInputElement>('[data-sso-domain-input]')
   const ssoSubmit = required<HTMLButtonElement>('[data-sso-domain-submit]')
   const ssoResult = required<HTMLElement>('[data-sso-domain-result]')
+  const remindersStatus = required<HTMLElement>('[data-settings-reminders-status]')
+  const remindersForm = required<HTMLFormElement>('[data-reminder-settings-form]')
+  const remindersEnabled = required<HTMLInputElement>('[data-reminder-settings-enabled]')
+  const remindersFirst = required<HTMLInputElement>('[data-reminder-settings-first]')
+  const remindersEvery = required<HTMLInputElement>('[data-reminder-settings-every]')
+  const remindersSubmit = required<HTMLButtonElement>('[data-reminder-settings-submit]')
+  const remindersResult = required<HTMLElement>('[data-reminder-settings-result]')
 
   // The list is held rather than re-fetched after every action: add, verify and
   // remove all answer with what they changed, and a re-fetch would throw away
@@ -396,6 +404,56 @@ export const createModuleSettingsController = (
    */
   const currentSession = (): ActiveSession | null =>
     session === null || session.signal.aborted ? null : session
+
+  // The policy's numbers only matter while it is on; greying them out says so
+  // without hiding what the default would be when switched back on.
+  const syncReminderFields = (): void => {
+    remindersFirst.disabled = !remindersEnabled.checked
+    remindersEvery.disabled = !remindersEnabled.checked
+  }
+  remindersEnabled.addEventListener('change', syncReminderFields)
+
+  const showReminderPolicy = (
+    policy: { first_after_days: number; every_days: number } | null,
+  ): void => {
+    remindersEnabled.checked = policy !== null
+    remindersFirst.value = String(policy?.first_after_days ?? 3)
+    remindersEvery.value = String(policy?.every_days ?? 7)
+    syncReminderFields()
+  }
+
+  remindersForm.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    if (active === null || api.updateInvoiceReminders === undefined) return
+    remindersResult.textContent = 'Saving…'
+    remindersSubmit.disabled = true
+    try {
+      const saved = await api.updateInvoiceReminders(
+        reminderPolicyFromForm({
+          enabled: remindersEnabled.checked,
+          firstAfterDays: remindersFirst.value,
+          everyDays: remindersEvery.value,
+        }),
+        active.signal,
+      )
+      active.present(() => {
+        showReminderPolicy(saved)
+        remindersResult.textContent =
+          saved === null ? 'Saved. Payment reminders are off.' : 'Saved.'
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        remindersResult.textContent = messageFor(
+          error,
+          'Only administrators and accounting can change payment reminders.',
+          'Payment reminders could not be saved.',
+        )
+      })
+    } finally {
+      if (currentSession() === active) remindersSubmit.disabled = false
+    }
+  })
 
   noteForm.addEventListener('submit', async (event) => {
     event.preventDefault()
@@ -795,6 +853,29 @@ export const createModuleSettingsController = (
           error,
           'Only executive managers and administrators can read the time tracking settings.',
           'Time tracking settings could not be loaded.',
+        )
+      })
+    }
+  }
+
+  const loadReminders = async (active: ActiveSession): Promise<void> => {
+    if (api.getInvoiceReminders === undefined) {
+      remindersStatus.textContent = 'This build has no payment reminder settings endpoint.'
+      return
+    }
+    try {
+      const policy = await api.getInvoiceReminders(active.signal)
+      active.present(() => {
+        showReminderPolicy(policy)
+        remindersForm.hidden = false
+        remindersStatus.textContent = ''
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        remindersStatus.textContent = messageFor(
+          error,
+          'Only administrators and accounting can read payment reminder settings.',
+          'Payment reminder settings could not be loaded.',
         )
       })
     }
@@ -1429,6 +1510,7 @@ export const createModuleSettingsController = (
 
       const configuration = Promise.all([
         loadTimeTracking(active),
+        loadReminders(active),
         loadEmail(identity, active),
         loadBackups(identity, active),
         loadWiseConnection(active),

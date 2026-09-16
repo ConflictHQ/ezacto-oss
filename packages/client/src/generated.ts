@@ -2833,6 +2833,21 @@ export type OrganizationInvoiceThankYouEnvelope = {
 };
 };
 
+export type ReminderPolicy = {
+  "first_after_days": number;
+  "every_days": number;
+};
+
+export type OrganizationInvoiceRemindersInput = {
+  "reminder_policy": ReminderPolicy | null;
+};
+
+export type OrganizationInvoiceRemindersEnvelope = {
+  "data": {
+  "reminder_policy": ReminderPolicy | null;
+};
+};
+
 export type InvoiceDocumentPreferenceEnvelope = {
   "data": {
   "invoice_id": number;
@@ -5318,6 +5333,25 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<OrganizationInvoiceThankYouEnvelope>("POST", "/api/v1/settings/invoice-thank-you", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getOrganizationInvoiceReminders(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<OrganizationInvoiceRemindersEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OrganizationInvoiceRemindersEnvelope>("GET", "/api/v1/settings/invoice-reminders", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setOrganizationInvoiceReminders(args: { body: OrganizationInvoiceRemindersInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<OrganizationInvoiceRemindersEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OrganizationInvoiceRemindersEnvelope>("POST", "/api/v1/settings/invoice-reminders", {
+      body: args.body,
       signal: args.signal,
       headers,
     });
