@@ -27,6 +27,13 @@ export interface ContactLookup {
 export interface MagicLinkService {
   /** Look up a contact by email address. */
   findContactByEmail(email: string): Promise<ContactLookup | null>
+  /**
+   * Whether this address was already sent a link that is still live. #734: the
+   * route is unauthenticated, so without a throttle anyone could have us mail
+   * a known contact as fast as they could post. Optional so a deployment that
+   * has not wired it keeps working, but the runtime does wire it.
+   */
+  hasActiveLink?(email: string): Promise<boolean>
   /** Generate a magic-link token for the contact. */
   createToken(contact: ContactLookup): Promise<{
     token: string
@@ -125,6 +132,16 @@ export const installMagicLinkRoutes = <Bindings extends object>(
     // Always return 202 to prevent email enumeration.
     const contact = await options.service.findContactByEmail(email)
     if (contact === null) {
+      return context.json(
+        { data: { status: 'magic_link_sent' as const } },
+        202,
+        { 'cache-control': 'no-store' },
+      )
+    }
+
+    // One live link per address at a time. Answer 202 either way: which of the
+    // two reasons it was, is exactly what an enumerator wants to learn.
+    if ((await options.service.hasActiveLink?.(contact.email)) === true) {
       return context.json(
         { data: { status: 'magic_link_sent' as const } },
         202,

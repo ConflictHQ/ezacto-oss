@@ -86,12 +86,12 @@ const mailer = {
   enqueue: async (delivery: MagicLinkDelivery) => void deliveries.push(delivery),
 }
 
-const createHarness = () => {
+const createHarness = (serviceOverride?: Partial<MagicLinkService>) => {
   deliveries.length = 0
   const app = createApiApp({
     installApp(app) {
       installMagicLinkRoutes(app, {
-        service: magicLinkService,
+        service: { ...magicLinkService, ...serviceOverride },
         sessions: portalSessions,
         sessionStore,
         mailer,
@@ -139,6 +139,34 @@ describe('magic-link authentication routes', () => {
     expect(await response.json()).toEqual({ data: { status: 'magic_link_sent' } })
     // No delivery should be enqueued for unknown contact
     expect(deliveries).toHaveLength(0)
+  })
+
+  /**
+   * #734. The route is unauthenticated, so without a throttle anyone could
+   * have us mail a known contact as fast as they could post, and every request
+   * left a row behind for good.
+   */
+  it('[security] does not mail again while a link for that address is still live', async () => {
+    const app = createHarness({ hasActiveLink: async () => true })
+    const response = await post(app, '/portal/magic-link', { email: 'alice@acme.test' })
+    expect(response.status).toBe(202)
+    expect(deliveries).toHaveLength(0)
+  })
+
+  it('[security] answers the throttled case exactly as the unknown-address case', async () => {
+    const throttled = await post(
+      createHarness({ hasActiveLink: async () => true }),
+      '/portal/magic-link',
+      { email: 'alice@acme.test' },
+    )
+    const unknown = await post(createHarness(), '/portal/magic-link', {
+      email: 'nobody@example.com',
+    })
+    // Same status, same body, same headers: which of the two it was is exactly
+    // what an enumerator is asking.
+    expect(throttled.status).toBe(unknown.status)
+    expect(await throttled.json()).toEqual(await unknown.json())
+    expect(throttled.headers.get('cache-control')).toBe(unknown.headers.get('cache-control'))
   })
 
   it('[api] POST /portal/magic-link rejects missing email', async () => {

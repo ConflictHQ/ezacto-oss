@@ -52,6 +52,12 @@ const store = (): MagicLinkStore & { consumed: string[] } => {
       created.delete(jti)
       return record
     },
+    // #734. The live-link check the service asks before mailing again; this
+    // fake answers from whatever create() has recorded and not yet consumed.
+    hasActiveLink: async (contactEmail) =>
+      [...created.values()].some(
+        (record) => record.contactEmail.toLowerCase() === contactEmail.toLowerCase(),
+      ),
   }
 }
 

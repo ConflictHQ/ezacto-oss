@@ -102,6 +102,20 @@ export const createMagicLinkService = ({
       )
     },
 
+    /**
+     * #734. Sixty seconds, matching the staff flow's repeat throttle. Long
+     * enough that a retyped address does not mail twice, short enough that a
+     * contact who genuinely lost the mail is not locked out for long.
+     */
+    async hasActiveLink(email: string): Promise<boolean> {
+      const instant = now().toISOString()
+      return store.hasActiveLink(
+        email,
+        instant,
+        new Date(now().getTime() - 60_000).toISOString(),
+      )
+    },
+
     async recordToken(input: {
       jti: string
       contactEmail: string
