@@ -3001,7 +3001,14 @@ export class EzactoClient {
       ? options.baseUrl
       : `${options.baseUrl}/`;
     this.token = options.token;
-    this.fetchImplementation = options.fetch ?? globalThis.fetch;
+    // Bound, because this is stored on the instance and later called as
+    // `this.fetchImplementation(...)`. A browser's fetch is a method of
+    // Window and refuses any other receiver, so the unbound form threw
+    // "Failed to execute 'fetch' on 'Window': Illegal invocation" on every
+    // request from a page or an extension (#772). Binding whatever we are
+    // given also covers a caller who hands us a bare `globalThis.fetch`;
+    // an arrow or an already-bound function ignores the receiver anyway.
+    this.fetchImplementation = (options.fetch ?? globalThis.fetch).bind(globalThis);
     this.defaultHeaders = new Headers(options.headers);
   }
 
