@@ -88,8 +88,33 @@ const main = async (): Promise<void> => {
   )
 }
 
+/**
+ * What a startup failure is allowed to say.
+ *
+ * Name alone told an operator nothing -- `ezacto container startup failed:
+ * Error` is the whole of it, and diagnosing that meant unpacking the image. But
+ * printing the message blindly is not safe either: `SMTP_URL` carries a
+ * password, and a library error that quotes the URL would write that password
+ * into the logs.
+ *
+ * So: the configuration validators in `config.ts` raise `TypeError` with
+ * value-free text -- they name the variable, never its contents -- and those
+ * are surfaced whole, because misconfiguration is the overwhelmingly common
+ * failure and the message is the fix. Anything else is surfaced with credential
+ * material stripped.
+ */
+const startupDetail = (error: unknown): string => {
+  if (!(error instanceof Error)) return 'UnknownError'
+  if (error instanceof TypeError) return `TypeError: ${error.message}`
+  // scheme://user:password@host -> scheme://***@host
+  const scrubbed = error.message.replace(
+    /([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi,
+    '$1***@',
+  )
+  return `${error.name}: ${scrubbed}`
+}
+
 main().catch((error: unknown) => {
-  const name = error instanceof Error ? error.name : 'UnknownError'
-  console.error(`ezacto container startup failed: ${name}`)
+  console.error(`ezacto container startup failed: ${startupDetail(error)}`)
   process.exitCode = 1
 })
