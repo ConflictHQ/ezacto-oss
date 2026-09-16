@@ -33,4 +33,11 @@ export interface CreateApiAppOptions<Bindings extends object> {
   installApp?: AppInstaller<Bindings>
   /** Canonical resource routes mounted below `/api/v1`. */
   installApi?: ApiInstaller<Bindings>
+  /**
+   * Told about every error the app answers with a 5xx (issue 807). The app
+   * handles the exception itself, so a crash reporter wrapped around the entry
+   * never sees it; this is how the Worker hands it to Sentry. Never given the
+   * request or response body, only the error and the request id the client got.
+   */
+  reportError?: (error: Error, requestId: string) => void
 }

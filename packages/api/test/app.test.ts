@@ -256,6 +256,31 @@ for (const [runtime, requestFor] of runtimeFactories) {
         )
       })
 
+      it('[ops] hands every 5xx to the entry\'s reporter with the request id, and survives a reporter that throws (issue 807)', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {})
+        const reported: { message: string; requestId: string }[] = []
+        const reportError = vi.fn((error: Error, requestId: string) => {
+          reported.push({ message: error.message, requestId })
+          throw new Error('the reporter itself is down')
+        })
+        const reporting = requestFor(
+          createApiApp({ authentication, installApi: installTestRoutes, reportError }),
+        )
+        const response = await reporting('/api/v1/explode')
+        expect(response.status).toBe(500)
+        expect(reported).toEqual([
+          {
+            message: 'internal-debug-detail-must-never-reach-the-response',
+            requestId: response.headers.get('x-request-id'),
+          },
+        ])
+        // A deliberate 5xx is reported too; a 4xx is an answer and is not.
+        expect((await reporting('/api/v1/deliberate-500')).status).toBe(503)
+        expect(reportError).toHaveBeenCalledTimes(2)
+        expect((await reporting('/api/v1/conflict')).status).toBe(409)
+        expect(reportError).toHaveBeenCalledTimes(2)
+      })
+
       it('[ops] does not log an answer below 500: a refusal is not a failure', async () => {
         const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
         const response = await request('/api/v1/validate', {

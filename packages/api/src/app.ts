@@ -44,7 +44,7 @@ export const createApiApp = <Bindings extends object = object>(
     return next()
   })
 
-  app.onError((error, context) => errorResponse(error, context))
+  app.onError((error, context) => errorResponse(error, context, options.reportError))
   app.notFound((context) => notFoundResponse(context))
   options.installApp?.(app)
 

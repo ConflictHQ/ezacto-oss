@@ -1,3 +1,4 @@
+import { captureException } from "@sentry/cloudflare";
 import type { BillRuntime, QuickBooksService, WiseRuntime } from "@ezacto/integrations";
 import type {
   InvoiceDocumentPreferenceService,
@@ -482,6 +483,12 @@ export const createApp = (
   }
 
   return createApiApp<AppEnv>({
+    // Every 5xx the API answers goes to Sentry with the request id the client
+    // was handed (issue 807). A no-op until SENTRY_DSN is set, like the wrapper
+    // in index.ts, and never given a request or response body.
+    reportError: (error, requestId) => {
+      captureException(error, { tags: { request_id: requestId } })
+    },
     ...(services === undefined
       ? {}
       : {
