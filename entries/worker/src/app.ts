@@ -106,6 +106,7 @@ import {
   type TimesheetApprovalService,
   type TimesheetLockPolicyService,
   type TeamRouteOptions,
+  invoicePaymentUrlForSend,
 } from '@ezacto/api'
 import {
   demoAccounts,
@@ -578,15 +579,15 @@ export const createApp = (
                   }),
               // The pay link the invoice email carries. Resolved here rather
               // than inside the money routes so those keep knowing nothing
-              // about a payment provider; a deployment without Stripe passes
-              // nothing and the email renders as it always did.
-              ...(services.stripe === undefined
+              // about a payment provider; a deployment with neither BILL nor
+              // Stripe passes nothing and the email renders as it always did.
+              ...(services.stripe === undefined && services.bill === undefined
                 ? {}
                 : {
-                    invoicePaymentUrl: async (invoiceId: number) => {
-                      const result = await services.stripe!.paymentLink(invoiceId)
-                      return result.kind === 'linked' ? result.url : null
-                    },
+                    invoicePaymentUrl: invoicePaymentUrlForSend({
+                      ...(services.bill === undefined ? {} : { bill: services.bill }),
+                      ...(services.stripe === undefined ? {} : { stripe: services.stripe }),
+                    }),
                   }),
               cursorSigningKey: services.cursorSigningKey,
               clock: () => systemClock.now().instant,

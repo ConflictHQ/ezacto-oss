@@ -79,6 +79,7 @@ import {
   createInvoiceEmailOutboxSubscriber,
   createInvoiceThankYouSubscriber,
   thankYouInvoiceFromDeliveryContext,
+  invoicePaymentUrlForMail,
 } from "@ezacto/api";
 import type {
   AttachmentObjectPort,
@@ -780,10 +781,7 @@ export const createRuntimeServices = async (
                 .all<{ version: number }>();
               return rows.results[0]?.version ?? null;
             },
-            paymentUrl: async (invoiceId: number) => {
-              const result = await stripe.paymentLink(invoiceId);
-              return result.kind === "linked" ? result.url : null;
-            },
+            paymentUrl: invoicePaymentUrlForMail({ bill, stripe }),
           },
         });
 
@@ -813,10 +811,7 @@ export const createRuntimeServices = async (
         const context = await moneyResources.getInvoiceDeliveryContext(invoiceId);
         return context === null ? null : thankYouInvoiceFromDeliveryContext(context);
       },
-      paymentUrl: async (invoiceId: number) => {
-        const result = await stripe.paymentLink(invoiceId);
-        return result.kind === "linked" ? result.url : null;
-      },
+      paymentUrl: invoicePaymentUrlForMail({ bill, stripe }),
     },
     now: () => new Date().toISOString(),
   });

@@ -230,6 +230,35 @@ describe('mirroring an invoice', () => {
   })
 })
 
+describe('the payment link the invoice email carries (issue 838)', () => {
+  it('[integration] is minted at send time for an opted-in client, and the BILL invoice behind it is not made twice', async () => {
+    // ezacto is the one sending the email here (a sync token cannot have BILL
+    // send it), so the link has to exist before the body is composed. The
+    // outbox subscriber then finds the link and creates nothing.
+    const harness = runtime({ ...fullConfig, replyToUserId: undefined })
+    expect(await harness.runtime.paymentLinkForSend(1315)).toBe('https://app.bill.com/pay/example')
+    expect(await harness.runtime.paymentLink(1315)).toBe('https://app.bill.com/pay/example')
+    expect(await harness.runtime.mirror(1315)).toMatchObject({ kind: 'adopted', billInvoiceId: '00e001' })
+    expect(harness.server.calls.filter((call) => call === 'POST /connect/v3/invoices')).toHaveLength(1)
+  })
+
+  it('[unit] answers nothing where BILL sends its own email, where the client is not opted in, or where BILL is not configured', async () => {
+    const billSends = runtime(fullConfig)
+    expect(await billSends.runtime.paymentLinkForSend(1315)).toBeNull()
+    expect(billSends.server.calls).toEqual([])
+
+    const notOptedIn = runtime({ ...fullConfig, replyToUserId: undefined }, {
+      source: source({ isOptedIn: vi.fn(async () => false) }),
+    })
+    expect(await notOptedIn.runtime.paymentLinkForSend(1315)).toBeNull()
+    expect(notOptedIn.server.calls).toEqual([])
+
+    const unconfigured = runtime({ ...fullConfig, password: undefined })
+    expect(await unconfigured.runtime.paymentLinkForSend(1315)).toBeNull()
+    expect(await unconfigured.runtime.paymentLink(1315)).toBeNull()
+  })
+})
+
 describe('reconciling payments', () => {
   const paid = {
     id: '0rp1',
@@ -414,6 +443,8 @@ describe('the outbox subscriber', () => {
     }),
     mirror,
     reconcilePayments: async () => 0,
+    paymentLinkForSend: async () => null,
+    paymentLink: async () => null,
   })
 
   it('[unit] fires on a sent invoice and nothing else', async () => {

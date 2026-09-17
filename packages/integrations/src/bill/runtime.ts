@@ -108,6 +108,17 @@ export interface BillRuntime {
   mirror(invoiceId: number): Promise<BillMirrorOutcome>
   /** Reads BILL's receivables and records what settled our invoices. */
   reconcilePayments(): Promise<number>
+  /**
+   * The BILL payment link an invoice email should carry (issue 838), minted
+   * now so the body composed at send time holds it. Mirrors the invoice into
+   * BILL when its client is opted in and ezacto is the one sending the email;
+   * answers null where the client is not opted in, where BILL sends its own
+   * email (then BILL owns the link), or where BILL is not configured. A
+   * failure at BILL surfaces to the caller, which sends without a link.
+   */
+  paymentLinkForSend(invoiceId: number): Promise<string | null>
+  /** The stored BILL payment link of a mirrored invoice, for later mail. */
+  paymentLink(invoiceId: number): Promise<string | null>
 }
 
 const trimmed = (value: string | undefined): string | null => {
@@ -254,6 +265,25 @@ export const createBillRuntime = (
         delivery: delivery(),
       })
     },
+
+    paymentLinkForSend: async (invoiceId: number): Promise<string | null> => {
+      if (credentials === null || replyToUserId !== null) return null
+      const invoice = await source.readInvoice(invoiceId)
+      if (invoice === null || !(await source.isOptedIn(invoice.clientId))) return null
+      const client = await source.readClient(invoice.clientId)
+      if (client === null) return null
+      const outcome = await mirrorInvoice({
+        invoice,
+        client,
+        links,
+        bill: mirrorBill(await signedIn()),
+        delivery: delivery(),
+      })
+      return outcome.kind === 'refused' ? null : outcome.paymentLink
+    },
+
+    paymentLink: async (invoiceId: number): Promise<string | null> =>
+      (await links.readLink('invoice', invoiceId))?.paymentLink ?? null,
 
     reconcilePayments: async (): Promise<number> => {
       if (credentials === null) return 0
