@@ -15,6 +15,7 @@ import {
   accessTokenNeedsRefresh,
   authorizeUrl,
   canonicalLastUpdated,
+  discoverEndpoints,
   exchangeAuthorizationCode,
   inboundPayments,
   mirrorInvoice,
@@ -87,7 +88,7 @@ export interface QuickBooksService {
   clientId(): string | null;
   callbackUrl(): string | null;
   settingsUrl(): string;
-  authorizeUrl(input: { state: string; redirectUri: string }): string;
+  authorizeUrl(input: { state: string; redirectUri: string }): Promise<string>;
   beginAuthorization(input: {
     state: string;
     userId: number;
@@ -310,6 +311,16 @@ export const createQuickBooksRuntime = (
   const callbackUrl = (): string | null =>
     appBaseUrl === null ? null : new URL(CALLBACK_PATH, appBaseUrl).toString();
 
+  // Intuit's current OAuth endpoints, from its discovery document (cached an
+  // hour; the published defaults when it cannot be read). Resolved per
+  // operation so a token refresh in a long-lived isolate follows a move.
+  const endpoints = () =>
+    discoverEndpoints({
+      fetch: options.fetch,
+      now: options.now(),
+      environment: config.environment,
+    });
+
   const requireSecret = (): string => {
     if (clientId === null || clientSecret === null) {
       throw new Error("QuickBooks client credentials are not configured");
@@ -335,6 +346,7 @@ export const createQuickBooksRuntime = (
         clientId: clientId ?? "",
         clientSecret: requireSecret(),
         refreshToken: connection.refreshToken,
+        endpoints: await endpoints(),
         fetch: options.fetch,
         now,
       });
@@ -587,12 +599,13 @@ export const createQuickBooksRuntime = (
     settingsUrl: () => SETTINGS_PATH,
     newState: options.newState ?? randomState,
 
-    authorizeUrl: ({ state, redirectUri }) =>
+    authorizeUrl: async ({ state, redirectUri }) =>
       authorizeUrl({
         clientId: clientId ?? "",
         redirectUri,
         state,
         scopes: [QUICKBOOKS_ACCOUNTING_SCOPE],
+        endpoints: await endpoints(),
       }),
 
     beginAuthorization: async ({ state, userId, redirectUri }) => {
@@ -619,6 +632,7 @@ export const createQuickBooksRuntime = (
         clientSecret: requireSecret(),
         redirectUri: issued.redirectUri,
         code,
+        endpoints: await endpoints(),
         fetch: options.fetch,
         now,
       });
@@ -674,7 +688,8 @@ export const createQuickBooksRuntime = (
             clientId,
             clientSecret,
             token: connection.refreshToken,
-            fetch: options.fetch,
+            endpoints: await endpoints(),
+        fetch: options.fetch,
           });
         } catch {
           // Already forgotten locally, which is what the operator asked for.

@@ -31,7 +31,7 @@ const service = (overrides: Partial<QuickBooksService> = {}): QuickBooksService 
   callbackUrl: vi.fn(() => 'https://app.example.test/api/v1/integrations/quickbooks/callback'),
   settingsUrl: vi.fn(() => '/settings/integrations'),
   authorizeUrl: vi.fn(
-    ({ state }: { state: string }) =>
+    async ({ state }: { state: string }) =>
       `https://appcenter.intuit.com/connect/oauth2?state=${state}`,
   ),
   beginAuthorization: vi.fn(async () => undefined),

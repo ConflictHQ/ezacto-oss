@@ -122,6 +122,11 @@ export {
 } from './deel/time-sync.js'
 export {
   QUICKBOOKS_ACCOUNTING_SCOPE,
+  QUICKBOOKS_DEFAULT_ENDPOINTS,
+  QUICKBOOKS_DISCOVERY_URL,
+  QUICKBOOKS_SANDBOX_DISCOVERY_URL,
+  discoverEndpoints,
+  forgetDiscoveredEndpoints,
   QuickBooksOAuthError,
   accessTokenNeedsRefresh,
   authorizeUrl,
@@ -130,6 +135,7 @@ export {
   revokeConnection,
   type AuthorizeUrlInput,
   type QuickBooksConnection,
+  type QuickBooksOAuthEndpoints,
   type QuickBooksConnectionIdentity,
   type QuickBooksTokens,
   type TokenExchangeInput,
