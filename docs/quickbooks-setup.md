@@ -113,8 +113,12 @@ review — worth starting before you need it rather than on the day you do.
 
 1. An administrator opens **Settings → Integrations** and presses **Connect to
    QuickBooks**.
-2. ezacto redirects to Intuit with the client ID, the accounting scope, the
-   registered callback, and a single-use `state`.
+2. ezacto reads Intuit's OAuth discovery document (`/.well-known/openid_configuration`,
+   or the sandbox one when `QUICKBOOKS_ENVIRONMENT=sandbox`) for the current
+   authorization, token and revocation endpoints, caching it for an hour and
+   falling back to the published endpoints if it cannot be read, then redirects
+   to Intuit with the client ID, the accounting scope, the registered callback,
+   and a single-use `state`.
 3. The operator picks a company and approves.
 4. Intuit redirects back to the callback with a code, the `realmId` of the
    company they chose, and the `state` — which is checked before anything else

@@ -167,7 +167,7 @@ const documentedApp = () =>
         clientId: () => "contract-fixture",
         callbackUrl: () => "https://app.example.test/cb",
         settingsUrl: () => "/settings/integrations",
-        authorizeUrl: () => "https://appcenter.intuit.com/connect/oauth2",
+        authorizeUrl: async () => "https://appcenter.intuit.com/connect/oauth2",
         beginAuthorization: async () => undefined,
         completeAuthorization: async () => {
           throw new Error("not used by the contract fixture");

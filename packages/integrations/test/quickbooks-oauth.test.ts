@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
   QUICKBOOKS_ACCOUNTING_SCOPE,
+  QUICKBOOKS_DEFAULT_ENDPOINTS,
+  QUICKBOOKS_DISCOVERY_URL,
+  QUICKBOOKS_SANDBOX_DISCOVERY_URL,
+  discoverEndpoints,
+  forgetDiscoveredEndpoints,
   QuickBooksOAuthError,
   accessTokenNeedsRefresh,
   authorizeUrl,
@@ -204,5 +209,109 @@ describe('Intuit OAuth', () => {
         }),
       ).rejects.toThrow(QuickBooksOAuthError)
     }
+  })
+})
+
+describe('the discovery document', () => {
+  beforeEach(() => {
+    forgetDiscoveredEndpoints()
+  })
+
+  const document = (overrides: Record<string, unknown> = {}): Response =>
+    new Response(
+      JSON.stringify({
+        issuer: 'https://oauth.platform.intuit.com/op/v1',
+        authorization_endpoint: 'https://appcenter.intuit.com/connect/oauth2',
+        token_endpoint: 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',
+        revocation_endpoint: 'https://developer.api.intuit.com/v2/oauth2/tokens/revoke',
+        ...overrides,
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )
+
+  it('[unit] reads the three endpoints from the document, and every call follows them', async () => {
+    const seen: string[] = []
+    const fetch = async (request: Request): Promise<Response> => {
+      seen.push(request.url)
+      if (request.url === QUICKBOOKS_DISCOVERY_URL) {
+        return document({
+          authorization_endpoint: 'https://appcenter.intuit.example/connect/oauth2',
+          token_endpoint: 'https://oauth.intuit.example/oauth2/v2/tokens/bearer',
+          revocation_endpoint: 'https://developer.intuit.example/v3/oauth2/tokens/revoke',
+        })
+      }
+      return tokenResponse()
+    }
+    const endpoints = await discoverEndpoints({ fetch, now })
+    expect(endpoints).toEqual({
+      authorizationEndpoint: 'https://appcenter.intuit.example/connect/oauth2',
+      tokenEndpoint: 'https://oauth.intuit.example/oauth2/v2/tokens/bearer',
+      revocationEndpoint: 'https://developer.intuit.example/v3/oauth2/tokens/revoke',
+    })
+    expect(
+      authorizeUrl({ clientId: 'c', redirectUri: 'https://a.test/cb', state: 's1', endpoints }),
+    ).toContain('https://appcenter.intuit.example/connect/oauth2?')
+    await refreshAccessToken({
+      clientId: 'c', clientSecret: 'x', refreshToken: 'r', fetch, now, endpoints,
+    })
+    await revokeConnection({ clientId: 'c', clientSecret: 'x', token: 'r', fetch, endpoints })
+    expect(seen.slice(1)).toEqual([
+      'https://oauth.intuit.example/oauth2/v2/tokens/bearer',
+      'https://developer.intuit.example/v3/oauth2/tokens/revoke',
+    ])
+  })
+
+  it('[unit] the sandbox environment reads the sandbox document', async () => {
+    const seen: string[] = []
+    await discoverEndpoints({
+      fetch: async (request) => {
+        seen.push(request.url)
+        return document()
+      },
+      now,
+      environment: 'sandbox',
+    })
+    expect(seen).toEqual([QUICKBOOKS_SANDBOX_DISCOVERY_URL])
+  })
+
+  it('[unit] is read once an hour, not once a call', async () => {
+    let reads = 0
+    const fetch = async (): Promise<Response> => {
+      reads += 1
+      return document()
+    }
+    await discoverEndpoints({ fetch, now })
+    await discoverEndpoints({ fetch, now: new Date(now.getTime() + 30 * 60 * 1_000) })
+    expect(reads).toBe(1)
+    await discoverEndpoints({ fetch, now: new Date(now.getTime() + 61 * 60 * 1_000) })
+    expect(reads).toBe(2)
+  })
+
+  it('[reliability] an unreachable or malformed document yields the published defaults', async () => {
+    expect(
+      await discoverEndpoints({
+        fetch: async () => {
+          throw new TypeError('network down')
+        },
+        now,
+      }),
+    ).toEqual(QUICKBOOKS_DEFAULT_ENDPOINTS)
+    forgetDiscoveredEndpoints()
+    expect(
+      await discoverEndpoints({
+        fetch: async () => new Response('<html>', { status: 503 }),
+        now,
+      }),
+    ).toEqual(QUICKBOOKS_DEFAULT_ENDPOINTS)
+    forgetDiscoveredEndpoints()
+    // A document that names one endpoint over plain http, or omits one, is
+    // not followed for that endpoint: a secret goes only where TLS goes.
+    const partial = await discoverEndpoints({
+      fetch: async () =>
+        document({ token_endpoint: 'http://oauth.intuit.example/tokens', revocation_endpoint: undefined }),
+      now,
+    })
+    expect(partial.tokenEndpoint).toBe(QUICKBOOKS_DEFAULT_ENDPOINTS.tokenEndpoint)
+    expect(partial.revocationEndpoint).toBe(QUICKBOOKS_DEFAULT_ENDPOINTS.revocationEndpoint)
   })
 })

@@ -27,9 +27,101 @@
  */
 export const QUICKBOOKS_ACCOUNTING_SCOPE = 'com.intuit.quickbooks.accounting'
 
-const AUTHORIZE_URL = 'https://appcenter.intuit.com/connect/oauth2'
-const TOKEN_URL = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer'
-const REVOKE_URL = 'https://developer.api.intuit.com/v2/oauth2/tokens/revoke'
+/**
+ * Intuit's OAuth endpoints, as published in its discovery document.
+ *
+ * These are the values the document has carried since it was introduced, kept
+ * as the fallback for a deployment that cannot reach it -- Intuit's own guidance
+ * is to read the document rather than pin them, and `discoverEndpoints` does.
+ */
+export const QUICKBOOKS_DEFAULT_ENDPOINTS: QuickBooksOAuthEndpoints = {
+  authorizationEndpoint: 'https://appcenter.intuit.com/connect/oauth2',
+  tokenEndpoint: 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',
+  revocationEndpoint: 'https://developer.api.intuit.com/v2/oauth2/tokens/revoke',
+}
+
+export const QUICKBOOKS_DISCOVERY_URL =
+  'https://developer.api.intuit.com/.well-known/openid_configuration'
+export const QUICKBOOKS_SANDBOX_DISCOVERY_URL =
+  'https://developer.api.intuit.com/.well-known/openid_sandbox_configuration'
+
+export interface QuickBooksOAuthEndpoints {
+  readonly authorizationEndpoint: string
+  readonly tokenEndpoint: string
+  readonly revocationEndpoint: string
+}
+
+/** How long a fetched document is trusted before it is read again. */
+const DISCOVERY_TTL_MS = 60 * 60 * 1_000
+
+const discovered = new Map<string, { endpoints: QuickBooksOAuthEndpoints; fetchedAt: number }>()
+
+const httpsUrl = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' ? url.toString() : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The endpoints Intuit currently publishes for the OAuth flow.
+ *
+ * Read from the discovery document so a moved endpoint is followed rather than
+ * failed against, and cached for an hour per isolate so the token exchange is
+ * not two round trips. A document that cannot be fetched, or that omits or
+ * malforms an endpoint, yields the published defaults for that endpoint: the
+ * document is a convenience for staying current, never a reason to refuse a
+ * sign-in that the defaults would have completed.
+ */
+export const discoverEndpoints = async (input: {
+  readonly fetch: (request: Request) => Promise<Response>
+  readonly now: Date
+  /** `sandbox` reads the sandbox document; anything else the production one. */
+  readonly environment?: string | undefined
+  readonly discoveryUrl?: string
+}): Promise<QuickBooksOAuthEndpoints> => {
+  const url =
+    input.discoveryUrl ??
+    (input.environment?.trim().toLowerCase() === 'sandbox'
+      ? QUICKBOOKS_SANDBOX_DISCOVERY_URL
+      : QUICKBOOKS_DISCOVERY_URL)
+  const cached = discovered.get(url)
+  if (cached !== undefined && input.now.getTime() - cached.fetchedAt < DISCOVERY_TTL_MS) {
+    return cached.endpoints
+  }
+  let endpoints = QUICKBOOKS_DEFAULT_ENDPOINTS
+  try {
+    const response = await input.fetch(
+      new Request(url, { method: 'GET', headers: { accept: 'application/json' } }),
+    )
+    if (response.ok) {
+      const body = (await response.json()) as Record<string, unknown>
+      endpoints = {
+        authorizationEndpoint:
+          httpsUrl(body['authorization_endpoint']) ??
+          QUICKBOOKS_DEFAULT_ENDPOINTS.authorizationEndpoint,
+        tokenEndpoint:
+          httpsUrl(body['token_endpoint']) ?? QUICKBOOKS_DEFAULT_ENDPOINTS.tokenEndpoint,
+        revocationEndpoint:
+          httpsUrl(body['revocation_endpoint']) ??
+          QUICKBOOKS_DEFAULT_ENDPOINTS.revocationEndpoint,
+      }
+    }
+  } catch {
+    // Unreachable or unparsable: the defaults stand, and the next call after
+    // the TTL asks again. Nothing here is worth failing an operator's connect.
+  }
+  discovered.set(url, { endpoints, fetchedAt: input.now.getTime() })
+  return endpoints
+}
+
+/** For tests: forget what discovery has cached. */
+export const forgetDiscoveredEndpoints = (): void => {
+  discovered.clear()
+}
 
 /**
  * Intuit's refresh tokens are long-lived but not permanent, and the lifetime is
@@ -77,13 +169,15 @@ export interface AuthorizeUrlInput {
    */
   readonly state: string
   readonly scopes?: readonly string[]
+  /** From `discoverEndpoints`; the published defaults when absent. */
+  readonly endpoints?: QuickBooksOAuthEndpoints
 }
 
 export const authorizeUrl = (input: Readonly<AuthorizeUrlInput>): string => {
   const scopes = input.scopes ?? [QUICKBOOKS_ACCOUNTING_SCOPE]
   if (scopes.length === 0) throw new QuickBooksOAuthError('at least one scope is required')
   if (input.state.trim() === '') throw new QuickBooksOAuthError('state is required')
-  const url = new URL(AUTHORIZE_URL)
+  const url = new URL((input.endpoints ?? QUICKBOOKS_DEFAULT_ENDPOINTS).authorizationEndpoint)
   url.searchParams.set('client_id', input.clientId)
   url.searchParams.set('response_type', 'code')
   url.searchParams.set('scope', scopes.join(' '))
@@ -163,6 +257,8 @@ export interface TokenExchangeInput {
   readonly code: string
   readonly fetch: (request: Request) => Promise<Response>
   readonly now: Date
+  /** From `discoverEndpoints`; the published defaults when absent. */
+  readonly endpoints?: QuickBooksOAuthEndpoints
 }
 
 /**
@@ -174,7 +270,7 @@ export const exchangeAuthorizationCode = async (
   input: Readonly<TokenExchangeInput>,
 ): Promise<QuickBooksTokens> => {
   const response = await input.fetch(
-    new Request(TOKEN_URL, {
+    new Request((input.endpoints ?? QUICKBOOKS_DEFAULT_ENDPOINTS).tokenEndpoint, {
       method: 'POST',
       headers: {
         accept: 'application/json',
@@ -198,6 +294,8 @@ export interface TokenRefreshInput {
   readonly refreshToken: string
   readonly fetch: (request: Request) => Promise<Response>
   readonly now: Date
+  /** From `discoverEndpoints`; the published defaults when absent. */
+  readonly endpoints?: QuickBooksOAuthEndpoints
 }
 
 /**
@@ -210,7 +308,7 @@ export const refreshAccessToken = async (
   input: Readonly<TokenRefreshInput>,
 ): Promise<QuickBooksTokens> => {
   const response = await input.fetch(
-    new Request(TOKEN_URL, {
+    new Request((input.endpoints ?? QUICKBOOKS_DEFAULT_ENDPOINTS).tokenEndpoint, {
       method: 'POST',
       headers: {
         accept: 'application/json',
@@ -233,6 +331,8 @@ export interface TokenRevokeInput {
   /** Either token revokes the whole grant; the refresh token is the durable one. */
   readonly token: string
   readonly fetch: (request: Request) => Promise<Response>
+  /** From `discoverEndpoints`; the published defaults when absent. */
+  readonly endpoints?: QuickBooksOAuthEndpoints
 }
 
 /**
@@ -244,7 +344,7 @@ export interface TokenRevokeInput {
  */
 export const revokeConnection = async (input: Readonly<TokenRevokeInput>): Promise<void> => {
   const response = await input.fetch(
-    new Request(REVOKE_URL, {
+    new Request((input.endpoints ?? QUICKBOOKS_DEFAULT_ENDPOINTS).revocationEndpoint, {
       method: 'POST',
       headers: {
         accept: 'application/json',

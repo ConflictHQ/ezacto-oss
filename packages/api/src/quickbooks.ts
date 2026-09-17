@@ -59,7 +59,7 @@ export interface QuickBooksService {
   callbackUrl(): string | null
   /** Where the operator lands after connecting; a page, not an API route. */
   settingsUrl(): string
-  authorizeUrl(input: { state: string; redirectUri: string }): string
+  authorizeUrl(input: { state: string; redirectUri: string }): Promise<string>
   beginAuthorization(input: {
     state: string
     userId: number
@@ -216,7 +216,7 @@ export const installQuickBooksRoutes = <Bindings extends object>(
     const state = service.newState()
     await service.beginAuthorization({ state, userId, redirectUri: callbackUrl })
     return context.json(
-      { data: { authorize_url: service.authorizeUrl({ state, redirectUri: callbackUrl }) } },
+      { data: { authorize_url: await service.authorizeUrl({ state, redirectUri: callbackUrl }) } },
       200,
       { 'cache-control': 'no-store' },
     )
