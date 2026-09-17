@@ -645,7 +645,9 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
       </header>
       <form class="org-timezone-form" data-org-timezone-form>
         <label>Organization timezone
-          <input name="timezone" type="text" list="timezone-options" data-org-timezone autocomplete="off" maxlength="128" required>
+          <select name="timezone" data-org-timezone required>
+            <option value="">Select a timezone</option>
+          </select>
         </label>
         <p class="field-hint">The day tracked work is filed on for anyone who has not set their own, and the timezone deadlines below are read in.</p>
         <button type="submit" data-org-timezone-submit>Save timezone</button>
@@ -870,14 +872,15 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
     <form class="profile-timezone-form" data-profile-timezone-form>
       <p class="eyebrow">Your timezone</p>
       <label>Your timezone
-        <input name="timezone" type="text" list="timezone-options" data-profile-timezone autocomplete="off" maxlength="128" required>
+        <select name="timezone" data-profile-timezone required>
+          <option value="">Select a timezone</option>
+        </select>
       </label>
       <p class="field-hint" data-profile-timezone-hint></p>
       <button type="submit" data-profile-timezone-submit>Save timezone</button>
       <p class="form-result" data-profile-timezone-result aria-live="polite"></p>
     </form>
   </dialog>
-  <datalist id="timezone-options" data-timezone-options></datalist>
   <dialog class="row-dialog" data-row-dialog aria-labelledby="row-title">
     <form data-row-form>
       <header><div><p class="eyebrow">Timesheet row</p><h2 id="row-title">Add project and task</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>

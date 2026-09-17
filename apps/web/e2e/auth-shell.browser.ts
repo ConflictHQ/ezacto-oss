@@ -2788,7 +2788,9 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
   // Issue 757. The organization timezone saves on its own: it used to be a field
   // on this form, so an instance that wanted a timezone and no automatic locking
   // could not set one at all.
-  await policyPanel.locator('[data-org-timezone]').fill('America/Costa_Rica')
+  // Issue 798. The zone list is the control's own options rather than a shared
+  // `<datalist>`, so this picks one instead of typing it.
+  await policyPanel.locator('[data-org-timezone]').selectOption('America/Costa_Rica')
   const timezoneSaved = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === '/api/v1/timesheet-lock-policy' &&

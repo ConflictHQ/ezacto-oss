@@ -414,6 +414,54 @@ const open = (dialog: HTMLDialogElement): void => {
   if (!dialog.open) dialog.showModal()
 }
 
+/**
+ * Issue 757 offered the IANA list so that setting a zone did not mean knowing
+ * the spelling by heart. It offered it through a `<datalist>`, which does not
+ * work here (issue 798): the popup filters by what the box already holds, and
+ * both timezone boxes are filled with a complete zone before anyone clicks
+ * them, so the list collapses to the value already chosen and the menu's box
+ * goes active and drops nothing. The entry editor hit the same wall with
+ * project and task (issues 497 and 506) and the answer is the same -- a real
+ * select, whose options are its own markup. That also puts them inside the
+ * modal dialog the menu's control lives in, rather than out in the document
+ * `showModal()` makes inert around it.
+ */
+const timezoneOption = (zone: string): HTMLOptionElement => {
+  const option = document.createElement('option')
+  option.value = zone
+  option.textContent = zone
+  return option
+}
+
+const timezoneNames = (): readonly string[] => {
+  const supported = (
+    Intl as typeof Intl & { supportedValuesOf?: (key: string) => string[] }
+  ).supportedValuesOf
+  const zones = supported === undefined ? [] : supported('timeZone')
+  // Every engine this bundle targets enumerates zones. One that does not gets a
+  // control it can still use rather than an empty list.
+  return zones.length > 0
+    ? zones
+    : [Intl.DateTimeFormat().resolvedOptions().timeZone, 'UTC']
+}
+
+/**
+ * A select can only hold a value it offers, and a stored zone need not be one
+ * the engine enumerates: `UTC` -- the organization default, and the profile
+ * column's "unset" -- is absent from `Intl.supportedValuesOf` on current V8,
+ * and IANA links such as `US/Pacific` always are. Assigned blind, the control
+ * drops it and reads as nothing chosen, so an account with a zone on file is
+ * shown as having none. The entry editor's `withHeldValue` holds the same line
+ * for project and task.
+ */
+const showTimezone = (control: HTMLSelectElement, zone: string): void => {
+  const offered = [...control.options].some((option) => option.value === zone)
+  if (zone !== '' && !offered) {
+    control.insertBefore(timezoneOption(zone), control.options[1] ?? null)
+  }
+  control.value = zone
+}
+
 const cellInput = (
   cell: WeekGridCell,
   view: GridView,
@@ -1266,16 +1314,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const lockPolicyAuto = required<HTMLInputElement>('[data-lock-policy-auto]')
   const lockPolicyDay = required<HTMLSelectElement>('[data-lock-policy-day]')
   const lockPolicyTime = required<HTMLInputElement>('[data-lock-policy-time]')
-  const orgTimezone = required<HTMLInputElement>('[data-org-timezone]')
+  const orgTimezone = required<HTMLSelectElement>('[data-org-timezone]')
   const orgTimezoneForm = required<HTMLFormElement>('[data-org-timezone-form]')
   const orgTimezoneSubmit = required<HTMLButtonElement>('[data-org-timezone-submit]')
   const orgTimezoneResult = required<HTMLElement>('[data-org-timezone-result]')
-  const profileTimezone = required<HTMLInputElement>('[data-profile-timezone]')
+  const profileTimezone = required<HTMLSelectElement>('[data-profile-timezone]')
   const profileTimezoneForm = required<HTMLFormElement>('[data-profile-timezone-form]')
   const profileTimezoneSubmit = required<HTMLButtonElement>('[data-profile-timezone-submit]')
   const profileTimezoneResult = required<HTMLElement>('[data-profile-timezone-result]')
   const profileTimezoneHint = required<HTMLElement>('[data-profile-timezone-hint]')
-  const timezoneOptions = required<HTMLDataListElement>('[data-timezone-options]')
   const lockPolicySubmit = required<HTMLButtonElement>('[data-lock-policy-submit]')
   const manualLockForm = required<HTMLFormElement>('[data-manual-lock-form]')
   const manualLockThrough = required<HTMLInputElement>('[data-manual-lock-through]')
@@ -1283,6 +1330,13 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const manualLockSubmit = required<HTMLButtonElement>('[data-manual-lock-submit]')
   const lockPolicyResult = required<HTMLElement>('[data-lock-policy-result]')
   const timesheetLockList = required<HTMLElement>('[data-timesheet-lock-list]')
+  // Filled here, before anything can render a policy or a profile into either
+  // control: `showTimezone` needs the list in place to know whether the zone it
+  // is given is one the engine enumerates.
+  const timezones = timezoneNames()
+  for (const control of [orgTimezone, profileTimezone]) {
+    control.append(...timezones.map((zone) => timezoneOption(zone)))
+  }
   const requestedView = new URL(globalThis.location.href).searchParams.get('view')
   document.documentElement.dataset.timeView =
     requestedView === 'day' || requestedView === 'calendar' ? requestedView : 'week'
@@ -2452,7 +2506,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     lockPolicyAuto.checked = lockPolicy.auto_lock
     lockPolicyDay.value = lockPolicy.timesheet_deadline?.day ?? 'monday'
     lockPolicyTime.value = lockPolicy.timesheet_deadline?.time ?? '17:00'
-    if (document.activeElement !== orgTimezone) orgTimezone.value = lockPolicy.timezone
+    if (document.activeElement !== orgTimezone) showTimezone(orgTimezone, lockPolicy.timezone)
     lockPolicySubmit.disabled = lockPolicyTransitionPending
     manualLockSubmit.disabled = lockPolicyTransitionPending
     if (manualLockThrough.value === '') manualLockThrough.value = localDate()
@@ -4566,26 +4620,6 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       })
   })
 
-  // Issue 757. Both timezone settings existed only as free-text boxes -- one
-  // buried in the lock-policy form, one on the team page -- so setting either
-  // meant knowing IANA spelling by heart. `Intl` knows the whole list; offer it.
-  const fillTimezoneOptions = (): void => {
-    const supported = (
-      Intl as typeof Intl & { supportedValuesOf?: (key: string) => string[] }
-    ).supportedValuesOf
-    // Older engines have no enumeration API. The inputs stay free text, which is
-    // exactly what they were before, so nothing is lost by the list being absent.
-    if (supported === undefined) return
-    timezoneOptions.replaceChildren(
-      ...supported('timeZone').map((zone) => {
-        const option = document.createElement('option')
-        option.value = zone
-        return option
-      }),
-    )
-  }
-  fillTimezoneOptions()
-
   // The organization timezone saves on its own. It used to ride along with the
   // lock deadline, so an instance that wanted a timezone and no automatic
   // locking could not set one at all -- the form refused to submit without a
@@ -4631,8 +4665,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         // 'UTC' is this column's "unset", not a choice: say so rather than
         // showing a zone the person never picked.
         const unset = profile.timezone === 'UTC'
-        profileTimezone.value = unset ? '' : profile.timezone
-        profileTimezone.placeholder = unset ? 'Using the organization timezone' : ''
+        showTimezone(profileTimezone, unset ? '' : profile.timezone)
         profileTimezoneHint.textContent = unset
           ? 'Not set. Your work files on the organization timezone.'
           : 'Your work files on the day it is where you are.'
