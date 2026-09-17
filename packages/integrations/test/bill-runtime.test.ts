@@ -285,9 +285,9 @@ describe('reconciling payments', () => {
   })
 
   it('[money #836] adopts an open invoice BILL already holds under our number, then records its payment', async () => {
-    // The books on the real instance: every Kestrel Environmental invoice reached BILL
-    // from Harvest, and the client pays there. None was mirrored from here,
-    // so the reconciliation would have matched nothing forever.
+    // The books on a real instance: every invoice for one client reached
+    // BILL from Harvest, and the client pays there. None was mirrored from
+    // here, so the reconciliation would have matched nothing forever.
     const server = billServer()
     server.fetch.mockImplementation(async (request: Request) => {
       const url = new URL(request.url)

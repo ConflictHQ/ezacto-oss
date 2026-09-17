@@ -154,7 +154,7 @@ describe('an overdue invoice is reminded', () => {
   it('[money] books the reminder off the organisation default, sends once, records it, and stops when paid', async () => {
     const { database, orm, scheduler, outbox, port } = await fixture()
     await setOrganizationReminderPolicy(orm, { first_after_days: 14, every_days: 7 }, sentAt)
-    await sendTo(orm, [{ name: 'Accounts Payable', email: 'ap@kestrel.test' }])
+    await sendTo(orm, [{ name: 'Accounts Payable', email: 'ap@kestrel.example' }])
     await outbox.drain()
 
     // Scheduled 14 days after the due date, from the default, with nothing on
@@ -175,7 +175,7 @@ describe('an overdue invoice is reminded', () => {
         const message = await port.prepare(reminder)
         if (message === null) throw new Error('nothing to send')
         sent.push(message.textBody)
-        expect(message.to).toEqual([{ name: 'Accounts Payable', email: 'ap@kestrel.test' }])
+        expect(message.to).toEqual([{ name: 'Accounts Payable', email: 'ap@kestrel.example' }])
         expect(message.subject).toBe('Reminder: invoice #1293 from CONFLICT')
       },
     })
@@ -226,14 +226,14 @@ describe('an overdue invoice is reminded', () => {
   it('[unit] the date named on the send wins over the policy offset', async () => {
     const { orm, scheduler, outbox } = await fixture()
     await setOrganizationReminderPolicy(orm, { first_after_days: 14, every_days: 7 }, sentAt)
-    await sendTo(orm, [{ name: 'AP', email: 'ap@kestrel.test' }], '2026-08-05')
+    await sendTo(orm, [{ name: 'AP', email: 'ap@kestrel.example' }], '2026-08-05')
     await outbox.drain()
     expect((await scheduler.listPending(1))[0]!.scheduledAt).toBe('2026-08-05T00:00:00.000Z')
   })
 
   it('[unit] a date named on the send with no policy anywhere books it, weekly after', async () => {
     const { orm, scheduler, outbox } = await fixture()
-    await sendTo(orm, [{ name: 'AP', email: 'ap@kestrel.test' }], '2026-08-05')
+    await sendTo(orm, [{ name: 'AP', email: 'ap@kestrel.example' }], '2026-08-05')
     await outbox.drain()
     const [booked] = await scheduler.listPending(1)
     expect(booked).toMatchObject({ scheduledAt: '2026-08-05T00:00:00.000Z', intervalDays: 7 })
@@ -241,7 +241,7 @@ describe('an overdue invoice is reminded', () => {
 
   it('[unit] with no policy anywhere, nothing is booked', async () => {
     const { orm, scheduler, outbox } = await fixture()
-    await sendTo(orm, [{ name: 'AP', email: 'ap@kestrel.test' }])
+    await sendTo(orm, [{ name: 'AP', email: 'ap@kestrel.example' }])
     await outbox.drain()
     expect(await scheduler.listPending(1)).toHaveLength(0)
   })
@@ -249,7 +249,7 @@ describe('an overdue invoice is reminded', () => {
   it('[security] the record refuses a reminder for an invoice that is not open', async () => {
     const { database, orm, scheduler, outbox, port } = await fixture()
     await setOrganizationReminderPolicy(orm, { first_after_days: 0, every_days: 7 }, sentAt)
-    await sendTo(orm, [{ name: 'AP', email: 'ap@kestrel.test' }])
+    await sendTo(orm, [{ name: 'AP', email: 'ap@kestrel.example' }])
     await outbox.drain()
     const [reminder] = await scheduler.listPending(1)
     // Settled underneath the scheduled row, before the outbox has run the
