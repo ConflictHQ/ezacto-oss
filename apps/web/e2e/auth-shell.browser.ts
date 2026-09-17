@@ -221,6 +221,10 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
       })
       return
     }
+    if (path === '/api/v1/profile') {
+      await fulfillJson(route, { data: { user_id: 1, timezone: 'UTC' } })
+      return
+    }
     if (path === '/api/v1/timesheet-submissions') {
       await fulfillJson(route, { error: { code: 'not_found' } }, 404)
       return
@@ -436,6 +440,12 @@ test('[e2e:track-week] uses one editor and submits 12-hour UI times as canonical
     }
     if (url.pathname === '/api/v1/timesheet-lock-policy') {
       await fulfillJson(route, { error: { code: 'not_found' } }, 404)
+      return
+    }
+    // The week reads the person's timezone to place today; the real server
+    // always answers this, and a timezone of UTC means "follow the org".
+    if (url.pathname === '/api/v1/profile') {
+      await fulfillJson(route, { data: { user_id: 1, timezone: 'UTC' } })
       return
     }
     await fulfillJson(route, { error: { code: 'unexpected_test_request' } }, 500)
