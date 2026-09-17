@@ -183,41 +183,6 @@ describe('mirror links', () => {
     ).toMatchObject({ quickBooksId: 'qb-1', syncToken: '1' })
   })
 
-  it('[db #828] saveLink keeps the QuickBooks id; replaceLink re-points it', async () => {
-    const store = await fixture()
-    await connected(store)
-    await store.saveLink({
-      realmId: 'realm-a',
-      kind: 'customer',
-      ezactoId: 1,
-      quickBooksId: 'qb-1',
-      syncToken: '0',
-      now: t(2),
-    })
-    await store.saveLink({
-      realmId: 'realm-a',
-      kind: 'customer',
-      ezactoId: 1,
-      quickBooksId: 'qb-2',
-      syncToken: '1',
-      now: t(3),
-    })
-    expect(
-      await store.readLink({ realmId: 'realm-a', kind: 'customer', ezactoId: 1 }),
-    ).toMatchObject({ quickBooksId: 'qb-1' })
-    await store.replaceLink({
-      realmId: 'realm-a',
-      kind: 'customer',
-      ezactoId: 1,
-      quickBooksId: 'qb-2',
-      syncToken: '4',
-      now: t(4),
-    })
-    expect(
-      await store.readLink({ realmId: 'realm-a', kind: 'customer', ezactoId: 1 }),
-    ).toMatchObject({ quickBooksId: 'qb-2', syncToken: '4' })
-  })
-
   it('[security] refuses a link to a client that does not exist', async () => {
     const store = await fixture()
     await connected(store)

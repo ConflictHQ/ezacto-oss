@@ -245,7 +245,7 @@ describe("mirroring an invoice", () => {
     const fetchImpl = intuit([
       { match: /\/query\?/u, body: { QueryResponse: {} } },
       { match: /\/customer\?/u, body: customerResponse },
-      { match: /\/invoice\?/u, body: { Invoice: { Id: "qb-inv-7", SyncToken: "0" } } },
+      { match: /\/invoice\?/u, body: { Invoice: { Id: "qb-inv-7", SyncToken: "0", CustomerRef: { value: "qb-2" } } } },
     ]);
     const { mirror, store } = await runtime(fetchImpl);
     await connected(store);
@@ -272,7 +272,7 @@ describe("mirroring an invoice", () => {
       },
       { match: /\/query\?/u, body: { QueryResponse: {} } },
       { match: /\/customer\?/u, body: customerResponse },
-      { match: /\/invoice\?/u, body: { Invoice: { Id: "qb-inv-7", SyncToken: "0" } } },
+      { match: /\/invoice\?/u, body: { Invoice: { Id: "qb-inv-7", SyncToken: "0", CustomerRef: { value: "qb-2" } } } },
     ]);
     const { mirror, store } = await runtime(fetchImpl);
     await store.saveConnection({
@@ -494,10 +494,10 @@ describe("payments going out (issue 799)", () => {
   const invoiceRoutes = [
     { match: /\/query\?/u, body: { QueryResponse: {} } },
     { match: /\/customer\?/u, body: customerResponse },
-    { match: /\/invoice\?/u, body: { Invoice: { Id: "qb-inv-8", SyncToken: "0" } } },
+    { match: /\/invoice\?/u, body: { Invoice: { Id: "qb-inv-8", SyncToken: "0", CustomerRef: { value: "qb-2" } } } },
     // The invoice as QuickBooks holds it now: one token on from the create,
     // as it is once a payment has been applied to it there.
-    { match: /\/invoice\/qb-inv-8\?/u, method: "GET", body: { Invoice: { Id: "qb-inv-8", SyncToken: "1" } } },
+    { match: /\/invoice\/qb-inv-8\?/u, method: "GET", body: { Invoice: { Id: "qb-inv-8", SyncToken: "1", CustomerRef: { value: "qb-2" } } } },
   ];
   const paymentRoute = {
     match: /\/payment\?/u,
@@ -641,10 +641,10 @@ describe("sync from the invoice page (issue 819)", () => {
   const invoiceRoutes = [
     { match: /\/query\?/u, body: { QueryResponse: {} } },
     { match: /\/customer\?/u, body: customerResponse },
-    { match: /\/invoice\?/u, body: { Invoice: { Id: "qb-inv-8", SyncToken: "0" } } },
+    { match: /\/invoice\?/u, body: { Invoice: { Id: "qb-inv-8", SyncToken: "0", CustomerRef: { value: "qb-2" } } } },
     // The invoice as QuickBooks holds it now: one token on from the create,
     // as it is once a payment has been applied to it there.
-    { match: /\/invoice\/qb-inv-8\?/u, method: "GET", body: { Invoice: { Id: "qb-inv-8", SyncToken: "1" } } },
+    { match: /\/invoice\/qb-inv-8\?/u, method: "GET", body: { Invoice: { Id: "qb-inv-8", SyncToken: "1", CustomerRef: { value: "qb-2" } } } },
   ];
   const paymentRoute = {
     match: /\/payment\?/u,
@@ -844,8 +844,8 @@ describe("sync from the invoice page (issue 819)", () => {
     // Every invoice on the real instance already exists in QuickBooks from the
     // Harvest era, under Harvest's customers and with no mark of ours. The
     // automatic mirror refused them all; the explicit sync adopts one whose
-    // total agrees, links the customer the books file it under, writes nothing
-    // to the document, and the payment lands where the invoice is.
+    // total agrees, writes nothing to the document, and the payment lands
+    // where the invoice is.
     const fetchImpl = intuit([]);
     fetchImpl.mockImplementation(async (request: Request) => {
       const url = new URL(request.url);
@@ -860,8 +860,9 @@ describe("sync from the invoice page (issue 819)", () => {
           },
         });
       }
-      if (url.pathname.endsWith("/customer/300") && request.method === "GET") {
-        return json({ Customer: { Id: "300", SyncToken: "2", DisplayName: "kestrel" } });
+      if (url.pathname.endsWith("/invoice/9862") && request.method === "GET") {
+        return json({ Invoice: { Id: "9862", SyncToken: "7", DocNumber: "1316", TotalAmt: 2500,
+          CustomerRef: { value: "300", name: "kestrel" }, Line: [] } });
       }
       if (request.method === "POST" && url.pathname.endsWith("/payment")) {
         const sent = (await request.clone().json()) as Record<string, unknown>;
@@ -885,35 +886,43 @@ describe("sync from the invoice page (issue 819)", () => {
       payments: [{ paymentId: 9, outcome: { kind: "created", quickBooksId: "qb-pay-9" } }],
     });
     // Nothing written to the invoice or a customer; one receipt, against the
-    // customer the books use.
+    // customer the books use. No customer link is made for the client: a
+    // Harvest sub-customer is not where new invoices for it belong.
     expect(posted(fetchImpl)).toEqual(["payment"]);
     const paymentRequest = fetchImpl.mock.calls.map((c) => c[0]).find((r) => r.method === "POST")!;
     expect(await paymentRequest.clone().json()).toMatchObject({
       CustomerRef: { value: "300" },
       Line: [{ LinkedTxn: [{ TxnId: "9862", TxnType: "Invoice" }] }],
     });
-    expect(await built.store.readLink({ realmId: "realm-a", kind: "customer", ezactoId: 2 })).toMatchObject({
-      quickBooksId: "300", syncToken: "2",
-    });
+    expect(await built.store.readLink({ realmId: "realm-a", kind: "customer", ezactoId: 2 })).toBeNull();
   });
 
-  it("[money #828] adoption re-points a customer link a refused mirror left behind, so the receipt reaches the invoice's customer", async () => {
+  it("[money #830] a stale customer link neither misdirects the receipt nor moves the invoice", async () => {
     // What happened on the real instance: the automatic mirror created a
-    // customer, then refused the invoice; Sync adopted the invoice under the
-    // customer the books use, but the stale customer link survived and the
-    // receipt went to the wrong customer -- QuickBooks 620.
+    // customer, then refused the invoice; the client's link pointed at that
+    // customer while the books filed the invoice under a Harvest sub-customer.
+    // The receipt named the link's customer -- QuickBooks 620 -- and the press
+    // after adoption moved the invoice to it. Now the receipt names the
+    // invoice's own customer, and an update leaves the customer alone.
     const fetchImpl = intuit([]);
+    const updates: Record<string, unknown>[] = [];
     fetchImpl.mockImplementation(async (request: Request) => {
       const url = new URL(request.url);
       const query = url.searchParams.get("query") ?? "";
       const json = (body: unknown) =>
         new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      const theirs = { Id: "10120", SyncToken: "3", DocNumber: "1316", TotalAmt: 2500,
+        CustomerRef: { value: "326", name: "Northpeak Support" }, Line: [] };
       if (query.includes("Invoice") && query.includes("'1316'")) {
-        return json({ QueryResponse: { Invoice: [{ Id: "10120", SyncToken: "3", DocNumber: "1316", TotalAmt: 2500,
-          CustomerRef: { value: "326", name: "Northpeak Support" }, Line: [] }] } });
+        return json({ QueryResponse: { Invoice: [theirs] } });
       }
-      if (url.pathname.endsWith("/customer/326") && request.method === "GET") {
-        return json({ Customer: { Id: "326", SyncToken: "5", DisplayName: "Northpeak Support" } });
+      if (url.pathname.endsWith("/invoice/10120") && request.method === "GET") {
+        return json({ Invoice: theirs });
+      }
+      if (url.pathname.endsWith("/invoice") && request.method === "POST") {
+        const sent = (await request.clone().json()) as Record<string, unknown>;
+        updates.push(sent);
+        return json({ Invoice: { ...theirs, SyncToken: "4", CustomerRef: sent["CustomerRef"] } });
       }
       if (request.method === "POST" && url.pathname.endsWith("/payment")) {
         const sent = (await request.clone().json()) as { CustomerRef: { value: string } };
@@ -931,13 +940,16 @@ describe("sync from the invoice page (issue 819)", () => {
     await built.store.saveLink({ realmId: "realm-a", kind: "customer", ezactoId: 2, quickBooksId: "332", syncToken: "0", now: t(0) });
     await markPaid(9);
 
-    const result = await built.sync(42);
-    expect(result).toEqual({
+    expect(await built.sync(42)).toEqual({
       invoice: { kind: "adopted", quickBooksId: "10120" },
       payments: [{ paymentId: 9, outcome: { kind: "created", quickBooksId: "qb-pay-9" } }],
     });
+    // The second press updates the document but keeps it under Northpeak Support.
+    expect(await built.sync(42)).toMatchObject({ invoice: { kind: "updated", quickBooksId: "10120" } });
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({ Id: "10120", SyncToken: "3", CustomerRef: { value: "326" } });
     expect(await built.store.readLink({ realmId: "realm-a", kind: "customer", ezactoId: 2 })).toMatchObject({
-      quickBooksId: "326", syncToken: "5",
+      quickBooksId: "332",
     });
   });
 

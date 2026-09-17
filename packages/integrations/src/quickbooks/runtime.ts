@@ -175,15 +175,6 @@ export interface QuickBooksConnectionStore {
     syncToken: string;
     now: string;
   }): Promise<void>;
-  /** Re-points a link at a different QuickBooks record: delete, then insert. */
-  replaceLink(input: {
-    realmId: string;
-    kind: "customer" | "invoice";
-    ezactoId: number;
-    quickBooksId: string;
-    syncToken: string;
-    now: string;
-  }): Promise<void>;
   readPaymentLink(input: {
     realmId: string;
     paymentId: number;
@@ -497,16 +488,6 @@ export const createQuickBooksRuntime = (
             now: options.now().toISOString(),
           });
         },
-        replaceLink: async (kind, ezactoId, link) => {
-          await store.replaceLink({
-            realmId: connection.realmId,
-            kind,
-            ezactoId,
-            quickBooksId: link.quickBooksId,
-            syncToken: link.syncToken,
-            now: options.now().toISOString(),
-          });
-        },
       },
       quickBooks: client,
       allowOnlinePayment: connection.allowOnlinePayment,
@@ -539,27 +520,27 @@ export const createQuickBooksRuntime = (
       if (mirrored.kind === "refused") return mirrored;
       invoiceQuickBooksId = mirrored.quickBooksId;
     }
-    const invoice = await source.readInvoice(input.invoiceId);
-    if (invoice === null) {
-      return { kind: "refused", reason: "the invoice no longer exists" };
-    }
-    const customerLink = await store.readLink({
-      realmId: connection.realmId,
-      kind: "customer",
-      ezactoId: invoice.clientId,
-    });
-    if (customerLink === null) {
-      return { kind: "refused", reason: "the invoice's client is not mirrored" };
-    }
     const client = await authorizedClient();
     if (client === null) {
       return { kind: "refused", reason: "QuickBooks is not connected" };
+    }
+    // The receipt names the customer the invoice is filed under in the books,
+    // read from the document itself. The client's customer link is where new
+    // invoices go; an adopted one may sit elsewhere -- Harvest filed one client
+    // under a sub-customer per project -- and QuickBooks refuses (620) a
+    // receipt whose customer is not the invoice's.
+    const quickBooksInvoice = await client.readInvoice(invoiceQuickBooksId);
+    if (quickBooksInvoice === null) {
+      return {
+        kind: "refused",
+        reason: "QuickBooks no longer holds the invoice; it was deleted there since it was mirrored",
+      };
     }
     const realmId = connection.realmId;
     return mirrorPayment({
       payment: input.payment,
       invoiceQuickBooksId,
-      customerQuickBooksId: customerLink.quickBooksId,
+      customerQuickBooksId: quickBooksInvoice.CustomerRef.value,
       links: {
         readPaymentLink: async (paymentId) => {
           const link = await store.readPaymentLink({ realmId, paymentId });

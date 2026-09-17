@@ -36,25 +36,12 @@ export interface MirrorLinkStore {
     ezactoId: number,
     link: MirrorLink,
   ): Promise<void>
-  /**
-   * Points a link at a different QuickBooks record. A link's identity is
-   * immutable in the store, so this is a delete and an insert, which leaves
-   * the trace the schema asks for; `saveLink` on an existing row keeps its id
-   * and would silently drop a new one (issue 828).
-   */
-  replaceLink?(
-    kind: MirrorLinkKind,
-    ezactoId: number,
-    link: MirrorLink,
-  ): Promise<void>
 }
 
 /** The half of the QuickBooks client a mirror uses. */
 export interface MirrorQuickBooks {
   findCustomerByDisplayName(displayName: string): Promise<QuickBooksCustomer | null>
   createCustomer(input: Record<string, unknown>): Promise<QuickBooksCustomer>
-  /** Only the adopt path needs it: the customer an existing invoice is filed under. */
-  readCustomer?(id: string): Promise<QuickBooksCustomer | null>
   findInvoiceByDocNumber(docNumber: string): Promise<QuickBooksInvoice | null>
   readInvoice(id: string): Promise<QuickBooksInvoice | null>
   createInvoice(input: Record<string, unknown>): Promise<QuickBooksInvoice>
@@ -165,22 +152,11 @@ export const mirrorInvoice = async (
         reason: `QuickBooks already holds invoice ${input.invoice.number} for ${theirs === null ? 'an unknown amount' : (theirs / 100).toFixed(2)}, and this one is ${(input.invoice.amountCents / 100).toFixed(2)}; they must agree before it can be adopted`,
       }
     }
-    // The customer the books file it under, not the one our client tree
-    // would produce: a payment must land where the invoice is, and QuickBooks
-    // refuses (620) a receipt whose customer is not the invoice's. A link that
-    // already points elsewhere -- typically at a customer an earlier, refused
-    // mirror created -- is replaced, not kept.
-    const customer = await input.quickBooks.readCustomer?.(existing.CustomerRef.value)
-    const customerLink = {
-      quickBooksId: existing.CustomerRef.value,
-      syncToken: customer?.SyncToken ?? '0',
-    }
-    const current = await input.links.readLink('customer', input.invoice.clientId)
-    if (current !== null && current.quickBooksId !== customerLink.quickBooksId) {
-      await (input.links.replaceLink ?? input.links.saveLink)('customer', input.invoice.clientId, customerLink)
-    } else {
-      await input.links.saveLink('customer', input.invoice.clientId, customerLink)
-    }
+    // Only the invoice is linked. The customer it is filed under stays as the
+    // books have it: Harvest filed one client of ours under a sub-customer per
+    // project, so there is no one customer the client's link could name, and a
+    // receipt names the customer the invoice carries (see mirrorPayment's
+    // caller), not the link.
     await input.links.saveLink('invoice', input.invoice.id, {
       quickBooksId: existing.Id,
       syncToken: existing.SyncToken,
@@ -188,16 +164,15 @@ export const mirrorInvoice = async (
     return { kind: 'adopted', quickBooksId: existing.Id }
   }
 
-  const customer = await ensureCustomer(input, input.invoice.clientId)
-  if ('refused' in customer) return { kind: 'refused', reason: customer.refused }
-
-  const options = {
-    customerRef: { value: customer.quickBooksId },
-    ...(input.allowOnlinePayment ? { allowOnlinePayment: true } : {}),
-  }
-
   if (action.kind === 'create') {
-    const created = await input.quickBooks.createInvoice(invoicePayload(input.invoice, options))
+    const customer = await ensureCustomer(input, input.invoice.clientId)
+    if ('refused' in customer) return { kind: 'refused', reason: customer.refused }
+    const created = await input.quickBooks.createInvoice(
+      invoicePayload(input.invoice, {
+        customerRef: { value: customer.quickBooksId },
+        ...(input.allowOnlinePayment ? { allowOnlinePayment: true } : {}),
+      }),
+    )
     await input.links.saveLink('invoice', input.invoice.id, {
       quickBooksId: created.Id,
       syncToken: created.SyncToken,
@@ -208,25 +183,31 @@ export const mirrorInvoice = async (
   // The token the link holds is the one our last write returned, and
   // QuickBooks moves it on every change to the document -- a payment applied
   // against the invoice included. Written back as stored it is a Stale Object
-  // Error on every press after the first receipt, so the current one is read
-  // first. An adopt already holds a fresh one from the lookup by number.
-  let syncToken = action.syncToken
-  if (action.kind === 'update') {
-    const current = await input.quickBooks.readInvoice(action.quickBooksId)
-    if (current === null) {
-      // Deleted in QuickBooks since it was mirrored. Re-creating it silently
-      // would put back a document somebody chose to remove.
-      return {
-        kind: 'refused',
-        reason: `QuickBooks no longer holds invoice ${input.invoice.number}; it was deleted there since it was mirrored`,
-      }
+  // Error on every press after the first receipt, so the current document is
+  // read first. Its customer is kept as well: the customer is set when the
+  // invoice is created, and an update never moves a document between
+  // customers -- one adopted from Harvest sits under the sub-customer Harvest
+  // filed it with, and a receipt already applied there names that customer.
+  // An adopt already holds the current document from the lookup by number.
+  const current =
+    action.kind === 'adopt' ? existing : await input.quickBooks.readInvoice(action.quickBooksId)
+  if (current === null) {
+    // Deleted in QuickBooks since it was mirrored. Re-creating it silently
+    // would put back a document somebody chose to remove.
+    return {
+      kind: 'refused',
+      reason: `QuickBooks no longer holds invoice ${input.invoice.number}; it was deleted there since it was mirrored`,
     }
-    syncToken = current.SyncToken
   }
-  // Adopt and update differ only in what is being recorded afterwards: both
-  // write the current state over what QuickBooks holds.
   const updated = await input.quickBooks.updateInvoice(
-    invoiceUpdatePayload(input.invoice, { Id: action.quickBooksId, SyncToken: syncToken }, options),
+    invoiceUpdatePayload(
+      input.invoice,
+      { Id: action.quickBooksId, SyncToken: current.SyncToken },
+      {
+        customerRef: { value: current.CustomerRef.value },
+        ...(input.allowOnlinePayment ? { allowOnlinePayment: true } : {}),
+      },
+    ),
   )
   await input.links.saveLink('invoice', input.invoice.id, {
     quickBooksId: updated.Id,
