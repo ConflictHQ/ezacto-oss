@@ -564,9 +564,14 @@ describe('native browser authentication', () => {
       ),
     )
 
-    // The organization timezone is its own setting with its own save.
-    document.querySelector<HTMLInputElement>('[data-org-timezone]')!.value =
-      'America/Costa_Rica'
+    // The organization timezone is its own setting with its own save. Issue
+    // 798: the zone list is this control's own options now, so the policy's
+    // zone is showing before anything is picked, and a value the control does
+    // not offer is one it refuses rather than one it silently swaps.
+    const orgTimezone = document.querySelector<HTMLSelectElement>('[data-org-timezone]')!
+    expect(orgTimezone.value).toBe('America/New_York')
+    orgTimezone.value = 'America/Costa_Rica'
+    expect(orgTimezone.value).toBe('America/Costa_Rica')
     document
       .querySelector<HTMLFormElement>('[data-org-timezone-form]')!
       .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))

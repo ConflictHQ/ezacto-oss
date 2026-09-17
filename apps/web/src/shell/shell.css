@@ -2661,7 +2661,7 @@
   display: grid;
   gap: 6px;
 }
-.org-timezone-form input,
+.org-timezone-form select,
 .org-timezone-form button,
 .lock-policy-form input:not([type='checkbox']),
 .lock-policy-form select,
@@ -6209,7 +6209,7 @@ dialog textarea {
   gap: 6px;
 }
 
-.profile-timezone-form input,
+.profile-timezone-form select,
 .profile-timezone-form button {
   min-height: 44px;
 }
