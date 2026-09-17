@@ -36,6 +36,17 @@ export interface MirrorLinkStore {
     ezactoId: number,
     link: MirrorLink,
   ): Promise<void>
+  /**
+   * Points a link at a different QuickBooks record. A link's identity is
+   * immutable in the store, so this is a delete and an insert, which leaves
+   * the trace the schema asks for; `saveLink` on an existing row keeps its id
+   * and would silently drop a new one (issue 828).
+   */
+  replaceLink?(
+    kind: MirrorLinkKind,
+    ezactoId: number,
+    link: MirrorLink,
+  ): Promise<void>
 }
 
 /** The half of the QuickBooks client a mirror uses. */
@@ -155,12 +166,21 @@ export const mirrorInvoice = async (
       }
     }
     // The customer the books file it under, not the one our client tree
-    // would produce: a payment must land where the invoice is.
+    // would produce: a payment must land where the invoice is, and QuickBooks
+    // refuses (620) a receipt whose customer is not the invoice's. A link that
+    // already points elsewhere -- typically at a customer an earlier, refused
+    // mirror created -- is replaced, not kept.
     const customer = await input.quickBooks.readCustomer?.(existing.CustomerRef.value)
-    await input.links.saveLink('customer', input.invoice.clientId, {
+    const customerLink = {
       quickBooksId: existing.CustomerRef.value,
       syncToken: customer?.SyncToken ?? '0',
-    })
+    }
+    const current = await input.links.readLink('customer', input.invoice.clientId)
+    if (current !== null && current.quickBooksId !== customerLink.quickBooksId) {
+      await (input.links.replaceLink ?? input.links.saveLink)('customer', input.invoice.clientId, customerLink)
+    } else {
+      await input.links.saveLink('customer', input.invoice.clientId, customerLink)
+    }
     await input.links.saveLink('invoice', input.invoice.id, {
       quickBooksId: existing.Id,
       syncToken: existing.SyncToken,

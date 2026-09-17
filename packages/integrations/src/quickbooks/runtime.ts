@@ -175,6 +175,15 @@ export interface QuickBooksConnectionStore {
     syncToken: string;
     now: string;
   }): Promise<void>;
+  /** Re-points a link at a different QuickBooks record: delete, then insert. */
+  replaceLink(input: {
+    realmId: string;
+    kind: "customer" | "invoice";
+    ezactoId: number;
+    quickBooksId: string;
+    syncToken: string;
+    now: string;
+  }): Promise<void>;
   readPaymentLink(input: {
     realmId: string;
     paymentId: number;
@@ -480,6 +489,16 @@ export const createQuickBooksRuntime = (
         },
         saveLink: async (kind, ezactoId, link) => {
           await store.saveLink({
+            realmId: connection.realmId,
+            kind,
+            ezactoId,
+            quickBooksId: link.quickBooksId,
+            syncToken: link.syncToken,
+            now: options.now().toISOString(),
+          });
+        },
+        replaceLink: async (kind, ezactoId, link) => {
+          await store.replaceLink({
             realmId: connection.realmId,
             kind,
             ezactoId,
