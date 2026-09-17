@@ -42,6 +42,8 @@ export interface MirrorLinkStore {
 export interface MirrorQuickBooks {
   findCustomerByDisplayName(displayName: string): Promise<QuickBooksCustomer | null>
   createCustomer(input: Record<string, unknown>): Promise<QuickBooksCustomer>
+  /** Only the adopt path needs it: the customer an existing invoice is filed under. */
+  readCustomer?(id: string): Promise<QuickBooksCustomer | null>
   findInvoiceByDocNumber(docNumber: string): Promise<QuickBooksInvoice | null>
   readInvoice(id: string): Promise<QuickBooksInvoice | null>
   createInvoice(input: Record<string, unknown>): Promise<QuickBooksInvoice>
@@ -61,7 +63,19 @@ export interface MirrorInvoiceInput {
   readonly links: MirrorLinkStore
   readonly quickBooks: MirrorQuickBooks
   readonly allowOnlinePayment: boolean
+  /**
+   * Adopt an invoice QuickBooks already holds under our number even though
+   * this mirror did not write it (issue 825). Only the explicit Sync sets
+   * this: an administrator pressed it against this invoice, and books that
+   * came through Harvest hold every invoice already. The document is left as
+   * the books have it -- customer, lines, dates -- and only the link is
+   * written, after the totals agree to the cent.
+   */
+  readonly adoptExisting?: boolean
 }
+
+const centsOf = (amount: number | undefined): number | null =>
+  amount === undefined ? null : Math.round(amount * 100)
 
 /**
  * Make sure every client from the root down to this one exists in QuickBooks,
@@ -119,14 +133,9 @@ const ensureCustomer = async (
 export const mirrorInvoice = async (
   input: Readonly<MirrorInvoiceInput>,
 ): Promise<MirrorOutcome> => {
-  const customer = await ensureCustomer(input, input.invoice.clientId)
-  if ('refused' in customer) return { kind: 'refused', reason: customer.refused }
-
-  const options = {
-    customerRef: { value: customer.quickBooksId },
-    ...(input.allowOnlinePayment ? { allowOnlinePayment: true } : {}),
-  }
-
+  // The invoice is looked up before any customer is made. A number QuickBooks
+  // already holds is decided here, and deciding it after `ensureCustomer` left
+  // a customer in the books for an invoice that was then refused.
   const link = await input.links.readLink('invoice', input.invoice.id)
   // Only looked up where there is no link. With one, the id is known and a query
   // by number would be a round trip to learn something already recorded.
@@ -134,7 +143,38 @@ export const mirrorInvoice = async (
     link === null ? await input.quickBooks.findInvoiceByDocNumber(input.invoice.number) : null
   const action = planInvoiceMirror(input.invoice, link, existing)
 
-  if (action.kind === 'conflict') return { kind: 'refused', reason: action.reason }
+  if (action.kind === 'conflict') {
+    if (input.adoptExisting !== true || existing === null) {
+      return { kind: 'refused', reason: action.reason }
+    }
+    const theirs = centsOf(existing.TotalAmt)
+    if (theirs !== input.invoice.amountCents) {
+      return {
+        kind: 'refused',
+        reason: `QuickBooks already holds invoice ${input.invoice.number} for ${theirs === null ? 'an unknown amount' : (theirs / 100).toFixed(2)}, and this one is ${(input.invoice.amountCents / 100).toFixed(2)}; they must agree before it can be adopted`,
+      }
+    }
+    // The customer the books file it under, not the one our client tree
+    // would produce: a payment must land where the invoice is.
+    const customer = await input.quickBooks.readCustomer?.(existing.CustomerRef.value)
+    await input.links.saveLink('customer', input.invoice.clientId, {
+      quickBooksId: existing.CustomerRef.value,
+      syncToken: customer?.SyncToken ?? '0',
+    })
+    await input.links.saveLink('invoice', input.invoice.id, {
+      quickBooksId: existing.Id,
+      syncToken: existing.SyncToken,
+    })
+    return { kind: 'adopted', quickBooksId: existing.Id }
+  }
+
+  const customer = await ensureCustomer(input, input.invoice.clientId)
+  if ('refused' in customer) return { kind: 'refused', reason: customer.refused }
+
+  const options = {
+    customerRef: { value: customer.quickBooksId },
+    ...(input.allowOnlinePayment ? { allowOnlinePayment: true } : {}),
+  }
 
   if (action.kind === 'create') {
     const created = await input.quickBooks.createInvoice(invoicePayload(input.invoice, options))

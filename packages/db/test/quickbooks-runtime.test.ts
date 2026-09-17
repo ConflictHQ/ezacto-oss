@@ -30,6 +30,7 @@ const invoice: MirrorInvoice = {
   dueDate: "2026-10-11",
   subject: "September retainer",
   notes: null,
+  amountCents: 250_000,
   lines: [{ description: "Advisory", amountCents: 250_000, quantity: 10, unitPriceCents: 25_000 }],
 };
 
@@ -706,6 +707,80 @@ describe("sync from the invoice page (issue 819)", () => {
     expect(again).toEqual({ invoice: { kind: "updated", quickBooksId: "qb-inv-8" }, payments: [] });
     expect(posted(fetchImpl).filter((path) => path === "invoice")).toHaveLength(2);
     expect(posted(fetchImpl).filter((path) => path === "payment")).toHaveLength(1);
+  });
+
+  it("[e2e #825] Sync adopts an invoice Harvest already put in the books, and Mark paid then files against it", async () => {
+    // Every invoice on the real instance already exists in QuickBooks from the
+    // Harvest era, under Harvest's customers and with no mark of ours. The
+    // automatic mirror refused them all; the explicit sync adopts one whose
+    // total agrees, links the customer the books file it under, writes nothing
+    // to the document, and the payment lands where the invoice is.
+    const fetchImpl = intuit([]);
+    fetchImpl.mockImplementation(async (request: Request) => {
+      const url = new URL(request.url);
+      const query = url.searchParams.get("query") ?? "";
+      const json = (body: unknown) =>
+        new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      if (query.includes("Invoice") && query.includes("'1316'")) {
+        return json({
+          QueryResponse: {
+            Invoice: [{ Id: "9862", SyncToken: "7", DocNumber: "1316", TotalAmt: 2500,
+              CustomerRef: { value: "300", name: "kestrel" }, Line: [] }],
+          },
+        });
+      }
+      if (url.pathname.endsWith("/customer/300") && request.method === "GET") {
+        return json({ Customer: { Id: "300", SyncToken: "2", DisplayName: "kestrel" } });
+      }
+      if (request.method === "POST" && url.pathname.endsWith("/payment")) {
+        const sent = (await request.clone().json()) as Record<string, unknown>;
+        return json({ Payment: { Id: "qb-pay-9", SyncToken: "0", TotalAmt: sent["TotalAmt"] } });
+      }
+      return json({ QueryResponse: {} });
+    });
+    const built = await runtime(fetchImpl, source({ readInvoice: vi.fn(async () => invoice42) }));
+    await connected(built.store);
+
+    // The automatic mirror, as the outbox would run it, refuses.
+    await createQuickBooksMirrorSubscriber(built).deliver({ aggregateType: "invoice", aggregateId: 42, eventType: "invoice.sent" });
+    expect((await built.syncState(42))?.lastOutcome).toMatchObject({ kind: "refused" });
+    expect(posted(fetchImpl)).toEqual([]);
+
+    // Paid here, then synced on purpose.
+    await markPaid(9);
+    const result = await built.sync(42);
+    expect(result).toEqual({
+      invoice: { kind: "adopted", quickBooksId: "9862" },
+      payments: [{ paymentId: 9, outcome: { kind: "created", quickBooksId: "qb-pay-9" } }],
+    });
+    // Nothing written to the invoice or a customer; one receipt, against the
+    // customer the books use.
+    expect(posted(fetchImpl)).toEqual(["payment"]);
+    const paymentRequest = fetchImpl.mock.calls.map((c) => c[0]).find((r) => r.method === "POST")!;
+    expect(await paymentRequest.clone().json()).toMatchObject({
+      CustomerRef: { value: "300" },
+      Line: [{ LinkedTxn: [{ TxnId: "9862", TxnType: "Invoice" }] }],
+    });
+    expect(await built.store.readLink({ realmId: "realm-a", kind: "customer", ezactoId: 2 })).toMatchObject({
+      quickBooksId: "300", syncToken: "2",
+    });
+  });
+
+  it("[money #825] Sync refuses to adopt when the books hold a different total", async () => {
+    const fetchImpl = intuit([]);
+    fetchImpl.mockImplementation(async (request: Request) => {
+      const query = new URL(request.url).searchParams.get("query") ?? "";
+      const body = query.includes("'1316'")
+        ? { QueryResponse: { Invoice: [{ Id: "9862", SyncToken: "7", DocNumber: "1316", TotalAmt: 2400, CustomerRef: { value: "300" }, Line: [] }] } }
+        : { QueryResponse: {} };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const built = await runtime(fetchImpl, source({ readInvoice: vi.fn(async () => invoice42) }));
+    await connected(built.store);
+    const result = await built.sync(42);
+    expect(result?.invoice).toMatchObject({ kind: "refused", reason: expect.stringContaining("2400.00") });
+    expect((result?.invoice as { reason: string }).reason).toContain("2500.00");
+    expect(posted(fetchImpl)).toEqual([]);
   });
 
   it("[e2e] a refused sync names the reason and touches no receipt", async () => {

@@ -419,7 +419,10 @@ export const createQuickBooksRuntime = (
     return outcome;
   };
 
-  const mirrorUnrecorded = async (invoiceId: number): Promise<MirrorOutcome> => {
+  const mirrorUnrecorded = async (
+    invoiceId: number,
+    adoptExisting = false,
+  ): Promise<MirrorOutcome> => {
     const connection = await store.readConnection();
     if (connection === null) {
       return { kind: "refused", reason: "QuickBooks is not connected" };
@@ -456,6 +459,7 @@ export const createQuickBooksRuntime = (
       },
       quickBooks: client,
       allowOnlinePayment: connection.allowOnlinePayment,
+      adoptExisting,
     });
   };
 
@@ -540,7 +544,10 @@ export const createQuickBooksRuntime = (
    */
   const sync = async (invoiceId: number): Promise<QuickBooksSyncResult | null> => {
     if ((await source.readInvoice(invoiceId)) === null) return null;
-    const invoice = await mirror(invoiceId);
+    // Pressed on purpose against this invoice, so an invoice the books already
+    // hold under our number is adopted rather than refused (issue 825). The
+    // outbox's automatic mirror keeps refusing: nobody asked it to.
+    const invoice = await recorded(invoiceId, () => mirrorUnrecorded(invoiceId, true));
     if (invoice.kind === "refused") return { invoice, payments: [] };
     const connection = await store.readConnection();
     const payments: { paymentId: number; outcome: MirrorPaymentOutcome }[] = [];

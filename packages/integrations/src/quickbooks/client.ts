@@ -226,6 +226,18 @@ export class QuickBooksClient {
     return rows[0] ?? null
   }
 
+  async readCustomer(id: string): Promise<QuickBooksCustomer | null> {
+    try {
+      const body = await this.#send(
+        this.#request(`/customer/${encodeURIComponent(id)}`, { method: 'GET' }),
+      )
+      return object(body['Customer'], 'Customer') as unknown as QuickBooksCustomer
+    } catch (error) {
+      if (error instanceof QuickBooksApiError && error.status === 404) return null
+      throw error
+    }
+  }
+
   async createCustomer(input: Record<string, unknown>): Promise<QuickBooksCustomer> {
     const body = await this.#send(
       this.#request('/customer', { method: 'POST', body: JSON.stringify(input) }),

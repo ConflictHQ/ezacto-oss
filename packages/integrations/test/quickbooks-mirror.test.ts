@@ -31,6 +31,7 @@ const invoice: MirrorInvoice = {
   dueDate: '2026-10-11',
   subject: 'September retainer',
   notes: null,
+  amountCents: 250_000,
   lines: [{ description: 'Advisory', amountCents: 250_000, quantity: 10, unitPriceCents: 25_000 }],
 }
 
@@ -240,6 +241,74 @@ describe('mirroring an invoice', () => {
     expect(vi.mocked(api.createInvoice).mock.calls[0]![0]).toMatchObject({
       AllowOnlineACHPayment: true,
     })
+  })
+})
+
+describe('adopting an invoice the books already hold (issue 825)', () => {
+  // Harvest put every invoice in QuickBooks under its own customers, with no
+  // mark of ours. The automatic mirror refuses those; the explicit Sync, which
+  // an administrator pressed against this invoice, adopts one whose total
+  // agrees, and leaves the document as the books have it.
+  const harvestInvoice = (overrides: Partial<QuickBooksInvoice> = {}): QuickBooksInvoice =>
+    ({
+      Id: 'qb-inv-9862',
+      SyncToken: '4',
+      DocNumber: '1315',
+      TotalAmt: 2500,
+      CustomerRef: { value: 'qb-300', name: 'kestrel' },
+      Line: [],
+      ...overrides,
+    }) as QuickBooksInvoice
+
+  it('[unit] the automatic mirror still refuses it', async () => {
+    const qb = quickBooks({ findInvoiceByDocNumber: vi.fn(async () => harvestInvoice()) })
+    const outcome = await mirrorInvoice({
+      invoice, clients, links: linkStore(), quickBooks: qb, allowOnlinePayment: false,
+    })
+    expect(outcome).toMatchObject({ kind: 'refused', reason: expect.stringContaining('not written by this mirror') })
+    expect(qb.createInvoice).not.toHaveBeenCalled()
+  })
+
+  it('[money] the explicit sync adopts it when the totals agree, linking the customer the books use', async () => {
+    const links = linkStore()
+    const qb = quickBooks({
+      findInvoiceByDocNumber: vi.fn(async () => harvestInvoice()),
+      readCustomer: vi.fn(async (id: string) => customer(id, 'kestrel')),
+    })
+    const outcome = await mirrorInvoice({
+      invoice, clients, links, quickBooks: qb, allowOnlinePayment: false, adoptExisting: true,
+    })
+    expect(outcome).toEqual({ kind: 'adopted', quickBooksId: 'qb-inv-9862' })
+    // Nothing written to the books: no customer made, no invoice created or updated.
+    expect(qb.createCustomer).not.toHaveBeenCalled()
+    expect(qb.createInvoice).not.toHaveBeenCalled()
+    expect(qb.updateInvoice).not.toHaveBeenCalled()
+    // The invoice link, and the customer link pointing where the invoice is
+    // filed -- not where our client tree would have put it.
+    expect(links.rows.get('invoice:41')).toEqual({ quickBooksId: 'qb-inv-9862', syncToken: '4' })
+    expect(links.rows.get('customer:2')).toEqual({ quickBooksId: 'qb-300', syncToken: '0' })
+  })
+
+  it('[money] refuses when the totals disagree, naming both', async () => {
+    const qb = quickBooks({ findInvoiceByDocNumber: vi.fn(async () => harvestInvoice({ TotalAmt: 2499.99 })) })
+    const outcome = await mirrorInvoice({
+      invoice, clients, links: linkStore(), quickBooks: qb, allowOnlinePayment: false, adoptExisting: true,
+    })
+    expect(outcome).toMatchObject({ kind: 'refused', reason: expect.stringContaining('2499.99') })
+    expect((outcome as { reason: string }).reason).toContain('2500.00')
+    expect(qb.createInvoice).not.toHaveBeenCalled()
+  })
+
+  it('[unit] an invoice this mirror wrote takes the ordinary adopt path unchanged', async () => {
+    const links = linkStore()
+    const qb = quickBooks({
+      findInvoiceByDocNumber: vi.fn(async () => qbInvoice()),
+    })
+    const outcome = await mirrorInvoice({
+      invoice, clients, links, quickBooks: qb, allowOnlinePayment: false, adoptExisting: true,
+    })
+    expect(outcome).toMatchObject({ kind: 'adopted' })
+    expect(qb.updateInvoice).toHaveBeenCalledTimes(1)
   })
 })
 
