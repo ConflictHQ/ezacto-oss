@@ -1228,7 +1228,7 @@
   gap: 10px;
 }
 .invoice-document-actions button {
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 14px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
