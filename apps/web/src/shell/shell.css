@@ -3633,6 +3633,30 @@ dialog h2,
   color: var(--ez-muted);
 }
 
+/* A section reads what another system holds, or failed to (issue 809): the
+   control that reads it again sits by the heading, and the one that retries a
+   failed read sits by the sentence saying it failed. */
+.settings-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.settings-refresh,
+.settings-retry {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+  color: var(--ez-data);
+}
+.settings-refresh:disabled,
+.settings-retry:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 /* The instance palette editor (issue 591). Grouped rather than one long list: the
    contrast rule means a dark palette needs most of the slots set, so the whole
    token set is offered, and the grouping is what keeps that from reading as a

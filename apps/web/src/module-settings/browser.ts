@@ -8,10 +8,15 @@ import { renderDataTable } from '../components/data-table.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
 import {
+  DEFAULT_COMPANY_SETTINGS_SECTION,
+  resolveSettingsSection,
+} from '../settings-sections.js'
+import {
   apiErrorMessage,
   brandAssetAccept,
   brandAssetRejection,
   brandAssetSlotCopy,
+  loadFailureMessage,
   themeSlotCopy,
   themeSlotGroups,
   noteSettingsPatch,
@@ -64,13 +69,13 @@ const fetchBrandAssets = async (
   })
   if (!response.ok) throw new EzactoApiError(
       response.status,
-      await brandBody(response),
+      await errorBody(response),
       response.headers.get('x-request-id'),
     )
   return ((await response.json()) as BrandAssetListEnvelope).data
 }
 
-const brandBody = async (response: Response): Promise<unknown> =>
+const errorBody = async (response: Response): Promise<unknown> =>
   response.json().catch(() => null)
 
 const uploadBrandAsset = async (
@@ -88,7 +93,7 @@ const uploadBrandAsset = async (
   })
   if (!response.ok) throw new EzactoApiError(
       response.status,
-      await brandBody(response),
+      await errorBody(response),
       response.headers.get('x-request-id'),
     )
 }
@@ -101,7 +106,7 @@ const removeBrandAsset = async (segment: string, signal?: AbortSignal): Promise<
   })
   if (!response.ok) throw new EzactoApiError(
       response.status,
-      await brandBody(response),
+      await errorBody(response),
       response.headers.get('x-request-id'),
     )
 }
@@ -132,6 +137,7 @@ const required = <ElementType extends Element>(selector: string): ElementType =>
 
 interface ActiveSession extends SessionPresenter {
   readonly signal: AbortSignal
+  readonly identity: Whoami
 }
 
 export interface ModuleSettingsController {
@@ -183,9 +189,15 @@ const fetchModules = async (signal?: AbortSignal): Promise<readonly ModuleState[
     credentials: 'same-origin',
     ...withSignal(signal),
   })
+  // The client's own error, request id and all, so a failed read says where
+  // to look for it (#809). The writes below keep their sentences: a refusal
+  // there is the API's own words, and those are the message.
   if (!response.ok) {
-    const text = await response.text().catch(() => '')
-    throw new Error(`Failed to load modules (${response.status}): ${text}`)
+    throw new EzactoApiError(
+      response.status,
+      await errorBody(response),
+      response.headers.get('x-request-id'),
+    )
   }
   const envelope = (await response.json()) as ModuleListEnvelope
   return envelope.data
@@ -241,8 +253,11 @@ const fetchSignInMethods = async (
     ...withSignal(signal),
   })
   if (!response.ok) {
-    const text = await response.text().catch(() => '')
-    throw new Error(refusal(text, 'Sign-in methods could not be loaded.'))
+    throw new EzactoApiError(
+      response.status,
+      await errorBody(response),
+      response.headers.get('x-request-id'),
+    )
   }
   const envelope = (await response.json()) as { data: readonly SignInMethodState[] }
   return envelope.data
@@ -355,6 +370,7 @@ export const createModuleSettingsController = (
   const quickBooksAllowPayment = required<HTMLInputElement>('[data-quickbooks-allow-payment]')
   const quickBooksDisconnect = required<HTMLButtonElement>('[data-quickbooks-disconnect]')
   const quickBooksResult = required<HTMLElement>('[data-settings-quickbooks-result]')
+  const refreshControls = document.querySelectorAll<HTMLButtonElement>('[data-settings-refresh]')
   const themeStatus = required<HTMLElement>('[data-settings-theme-status]')
   const themeSlots = required<HTMLElement>('[data-settings-theme-slots]')
   const themeActions = required<HTMLElement>('[data-settings-theme-actions]')
@@ -397,6 +413,13 @@ export const createModuleSettingsController = (
   // policy twice.
   let session: ActiveSession | null = null
 
+  // Which sections this session has read, by the promise that read them. A
+  // section loads the first time it is shown and not again (issue 809): the
+  // page used to fire every read the moment it opened, so opening Accounting
+  // called Wise. A failed read takes itself out of here, which is what makes
+  // Retry a second attempt rather than a cached failure.
+  const loaded = new Map<string, Promise<void>>()
+
   /**
    * The session an operation may start for, or null when there is none. A
    * request begun for a session that has already ended is a request whose
@@ -404,6 +427,37 @@ export const createModuleSettingsController = (
    */
   const currentSession = (): ActiveSession | null =>
     session === null || session.signal.aborted ? null : session
+
+  /**
+   * A read that failed. A 403 is an answer -- this profile cannot read the
+   * section -- and stays as it was. Anything else says what to do and offers
+   * to do it: the section comes out of `loaded`, so Retry is a second read of
+   * that section and of nothing else.
+   */
+  const sectionFailed = (
+    section: string,
+    target: HTMLElement,
+    error: unknown,
+    forbidden: string,
+    fallback: string,
+  ): void => {
+    if (error instanceof EzactoApiError && error.status === 403) {
+      target.textContent = forbidden
+      return
+    }
+    loaded.delete(section)
+    target.textContent = loadFailureMessage(error, fallback)
+    const retry = document.createElement('button')
+    retry.type = 'button'
+    retry.className = 'settings-retry'
+    retry.dataset.settingsRetry = section
+    retry.textContent = 'Retry'
+    retry.addEventListener('click', () => {
+      retry.disabled = true
+      void load(section)
+    })
+    target.append(' ', retry)
+  }
 
   // The policy's numbers only matter while it is on; greying them out says so
   // without hiding what the default would be when switched back on.
@@ -787,6 +841,7 @@ export const createModuleSettingsController = (
     // taken off it. Whatever it still has in flight then has nowhere to paint,
     // whether or not the shell remembered to abort its signal on the way out.
     session = null
+    loaded.clear()
     // Its controls come back with the page rather than from the finally of an
     // operation that is no longer allowed to touch anything.
     noteSubmit.disabled = false
@@ -849,7 +904,9 @@ export const createModuleSettingsController = (
       // still presents a signed-out user as signed in, over a raw
       // "request failed with status 401".
       active.presentFailure(error, () => {
-        timeStatus.textContent = messageFor(
+        sectionFailed(
+          'time',
+          timeStatus,
           error,
           'Only executive managers and administrators can read the time tracking settings.',
           'Time tracking settings could not be loaded.',
@@ -872,7 +929,9 @@ export const createModuleSettingsController = (
       })
     } catch (error) {
       active.presentFailure(error, () => {
-        remindersStatus.textContent = messageFor(
+        sectionFailed(
+          'reminders',
+          remindersStatus,
           error,
           'Only administrators and accounting can read payment reminder settings.',
           'Payment reminder settings could not be loaded.',
@@ -917,7 +976,9 @@ export const createModuleSettingsController = (
       })
     } catch (error) {
       active.presentFailure(error, () => {
-        emailStatus.textContent = messageFor(
+        sectionFailed(
+          'email',
+          emailStatus,
           error,
           'Only administrators can view email delivery.',
           'Email delivery could not be loaded.',
@@ -1106,7 +1167,9 @@ export const createModuleSettingsController = (
       active.present(() => showTheme(view))
     } catch (error) {
       active.presentFailure(error, () => {
-        themeStatus.textContent = messageFor(
+        sectionFailed(
+          'appearance',
+          themeStatus,
           error,
           'Changing how this instance looks is an administrator action.',
           'The instance theme could not be read.',
@@ -1157,7 +1220,9 @@ export const createModuleSettingsController = (
       })
     } catch (error) {
       active.presentFailure(error, () => {
-        quickBooksStatus.textContent = messageFor(
+        sectionFailed(
+          'integrations',
+          quickBooksStatus,
           error,
           'Connecting an accounting system is an administrator action.',
           'The QuickBooks connection could not be read.',
@@ -1167,16 +1232,13 @@ export const createModuleSettingsController = (
   }
 
   /**
-   * The payout connection.
-   *
-   * No profile check of its own: `activate` refuses anyone who is not an
-   * administrator or an executive manager before any of these loaders run, so a
-   * second one here would be a branch nothing can reach. A build without the
-   * Wise routes hides the section rather than showing an empty one.
+   * A build without the Wise routes hides the Payouts section rather than
+   * showing an empty one. Whether the routes exist is known before anything is
+   * read, and the section has to be offered before it can be opened, so this
+   * runs on activation while the read itself waits for the section (#809).
    */
-  const loadWiseConnection = async (active: ActiveSession): Promise<void> => {
-    const read = api.getWiseConnection
-    if (read === undefined) return
+  const revealWiseSection = (): void => {
+    if (api.getWiseConnection === undefined) return
     wiseSection.hidden = false
     // Available now, so the section strip may offer it. The shell re-applies
     // the chosen section on the same event it follows for the hash, which
@@ -1188,6 +1250,18 @@ export const createModuleSettingsController = (
       link.hidden = false
     }
     globalThis.dispatchEvent(new Event('hashchange'))
+  }
+
+  /**
+   * The payout connection.
+   *
+   * No profile check of its own: `activate` refuses anyone who is not an
+   * administrator or an executive manager before any of these loaders run, so a
+   * second one here would be a branch nothing can reach.
+   */
+  const loadWiseConnection = async (active: ActiveSession): Promise<void> => {
+    const read = api.getWiseConnection
+    if (read === undefined) return
     try {
       const state = await read(active.signal)
       active.present(() => {
@@ -1223,7 +1297,9 @@ export const createModuleSettingsController = (
     } catch (error) {
       active.presentFailure(error, () => {
         wiseFacts.hidden = true
-        wiseStatus.textContent = messageFor(
+        sectionFailed(
+          'payouts',
+          wiseStatus,
           error,
           'Only administrators and accounting can view the payout connection.',
           'The payout connection could not be loaded.',
@@ -1281,7 +1357,9 @@ export const createModuleSettingsController = (
       })
     } catch (error) {
       active.presentFailure(error, () => {
-        backupStatus.textContent = messageFor(
+        sectionFailed(
+          'backup',
+          backupStatus,
           error,
           'Only administrators can view backups.',
           'Backup status could not be loaded.',
@@ -1309,7 +1387,9 @@ export const createModuleSettingsController = (
       })
     } catch (error) {
       active.presentFailure(error, () => {
-        brandStatus.textContent = messageFor(
+        sectionFailed(
+          'brand',
+          brandStatus,
           error,
           'Only administrators can change the brand assets.',
           'Brand assets could not be loaded.',
@@ -1340,7 +1420,9 @@ export const createModuleSettingsController = (
       })
     } catch (error) {
       active.presentFailure(error, () => {
-        ssoStatus.textContent = messageFor(
+        sectionFailed(
+          'sso',
+          ssoStatus,
           error,
           'Only administrators can manage SSO provisioning domains.',
           'SSO provisioning domains could not be loaded.',
@@ -1499,6 +1581,187 @@ export const createModuleSettingsController = (
       })
   })
 
+  // Painted whole on every change rather than patched in place: switching
+  // one method off can be what makes another one's toggle the last one
+  // standing, and a card that still offers a switch the server would now
+  // refuse is worse than a redraw.
+  const paintSignInMethods = (
+    active: ActiveSession,
+    states: readonly SignInMethodState[],
+  ): void => {
+    signInStatus.textContent = ''
+    signInList.hidden = false
+    signInList.innerHTML = states.map(renderSignInMethodCard).join('')
+    for (const toggle of signInList.querySelectorAll<HTMLInputElement>(
+      '[data-sign-in-toggle]',
+    )) {
+      toggle.addEventListener('change', async () => {
+        const method = toggle.dataset.signInToggle!
+        const result = signInList.querySelector<HTMLElement>(
+          `[data-sign-in-result="${method}"]`,
+        )
+        const span = toggle.parentElement?.querySelector('span')
+        toggle.disabled = true
+        if (result) result.textContent = 'Saving…'
+        try {
+          const updated = await patchSignInMethod(method, toggle.checked, active.signal)
+          active.present(() => paintSignInMethods(active, updated))
+        } catch (error) {
+          active.presentFailure(error, () => {
+            // The refusal is the point, so the checkbox goes back to what
+            // the server still believes and the reason stays on screen.
+            toggle.checked = !toggle.checked
+            if (span) span.textContent = toggle.checked ? 'Enabled' : 'Disabled'
+            toggle.disabled = false
+            if (result) {
+              result.textContent =
+                error instanceof Error
+                  ? error.message
+                  : 'That sign-in method could not be changed.'
+            }
+          })
+        }
+      })
+    }
+  }
+
+  const loadSignInMethods = async (active: ActiveSession): Promise<void> => {
+    try {
+      const methods = await fetchSignInMethods(active.signal)
+      active.present(() => paintSignInMethods(active, methods))
+    } catch (error) {
+      active.presentFailure(error, () => {
+        sectionFailed(
+          'sign-in',
+          signInStatus,
+          error,
+          'Only administrators can manage sign-in methods.',
+          'Sign-in methods could not be loaded.',
+        )
+      })
+    }
+  }
+
+  const loadModules = async (active: ActiveSession): Promise<void> => {
+    try {
+      const modules = await fetchModules(active.signal)
+      active.present(() => {
+        status.textContent = ''
+        list.innerHTML = modules.map(renderModuleCard).join('')
+
+        for (const toggle of list.querySelectorAll<HTMLInputElement>('[data-module-toggle]')) {
+          toggle.addEventListener('change', async () => {
+            const moduleName = toggle.dataset.moduleToggle!
+            const result = list.querySelector<HTMLElement>(`[data-module-result="${moduleName}"]`)
+            const span = toggle.parentElement?.querySelector('span')
+            toggle.disabled = true
+            if (result) result.textContent = 'Saving…'
+
+            try {
+              const updated = await patchModule(moduleName, toggle.checked, active.signal)
+              active.present(() => {
+                const state = updated.find((m) => m.module === moduleName)
+                if (span) span.textContent = state?.enabled ? 'Enabled' : 'Disabled'
+                if (result) result.textContent = ''
+              })
+            } catch (error) {
+              active.presentFailure(error, () => {
+                toggle.checked = !toggle.checked
+                if (span) span.textContent = toggle.checked ? 'Enabled' : 'Disabled'
+                if (result) {
+                  result.textContent = error instanceof Error
+                    ? error.message
+                    : 'The module update could not be completed.'
+                }
+              })
+            } finally {
+              active.present(() => {
+                toggle.disabled = false
+              })
+            }
+          })
+        }
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        sectionFailed(
+          'modules',
+          status,
+          error,
+          'Only administrators can manage module settings.',
+          'Modules could not be loaded.',
+        )
+      })
+    }
+  }
+
+  /**
+   * One reader per section, keyed the way the strip and the hash key them
+   * (issue 800). A section is read the first time it is shown and not again
+   * for the session; what it showed stays, and a Retry or Refresh reads it
+   * once more.
+   */
+  const sectionLoaders: Readonly<Record<string, (active: ActiveSession) => Promise<void>>> = {
+    modules: loadModules,
+    'sign-in': loadSignInMethods,
+    time: loadTimeTracking,
+    email: (active) => loadEmail(active.identity, active),
+    reminders: loadReminders,
+    payouts: loadWiseConnection,
+    backup: (active) => loadBackups(active.identity, active),
+    brand: (active) => loadBrandAssets(active.identity, active),
+    appearance: (active) => loadInstanceTheme(active.identity, active),
+    integrations: (active) => loadQuickBooks(active.identity, active),
+    sso: (active) => loadSsoDomains(active.identity, active),
+  }
+
+  const load = (section: string): Promise<void> => {
+    const active = currentSession()
+    const read = sectionLoaders[section]
+    if (active === null || read === undefined) return Promise.resolve()
+    const pending = loaded.get(section)
+    if (pending !== undefined) return pending
+    const run = read(active)
+    loaded.set(section, run)
+    return run
+  }
+
+  /**
+   * The section on screen: the one the hash names, or the first where that
+   * one is Payouts and the deployment has no Wise routes -- the same fallback
+   * the shell makes when it decides what to show.
+   */
+  const shownSection = (): string => {
+    const wanted = resolveSettingsSection(globalThis.location.hash)
+    return wanted === 'payouts' && wiseSection.hasAttribute('data-settings-unavailable')
+      ? DEFAULT_COMPANY_SETTINGS_SECTION
+      : wanted
+  }
+
+  // Following a link in the strip is a hash change (issue 800), and the
+  // section it shows is read then, if this session has not read it yet.
+  // Nothing happens off the company page: there is no session to read for.
+  globalThis.addEventListener('hashchange', () => {
+    void load(shownSection())
+  })
+
+  // The integration sections read what another system holds, and an operator
+  // who just connected QuickBooks in another tab should not need a reload to
+  // see it. A refresh is a read the cache has forgotten.
+  for (const control of refreshControls) {
+    control.addEventListener('click', async () => {
+      const section = control.dataset.settingsRefresh
+      if (section === undefined || currentSession() === null) return
+      loaded.delete(section)
+      control.disabled = true
+      try {
+        await load(section)
+      } finally {
+        control.disabled = false
+      }
+    })
+  }
+
   return {
     async activate(identity, signal, onSessionFailure) {
       clearPrivatePresentation()
@@ -1514,122 +1777,13 @@ export const createModuleSettingsController = (
 
       const active: ActiveSession = {
         signal,
+        identity,
         ...sessionPresenter(() => currentSession() === active, onSessionFailure),
       }
       session = active
 
-      const configuration = Promise.all([
-        loadTimeTracking(active),
-        loadReminders(active),
-        loadEmail(identity, active),
-        loadBackups(identity, active),
-        loadWiseConnection(active),
-        loadQuickBooks(identity, active),
-        loadInstanceTheme(identity, active),
-        loadBrandAssets(identity, active),
-        loadSsoDomains(identity, active),
-      ])
-
-      // Painted whole on every change rather than patched in place: switching
-      // one method off can be what makes another one's toggle the last one
-      // standing, and a card that still offers a switch the server would now
-      // refuse is worse than a redraw.
-      const paintSignInMethods = (states: readonly SignInMethodState[]): void => {
-        signInStatus.textContent = ''
-        signInList.hidden = false
-        signInList.innerHTML = states.map(renderSignInMethodCard).join('')
-        for (const toggle of signInList.querySelectorAll<HTMLInputElement>(
-          '[data-sign-in-toggle]',
-        )) {
-          toggle.addEventListener('change', async () => {
-            const method = toggle.dataset.signInToggle!
-            const result = signInList.querySelector<HTMLElement>(
-              `[data-sign-in-result="${method}"]`,
-            )
-            const span = toggle.parentElement?.querySelector('span')
-            toggle.disabled = true
-            if (result) result.textContent = 'Saving…'
-            try {
-              const updated = await patchSignInMethod(method, toggle.checked, signal)
-              active.present(() => paintSignInMethods(updated))
-            } catch (error) {
-              active.presentFailure(error, () => {
-                // The refusal is the point, so the checkbox goes back to what
-                // the server still believes and the reason stays on screen.
-                toggle.checked = !toggle.checked
-                if (span) span.textContent = toggle.checked ? 'Enabled' : 'Disabled'
-                toggle.disabled = false
-                if (result) {
-                  result.textContent =
-                    error instanceof Error
-                      ? error.message
-                      : 'That sign-in method could not be changed.'
-                }
-              })
-            }
-          })
-        }
-      }
-
-      try {
-        const methods = await fetchSignInMethods(signal)
-        active.present(() => paintSignInMethods(methods))
-      } catch (error) {
-        active.presentFailure(error, () => {
-          signInStatus.textContent =
-            error instanceof Error
-              ? error.message
-              : 'Sign-in methods could not be loaded.'
-        })
-      }
-
-      try {
-        const modules = await fetchModules(signal)
-        active.present(() => {
-          status.textContent = ''
-          list.innerHTML = modules.map(renderModuleCard).join('')
-
-          for (const toggle of list.querySelectorAll<HTMLInputElement>('[data-module-toggle]')) {
-            toggle.addEventListener('change', async () => {
-              const moduleName = toggle.dataset.moduleToggle!
-              const result = list.querySelector<HTMLElement>(`[data-module-result="${moduleName}"]`)
-              const span = toggle.parentElement?.querySelector('span')
-              toggle.disabled = true
-              if (result) result.textContent = 'Saving…'
-
-              try {
-                const updated = await patchModule(moduleName, toggle.checked, signal)
-                active.present(() => {
-                  const state = updated.find((m) => m.module === moduleName)
-                  if (span) span.textContent = state?.enabled ? 'Enabled' : 'Disabled'
-                  if (result) result.textContent = ''
-                })
-              } catch (error) {
-                active.presentFailure(error, () => {
-                  toggle.checked = !toggle.checked
-                  if (span) span.textContent = toggle.checked ? 'Enabled' : 'Disabled'
-                  if (result) {
-                    result.textContent = error instanceof Error
-                      ? error.message
-                      : 'The module update could not be completed.'
-                  }
-                })
-              } finally {
-                active.present(() => {
-                  toggle.disabled = false
-                })
-              }
-            })
-          }
-        })
-      } catch (error) {
-        active.presentFailure(error, () => {
-          status.textContent = error instanceof Error
-            ? error.message
-            : 'Modules could not be loaded.'
-        })
-      }
-      await configuration
+      revealWiseSection()
+      await load(shownSection())
     },
   }
 }
