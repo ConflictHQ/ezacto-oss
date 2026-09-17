@@ -2949,13 +2949,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       const profile = await api.getProfile(operation.signal)
       return profile.timezone === 'UTC' ? null : profile.timezone
     } catch (error) {
-      if (
-        error instanceof EzactoApiError &&
-        (error.status === 403 || error.status === 404)
-      ) {
-        return null
-      }
-      throw error
+      // A session that has ended is the week's failure, not this read's. Any
+      // other refusal or fault falls back to the browser's clock: the zone
+      // decides which cell is today, and a week that cannot say is still a
+      // week worth showing.
+      if (error instanceof EzactoApiError && error.status === 401) throw error
+      return null
     }
   }
 
