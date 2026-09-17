@@ -34,6 +34,8 @@ export interface MirrorInvoice {
   readonly dueDate: string | null
   readonly subject: string | null
   readonly notes: string | null
+  /** The invoice's own total in cents, tax and discount included. */
+  readonly amountCents: number
   readonly lines: readonly MirrorInvoiceLine[]
 }
 

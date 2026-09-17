@@ -41,6 +41,7 @@ const invoice = (overrides: Partial<MirrorInvoice> = {}): MirrorInvoice => ({
   dueDate: '2026-10-11',
   subject: 'September retainer',
   notes: null,
+  amountCents: 250_000,
   lines: [
     { description: 'Advisory', amountCents: 250_000, quantity: 10, unitPriceCents: 25_000 },
   ],

@@ -137,6 +137,14 @@ that was never mirrored is mirrored first, then paid. A receipt that arrived
 from QuickBooks is never sent back, and an edit or deletion of a payment here is
 not copied out: the linked payment is the bookkeeper's pointer.
 
+Books that already hold your invoices (from Harvest, or hand-entered) are the
+common case on day one. The automatic mirror refuses an invoice QuickBooks
+already holds under the same number, because it did not write it and must not
+overwrite it. **Sync to QuickBooks** on the invoice page, pressed by an
+administrator, adopts that invoice instead when its total agrees to the cent:
+nothing on the QuickBooks document changes, the link is recorded against the
+customer the books file it under, and payments then go where the invoice is.
+
 Every mirror attempt leaves its result on the invoice, whether it created the
 document, was refused (not connected when the invoice went out, a customer name
 QuickBooks already holds under a different parent, an invoice number it holds

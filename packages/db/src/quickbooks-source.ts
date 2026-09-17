@@ -30,6 +30,7 @@ interface InvoiceRow {
   due_date: string | null;
   subject: string | null;
   notes: string | null;
+  amount_cents: number;
 }
 
 interface LineRow {
@@ -68,7 +69,7 @@ export const createQuickBooksMirrorSource = (
 ): QuickBooksMirrorSource => ({
   readInvoice: async (invoiceId) => {
     const rows = await database.all<InvoiceRow>(sql`
-      SELECT id, number, client_id, currency, issue_date, due_date, subject, notes
+      SELECT id, number, client_id, currency, issue_date, due_date, subject, notes, amount_cents
       FROM invoices WHERE id = ${invoiceId}`);
     const invoice = rows[0];
     if (invoice === undefined) return null;
@@ -85,6 +86,7 @@ export const createQuickBooksMirrorSource = (
       dueDate: invoice.due_date,
       subject: invoice.subject,
       notes: invoice.notes,
+      amountCents: invoice.amount_cents,
       lines: lines.map((line) => ({
         // QuickBooks shows the description and nothing else on a line, so an
         // empty one would be a blank row on a client's invoice.
