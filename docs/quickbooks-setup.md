@@ -83,7 +83,7 @@ Three things matter:
 
 | | |
 | --- | --- |
-| **Endpoint URL** | `https://<your-host>/api/v1/integrations/quickbooks/webhook`. Must be publicly reachable HTTPS — Intuit will not deliver to localhost. For local work, use a tunnel. |
+| **Endpoint URL** | `https://<your-host>/webhooks/quickbooks` — on the site root, not under `/api/v1`, and not the OAuth callback. Must be publicly reachable HTTPS — Intuit will not deliver to localhost. For local work, use a tunnel. |
 | **Verifier token** | Revealed by the toggle. Intuit signs every delivery with it (HMAC-SHA256, `intuit-signature` header), and the endpoint **must** verify that signature — the URL is public, and anything that reaches it is otherwise unauthenticated. |
 | **Subscribed events** | Every entity is checked by default. Narrow it to **Invoice** and **Payment**; everything else is delivery volume for events that will be ignored. |
 
@@ -106,6 +106,46 @@ the token exchange, which is where Intuit expects it.
 Development keys reach sandbox companies only. Production keys require going
 through Intuit's app assessment first, which is a separate process with its own
 review — worth starting before you need it rather than on the day you do.
+
+## 6. Production access
+
+The **Production** tab of the app is locked behind Intuit's questionnaire. It
+asks how the app handles OAuth and data; these are the answers that describe
+ezacto, so they can be given without guessing:
+
+| Intuit asks about | ezacto |
+| --- | --- |
+| The OAuth flow | Authorization code, browser-initiated by an administrator. No implicit flow, no client credentials. |
+| Token refresh | Only when a call is about to be made and the stored access token is within two minutes of its expiry; never on a timer. The rotated refresh token is stored before the call goes out. |
+| Endpoint discovery | Reads Intuit's OpenID discovery document rather than hardcoding endpoints. |
+| Scopes | `com.intuit.quickbooks.accounting` only. No OpenID, no payments scope. |
+| What is stored | The access and refresh tokens and the company (realm) id, in the deployment's database; refreshed tokens overwrite the old ones. Nothing from the books is copied except the ids of the invoices, customers and payments the mirror wrote or adopted. |
+| Disconnect | Revokes the tokens at Intuit and forgets them. |
+| Webhooks | Every delivery's HMAC signature is verified against the verifier token before it is read. |
+
+Two things the production tab needs that the development tab did not: its own
+**redirect URI** (the production host's `/api/v1/integrations/quickbooks/callback`,
+HTTPS) and its own **webhook endpoint** with its own verifier token. The pairs
+are per environment; a production key with the development callback registered
+fails with *"The redirect_uri query parameter value is invalid"* at the consent
+screen.
+
+## 7. Where the keys go
+
+Four values per deployment. The Worker reads them as secrets; the container
+reads them from its environment.
+
+| Name | Value |
+| --- | --- |
+| `QUICKBOOKS_CLIENT_ID` | the client ID of the environment's key pair |
+| `QUICKBOOKS_CLIENT_SECRET` | its secret |
+| `QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN` | the verifier token of that environment's webhook |
+| `QUICKBOOKS_ENVIRONMENT` | `sandbox` for a development key; anything else, including unset, is live books |
+
+How they reach a deployment, and how to prove they did, is in
+[Integrations: where the keys go](integrations.md). Once they are in place,
+**Settings → Integrations** offers **Connect to QuickBooks** and, after the
+consent screen, names the connected company.
 
 ---
 
