@@ -842,6 +842,11 @@ const displayEntries = (
   }))
 }
 
+const isModuleDisabled = (error: EzactoApiError): boolean => {
+  const body = error.body as { error?: { code?: unknown } } | null
+  return typeof body === 'object' && body !== null && body.error?.code === 'module_disabled'
+}
+
 export const loadShellSnapshot = async (
   api: ShellApi,
   now = new Date(),
@@ -849,8 +854,13 @@ export const loadShellSnapshot = async (
 ): Promise<ShellSnapshot> => {
   const timeEntrySettings = await api.getTimeEntrySettings(signal)
   const range = weekRange(localDate(now), timeEntrySettings.week_start_day)
+  // Expenses are a module, and a module an administrator switched off answers
+  // 403 `module_disabled` -- a decision, not a failure. Only the 404 of a build
+  // without the routes was tolerated here, so turning the module off in
+  // Settings took the whole week with it ("your week could not load").
   const expenseRequest = api.listExpenses?.(range, signal).catch((error: unknown) => {
     if (error instanceof EzactoApiError && error.status === 404) return []
+    if (error instanceof EzactoApiError && error.status === 403 && isModuleDisabled(error)) return []
     throw error
   }) ?? Promise.resolve([])
   const [resources, entries, running, expenses, timeEntryOptions] = await Promise.all([

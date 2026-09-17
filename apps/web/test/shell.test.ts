@@ -1,3 +1,4 @@
+import { EzactoApiError } from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import {
   createShellApi,
@@ -647,6 +648,32 @@ describe('S-1 through S-5 application shell', () => {
       { kind: 'client', label: 'Northpeak', href: '/clients/4' },
     ])
   })
+
+  it('[browser] a week still loads when the Expenses module is switched off', async () => {
+    // Turning Expenses off in Company settings answers 403 module_disabled on
+    // the expenses route, and the week loader treated that like any failure:
+    // "Signed in, but your week could not load" on every Time page until the
+    // module was switched back on. A disabled module is a decision, not an
+    // outage; the week loads with no expenses.
+    const api = memoryApi()
+    api.listExpenses = vi.fn(async () => {
+      throw new EzactoApiError(
+        403,
+        { error: { code: 'module_disabled', message: 'The expenses module is not enabled for this organization.', fields: [] } },
+        'req-1',
+      )
+    })
+    const snapshot = await loadShellSnapshot(api, new Date(timestamp))
+    expect(snapshot.expenses).toEqual([])
+    expect(api.listExpenses).toHaveBeenCalledTimes(1)
+
+    // Any other refusal is still a failure the page must report.
+    api.listExpenses = vi.fn(async () => {
+      throw new EzactoApiError(403, { error: { code: 'profile_forbidden', message: 'no', fields: [] } }, 'req-2')
+    })
+    await expect(loadShellSnapshot(api, new Date(timestamp))).rejects.toBeInstanceOf(EzactoApiError)
+  })
+
 
   it('[unit] creates an entry and the refreshed week snapshot reflects it', async () => {
     const api = memoryApi()
