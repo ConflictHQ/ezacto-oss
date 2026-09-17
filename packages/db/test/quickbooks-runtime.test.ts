@@ -1,15 +1,17 @@
 import BetterSqlite3 from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { MirrorClient, MirrorInvoice } from "@ezacto/integrations";
+import type { MirrorClient } from "@ezacto/integrations";
 import {
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
   type QuickBooksMirrorSource,
   type QuickBooksRuntime,
+  type QuickBooksSourceInvoice,
 } from "@ezacto/integrations";
 import { createContainerDatabase } from "../src/adapters.js";
 import { recordInvoicePayment } from "../src/invoice-state.js";
 import { migrateContainer } from "../src/migrate.js";
+import { createQuickBooksMirrorSource } from "../src/quickbooks-source.js";
 import { createQuickBooksStore } from "../src/quickbooks.js";
 
 const t = (minute: number): string => `2026-09-11T12:${String(minute).padStart(2, "0")}:00.000Z`;
@@ -21,7 +23,7 @@ afterEach(() => {
   sqlite = null;
 });
 
-const invoice: MirrorInvoice = {
+const invoice: QuickBooksSourceInvoice = {
   id: 41,
   number: "1315",
   clientId: 2,
@@ -31,6 +33,7 @@ const invoice: MirrorInvoice = {
   subject: "September retainer",
   notes: null,
   amountCents: 250_000,
+  state: "open",
   lines: [{ description: "Advisory", amountCents: 250_000, quantity: 10, unitPriceCents: 25_000 }],
 };
 
@@ -48,25 +51,18 @@ const recordedPayments: {
   realmId: string;
 }[] = [];
 
-/** The receipts as they stand in the fixture database, the way the real source reads them. */
-const paymentsOf = async (invoiceId: number) =>
-  (
-    sqlite!
-      .prepare(
-        `SELECT id, amount_cents, paid_date, provider FROM invoice_payments
-         WHERE invoice_id = ? ORDER BY id`,
-      )
-      .all(invoiceId) as { id: number; amount_cents: number; paid_date: string | null; provider: string }[]
-  ).map((row) => ({
-    id: row.id,
-    amountCents: row.amount_cents,
-    paidOn: row.paid_date,
-    provider: row.provider,
-  }));
+/**
+ * The real source over the fixture database, bound late because the database
+ * is made per test. The receipts are read through it rather than a test-local
+ * query, so a wrong column in the real `readPayments` fails here and not on a
+ * pressed Sync in production.
+ */
+const realSource = () =>
+  createQuickBooksMirrorSource(createContainerDatabase(sqlite!) as never, () => new Date(t(1)));
 
 const source = (overrides: Partial<QuickBooksMirrorSource> = {}): QuickBooksMirrorSource => ({
   readInvoice: vi.fn(async () => invoice),
-  readPayments: vi.fn(paymentsOf),
+  readPayments: vi.fn((invoiceId: number) => realSource().readPayments(invoiceId)),
   readClients: vi.fn(async () => clients),
   ezactoInvoiceFor: vi.fn(async (_realm: string, id: string) => (id === "qb-inv-7" ? 41 : null)),
   recordPayment: vi.fn(async (input) => {
@@ -499,6 +495,9 @@ describe("payments going out (issue 799)", () => {
     { match: /\/query\?/u, body: { QueryResponse: {} } },
     { match: /\/customer\?/u, body: customerResponse },
     { match: /\/invoice\?/u, body: { Invoice: { Id: "qb-inv-8", SyncToken: "0" } } },
+    // The invoice as QuickBooks holds it now: one token on from the create,
+    // as it is once a payment has been applied to it there.
+    { match: /\/invoice\/qb-inv-8\?/u, method: "GET", body: { Invoice: { Id: "qb-inv-8", SyncToken: "1" } } },
   ];
   const paymentRoute = {
     match: /\/payment\?/u,
@@ -643,6 +642,9 @@ describe("sync from the invoice page (issue 819)", () => {
     { match: /\/query\?/u, body: { QueryResponse: {} } },
     { match: /\/customer\?/u, body: customerResponse },
     { match: /\/invoice\?/u, body: { Invoice: { Id: "qb-inv-8", SyncToken: "0" } } },
+    // The invoice as QuickBooks holds it now: one token on from the create,
+    // as it is once a payment has been applied to it there.
+    { match: /\/invoice\/qb-inv-8\?/u, method: "GET", body: { Invoice: { Id: "qb-inv-8", SyncToken: "1" } } },
   ];
   const paymentRoute = {
     match: /\/payment\?/u,
@@ -707,6 +709,135 @@ describe("sync from the invoice page (issue 819)", () => {
     expect(again).toEqual({ invoice: { kind: "updated", quickBooksId: "qb-inv-8" }, payments: [] });
     expect(posted(fetchImpl).filter((path) => path === "invoice")).toHaveLength(2);
     expect(posted(fetchImpl).filter((path) => path === "payment")).toHaveLength(1);
+    // The update carries the token QuickBooks holds after the receipt was
+    // applied there, not the one the create returned: the stored token is
+    // stale by then, and sending it is a Stale Object Error on every press.
+    const update = fetchImpl.mock.calls
+      .map((call) => call[0])
+      .filter((request) => request.method === "POST" && /\/invoice\?/u.test(request.url))
+      .at(-1)!;
+    expect(await update.clone().json()).toMatchObject({ Id: "qb-inv-8", SyncToken: "1" });
+  });
+
+  it("[security] a draft or a closed invoice is refused by the runtime, not only by the button", async () => {
+    // Anything that can name an invoice -- the generated client, the CLI, curl --
+    // reaches sync() without the page's disabled button in the way.
+    for (const [state, reason] of [
+      ["draft", "a draft is not mirrored until it is sent"],
+      ["closed", "a closed invoice is not mirrored"],
+    ] as const) {
+      const fetchImpl = intuit([paymentRoute, ...invoiceRoutes]);
+      const built = await runtime(
+        fetchImpl,
+        source({ readInvoice: vi.fn(async () => ({ ...invoice42, state })) }),
+      );
+      await connected(built.store);
+      expect(await built.sync(42)).toEqual({ invoice: { kind: "refused", reason }, payments: [] });
+      expect(await built.syncState(42)).toMatchObject({
+        connected: true,
+        invoice: null,
+        lastOutcome: { kind: "refused", reason },
+      });
+      expect(posted(fetchImpl)).toEqual([]);
+    }
+  });
+
+  it("[security] the real source carries the state, so a draft in the database is refused", async () => {
+    // Fixture invoice 41 is a draft in the database. Read through the real
+    // source rather than the fake, which is how production reaches it.
+    const fetchImpl = intuit([...invoiceRoutes]);
+    const built = await runtime(
+      fetchImpl,
+      source({ readInvoice: vi.fn((invoiceId: number) => realSource().readInvoice(invoiceId)) }),
+    );
+    await connected(built.store);
+    expect(await built.sync(41)).toEqual({
+      invoice: { kind: "refused", reason: "a draft is not mirrored until it is sent" },
+      payments: [],
+    });
+    expect(posted(fetchImpl)).toEqual([]);
+  });
+
+  it("[e2e] a receipt that came from QuickBooks is counted, never sent back, and leaves the outcome alone", async () => {
+    const fetchImpl = intuit([paymentRoute, ...invoiceRoutes]);
+    const built = await runtime(fetchImpl, source({ readInvoice: vi.fn(async () => invoice42) }));
+    await connected(built.store);
+    const subscriber = createQuickBooksMirrorSubscriber(built);
+    await subscriber.deliver({ aggregateType: "invoice", aggregateId: 42, eventType: "invoice.sent" });
+    // The customer paid inside QuickBooks; the webhook recorded it here through
+    // the real source, which is the command path.
+    await realSource().recordPayment({
+      invoiceId: 42,
+      amountCents: 250_000,
+      paidOn: "2026-09-20",
+      realmId: "realm-a",
+      quickBooksPaymentId: "qb-pay-from-qbo",
+    });
+    const recorded = sqlite!
+      .prepare(`SELECT id, created_at FROM invoice_payments WHERE invoice_id = 42`)
+      .get() as { id: number; created_at: string };
+
+    // The outbox hands the command's own payment.recorded to the subscriber,
+    // provider and all. That is the normal path for a mirrored invoice, and it
+    // must not become "last attempt refused" on the page.
+    const event = sqlite!
+      .prepare(
+        `SELECT payload_json FROM event_outbox
+         WHERE aggregate_id = 42 AND event_type = 'payment.recorded'`,
+      )
+      .get() as { payload_json: string };
+    await subscriber.deliver({
+      aggregateType: "invoice",
+      aggregateId: 42,
+      eventType: "payment.recorded",
+      payload: JSON.parse(event.payload_json) as Record<string, unknown>,
+    });
+    const expected = {
+      connected: true,
+      invoice: { quickBooksId: "qb-inv-8", mirroredAt: t(1) },
+      payments: [{ paymentId: recorded.id, quickBooksId: "qb-pay-from-qbo", mirroredAt: recorded.created_at }],
+      lastOutcome: { kind: "created", reason: null, at: t(1) },
+    };
+    expect(await built.syncState(42)).toEqual(expected);
+
+    // And a pressed Sync afterwards: nothing to send, nothing recorded.
+    expect(await built.sync(42)).toEqual({
+      invoice: { kind: "updated", quickBooksId: "qb-inv-8" },
+      payments: [],
+    });
+    expect(posted(fetchImpl).filter((path) => path === "payment")).toHaveLength(0);
+    expect(await built.syncState(42)).toEqual({
+      ...expected,
+      lastOutcome: { kind: "updated", reason: null, at: t(1) },
+    });
+  });
+
+  it("[e2e] a refused receipt after a mirrored invoice is the last outcome, and Sync says which", async () => {
+    // Harvest closes a $0 invoice with a $0 payment, and a credit note with a
+    // negative one. Neither is a receipt QuickBooks takes, and the page must
+    // say so rather than report the invoice as synced and leave it there.
+    const fetchImpl = intuit([paymentRoute, ...invoiceRoutes]);
+    const built = await runtime(
+      fetchImpl,
+      source({
+        readInvoice: vi.fn(async () => invoice42),
+        readPayments: vi.fn(async () => [
+          { id: 77, amountCents: 0, paidOn: "2026-09-20", provider: "manual", providerTransactionId: null, recordedAt: t(2) },
+        ]),
+      }),
+    );
+    await connected(built.store);
+    expect(await built.sync(42)).toEqual({
+      invoice: { kind: "created", quickBooksId: "qb-inv-8" },
+      payments: [{ paymentId: 77, outcome: { kind: "refused", reason: "QuickBooks takes receipts, not refunds" } }],
+    });
+    expect(posted(fetchImpl).filter((path) => path === "payment")).toHaveLength(0);
+    expect(await built.syncState(42)).toEqual({
+      connected: true,
+      invoice: { quickBooksId: "qb-inv-8", mirroredAt: t(1) },
+      payments: [],
+      lastOutcome: { kind: "refused", reason: "QuickBooks takes receipts, not refunds", at: t(1) },
+    });
   });
 
   it("[e2e #825] Sync adopts an invoice Harvest already put in the books, and Mark paid then files against it", async () => {

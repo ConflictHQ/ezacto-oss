@@ -185,14 +185,28 @@ export const mirrorInvoice = async (
     return { kind: 'created', quickBooksId: created.Id }
   }
 
+  // The token the link holds is the one our last write returned, and
+  // QuickBooks moves it on every change to the document -- a payment applied
+  // against the invoice included. Written back as stored it is a Stale Object
+  // Error on every press after the first receipt, so the current one is read
+  // first. An adopt already holds a fresh one from the lookup by number.
+  let syncToken = action.syncToken
+  if (action.kind === 'update') {
+    const current = await input.quickBooks.readInvoice(action.quickBooksId)
+    if (current === null) {
+      // Deleted in QuickBooks since it was mirrored. Re-creating it silently
+      // would put back a document somebody chose to remove.
+      return {
+        kind: 'refused',
+        reason: `QuickBooks no longer holds invoice ${input.invoice.number}; it was deleted there since it was mirrored`,
+      }
+    }
+    syncToken = current.SyncToken
+  }
   // Adopt and update differ only in what is being recorded afterwards: both
   // write the current state over what QuickBooks holds.
   const updated = await input.quickBooks.updateInvoice(
-    invoiceUpdatePayload(
-      input.invoice,
-      { Id: action.quickBooksId, SyncToken: action.syncToken },
-      options,
-    ),
+    invoiceUpdatePayload(input.invoice, { Id: action.quickBooksId, SyncToken: syncToken }, options),
   )
   await input.links.saveLink('invoice', input.invoice.id, {
     quickBooksId: updated.Id,

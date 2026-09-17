@@ -213,6 +213,8 @@ export {
   type QuickBooksRuntime,
   type QuickBooksRuntimeOptions,
   type QuickBooksService,
+  type QuickBooksSourceInvoice,
+  type QuickBooksSourcePayment,
   type QuickBooksSyncResult,
 } from './quickbooks/runtime.js'
 export {

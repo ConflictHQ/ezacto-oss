@@ -230,15 +230,31 @@ export interface QuickBooksConfig {
 }
 
 /**
+ * The invoice as the source reads it: what the mirror sends, plus the state
+ * that decides whether it is sent at all.
+ */
+export interface QuickBooksSourceInvoice extends MirrorInvoice {
+  /** `draft`, `open`, `paid` or `closed`. Only the middle two are documents of record. */
+  readonly state: string;
+}
+
+/** A receipt as the source reads it: what the mirror sends, plus where it came from. */
+export interface QuickBooksSourcePayment extends MirrorPayment {
+  /** The provider's own id for the receipt: for `quickbooks`, the QuickBooks payment. */
+  readonly providerTransactionId: string | null;
+  readonly recordedAt: string;
+}
+
+/**
  * Reading an invoice and the clients it hangs off, for the mirror.
  *
  * Narrow on purpose: the mirror needs an invoice and an ancestry, not the
  * money repository. Implemented against the database by the caller.
  */
 export interface QuickBooksMirrorSource {
-  readInvoice(invoiceId: number): Promise<MirrorInvoice | null>;
+  readInvoice(invoiceId: number): Promise<QuickBooksSourceInvoice | null>;
   /** Every receipt on the invoice, whichever system recorded it (issue 819). */
-  readPayments(invoiceId: number): Promise<readonly MirrorPayment[]>;
+  readPayments(invoiceId: number): Promise<readonly QuickBooksSourcePayment[]>;
   readClients(clientId: number): Promise<ReadonlyMap<number, MirrorClient>>;
   /** Our invoice id for a QuickBooks invoice id, for payments coming back. */
   ezactoInvoiceFor(realmId: string, quickBooksInvoiceId: string): Promise<number | null>;
@@ -276,6 +292,20 @@ const randomState = (): string => {
 const trimmed = (value: string | undefined): string | null => {
   const text = value?.trim();
   return text === undefined || text === "" ? null : text;
+};
+
+/**
+ * Why an invoice in this state is not mirrored, or null where it is. The
+ * outbox only ever offered a sent invoice; a pressed Sync can name any invoice,
+ * so the same rule is stated here rather than trusted to the button. A draft
+ * can still be edited or thrown away, and a closed one was cancelled or
+ * written off: neither is a receivable anybody should find in their books.
+ */
+const notADocumentOfRecord = (state: string): string | null => {
+  if (state === "open" || state === "paid") return null;
+  return state === "draft"
+    ? "a draft is not mirrored until it is sent"
+    : "a closed invoice is not mirrored";
 };
 
 export interface QuickBooksRuntime {
@@ -431,6 +461,8 @@ export const createQuickBooksRuntime = (
     if (invoice === null) {
       return { kind: "refused", reason: "the invoice no longer exists" };
     }
+    const notOfRecord = notADocumentOfRecord(invoice.state);
+    if (notOfRecord !== null) return { kind: "refused", reason: notOfRecord };
     const client = await authorizedClient();
     if (client === null) {
       return { kind: "refused", reason: "QuickBooks is not connected" };
@@ -530,10 +562,20 @@ export const createQuickBooksRuntime = (
     });
   };
 
+  /**
+   * A receipt QuickBooks itself recorded reached us through the webhook, and
+   * the mirror refuses to send it back. That refusal is the normal path for a
+   * mirrored invoice a customer pays inside QuickBooks, not something the
+   * invoice page should report as the last attempt, so it is answered without
+   * touching the invoice's recorded outcome.
+   */
   const mirrorPaymentOnto = (input: {
     invoiceId: number;
     payment: MirrorPayment;
-  }): Promise<MirrorPaymentOutcome> => recorded(input.invoiceId, () => mirrorPaymentUnrecorded(input));
+  }): Promise<MirrorPaymentOutcome> =>
+    input.payment.provider === "quickbooks"
+      ? mirrorPaymentUnrecorded(input)
+      : recorded(input.invoiceId, () => mirrorPaymentUnrecorded(input));
 
   /**
    * The Sync button (issue 819). The invoice first; a refusal there stops
@@ -581,6 +623,18 @@ export const createQuickBooksRuntime = (
     const invoiceLink = await store.readLink({ realmId, kind: "invoice", ezactoId: invoiceId });
     const payments: { paymentId: number; quickBooksId: string; mirroredAt: string }[] = [];
     for (const payment of await source.readPayments(invoiceId)) {
+      // A receipt QuickBooks recorded is in QuickBooks by definition: the
+      // webhook brought it here, and its id is the provider's transaction id.
+      if (payment.provider === "quickbooks") {
+        if (payment.providerTransactionId !== null) {
+          payments.push({
+            paymentId: payment.id,
+            quickBooksId: payment.providerTransactionId,
+            mirroredAt: payment.recordedAt,
+          });
+        }
+        continue;
+      }
       const link = await store.readPaymentLink({ realmId, paymentId: payment.id });
       if (link === null) continue;
       payments.push({
@@ -832,6 +886,9 @@ export const createQuickBooksMirrorSubscriber = (
     if (event.eventType !== "payment.recorded") return;
     const payment = recordedPayment(event.payload);
     if (payment === null) return;
+    // A receipt QuickBooks recorded came in through the webhook. It is already
+    // in QuickBooks, so there is nothing to mirror and nothing to report.
+    if (payment.provider === "quickbooks") return;
     await runtime.mirrorPayment({ invoiceId: event.aggregateId, payment });
   },
 });
