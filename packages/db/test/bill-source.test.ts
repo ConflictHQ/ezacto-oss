@@ -107,7 +107,7 @@ describe('the invoices a reconciliation may still adopt (issue 836)', () => {
     // 12 is already linked, so only 11 is left to find in BILL.
     await links.saveLink('invoice', 12, { billId: '00e12', paymentLink: null })
     expect(await source.unsettledInvoices()).toEqual([
-      { id: 11, number: '1316', issueDate: '2026-09-12', amountCents: 2_520_000 },
+      { id: 11, number: '1316', clientId: 1, issueDate: '2026-09-12', amountCents: 2_520_000 },
     ])
   })
 })

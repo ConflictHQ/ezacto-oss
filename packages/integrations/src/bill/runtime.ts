@@ -77,7 +77,13 @@ export interface BillMirrorSource {
    * what is unpaid, so an instance with nothing outstanding asks nothing.
    */
   unsettledInvoices(): Promise<
-    readonly { id: number; number: string; issueDate: string; amountCents: number }[]
+    readonly {
+      id: number
+      number: string
+      clientId: number
+      issueDate: string
+      amountCents: number
+    }[]
   >
   recordPayment(input: {
     invoiceId: number
@@ -267,6 +273,20 @@ export const createBillRuntime = (
           continue
         }
         await links.saveLink('invoice', ours.id, { billId: theirs.id, paymentLink: null })
+        // The customer BILL files it under is the client's customer from here
+        // on, when the client has none yet: BILL held one customer per
+        // Harvest client, and an invoice sent from here must reach the record
+        // the client's own BILL account already pays. A link that exists is
+        // never re-pointed; adoption learns, it does not overrule.
+        if (
+          theirs.customerId !== undefined &&
+          (await links.readLink('customer', ours.clientId)) === null
+        ) {
+          await links.saveLink('customer', ours.clientId, {
+            billId: theirs.customerId,
+            paymentLink: null,
+          })
+        }
       }
       const mirrored = await source.mirroredInvoices()
       if (mirrored.size === 0) return 0

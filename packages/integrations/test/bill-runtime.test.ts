@@ -297,7 +297,7 @@ describe('reconciling payments', () => {
         return json({
           results: [
             { id: '00e0777', invoiceNumber: '1298', totalAmount: 5300, status: 'PAID_IN_FULL' },
-            { id: '00e1299', invoiceNumber: '1299', totalAmount: 25200, status: 'PAID_IN_FULL' },
+            { id: '00e1299', invoiceNumber: '1299', customerId: '0cu0steady', totalAmount: 25200, status: 'PAID_IN_FULL' },
           ],
         })
       }
@@ -318,7 +318,7 @@ describe('reconciling payments', () => {
     const store = new Map<string, number>()
     const mirrorSource = source({
       unsettledInvoices: vi.fn(async () => [
-        { id: 44, number: '1299', issueDate: '2026-08-01', amountCents: 2_520_000 },
+        { id: 44, number: '1299', clientId: 5, issueDate: '2026-08-01', amountCents: 2_520_000 },
       ]),
       mirroredInvoices: vi.fn(async () => new Map(store)),
     })
@@ -330,6 +330,9 @@ describe('reconciling payments', () => {
 
     expect(await harness.runtime.reconcilePayments()).toBe(1)
     expect(harness.store.rows.get('invoice:44')).toEqual({ billId: '00e1299', paymentLink: null })
+    // The client's customer is learnt from the adopted invoice: the record
+    // the client's own BILL account already pays, not one found by name.
+    expect(harness.store.rows.get('customer:5')).toEqual({ billId: '0cu0steady', paymentLink: null })
     expect(mirrorSource.recordPayment).toHaveBeenCalledWith({
       invoiceId: 44,
       billInvoiceId: '00e1299',
@@ -339,6 +342,29 @@ describe('reconciling payments', () => {
     })
     // Nothing was sent or created: adoption is a link, not a delivery.
     expect(server.calls.filter((call) => call.startsWith('POST') && !call.endsWith('/login'))).toEqual([])
+  })
+
+  it('[money] adoption never re-points a customer link the client already has', async () => {
+    const server = billServer()
+    server.fetch.mockImplementation(async (request: Request) => {
+      const url = new URL(request.url)
+      if (url.pathname === '/connect/v3/login') return json({ sessionId: 'session-1' })
+      if (url.pathname === '/connect/v3/invoices') {
+        return json({ results: [{ id: '00e1299', invoiceNumber: '1299', customerId: '0cu0other', totalAmount: 25200 }] })
+      }
+      if (url.pathname === '/connect/v3/receivable-payments') return json({ results: [] })
+      throw new Error(`unexpected ${url.pathname}`)
+    })
+    const mirrorSource = source({
+      unsettledInvoices: vi.fn(async () => [
+        { id: 44, number: '1299', clientId: 5, issueDate: '2026-08-01', amountCents: 2_520_000 },
+      ]),
+      mirroredInvoices: vi.fn(async () => new Map([['00e1299', 44]])),
+    })
+    const harness = runtime(fullConfig, { server, source: mirrorSource })
+    await harness.store.saveLink('customer', 5, { billId: '0cu0steady', paymentLink: null })
+    await harness.runtime.reconcilePayments()
+    expect(harness.store.rows.get('customer:5')).toEqual({ billId: '0cu0steady', paymentLink: null })
   })
 
   it('[money #836] refuses to adopt when the totals disagree, and asks nothing when nothing is open', async () => {
@@ -353,7 +379,7 @@ describe('reconciling payments', () => {
     })
     const mirrorSource = source({
       unsettledInvoices: vi.fn(async () => [
-        { id: 44, number: '1299', issueDate: '2026-08-01', amountCents: 2_520_000 },
+        { id: 44, number: '1299', clientId: 5, issueDate: '2026-08-01', amountCents: 2_520_000 },
       ]),
     })
     const harness = runtime(fullConfig, { server, source: mirrorSource })

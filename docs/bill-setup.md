@@ -20,7 +20,10 @@ already holds under the same number with the same total -- one sent from
 Harvest before the cutover, or from here before BILL was configured. Adoption
 writes only the link, sends nothing, and does not need the client opted in, so
 a client who pays at BILL closes their invoices here whether or not BILL is how
-their invoices go out.
+their invoices go out. It also learns the client's BILL customer from the first
+invoice adopted, when the client has none yet, so an invoice sent from here
+later reaches the record the client's own BILL account already pays rather than
+one found by name.
 
 Clients who are not opted in are untouched: their invoice goes out exactly as it
 does now.
@@ -72,7 +75,7 @@ rather than discovering it on the first invoice.
 |  | BILL sends | ezacto sends |
 | --- | --- | --- |
 | needs | an operator login **and** `BILL_REPLY_TO_USER_ID` | any working credential |
-| the client receives | BILL's invoice email | ezacto's invoice email, carrying a BILL payment link |
+| the client receives | BILL's invoice email | ezacto's invoice email, as always; the invoice is in BILL for the client's own BILL account to pay |
 | pays at | BILL | BILL |
 | payment tracked | yes | yes |
 

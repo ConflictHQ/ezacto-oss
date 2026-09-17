@@ -148,10 +148,11 @@ export const createBillMirrorSource = (
     const rows = await database.all<{
       id: number
       number: string
+      client_id: number
       issue_date: string
       amount_cents: number
     }>(sql`
-      SELECT invoice.id, invoice.number, invoice.issue_date, invoice.amount_cents
+      SELECT invoice.id, invoice.number, invoice.client_id, invoice.issue_date, invoice.amount_cents
       FROM invoices invoice
       LEFT JOIN bill_links link ON link.kind = 'invoice' AND link.ezacto_id = invoice.id
       WHERE invoice.state = 'open' AND link.ezacto_id IS NULL
@@ -159,6 +160,7 @@ export const createBillMirrorSource = (
     return rows.map((row) => ({
       id: row.id,
       number: row.number,
+      clientId: row.client_id,
       issueDate: row.issue_date,
       amountCents: row.amount_cents,
     }))
