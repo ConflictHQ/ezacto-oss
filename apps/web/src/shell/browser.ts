@@ -83,6 +83,7 @@ import {
   type WeekGridCell,
   type WeekRowSeed,
 } from '../week-grid/model.js'
+import { canProfileUseApiScope, isApiScope } from '@ezacto/core'
 import {
   canBrowseDirectories,
   createSameOriginShellApi,
@@ -1969,10 +1970,26 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
    * reached them. They are scoped to the acting user by the routes themselves,
    * so this belongs on the page that is yours rather than on the company one.
    */
-  const wireApiTokens = (): void => {
+  const wireApiTokens = (identity: Whoami): void => {
     const section = document.querySelector<HTMLElement>('[data-settings-tokens]')
     const read = api.listApiTokens
     if (section === null || read === undefined) return
+    // The form offered every scope to everyone and the server refused the
+    // ones a profile cannot grant with a flat 403, so a member ticking
+    // "Write projects" was told their profile could not grant "one or more"
+    // and left to guess which. The rule the server applies is in core; the
+    // boxes follow it, so what can be ticked is what can be issued.
+    for (const box of section.querySelectorAll<HTMLInputElement>('input[name="scopes"]')) {
+      const grantable =
+        isApiScope(box.value) && canProfileUseApiScope(identity.profile, box.value)
+      box.disabled = !grantable
+      box.checked = box.checked && grantable
+      const label = box.closest('label')
+      if (label !== null) {
+        label.classList.toggle('team-check--unavailable', !grantable)
+        label.title = grantable ? '' : `Your ${profileLabel(identity.profile)} profile cannot grant this scope.`
+      }
+    }
     const status = required<HTMLElement>('[data-settings-tokens-status]')
     const table = required<HTMLElement>('[data-settings-tokens-table]')
     const form = required<HTMLFormElement>('[data-settings-token-form]')
@@ -2064,6 +2081,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         result.textContent = 'Name the token and tick at least one scope.'
         return
       }
+      // Said here, by name, before the request: the boxes are disabled above,
+      // but a stale page or a hand-built form can still send one.
+      const refused = scopes.filter(
+        (scope) => !isApiScope(scope) || !canProfileUseApiScope(identity.profile, scope),
+      )
+      if (refused.length > 0) {
+        result.textContent = `Your ${profileLabel(identity.profile)} profile cannot grant ${refused.join(', ')}.`
+        return
+      }
       submit.disabled = true
       result.textContent = 'Issuing…'
       void (async () => {
@@ -2084,7 +2110,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
           issued.hidden = true
           result.textContent =
             error instanceof EzactoApiError && error.status === 403
-              ? 'Your permission profile cannot grant one or more of those scopes.'
+              ? `Your ${profileLabel(identity.profile)} profile cannot grant one or more of those scopes.`
               : 'The token could not be issued.'
         } finally {
           submit.disabled = false
@@ -2287,7 +2313,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     facts.hidden = false
     settingsStatus.textContent = ''
     wireUserPayout(identity)
-    wireApiTokens()
+    wireApiTokens(identity)
     wireTwoFactor()
   }
 

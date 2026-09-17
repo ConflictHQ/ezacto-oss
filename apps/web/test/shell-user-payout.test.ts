@@ -7,6 +7,7 @@ import {
   browserApi,
   mountShell,
   renderBrowserShell,
+  secondIdentity,
 } from './support/shell-harness.js'
 
 /**
@@ -286,6 +287,46 @@ describe('your API tokens in your own settings', () => {
     )
     expect(document.querySelector<HTMLElement>('[data-settings-token-issued]')!.hidden).toBe(true)
   })
+
+  it('[security] offers a member only the scopes their profile can grant, and names a refused one', async () => {
+    // Every scope was offered to everyone; a member who ticked "Write projects"
+    // got a 403 saying "one or more" and had to guess which. The rule the
+    // server applies lives in core, and the boxes now follow it.
+    renderBrowserShell({ view: 'settings-user' })
+    const createApiToken = vi.fn()
+    await mountShell({ ...tokenApi({ createApiToken }), whoami: vi.fn(async () => secondIdentity) })
+
+    await vi.waitFor(() => expect(form().hidden).toBe(false))
+    const box = (scope: string) => form().querySelector<HTMLInputElement>(`input[value="${scope}"]`)!
+    // A member may track time and read projects, but not write projects,
+    // touch money, read the team, or read reports.
+    expect(box('time_entries:write').disabled).toBe(false)
+    expect(box('projects:read').disabled).toBe(false)
+    for (const scope of ['projects:write', 'invoices:read', 'invoices:write', 'team:read', 'reports:read', 'schedule:write', 'clients:write']) {
+      expect(box(scope).disabled, scope).toBe(true)
+      expect(box(scope).closest('label')!.title).toContain('cannot grant')
+    }
+
+    // A hand-built submit with a refused scope is stopped here and told which.
+    ;(form().elements.namedItem('name') as HTMLInputElement).value = 'Too much'
+    box('projects:write').disabled = false
+    box('projects:write').checked = true
+    form().dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    expect(createApiToken).not.toHaveBeenCalled()
+    expect(
+      document.querySelector<HTMLElement>('[data-settings-token-result]')!.textContent,
+    ).toContain('projects:write')
+  })
+
+  it('offers an administrator every scope', async () => {
+    renderBrowserShell({ view: 'settings-user' })
+    await mountShell(tokenApi())
+    await vi.waitFor(() => expect(form().hidden).toBe(false))
+    const boxes = [...form().querySelectorAll<HTMLInputElement>('input[name="scopes"]')]
+    expect(boxes.length).toBe(14)
+    expect(boxes.filter((box) => box.disabled)).toEqual([])
+  })
+
 
   it('leaves a revoked token off the list rather than showing it as live', async () => {
     renderBrowserShell({ view: 'settings-user' })

@@ -434,6 +434,11 @@
   width: auto;
   min-height: 20px;
 }
+/* A scope the acting profile cannot grant stays visible so the list reads the
+   same for everyone, and reads as not yours to tick. */
+.team-check--unavailable {
+  color: var(--ez-muted);
+}
 .team-status-actions {
   max-width: 760px;
   margin-top: 28px;
