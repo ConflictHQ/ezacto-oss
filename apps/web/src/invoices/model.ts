@@ -11,6 +11,7 @@ import type {
   InvoicePaymentInput,
   InvoicePaymentUpdateInput,
   InvoiceQuickBooksEnvelope,
+  InvoiceReminderPreferenceEnvelope,
   InvoiceRecipient,
   InvoiceTransitionInput,
   VersionedRowDeleteInput,
@@ -19,6 +20,7 @@ import type {
 
 /** Where one invoice stands with QuickBooks, as the API reports it (issue 819). */
 export type InvoiceQuickBooksState = InvoiceQuickBooksEnvelope['data']
+export type InvoiceReminderPreference = InvoiceReminderPreferenceEnvelope['data']
 
 export type InvoiceState = Invoice['state']
 
@@ -124,6 +126,35 @@ export interface InvoicePaymentApi {
    */
   getInvoiceQuickBooks?(id: number, signal?: AbortSignal): Promise<InvoiceQuickBooksState>
   syncInvoiceQuickBooks?(id: number, signal?: AbortSignal): Promise<InvoiceQuickBooksState>
+  /**
+   * The Reminders fact and its switch (issue 850): whether this invoice will
+   * be reminded, when the next one is booked, and the one control that turns
+   * them off for this invoice alone. Optional the way QuickBooks is.
+   */
+  getInvoiceReminderPreference?(id: number, signal?: AbortSignal): Promise<InvoiceReminderPreference>
+  setInvoiceReminderPreference?(
+    id: number,
+    reminders: boolean | null,
+    signal?: AbortSignal,
+  ): Promise<InvoiceReminderPreference>
+}
+
+/**
+ * The Reminders fact, in one line. Off for this invoice says so; on names the
+ * next date, or that there is no policy to book from.
+ */
+export const invoiceRemindersLine = (
+  preference: Readonly<InvoiceReminderPreference>,
+  dateLabel: (value: string) => string,
+): string => {
+  if (preference.reminders === false) return 'Off for this invoice'
+  if (preference.next_reminder_at !== null) {
+    return `Next reminder ${dateLabel(preference.next_reminder_at.slice(0, 10))}`
+  }
+  if (preference.organization_reminder_policy === null) {
+    return 'No reminder policy set for the organization'
+  }
+  return 'None booked'
 }
 
 /**

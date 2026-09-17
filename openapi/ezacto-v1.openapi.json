@@ -18906,6 +18906,146 @@
         }
       }
     },
+    "/api/v1/invoices/{id}/reminder-preference": {
+      "get": {
+        "operationId": "getInvoiceReminderPreference",
+        "summary": "Whether this invoice will be reminded, and when the next one is booked",
+        "tags": [
+          "money"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceReminderPreferenceEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoices/:id/reminder-preference",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "setInvoiceReminderPreference",
+        "summary": "Switch reminders off for this invoice, back on, or follow the organization",
+        "tags": [
+          "money"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceReminderPreferenceEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoices/:id/reminder-preference",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceReminderPreferenceInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/recurring-invoices/incomplete": {
       "get": {
         "operationId": "listIncompleteRecurringInvoices",
@@ -34983,6 +35123,84 @@
         },
         "additionalProperties": false
       },
+      "InvoiceReminderPreferenceInput": {
+        "type": "object",
+        "required": [
+          "reminders"
+        ],
+        "properties": {
+          "reminders": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceReminderPreferenceEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "invoice_id",
+              "reminders",
+              "organization_reminder_policy",
+              "effective",
+              "next_reminder_at"
+            ],
+            "properties": {
+              "invoice_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "reminders": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "organization_reminder_policy": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ReminderPolicy"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "effective": {
+                "type": "boolean"
+              },
+              "next_reminder_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
       "OrganizationInvoiceRemindersInput": {
         "type": "object",
         "required": [
@@ -35023,6 +35241,10 @@
                     "type": "null"
                   }
                 ]
+              },
+              "applied_to_open_invoices": {
+                "type": "integer",
+                "minimum": 0
               }
             },
             "additionalProperties": false

@@ -191,6 +191,67 @@ for (const [runtime, factory] of factories) {
       })
     })
 
+    it('[unit #850] an invoice that asked for no reminders is not scheduled, whatever the policy says', async () => {
+      database = await factory()
+      await installFixture(database)
+      await database.run(`UPDATE invoices SET invoice_extras = '{"reminders":false}' WHERE id = 1`)
+      await sendInvoice(database)
+
+      const scheduler = database.reminder()
+      const service = database.outbox({
+        subscribers: [scheduler.subscriber],
+        now: () => drainAt,
+        createAttemptId: () => 'muted-attempt',
+      })
+      await expect(service.drain()).resolves.toMatchObject({ delivered: 1 })
+      expect(await scheduler.listPending(1)).toHaveLength(0)
+    })
+
+    it('[unit #850] a policy set after the send reaches the open invoice, once', async () => {
+      // Reminders are booked on invoice.sent. An operator who sets the
+      // organisation policy today expects the invoices already out to be
+      // reminded, not only the ones sent from now on.
+      database = await factory()
+      await installFixture(database, { reminderPolicy: null })
+      await sendInvoice(database)
+      const scheduler = database.reminder()
+      await database
+        .outbox({ subscribers: [scheduler.subscriber], now: () => drainAt, createAttemptId: () => 'a' })
+        .drain()
+      expect(await scheduler.listPending(1)).toHaveLength(0)
+
+      await database.run(
+        `UPDATE organizations SET reminder_policy = '{"first_after_days":3,"every_days":7}'`,
+      )
+      expect(await scheduler.applyPolicy({ now: drainAt, causation: 'policy:test' })).toBe(1)
+      expect(await scheduler.listPending(1)).toMatchObject([
+        { invoiceId: 1, scheduledAt: '2026-09-18T00:00:00.000Z', intervalDays: 7, status: 'pending' },
+      ])
+      // A second pass books nothing twice.
+      expect(await scheduler.applyPolicy({ now: drainAt, causation: 'policy:test' })).toBe(0)
+      expect(await scheduler.listPending(1)).toHaveLength(1)
+    })
+
+    it('[unit #850] switching reminders off cancels what is pending, and on books again', async () => {
+      database = await factory()
+      await installFixture(database)
+      await sendInvoice(database)
+      const scheduler = database.reminder()
+      await database
+        .outbox({ subscribers: [scheduler.subscriber], now: () => drainAt, createAttemptId: () => 'b' })
+        .drain()
+      expect(await scheduler.listPending(1)).toHaveLength(1)
+
+      expect(await scheduler.cancelPending(1, drainAt)).toBe(1)
+      expect(await scheduler.listPending(1)).toHaveLength(0)
+      await database.run(`UPDATE invoices SET invoice_extras = '{"reminders":false}' WHERE id = 1`)
+      expect(await scheduler.applyPolicy({ now: drainAt, invoiceId: 1, causation: 'pref:1' })).toBe(0)
+
+      await database.run(`UPDATE invoices SET invoice_extras = NULL WHERE id = 1`)
+      expect(await scheduler.applyPolicy({ now: drainAt, invoiceId: 1, causation: 'pref:1' })).toBe(1)
+      expect(await scheduler.listPending(1)).toHaveLength(1)
+    })
+
     it('[unit] invoice.sent does not schedule when reminder_policy is null', async () => {
       database = await factory()
       await installFixture(database, { reminderPolicy: null })

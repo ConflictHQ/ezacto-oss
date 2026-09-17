@@ -1574,6 +1574,30 @@ const invoiceThankYouPreferenceOperations: ApiContractOperation[] = [
     requestRequired: true,
     sessionOnly: true,
   },
+  {
+    method: "get",
+    path: "/api/v1/invoices/:id/reminder-preference",
+    operationId: "getInvoiceReminderPreference",
+    summary: "Whether this invoice will be reminded, and when the next one is booked",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "InvoiceReminderPreferenceEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "post",
+    path: "/api/v1/invoices/:id/reminder-preference",
+    operationId: "setInvoiceReminderPreference",
+    summary: "Switch reminders off for this invoice, back on, or follow the organization",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "InvoiceReminderPreferenceEnvelope",
+    requestSchema: "InvoiceReminderPreferenceInput",
+    requestRequired: true,
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
 ];
 
 const invoiceDocumentPreferenceOperations: ApiContractOperation[] = [
@@ -7995,6 +8019,36 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  InvoiceReminderPreferenceInput: {
+    type: "object",
+    required: ["reminders"],
+    properties: {
+      // false switches reminders off for this invoice; null follows the organization.
+      reminders: { anyOf: [{ type: "boolean" }, { type: "null" }] },
+    },
+    additionalProperties: false,
+  },
+  InvoiceReminderPreferenceEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["invoice_id", "reminders", "organization_reminder_policy", "effective", "next_reminder_at"],
+        properties: {
+          invoice_id: integerSchema,
+          reminders: { anyOf: [{ type: "boolean" }, { type: "null" }] },
+          organization_reminder_policy: {
+            anyOf: [{ $ref: "#/components/schemas/ReminderPolicy" }, { type: "null" }],
+          },
+          effective: { type: "boolean" },
+          next_reminder_at: { anyOf: [{ type: "string" }, { type: "null" }] },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
   OrganizationInvoiceRemindersInput: {
     type: "object",
     required: ["reminder_policy"],
@@ -8014,6 +8068,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           reminder_policy: {
             anyOf: [{ $ref: "#/components/schemas/ReminderPolicy" }, { type: "null" }],
           },
+          // On a set only: how many open invoices with nothing pending the
+          // new policy was booked for (issue 850).
+          applied_to_open_invoices: { type: "integer", minimum: 0 },
         },
         additionalProperties: false,
       },

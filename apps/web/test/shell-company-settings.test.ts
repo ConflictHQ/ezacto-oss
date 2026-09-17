@@ -133,7 +133,10 @@ describe('company settings', () => {
     getBackupStatus: vi.fn(async () => backupStatusPayload),
     getInvoiceReminders: vi.fn(async () => ({ first_after_days: 3, every_days: 7 })),
     updateInvoiceReminders: vi.fn(
-      async (policy: { first_after_days: number; every_days: number } | null) => policy,
+      async (policy: { first_after_days: number; every_days: number } | null) => ({
+        policy,
+        applied: policy === null ? 0 : 2,
+      }),
     ),
     getEmailHealth: vi.fn(async () => ({
       reputation: {
@@ -189,7 +192,9 @@ describe('company settings', () => {
     first.value = '14'
     every.value = '14'
     form.requestSubmit()
-    await vi.waitFor(() => expect(result.textContent).toBe('Saved.'))
+    await vi.waitFor(() =>
+      expect(result.textContent).toBe('Saved. Booked for 2 open invoices with nothing pending.'),
+    )
     expect(api.updateInvoiceReminders).toHaveBeenLastCalledWith(
       { first_after_days: 14, every_days: 14 },
       expect.any(AbortSignal),

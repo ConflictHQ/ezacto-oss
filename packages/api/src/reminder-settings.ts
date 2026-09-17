@@ -17,9 +17,27 @@ export interface ReminderPolicyBody {
   readonly every_days: number
 }
 
+/**
+ * One invoice's answer (issue 850). `invoice` is `false` where the operator
+ * switched reminders off for it and `null` where it follows the organisation;
+ * `effective` is what will happen, so a screen does not work out the
+ * precedence a second time.
+ */
+export interface InvoiceReminderPreference {
+  readonly invoice: boolean | null
+  readonly organizationPolicy: ReminderPolicyBody | null
+  readonly effective: boolean
+  /** The next reminder booked, or null where none is. */
+  readonly nextReminderAt: string | null
+}
+
 export interface ReminderSettingsService {
   readOrganizationReminderPolicy(): Promise<ReminderPolicyBody | null>
-  setOrganizationReminderPolicy(policy: ReminderPolicyBody | null): Promise<void>
+  /** Sets the default and books it for open invoices with nothing pending; how many. */
+  setOrganizationReminderPolicy(policy: ReminderPolicyBody | null): Promise<number>
+  readInvoiceReminders(invoiceId: number): Promise<InvoiceReminderPreference | null>
+  /** `false` switches them off for this invoice; `null` hands it back to the organisation. */
+  setInvoiceReminders(invoiceId: number, value: boolean | null): Promise<boolean>
 }
 
 const assertMoneyWriter = <Bindings extends object>(
@@ -74,12 +92,42 @@ const policyOf = (body: Record<string, unknown>): ReminderPolicyBody | null => {
   return { first_after_days: first as number, every_days: every as number }
 }
 
+const invoiceIdOf = <Bindings extends object>(context: Context<ApiContext<Bindings>>): number => {
+  const id = Number(context.req.param('id'))
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    throw new ApiError({ status: 404, code: 'not_found', message: 'Invoice not found.' })
+  }
+  return id
+}
+
+const invoiceFlagOf = (body: Record<string, unknown>): boolean | null => {
+  if (!('reminders' in body)) {
+    throw validationError([
+      { field: 'reminders', code: 'required', message: 'reminders is required.' },
+    ])
+  }
+  const value = body.reminders
+  if (value !== null && typeof value !== 'boolean') {
+    throw validationError([
+      {
+        field: 'reminders',
+        code: 'invalid',
+        message: 'reminders must be true, false, or null to follow the organization.',
+      },
+    ])
+  }
+  return value
+}
+
 export const installReminderSettingsRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   service: Readonly<ReminderSettingsService>,
 ): void => {
-  const body = async () => ({
-    data: { reminder_policy: await service.readOrganizationReminderPolicy() },
+  const body = async (applied?: number) => ({
+    data: {
+      reminder_policy: await service.readOrganizationReminderPolicy(),
+      ...(applied === undefined ? {} : { applied_to_open_invoices: applied }),
+    },
   })
 
   api.get('/settings/invoice-reminders', async (context) => {
@@ -90,7 +138,42 @@ export const installReminderSettingsRoutes = <Bindings extends object>(
   api.post('/settings/invoice-reminders', async (context) => {
     assertMoneyWriter(context)
     const raw = (await context.req.json().catch(() => ({}))) as Record<string, unknown>
-    await service.setOrganizationReminderPolicy(policyOf(raw))
-    return context.json(await body(), 200, { 'cache-control': 'no-store' })
+    const applied = await service.setOrganizationReminderPolicy(policyOf(raw))
+    return context.json(await body(applied), 200, { 'cache-control': 'no-store' })
+  })
+
+  const invoiceBody = (answer: InvoiceReminderPreference, invoiceId: number) => ({
+    data: {
+      invoice_id: invoiceId,
+      reminders: answer.invoice,
+      organization_reminder_policy: answer.organizationPolicy,
+      effective: answer.effective,
+      next_reminder_at: answer.nextReminderAt,
+    },
+  })
+
+  api.get('/invoices/:id/reminder-preference', async (context) => {
+    assertMoneyWriter(context)
+    const invoiceId = invoiceIdOf(context)
+    const answer = await service.readInvoiceReminders(invoiceId)
+    if (answer === null) {
+      throw new ApiError({ status: 404, code: 'not_found', message: 'Invoice not found.' })
+    }
+    return context.json(invoiceBody(answer, invoiceId), 200, { 'cache-control': 'no-store' })
+  })
+
+  api.post('/invoices/:id/reminder-preference', async (context) => {
+    assertMoneyWriter(context)
+    const invoiceId = invoiceIdOf(context)
+    const raw = (await context.req.json().catch(() => ({}))) as Record<string, unknown>
+    const wanted = invoiceFlagOf(raw)
+    if (!(await service.setInvoiceReminders(invoiceId, wanted))) {
+      throw new ApiError({ status: 404, code: 'not_found', message: 'Invoice not found.' })
+    }
+    const answer = await service.readInvoiceReminders(invoiceId)
+    if (answer === null) {
+      throw new ApiError({ status: 404, code: 'not_found', message: 'Invoice not found.' })
+    }
+    return context.json(invoiceBody(answer, invoiceId), 200, { 'cache-control': 'no-store' })
   })
 }

@@ -492,9 +492,13 @@ export const createModuleSettingsController = (
         active.signal,
       )
       active.present(() => {
-        showReminderPolicy(saved)
+        showReminderPolicy(saved.policy)
         remindersResult.textContent =
-          saved === null ? 'Saved. Payment reminders are off.' : 'Saved.'
+          saved.policy === null
+            ? 'Saved. Payment reminders are off.'
+            : saved.applied === 0
+              ? 'Saved.'
+              : `Saved. Booked for ${saved.applied} open ${saved.applied === 1 ? 'invoice' : 'invoices'} with nothing pending.`
       })
     } catch (error) {
       active.presentFailure(error, () => {

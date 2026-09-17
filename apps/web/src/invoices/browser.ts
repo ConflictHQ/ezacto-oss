@@ -46,6 +46,7 @@ import {
   invoiceReminderDate,
   invoicePlannedReminder,
   invoiceQuickBooksLine,
+  invoiceRemindersLine,
   invoiceSendAttemptFor,
   invoiceSendFailure,
   invoiceSendWork,
@@ -53,6 +54,7 @@ import {
   type InvoiceOverflowCommand,
   type InvoicePaymentApi,
   type InvoiceQuickBooksState,
+  type InvoiceReminderPreference,
   type InvoiceSendAttempt,
   type InvoiceSendDelivery,
 } from './model.js'
@@ -503,6 +505,9 @@ export const createInvoicePaymentController = (
   const quickBooksSync = required<HTMLButtonElement>('[data-invoice-quickbooks-sync]')
   const quickBooksFact = required<HTMLElement>('[data-invoice-quickbooks-fact]')
   const quickBooksLine = required<HTMLElement>('[data-invoice-detail-quickbooks]')
+  const remindersFact = required<HTMLElement>('[data-invoice-reminders-fact]')
+  const remindersLine = required<HTMLElement>('[data-invoice-detail-reminders]')
+  const remindersToggle = required<HTMLInputElement>('[data-invoice-reminders-toggle]')
   const composerDialog = required<HTMLDialogElement>('[data-invoice-composer-dialog]')
   const composerForm = required<HTMLFormElement>('[data-invoice-composer-form]')
   const composerTitle = required<HTMLElement>('[data-invoice-composer-title]')
@@ -608,6 +613,8 @@ export const createInvoicePaymentController = (
   // Null until the state has loaded, and null for good where the deployment
   // has no QuickBooks routes: the line and the button follow it (issue 819).
   let quickBooks: InvoiceQuickBooksState | null = null
+  let reminders: InvoiceReminderPreference | null = null
+  let remindersSaving = false
   let quickBooksSyncing = false
 
   const current = (): ActiveSession | null =>
@@ -953,11 +960,48 @@ export const createInvoicePaymentController = (
     syncControls()
   }
 
+  const renderReminders = (): void => {
+    if (reminders === null) {
+      remindersFact.hidden = true
+      remindersLine.textContent = '—'
+      return
+    }
+    remindersLine.textContent = invoiceRemindersLine(reminders, (value) => dateLabel(value))
+    remindersToggle.checked = reminders.reminders !== false
+    remindersToggle.disabled = remindersSaving
+    remindersFact.hidden = false
+  }
+
+  /**
+   * The Reminders fact (issue 850), loaded the way the QuickBooks one is: a
+   * fact beside the invoice. Only an open invoice can be reminded, so the
+   * fact is for those; a route that is missing or refused to this profile is
+   * "no fact here", not an error.
+   */
+  const loadReminders = async (session: ActiveSession, invoiceId: number): Promise<void> => {
+    reminders = null
+    if (api.getInvoiceReminderPreference === undefined || invoice === null || invoice.state !== 'open') {
+      renderReminders()
+      return
+    }
+    try {
+      const preference = await api.getInvoiceReminderPreference(invoiceId, session.signal)
+      if (current() !== session) return
+      reminders = preference
+    } catch (error) {
+      if (current() !== session) return
+      if (session.onSessionFailure(error)) return
+      reminders = null
+    }
+    renderReminders()
+  }
+
   const clearPrivatePresentation = (): void => {
     invoice = null
     payments = []
     attachments = []
     quickBooks = null
+    reminders = null
     quickBooksSyncing = false
     attachmentCommandId = null
     editingPayment = null
@@ -1106,6 +1150,7 @@ export const createInvoicePaymentController = (
       attachmentSubmit.disabled = false
       void loadAttachments(session, invoiceId!)
       void loadQuickBooks(session, invoiceId!)
+      void loadReminders(session, invoiceId!)
       syncControls()
       return true
     } catch (error) {
@@ -2346,6 +2391,36 @@ export const createInvoicePaymentController = (
   // second document -- so a retry is just another press. Feedback goes to the
   // page status line, beside the button, like Mark paid; the line under the
   // facts is re-read from the response so what it says is what the server has.
+  remindersToggle.addEventListener('change', () => {
+    const session = current()
+    const selectedInvoice = invoice
+    const set = api.setInvoiceReminderPreference
+    if (session === null || selectedInvoice === null || set === undefined || remindersSaving) {
+      renderReminders()
+      return
+    }
+    // Off is a statement about this invoice; on hands it back to the
+    // organization, so a default set later still governs it.
+    const wanted: boolean | null = remindersToggle.checked ? null : false
+    remindersSaving = true
+    remindersToggle.disabled = true
+    void set(selectedInvoice.id, wanted, session.signal)
+      .then((preference) => {
+        if (current() !== session) return
+        reminders = preference
+      })
+      .catch((error: unknown) => {
+        if (current() !== session) return
+        if (session.onSessionFailure(error)) return
+        remindersLine.textContent = apiMessage(error)
+      })
+      .finally(() => {
+        if (current() !== session) return
+        remindersSaving = false
+        renderReminders()
+      })
+  })
+
   quickBooksSync.addEventListener('click', () => {
     const session = current()
     const selectedInvoice = invoice

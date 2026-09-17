@@ -29,3 +29,6 @@
   the invoice's own policy, the organisation default, or the date named on the
   send) and cancelled on payment; the daily cron on Workers, or the outbox tick
   in the container, sends the ones that have come due and books the next.
+  Setting the organisation default also books it for the open invoices already
+  out, and an invoice can switch its own reminders off (the Reminders fact on
+  the invoice page), which cancels what is pending and outlives any default.

@@ -90,10 +90,11 @@ export interface CompanySettingsApi {
    * serves it, and a section that cannot be saved says so rather than failing.
    */
   getInvoiceReminders?(signal?: AbortSignal): Promise<ReminderPolicySetting>
+  /** Saves the default; `applied` is how many open invoices it was booked for (issue 850). */
   updateInvoiceReminders?(
     policy: ReminderPolicySetting,
     signal?: AbortSignal,
-  ): Promise<ReminderPolicySetting>
+  ): Promise<{ readonly policy: ReminderPolicySetting; readonly applied: number }>
   getEmailHealth(signal?: AbortSignal): Promise<EmailHealth>
   /**
    * Backup runs. Optional because only a deployment that composes a reader

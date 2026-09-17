@@ -16,7 +16,7 @@ import type { InvoiceStateDatabase } from './invoice-state.js'
  * something off today expects that to govern an invoice raised yesterday.
  */
 
-export const invoiceExtraKinds = ['document', 'files', 'thank_you', 'journal'] as const
+export const invoiceExtraKinds = ['document', 'files', 'thank_you', 'journal', 'reminders'] as const
 export type InvoiceExtraKind = (typeof invoiceExtraKinds)[number]
 
 /**
