@@ -443,6 +443,8 @@ describe('the outbox subscriber', () => {
     }),
     mirror,
     reconcilePayments: async () => 0,
+    paymentLinkForSend: async () => null,
+    paymentLink: async () => null,
   })
 
   it('[unit] fires on a sent invoice and nothing else', async () => {
