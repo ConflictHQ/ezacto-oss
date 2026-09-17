@@ -103,6 +103,7 @@ import type { AppEnv, RuntimeServices } from '../../worker/src/app.js'
 import {
   createBillMirrorSubscriber,
   createBillRuntime,
+  createScheduledBillReconciliation,
   createStripeRuntime,
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
@@ -588,11 +589,25 @@ export const createContainerRuntime = async (
         .get() as { name: string } | undefined
       return row?.name ?? 'Ezacto'
     }
+    // Payments made at BILL (issue 834). The poll is every fifteen seconds
+    // and this walks BILL's receivables, so it is held to once an hour; the
+    // Worker runs the same thing from an hourly cron. It never throws.
+    const reconcileBillPayments = createScheduledBillReconciliation({
+      reconcile: bill.reconcilePayments,
+      everyMs: 3_600_000,
+      report: (error) => {
+        console.error('[container] BILL reconciliation failed', error)
+      },
+    })
     outboxScheduler = new ContainerOutboxScheduler(outbox, {
       // Reminders that have come due go out on the same tick the outbox
       // drains, before it, so the sends they enqueue are drained in the same
-      // pass. Cheap when nothing is due: one indexed read.
-      beforeDrain: () => processDueReminders(new Date().toISOString()),
+      // pass. Cheap when nothing is due: one indexed read. The BILL receipts
+      // it records are drained in the same pass too.
+      beforeDrain: async () => {
+        await processDueReminders(new Date().toISOString())
+        await reconcileBillPayments()
+      },
     })
     const objects = await createDiskAttachmentObjectStore(
       config.attachmentDirectory,

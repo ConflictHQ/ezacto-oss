@@ -11,15 +11,19 @@ afterEach(async () => {
 })
 
 describe('Worker outbox schedule', () => {
-  it('[config] enables the same bounded one-minute drainer cadence in both deployments', () => {
+  it('[config] enables the same one-minute drainer, hourly BILL reconciliation and daily sweep in both deployments', () => {
     const configuration = readFileSync(
       new URL('../wrangler.jsonc', import.meta.url),
       'utf8',
     )
-    expect(configuration.match(/"triggers": \{ "crons": \["\* \* \* \* \*", "0 3 \* \* \*"\] \}/gu)).toHaveLength(2)
+    expect(configuration.match(/"triggers": \{ "crons": \["\* \* \* \* \*", "0 \* \* \* \*", "0 3 \* \* \*"\] \}/gu)).toHaveLength(2)
   })
 
-  it('[integration] drains a committed D1 outbox row through a real scheduled Worker event', async () => {
+  // Both the minute drainer and the hourly BILL reconciliation (issue 834)
+  // end in the same drain. The hourly one runs on an instance with no BILL
+  // configured here, which is the common case and must be a no-op that still
+  // drains rather than a throw that stops the outbox.
+  it.each(['* * * * *', '0 * * * *'])('[integration] drains a committed D1 outbox row through a real scheduled Worker event (%s)', async (cron) => {
     const bundled = await build({
       entryPoints: [new URL('../src/index.ts', import.meta.url).pathname],
       bundle: true,
@@ -73,7 +77,7 @@ describe('Worker outbox schedule', () => {
       .run()
 
     const response = await miniflare.dispatchFetch(
-      'https://worker.test/cdn-cgi/handler/scheduled?time=1788350400000&cron=*+*+*+*+*',
+      `https://worker.test/cdn-cgi/handler/scheduled?time=1788350400000&cron=${encodeURIComponent(cron)}`,
     )
     expect(response.status).toBe(200)
     await expect(

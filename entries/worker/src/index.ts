@@ -9,6 +9,7 @@ import { consumeCloudflareEmailBatch } from './email-queue.js'
 import { createAttachmentResolver } from './invoice-documents.js'
 import { runDemoMaintenance } from './demo.js'
 import { runNightlyExport } from './nightly-export.js'
+import { createScheduledBillReconciliation } from '@ezacto/integrations'
 import {
   createR2AttachmentObjectStore,
   createRuntimeServices,
@@ -200,6 +201,20 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
       if (services.reminders !== undefined) {
         await services.reminders.processDue(new Date().toISOString())
       }
+    }
+    if (controller.cron === '0 * * * *' && services.bill !== undefined) {
+      // Payments made at BILL (issue 834). Hourly: it walks every receivable
+      // payment BILL holds, which is too much for the minute cron and too slow
+      // for the daily one when a client has just paid. Cheap when BILL is not
+      // configured or nothing is mirrored, and never throws -- a BILL outage
+      // is reported and the drain below still runs.
+      await createScheduledBillReconciliation({
+        reconcile: services.bill.reconcilePayments,
+        report: (error) => {
+          console.error('[worker] BILL reconciliation failed', error)
+          Sentry.captureException(error)
+        },
+      })()
     }
     // Refuses on any deployment that is not the demo, so this line is safe to
     // read as unconditional. See `runDemoMaintenance`.
