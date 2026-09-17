@@ -435,7 +435,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const resumeSession = options.sessionCookiePresent === true
   const shortRelease = options.release.slice(0, 7)
   const navLink = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
-    `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${section}</a>`
+    `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Expenses' ? ' data-expenses-nav' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${section}</a>`
   const navigation = sections.map(navLink).join('')
   const foldedNavigation = foldedSections.map(navLink).join('')
 

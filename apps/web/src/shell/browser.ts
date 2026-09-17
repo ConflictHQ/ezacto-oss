@@ -3016,6 +3016,13 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     // disagreed with what the timesheet called the same week.
     invoicePeriod.setWeekStartDay(loadedWeekStartDay)
     snapshot = loaded
+    // A module an administrator switched off is not offered in the strip
+    // (issue 815), the way Approvals and Team already are not. Only hidden,
+    // never removed: the route still answers with its own "unavailable" state
+    // for anyone who kept a bookmark.
+    for (const link of document.querySelectorAll<HTMLElement>('[data-expenses-nav]')) {
+      link.hidden = !loaded.expensesAvailable
+    }
     // Publish before anything renders: the week total, approval cards and the
     // running-timer elapsed all format seconds, and all of them run ahead of
     // the grid render where this used to be set.

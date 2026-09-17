@@ -1,6 +1,7 @@
 /** @vitest-environment happy-dom */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { EzactoApiError } from '@conflict-hq/ezacto-client'
 import {
   browserApi,
   desktopInputs,
@@ -108,6 +109,38 @@ describe('week-grid browser behavior', () => {
     start.click()
     await vi.waitFor(() => expect(restarted).toEqual([1]))
   })
+
+  it('[browser #815] loads the week and hides the Expenses link when the module is off', async () => {
+    // Switching Expenses off in Company settings answers 403 module_disabled
+    // on the expenses route. The week used to fail whole ("your week could
+    // not load"), and the strip kept offering Expenses, a page that refuses.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-16T12:00:00'))
+    renderBrowserShell()
+    const api = browserApi()
+    const withoutExpenses = {
+      ...api,
+      listExpenses: vi.fn(async () => {
+        throw new EzactoApiError(
+          403,
+          { error: { code: 'module_disabled', message: 'The expenses module is not enabled for this organization.', fields: [] } },
+          'req-815',
+        )
+      }),
+    }
+
+    await mountShell(withoutExpenses)
+
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-week-grid-rows] tr th')).not.toBeNull()
+    })
+    expect(document.body.textContent).not.toContain('your week could not load')
+    const expensesLink = document.querySelector<HTMLElement>('[data-expenses-nav]')!
+    expect(expensesLink.hidden).toBe(true)
+    // Approvals and Team already hide when withheld; Time itself never does.
+    expect(document.querySelector<HTMLElement>('nav a[href="/"]')!.hidden).toBe(false)
+  })
+
 
   it('[browser #797] starts a row on today, not on its last day with a value', async () => {
     // Reported setup: a Wednesday, one project holding Monday's entry and

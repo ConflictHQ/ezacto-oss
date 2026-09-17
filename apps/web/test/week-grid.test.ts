@@ -56,6 +56,7 @@ const entry = (id: number, overrides: Partial<DisplayTimeEntry> = {}): DisplayTi
 const snapshot = (entries: readonly DisplayTimeEntry[]): ShellSnapshot => ({
   entries,
   expenses: [],
+  expensesAvailable: true,
   running: entries.find((item) => item.is_running) ?? null,
   timeEntrySettings: {
     time_entry_mode: 'duration',
@@ -166,6 +167,7 @@ describe('timesheet week grid', () => {
     await expect(loadShellSnapshot(api, new Date('2026-08-28T12:00:00Z'))).resolves.toMatchObject({
       entries: [{ id: 1, project_label: 'Northpeak', task_label: 'Development' }],
       expenses: [],
+      expensesAvailable: true,
     })
 
     api.listExpenses = vi.fn(async () => {
