@@ -40,8 +40,8 @@ Four values, all required, all secrets:
 
 | variable | where it comes from |
 | --- | --- |
-| `BILL_DEV_KEY` | Settings → Sync & Integrations → Manage Developer Keys |
-| `BILL_COMPANY_ID` | the same page; begins `008` |
+| `BILL_DEV_KEY` | Settings → Sync & Integrations → Manage Developer Keys → **Generate developer key**. Name it for this deployment; the key is revealed by the eye icon and begins `01`. |
+| `BILL_COMPANY_ID` | the same page, printed at the bottom as *Organization ID*; begins `008` |
 | `BILL_USERNAME` | see below |
 | `BILL_PASSWORD` | see below |
 
@@ -63,12 +63,21 @@ Two optional values:
 
 | variable | effect |
 | --- | --- |
-| `BILL_REPLY_TO_USER_ID` | a BILL user id beginning `006`. Set it and BILL sends its own invoice email with that user as the reply-to; leave it and ezacto sends the invoice with a BILL payment link in it. |
+| `BILL_REPLY_TO_USER_ID` | a BILL user id beginning `006`. Set it and BILL sends its own invoice email with that user as the reply-to; leave it and ezacto sends its invoice email as always, with the invoice also in BILL for the client's own BILL account to pay. |
 | `BILL_ENVIRONMENT` | `sandbox` reaches BILL's test organisation. **Anything else is the real book**, including leaving it unset. |
 
 Set all four or none. A deployment with three has a configuration that cannot
 sign in and an operator who believes it can, so the container refuses to start
 rather than discovering it on the first invoice.
+
+BILL has no sandbox organisation unless you apply for one, and the developer
+key is issued by the real organisation, so the usual shape is **production
+only**: the values go to the production deployment and the development one is
+left unconfigured, where the settings page says so. How the values reach a
+deployment, and how to prove they did, is in
+[Integrations: where the keys go](integrations.md). Once they are there,
+`GET /api/v1/integrations/bill` answers `configured: true` with the company id
+and environment, and **Settings → Integrations** shows the same.
 
 ## Delivery, in more detail
 
