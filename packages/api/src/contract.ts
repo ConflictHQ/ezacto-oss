@@ -1178,6 +1178,31 @@ const quickBooksOperations: ApiContractOperation[] = [
     responseStatus: 204,
     sessionOnly: true,
   },
+  // Where one invoice stands with QuickBooks, and the button that mirrors it
+  // now (issue 819). Gated with the connection routes: same keys, same
+  // feature, and `entry-surface.ts` lists them together.
+  {
+    method: "get",
+    path: "/api/v1/invoices/:id/quickbooks",
+    operationId: "getInvoiceQuickBooks",
+    summary: "Whether this invoice and its payments are mirrored in QuickBooks, and how the last attempt went",
+    tag: "integrations",
+    responseStatus: 200,
+    responseSchema: "InvoiceQuickBooksEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "post",
+    path: "/api/v1/invoices/:id/quickbooks/sync",
+    operationId: "syncInvoiceQuickBooks",
+    summary: "Mirror this invoice and its unmirrored payments to QuickBooks now",
+    tag: "integrations",
+    responseStatus: 200,
+    responseSchema: "InvoiceQuickBooksEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
   {
     method: "get",
     path: "/api/v1/integrations/quickbooks/callback",
@@ -3637,6 +3662,55 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: ["allow_online_payment"],
     properties: { allow_online_payment: { type: "boolean" } },
+    additionalProperties: false,
+  },
+  InvoiceQuickBooksEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["connected", "invoice", "payments", "last_outcome"],
+        properties: {
+          connected: booleanSchema,
+          invoice: nullable({
+            type: "object",
+            required: ["quickbooks_id", "mirrored_at"],
+            properties: { quickbooks_id: stringSchema, mirrored_at: timestampSchema },
+            additionalProperties: false,
+          }),
+          payments: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["payment_id", "quickbooks_id", "mirrored_at"],
+              properties: {
+                payment_id: integerSchema,
+                quickbooks_id: stringSchema,
+                mirrored_at: timestampSchema,
+              },
+              additionalProperties: false,
+            },
+          },
+          // The most recent mirror attempt, from the outbox or from Sync,
+          // whichever way it went. `reason` is present for refused and failed.
+          last_outcome: nullable({
+            type: "object",
+            required: ["kind", "reason", "at"],
+            properties: {
+              kind: {
+                type: "string",
+                enum: ["created", "updated", "adopted", "linked", "refused", "failed"],
+              },
+              reason: nullable(stringSchema),
+              at: timestampSchema,
+            },
+            additionalProperties: false,
+          }),
+        },
+        additionalProperties: false,
+      },
+    },
     additionalProperties: false,
   },
   SenderEvidenceRefreshInput: {

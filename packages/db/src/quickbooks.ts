@@ -28,6 +28,24 @@ export interface QuickBooksConnectionRecord {
   readonly disconnectedAt: string | null
 }
 
+export type QuickBooksMirrorOutcomeKind =
+  | 'created'
+  | 'updated'
+  | 'adopted'
+  | 'linked'
+  | 'refused'
+  | 'failed'
+
+/** The most recent mirror attempt for an invoice (issue 819). */
+export interface QuickBooksMirrorOutcomeRecord {
+  readonly invoiceId: number
+  readonly realmId: string | null
+  readonly kind: QuickBooksMirrorOutcomeKind
+  readonly reason: string | null
+  readonly quickBooksId: string | null
+  readonly attemptedAt: string
+}
+
 export interface QuickBooksLinkRecord {
   readonly realmId: string
   readonly kind: 'customer' | 'invoice'
@@ -131,6 +149,21 @@ export interface QuickBooksStore {
     syncToken: string
     now: string
   }): Promise<void>
+  /**
+   * The result of the latest mirror attempt for an invoice, whichever way it
+   * went, overwritten on every attempt (issue 819). This is what lets the
+   * invoice page say "not synced, because ..." without a sync ever being
+   * pressed.
+   */
+  recordMirrorOutcome(input: {
+    invoiceId: number
+    realmId: string | null
+    kind: QuickBooksMirrorOutcomeKind
+    reason: string | null
+    quickBooksId: string | null
+    now: string
+  }): Promise<void>
+  readMirrorOutcome(invoiceId: number): Promise<QuickBooksMirrorOutcomeRecord | null>
   /**
    * Records a delivery and says whether this caller is the one that should act
    * on it. A second delivery of the same change answers false rather than
@@ -284,6 +317,41 @@ export const createQuickBooksStore = (database: Database): QuickBooksStore => ({
          sync_token = excluded.sync_token,
          mirrored_at = excluded.mirrored_at,
          updated_at = excluded.updated_at`)
+  },
+
+  recordMirrorOutcome: async (input) => {
+    await database.run(sql`INSERT INTO quickbooks_mirror_outcomes
+         (invoice_id, realm_id, kind, reason, quickbooks_id, attempted_at)
+       VALUES (${input.invoiceId}, ${input.realmId}, ${input.kind}, ${input.reason}, ${input.quickBooksId}, ${input.now})
+       ON CONFLICT(invoice_id) DO UPDATE SET
+         realm_id = excluded.realm_id,
+         kind = excluded.kind,
+         reason = excluded.reason,
+         quickbooks_id = excluded.quickbooks_id,
+         attempted_at = excluded.attempted_at`)
+  },
+
+  readMirrorOutcome: async (invoiceId) => {
+    const rows = await database.all<{
+      invoice_id: number
+      realm_id: string | null
+      kind: QuickBooksMirrorOutcomeKind
+      reason: string | null
+      quickbooks_id: string | null
+      attempted_at: string
+    }>(sql`SELECT invoice_id, realm_id, kind, reason, quickbooks_id, attempted_at
+       FROM quickbooks_mirror_outcomes WHERE invoice_id = ${invoiceId}`)
+    const row = rows[0]
+    return row === undefined
+      ? null
+      : {
+          invoiceId: row.invoice_id,
+          realmId: row.realm_id,
+          kind: row.kind,
+          reason: row.reason,
+          quickBooksId: row.quickbooks_id,
+          attemptedAt: row.attempted_at,
+        }
   },
 
   claimWebhookDelivery: async (input) => {

@@ -47,8 +47,25 @@ const recordedPayments: {
   realmId: string;
 }[] = [];
 
+/** The receipts as they stand in the fixture database, the way the real source reads them. */
+const paymentsOf = async (invoiceId: number) =>
+  (
+    sqlite!
+      .prepare(
+        `SELECT id, amount_cents, paid_date, provider FROM invoice_payments
+         WHERE invoice_id = ? ORDER BY id`,
+      )
+      .all(invoiceId) as { id: number; amount_cents: number; paid_date: string | null; provider: string }[]
+  ).map((row) => ({
+    id: row.id,
+    amountCents: row.amount_cents,
+    paidOn: row.paid_date,
+    provider: row.provider,
+  }));
+
 const source = (overrides: Partial<QuickBooksMirrorSource> = {}): QuickBooksMirrorSource => ({
   readInvoice: vi.fn(async () => invoice),
+  readPayments: vi.fn(paymentsOf),
   readClients: vi.fn(async () => clients),
   ezactoInvoiceFor: vi.fn(async (_realm: string, id: string) => (id === "qb-inv-7" ? 41 : null)),
   recordPayment: vi.fn(async (input) => {
@@ -581,5 +598,193 @@ describe("payments going out (issue 799)", () => {
       }),
     ).rejects.toThrow();
     expect(await built.store.readPaymentLink({ realmId: "realm-a", paymentId: 999 })).toBeNull();
+  });
+});
+
+describe("sync from the invoice page (issue 819)", () => {
+  const connected = async (store: ReturnType<typeof createQuickBooksStore>): Promise<void> => {
+    await store.saveConnection({
+      realmId: "realm-a",
+      accessToken: "access-1",
+      refreshToken: "refresh-1",
+      accessTokenExpiresAt: t(59),
+      refreshTokenExpiresAt: t(59),
+      scope: "com.intuit.quickbooks.accounting",
+      connectedByUserId: 1,
+      companyName: "Sandbox Company",
+      now: t(1),
+    });
+  };
+
+  const markPaid = async (paymentId: number): Promise<void> => {
+    await recordInvoicePayment(createContainerDatabase(sqlite!), {
+      invoiceId: 42,
+      commandId: `record-${String(paymentId)}`,
+      actor: { type: "user", id: 1 },
+      authorize: async () => true,
+      expectedVersion: 0,
+      occurredAt: t(2),
+      eventIds: [`evt-${String(paymentId)}-a`, `evt-${String(paymentId)}-b`],
+      payment: {
+        type: "manual",
+        id: paymentId,
+        currency: "USD",
+        amountCents: 250_000,
+        paidAt: null,
+        paidDate: "2026-09-20",
+        notes: null,
+        recordedByUserId: 1,
+      },
+    });
+  };
+
+  const invoiceRoutes = [
+    { match: /\/query\?/u, body: { QueryResponse: {} } },
+    { match: /\/customer\?/u, body: customerResponse },
+    { match: /\/invoice\?/u, body: { Invoice: { Id: "qb-inv-8", SyncToken: "0" } } },
+  ];
+  const paymentRoute = {
+    match: /\/payment\?/u,
+    method: "POST",
+    body: (sent: Record<string, unknown>) => ({
+      Payment: { Id: "qb-pay-9", SyncToken: "0", TotalAmt: sent["TotalAmt"] },
+    }),
+  };
+  const invoice42 = { ...invoice, id: 42, number: "1316" };
+  const posted = (fetchImpl: ReturnType<typeof intuit>): string[] =>
+    fetchImpl.mock.calls
+      .map((call) => call[0])
+      .filter((request) => request.method === "POST")
+      .map((request) => new URL(request.url).pathname.split("/").at(-1)!);
+
+  it("[e2e] an invoice sent before Connect is refused with the reason, and the page can say so", async () => {
+    const fetchImpl = intuit([]);
+    const built = await runtime(fetchImpl, source({ readInvoice: vi.fn(async () => invoice42) }));
+    const subscriber = createQuickBooksMirrorSubscriber(built);
+    await subscriber.deliver({ aggregateType: "invoice", aggregateId: 42, eventType: "invoice.sent" });
+
+    // Recorded by the subscriber, not by a pressed Sync: the line is honest
+    // before anybody looks for a button.
+    expect(await built.syncState(42)).toEqual({
+      connected: false,
+      invoice: null,
+      payments: [],
+      lastOutcome: { kind: "refused", reason: "QuickBooks is not connected", at: t(1) },
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("[e2e] after Connect, Sync mirrors the invoice and its receipts, and a second press creates nothing", async () => {
+    const fetchImpl = intuit([paymentRoute, ...invoiceRoutes]);
+    const built = await runtime(fetchImpl, source({ readInvoice: vi.fn(async () => invoice42) }));
+    // Sent, then paid, all before the connection existed.
+    await createQuickBooksMirrorSubscriber(built).deliver({
+      aggregateType: "invoice",
+      aggregateId: 42,
+      eventType: "invoice.sent",
+    });
+    await markPaid(9);
+    await connected(built.store);
+
+    const result = await built.sync(42);
+    expect(result).toEqual({
+      invoice: { kind: "created", quickBooksId: "qb-inv-8" },
+      payments: [{ paymentId: 9, outcome: { kind: "created", quickBooksId: "qb-pay-9" } }],
+    });
+    expect(posted(fetchImpl).filter((path) => path === "invoice")).toHaveLength(1);
+    expect(posted(fetchImpl).filter((path) => path === "payment")).toHaveLength(1);
+    expect(await built.syncState(42)).toEqual({
+      connected: true,
+      invoice: { quickBooksId: "qb-inv-8", mirroredAt: t(1) },
+      payments: [{ paymentId: 9, quickBooksId: "qb-pay-9", mirroredAt: t(1) }],
+      lastOutcome: { kind: "created", reason: null, at: t(1) },
+    });
+
+    // Pressed twice, as a nervous operator does. The links are what stop the
+    // second press filing a second invoice or a second receipt.
+    const again = await built.sync(42);
+    expect(again).toEqual({ invoice: { kind: "updated", quickBooksId: "qb-inv-8" }, payments: [] });
+    expect(posted(fetchImpl).filter((path) => path === "invoice")).toHaveLength(2);
+    expect(posted(fetchImpl).filter((path) => path === "payment")).toHaveLength(1);
+  });
+
+  it("[e2e] a refused sync names the reason and touches no receipt", async () => {
+    // The customer name QuickBooks already holds under a different parent.
+    const fetchImpl = intuit([]);
+    fetchImpl.mockImplementation(async (request: Request) => {
+      const url = new URL(request.url);
+      const query = url.searchParams.get("query") ?? "";
+      if (query.includes("Customer") && query.includes("Northpeak")) {
+        return new Response(
+          JSON.stringify({
+            QueryResponse: {
+              Customer: [
+                {
+                  Id: "qb-elsewhere",
+                  SyncToken: "0",
+                  DisplayName: "Northpeak",
+                  ParentRef: { value: "qb-somebody-else" },
+                },
+              ],
+            },
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      if (query.includes("Customer")) {
+        return new Response(
+          JSON.stringify({
+            QueryResponse: {
+              Customer: [{ Id: "qb-1", SyncToken: "0", DisplayName: "Kestrel Environmental" }],
+            },
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify({ QueryResponse: {} }), {
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const built = await runtime(fetchImpl, source({ readInvoice: vi.fn(async () => invoice42) }));
+    await connected(built.store);
+    await markPaid(9);
+
+    // The sub-customer's display name carries its parent, which is how a
+    // bookkeeper reading the reason finds the record in QuickBooks.
+    const reason =
+      "QuickBooks already has a customer named Kestrel Environmental \u2014 Northpeak under a different parent";
+    expect(await built.sync(42)).toEqual({
+      invoice: { kind: "refused", reason },
+      payments: [],
+    });
+    // Surfaced on the page as the reason, not swallowed as a retry.
+    expect(await built.syncState(42)).toMatchObject({
+      connected: true,
+      invoice: null,
+      payments: [],
+      lastOutcome: { kind: "refused", reason },
+    });
+    expect(posted(fetchImpl)).toEqual([]);
+  });
+
+  it("[reliability] an error is recorded as failed and still thrown, so the outbox retries", async () => {
+    const fetchImpl = intuit([
+      { match: /\/query\?/u, body: { Fault: { Error: [{ Message: "token lapsed" }] } }, status: 401 },
+    ]);
+    const built = await runtime(fetchImpl, source({ readInvoice: vi.fn(async () => invoice42) }));
+    await connected(built.store);
+    const subscriber = createQuickBooksMirrorSubscriber(built);
+    await expect(
+      subscriber.deliver({ aggregateType: "invoice", aggregateId: 42, eventType: "invoice.sent" }),
+    ).rejects.toThrow();
+    const state = await built.syncState(42);
+    expect(state?.lastOutcome?.kind).toBe("failed");
+    expect(state?.lastOutcome?.reason).not.toBe("");
+  });
+
+  it("[api] an invoice that does not exist is nothing to sync or report", async () => {
+    const built = await runtime(intuit([]), source({ readInvoice: vi.fn(async () => null) }));
+    expect(await built.sync(404)).toBeNull();
+    expect(await built.syncState(404)).toBeNull();
   });
 });

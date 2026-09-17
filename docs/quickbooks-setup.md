@@ -133,6 +133,20 @@ that was never mirrored is mirrored first, then paid. A receipt that arrived
 from QuickBooks is never sent back, and an edit or deletion of a payment here is
 not copied out: the linked payment is the bookkeeper's pointer.
 
+Every mirror attempt leaves its result on the invoice, whether it created the
+document, was refused (not connected when the invoice went out, a customer name
+QuickBooks already holds under a different parent, an invoice number it holds
+for somebody else), or failed outright (a lapsed token). The invoice page shows
+that as a **QuickBooks** line under the facts -- *Not connected*, *Not synced:
+reason*, or *Synced to QuickBooks invoice 147 on Sep 17 · 1 payment synced* --
+and a **Sync to QuickBooks** button that mirrors the invoice and then every
+payment on it not yet in QuickBooks. Pressing it twice creates nothing twice:
+the links are what a second run finds. The button is for administrators and
+accounting, and is not offered at all on a deployment without Intuit keys.
+`GET /api/v1/invoices/:id/quickbooks` reports the same state and
+`POST /api/v1/invoices/:id/quickbooks/sync` runs the same sync, answering 409
+`quickbooks_refused` with the reason when the invoice mirror is refused.
+
 ## Sandbox companies
 
 **My Hub → Sandboxes** gives you a QuickBooks company with fake data to connect

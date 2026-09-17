@@ -45,12 +45,14 @@ import {
   invoiceRecipients,
   invoiceReminderDate,
   invoicePlannedReminder,
+  invoiceQuickBooksLine,
   invoiceSendAttemptFor,
   invoiceSendFailure,
   invoiceSendWork,
   invoiceStateLabel,
   type InvoiceOverflowCommand,
   type InvoicePaymentApi,
+  type InvoiceQuickBooksState,
   type InvoiceSendAttempt,
   type InvoiceSendDelivery,
 } from './model.js'
@@ -498,6 +500,9 @@ export const createInvoicePaymentController = (
   const deleteResult = required<HTMLElement>('[data-invoice-payment-delete-result]')
   const deleteSubmit = required<HTMLButtonElement>('[data-invoice-payment-delete-submit]')
   const send = required<HTMLButtonElement>('[data-invoice-send]')
+  const quickBooksSync = required<HTMLButtonElement>('[data-invoice-quickbooks-sync]')
+  const quickBooksFact = required<HTMLElement>('[data-invoice-quickbooks-fact]')
+  const quickBooksLine = required<HTMLElement>('[data-invoice-detail-quickbooks]')
   const composerDialog = required<HTMLDialogElement>('[data-invoice-composer-dialog]')
   const composerForm = required<HTMLFormElement>('[data-invoice-composer-form]')
   const composerTitle = required<HTMLElement>('[data-invoice-composer-title]')
@@ -600,6 +605,10 @@ export const createInvoicePaymentController = (
   let lineDeleteCommandId: string | null = null
   let editHeaderCommandId: string | null = null
   let editFinancialsCommandId: string | null = null
+  // Null until the state has loaded, and null for good where the deployment
+  // has no QuickBooks routes: the line and the button follow it (issue 819).
+  let quickBooks: InvoiceQuickBooksState | null = null
+  let quickBooksSyncing = false
 
   const current = (): ActiveSession | null =>
     active !== null &&
@@ -743,6 +752,27 @@ export const createInvoicePaymentController = (
         : ''
     record.title = paymentRefusal
     settle.title = paymentRefusal
+    // Shown only where the state loaded -- a build without the routes, or a
+    // deployment without Intuit keys, has nothing to sync into. Disabled while a
+    // sync runs, and with a reason where there is nothing yet to sync: a draft
+    // is not a document of record, and the mirror will not put one in
+    // somebody's books until it is sent.
+    const canSync =
+      canWrite &&
+      invoice !== null &&
+      quickBooks !== null &&
+      api.syncInvoiceQuickBooks !== undefined
+    quickBooksSync.hidden = !canSync
+    const syncRefusal = !canSync
+      ? ''
+      : !quickBooks!.connected
+        ? 'Connect QuickBooks under Settings → Integrations first.'
+        : invoice!.state === 'draft'
+          ? 'Drafts are not mirrored. Send the invoice first.'
+          : ''
+    quickBooksSync.disabled =
+      !canSync || controlsLocked || quickBooksSyncing || syncRefusal !== ''
+    quickBooksSync.title = syncRefusal
     const canSend = canWrite && invoice !== null && invoiceCanMarkSent(invoice)
     send.hidden = !canSend
     send.disabled = controlsLocked || !canSend
@@ -876,10 +906,56 @@ export const createInvoicePaymentController = (
     }
   }
 
+  const renderQuickBooks = (): void => {
+    if (quickBooks === null) {
+      quickBooksFact.hidden = true
+      quickBooksLine.textContent = '—'
+      return
+    }
+    quickBooksLine.textContent = invoiceQuickBooksLine(quickBooks, (value) =>
+      dateLabel(value),
+    )
+    quickBooksFact.hidden = false
+  }
+
+  /**
+   * Loaded beside the invoice rather than with it, the way attachments are: it
+   * is a fact about the invoice, not the invoice, and a deployment without the
+   * routes answers 404 -- which is "there is no line here", not an error the
+   * page has to show.
+   */
+  const loadQuickBooks = async (session: ActiveSession, invoiceId: number): Promise<void> => {
+    if (api.getInvoiceQuickBooks === undefined) {
+      quickBooks = null
+      renderQuickBooks()
+      syncControls()
+      return
+    }
+    try {
+      const state = await api.getInvoiceQuickBooks(invoiceId, session.signal)
+      if (current() !== session) return
+      quickBooks = state
+    } catch (error) {
+      if (current() !== session) return
+      if (session.onSessionFailure(error)) return
+      quickBooks = null
+      if (!(error instanceof EzactoApiError && error.status === 404)) {
+        quickBooksFact.hidden = false
+        quickBooksLine.textContent = apiMessage(error)
+        syncControls()
+        return
+      }
+    }
+    renderQuickBooks()
+    syncControls()
+  }
+
   const clearPrivatePresentation = (): void => {
     invoice = null
     payments = []
     attachments = []
+    quickBooks = null
+    quickBooksSyncing = false
     attachmentCommandId = null
     editingPayment = null
     deletingPayment = null
@@ -918,6 +994,7 @@ export const createInvoicePaymentController = (
     attachmentStatus.textContent = ''
     attachmentList.replaceChildren()
     attachmentForm.hidden = true
+    renderQuickBooks()
     status.textContent = 'Loading invoice…'
     retry.hidden = true
     article.hidden = true
@@ -1025,6 +1102,7 @@ export const createInvoicePaymentController = (
       attachmentReadonly.hidden = canWrite || api.uploadInvoiceAttachment === undefined
       attachmentSubmit.disabled = false
       void loadAttachments(session, invoiceId!)
+      void loadQuickBooks(session, invoiceId!)
       syncControls()
       return true
     } catch (error) {
@@ -2257,6 +2335,64 @@ export const createInvoicePaymentController = (
       .finally(() => {
         if (current() !== session) return
         mutationPending = false
+        syncControls()
+      })
+  })
+  // The Sync button (issue 819). No command id: the mirror is idempotent by
+  // construction -- the link tables are what stop a second press filing a
+  // second document -- so a retry is just another press. Feedback goes to the
+  // page status line, beside the button, like Mark paid; the line under the
+  // facts is re-read from the response so what it says is what the server has.
+  quickBooksSync.addEventListener('click', () => {
+    const session = current()
+    const selectedInvoice = invoice
+    const sync = api.syncInvoiceQuickBooks
+    if (
+      session === null ||
+      selectedInvoice === null ||
+      sync === undefined ||
+      quickBooksSyncing ||
+      mutationPending ||
+      refreshRequired ||
+      !invoiceIdentityCanWrite(session.identity)
+    ) {
+      return
+    }
+    quickBooksSyncing = true
+    status.textContent = 'Syncing to QuickBooks…'
+    syncControls()
+    void sync(selectedInvoice.id, session.signal)
+      .then((state) => {
+        if (current() !== session) return
+        quickBooks = state
+        renderQuickBooks()
+        const receipts = state.payments.length
+        status.textContent =
+          state.invoice === null
+            ? 'Sync finished, but the invoice is not in QuickBooks. See the QuickBooks line for why.'
+            : receipts === 0
+              ? `Synced to QuickBooks invoice ${state.invoice.quickbooks_id}.`
+              : `Synced to QuickBooks invoice ${state.invoice.quickbooks_id} with ${receipts} ${receipts === 1 ? 'payment' : 'payments'}.`
+      })
+      .catch(async (error: unknown) => {
+        if (current() !== session) return
+        if (session.onSessionFailure(error)) {
+          clearPrivatePresentation()
+          active = null
+          return
+        }
+        // A 409 is the mirror's decision, and the reason is the message. The
+        // line is re-read so it says the same thing the status does, and keeps
+        // saying it after the status moves on.
+        status.textContent =
+          apiErrorCode(error) === 'quickbooks_refused'
+            ? `QuickBooks refused the invoice: ${apiMessage(error)}`
+            : apiMessage(error)
+        await loadQuickBooks(session, selectedInvoice.id)
+      })
+      .finally(() => {
+        if (current() !== session) return
+        quickBooksSyncing = false
         syncControls()
       })
   })

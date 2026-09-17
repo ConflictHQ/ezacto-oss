@@ -16779,6 +16779,138 @@
         }
       }
     },
+    "/api/v1/invoices/{id}/quickbooks": {
+      "get": {
+        "operationId": "getInvoiceQuickBooks",
+        "summary": "Whether this invoice and its payments are mirrored in QuickBooks, and how the last attempt went",
+        "tags": [
+          "integrations"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceQuickBooksEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoices/:id/quickbooks",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/invoices/{id}/quickbooks/sync": {
+      "post": {
+        "operationId": "syncInvoiceQuickBooks",
+        "summary": "Mirror this invoice and its unmirrored payments to QuickBooks now",
+        "tags": [
+          "integrations"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceQuickBooksEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoices/:id/quickbooks/sync",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/integrations/quickbooks/callback": {
       "get": {
         "operationId": "completeQuickBooksAuthorization",
@@ -22420,6 +22552,122 @@
         "properties": {
           "allow_online_payment": {
             "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceQuickBooksEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "connected",
+              "invoice",
+              "payments",
+              "last_outcome"
+            ],
+            "properties": {
+              "connected": {
+                "type": "boolean"
+              },
+              "invoice": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "quickbooks_id",
+                      "mirrored_at"
+                    ],
+                    "properties": {
+                      "quickbooks_id": {
+                        "type": "string"
+                      },
+                      "mirrored_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "payments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "payment_id",
+                    "quickbooks_id",
+                    "mirrored_at"
+                  ],
+                  "properties": {
+                    "payment_id": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "quickbooks_id": {
+                      "type": "string"
+                    },
+                    "mirrored_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "last_outcome": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "reason",
+                      "at"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "created",
+                          "updated",
+                          "adopted",
+                          "linked",
+                          "refused",
+                          "failed"
+                        ]
+                      },
+                      "reason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "at": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": false

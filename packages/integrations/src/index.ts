@@ -201,10 +201,13 @@ export {
   type QuickBooksConfig,
   type QuickBooksConnectionStatus,
   type QuickBooksConnectionStore,
+  type QuickBooksInvoiceSyncState,
+  type QuickBooksMirrorOutcomeKind,
   type QuickBooksMirrorSource,
   type QuickBooksRuntime,
   type QuickBooksRuntimeOptions,
   type QuickBooksService,
+  type QuickBooksSyncResult,
 } from './quickbooks/runtime.js'
 export {
   proposeEntriesFromEvents,

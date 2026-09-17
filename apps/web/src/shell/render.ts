@@ -715,7 +715,7 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
           <h2 data-invoice-detail-number>—</h2>
           <p data-invoice-detail-subject hidden></p>
         </div>
-        <div class="invoice-document-actions"><strong class="invoice-state" data-invoice-detail-state>—</strong><button type="button" data-invoice-print>Print</button><button type="button" data-invoice-edit disabled hidden>Edit invoice</button><button type="button" data-invoice-send disabled hidden>Send invoice</button><button type="button" class="primary-action" data-invoice-payment-settle data-auth-action disabled hidden>Mark paid</button>${renderInvoiceOverflowMenu()}</div>
+        <div class="invoice-document-actions"><strong class="invoice-state" data-invoice-detail-state>—</strong><button type="button" data-invoice-print>Print</button><button type="button" data-invoice-edit disabled hidden>Edit invoice</button><button type="button" data-invoice-send disabled hidden>Send invoice</button><button type="button" data-invoice-quickbooks-sync disabled hidden>Sync to QuickBooks</button><button type="button" class="primary-action" data-invoice-payment-settle data-auth-action disabled hidden>Mark paid</button>${renderInvoiceOverflowMenu()}</div>
       </header>
       <p class="invoice-reminder-line" data-invoice-reminder-line hidden></p>
       <dl class="invoice-facts">
@@ -724,6 +724,7 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
         <div><dt>Due</dt><dd data-invoice-detail-due-date>—</dd></div>
         <div><dt>Period</dt><dd data-invoice-detail-period>—</dd></div>
         <div><dt>Purchase order</dt><dd data-invoice-detail-purchase-order>—</dd></div>
+        <div data-invoice-quickbooks-fact hidden><dt>QuickBooks</dt><dd data-invoice-detail-quickbooks>—</dd></div>
       </dl>
       ${renderInvoiceLineEditor()}
       <div class="invoice-line-wrap">

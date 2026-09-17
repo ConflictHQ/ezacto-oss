@@ -56,11 +56,13 @@ export const UNDOCUMENTED_ROUTES: readonly string[] = [
 /**
  * Mounted only where the deployment carries Intuit keys.
  *
- * Four of the six are in the contract, so a generated client can call them; the
- * two above are not, for the reason given there. They are gated together
+ * Six of the eight are in the contract, so a generated client can call them;
+ * the two above are not, for the reason given there. They are gated together
  * because they are one feature: a callback with no connect button behind it is
  * a URL nobody can reach, and a connect button with no callback is a handshake
- * that cannot finish.
+ * that cannot finish. The two invoice routes (issue 819) are the same feature
+ * seen from an invoice: without keys there is no mirror to report on, and the
+ * invoice page shows no QuickBooks line.
  */
 export const QUICKBOOKS_ROUTES: readonly string[] = [
   'get /api/v1/integrations/quickbooks',
@@ -69,6 +71,8 @@ export const QUICKBOOKS_ROUTES: readonly string[] = [
   'post /api/v1/integrations/quickbooks/settings',
   'delete /api/v1/integrations/quickbooks',
   'post /api/v1/integrations/quickbooks/webhook',
+  'get /api/v1/invoices/:id/quickbooks',
+  'post /api/v1/invoices/:id/quickbooks/sync',
 ]
 
 /**

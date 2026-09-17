@@ -352,6 +352,8 @@ export {
   createQuickBooksStore,
   type QuickBooksConnectionRecord,
   type QuickBooksLinkRecord,
+  type QuickBooksMirrorOutcomeKind,
+  type QuickBooksMirrorOutcomeRecord,
   type QuickBooksStore,
 } from './quickbooks.js'
 export { createQuickBooksMirrorSource } from './quickbooks-source.js'
