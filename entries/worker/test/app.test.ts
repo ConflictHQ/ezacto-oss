@@ -294,7 +294,7 @@ describe('worker entry', () => {
     expect(listHtml).toContain('data-app-view="expense-list"')
     expect(listHtml).toContain('data-expense-list-page')
     expect(listHtml).toContain('data-expense-create-form')
-    expect(listHtml).toContain('href="/expenses" aria-current="page"')
+    expect(listHtml).toContain('href="/expenses" data-expenses-nav aria-current="page"')
     expect(listHtml).toContain('href="/expense-categories">Manage categories</a>')
 
     expect(detail.status).toBe(200)
@@ -316,7 +316,7 @@ describe('worker entry', () => {
     expect(html).toContain('data-expense-categories-page')
     expect(html).toContain('data-expense-category-create-form')
     expect(html).toContain('data-expense-category-list')
-    expect(html).toContain('href="/expenses" aria-current="page"')
+    expect(html).toContain('href="/expenses" data-expenses-nav aria-current="page"')
     expect(html).toContain('Existing expenses keep their category')
   })
 
