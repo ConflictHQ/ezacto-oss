@@ -35,7 +35,8 @@ export interface BillLinkStore {
 export interface MirrorBill {
   findCustomerByName(name: string): Promise<BillCustomer | null>
   createCustomer(input: Record<string, unknown>): Promise<BillCustomer>
-  findInvoiceByNumber(invoiceNumber: string): Promise<BillInvoice | null>
+  /** By our number; `issueDate` bounds the read, since BILL cannot filter on the number. */
+  findInvoiceByNumber(invoiceNumber: string, issueDate: string): Promise<BillInvoice | null>
   createInvoice(input: Record<string, unknown>): Promise<BillInvoice>
   sendInvoice(
     invoiceId: string,
@@ -140,7 +141,7 @@ export const mirrorInvoice = async (
   const customer = await ensureCustomer(input)
   if ('refused' in customer) return { kind: 'refused', reason: customer.refused }
 
-  const found = await input.bill.findInvoiceByNumber(input.invoice.number)
+  const found = await input.bill.findInvoiceByNumber(input.invoice.number, input.invoice.issueDate)
   const plan = planInvoice(input.invoice, found === null ? [] : [found])
 
   let billInvoiceId: string

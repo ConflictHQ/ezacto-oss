@@ -16,7 +16,7 @@ import {
   type BillMirrorOutcome,
   type MirrorBill,
 } from './mirror.js'
-import type { BillMirrorClient, BillMirrorInvoice } from './mapping.js'
+import { amountToCents, type BillMirrorClient, type BillMirrorInvoice } from './mapping.js'
 
 /**
  * Everything above the transport: hold a session, decide how an invoice is
@@ -71,6 +71,14 @@ export interface BillMirrorSource {
   isOptedIn(clientId: number): Promise<boolean>
   /** Our invoice id for each BILL invoice id we have mirrored. */
   mirroredInvoices(): Promise<ReadonlyMap<string, number>>
+  /**
+   * Open invoices here with no BILL link yet: the ones a reconciliation may
+   * still find in BILL under our number and adopt (issue 836). Bounded by
+   * what is unpaid, so an instance with nothing outstanding asks nothing.
+   */
+  unsettledInvoices(): Promise<
+    readonly { id: number; number: string; issueDate: string; amountCents: number }[]
+  >
   recordPayment(input: {
     invoiceId: number
     billInvoiceId: string
@@ -99,6 +107,36 @@ export interface BillRuntime {
 const trimmed = (value: string | undefined): string | null => {
   const text = value?.trim()
   return text === undefined || text === '' ? null : text
+}
+
+/**
+ * BILL's v3 list refuses `invoiceNumber` as a filter field ("field
+ * [invoiceNumber] is not supported in filter field"), which the first version
+ * of this asked for and which every deployment would have failed on at the
+ * first adopt. It does take `invoiceDate:gte`, so the window from the day our
+ * invoice was issued is read and the number matched here. A document with our
+ * number carries our issue date -- BILL is told it, and Harvest wrote the same
+ * date into both books -- so the window holds the match and stays short.
+ */
+const findInvoiceByNumber = async (
+  client: BillClient,
+  invoiceNumber: string,
+  issueDate: string,
+): Promise<BillInvoice | null> => {
+  const wanted = invoiceNumber.trim()
+  let page: string | undefined
+  do {
+    const result = await client.listInvoices({
+      filters: [billFilter('invoiceDate', 'gte', issueDate)],
+      ...(page === undefined ? {} : { page }),
+    })
+    const match = result.results.find(
+      (candidate) => (candidate.invoiceNumber ?? '').trim() === wanted,
+    )
+    if (match !== undefined) return match
+    page = result.nextPage ?? undefined
+  } while (page !== undefined)
+  return null
 }
 
 export const createBillRuntime = (
@@ -157,13 +195,8 @@ export const createBillRuntime = (
       return page.results[0] ?? null
     },
     createCustomer: (input) => client.createCustomer(input),
-    findInvoiceByNumber: async (invoiceNumber: string): Promise<BillInvoice | null> => {
-      const page = await client.listInvoices({
-        filters: [billFilter('invoiceNumber', 'eq', invoiceNumber)],
-        max: 2,
-      })
-      return page.results[0] ?? null
-    },
+    findInvoiceByNumber: (invoiceNumber, issueDate) =>
+      findInvoiceByNumber(client, invoiceNumber, issueDate),
     createInvoice: (input) => client.createInvoice(input),
     sendInvoice: (invoiceId, sendOptions) => client.sendInvoice(invoiceId, sendOptions),
     paymentLink: (invoiceId) => client.paymentLink(invoiceId),
@@ -218,9 +251,26 @@ export const createBillRuntime = (
 
     reconcilePayments: async (): Promise<number> => {
       if (credentials === null) return 0
+      // Invoices BILL already holds under our number -- sent from Harvest
+      // before the cutover, or here before BILL was configured -- are adopted
+      // when their totals agree (issue 836). Only the link is written: nothing
+      // is sent, and the client need not be opted in, because this records
+      // that a document in the books is ours rather than sending one. Once
+      // linked, a payment against it lands below like any other.
+      const unsettled = await source.unsettledInvoices()
+      let client: Awaited<ReturnType<typeof signedIn>> | null = null
+      for (const ours of unsettled) {
+        client ??= await signedIn()
+        const theirs = await findInvoiceByNumber(client, ours.number, ours.issueDate)
+        if (theirs === null) continue
+        if (theirs.totalAmount === undefined || amountToCents(theirs.totalAmount) !== ours.amountCents) {
+          continue
+        }
+        await links.saveLink('invoice', ours.id, { billId: theirs.id, paymentLink: null })
+      }
       const mirrored = await source.mirroredInvoices()
       if (mirrored.size === 0) return 0
-      const client = await signedIn()
+      client ??= await signedIn()
 
       const collected: Parameters<typeof inboundPayments>[0]['payments'][number][] = []
       let page: string | undefined

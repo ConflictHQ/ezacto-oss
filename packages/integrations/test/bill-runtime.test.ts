@@ -36,6 +36,7 @@ const source = (overrides: Partial<BillMirrorSource> = {}): BillMirrorSource => 
   readClient: vi.fn(async () => client),
   isOptedIn: vi.fn(async () => true),
   mirroredInvoices: vi.fn(async () => new Map<string, number>()),
+  unsettledInvoices: vi.fn(async () => []),
   recordPayment: vi.fn(async () => undefined),
   ...overrides,
 })
@@ -195,6 +196,19 @@ describe('mirroring an invoice', () => {
     expect(harness.server.calls).not.toContain('POST /connect/v3/invoices/00e001/email')
   })
 
+  it('[api] looks an invoice up by its date window, because BILL refuses a number filter', async () => {
+    // BILL's v3 list answers `invoiceNumber:eq:...` with 400 "field
+    // [invoiceNumber] is not supported in filter field" (seen on the real
+    // books, 2026-09-17). The first version asked exactly that, and the only
+    // test was a fake that accepted anything.
+    const harness = runtime()
+    await harness.runtime.mirror(1315)
+    const search = harness.server.fetch.mock.calls
+      .map(([request]) => new URL((request as Request).url))
+      .find((url) => url.pathname === '/connect/v3/invoices')
+    expect(search?.searchParams.get('filters')).toBe('invoiceDate:gte:2026-09-11')
+  })
+
   it('[api] searches by filter rather than listing every customer', async () => {
     // An organisation with a thousand customers would otherwise page through
     // all of them to answer whether one exists.
@@ -268,6 +282,87 @@ describe('reconciling payments', () => {
     const harness = runtime(fullConfig, { server, source: mirrorSource })
     expect(await harness.runtime.reconcilePayments()).toBe(1)
     expect(index).toBe(2)
+  })
+
+  it('[money #836] adopts an open invoice BILL already holds under our number, then records its payment', async () => {
+    // The books on the real instance: every Kestrel Environmental invoice reached BILL
+    // from Harvest, and the client pays there. None was mirrored from here,
+    // so the reconciliation would have matched nothing forever.
+    const server = billServer()
+    server.fetch.mockImplementation(async (request: Request) => {
+      const url = new URL(request.url)
+      if (url.pathname === '/connect/v3/login') return json({ sessionId: 'session-1' })
+      if (url.pathname === '/connect/v3/invoices') {
+        expect(url.searchParams.get('filters')).toBe('invoiceDate:gte:2026-08-01')
+        return json({
+          results: [
+            { id: '00e0777', invoiceNumber: '1298', totalAmount: 5300, status: 'PAID_IN_FULL' },
+            { id: '00e1299', invoiceNumber: '1299', totalAmount: 25200, status: 'PAID_IN_FULL' },
+          ],
+        })
+      }
+      if (url.pathname === '/connect/v3/receivable-payments') {
+        return json({
+          results: [
+            {
+              id: '0rp9',
+              status: 'PAID',
+              paymentDate: '2026-09-20',
+              invoicePayments: [{ invoiceId: '00e1299', amount: 25200 }],
+            },
+          ],
+        })
+      }
+      throw new Error(`unexpected ${url.pathname}`)
+    })
+    const store = new Map<string, number>()
+    const mirrorSource = source({
+      unsettledInvoices: vi.fn(async () => [
+        { id: 44, number: '1299', issueDate: '2026-08-01', amountCents: 2_520_000 },
+      ]),
+      mirroredInvoices: vi.fn(async () => new Map(store)),
+    })
+    const harness = runtime(fullConfig, { server, source: mirrorSource })
+    harness.store.saveLink = vi.fn(async (kind, id, link) => {
+      harness.store.rows.set(`${kind}:${id}`, link)
+      store.set(link.billId, id)
+    }) as typeof harness.store.saveLink
+
+    expect(await harness.runtime.reconcilePayments()).toBe(1)
+    expect(harness.store.rows.get('invoice:44')).toEqual({ billId: '00e1299', paymentLink: null })
+    expect(mirrorSource.recordPayment).toHaveBeenCalledWith({
+      invoiceId: 44,
+      billInvoiceId: '00e1299',
+      billPaymentId: '0rp9',
+      amountCents: 2_520_000,
+      paidOn: '2026-09-20',
+    })
+    // Nothing was sent or created: adoption is a link, not a delivery.
+    expect(server.calls.filter((call) => call.startsWith('POST') && !call.endsWith('/login'))).toEqual([])
+  })
+
+  it('[money #836] refuses to adopt when the totals disagree, and asks nothing when nothing is open', async () => {
+    const server = billServer()
+    server.fetch.mockImplementation(async (request: Request) => {
+      const url = new URL(request.url)
+      if (url.pathname === '/connect/v3/login') return json({ sessionId: 'session-1' })
+      if (url.pathname === '/connect/v3/invoices') {
+        return json({ results: [{ id: '00e1299', invoiceNumber: '1299', totalAmount: 25199.99 }] })
+      }
+      throw new Error(`unexpected ${url.pathname}`)
+    })
+    const mirrorSource = source({
+      unsettledInvoices: vi.fn(async () => [
+        { id: 44, number: '1299', issueDate: '2026-08-01', amountCents: 2_520_000 },
+      ]),
+    })
+    const harness = runtime(fullConfig, { server, source: mirrorSource })
+    expect(await harness.runtime.reconcilePayments()).toBe(0)
+    expect(harness.store.rows.size).toBe(0)
+
+    const quiet = runtime()
+    expect(await quiet.runtime.reconcilePayments()).toBe(0)
+    expect(quiet.server.calls).toEqual([])
   })
 
   it('[unit] does nothing, and asks BILL nothing, when no invoice was mirrored', async () => {
