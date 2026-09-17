@@ -1595,6 +1595,23 @@ describe('the QuickBooks line and Sync button (issue 819)', () => {
     await vi.waitFor(() => expect(line()).toBe('Not synced'))
     expect(button().disabled).toBe(true)
     expect(button().title).toBe('Drafts are not mirrored. Send the invoice first.')
+
+    // Cancelled or written off: not a receivable anybody should find in their
+    // books. The runtime refuses it too; the button says so before the round trip.
+    renderDetail()
+    const closed = createInvoicePaymentController({
+      getInvoice: vi.fn(async () =>
+        invoice('CLOSED', { state: 'closed', close_reason: 'cancelled', sent_at: null }),
+      ),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+      getInvoiceQuickBooks: vi.fn(async () => ({ ...notConnected, connected: true })),
+      syncInvoiceQuickBooks: vi.fn(),
+    })
+    await closed.activate(identity(1), new AbortController().signal, () => false)
+    await vi.waitFor(() => expect(line()).toBe('Not synced'))
+    expect(button().disabled).toBe(true)
+    expect(button().title).toBe('A closed invoice is not mirrored.')
   })
 
   it('[e2e:invoice-quickbooks] Mark paid re-reads the line, so a receipt the outbox filed shows up', async () => {

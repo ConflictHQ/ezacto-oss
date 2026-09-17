@@ -335,6 +335,88 @@ describe('the mirrors that discover a payment (#595)', () => {
     ])
   })
 
+  it('[money] QuickBooks reads every receipt on the invoice as the mirror needs it', async () => {
+    // The real query, against the real table. The runtime test used to read
+    // the receipts through a test-local query, so a wrong column here shipped
+    // green and threw on every pressed Sync in production.
+    const { database, orm } = await sendable()
+    const source = createQuickBooksMirrorSource(orm as never, () => new Date(paidAt))
+    const version = (): number =>
+      (database.prepare('SELECT version FROM invoices WHERE id = 1').get() as { version: number })
+        .version
+    const manual = async (id: number, paid: { paidAt: string | null; paidDate: string | null }) => {
+      await recordInvoicePayment(orm, {
+        invoiceId: 1,
+        commandId: `record-manual-${String(id)}`,
+        actor: { type: 'user', id: 1 },
+        authorize,
+        expectedVersion: version(),
+        occurredAt: paidAt,
+        eventIds: [`event-manual-${String(id)}-recorded`, `event-manual-${String(id)}-paid`],
+        payment: {
+          type: 'manual',
+          id,
+          currency: 'USD',
+          amountCents: 30_000,
+          ...paid,
+          notes: null,
+          recordedByUserId: 1,
+        },
+      } as never)
+    }
+    // One with a date, one with only an instant, and one QuickBooks recorded.
+    await manual(501, { paidAt: null, paidDate: '2026-09-20' })
+    await manual(502, { paidAt: '2026-09-21T03:04:05.000Z', paidDate: null })
+    await source.recordPayment({
+      invoiceId: 1,
+      amountCents: 40_000,
+      paidOn: '2026-09-22',
+      realmId: 'realm-a',
+      quickBooksPaymentId: 'qbp-1',
+    })
+    const quickBooksId = (
+      database
+        .prepare("SELECT id FROM invoice_payments WHERE provider = 'quickbooks'")
+        .get() as { id: number }
+    ).id
+
+    expect(await source.readPayments(1)).toEqual([
+      {
+        id: 501,
+        amountCents: 30_000,
+        paidOn: '2026-09-20',
+        provider: 'manual',
+        providerTransactionId: null,
+        recordedAt: paidAt,
+      },
+      {
+        id: 502,
+        amountCents: 30_000,
+        // The instant sliced to its day, the way the outbox event carries it.
+        paidOn: '2026-09-21',
+        provider: 'manual',
+        providerTransactionId: null,
+        recordedAt: paidAt,
+      },
+      {
+        id: quickBooksId,
+        amountCents: 40_000,
+        paidOn: '2026-09-22',
+        provider: 'quickbooks',
+        providerTransactionId: 'qbp-1',
+        recordedAt: paidAt,
+      },
+    ])
+    expect(await source.readPayments(2)).toEqual([])
+  })
+
+  it('[money] QuickBooks reads the invoice with the state that decides whether it is mirrored', async () => {
+    const { orm } = await sendable()
+    const source = createQuickBooksMirrorSource(orm as never, () => new Date(paidAt))
+    expect(await source.readInvoice(1)).toMatchObject({ id: 1, number: '1315', state: 'open' })
+    expect(await source.readInvoice(2)).toBeNull()
+  })
+
   it('[money] QuickBooks records it once, however many times the webhook arrives', async () => {
     const { database, orm } = await sendable()
     const source = createQuickBooksMirrorSource(orm as never, () => new Date(paidAt))

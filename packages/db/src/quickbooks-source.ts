@@ -12,9 +12,9 @@ import { recordCheckoutPayment } from "./checkout-payments.js";
 import type { InvoiceStateDatabase } from "./invoice-state.js";
 import type {
   MirrorClient,
-  MirrorInvoice,
-  MirrorPayment,
   QuickBooksMirrorSource,
+  QuickBooksSourceInvoice,
+  QuickBooksSourcePayment,
 } from "@ezacto/integrations";
 
 // The command path's own database type: writing a receipt is a command, and
@@ -31,6 +31,7 @@ interface InvoiceRow {
   subject: string | null;
   notes: string | null;
   amount_cents: number;
+  state: string;
 }
 
 interface LineRow {
@@ -46,6 +47,8 @@ interface PaymentRow {
   paid_date: string | null;
   paid_at: string | null;
   provider: string;
+  provider_transaction_id: string | null;
+  created_at: string;
 }
 
 interface ClientRow {
@@ -69,7 +72,7 @@ export const createQuickBooksMirrorSource = (
 ): QuickBooksMirrorSource => ({
   readInvoice: async (invoiceId) => {
     const rows = await database.all<InvoiceRow>(sql`
-      SELECT id, number, client_id, currency, issue_date, due_date, subject, notes, amount_cents
+      SELECT id, number, client_id, currency, issue_date, due_date, subject, notes, amount_cents, state
       FROM invoices WHERE id = ${invoiceId}`);
     const invoice = rows[0];
     if (invoice === undefined) return null;
@@ -87,6 +90,7 @@ export const createQuickBooksMirrorSource = (
       subject: invoice.subject,
       notes: invoice.notes,
       amountCents: invoice.amount_cents,
+      state: invoice.state,
       lines: lines.map((line) => ({
         // QuickBooks shows the description and nothing else on a line, so an
         // empty one would be a blank row on a client's invoice.
@@ -95,12 +99,12 @@ export const createQuickBooksMirrorSource = (
         quantity: line.quantity,
         unitPriceCents: line.unit_price_cents,
       })),
-    } satisfies MirrorInvoice;
+    } satisfies QuickBooksSourceInvoice;
   },
 
   readPayments: async (invoiceId) => {
     const rows = await database.all<PaymentRow>(sql`
-      SELECT id, amount_cents, paid_date, paid_at, provider
+      SELECT id, amount_cents, paid_date, paid_at, provider, provider_transaction_id, created_at
       FROM invoice_payments WHERE invoice_id = ${invoiceId}
       ORDER BY id`);
     return rows.map((row) => ({
@@ -110,7 +114,9 @@ export const createQuickBooksMirrorSource = (
       // otherwise the day of the instant.
       paidOn: row.paid_date ?? row.paid_at?.slice(0, 10) ?? null,
       provider: row.provider,
-    })) satisfies MirrorPayment[];
+      providerTransactionId: row.provider_transaction_id,
+      recordedAt: row.created_at,
+    })) satisfies QuickBooksSourcePayment[];
   },
 
   readClients: async (clientId) => {

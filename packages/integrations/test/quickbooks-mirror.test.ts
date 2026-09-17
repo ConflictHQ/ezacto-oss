@@ -151,7 +151,7 @@ describe('mirroring an invoice', () => {
       'customer:2': { quickBooksId: 'qb-2', syncToken: '0' },
       'invoice:41': { quickBooksId: 'qb-inv-7', syncToken: '2' },
     })
-    const api = quickBooks()
+    const api = quickBooks({ readInvoice: vi.fn(async () => qbInvoice({ SyncToken: '2' })) })
     const outcome = await mirrorInvoice({
       invoice,
       clients,
@@ -164,6 +164,57 @@ describe('mirroring an invoice', () => {
     // something recorded.
     expect(api.findInvoiceByDocNumber).not.toHaveBeenCalled()
     expect(api.createCustomer).not.toHaveBeenCalled()
+    expect(api.readInvoice).toHaveBeenCalledWith('qb-inv-7')
+  })
+
+  it('[reliability] an update carries the token QuickBooks holds now, not the one the link kept', async () => {
+    // QuickBooks moves an invoice's SyncToken when a payment is applied to it.
+    // The link still holds the token from our last write, and sending that back
+    // is a Stale Object Error on every press after the first receipt.
+    const links = linkStore({
+      'customer:1': { quickBooksId: 'qb-1', syncToken: '0' },
+      'customer:2': { quickBooksId: 'qb-2', syncToken: '0' },
+      'invoice:41': { quickBooksId: 'qb-inv-7', syncToken: '0' },
+    })
+    const api = quickBooks({
+      readInvoice: vi.fn(async () => qbInvoice({ SyncToken: '1' })),
+      updateInvoice: vi.fn(async () => qbInvoice({ SyncToken: '2' })),
+    })
+    const outcome = await mirrorInvoice({
+      invoice,
+      clients,
+      links,
+      quickBooks: api,
+      allowOnlinePayment: false,
+    })
+    expect(outcome).toEqual({ kind: 'updated', quickBooksId: 'qb-inv-7' })
+    expect(vi.mocked(api.updateInvoice).mock.calls[0]![0]).toMatchObject({
+      Id: 'qb-inv-7',
+      SyncToken: '1',
+    })
+    expect(links.rows.get('invoice:41')).toMatchObject({ syncToken: '2' })
+  })
+
+  it('[security] a linked invoice deleted in QuickBooks is refused, not put back', async () => {
+    const links = linkStore({
+      'customer:1': { quickBooksId: 'qb-1', syncToken: '0' },
+      'customer:2': { quickBooksId: 'qb-2', syncToken: '0' },
+      'invoice:41': { quickBooksId: 'qb-inv-7', syncToken: '2' },
+    })
+    const api = quickBooks()
+    const outcome = await mirrorInvoice({
+      invoice,
+      clients,
+      links,
+      quickBooks: api,
+      allowOnlinePayment: false,
+    })
+    expect(outcome).toEqual({
+      kind: 'refused',
+      reason: 'QuickBooks no longer holds invoice 1315; it was deleted there since it was mirrored',
+    })
+    expect(api.updateInvoice).not.toHaveBeenCalled()
+    expect(api.createInvoice).not.toHaveBeenCalled()
   })
 
   it('[security] refuses an invoice number QuickBooks holds for somebody else', async () => {

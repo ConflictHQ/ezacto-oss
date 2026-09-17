@@ -754,9 +754,10 @@ export const createInvoicePaymentController = (
     settle.title = paymentRefusal
     // Shown only where the state loaded -- a build without the routes, or a
     // deployment without Intuit keys, has nothing to sync into. Disabled while a
-    // sync runs, and with a reason where there is nothing yet to sync: a draft
-    // is not a document of record, and the mirror will not put one in
-    // somebody's books until it is sent.
+    // sync runs, and with a reason where there is nothing to sync: a draft is
+    // not a document of record, and the mirror will not put one in somebody's
+    // books until it is sent; a closed one was cancelled or written off. The
+    // runtime refuses both on its own; the button only says so first.
     const canSync =
       canWrite &&
       invoice !== null &&
@@ -769,7 +770,9 @@ export const createInvoicePaymentController = (
         ? 'Connect QuickBooks under Settings → Integrations first.'
         : invoice!.state === 'draft'
           ? 'Drafts are not mirrored. Send the invoice first.'
-          : ''
+          : invoice!.state === 'closed'
+            ? 'A closed invoice is not mirrored.'
+            : ''
     quickBooksSync.disabled =
       !canSync || controlsLocked || quickBooksSyncing || syncRefusal !== ''
     quickBooksSync.title = syncRefusal
