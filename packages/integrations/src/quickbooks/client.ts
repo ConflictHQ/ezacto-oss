@@ -40,6 +40,17 @@ export class QuickBooksApiError extends Error {
   }
 }
 
+/**
+ * QuickBooks does not answer a missing object with a 404. A read of an id
+ * the company does not hold -- deleted, or never there -- is a 400 whose
+ * Fault carries code 610, "Object Not Found" (seen on the sandbox,
+ * 2026-09-17). A 404 is kept for the shape the docs describe.
+ */
+const isObjectNotFound = (error: unknown): boolean =>
+  error instanceof QuickBooksApiError &&
+  (error.status === 404 || (error.status === 400 && error.code === '610'))
+
+
 export class QuickBooksResponseError extends Error {
   constructor(message: string) {
     super(message)
@@ -233,7 +244,7 @@ export class QuickBooksClient {
       )
       return object(body['Customer'], 'Customer') as unknown as QuickBooksCustomer
     } catch (error) {
-      if (error instanceof QuickBooksApiError && error.status === 404) return null
+      if (isObjectNotFound(error)) return null
       throw error
     }
   }
@@ -283,7 +294,7 @@ export class QuickBooksClient {
     } catch (error) {
       // A mirrored invoice deleted in QuickBooks is a real state, not a failure:
       // the link is stale and the caller decides whether to re-create.
-      if (error instanceof QuickBooksApiError && error.status === 404) return null
+      if (isObjectNotFound(error)) return null
       throw error
     }
   }
@@ -330,7 +341,7 @@ export class QuickBooksClient {
       )
       return object(body['Payment'], 'Payment') as unknown as QuickBooksPayment
     } catch (error) {
-      if (error instanceof QuickBooksApiError && error.status === 404) return null
+      if (isObjectNotFound(error)) return null
       throw error
     }
   }
