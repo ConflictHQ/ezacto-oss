@@ -216,6 +216,43 @@ describe('recording a BILL payment', () => {
     ])
   })
 
+  it('[money] a full receipt from BILL marks the sent invoice paid here', async () => {
+    // The whole point of the reconciliation: a client who pays at BILL has
+    // their invoice close in ezacto, with the receipt naming BILL and the
+    // BILL payment, so the thank-you and the reminders behave as for any
+    // other payment.
+    const { sqlite: database, orm, source } = await fixture()
+    database.exec(`
+      INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+        VALUES (1, 'Casey', 'Ng', 'administrator', '[]', '${t(0)}', '${t(0)}');
+    `)
+    await executeInvoiceLifecycleCommand(orm, {
+      invoiceId: 10,
+      commandId: 'send-10',
+      command: 'send',
+      actor: { type: 'user', id: 1 },
+      authorize: async () => true,
+      expectedVersion: 0,
+      occurredAt: t(1),
+      messageId: 210,
+      eventId: 'sent-10',
+    })
+    await source.recordPayment(payment)
+    expect(
+      database
+        .prepare('SELECT state, paid_date, due_amount_cents FROM invoices WHERE id = 10')
+        .get(),
+    ).toEqual({ state: 'paid', paid_date: '2026-09-20', due_amount_cents: 0 })
+    expect(
+      database
+        .prepare(`SELECT provider, amount_cents, paid_date FROM invoice_payments WHERE invoice_id = 10`)
+        .all(),
+    ).toEqual([{ provider: 'bill_com', amount_cents: 60_000, paid_date: '2026-09-20' }])
+    expect(
+      (database.prepare(`SELECT COUNT(*) AS n FROM event_outbox WHERE event_type = 'invoice.paid' AND aggregate_id = 10`).get() as { n: number }).n,
+    ).toBe(1)
+  })
+
   it('[money] records the same payment once, however many times it is polled', async () => {
     // The reconciliation is a poll: it sees every payment again on every pass.
     const { sqlite: database, source } = await fixture()
