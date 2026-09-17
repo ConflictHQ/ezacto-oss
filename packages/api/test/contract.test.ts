@@ -177,6 +177,8 @@ const documentedApp = () =>
         disconnect: async () => undefined,
         receiveWebhook: async () => ({ accepted: true }),
         newState: () => "contract-fixture-state",
+        sync: async () => null,
+        syncState: async () => null,
       });
       installWiseRoutes(api, {
         configured: () => true,

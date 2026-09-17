@@ -366,7 +366,9 @@ export {
   installQuickBooksRoutes,
   installQuickBooksWebhookRoute,
   type QuickBooksConnectionStatus,
+  type QuickBooksInvoiceSyncState,
   type QuickBooksService,
+  type QuickBooksSyncResult,
   type QuickBooksTokenSet,
 } from './quickbooks.js'
 export {

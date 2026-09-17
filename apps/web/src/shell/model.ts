@@ -1863,6 +1863,10 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.listInvoicePayments({ id, ...withSignal(signal) })).data,
   listInvoiceAttachments: async (id, signal) =>
     (await client.listInvoiceAttachments({ invoiceId: id, ...withSignal(signal) })).data,
+  getInvoiceQuickBooks: async (id, signal) =>
+    (await client.getInvoiceQuickBooks({ id, ...withSignal(signal) })).data,
+  syncInvoiceQuickBooks: async (id, signal) =>
+    (await client.syncInvoiceQuickBooks({ id, ...withSignal(signal) })).data,
   uploadInvoiceAttachment: async (id, commandId, body, signal) =>
     (
       await client.createInvoiceAttachment({

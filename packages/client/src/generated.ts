@@ -398,6 +398,26 @@ export type QuickBooksSettingsInput = {
   "allow_online_payment": boolean;
 };
 
+export type InvoiceQuickBooksEnvelope = {
+  "data": {
+  "connected": boolean;
+  "invoice": {
+  "quickbooks_id": string;
+  "mirrored_at": string;
+} | null;
+  "payments": Array<{
+  "payment_id": number;
+  "quickbooks_id": string;
+  "mirrored_at": string;
+}>;
+  "last_outcome": {
+  "kind": "created" | "updated" | "adopted" | "linked" | "refused" | "failed";
+  "reason": string | null;
+  "at": string;
+} | null;
+};
+};
+
 export type SenderEvidenceRefreshInput = {
   "expected_evidence_version": number;
 };
@@ -5067,6 +5087,24 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<void>("DELETE", "/api/v1/integrations/quickbooks", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getInvoiceQuickBooks(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceQuickBooksEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoiceQuickBooksEnvelope>("GET", "/api/v1/invoices/:id/quickbooks".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async syncInvoiceQuickBooks(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceQuickBooksEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoiceQuickBooksEnvelope>("POST", "/api/v1/invoices/:id/quickbooks/sync".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });

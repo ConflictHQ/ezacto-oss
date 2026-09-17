@@ -13,6 +13,7 @@ import type { InvoiceStateDatabase } from "./invoice-state.js";
 import type {
   MirrorClient,
   MirrorInvoice,
+  MirrorPayment,
   QuickBooksMirrorSource,
 } from "@ezacto/integrations";
 
@@ -36,6 +37,14 @@ interface LineRow {
   quantity: number;
   unit_price_cents: number;
   amount_cents: number;
+}
+
+interface PaymentRow {
+  id: number;
+  amount_cents: number;
+  paid_date: string | null;
+  paid_at: string | null;
+  provider: string;
 }
 
 interface ClientRow {
@@ -85,6 +94,21 @@ export const createQuickBooksMirrorSource = (
         unitPriceCents: line.unit_price_cents,
       })),
     } satisfies MirrorInvoice;
+  },
+
+  readPayments: async (invoiceId) => {
+    const rows = await database.all<PaymentRow>(sql`
+      SELECT id, amount_cents, paid_date, paid_at, provider
+      FROM invoice_payments WHERE invoice_id = ${invoiceId}
+      ORDER BY id`);
+    return rows.map((row) => ({
+      id: row.id,
+      amountCents: row.amount_cents,
+      // The same day the outbox event carries: the date where one was recorded,
+      // otherwise the day of the instant.
+      paidOn: row.paid_date ?? row.paid_at?.slice(0, 10) ?? null,
+      provider: row.provider,
+    })) satisfies MirrorPayment[];
   },
 
   readClients: async (clientId) => {

@@ -10,11 +10,15 @@ import type {
   InvoicePayment,
   InvoicePaymentInput,
   InvoicePaymentUpdateInput,
+  InvoiceQuickBooksEnvelope,
   InvoiceRecipient,
   InvoiceTransitionInput,
   VersionedRowDeleteInput,
   Whoami,
 } from '@conflict-hq/ezacto-client'
+
+/** Where one invoice stands with QuickBooks, as the API reports it (issue 819). */
+export type InvoiceQuickBooksState = InvoiceQuickBooksEnvelope['data']
 
 export type InvoiceState = Invoice['state']
 
@@ -113,6 +117,44 @@ export interface InvoicePaymentApi {
     input: InvoiceEmailDeliveryInput,
     signal?: AbortSignal,
   ): Promise<Invoice>
+  /**
+   * The QuickBooks line and its Sync button (issue 819). Optional because the
+   * routes are mounted only where the deployment carries Intuit keys; a build
+   * without them shows neither.
+   */
+  getInvoiceQuickBooks?(id: number, signal?: AbortSignal): Promise<InvoiceQuickBooksState>
+  syncInvoiceQuickBooks?(id: number, signal?: AbortSignal): Promise<InvoiceQuickBooksState>
+}
+
+/**
+ * The QuickBooks fact on the invoice page, in one line. "Not connected" is the
+ * deployment's state; "Not synced" is this invoice's, with the reason the last
+ * attempt gave where it gave one, so a refusal is read rather than guessed at.
+ * A synced invoice names the QuickBooks document and how many receipts
+ * followed it, and still reports a later attempt that was refused or failed --
+ * a receipt the mirror could not file is not settled just because the invoice
+ * was.
+ */
+export const invoiceQuickBooksLine = (
+  state: Readonly<InvoiceQuickBooksState>,
+  dateLabel: (value: string) => string,
+): string => {
+  if (!state.connected) return 'Not connected'
+  const outcome = state.last_outcome
+  const trouble =
+    outcome !== null && (outcome.kind === 'refused' || outcome.kind === 'failed')
+      ? (outcome.reason ?? 'the last attempt gave no reason')
+      : null
+  if (state.invoice === null) {
+    return trouble === null ? 'Not synced' : `Not synced: ${trouble}`
+  }
+  const parts = [
+    `Synced to QuickBooks invoice ${state.invoice.quickbooks_id} on ${dateLabel(state.invoice.mirrored_at)}`,
+  ]
+  const count = state.payments.length
+  if (count > 0) parts.push(`${count} ${count === 1 ? 'payment' : 'payments'} synced`)
+  if (trouble !== null) parts.push(`last attempt ${outcome!.kind}: ${trouble}`)
+  return parts.join(' \u00b7 ')
 }
 
 export const invoiceProfileHasAccess = (profile: Whoami['profile']): boolean =>

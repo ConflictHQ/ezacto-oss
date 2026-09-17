@@ -8,7 +8,7 @@
  * lets the whole thing be driven by fakes.
  */
 
-import type { Hono } from 'hono'
+import type { Context, Hono } from 'hono'
 import { requireSessionPrincipal } from './auth.js'
 import type { ApiContext } from './context.js'
 import { ApiError, validationError } from './errors.js'
@@ -27,6 +27,23 @@ export interface QuickBooksConnectionStatus {
   scope: string
   allowOnlinePayment: boolean
   connectedAt: string
+}
+
+/**
+ * Where one invoice stands with QuickBooks (issue 819): stated here in the
+ * same structural way as the connection status, so the integrations package
+ * that produces it never has to import the package that serves it.
+ */
+export interface QuickBooksInvoiceSyncState {
+  connected: boolean
+  invoice: { quickBooksId: string; mirroredAt: string } | null
+  payments: readonly { paymentId: number; quickBooksId: string; mirroredAt: string }[]
+  lastOutcome: { kind: string; reason: string | null; at: string } | null
+}
+
+export interface QuickBooksSyncResult {
+  invoice: { kind: string; reason?: string; quickBooksId?: string }
+  payments: readonly { paymentId: number; outcome: { kind: string; reason?: string } }[]
 }
 
 /**
@@ -66,6 +83,9 @@ export interface QuickBooksService {
     signature: string | null
   }): Promise<{ accepted: boolean; reason?: string }>
   newState(): string
+  /** Both answer null for an invoice that does not exist, which is the route's 404. */
+  sync(invoiceId: number): Promise<QuickBooksSyncResult | null>
+  syncState(invoiceId: number): Promise<QuickBooksInvoiceSyncState | null>
 }
 
 const requireAdministrator = <Bindings extends object>(
@@ -83,6 +103,65 @@ const requireAdministrator = <Bindings extends object>(
   }
   return { userId: principal.userId }
 }
+
+/**
+ * The same profiles that raise invoices and record money against them
+ * (`assertMoneyWriter` in thank-you-preference.ts). Syncing one invoice is not
+ * a grant over the book the way connecting is, so accounting can press it.
+ */
+const requireMoneyWriter = <Bindings extends object>(
+  context: Context<ApiContext<Bindings>>,
+): void => {
+  const principal = requireSessionPrincipal(context)
+  if (!['administrator', 'accounting', 'executive_manager'].includes(principal.profile)) {
+    throw new ApiError({
+      status: 403,
+      code: 'profile_forbidden',
+      message: 'Only administrators and accounting can sync an invoice to QuickBooks.',
+    })
+  }
+}
+
+const invoiceIdOf = <Bindings extends object>(
+  context: Context<ApiContext<Bindings>>,
+): number => {
+  const invoiceId = Number(context.req.param('id') ?? '')
+  if (!Number.isSafeInteger(invoiceId) || invoiceId <= 0) {
+    throw validationError([
+      { field: 'id', code: 'invalid', message: 'id must be a positive integer.' },
+    ])
+  }
+  return invoiceId
+}
+
+const invoiceNotFound = (): never => {
+  throw new ApiError({
+    status: 404,
+    code: 'not_found',
+    message: 'The requested resource does not exist.',
+  })
+}
+
+const serializeSyncState = (state: QuickBooksInvoiceSyncState) => ({
+  connected: state.connected,
+  invoice:
+    state.invoice === null
+      ? null
+      : { quickbooks_id: state.invoice.quickBooksId, mirrored_at: state.invoice.mirroredAt },
+  payments: state.payments.map((payment) => ({
+    payment_id: payment.paymentId,
+    quickbooks_id: payment.quickBooksId,
+    mirrored_at: payment.mirroredAt,
+  })),
+  last_outcome:
+    state.lastOutcome === null
+      ? null
+      : {
+          kind: state.lastOutcome.kind,
+          reason: state.lastOutcome.reason,
+          at: state.lastOutcome.at,
+        },
+})
 
 const requireConfigured = (service: Readonly<QuickBooksService>): {
   clientId: string
@@ -207,6 +286,43 @@ export const installQuickBooksRoutes = <Bindings extends object>(
     return context.body(null, 204)
   })
 
+  // Where one invoice stands (issue 819). Mounted with the connection routes
+  // because it is the same feature under the same gate: without Intuit keys
+  // there is no state to report and the invoice page shows no line.
+  api.get('/invoices/:id/quickbooks', async (context) => {
+    requireMoneyWriter(context)
+    const state = await service.syncState(invoiceIdOf(context))
+    if (state === null) invoiceNotFound()
+    return context.json({ data: serializeSyncState(state!) }, 200, {
+      'cache-control': 'no-store',
+    })
+  })
+
+  /**
+   * The Sync button. A refused invoice mirror is a 409 carrying the reason,
+   * because the operator pressed this to find out why -- the mirror's decision
+   * is the answer, not an error in the request. A refused *receipt* after a
+   * mirrored invoice is not a 409: the invoice did sync, and the state that
+   * comes back names the receipt's refusal as the last outcome.
+   */
+  api.post('/invoices/:id/quickbooks/sync', async (context) => {
+    requireMoneyWriter(context)
+    const invoiceId = invoiceIdOf(context)
+    const result = await service.sync(invoiceId)
+    if (result === null) invoiceNotFound()
+    if (result!.invoice.kind === 'refused') {
+      throw new ApiError({
+        status: 409,
+        code: 'quickbooks_refused',
+        message: result!.invoice.reason ?? 'QuickBooks refused the invoice.',
+      })
+    }
+    const state = await service.syncState(invoiceId)
+    if (state === null) invoiceNotFound()
+    return context.json({ data: serializeSyncState(state!) }, 200, {
+      'cache-control': 'no-store',
+    })
+  })
 }
 
 /**

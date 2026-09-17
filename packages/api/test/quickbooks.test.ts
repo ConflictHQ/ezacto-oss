@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   installQuickBooksRoutes,
   installQuickBooksWebhookRoute,
+  type QuickBooksInvoiceSyncState,
   type QuickBooksService,
 } from '../src/quickbooks.js'
 import { createApiApp } from '../src/index.js'
@@ -16,6 +17,13 @@ const connection = {
   scope: 'com.intuit.quickbooks.accounting',
   allowOnlinePayment: false,
   connectedAt: '2026-09-11T12:00:00.000Z',
+}
+
+const synced: QuickBooksInvoiceSyncState = {
+  connected: true,
+  invoice: { quickBooksId: '147', mirroredAt: '2026-09-17T12:00:00.000Z' },
+  payments: [{ paymentId: 9, quickBooksId: '148', mirroredAt: '2026-09-17T12:00:01.000Z' }],
+  lastOutcome: { kind: 'created', reason: null, at: '2026-09-17T12:00:01.000Z' },
 }
 
 const service = (overrides: Partial<QuickBooksService> = {}): QuickBooksService => ({
@@ -33,6 +41,11 @@ const service = (overrides: Partial<QuickBooksService> = {}): QuickBooksService 
   disconnect: vi.fn(async () => undefined),
   receiveWebhook: vi.fn(async () => ({ accepted: true })),
   newState: vi.fn(() => 'state-value-0123456789'),
+  sync: vi.fn(async () => ({
+    invoice: { kind: 'created', quickBooksId: '147' },
+    payments: [{ paymentId: 9, outcome: { kind: 'created', quickBooksId: '148' } }],
+  })),
+  syncState: vi.fn(async () => synced),
   ...overrides,
 })
 
@@ -293,5 +306,89 @@ describe('the settings toggle', () => {
     })
     expect(response.status).toBe(422)
     expect(quickBooks.setAllowOnlinePayment).not.toHaveBeenCalled()
+  })
+})
+
+describe('the invoice sync line and button (issue 819)', () => {
+  const wire = {
+    connected: true,
+    invoice: { quickbooks_id: '147', mirrored_at: '2026-09-17T12:00:00.000Z' },
+    payments: [{ payment_id: 9, quickbooks_id: '148', mirrored_at: '2026-09-17T12:00:01.000Z' }],
+    last_outcome: { kind: 'created', reason: null, at: '2026-09-17T12:00:01.000Z' },
+  }
+
+  it('[api] reports where the invoice stands', async () => {
+    const quickBooks = service()
+    const response = await app(quickBooks).request('/invoices/41/quickbooks')
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ data: wire })
+    expect(quickBooks.syncState).toHaveBeenCalledWith(41)
+    expect(quickBooks.sync).not.toHaveBeenCalled()
+  })
+
+  it('[api] syncs the invoice and answers with the state afterwards', async () => {
+    const quickBooks = service()
+    const response = await app(quickBooks).request('/invoices/41/quickbooks/sync', {
+      method: 'POST',
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ data: wire })
+    expect(quickBooks.sync).toHaveBeenCalledWith(41)
+  })
+
+  it('[api] a refused mirror is a 409 that names the reason', async () => {
+    const quickBooks = service({
+      sync: vi.fn(async () => ({
+        invoice: { kind: 'refused', reason: 'QuickBooks is not connected' },
+        payments: [],
+      })),
+    })
+    const response = await app(quickBooks).request('/invoices/41/quickbooks/sync', {
+      method: 'POST',
+    })
+    expect(response.status).toBe(409)
+    // The operator pressed the button to find out why. The decision is the answer.
+    expect(await response.json()).toMatchObject({
+      error: { code: 'quickbooks_refused', message: 'QuickBooks is not connected' },
+    })
+  })
+
+  it('[api] an invoice that does not exist is a 404 on both routes', async () => {
+    const quickBooks = service({
+      sync: vi.fn(async () => null),
+      syncState: vi.fn(async () => null),
+    })
+    expect((await app(quickBooks).request('/invoices/999/quickbooks')).status).toBe(404)
+    expect(
+      (await app(quickBooks).request('/invoices/999/quickbooks/sync', { method: 'POST' })).status,
+    ).toBe(404)
+  })
+
+  it('[security] accounting may sync; a member or project manager may not', async () => {
+    for (const profile of ['administrator', 'accounting', 'executive_manager']) {
+      const quickBooks = service()
+      const response = await app(quickBooks, { userId: 2, profile }).request(
+        '/invoices/41/quickbooks/sync',
+        { method: 'POST' },
+      )
+      expect(response.status).toBe(200)
+    }
+    for (const profile of ['member', 'project_manager']) {
+      const quickBooks = service()
+      const instance = app(quickBooks, { userId: 2, profile })
+      expect((await instance.request('/invoices/41/quickbooks')).status).toBe(403)
+      expect(
+        (await instance.request('/invoices/41/quickbooks/sync', { method: 'POST' })).status,
+      ).toBe(403)
+      expect(quickBooks.sync).not.toHaveBeenCalled()
+      expect(quickBooks.syncState).not.toHaveBeenCalled()
+    }
+  })
+
+  it('[api] refuses an id that is not an invoice id', async () => {
+    const quickBooks = service()
+    const response = await app(quickBooks).request('/invoices/abc/quickbooks')
+    expect(response.status).toBe(422)
+    expect(quickBooks.syncState).not.toHaveBeenCalled()
   })
 })

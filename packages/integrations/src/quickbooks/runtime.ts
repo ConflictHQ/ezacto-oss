@@ -44,6 +44,44 @@ export interface QuickBooksConnectionStatus {
   connectedAt: string;
 }
 
+export type QuickBooksMirrorOutcomeKind =
+  | "created"
+  | "updated"
+  | "adopted"
+  | "linked"
+  | "refused"
+  | "failed";
+
+/**
+ * What an invoice page can say about the mirror (issue 819): whether there is
+ * a company to mirror into, what this invoice and its receipts became there,
+ * and how the most recent attempt went -- success, refusal, or failure --
+ * whether it ran from the outbox or from a pressed Sync.
+ */
+export interface QuickBooksInvoiceSyncState {
+  readonly connected: boolean;
+  readonly invoice: { readonly quickBooksId: string; readonly mirroredAt: string } | null;
+  readonly payments: readonly {
+    readonly paymentId: number;
+    readonly quickBooksId: string;
+    readonly mirroredAt: string;
+  }[];
+  readonly lastOutcome: {
+    readonly kind: QuickBooksMirrorOutcomeKind;
+    readonly reason: string | null;
+    readonly at: string;
+  } | null;
+}
+
+/** What a pressed Sync did: the invoice mirror, then one entry per receipt tried. */
+export interface QuickBooksSyncResult {
+  readonly invoice: MirrorOutcome;
+  readonly payments: readonly {
+    readonly paymentId: number;
+    readonly outcome: MirrorPaymentOutcome;
+  }[];
+}
+
 /** Likewise structural: what the routes call, without importing the routes. */
 export interface QuickBooksService {
   clientId(): string | null;
@@ -68,6 +106,13 @@ export interface QuickBooksService {
     signature: string | null;
   }): Promise<{ accepted: boolean; reason?: string }>;
   newState(): string;
+  /**
+   * Mirrors the invoice and every receipt on it not yet mirrored, now, from a
+   * button rather than the outbox (issue 819). Null where the invoice does not
+   * exist, so the route can say 404 rather than mirror nothing and call it done.
+   */
+  sync(invoiceId: number): Promise<QuickBooksSyncResult | null>;
+  syncState(invoiceId: number): Promise<QuickBooksInvoiceSyncState | null>;
 }
 
 /**
@@ -120,7 +165,7 @@ export interface QuickBooksConnectionStore {
     realmId: string;
     kind: "customer" | "invoice";
     ezactoId: number;
-  }): Promise<{ quickBooksId: string; syncToken: string } | null>;
+  }): Promise<{ quickBooksId: string; syncToken: string; mirroredAt: string } | null>;
   saveLink(input: {
     realmId: string;
     kind: "customer" | "invoice";
@@ -132,7 +177,7 @@ export interface QuickBooksConnectionStore {
   readPaymentLink(input: {
     realmId: string;
     paymentId: number;
-  }): Promise<{ quickBooksId: string; syncToken: string } | null>;
+  }): Promise<{ quickBooksId: string; syncToken: string; mirroredAt: string } | null>;
   savePaymentLink(input: {
     realmId: string;
     paymentId: number;
@@ -140,6 +185,21 @@ export interface QuickBooksConnectionStore {
     syncToken: string;
     now: string;
   }): Promise<void>;
+  /** The latest attempt per invoice, overwritten every time (issue 819). */
+  recordMirrorOutcome(input: {
+    invoiceId: number;
+    realmId: string | null;
+    kind: QuickBooksMirrorOutcomeKind;
+    reason: string | null;
+    quickBooksId: string | null;
+    now: string;
+  }): Promise<void>;
+  readMirrorOutcome(invoiceId: number): Promise<{
+    kind: QuickBooksMirrorOutcomeKind;
+    reason: string | null;
+    quickBooksId: string | null;
+    attemptedAt: string;
+  } | null>;
   claimWebhookDelivery(input: {
     realmId: string;
     entityName: string;
@@ -176,6 +236,8 @@ export interface QuickBooksConfig {
  */
 export interface QuickBooksMirrorSource {
   readInvoice(invoiceId: number): Promise<MirrorInvoice | null>;
+  /** Every receipt on the invoice, whichever system recorded it (issue 819). */
+  readPayments(invoiceId: number): Promise<readonly MirrorPayment[]>;
   readClients(clientId: number): Promise<ReadonlyMap<number, MirrorClient>>;
   /** Our invoice id for a QuickBooks invoice id, for payments coming back. */
   ezactoInvoiceFor(realmId: string, quickBooksInvoiceId: string): Promise<number | null>;
@@ -227,6 +289,9 @@ export interface QuickBooksRuntime {
     invoiceId: number;
     payment: MirrorPayment;
   }): Promise<MirrorPaymentOutcome>;
+  /** The invoice, then every unmirrored receipt on it. What the Sync button runs. */
+  sync(invoiceId: number): Promise<QuickBooksSyncResult | null>;
+  syncState(invoiceId: number): Promise<QuickBooksInvoiceSyncState | null>;
 }
 
 export const createQuickBooksRuntime = (
@@ -305,7 +370,44 @@ export const createQuickBooksRuntime = (
     connectedAt: connection.connectedAt,
   });
 
-  const mirror = async (invoiceId: number): Promise<MirrorOutcome> => {
+  /**
+   * Every attempt leaves its outcome on the invoice, whichever way it went
+   * (issue 819). An error is recorded as `failed` and rethrown, so the outbox
+   * still retries it and the invoice page still says what happened meanwhile.
+   */
+  const recorded = async <Outcome extends MirrorPaymentOutcome>(
+    invoiceId: number,
+    attempt: () => Promise<Outcome>,
+  ): Promise<Outcome> => {
+    const realmId = (await store.readConnection())?.realmId ?? null;
+    let outcome: Outcome;
+    try {
+      outcome = await attempt();
+    } catch (error) {
+      await store.recordMirrorOutcome({
+        invoiceId,
+        realmId,
+        kind: "failed",
+        // Bounded because the table bounds it: an Intuit fault can carry its
+        // whole response body, and the row must land for the page to say so.
+        reason: (error instanceof Error && error.message !== "" ? error.message : "unknown error").slice(0, 2000),
+        quickBooksId: null,
+        now: options.now().toISOString(),
+      });
+      throw error;
+    }
+    await store.recordMirrorOutcome({
+      invoiceId,
+      realmId,
+      kind: outcome.kind,
+      reason: outcome.kind === "refused" ? outcome.reason : null,
+      quickBooksId: outcome.kind === "refused" ? null : outcome.quickBooksId,
+      now: options.now().toISOString(),
+    });
+    return outcome;
+  };
+
+  const mirrorUnrecorded = async (invoiceId: number): Promise<MirrorOutcome> => {
     const connection = await store.readConnection();
     if (connection === null) {
       return { kind: "refused", reason: "QuickBooks is not connected" };
@@ -345,7 +447,10 @@ export const createQuickBooksRuntime = (
     });
   };
 
-  const mirrorPaymentOnto = async (input: {
+  const mirror = (invoiceId: number): Promise<MirrorOutcome> =>
+    recorded(invoiceId, () => mirrorUnrecorded(invoiceId));
+
+  const mirrorPaymentUnrecorded = async (input: {
     invoiceId: number;
     payment: MirrorPayment;
   }): Promise<MirrorPaymentOutcome> => {
@@ -363,7 +468,7 @@ export const createQuickBooksRuntime = (
     });
     let invoiceQuickBooksId = invoiceLink?.quickBooksId ?? null;
     if (invoiceQuickBooksId === null) {
-      const mirrored = await mirror(input.invoiceId);
+      const mirrored = await mirrorUnrecorded(input.invoiceId);
       if (mirrored.kind === "refused") return mirrored;
       invoiceQuickBooksId = mirrored.quickBooksId;
     }
@@ -407,6 +512,73 @@ export const createQuickBooksRuntime = (
       },
       quickBooks: client,
     });
+  };
+
+  const mirrorPaymentOnto = (input: {
+    invoiceId: number;
+    payment: MirrorPayment;
+  }): Promise<MirrorPaymentOutcome> => recorded(input.invoiceId, () => mirrorPaymentUnrecorded(input));
+
+  /**
+   * The Sync button (issue 819). The invoice first; a refusal there stops
+   * everything, because a receipt has nothing to settle. Then each receipt this
+   * instance recorded that has no QuickBooks payment yet. One that came *from*
+   * QuickBooks is never sent back, and one already linked is left alone -- so a
+   * second press, like a redelivered event, creates nothing.
+   */
+  const sync = async (invoiceId: number): Promise<QuickBooksSyncResult | null> => {
+    if ((await source.readInvoice(invoiceId)) === null) return null;
+    const invoice = await mirror(invoiceId);
+    if (invoice.kind === "refused") return { invoice, payments: [] };
+    const connection = await store.readConnection();
+    const payments: { paymentId: number; outcome: MirrorPaymentOutcome }[] = [];
+    for (const payment of await source.readPayments(invoiceId)) {
+      if (payment.provider === "quickbooks") continue;
+      const linked =
+        connection === null
+          ? null
+          : await store.readPaymentLink({ realmId: connection.realmId, paymentId: payment.id });
+      if (linked !== null) continue;
+      payments.push({
+        paymentId: payment.id,
+        outcome: await mirrorPaymentOnto({ invoiceId, payment }),
+      });
+    }
+    return { invoice, payments };
+  };
+
+  const syncState = async (invoiceId: number): Promise<QuickBooksInvoiceSyncState | null> => {
+    if ((await source.readInvoice(invoiceId)) === null) return null;
+    const outcome = await store.readMirrorOutcome(invoiceId);
+    const lastOutcome =
+      outcome === null
+        ? null
+        : { kind: outcome.kind, reason: outcome.reason, at: outcome.attemptedAt };
+    const connection = await store.readConnection();
+    if (connection === null) {
+      return { connected: false, invoice: null, payments: [], lastOutcome };
+    }
+    const realmId = connection.realmId;
+    const invoiceLink = await store.readLink({ realmId, kind: "invoice", ezactoId: invoiceId });
+    const payments: { paymentId: number; quickBooksId: string; mirroredAt: string }[] = [];
+    for (const payment of await source.readPayments(invoiceId)) {
+      const link = await store.readPaymentLink({ realmId, paymentId: payment.id });
+      if (link === null) continue;
+      payments.push({
+        paymentId: payment.id,
+        quickBooksId: link.quickBooksId,
+        mirroredAt: link.mirroredAt,
+      });
+    }
+    return {
+      connected: true,
+      invoice:
+        invoiceLink === null
+          ? null
+          : { quickBooksId: invoiceLink.quickBooksId, mirroredAt: invoiceLink.mirroredAt },
+      payments,
+      lastOutcome,
+    };
   };
 
   const service: QuickBooksService = {
@@ -586,9 +758,12 @@ export const createQuickBooksRuntime = (
       }
       return { accepted: true };
     },
+
+    sync,
+    syncState,
   };
 
-  return { service, mirror, mirrorPayment: mirrorPaymentOnto };
+  return { service, mirror, mirrorPayment: mirrorPaymentOnto, sync, syncState };
 };
 
 /**
@@ -620,14 +795,13 @@ export const createQuickBooksMirrorSubscriber = (
   async deliver(event) {
     if (event.aggregateType !== "invoice") return;
     if (event.eventType === "invoice.sent") {
-      const outcome = await runtime.mirror(event.aggregateId);
-      if (outcome.kind === "refused") {
-        // A refusal is a decision, not a failure: no connection, or a document in
-        // QuickBooks this mirror did not write. Retrying cannot change either, so
-        // it is recorded rather than thrown -- the outbox would otherwise retry
-        // it until it gave up and called a correct decision an error.
-        return;
-      }
+      // A refusal is a decision, not a failure: no connection, or a document in
+      // QuickBooks this mirror did not write. Retrying cannot change either, so
+      // it is recorded rather than thrown -- the outbox would otherwise retry
+      // it until it gave up and called a correct decision an error. The runtime
+      // records every outcome, refusal included, on the invoice (issue 819), so
+      // the invoice page can say why and offer Sync.
+      await runtime.mirror(event.aggregateId);
       return;
     }
     // `payment.recorded` and only that: an edit or a deletion here has no
