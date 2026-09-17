@@ -320,11 +320,10 @@ describe('adopting an invoice the books already hold (issue 825)', () => {
     expect(qb.createInvoice).not.toHaveBeenCalled()
   })
 
-  it('[money] the explicit sync adopts it when the totals agree, linking the customer the books use', async () => {
+  it('[money] the explicit sync adopts it when the totals agree, and links only the invoice', async () => {
     const links = linkStore()
     const qb = quickBooks({
       findInvoiceByDocNumber: vi.fn(async () => harvestInvoice()),
-      readCustomer: vi.fn(async (id: string) => customer(id, 'kestrel')),
     })
     const outcome = await mirrorInvoice({
       invoice, clients, links, quickBooks: qb, allowOnlinePayment: false, adoptExisting: true,
@@ -334,10 +333,38 @@ describe('adopting an invoice the books already hold (issue 825)', () => {
     expect(qb.createCustomer).not.toHaveBeenCalled()
     expect(qb.createInvoice).not.toHaveBeenCalled()
     expect(qb.updateInvoice).not.toHaveBeenCalled()
-    // The invoice link, and the customer link pointing where the invoice is
-    // filed -- not where our client tree would have put it.
+    // The invoice link only. Harvest filed one client under a sub-customer
+    // per project, so no customer link could stand for where its invoices
+    // are; a receipt reads the customer off the invoice instead (issue 830).
     expect(links.rows.get('invoice:41')).toEqual({ quickBooksId: 'qb-inv-9862', syncToken: '4' })
-    expect(links.rows.get('customer:2')).toEqual({ quickBooksId: 'qb-300', syncToken: '0' })
+    expect(links.rows.has('customer:2')).toBe(false)
+  })
+
+  it('[money #830] a later update keeps the customer the books file it under, and makes no customer of its own', async () => {
+    // The press after adoption takes the update path. It rewrites the lines
+    // from here, but the document stays under the sub-customer Harvest filed
+    // it with: a receipt already applied there names that customer, and
+    // moving the invoice would strand it.
+    const links = linkStore({
+      'customer:2': { quickBooksId: 'qb-2', syncToken: '0' },
+      'invoice:41': { quickBooksId: 'qb-inv-9862', syncToken: '4' },
+    })
+    const qb = quickBooks({
+      readInvoice: vi.fn(async () => harvestInvoice({ SyncToken: '5' })),
+      updateInvoice: vi.fn(async () => harvestInvoice({ SyncToken: '6' })),
+    })
+    const outcome = await mirrorInvoice({
+      invoice, clients, links, quickBooks: qb, allowOnlinePayment: false,
+    })
+    expect(outcome).toEqual({ kind: 'updated', quickBooksId: 'qb-inv-9862' })
+    expect(vi.mocked(qb.updateInvoice).mock.calls[0]![0]).toMatchObject({
+      Id: 'qb-inv-9862',
+      SyncToken: '5',
+      CustomerRef: { value: 'qb-300' },
+    })
+    expect(qb.findCustomerByDisplayName).not.toHaveBeenCalled()
+    expect(qb.createCustomer).not.toHaveBeenCalled()
+    expect(links.rows.get('customer:2')).toEqual({ quickBooksId: 'qb-2', syncToken: '0' })
   })
 
   it('[money] refuses when the totals disagree, naming both', async () => {

@@ -142,8 +142,12 @@ common case on day one. The automatic mirror refuses an invoice QuickBooks
 already holds under the same number, because it did not write it and must not
 overwrite it. **Sync to QuickBooks** on the invoice page, pressed by an
 administrator, adopts that invoice instead when its total agrees to the cent:
-nothing on the QuickBooks document changes, the link is recorded against the
-customer the books file it under, and payments then go where the invoice is.
+nothing on the QuickBooks document changes, only the invoice link is recorded,
+and payments go to the customer the QuickBooks invoice is filed under. That
+customer is never changed afterwards, by adoption or by a later press: Harvest
+filed one client under a sub-customer per project, and an invoice stays where
+the books put it. The client's own customer link only decides where invoices
+created here go.
 
 Every mirror attempt leaves its result on the invoice, whether it created the
 document, was refused (not connected when the invoice went out, a customer name

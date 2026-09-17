@@ -137,19 +137,6 @@ export interface QuickBooksStore {
     syncToken: string
     now: string
   }): Promise<void>
-  /**
-   * Points a link at a different QuickBooks record. The identity trigger
-   * refuses an update, and `saveLink`'s upsert keeps the old id, so this is a
-   * delete and an insert -- the trace the trigger's comment asks for.
-   */
-  replaceLink(input: {
-    realmId: string
-    kind: 'customer' | 'invoice'
-    ezactoId: number
-    quickBooksId: string
-    syncToken: string
-    now: string
-  }): Promise<void>
   /** A receipt of ours and the QuickBooks payment it became (issue 799). */
   readPaymentLink(input: {
     realmId: string
@@ -308,14 +295,6 @@ export const createQuickBooksStore = (database: Database): QuickBooksStore => ({
          sync_token = excluded.sync_token,
          mirrored_at = excluded.mirrored_at,
          updated_at = excluded.updated_at`)
-  },
-  replaceLink: async (input) => {
-    await database.run(sql`DELETE FROM quickbooks_links
-       WHERE realm_id = ${input.realmId} AND kind = ${input.kind} AND ezacto_id = ${input.ezactoId}`)
-    await database.run(sql`INSERT INTO quickbooks_links
-         (realm_id, kind, ezacto_id, quickbooks_id, sync_token, mirrored_at,
-          created_at, updated_at)
-       VALUES (${input.realmId}, ${input.kind}, ${input.ezactoId}, ${input.quickBooksId}, ${input.syncToken}, ${input.now}, ${input.now}, ${input.now})`)
   },
   readPaymentLink: async (input) => {
     const rows = await database.all<{
