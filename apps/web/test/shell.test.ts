@@ -665,6 +665,7 @@ describe('S-1 through S-5 application shell', () => {
     })
     const snapshot = await loadShellSnapshot(api, new Date(timestamp))
     expect(snapshot.expenses).toEqual([])
+    expect(snapshot.expensesAvailable).toBe(false)
     expect(api.listExpenses).toHaveBeenCalledTimes(1)
 
     // Any other refusal is still a failure the page must report.
