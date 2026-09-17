@@ -161,6 +161,39 @@ describe('demo reset', () => {
     ).toBe(1)
   })
 
+  it('[reliability] rebuilds even after an operator saved a template on the demo', async () => {
+    // A saved template version names the user who saved it, and the wipe
+    // deletes every user. With foreign keys deferred, that surfaced only at
+    // commit -- as a rolled-back rebuild every night from 2026-09-12 until
+    // somebody read Sentry. The template is kept; its authorship is not.
+    const { client, driver } = harness()
+    migrateContainer(client)
+    client
+      .prepare(
+        `INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+         VALUES (1, 'Casey', 'Ng', 'administrator', '[]', ?, ?)`,
+      )
+      .run(now, now)
+    const next =
+      (client
+        .prepare(`SELECT max(version) + 1 AS n FROM email_template_versions WHERE template_kind = 'invoice'`)
+        .get() as { n: number }).n
+    client
+      .prepare(
+        `INSERT INTO email_template_versions
+           (template_kind, version, subject_template, text_template, html_template, created_by_user_id, created_at)
+         VALUES ('invoice', ?, 'Invoice %invoice_id%', 'body', NULL, 1, ?)`,
+      )
+      .run(next, now)
+    await wipeAndSeedDemo(driver, { now, years, confirm: 'wipe-and-reload' })
+    expect(
+      client
+        .prepare(`SELECT created_by_user_id AS by FROM email_template_versions WHERE template_kind = 'invoice' AND version = ?`)
+        .get(next),
+    ).toEqual({ by: null })
+    expect(count(client, 'users')).toBeGreaterThan(0)
+  })
+
   it('[unit] bills a bounded slice and resumes where the last one stopped', async () => {
     // The caller is a cron tick with a CPU budget, so a reset that can only run
     // to completion in one go is a reset that never completes.
