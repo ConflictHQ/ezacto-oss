@@ -897,6 +897,50 @@ describe("sync from the invoice page (issue 819)", () => {
     });
   });
 
+  it("[money #828] adoption re-points a customer link a refused mirror left behind, so the receipt reaches the invoice's customer", async () => {
+    // What happened on the real instance: the automatic mirror created a
+    // customer, then refused the invoice; Sync adopted the invoice under the
+    // customer the books use, but the stale customer link survived and the
+    // receipt went to the wrong customer -- QuickBooks 620.
+    const fetchImpl = intuit([]);
+    fetchImpl.mockImplementation(async (request: Request) => {
+      const url = new URL(request.url);
+      const query = url.searchParams.get("query") ?? "";
+      const json = (body: unknown) =>
+        new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      if (query.includes("Invoice") && query.includes("'1316'")) {
+        return json({ QueryResponse: { Invoice: [{ Id: "10120", SyncToken: "3", DocNumber: "1316", TotalAmt: 2500,
+          CustomerRef: { value: "326", name: "Northpeak Support" }, Line: [] }] } });
+      }
+      if (url.pathname.endsWith("/customer/326") && request.method === "GET") {
+        return json({ Customer: { Id: "326", SyncToken: "5", DisplayName: "Northpeak Support" } });
+      }
+      if (request.method === "POST" && url.pathname.endsWith("/payment")) {
+        const sent = (await request.clone().json()) as { CustomerRef: { value: string } };
+        // The real refusal, when the customer is not the invoice's.
+        if (sent.CustomerRef.value !== "326") {
+          return new Response(JSON.stringify({ Fault: { Error: [{ code: "620", Message: "TxnID Cannot Be Linked" }] } }), { status: 400 });
+        }
+        return json({ Payment: { Id: "qb-pay-9", SyncToken: "0", TotalAmt: 2500 } });
+      }
+      return json({ QueryResponse: {} });
+    });
+    const built = await runtime(fetchImpl, source({ readInvoice: vi.fn(async () => invoice42) }));
+    await connected(built.store);
+    // The stale link, as the earlier mirror left it.
+    await built.store.saveLink({ realmId: "realm-a", kind: "customer", ezactoId: 2, quickBooksId: "332", syncToken: "0", now: t(0) });
+    await markPaid(9);
+
+    const result = await built.sync(42);
+    expect(result).toEqual({
+      invoice: { kind: "adopted", quickBooksId: "10120" },
+      payments: [{ paymentId: 9, outcome: { kind: "created", quickBooksId: "qb-pay-9" } }],
+    });
+    expect(await built.store.readLink({ realmId: "realm-a", kind: "customer", ezactoId: 2 })).toMatchObject({
+      quickBooksId: "326", syncToken: "5",
+    });
+  });
+
   it("[money #825] Sync refuses to adopt when the books hold a different total", async () => {
     const fetchImpl = intuit([]);
     fetchImpl.mockImplementation(async (request: Request) => {
