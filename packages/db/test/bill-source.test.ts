@@ -1,6 +1,7 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase } from '../src/adapters.js'
+import { executeInvoiceLifecycleCommand } from '../src/invoice-state.js'
 import { migrateContainer } from '../src/migrate.js'
 import {
   createBillLinkStore,
@@ -73,6 +74,41 @@ describe('reading an invoice for BILL', () => {
   it('[db] answers null for an invoice that is not there', async () => {
     const { source } = await fixture()
     expect(await source.readInvoice(999)).toBeNull()
+  })
+})
+
+describe('the invoices a reconciliation may still adopt (issue 836)', () => {
+  it('[db] lists open invoices without a BILL link, with the total BILL must agree to', async () => {
+    const { sqlite: database, orm, source, links } = await fixture()
+    database.exec(`
+      INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+        VALUES (1, 'Casey', 'Ng', 'administrator', '[]', '${t(0)}', '${t(0)}');
+      INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date, state, created_at, updated_at)
+        VALUES (11, 1, '1316', 'USD', '2026-09-12', '2026-10-12', 'draft', '${t(0)}', '${t(0)}'),
+               (12, 1, '1317', 'USD', '2026-09-13', '2026-10-13', 'draft', '${t(0)}', '${t(0)}');
+      INSERT INTO invoice_line_items (invoice_id, position, kind, description, quantity, unit_price_cents, amount_cents, created_at, updated_at)
+        VALUES (11, 1, 'Service', 'Advisory', 1, 2520000, 2520000, '${t(0)}', '${t(0)}'),
+               (12, 1, 'Service', 'Advisory', 1, 100, 100, '${t(0)}', '${t(0)}');
+    `)
+    // Sent through the real lifecycle, as the books are. 10 stays a draft.
+    for (const invoiceId of [11, 12]) {
+      await executeInvoiceLifecycleCommand(orm, {
+        invoiceId,
+        commandId: `send-${invoiceId}`,
+        command: 'send',
+        actor: { type: 'user', id: 1 },
+        authorize: async () => true,
+        expectedVersion: 0,
+        occurredAt: t(1),
+        messageId: 200 + invoiceId,
+        eventId: `sent-${invoiceId}`,
+      })
+    }
+    // 12 is already linked, so only 11 is left to find in BILL.
+    await links.saveLink('invoice', 12, { billId: '00e12', paymentLink: null })
+    expect(await source.unsettledInvoices()).toEqual([
+      { id: 11, number: '1316', issueDate: '2026-09-12', amountCents: 2_520_000 },
+    ])
   })
 })
 

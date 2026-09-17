@@ -184,7 +184,7 @@ export interface BillSettledPayment {
   readonly paidOn: string | null
 }
 
-const amountToCents = (amount: number): number => Math.round(amount * 100)
+export const amountToCents = (amount: number): number => Math.round(amount * 100)
 
 /**
  * The parts of a BILL payment that settled invoices we mirrored.
@@ -201,6 +201,8 @@ export const settledPayments = (
   payments: readonly Readonly<{
     id: string
     status?: string
+    /** The day the money arrived. BILL carries it on the payment, not the line. */
+    paymentDate?: string
     invoicePayments?: readonly Readonly<{
       invoiceId: string
       amount: number
@@ -218,6 +220,6 @@ export const settledPayments = (
           billPaymentId: payment.id,
           billInvoiceId: line.invoiceId,
           amountCents: amountToCents(line.amount),
-          paidOn: line.paymentDate ?? null,
+          paidOn: line.paymentDate ?? payment.paymentDate ?? null,
         })),
     )

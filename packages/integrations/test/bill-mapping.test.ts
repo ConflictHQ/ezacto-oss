@@ -217,6 +217,28 @@ describe('reading what was actually paid', () => {
     ])
   })
 
+  it('[money] takes the day from the payment when the line does not carry one', () => {
+    // BILL's receivable payment carries `paymentDate` on the payment and not
+    // on each invoice line (seen on the real books, 2026-09-17). Read only
+    // from the line, every receipt recorded from BILL had no paid-on date.
+    const settled = settledPayments(
+      [
+        {
+          id: '0rp1',
+          status: 'PAID',
+          paymentDate: '2026-08-20',
+          invoicePayments: [
+            { invoiceId: '00e42', amount: 15112.5 },
+            { invoiceId: '00e43', amount: 25200 },
+          ],
+        },
+      ],
+      known,
+    )
+    expect(settled.map((line) => line.paidOn)).toEqual(['2026-08-20', '2026-08-20'])
+    expect(settled.map((line) => line.amountCents)).toEqual([1_511_250, 2_520_000])
+  })
+
   it('[money] counts only money that actually arrived', () => {
     // Scheduled has not arrived; void, cancelled and escheated never will.
     // Treating any of them as received marks an invoice paid that is still owed.

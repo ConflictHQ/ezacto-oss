@@ -15,6 +15,12 @@ When an invoice is sent to a client who is billed through BILL:
 Separately, once an hour, a reconciliation reads BILL's receivables and
 records what settled our invoices: the payment lands on the invoice here as a
 receipt from BILL, which marks it paid and sends the thank-you like any other.
+Before it reads the payments it adopts any open invoice of ours that BILL
+already holds under the same number with the same total -- one sent from
+Harvest before the cutover, or from here before BILL was configured. Adoption
+writes only the link, sends nothing, and does not need the client opted in, so
+a client who pays at BILL closes their invoices here whether or not BILL is how
+their invoices go out.
 
 Clients who are not opted in are untouched: their invoice goes out exactly as it
 does now.

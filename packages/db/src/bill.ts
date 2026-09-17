@@ -144,6 +144,26 @@ export const createBillMirrorSource = (
     return rows[0]?.bill_delivery === 1
   },
 
+  unsettledInvoices: async () => {
+    const rows = await database.all<{
+      id: number
+      number: string
+      issue_date: string
+      amount_cents: number
+    }>(sql`
+      SELECT invoice.id, invoice.number, invoice.issue_date, invoice.amount_cents
+      FROM invoices invoice
+      LEFT JOIN bill_links link ON link.kind = 'invoice' AND link.ezacto_id = invoice.id
+      WHERE invoice.state = 'open' AND link.ezacto_id IS NULL
+      ORDER BY invoice.id`)
+    return rows.map((row) => ({
+      id: row.id,
+      number: row.number,
+      issueDate: row.issue_date,
+      amountCents: row.amount_cents,
+    }))
+  },
+
   mirroredInvoices: async (): Promise<ReadonlyMap<string, number>> => {
     const rows = await database.all<{ bill_id: string; ezacto_id: number }>(sql`
       SELECT bill_id, ezacto_id FROM bill_links WHERE kind = 'invoice'`)
