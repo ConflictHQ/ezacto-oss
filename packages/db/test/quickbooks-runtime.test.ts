@@ -368,6 +368,40 @@ describe("payments coming back", () => {
     ]);
   });
 
+  it("[reliability] a payment gone before it is read is skipped, not retried forever", async () => {
+    // QuickBooks answers a missing object with 400 and fault code 610, not a
+    // 404 (seen on the sandbox, 2026-09-17). Left as a thrown error the
+    // delivery was a 500, and Intuit retries a non-2xx until it gives up.
+    recordedPayments.length = 0;
+    const fetchImpl = intuit([
+      {
+        match: /\/payment\//u,
+        status: 400,
+        body: { Fault: { Error: [{ code: "610", Message: "Object Not Found", Detail: "Object Not Found : Something you're trying to use has been made inactive." }] } },
+      },
+    ]);
+    const { service, store } = await runtime(fetchImpl);
+    await store.saveConnection({
+      realmId: "realm-a",
+      accessToken: "access-1",
+      refreshToken: "refresh-1",
+      accessTokenExpiresAt: t(59),
+      refreshTokenExpiresAt: t(59),
+      scope: "com.intuit.quickbooks.accounting",
+      connectedByUserId: 1,
+      companyName: null,
+      now: t(1),
+    });
+    const payload = notification();
+    const result = await service.receiveWebhook({ payload, signature: await sign(payload) });
+    expect(result.accepted).toBe(true);
+    expect(recordedPayments).toEqual([]);
+    const row = sqlite!
+      .prepare("SELECT skipped_reason FROM quickbooks_webhook_deliveries WHERE entity_id = 'qb-pay-1'")
+      .get() as { skipped_reason: string | null };
+    expect(row.skipped_reason).toBe("the payment no longer exists");
+  });
+
   it("[security] a retried delivery does not record the payment twice", async () => {
     recordedPayments.length = 0;
     const fetchImpl = intuit(paymentRoutes);
