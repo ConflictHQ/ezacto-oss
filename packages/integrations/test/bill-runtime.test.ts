@@ -285,9 +285,9 @@ describe('reconciling payments', () => {
   })
 
   it('[money #836] adopts an open invoice BILL already holds under our number, then records its payment', async () => {
-    // The books on the real instance: every Kestrel Environmental invoice reached BILL
-    // from Harvest, and the client pays there. None was mirrored from here,
-    // so the reconciliation would have matched nothing forever.
+    // The books on a real instance: every invoice for one client reached
+    // BILL from Harvest, and the client pays there. None was mirrored from
+    // here, so the reconciliation would have matched nothing forever.
     const server = billServer()
     server.fetch.mockImplementation(async (request: Request) => {
       const url = new URL(request.url)
@@ -297,7 +297,7 @@ describe('reconciling payments', () => {
         return json({
           results: [
             { id: '00e0777', invoiceNumber: '1298', totalAmount: 5300, status: 'PAID_IN_FULL' },
-            { id: '00e1299', invoiceNumber: '1299', customerId: '0cu0steady', totalAmount: 25200, status: 'PAID_IN_FULL' },
+            { id: '00e1299', invoiceNumber: '1299', customerId: '0cu0kestrel', totalAmount: 25200, status: 'PAID_IN_FULL' },
           ],
         })
       }
@@ -332,7 +332,7 @@ describe('reconciling payments', () => {
     expect(harness.store.rows.get('invoice:44')).toEqual({ billId: '00e1299', paymentLink: null })
     // The client's customer is learnt from the adopted invoice: the record
     // the client's own BILL account already pays, not one found by name.
-    expect(harness.store.rows.get('customer:5')).toEqual({ billId: '0cu0steady', paymentLink: null })
+    expect(harness.store.rows.get('customer:5')).toEqual({ billId: '0cu0kestrel', paymentLink: null })
     expect(mirrorSource.recordPayment).toHaveBeenCalledWith({
       invoiceId: 44,
       billInvoiceId: '00e1299',
@@ -362,9 +362,9 @@ describe('reconciling payments', () => {
       mirroredInvoices: vi.fn(async () => new Map([['00e1299', 44]])),
     })
     const harness = runtime(fullConfig, { server, source: mirrorSource })
-    await harness.store.saveLink('customer', 5, { billId: '0cu0steady', paymentLink: null })
+    await harness.store.saveLink('customer', 5, { billId: '0cu0kestrel', paymentLink: null })
     await harness.runtime.reconcilePayments()
-    expect(harness.store.rows.get('customer:5')).toEqual({ billId: '0cu0steady', paymentLink: null })
+    expect(harness.store.rows.get('customer:5')).toEqual({ billId: '0cu0kestrel', paymentLink: null })
   })
 
   it('[money #836] refuses to adopt when the totals disagree, and asks nothing when nothing is open', async () => {
