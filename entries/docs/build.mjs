@@ -314,6 +314,7 @@ const build = async () => {
 <li><a href="/docs/migrating-from-harvest/">Migrate from Harvest</a></li>
 <li><a href="/api/">API reference</a> and the <a href="/openapi/v1.json">OpenAPI document</a></li>
 <li><a href="/cli/">ez CLI</a></li>
+<li><a href="https://chromewebstore.google.com/detail/ezacto/hflcpglmocgcnndgdhoemlafdalnocfa">ezacto for Chrome</a>, the timer on your toolbar, signed in to your instance with an API token</li>
 <li><a href="https://github.com/ConflictHQ/ezacto-oss">Source on GitHub</a>, <a href="https://github.com/ConflictHQ/ezacto-portal-oss">the client portal</a></li>
 </ul>
 <h2>Licence</h2>${renderMarkdown(licence, 'README.md')}`,
