@@ -147,9 +147,27 @@ describe('company settings', () => {
     })),
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    // happy-dom delivers hashchange on a timer. The controllers this file has
+    // mounted keep listening, and each answers the cleared hash by reading the
+    // first section, so the event is let through before fetch is unstubbed
+    // rather than reaching a real one at teardown.
+    globalThis.location.hash = ''
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
     vi.unstubAllGlobals()
   })
+
+  // A section is read the first time it is shown (issue 809), so a test opens
+  // the page on the section it reads, the way an operator following a link
+  // would, and moves between sections the way the strip does: by the hash.
+  const openCompanySettings = (section: string): void => {
+    renderBrowserShell({ view: 'settings-company' })
+    globalThis.location.hash = `#${section}`
+  }
+  const openSection = (section: string): void => {
+    globalThis.location.hash = `#${section}`
+    globalThis.dispatchEvent(new Event('hashchange'))
+  }
 
   it('[browser #801] shows the payment reminder default, saves a change, and switches it off', async () => {
     stubModulesEndpoint()
@@ -218,12 +236,123 @@ describe('company settings', () => {
     globalThis.location.hash = ''
   })
 
+  const fetchedPaths = (): string[] =>
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map((call) =>
+      String(call[0]).replace(/^https?:\/\/[^/]+/u, ''),
+    )
+
+  it('[browser #809] reads a section the first time it is shown, and not again', async () => {
+    // Every section's reads used to go out the moment the page opened, so
+    // opening Accounting called Wise and the module toggles waited on
+    // QuickBooks. A section is read when it is shown, and once.
+    stubModulesEndpoint()
+    openCompanySettings('integrations')
+    const api = {
+      ...companyApi([senderIdentity()], [ssoDomain()]),
+      getQuickBooksConnection: vi.fn(async () => ({ configured: true, connection: null })),
+      getWiseConnection: vi.fn(async () => ({ configured: true, connection: null })),
+    }
+    await mountShell(api)
+
+    await vi.waitFor(() => expect(api.getQuickBooksConnection).toHaveBeenCalledTimes(1))
+    expect(api.getWiseConnection).not.toHaveBeenCalled()
+    // The week grid reads the tracking settings for every page; the notes
+    // policy is the Time section's own read.
+    expect(api.getTimeEntryNoteSettings).not.toHaveBeenCalled()
+    expect(api.getInvoiceReminders).not.toHaveBeenCalled()
+    expect(api.listSenderIdentities).not.toHaveBeenCalled()
+    expect(api.getEmailHealth).not.toHaveBeenCalled()
+    expect(api.getBackupStatus).not.toHaveBeenCalled()
+    expect(api.listSsoDomains).not.toHaveBeenCalled()
+    // The three sections that fetch for themselves are not read either.
+    expect(fetchedPaths()).not.toContain('/api/v1/admin/modules')
+    expect(fetchedPaths()).not.toContain('/api/v1/admin/sign-in-methods')
+    expect(fetchedPaths()).not.toContain('/api/v1/settings/brand-assets')
+
+    openSection('payouts')
+    await vi.waitFor(() => expect(api.getWiseConnection).toHaveBeenCalledTimes(1))
+    expect(api.getQuickBooksConnection).toHaveBeenCalledTimes(1)
+
+    // Back to a section already read: nothing goes out.
+    openSection('integrations')
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
+    expect(api.getQuickBooksConnection).toHaveBeenCalledTimes(1)
+    expect(api.getWiseConnection).toHaveBeenCalledTimes(1)
+    expect(api.listSsoDomains).not.toHaveBeenCalled()
+  })
+
+  it('[browser #809] offers Retry on a failed read, with the request id, and retries that section only', async () => {
+    // "ezacto API request failed with status 500" named neither the section
+    // nor what to do, and the only way to try again was a reload.
+    stubModulesEndpoint()
+    openCompanySettings('integrations')
+    let attempts = 0
+    const api = {
+      ...companyApi([senderIdentity()], [ssoDomain()]),
+      getQuickBooksConnection: vi.fn(async () => {
+        attempts += 1
+        if (attempts === 1) {
+          throw new EzactoApiError(
+            500,
+            { error: { code: 'internal', message: 'server detail is not rendered' } },
+            'req-7f3a9c',
+          )
+        }
+        return { configured: true, connection: null }
+      }),
+      getWiseConnection: vi.fn(async () => ({ configured: true, connection: null })),
+    }
+    await mountShell(api)
+
+    const status = document.querySelector<HTMLElement>('[data-settings-quickbooks-status]')!
+    await vi.waitFor(() =>
+      expect(status.textContent).toContain('The QuickBooks connection could not be read.'),
+    )
+    // The id is how the failure is found in the Worker log and in Sentry.
+    expect(status.textContent).toContain('request id req-7f3a9c')
+    const retry = status.querySelector<HTMLButtonElement>('[data-settings-retry="integrations"]')
+    expect(retry).not.toBeNull()
+
+    retry!.click()
+    await vi.waitFor(() => expect(api.getQuickBooksConnection).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(status.textContent).toBe('Not connected.'))
+    // Cleared on success, and no other section was asked.
+    expect(status.querySelector('[data-settings-retry]')).toBeNull()
+    expect(api.getWiseConnection).not.toHaveBeenCalled()
+    expect(api.listSsoDomains).not.toHaveBeenCalled()
+
+    // An operator who connected in another tab reads the section again from
+    // the heading, and the cache forgets it.
+    document.querySelector<HTMLButtonElement>('[data-settings-refresh="integrations"]')!.click()
+    await vi.waitFor(() => expect(api.getQuickBooksConnection).toHaveBeenCalledTimes(3))
+    expect(api.getWiseConnection).not.toHaveBeenCalled()
+  })
+
+  it('[browser #809] keeps a configuration answer as an answer, with nothing to retry', async () => {
+    // A 403 is what this profile may read, not a failure to read it.
+    stubModulesEndpoint()
+    openCompanySettings('integrations')
+    const api = {
+      ...companyApi([senderIdentity()], []),
+      getQuickBooksConnection: vi.fn(async () => {
+        throw new EzactoApiError(403, { error: { code: 'profile_forbidden' } }, 'req-403')
+      }),
+    }
+    await mountShell(api)
+
+    const status = document.querySelector<HTMLElement>('[data-settings-quickbooks-status]')!
+    await vi.waitFor(() =>
+      expect(status.textContent).toBe('Connecting an accounting system is an administrator action.'),
+    )
+    expect(status.querySelector('[data-settings-retry]')).toBeNull()
+  })
+
   it('[unit] shows the instance configuration the endpoints already served', async () => {
     // Every setting on this page had an endpoint and no reader: the notes
     // policy, the tracking mode, the address this instance sends as and how
     // that mail lands were all reachable only with a token and a terminal.
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('time')
     const api = companyApi([
       senderIdentity(),
       senderIdentity({ id: 4, email: 'noreply@northpeak.test', is_default: false, evidence: null }),
@@ -242,6 +371,7 @@ describe('company settings', () => {
     expect(noteMinimum.value).toBe('12')
     expect(document.querySelector<HTMLElement>('[data-note-settings-form]')!.hidden).toBe(false)
 
+    openSection('email')
     const senders = document.querySelector<HTMLElement>('[data-settings-sender-identities]')!
     await vi.waitFor(() => expect(senders.hidden).toBe(false))
     expect(senders.querySelectorAll('tbody [data-row]')).toHaveLength(2)
@@ -261,7 +391,7 @@ describe('company settings', () => {
 
   it('[browser #104] offers one Connect button, and sends the operator to Intuit', async () => {
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('integrations')
     const api = {
       ...companyApi([senderIdentity()], []),
       getQuickBooksConnection: vi.fn(async () => ({ configured: true, connection: null })),
@@ -273,7 +403,7 @@ describe('company settings', () => {
     const original = window.location
     Object.defineProperty(window, 'location', {
       configurable: true,
-      value: { ...original, assign },
+      value: { ...original, hash: '#integrations', assign },
     })
     try {
       const controller = createModuleSettingsController(api as never)
@@ -300,7 +430,7 @@ describe('company settings', () => {
 
   it('[browser #104] shows the connected company, and what it is allowed to do', async () => {
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('integrations')
     const api = {
       ...companyApi([senderIdentity()], []),
       getQuickBooksConnection: vi.fn(async () => ({
@@ -337,7 +467,7 @@ describe('company settings', () => {
 
   it('[security #104] offers no connect button to a profile the route would refuse', async () => {
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('integrations')
     const api = {
       ...companyApi([senderIdentity()], []),
       getQuickBooksConnection: vi.fn(async () => ({ configured: true, connection: null })),
@@ -361,7 +491,7 @@ describe('company settings', () => {
 
   it('[browser #104] says so where the deployment has no Intuit credentials', async () => {
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('integrations')
     const api = {
       ...companyApi([senderIdentity()], []),
       getQuickBooksConnection: vi.fn(async () => ({ configured: false, connection: null })),
@@ -385,7 +515,7 @@ describe('company settings', () => {
     // and reputation figures stayed rendered above the notice saying they were
     // administrators-only.
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('email')
     const api = companyApi([senderIdentity()], [ssoDomain()])
     const controller = createModuleSettingsController(api as never)
 
@@ -393,6 +523,10 @@ describe('company settings', () => {
     const senders = document.querySelector<HTMLElement>('[data-settings-sender-identities]')!
     await vi.waitFor(() => expect(senders.hidden).toBe(false))
     expect(document.body.textContent).toContain('billing@northpeak.test')
+    openSection('sso')
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('ezacto-verification=zLp7c4Qk'),
+    )
 
     // The same tab, a different person.
     await controller.activate(secondIdentity, new AbortController().signal, () => false)
@@ -415,7 +549,7 @@ describe('company settings', () => {
 
   it('[unit] saves the notes policy the page loaded', async () => {
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('time')
     const api = companyApi()
     await mountShell(api)
 
@@ -443,7 +577,7 @@ describe('company settings', () => {
     // The API answers 422 for this. Spending a round trip to be told so leaves
     // the form looking broken rather than wrong.
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('time')
     const api = companyApi()
     await mountShell(api)
 
@@ -466,7 +600,7 @@ describe('company settings', () => {
     // Both email endpoints are administrator-only. An executive manager who
     // opens the page gets told so, rather than two 403s dressed as a failure.
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('email')
     const api = {
       ...companyApi(),
       whoami: vi.fn(async () => ({
@@ -484,7 +618,8 @@ describe('company settings', () => {
     )
     expect(api.listSenderIdentities).not.toHaveBeenCalled()
     expect(api.getEmailHealth).not.toHaveBeenCalled()
-    // The notes policy is theirs to set, so that half of the page still loads.
+    // The notes policy is theirs to set, so that section still loads.
+    openSection('time')
     await vi.waitFor(() =>
       expect(document.querySelector<HTMLElement>('[data-note-settings-form]')!.hidden).toBe(false),
     )
@@ -515,7 +650,7 @@ describe('company settings', () => {
     // so before this screen an instance had no in-product path from off to on:
     // recovery meant hand-writing a D1 row with a valid challenge token.
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('sso')
     const api = companyApi(
       [senderIdentity()],
       [
@@ -549,7 +684,7 @@ describe('company settings', () => {
 
   it('[unit] adds a domain and says it provisions nobody until the record is published', async () => {
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('sso')
     const api = companyApi()
     await mountShell(api)
 
@@ -569,7 +704,7 @@ describe('company settings', () => {
 
   it('[unit] reports a check that ran and found nothing as not verified yet', async () => {
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('sso')
     const api = {
       ...companyApi([senderIdentity()], [ssoDomain()]),
       verifySsoDomain: vi.fn(async () => ({
@@ -592,7 +727,7 @@ describe('company settings', () => {
     // the record may be published and perfect. A page that reads the two the
     // same way sends an operator to pull a record that was never the problem.
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('sso')
     const api = {
       ...companyApi([senderIdentity()], [ssoDomain()]),
       verifySsoDomain: vi.fn(async () => {
@@ -624,7 +759,7 @@ describe('company settings', () => {
 
   it('[unit] verifies a domain and says so', async () => {
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('sso')
     const api = companyApi([senderIdentity()], [ssoDomain()])
     await mountShell(api)
     await vi.waitFor(() => expect(ssoTable().hidden).toBe(false))
@@ -638,7 +773,7 @@ describe('company settings', () => {
 
   it('[unit] removes a domain from the list it provisions from', async () => {
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('sso')
     const api = companyApi([senderIdentity()], [ssoDomain()])
     await mountShell(api)
     await vi.waitFor(() => expect(ssoTable().hidden).toBe(false))
@@ -655,7 +790,7 @@ describe('company settings', () => {
 
   it('[security] does not ask for provisioning domains as an executive manager', async () => {
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('sso')
     const api = {
       ...companyApi([senderIdentity()], [ssoDomain()]),
       whoami: vi.fn(async () => ({
@@ -689,7 +824,7 @@ describe('company settings', () => {
   // painting into the page it came back to.
   it('[security] does not paint an add that answers after the next person signs in', async () => {
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('sso')
     const added = deferred<SsoDomain>()
     const api = {
       ...companyApi([senderIdentity()], []),
@@ -730,7 +865,7 @@ describe('company settings', () => {
 
   it('[security] does not paint a verify that answers after the next person signs in', async () => {
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('sso')
     const checked = deferred<SsoDomain>()
     const api = {
       ...companyApi([senderIdentity()], [ssoDomain()]),
@@ -764,7 +899,7 @@ describe('company settings', () => {
     // that stops the check from reporting on a session that has ended is the
     // aborted signal the shell hands every controller on the way out.
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('sso')
     const checked = deferred<SsoDomain>()
     const api = {
       ...companyApi([senderIdentity()], [ssoDomain()]),
@@ -788,7 +923,7 @@ describe('company settings', () => {
 
   it('[security] does not paint a remove that answers after the next person signs in', async () => {
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('sso')
     const removed = deferred<undefined>()
     const api = {
       ...companyApi([senderIdentity()], [ssoDomain()]),
@@ -817,7 +952,7 @@ describe('company settings', () => {
     // The notes form is the only writable setting on the page, and its handler
     // was written with the same shape as the three SSO ones.
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('time')
     const saved = deferred<{ required: boolean; minimum_length: number }>()
     const api = {
       ...companyApi(),
@@ -849,7 +984,7 @@ describe('company settings', () => {
     // currency a second time -- a guarantee this controller was borrowing
     // rather than holding, and the borrowed one is what six earlier sites had.
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('sso')
     const checked = deferred<SsoDomain>()
     const api = {
       ...companyApi([senderIdentity()], [ssoDomain()]),
@@ -879,7 +1014,7 @@ describe('company settings', () => {
     // disabled it, so the reset has to happen where the next session's page is
     // built. Without it, guarding the finally strands the button.
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('sso')
     const added = deferred<SsoDomain>()
     const api = {
       ...companyApi([senderIdentity()], []),
@@ -911,7 +1046,7 @@ describe('company settings', () => {
     // so whether the nightly export worked was a question only a terminal could
     // answer.
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('backup')
     const api = companyApi()
     await mountShell(api)
 
@@ -937,7 +1072,7 @@ describe('company settings', () => {
     // the answer to the only question this section is asked, so it is the
     // first thing on it.
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('backup')
     backupStatusPayload = {
       last_completed: backupRun(),
       last_failed: backupRun({
@@ -960,7 +1095,7 @@ describe('company settings', () => {
     // An empty history reads as "nothing wrong" and is the state in which
     // nothing can be restored.
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('backup')
     backupStatusPayload = {
       last_completed: null,
       last_failed: null,
@@ -978,7 +1113,7 @@ describe('company settings', () => {
     // The container composes no reader: its backups are the operator's own
     // filesystem, and an empty section would read as a broken one.
     stubModulesEndpoint()
-    renderBrowserShell({ view: 'settings-company' })
+    openCompanySettings('backup')
     const api = companyApi()
     delete (api as { getBackupStatus?: unknown }).getBackupStatus
     await mountShell(api)

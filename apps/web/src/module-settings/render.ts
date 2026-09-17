@@ -73,7 +73,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p class="form-result" data-reminder-settings-result role="status" aria-live="polite"></p>
     </section>
     <section class="settings-section" data-settings-section="payouts" data-settings-wise data-settings-unavailable aria-labelledby="settings-wise-title" hidden>
-      <header><h2 id="settings-wise-title">Payouts</h2>
+      <header><div class="settings-section-heading"><h2 id="settings-wise-title">Payouts</h2><button type="button" class="settings-refresh" data-settings-refresh="payouts">Refresh</button></div>
       <p>Which Wise profile money leaves from, how many people it can currently pay, and whether Wise can tell this instance what became of a transfer. The token itself stays in the deployment; what is shown here is the state it produces.</p></header>
       <p class="form-result" data-settings-wise-status role="status" aria-live="polite">Loading payout connection…</p>
       <dl class="settings-facts" data-settings-wise-facts hidden></dl>
@@ -107,7 +107,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p class="form-result" data-settings-theme-result role="status" aria-live="polite"></p>
     </section>
     <section class="settings-section" data-settings-section="integrations" aria-labelledby="settings-integrations-title">
-      <header><h2 id="settings-integrations-title">Accounting</h2>
+      <header><div class="settings-section-heading"><h2 id="settings-integrations-title">Accounting</h2><button type="button" class="settings-refresh" data-settings-refresh="integrations">Refresh</button></div>
       <p>Invoices raised here are copied into QuickBooks Online, and payments recorded there come back. Your client tree becomes customers and sub-customers, so a subsidiary is filed under its parent rather than beside it. Connecting is a grant over your whole book, so only an administrator can do it.</p></header>
       <p class="form-result" data-settings-quickbooks-status role="status" aria-live="polite">Loading accounting integrations…</p>
       <dl class="settings-facts" data-settings-quickbooks-facts hidden></dl>

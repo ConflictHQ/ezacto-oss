@@ -362,6 +362,26 @@ export const apiErrorMessage = (error: unknown, fallback: string): string => {
 }
 
 /**
+ * What a section's status says when its read failed (#809). The transport
+ * line -- "ezacto API request failed with status 500" -- names neither the
+ * section nor what to do about it, so the section's own sentence comes first,
+ * then the two things an operator can do, then the request id the API handed
+ * back, which is how the failure is found in the Worker log and in Sentry
+ * (#807). An error that is not the API's -- the fetch itself failing -- has no
+ * id to give and keeps its own words.
+ */
+export const loadFailureMessage = (error: unknown, fallback: string): string => {
+  if (error instanceof EzactoApiError) {
+    const where =
+      error.requestId === null
+        ? 'the Worker log'
+        : `the Worker log for request id ${error.requestId}`
+    return `${fallback} Retry, or check ${where}.`
+  }
+  return error instanceof Error ? error.message : fallback
+}
+
+/**
  * The palette an administrator edits (#591), in the order it is presented.
  *
  * Every slot the shell declares is here, and that is deliberate rather than
