@@ -84,6 +84,7 @@ import {
   createQueuedStaffMagicLinkMailer,
   type AttachmentRouteOptions,
   type UserPrincipal,
+  invoicePaymentUrlForMail,
 } from '@ezacto/api'
 import {
   configuredEmailSender,
@@ -533,10 +534,7 @@ export const createContainerRuntime = async (
           const context = await moneyResources.getInvoiceDeliveryContext(invoiceId)
           return context === null ? null : thankYouInvoiceFromDeliveryContext(context)
         },
-        paymentUrl: async (invoiceId: number) => {
-          const result = await stripe.paymentLink(invoiceId)
-          return result.kind === 'linked' ? result.url : null
-        },
+        paymentUrl: invoicePaymentUrlForMail({ bill, stripe }),
       },
       now: () => new Date().toISOString(),
     })

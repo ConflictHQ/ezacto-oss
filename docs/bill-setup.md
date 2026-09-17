@@ -63,7 +63,7 @@ Two optional values:
 
 | variable | effect |
 | --- | --- |
-| `BILL_REPLY_TO_USER_ID` | a BILL user id beginning `006`. Set it and BILL sends its own invoice email with that user as the reply-to; leave it and ezacto sends its invoice email as always, with the invoice also in BILL for the client's own BILL account to pay. |
+| `BILL_REPLY_TO_USER_ID` | a BILL user id beginning `006`. Set it and BILL sends its own invoice email with that user as the reply-to; leave it and ezacto sends its invoice email as always, with a BILL payment link in it (`%invoice_payment_url%` in the template) and the invoice also in BILL for the client's own BILL account to pay. |
 | `BILL_ENVIRONMENT` | `sandbox` reaches BILL's test organisation. **Anything else is the real book**, including leaving it unset. |
 
 Set all four or none. A deployment with three has a configuration that cannot
@@ -84,7 +84,7 @@ and environment, and **Settings → Integrations** shows the same.
 |  | BILL sends | ezacto sends |
 | --- | --- | --- |
 | needs | an operator login **and** `BILL_REPLY_TO_USER_ID` | any working credential |
-| the client receives | BILL's invoice email | ezacto's invoice email, as always; the invoice is in BILL for the client's own BILL account to pay |
+| the client receives | BILL's invoice email | ezacto's invoice email, as always, carrying the BILL payment link; the invoice is in BILL for the client's own BILL account to pay too |
 | pays at | BILL | BILL |
 | payment tracked | yes | yes |
 

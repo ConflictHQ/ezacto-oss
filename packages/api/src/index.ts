@@ -392,3 +392,8 @@ export * from './thank-you-preference.js'
 export * from './reminder-settings.js'
 
 export * from './recurring-repair.js'
+export {
+  invoicePaymentUrlForMail,
+  invoicePaymentUrlForSend,
+  type InvoicePaymentUrlProviders,
+} from './payment-url.js'
