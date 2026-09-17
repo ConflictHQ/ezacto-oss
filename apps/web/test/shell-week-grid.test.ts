@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   browserApi,
   desktopInputs,
@@ -9,14 +9,75 @@ import {
   renderBrowserShell,
   timeEntry,
   timestamp,
+  type ShellApi,
+  type TimeEntryInput,
 } from './support/shell-harness.js'
 
+/**
+ * The Start button on the week row of a named project. Rows sort by label, so
+ * an index would move the moment a fixture gains a project.
+ */
+const rowStart = (projectLabel: string): HTMLButtonElement | null => {
+  const row = [
+    ...document.querySelectorAll<HTMLTableRowElement>('[data-week-grid-rows] tr'),
+  ].find((candidate) => candidate.querySelector('th strong')?.textContent === projectLabel)
+  return row?.querySelector<HTMLButtonElement>('.grid-row-start') ?? null
+}
+
+/**
+ * Records what the row's Start actually asked the server for, and answers the
+ * way the server does: a restart keeps the entry it was given, and a created
+ * timer is filed on the operator's current date whatever week is on screen.
+ */
+const recordingTimerApi = (
+  api: ReturnType<typeof browserApi>,
+  today: string,
+): {
+  readonly api: ShellApi
+  readonly restarted: number[]
+  readonly created: TimeEntryInput[]
+} => {
+  const restarted: number[] = []
+  const created: TimeEntryInput[] = []
+  return {
+    restarted,
+    created,
+    api: {
+      ...api,
+      restartTimeEntry: async (id: number) => {
+        restarted.push(id)
+        const current = api.entries.find((entry) => entry.id === id)!
+        const running = { ...current, is_running: true, timer_started_at: timestamp }
+        api.entries.splice(api.entries.indexOf(current), 1, running)
+        return running
+      },
+      createTimeEntry: async (input: TimeEntryInput) => {
+        created.push(input)
+        const started = timeEntry(
+          Math.max(...api.entries.map((entry) => entry.id)) + 1,
+          { ...input, spent_date: today },
+        )
+        api.entries.push(started)
+        return started
+      },
+    },
+  }
+}
+
 describe('week-grid browser behavior', () => {
-  it('[browser] offers Start on a week-grid row, from its most recent entry', async () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('[browser] offers Start on a week-grid row, from its most recent entry off this week', async () => {
     // The day list has carried this since the timesheet work. On a desktop the
     // grid is the screen you are actually on, and it offered nothing: the only
     // way to start a timer was to retype the project and task into the top bar
     // as exact strings.
+    //
+    // The clock is pinned outside the week on screen, which is the case this
+    // covers since #797: there is no today column to start on, so the row falls
+    // back to the entry a restart has always taken.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-16T12:00:00'))
     renderBrowserShell()
     window.history.replaceState(null, '', '/?week=2026-08-28')
     const restarted: number[] = []
@@ -46,6 +107,115 @@ describe('week-grid browser behavior', () => {
 
     start.click()
     await vi.waitFor(() => expect(restarted).toEqual([1]))
+  })
+
+  it('[browser #797] starts a row on today, not on its last day with a value', async () => {
+    // Reported setup: a Wednesday, one project holding Monday's entry and
+    // another holding Tuesday's, and Start on the first row put the running
+    // timer in the Monday cell. The row walked its cells backwards for the last
+    // one holding an entry and restarted that, and a restart keeps the entry's
+    // own spent_date -- so the timer accrued to a day nobody was working on.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    // Local rather than UTC: the column the grid paints as today is the
+    // browser's own date, so a Z-suffixed noon would be a different Wednesday
+    // east of UTC+12 and this would assert the wrong cell there.
+    vi.setSystemTime(new Date('2026-08-26T12:00:00'))
+    renderBrowserShell()
+    const api = browserApi()
+    api.entries.splice(
+      0,
+      api.entries.length,
+      timeEntry(1, {
+        project_id: 1,
+        task_id: 1,
+        spent_date: '2026-08-24',
+        seconds: 3_600,
+        notes: 'Monday on Northpeak',
+      }),
+      timeEntry(2, { project_id: 2, task_id: 2, spent_date: '2026-08-25', seconds: 3_600 }),
+    )
+    const { api: withTimer, restarted, created } = recordingTimerApi(api, '2026-08-26')
+
+    await mountShell(withTimer)
+
+    const start = await vi.waitFor(() => {
+      const control = rowStart('Northpeak')
+      expect(control).not.toBeNull()
+      return control!
+    })
+    // Today holds nothing on this row, so there is no entry for the button to
+    // aim at -- and in particular not Monday's.
+    expect(start.dataset.startEntry).toBeUndefined()
+
+    start.click()
+    await vi.waitFor(() => expect(created).toHaveLength(1))
+    expect(restarted).toEqual([])
+    // No spent_date and no seconds is the timer request the entry editor
+    // already makes: the date a running timer is filed under belongs to the
+    // server, which refuses to be told one that disagrees with the operator's
+    // own day. The note rides along from the entry a restart would have taken,
+    // because a note-required project cannot start a timer without one.
+    expect(created[0]).toEqual({
+      project_id: 1,
+      task_id: 1,
+      notes: 'Monday on Northpeak',
+    })
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector(
+          '[data-week-grid-rows] [data-cell-key="1:1:2026-08-26"][data-running="true"]',
+        ),
+      ).not.toBeNull(),
+    )
+    expect(
+      document.querySelector(
+        '[data-week-grid-rows] [data-cell-key="1:1:2026-08-24"][data-running="true"]',
+      ),
+    ).toBeNull()
+  })
+
+  it("[browser #797] continues today's own entry rather than a later day's", async () => {
+    // A row can carry time ahead of today -- Friday's travel logged on
+    // Wednesday -- and walking backwards would restart that one. Today's entry
+    // is continued rather than joined by a second: two entries in one cell is
+    // the conflict state the grid then refuses to edit.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-08-26T12:00:00'))
+    renderBrowserShell()
+    const api = browserApi()
+    api.entries.splice(
+      0,
+      api.entries.length,
+      timeEntry(1, { project_id: 1, task_id: 1, spent_date: '2026-08-24', seconds: 3_600 }),
+      timeEntry(3, { project_id: 1, task_id: 1, spent_date: '2026-08-26', seconds: 1_800 }),
+      timeEntry(4, { project_id: 1, task_id: 1, spent_date: '2026-08-28', seconds: 900 }),
+    )
+    const { api: withTimer, restarted, created } = recordingTimerApi(api, '2026-08-26')
+
+    await mountShell(withTimer)
+
+    const start = await vi.waitFor(() => {
+      const control = rowStart('Northpeak')
+      expect(control).not.toBeNull()
+      return control!
+    })
+    expect(start.dataset.startEntry).toBe('3')
+
+    start.click()
+    await vi.waitFor(() => expect(restarted).toEqual([3]))
+    expect(created).toEqual([])
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector(
+          '[data-week-grid-rows] [data-cell-key="1:1:2026-08-26"][data-running="true"]',
+        ),
+      ).not.toBeNull(),
+    )
+    expect(
+      document.querySelector(
+        '[data-week-grid-rows] [data-cell-key="1:1:2026-08-28"][data-running="true"]',
+      ),
+    ).toBeNull()
   })
 
   it('[browser] moves the week with brackets, and never while a cell is being typed in', async () => {
