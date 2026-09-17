@@ -1264,5 +1264,31 @@ describe('the payout connection on company settings (issues 421, 543)', () => {
   
       expect(section().hidden).toBe(true)
     })
+
+    it('[browser] a deployment without a Wise token is a state, not a failure to retry', async () => {
+      // The generated client always has the method, so the only thing that
+      // says whether Payouts applies is the route answering 404 (no token on
+      // the Worker). ezacto.io showed "could not be loaded ... Retry" with a
+      // request id for exactly that after #809 made the section lazy.
+      stubModulesEndpoint()
+      openOnPayouts()
+      await mountShell({
+          ...companyApi(),
+          getWiseConnection: vi.fn(async () => {
+            throw new EzactoApiError(
+              404,
+              { error: { code: 'not_found', message: 'The requested resource does not exist.', fields: [] } },
+              'req-404',
+            )
+          }),
+      })
+
+      const status = document.querySelector<HTMLElement>('[data-settings-wise-status]')!
+      await vi.waitFor(() => expect(status.textContent).toContain('not connected on this deployment'))
+      expect(status.textContent).not.toContain('Retry')
+      expect(document.querySelector('[data-settings-retry="payouts"]')).toBeNull()
+      expect(section().hasAttribute('data-settings-unavailable')).toBe(true)
+      expect(document.querySelector<HTMLElement>('[data-settings-section-link="payouts"]')!.hidden).toBe(true)
+    })
   })
 })

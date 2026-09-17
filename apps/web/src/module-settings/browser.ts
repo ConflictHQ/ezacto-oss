@@ -1297,6 +1297,18 @@ export const createModuleSettingsController = (
     } catch (error) {
       active.presentFailure(error, () => {
         wiseFacts.hidden = true
+        wiseAlarm.hidden = true
+        // A 404 is a deployment without the Wise routes (no token configured),
+        // not a failure to retry: the generated client always has the method,
+        // so this answer is the only thing that says whether the section
+        // applies. Withdraw it from the strip again rather than offer Retry
+        // against a route that does not exist.
+        if (error instanceof EzactoApiError && error.status === 404) {
+          wiseStatus.textContent =
+            'Wise is not connected on this deployment. Payouts cannot be sent.'
+          withdrawWiseSection()
+          return
+        }
         sectionFailed(
           'payouts',
           wiseStatus,
@@ -1306,6 +1318,16 @@ export const createModuleSettingsController = (
         )
       })
     }
+  }
+
+  const withdrawWiseSection = (): void => {
+    wiseSection.setAttribute('data-settings-unavailable', '')
+    for (const link of document.querySelectorAll<HTMLElement>(
+      '[data-settings-section-link="payouts"]',
+    )) {
+      link.hidden = true
+    }
+    globalThis.dispatchEvent(new Event('hashchange'))
   }
 
   const loadBackups = async (identity: Whoami, active: ActiveSession): Promise<void> => {
