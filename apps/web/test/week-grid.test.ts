@@ -8,9 +8,11 @@ import {
 import { describe, expect, it, vi } from 'vitest'
 import {
   buildWeekGrid,
+  filingDate,
   formatCellHours,
   formatDuration,
   loadShellSnapshot,
+  localDate,
   parseCellSeconds,
   saveWeekCellWithRetry,
   seedsFromEntries,
@@ -240,6 +242,22 @@ describe('timesheet week grid', () => {
     const grid = buildWeekGrid(state, '2026-08-28')
     expect(grid.rows[0]?.cells[0]?.minimumNoteLength).toBe(8)
     expect(grid.rows[0]?.cells[1]?.minimumNoteLength).toBe(8)
+  })
+
+  it('[unit #797] takes the filing date from the first zone Intl accepts, then the browser', () => {
+    // 10:30Z on Wednesday the 26th is already Thursday the 27th in Kiritimati
+    // (UTC+14) and still Tuesday the 25th in Pago Pago (UTC-11).
+    const now = new Date('2026-08-26T10:30:00Z')
+    expect(filingDate(['Pacific/Kiritimati'], now)).toBe('2026-08-27')
+    expect(filingDate(['Pacific/Pago_Pago', 'Pacific/Kiritimati'], now)).toBe('2026-08-25')
+    // A zone Intl refuses is skipped for the next, as the server skips it for
+    // the organization's: imported people carry Harvest display names.
+    expect(filingDate(['Central America', 'Pacific/Kiritimati'], now)).toBe('2026-08-27')
+    // 'UTC' is a zone here; the caller decides whether the profile's is unset.
+    expect(filingDate(['UTC'], now)).toBe('2026-08-26')
+    // With nothing usable the browser's own day is the best guess left.
+    expect(filingDate([], now)).toBe(localDate(now))
+    expect(filingDate(['Central America'], now)).toBe(localDate(now))
   })
 
   it('[unit] parses and formats decimal or clock-form hours without ambiguous values', () => {

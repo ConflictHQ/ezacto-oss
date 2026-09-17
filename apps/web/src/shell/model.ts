@@ -793,6 +793,35 @@ export const localDate = (now = new Date()): string => {
   return `${year}-${month}-${day}`
 }
 
+/**
+ * The date a running timer will be filed on, as far as the browser can tell.
+ *
+ * The server files a timer on the operator's own timezone, then the
+ * organization's (issue 651) -- never the browser's clock, which a laptop away
+ * from home disagrees with every evening. `zones` are those candidates in
+ * that order; the first one `Intl` accepts wins, because the server skips a
+ * zone it cannot use in exactly the same way (imported people carry Harvest
+ * display names such as "Central America"). With none usable the browser's
+ * own day is the best guess left. `en-CA` formats as YYYY-MM-DD, the shape
+ * the grid keys its cells by.
+ */
+export const filingDate = (zones: readonly string[], now = new Date()): string => {
+  for (const timeZone of zones) {
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(now)
+    } catch {
+      // Not a zone this engine knows; the next candidate is what the server
+      // would use too.
+    }
+  }
+  return localDate(now)
+}
+
 export const weekRange = (
   within: string,
   weekStartDay: 'saturday' | 'sunday' | 'monday' = 'monday',

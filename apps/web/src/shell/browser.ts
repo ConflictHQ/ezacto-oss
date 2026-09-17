@@ -88,6 +88,7 @@ import {
   createSameOriginShellApi,
   hydratePendingTimesheetDetails,
   loadShellSnapshot,
+  filingDate,
   localDate,
   navigationDestination,
   quickAddPreview,
@@ -649,7 +650,14 @@ const renderCellControl = (
   return wrapper
 }
 
-const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers): void => {
+/**
+ * `today` is the day the server files a timer on -- the operator's zone, then
+ * the organization's -- not the browser's clock. The column marked today and
+ * the cell a row's Start aims at are the same date, so they take it from the
+ * same place: marked from one clock and started from another, the highlighted
+ * column would stay empty while the timer landed a day over.
+ */
+const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string): void => {
   const head = required<HTMLTableSectionElement>('[data-week-grid-head]')
   const heading = document.createElement('tr')
   const projectHeading = document.createElement('th')
@@ -659,7 +667,6 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers): void => {
   // Which column is today is the first thing you look for in a week grid, and
   // nothing said. The cells carry it too, so the marker runs the column's
   // height rather than sitting only in its header.
-  const today = localDate()
   for (const date of grid.dates) {
     const th = document.createElement('th')
     th.scope = 'col'
@@ -716,20 +723,22 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers): void => {
           .reverse()
           .find((cell) => cell.entries.length > 0 && !cell.isLocked)
         const todayCell = row.cells.find((cell) => cell.date === today)
-        // Off today's week there is no today column to start on, and the
-        // snapshot only ever holds the week on screen -- nothing here can tell
-        // whether today already carries this row, and starting a blind second
-        // entry on a day you cannot see is worse than the restart this has
-        // always done. Locked today is no start at all: nothing can be logged
-        // to it.
-        const startCell =
-          latest === undefined || row.isRunning || todayCell?.isLocked === true
-            ? undefined
-            : (todayCell ?? latest)
+        // Off today's week there is no today column, and the snapshot only
+        // holds the week on screen, so nothing here can tell whether today
+        // already carries this row. The row still starts a new timer rather
+        // than restarting its latest entry: a restart keeps that entry's
+        // spent_date, so from last week's grid it ran the timer on last week's
+        // date -- the reported wrong day, one navigation away -- and in
+        // start/end mode moved that entry's logged time to today outright.
+        // The worst a new timer can do is join an entry it could not see,
+        // which the day view then sorts out. Locked today is no start at all:
+        // nothing can be logged to it.
+        const offered =
+          latest !== undefined && !row.isRunning && todayCell?.isLocked !== true
         // The row's Start needs both halves to work, so a build without the
         // restart endpoint still shows none.
-        if (handlers.restart !== undefined && startCell !== undefined) {
-          const restartId = startCell.entries[0]?.id
+        if (handlers.restart !== undefined && offered) {
+          const restartId = todayCell?.entries[0]?.id
           // The rate and note of the work last done, which is what a restart
           // carried and what a note-required project needs to start at all.
           const inheritedNotes = latest?.entries[0]?.notes ?? null
@@ -814,9 +823,9 @@ const renderDayTotals = (
   grid: WeekGrid,
   selectedDay: number,
   selectDay: (index: number) => void,
+  today: string,
 ): void => {
   const strip = required<HTMLElement>('[data-day-totals]')
-  const today = localDate()
   strip.replaceChildren(
     ...grid.dates.map((date, index) => {
       const item = document.createElement('li')
@@ -1451,6 +1460,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   let selectedSubmissionIds: ReadonlySet<number> = new Set()
   let bulkApprovalCommandId: string | null = null
   let lockPolicy: TimesheetLockPolicy | null = null
+  // The signed-in person's own timezone, or null for the 'UTC' the profile
+  // column holds for anyone who never set one -- which is "unset", not a zone.
+  let profileZone: string | null = null
   let activeTimesheetLocks: readonly TimesheetLockWindow[] = []
   let timesheetTransitionPending = false
   let lockPolicyTransitionPending = false
@@ -1676,6 +1688,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     pendingNextCursor = null
     approvedNextCursor = null
     lockPolicy = null
+    profileZone = null
     activeTimesheetLocks = []
     timesheetTransitionPending = false
     lockPolicyTransitionPending = false
@@ -2813,8 +2826,18 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     // The same data the grid draws, laid out on whichever axis the
     // organization's tracking mode makes true.
     calendar.render(grid.dates, snapshot.entries, snapshot.timeEntrySettings.time_entry_mode)
-    renderDayTotals(grid, selectedDay, selectDay)
-    renderDesktopGrid(grid, handlers)
+    // The server's today, as near as the shell can get: the person's own zone,
+    // then the organization's where the session can read it (the lock policy
+    // is an administrator's), then the browser's clock. The browser's clock
+    // alone marked a column the server would not file on whenever the two
+    // disagreed on the date, and a timer started on that column's word landed
+    // beside the entry the previous day already held.
+    const today = filingDate([
+      ...(profileZone === null ? [] : [profileZone]),
+      ...(lockPolicy === null ? [] : [lockPolicy.timezone]),
+    ])
+    renderDayTotals(grid, selectedDay, selectDay, today)
+    renderDesktopGrid(grid, handlers, today)
     renderPhoneDay(grid, selectedDay, handlers)
     renderTimer(snapshot.running)
     updateRowOptions()
@@ -2917,6 +2940,25 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   }
 
+  // The zone a timer is filed on is the person's own before the organization's
+  // (issue 651), and only `GET /profile` says what it is. Read with the week so
+  // the grid's today is the server's, not the browser's.
+  const loadProfileZone = async (operation: AuthOperation): Promise<string | null> => {
+    if (api.getProfile === undefined) return null
+    try {
+      const profile = await api.getProfile(operation.signal)
+      return profile.timezone === 'UTC' ? null : profile.timezone
+    } catch (error) {
+      if (
+        error instanceof EzactoApiError &&
+        (error.status === 403 || error.status === 404)
+      ) {
+        return null
+      }
+      throw error
+    }
+  }
+
   const restartEntry = async (entryId: number): Promise<void> => {
     const operation = sessionOperation()
     const restart = api.restartTimeEntry
@@ -2974,9 +3016,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       operation.signal,
     )
     const loadedWeekStartDay = loaded.timeEntrySettings.week_start_day
-    const [approval, policy] = await Promise.all([
+    const [approval, policy, zone] = await Promise.all([
       loadApprovalData(operation, requestedWithin, loadedWeekStartDay),
       loadLockPolicyData(operation),
+      loadProfileZone(operation),
     ])
     if (!isSessionCurrent(operation) || within !== requestedWithin) return false
     weekStartDay = loadedWeekStartDay
@@ -3003,6 +3046,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     approvedNextCursor = approval.approvedCursor
     lockPolicyAvailable = policy.available
     lockPolicy = policy.policy
+    profileZone = zone
     activeTimesheetLocks = policy.locks
     render()
     focusCell(focus)
