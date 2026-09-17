@@ -12,8 +12,9 @@ When an invoice is sent to a client who is billed through BILL:
 3. It is delivered — by BILL's own invoice email, or by ezacto's email carrying
    a BILL payment link. Which one depends on the credential; see below.
 
-Separately, a reconciliation reads BILL's receivables and records what settled
-our invoices.
+Separately, once an hour, a reconciliation reads BILL's receivables and
+records what settled our invoices: the payment lands on the invoice here as a
+receipt from BILL, which marks it paid and sends the thank-you like any other.
 
 Clients who are not opted in are untouched: their invoice goes out exactly as it
 does now.
@@ -104,10 +105,6 @@ this near a real client.
   puts those behind an MFA challenge to a registered phone that no unattended
   process can answer, so the wall is the boundary of the client rather than
   something to fail at.
-- **Mark the invoice paid in ezacto.** A payment BILL reports is recorded as an
-  observation — which invoice, how much, when — and does not yet write the
-  invoice's own receipt. That write is guarded by the invoice command ledger,
-  which both this and the QuickBooks mirror have to go through; see issue 595.
 - **Re-send.** An invoice already in BILL is adopted rather than sent again. An
   invoice a client already has is not improved by arriving twice.
 - **Edit.** A sent invoice is not updated in BILL afterwards.

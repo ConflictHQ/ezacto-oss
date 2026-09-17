@@ -46,6 +46,10 @@ export {
   type BillRuntimeOptions,
 } from './bill/runtime.js'
 export {
+  createScheduledReconciliation as createScheduledBillReconciliation,
+  type ScheduledReconciliationOptions as ScheduledBillReconciliationOptions,
+} from './bill/reconcile-schedule.js'
+export {
   BILL_PRODUCTION_BASE_URL,
   BILL_SANDBOX_BASE_URL,
   BILL_SESSION_IDLE_SECONDS,
