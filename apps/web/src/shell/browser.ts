@@ -148,6 +148,9 @@ interface GridHandlers {
   openEntry(cell: WeekGridCell, view: GridView): void
   // Absent when the build has no restart endpoint; the row then shows no Start.
   restart?(entryId: number): Promise<void>
+  // The other half of a row's Start: today holds nothing on this row yet, so
+  // there is no entry to restart and a new timer is what it means.
+  startToday(seed: WeekRowSeed, notes: string | null): Promise<void>
 }
 
 interface ActiveEntryEditor {
@@ -652,18 +655,40 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers): void => {
         label.append(project, task)
         // The day list has had this since the timesheet work; the week grid
         // never did, so on a desktop the only way to start a timer was to
-        // retype the project and task into the top bar as exact strings. Start
-        // from the most recent entry on the row, which is the one whose notes
-        // and rate the new timer should inherit.
-        const restartable = [...row.cells]
+        // retype the project and task into the top bar as exact strings.
+        //
+        // A timer measures now, so the row starts on *today's* cell. It used to
+        // restart the row's last day holding a value, and a restart keeps that
+        // entry's own spent_date: on a Wednesday, a row whose only entry was
+        // Monday's put the running timer in the Monday cell (issue 797).
+        // Today's own entry is continued where there is one, rather than joined
+        // by a second -- two entries in a cell is the conflict state the grid
+        // then refuses to edit.
+        const latest = [...row.cells]
           .reverse()
           .find((cell) => cell.entries.length > 0 && !cell.isLocked)
-        const restartId = restartable?.entries[0]?.id
-        if (handlers.restart !== undefined && restartId !== undefined && !row.isRunning) {
+        const todayCell = row.cells.find((cell) => cell.date === today)
+        // Off today's week there is no today column to start on, and the
+        // snapshot only ever holds the week on screen -- nothing here can tell
+        // whether today already carries this row, and starting a blind second
+        // entry on a day you cannot see is worse than the restart this has
+        // always done. Locked today is no start at all: nothing can be logged
+        // to it.
+        const startCell =
+          latest === undefined || row.isRunning || todayCell?.isLocked === true
+            ? undefined
+            : (todayCell ?? latest)
+        // The row's Start needs both halves to work, so a build without the
+        // restart endpoint still shows none.
+        if (handlers.restart !== undefined && startCell !== undefined) {
+          const restartId = startCell.entries[0]?.id
+          // The rate and note of the work last done, which is what a restart
+          // carried and what a note-required project needs to start at all.
+          const inheritedNotes = latest?.entries[0]?.notes ?? null
           const start = document.createElement('button')
           start.type = 'button'
           start.className = 'grid-row-start'
-          start.dataset.startEntry = String(restartId)
+          if (restartId !== undefined) start.dataset.startEntry = String(restartId)
           start.textContent = 'Start'
           // setAttribute rather than the ariaLabel property: the property is an
           // ARIA reflection jsdom does not mirror to the content attribute, so
@@ -674,7 +699,14 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers): void => {
           )
           start.addEventListener('click', () => {
             start.disabled = true
-            void handlers.restart?.(restartId).finally(() => {
+            const started =
+              restartId === undefined
+                ? handlers.startToday(
+                    { projectId: row.projectId, taskId: row.taskId },
+                    inheritedNotes,
+                  )
+                : handlers.restart?.(restartId)
+            void started?.finally(() => {
               start.disabled = false
             })
           })
@@ -2721,6 +2753,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       commit: commitCell,
       retry: retryCell,
       openEntry,
+      startToday: startRowToday,
       ...(api.restartTimeEntry === undefined ? {} : { restart: restartEntry }),
     }
     // The same data the grid draws, laid out on whichever axis the
@@ -2836,6 +2869,36 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     if (operation === null || restart === undefined) return
     try {
       await restart(entryId, operation.signal)
+      if (!isSessionCurrent(operation)) return
+      await refresh(operation)
+    } catch (error: unknown) {
+      if (handleSessionFailure(error, operation)) return
+      status.textContent = messageFor(error)
+    }
+  }
+
+  /**
+   * A row's Start where today carries no entry to continue. Neither
+   * `spent_date` nor `seconds` is sent: that is the timer request the entry
+   * editor already makes, and the date a running timer is filed under belongs
+   * to the server, which derives it from the operator's timezone (then the
+   * organization's) and refuses to be told one that disagrees.
+   */
+  const startRowToday = async (
+    seed: WeekRowSeed,
+    notes: string | null,
+  ): Promise<void> => {
+    const operation = sessionOperation()
+    if (operation === null) return
+    try {
+      await api.createTimeEntry(
+        {
+          project_id: seed.projectId,
+          task_id: seed.taskId,
+          ...(notes === null ? {} : { notes }),
+        },
+        operation.signal,
+      )
       if (!isSessionCurrent(operation)) return
       await refresh(operation)
     } catch (error: unknown) {
