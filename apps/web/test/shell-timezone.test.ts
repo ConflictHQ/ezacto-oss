@@ -98,6 +98,28 @@ describe('personal timezone', () => {
     )
   })
 
+  it('[browser][regression] offers UTC while a different zone is on file', async () => {
+    // 'UTC' is the profile column's "unset", and the only way back to filing on
+    // the organization timezone once a zone is on file (an empty submit is
+    // refused). V8's `Intl.supportedValuesOf` leaves 'UTC' out, and a select
+    // offers nothing but its own options, so the list has to carry it whether
+    // or not the engine does -- not only while UTC is already the held value.
+    renderBrowserShell()
+    const { api, updateProfile } = shellWithProfile('America/Costa_Rica')
+    await mountShell(api)
+    openMenu()
+
+    const control = profileTimezone()
+    await vi.waitFor(() => expect(control.value).toBe('America/Costa_Rica'))
+    control.value = 'UTC'
+    expect(control.value).toBe('UTC')
+    submitProfileTimezone()
+
+    await vi.waitFor(() =>
+      expect(updateProfile).toHaveBeenCalledWith('UTC', expect.any(AbortSignal)),
+    )
+  })
+
   it('[browser] keeps a stored zone the browser does not enumerate', async () => {
     // `US/Pacific` is a valid IANA link that `Intl.supportedValuesOf` omits, as
     // is the 'UTC' the organization setting defaults to. A select drops a value
