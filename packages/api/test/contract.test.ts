@@ -281,7 +281,9 @@ const documentedApp = () =>
       } as never);
       installReminderSettingsRoutes(api, {
         readOrganizationReminderPolicy: async () => null,
-        setOrganizationReminderPolicy: async () => undefined,
+        setOrganizationReminderPolicy: async () => 0,
+        readInvoiceReminders: async () => null,
+        setInvoiceReminders: async () => false,
       });
       installInvoiceTimeClaimRoutes(api, {
         releaseInvoicedTime: async () => ({ kind: "released", released: 0 }),

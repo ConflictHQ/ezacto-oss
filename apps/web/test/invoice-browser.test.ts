@@ -15,7 +15,12 @@ import {
 } from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import { createInvoicePaymentController } from '../src/invoices/browser.js'
-import { invoiceQuickBooksLine, type InvoicePaymentApi } from '../src/invoices/model.js'
+import {
+  invoiceQuickBooksLine,
+  invoiceRemindersLine,
+  type InvoicePaymentApi,
+  type InvoiceReminderPreference,
+} from '../src/invoices/model.js'
 import { renderAppShell } from '../src/shell/render.js'
 import { contrastRatio, defaultTheme, themeManifest, webAssets } from '../src/index.js'
 
@@ -1644,5 +1649,80 @@ describe('the QuickBooks line and Sync button (issue 819)', () => {
       expect(line()).toBe('Synced to QuickBooks invoice 147 on Sep 17, 2026 \u00b7 1 payment synced'),
     )
     expect(getInvoiceQuickBooks).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('the Reminders fact and its switch (issue 850)', () => {
+  const day = (value: string) => value
+  const following: InvoiceReminderPreference = {
+    invoice_id: 7,
+    reminders: null,
+    organization_reminder_policy: { first_after_days: 3, every_days: 7 },
+    effective: true,
+    next_reminder_at: '2026-09-18T00:00:00.000Z',
+  }
+  const off: InvoiceReminderPreference = { ...following, reminders: false, effective: false, next_reminder_at: null }
+  const fact = () => document.querySelector<HTMLElement>('[data-invoice-reminders-fact]')!
+  const line = () => document.querySelector('[data-invoice-detail-reminders]')!.textContent
+  const toggle = () => document.querySelector<HTMLInputElement>('[data-invoice-reminders-toggle]')!
+
+  it('[unit] says off, the next date, or that there is no policy', () => {
+    expect(invoiceRemindersLine(following, day)).toBe('Next reminder 2026-09-18')
+    expect(invoiceRemindersLine(off, day)).toBe('Off for this invoice')
+    expect(
+      invoiceRemindersLine({ ...following, organization_reminder_policy: null, next_reminder_at: null }, day),
+    ).toBe('No reminder policy set for the organization')
+    expect(invoiceRemindersLine({ ...following, next_reminder_at: null }, day)).toBe('None booked')
+  })
+
+  it('[browser] shows no fact where the build has no route, or the invoice is not open', async () => {
+    renderDetail()
+    const controller = createInvoicePaymentController({
+      getInvoice: vi.fn(async () => invoice('DRAFT', { state: 'draft', sent_at: null })),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+      getInvoiceReminderPreference: vi.fn(async () => following),
+      setInvoiceReminderPreference: vi.fn(),
+    })
+    await controller.activate(identity(1), new AbortController().signal, () => false)
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-document]')!.hasAttribute('hidden')).toBe(false),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(fact().hidden).toBe(true)
+  })
+
+  it('[e2e:invoice-reminders] the switch turns reminders off for this invoice and hands them back', async () => {
+    // The client said they will pay. Off is a statement about this invoice;
+    // on is null, so a default set later governs it again.
+    renderDetail()
+    let state = following
+    const setInvoiceReminderPreference = vi.fn(async (_id: number, reminders: boolean | null) => {
+      state = reminders === false ? off : following
+      return state
+    })
+    const controller = createInvoicePaymentController({
+      getInvoice: vi.fn(async () => invoice('REM')),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+      getInvoiceReminderPreference: vi.fn(async () => state),
+      setInvoiceReminderPreference,
+    })
+    await controller.activate(identity(1), new AbortController().signal, () => false)
+    await vi.waitFor(() => expect(line()).toBe('Next reminder Sep 18, 2026'))
+    expect(fact().hidden).toBe(false)
+    expect(toggle().checked).toBe(true)
+
+    toggle().checked = false
+    toggle().dispatchEvent(new Event('change'))
+    await vi.waitFor(() => expect(line()).toBe('Off for this invoice'))
+    expect(setInvoiceReminderPreference).toHaveBeenLastCalledWith(expect.any(Number), false, expect.any(AbortSignal))
+    expect(toggle().checked).toBe(false)
+    expect(toggle().disabled).toBe(false)
+
+    toggle().checked = true
+    toggle().dispatchEvent(new Event('change'))
+    await vi.waitFor(() => expect(line()).toBe('Next reminder Sep 18, 2026'))
+    expect(setInvoiceReminderPreference).toHaveBeenLastCalledWith(expect.any(Number), null, expect.any(AbortSignal))
   })
 })

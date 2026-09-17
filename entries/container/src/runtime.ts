@@ -62,8 +62,7 @@ import {
   recordCheckoutPayment,
   createThankYouPort,
   createReminderPort,
-  readOrganizationReminderPolicy,
-  setOrganizationReminderPolicy,
+  createReminderSettings,
   readThankYouPreference,
   readOrganizationThankYouPolicy,
   setInvoiceThankYouPolicy,
@@ -737,11 +736,7 @@ export const createContainerRuntime = async (
           setOrganizationThankYouPolicy(drizzle, enabled),
       },
       reminders: { processDue: processDueReminders },
-      reminderSettings: {
-        readOrganizationReminderPolicy: () => readOrganizationReminderPolicy(drizzle),
-        setOrganizationReminderPolicy: (policy) =>
-          setOrganizationReminderPolicy(drizzle, policy, new Date().toISOString()),
-      },
+      reminderSettings: createReminderSettings(drizzle, reminders, () => new Date().toISOString()),
       // The same seam the Worker composes: both entries must answer this route
       // or `entry-surface.ts` fails the one that does and the one that does not.
       invoiceTimeClaims: {

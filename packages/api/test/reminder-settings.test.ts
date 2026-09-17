@@ -18,7 +18,21 @@ const app = (
       overrides.readOrganizationReminderPolicy ??
       vi.fn(async () => ({ first_after_days: 3, every_days: 7 })),
     setOrganizationReminderPolicy:
-      overrides.setOrganizationReminderPolicy ?? vi.fn(async () => undefined),
+      overrides.setOrganizationReminderPolicy ?? vi.fn(async () => 2),
+    readInvoiceReminders:
+      overrides.readInvoiceReminders ??
+      vi.fn(async (invoiceId: number) =>
+        invoiceId === 41
+          ? {
+              invoice: null,
+              organizationPolicy: { first_after_days: 3, every_days: 7 },
+              effective: true,
+              nextReminderAt: '2026-09-18T00:00:00.000Z',
+            }
+          : null,
+      ),
+    setInvoiceReminders:
+      overrides.setInvoiceReminders ?? vi.fn(async (invoiceId: number) => invoiceId === 41),
   }
   const instance = new Hono<{ Bindings: object; Variables: Record<string, unknown> }>()
   instance.use('*', async (context, next) => {
@@ -96,5 +110,52 @@ describe('who may change it', () => {
       const { app: instance } = app({}, profile)
       expect((await post(instance, { reminder_policy: null })).status).toBe(200)
     }
+  })
+})
+
+describe('one invoice (issue 850)', () => {
+  it('[unit] reads the answer with the next booked reminder', async () => {
+    const { app: instance } = app()
+    expect(await (await instance.request('/invoices/41/reminder-preference')).json()).toEqual({
+      data: {
+        invoice_id: 41,
+        reminders: null,
+        organization_reminder_policy: { first_after_days: 3, every_days: 7 },
+        effective: true,
+        next_reminder_at: '2026-09-18T00:00:00.000Z',
+      },
+    })
+    expect((await instance.request('/invoices/42/reminder-preference')).status).toBe(404)
+  })
+
+  it('[unit] switches them off, and hands them back with null', async () => {
+    const { app: instance, service } = app()
+    for (const reminders of [false, null, true]) {
+      const response = await instance.request('/invoices/41/reminder-preference', {
+        method: 'POST',
+        body: JSON.stringify({ reminders }),
+        headers: { 'content-type': 'application/json' },
+      })
+      expect(response.status).toBe(200)
+      expect(service.setInvoiceReminders).toHaveBeenCalledWith(41, reminders)
+    }
+  })
+
+  it('[api] refuses a value that is not an answer', async () => {
+    const { app: instance } = app()
+    for (const body of [{}, { reminders: 'no' }, { reminders: 0 }]) {
+      const response = await instance.request('/invoices/41/reminder-preference', {
+        method: 'POST',
+        body: JSON.stringify(body),
+        headers: { 'content-type': 'application/json' },
+      })
+      expect(response.status).toBe(422)
+    }
+  })
+
+  it('[unit] setting the organisation policy says how many open invoices it reached', async () => {
+    const { app: instance } = app()
+    const response = await post(instance, { reminder_policy: { first_after_days: 3, every_days: 7 } })
+    expect(await response.json()).toMatchObject({ data: { applied_to_open_invoices: 2 } })
   })
 })

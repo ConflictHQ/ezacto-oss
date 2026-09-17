@@ -104,9 +104,12 @@ const scheduleReminder = async (
   // where it does not (issue 801). Read at send time rather than copied onto
   // the invoice, so a default switched on today governs an invoice raised
   // yesterday and sent tomorrow.
-  const invoice = await database.first<InvoiceReminderContext & { sendReminderOn: string | null }>(
+  const invoice = await database.first<
+    InvoiceReminderContext & { sendReminderOn: string | null; extras: string | null }
+  >(
     `SELECT invoice.due_date AS "dueDate",
             COALESCE(invoice.reminder_policy, organization.reminder_policy) AS "reminderPolicy",
+            invoice.invoice_extras AS "extras",
             (SELECT message.send_reminder_on FROM invoice_messages message
               WHERE message.invoice_id = invoice.id AND message.event_type = 'send'
               ORDER BY message.id DESC LIMIT 1) AS "sendReminderOn"
@@ -118,6 +121,10 @@ const scheduleReminder = async (
     [event.aggregateId],
   )
   if (invoice === null) return
+  // The invoice's own "no reminders" (issue 850) beats a policy and a named
+  // date alike: an operator who switched them off for this invoice, because
+  // the client said they will pay, meant it.
+  if (remindersMuted(invoice.extras)) return
   const namedDate =
     invoice.sendReminderOn !== null && /^\d{4}-\d{2}-\d{2}$/.test(invoice.sendReminderOn)
       ? invoice.sendReminderOn
@@ -169,6 +176,83 @@ const cancelReminders = async (
   )
 }
 
+/** `invoice_extras.reminders === false`: this invoice asked for no reminders. */
+export const remindersMuted = (extras: string | null): boolean => {
+  if (extras === null) return false
+  try {
+    const parsed: unknown = JSON.parse(extras)
+    return (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      (parsed as Record<string, unknown>).reminders === false
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Books a reminder for every open invoice that has a policy to book from and
+ * nothing pending (issue 850). Two callers: the organisation policy being
+ * set, which must reach the invoices already out rather than only the ones
+ * sent from now on; and an invoice whose reminders are switched back on.
+ * Muted invoices and invoices already carrying a pending reminder are left
+ * as they are, so a second pass books nothing twice.
+ *
+ * The date is the policy's own -- due date plus the first offset -- even
+ * where that is already past: an invoice a policy finds late is one the
+ * policy would have reminded on by now, and the next daily pass sends it.
+ */
+const applyReminderPolicy = async (
+  database: ReminderDatabase,
+  options: { readonly now: string; readonly invoiceId?: number; readonly causation: string },
+): Promise<number> => {
+  assertCanonicalTimestamp(options.now, 'reminder apply clock')
+  const rows = await database.all<
+    InvoiceReminderContext & { id: number; extras: string | null }
+  >(
+    `SELECT invoice.id, invoice.due_date AS "dueDate",
+            COALESCE(invoice.reminder_policy, organization.reminder_policy) AS "reminderPolicy",
+            invoice.invoice_extras AS "extras"
+     FROM invoices invoice
+     LEFT JOIN organizations organization ON organization.id = (
+       SELECT id FROM organizations ORDER BY id LIMIT 1
+     )
+     WHERE invoice.state = 'open'
+       AND (? IS NULL OR invoice.id = ?)
+       AND NOT EXISTS (
+         SELECT 1 FROM scheduled_reminders pending
+         WHERE pending.invoice_id = invoice.id AND pending.status = 'pending'
+       )
+     ORDER BY invoice.id`,
+    [options.invoiceId ?? null, options.invoiceId ?? null],
+  )
+  let booked = 0
+  for (const invoice of rows) {
+    if (remindersMuted(invoice.extras)) continue
+    const policy = parseReminderPolicy(invoice.reminderPolicy)
+    if (policy === null) continue
+    await database.run(
+      `INSERT INTO scheduled_reminders (
+        invoice_id, scheduled_at, interval_days, status, template,
+        causation_event_id, created_at, updated_at
+      ) VALUES (?, ?, ?, 'pending', 'reminder', ?, ?, ?)`,
+      [
+        invoice.id,
+        addDays(invoice.dueDate, policy.first_after_days),
+        policy.every_days,
+        // Unique per row, as the schema asks of an event id; one apply pass
+        // books many invoices, so the invoice is part of it.
+        `${options.causation}:${String(invoice.id)}`,
+        options.now,
+        options.now,
+      ],
+    )
+    booked += 1
+  }
+  return booked
+}
+
 const createSubscriber = (database: ReminderDatabase): OutboxSubscriber => ({
   id: REMINDER_SUBSCRIBER_ID,
   async deliver(event, context) {
@@ -194,6 +278,10 @@ export interface ReminderScheduler {
     send: (reminder: ScheduledReminderRecord) => Promise<void>
   }): Promise<ReminderProcessSummary>
   listPending(invoiceId?: number): Promise<ScheduledReminderRecord[]>
+  /** Books reminders for open invoices with a policy and nothing pending; how many. */
+  applyPolicy(options: { now: string; invoiceId?: number; causation: string }): Promise<number>
+  /** Cancels whatever is pending for one invoice; how many. */
+  cancelPending(invoiceId: number, now: string): Promise<number>
 }
 
 const createScheduler = (database: ReminderDatabase): ReminderScheduler => {
@@ -201,6 +289,23 @@ const createScheduler = (database: ReminderDatabase): ReminderScheduler => {
 
   return {
     subscriber,
+
+    applyPolicy: (options) => applyReminderPolicy(database, options),
+
+    async cancelPending(invoiceId, now) {
+      assertCanonicalTimestamp(now, 'reminder cancel clock')
+      const pending = await database.all<{ id: number }>(
+        `SELECT id FROM scheduled_reminders WHERE invoice_id = ? AND status = 'pending'`,
+        [invoiceId],
+      )
+      if (pending.length === 0) return 0
+      await database.run(
+        `UPDATE scheduled_reminders SET status = 'cancelled', updated_at = ?
+         WHERE invoice_id = ? AND status = 'pending'`,
+        [now, invoiceId],
+      )
+      return pending.length
+    },
 
     async processReminders(options) {
       assertCanonicalTimestamp(options.now, 'reminder process clock')

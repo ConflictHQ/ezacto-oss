@@ -1183,13 +1183,15 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.updateTimeEntryNoteSettings({ body: patch, ...withSignal(signal) })).data,
   getInvoiceReminders: async (signal) =>
     (await client.getOrganizationInvoiceReminders(withSignal(signal))).data.reminder_policy,
-  updateInvoiceReminders: async (policy, signal) =>
-    (
+  updateInvoiceReminders: async (policy, signal) => {
+    const saved = (
       await client.setOrganizationInvoiceReminders({
         body: { reminder_policy: policy },
         ...withSignal(signal),
       })
-    ).data.reminder_policy,
+    ).data
+    return { policy: saved.reminder_policy, applied: saved.applied_to_open_invoices ?? 0 }
+  },
   getEmailHealth: async (signal) =>
     (await client.getEmailHealth(withSignal(signal))).data,
   getBackupStatus: async (signal) =>
@@ -1896,6 +1898,10 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getInvoiceQuickBooks({ id, ...withSignal(signal) })).data,
   syncInvoiceQuickBooks: async (id, signal) =>
     (await client.syncInvoiceQuickBooks({ id, ...withSignal(signal) })).data,
+  getInvoiceReminderPreference: async (id, signal) =>
+    (await client.getInvoiceReminderPreference({ id, ...withSignal(signal) })).data,
+  setInvoiceReminderPreference: async (id, reminders, signal) =>
+    (await client.setInvoiceReminderPreference({ id, body: { reminders }, ...withSignal(signal) })).data,
   uploadInvoiceAttachment: async (id, commandId, body, signal) =>
     (
       await client.createInvoiceAttachment({

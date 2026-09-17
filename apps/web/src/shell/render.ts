@@ -725,6 +725,7 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
         <div><dt>Period</dt><dd data-invoice-detail-period>—</dd></div>
         <div><dt>Purchase order</dt><dd data-invoice-detail-purchase-order>—</dd></div>
         <div data-invoice-quickbooks-fact hidden><dt>QuickBooks</dt><dd data-invoice-detail-quickbooks>—</dd></div>
+        <div data-invoice-reminders-fact hidden><dt>Reminders</dt><dd><span data-invoice-detail-reminders>—</span> <label class="invoice-reminders-switch"><input type="checkbox" data-invoice-reminders-toggle> Send payment reminders</label></dd></div>
       </dl>
       ${renderInvoiceLineEditor()}
       <div class="invoice-line-wrap">

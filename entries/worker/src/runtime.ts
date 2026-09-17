@@ -63,8 +63,7 @@ import {
   recordCheckoutPayment,
   createThankYouPort,
   createReminderPort,
-  readOrganizationReminderPolicy,
-  setOrganizationReminderPolicy,
+  createReminderSettings,
   readThankYouPreference,
   readOrganizationThankYouPolicy,
   setInvoiceThankYouPolicy,
@@ -883,11 +882,7 @@ export const createRuntimeServices = async (
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     recurringInvoices: createRecurringInvoiceEngine(drizzle),
     reminders: { processDue: processDueReminders },
-    reminderSettings: {
-      readOrganizationReminderPolicy: () => readOrganizationReminderPolicy(drizzle),
-      setOrganizationReminderPolicy: (policy) =>
-        setOrganizationReminderPolicy(drizzle, policy, new Date().toISOString()),
-    },
+    reminderSettings: createReminderSettings(drizzle, reminders, () => new Date().toISOString()),
     // #712. Adapted rather than passed through: the port declares the shape the
     // route needs, and the reader takes the database as its first argument.
     bandClaimBackfill: {
