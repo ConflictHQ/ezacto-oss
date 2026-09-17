@@ -196,6 +196,13 @@ const wipeStatements = (objects: DemoSchemaObjects): readonly DemoSeedStatement[
   // needs a row to read, and reset because yesterday's demo took every number
   // below it and none of those invoices exist any more.
   { text: 'UPDATE invoice_number_sequence SET next_number = 1', bindings: [] },
+  // Preserved, but not carried over either: a template version records who
+  // saved it, and that person was a row in `users`, which this wipe has just
+  // emptied. Deferred, the foreign key bites at commit and D1 rolls the whole
+  // rebuild back -- which is what the demo did every night from 2026-09-12,
+  // silently, once an operator had saved an invoice template on it. The
+  // template outlives its author; the authorship does not.
+  { text: 'UPDATE email_template_versions SET created_by_user_id = NULL', bindings: [] },
   ...objects.triggers.map((trigger) => ({ text: trigger.sql, bindings: [] })),
 ]
 
