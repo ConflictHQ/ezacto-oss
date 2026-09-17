@@ -1124,6 +1124,11 @@ describe('invoice payment controller', () => {
     expect(settle.hidden).toBe(false)
     expect(settle.disabled).toBe(false)
     expect(settle.textContent).toBe('Mark paid \u00b7 $625.00')
+    // In the header with Print, Edit and Send, not below the line items with
+    // the payment list: an operator who reads the header and finds no way to
+    // mark a sent invoice paid concludes there is none (issue 812).
+    expect(settle.closest('.invoice-document-actions')).not.toBeNull()
+    expect(settle.closest('.invoice-payment-history')).toBeNull()
 
     settle.click()
     await vi.waitFor(() => expect(recordInvoicePayment).toHaveBeenCalledTimes(1))
