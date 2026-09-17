@@ -2202,6 +2202,9 @@ export const createInvoicePaymentController = (
   // from the payments -- an invoice is paid when nothing is left due -- so there
   // is no flag to set, only a payment to record. The command id is held until
   // the write lands, so a click repeated over a timeout settles the balance once.
+  // The button lives in the document header, so its feedback goes to the page
+  // status line directly above the document, not to the Payments section below
+  // the line items, where a conflict or a failed write would land off-screen.
   settle.addEventListener('click', () => {
     const session = current()
     const selectedInvoice = invoice
@@ -2220,7 +2223,7 @@ export const createInvoicePaymentController = (
     settleCommandId ??= commandId('record')
     const activeCommand = settleCommandId
     mutationPending = true
-    workflowStatus.textContent = 'Recording payment…'
+    status.textContent = 'Recording payment…'
     syncControls()
     void recordPayment(
       selectedInvoice.id,
@@ -2239,18 +2242,18 @@ export const createInvoicePaymentController = (
         invoice = updatedInvoice
         refreshRequired = true
         settleCommandId = null
-        workflowStatus.textContent = 'Invoice marked paid. Refreshing invoice…'
+        status.textContent = 'Invoice marked paid. Refreshing invoice…'
         syncControls()
-        const loaded = await loadDetail(session, {
-          hideDocument: false,
-          successMessage: 'Invoice marked paid.',
-        })
-        if (!loaded && current() === session && refreshRequired) {
-          workflowStatus.textContent =
+        const loaded = await loadDetail(session, { hideDocument: false })
+        if (current() !== session) return
+        if (loaded) {
+          status.textContent = 'Invoice marked paid.'
+        } else if (refreshRequired) {
+          status.textContent =
             'Invoice marked paid, but the updated invoice could not be refreshed. Retry invoice; the payment will not be submitted again.'
         }
       })
-      .catch((error: unknown) => handleMutationFailure(error, session, workflowStatus))
+      .catch((error: unknown) => handleMutationFailure(error, session, status))
       .finally(() => {
         if (current() !== session) return
         mutationPending = false

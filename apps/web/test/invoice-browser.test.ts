@@ -1138,16 +1138,20 @@ describe('invoice payment controller', () => {
     expect(document.querySelector<HTMLDialogElement>('[data-invoice-payment-dialog]')?.open).toBe(
       false,
     )
-    expect(document.querySelector('[data-invoice-payment-status]')?.textContent).toContain(
+    // The failure reads next to the button that caused it: the page status line
+    // above the document, not the Payments section below the line items.
+    expect(document.querySelector('[data-invoice-detail-status]')?.textContent).toContain(
       'the ledger is unavailable',
     )
+    expect(document.querySelector('[data-invoice-payment-status]')?.textContent).toBe('')
 
     settle.click()
     await vi.waitFor(() =>
-      expect(document.querySelector('[data-invoice-payment-status]')?.textContent).toBe(
+      expect(document.querySelector('[data-invoice-detail-status]')?.textContent).toBe(
         'Invoice marked paid.',
       ),
     )
+    expect(document.querySelector('[data-invoice-payment-status]')?.textContent).toBe('')
     expect(recordInvoicePayment).toHaveBeenCalledTimes(2)
     const [first, second] = recordInvoicePayment.mock.calls
     // Held, not rotated: the retry is the same intent, so the server sees one
@@ -1168,6 +1172,75 @@ describe('invoice payment controller', () => {
     expect(settle.title).toBe('This invoice has no remaining amount due.')
     expect(document.querySelector<HTMLButtonElement>('[data-invoice-payment-record]')!.title).toBe(
       settle.title,
+    )
+  })
+
+  it('[e2e:invoice-cycle] reports a Mark paid conflict beside the header button, not below the fold', async () => {
+    renderDetail()
+    // Version 3 with $625 due; another operator records $300 (version 4) before
+    // this click lands, so the settle is refused with a conflict.
+    let currentInvoice = invoice('SETTLE', {
+      amount_cents: 100_000,
+      due_amount_cents: 62_500,
+      version: 3,
+    })
+    let settleAttempt: { reject: (error: unknown) => void } | null = null
+    const recordInvoicePayment = vi.fn(
+      () =>
+        new Promise<Invoice>((_resolve, reject) => {
+          settleAttempt = { reject }
+        }),
+    )
+    const controller = createInvoicePaymentController({
+      getInvoice: vi.fn(async () => currentInvoice),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+      recordInvoicePayment,
+    })
+    await controller.activate(identity(1), new AbortController().signal, () => false)
+
+    const settle = document.querySelector<HTMLButtonElement>('[data-invoice-payment-settle]')!
+    const pageStatus = document.querySelector<HTMLElement>('[data-invoice-detail-status]')!
+    const paymentStatus = document.querySelector<HTMLElement>('[data-invoice-payment-status]')!
+    expect(settle.textContent).toBe('Mark paid \u00b7 $625.00')
+
+    settle.click()
+    await vi.waitFor(() => expect(recordInvoicePayment).toHaveBeenCalledTimes(1))
+    expect(settle.disabled).toBe(true)
+    // Progress, too, sits by the button, and the Payments line stays empty.
+    expect(pageStatus.textContent).toBe('Recording payment\u2026')
+    expect(paymentStatus.textContent).toBe('')
+
+    currentInvoice = { ...currentInvoice, due_amount_cents: 32_500, version: 4 }
+    settleAttempt!.reject(
+      new EzactoApiError(
+        409,
+        { error: { code: 'invoice_version_conflict', message: 'server conflict', fields: [] } },
+        null,
+      ),
+    )
+    await vi.waitFor(() =>
+      expect(pageStatus.textContent).toBe(
+        'The invoice, line, or payment changed elsewhere. Latest values are loaded; review and try again.',
+      ),
+    )
+    // The reload relabelled the button with the new balance; the sentence that
+    // explains why is in the same viewport as the button, not in the Payments
+    // section under the line items, totals and notes.
+    expect(settle.disabled).toBe(false)
+    expect(settle.textContent).toBe('Mark paid \u00b7 $325.00')
+    expect(paymentStatus.textContent).toBe('')
+    expect(document.querySelector<HTMLDialogElement>('[data-invoice-payment-dialog]')?.open).toBe(
+      false,
+    )
+  })
+
+  it('[e2e:invoice-cycle] keeps every header action a 44px touch target on a phone', () => {
+    // The e2e suite measures Mark paid with expectPhoneControl at 390px, which
+    // demands 44px. Under the Payments heading it had that; the header row was
+    // 40px, and nothing at the 720px breakpoint raised it.
+    expect(webAssets.stylesheet).toMatch(
+      /\.invoice-document-actions button \{\s*min-height: 44px;/u,
     )
   })
 
