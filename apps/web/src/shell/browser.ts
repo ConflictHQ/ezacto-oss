@@ -443,19 +443,22 @@ const timezoneNames = (): readonly string[] => {
   const zones = supported === undefined ? [] : supported('timeZone')
   // Every engine this bundle targets enumerates zones. One that does not gets a
   // control it can still use rather than an empty list.
-  return zones.length > 0
-    ? zones
-    : [Intl.DateTimeFormat().resolvedOptions().timeZone, 'UTC']
+  if (zones.length === 0) return [Intl.DateTimeFormat().resolvedOptions().timeZone, 'UTC']
+  // V8 leaves `UTC` (and `Etc/UTC`) out of the list; Firefox and Safari do not.
+  // It is the organization default and the profile column's "unset", and it
+  // has to stay a choice once another zone is on file: a select offers only
+  // what it holds, so without this an organization could never move back to
+  // UTC and a person could never return to filing on the organization zone.
+  return zones.includes('UTC') ? zones : [...zones, 'UTC']
 }
 
 /**
  * A select can only hold a value it offers, and a stored zone need not be one
- * the engine enumerates: `UTC` -- the organization default, and the profile
- * column's "unset" -- is absent from `Intl.supportedValuesOf` on current V8,
- * and IANA links such as `US/Pacific` always are. Assigned blind, the control
- * drops it and reads as nothing chosen, so an account with a zone on file is
- * shown as having none. The entry editor's `withHeldValue` holds the same line
- * for project and task.
+ * the engine enumerates: IANA links such as `US/Pacific` never are, and what a
+ * given browser leaves out of `Intl.supportedValuesOf` varies. Assigned blind,
+ * the control drops it and reads as nothing chosen, so an account with a zone
+ * on file is shown as having none. The entry editor's `withHeldValue` holds
+ * the same line for project and task.
  */
 const showTimezone = (control: HTMLSelectElement, zone: string): void => {
   const offered = [...control.options].some((option) => option.value === zone)

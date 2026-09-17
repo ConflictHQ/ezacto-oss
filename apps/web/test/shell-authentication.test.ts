@@ -455,7 +455,10 @@ describe('native browser authentication', () => {
     let policy = {
       auto_lock: true,
       timesheet_deadline: { day: 'monday' as const, time: '17:00' },
-      timezone: 'America/New_York',
+      // An IANA link the engine does not enumerate: the control has to hold the
+      // zone on file whether or not it is in the browser's list, and a zone
+      // from that list would not notice a control assigned blind.
+      timezone: 'US/Eastern',
       week_start_day: 'monday' as const,
       updated_at: timestamp,
     }
@@ -569,7 +572,12 @@ describe('native browser authentication', () => {
     // zone is showing before anything is picked, and a value the control does
     // not offer is one it refuses rather than one it silently swaps.
     const orgTimezone = document.querySelector<HTMLSelectElement>('[data-org-timezone]')!
-    expect(orgTimezone.value).toBe('America/New_York')
+    expect(orgTimezone.value).toBe('US/Eastern')
+    // UTC is the organization default, and V8 leaves it out of the zone list:
+    // it has to stay a choice while a different zone is on file, or an
+    // organization could never move back to it.
+    orgTimezone.value = 'UTC'
+    expect(orgTimezone.value).toBe('UTC')
     orgTimezone.value = 'America/Costa_Rica'
     expect(orgTimezone.value).toBe('America/Costa_Rica')
     document
