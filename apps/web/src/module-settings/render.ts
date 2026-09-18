@@ -196,15 +196,6 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p class="hint">Tokens act as you, with only the scopes you tick, and they are how the CLI and anything else outside this app signs in. Issuing one has been a terminal job until now.</p>
       <p class="form-result" data-settings-tokens-status role="status" aria-live="polite">Loading your API tokens…</p>
       <div class="settings-table" data-settings-tokens-table hidden></div>
-      <div class="settings-token-issued" data-settings-token-issued hidden tabindex="-1">
-        <h3>Copy this now</h3>
-        <p class="hint">This is the only time the token is shown. It is stored hashed, so nobody — including this instance — can read it back.</p>
-        <p class="settings-token-reveal">
-          <code data-settings-token-value aria-live="off"></code>
-          <button type="button" class="settings-token-eye" data-settings-token-toggle aria-pressed="false" aria-label="Show token">${iconMarkup('eye')}${iconMarkup('eye-off')}</button>
-          <button type="button" class="primary-action" data-settings-token-copy>Copy</button>
-        </p>
-      </div>
       <form class="team-person-form" data-settings-token-form>
         <label for="ez-settings-token-name">Name<input id="ez-settings-token-name" name="name" autocomplete="off" maxlength="100" placeholder="Laptop CLI" required aria-describedby="settings-token-name-hint"></label>
         <p class="hint" id="settings-token-name-hint">What it is for, so a token you find later can be revoked without guessing.</p>
@@ -214,6 +205,19 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <p class="form-result" data-settings-token-result role="status" aria-live="polite"></p>
         <button class="primary-action" type="submit" data-settings-token-submit>Issue token</button>
       </form>
+      <dialog class="settings-token-dialog" data-settings-token-issued aria-labelledby="settings-token-issued-title">
+        <form method="dialog">
+          <header><div><p class="eyebrow">API token</p><h2 id="settings-token-issued-title">Copy this now</h2></div><button value="close" aria-label="Close">×</button></header>
+          <p class="hint">This is the only time the token is shown. It is stored hashed, so nobody — including this instance — can read it back.</p>
+          <p class="settings-token-reveal">
+            <code data-settings-token-value aria-live="off"></code>
+            <button type="button" class="settings-token-eye" data-settings-token-toggle aria-pressed="false" aria-label="Show token">${iconMarkup('eye')}${iconMarkup('eye-off')}</button>
+            <button type="button" class="primary-action" data-settings-token-copy>Copy</button>
+          </p>
+          <p class="form-result" data-settings-token-copied role="status" aria-live="polite"></p>
+          <div class="client-confirm-actions"><button type="submit" value="close">Done</button></div>
+        </form>
+      </dialog>
     </section>
     <section class="settings-density" aria-labelledby="settings-density-heading">
       <h2 id="settings-density-heading">Row density</h2>

@@ -2025,18 +2025,20 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const form = required<HTMLFormElement>('[data-settings-token-form]')
     const result = required<HTMLElement>('[data-settings-token-result]')
     const submit = required<HTMLButtonElement>('[data-settings-token-submit]')
-    const issued = required<HTMLElement>('[data-settings-token-issued]')
+    const issued = required<HTMLDialogElement>('[data-settings-token-issued]')
     const issuedValue = required<HTMLElement>('[data-settings-token-value]')
     const toggle = required<HTMLButtonElement>('[data-settings-token-toggle]')
     const copy = required<HTMLButtonElement>('[data-settings-token-copy]')
+    const copied = required<HTMLElement>('[data-settings-token-copied]')
     section.hidden = false
 
-    // The value is shown once and then never again, so the screen it lands on
-    // has to be where the person is looking. It used to be printed below the
-    // form: the table above repainted, the form reset, and the one thing
-    // worth reading was off screen (issue 855). It now sits above the form,
-    // masked behind an eye so a shared screen does not print it, with a copy
-    // button that takes the real value either way.
+    // The value is shown once and then never again, so it has to land where
+    // the person is looking. It used to be printed under the form: the table
+    // above repainted a moment later, everything below it moved down, and the
+    // one thing worth reading left the screen (issue 855). A modal does not
+    // move when the page behind it does. The value is masked behind an eye so
+    // a shared screen does not print it, and Copy takes the real value either
+    // way. Closing the dialog drops the value: there is no second look.
     let issuedToken = ''
     const showIssued = (revealed: boolean): void => {
       issuedValue.textContent = revealed ? issuedToken : '•'.repeat(24)
@@ -2050,14 +2052,19 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       void navigator.clipboard
         .writeText(issuedToken)
         .then(() => {
-          result.textContent = 'Copied.'
+          copied.textContent = 'Copied.'
         })
         .catch(() => {
           // Clipboard needs a secure context and permission; failing that,
           // reveal it so it can still be selected by hand.
           showIssued(true)
-          result.textContent = 'Could not copy. Select the token and copy it yourself.'
+          copied.textContent = 'Could not copy. Select the token and copy it yourself.'
         })
+    })
+    issued.addEventListener('close', () => {
+      issuedToken = ''
+      issuedValue.textContent = ''
+      copied.textContent = ''
     })
 
     const paint = (tokens: readonly ApiToken[]): void => {
@@ -2167,14 +2174,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
           // exists anywhere a person can read it.
           issuedToken = token.token
           showIssued(false)
-          issued.hidden = false
-          result.textContent = ''
+          result.textContent = `Issued ${token.name}.`
           form.reset()
-          issued.scrollIntoView({ block: 'nearest' })
-          issued.focus({ preventScroll: true })
+          open(issued)
           await reload()
         } catch (error) {
-          issued.hidden = true
           result.textContent =
             error instanceof EzactoApiError && error.status === 403
               ? `Your ${profileLabel(identity.profile)} profile cannot grant one or more of those scopes.`

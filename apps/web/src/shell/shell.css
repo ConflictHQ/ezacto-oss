@@ -439,15 +439,9 @@
 .team-check--unavailable {
   color: var(--ez-muted);
 }
-.settings-token-issued {
-  max-width: 760px;
-  margin-bottom: 20px;
-  padding: 16px;
-  border: 1px solid var(--ez-live);
-  border-radius: var(--ez-radius);
-}
-.settings-token-issued h3 {
-  margin-top: 0;
+.settings-token-dialog .hint,
+.settings-token-dialog .form-result {
+  margin: 0;
 }
 .settings-token-reveal {
   display: flex;

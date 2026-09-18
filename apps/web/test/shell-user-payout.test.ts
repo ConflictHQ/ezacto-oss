@@ -242,19 +242,22 @@ describe('your API tokens in your own settings', () => {
     form().dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
 
     await vi.waitFor(() => expect(createApiToken).toHaveBeenCalledTimes(1))
-    const issued = document.querySelector<HTMLElement>('[data-settings-token-issued]')!
-    await vi.waitFor(() => expect(issued.hidden).toBe(false))
+    // A modal, not a block under the form: the table above repaints a moment
+    // after issue and pushed the block off screen (issue 855).
+    const issued = document.querySelector<HTMLDialogElement>('[data-settings-token-issued]')!
+    await vi.waitFor(() => expect(issued.open).toBe(true))
     expect(issued.textContent).toContain('only time')
-    // Masked until asked for: the screen may be shared. The eye reveals it,
-    // and the block is where the person is looking rather than under the form.
+    // Masked until asked for: the screen may be shared. The eye reveals it.
     expect(issued.textContent).not.toContain('ez_live_secret_value')
-    expect(document.activeElement).toBe(issued)
-    expect(issued.compareDocumentPosition(form()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     const eye = issued.querySelector<HTMLButtonElement>('[data-settings-token-toggle]')!
     expect(eye.getAttribute('aria-label')).toBe('Show token')
     eye.click()
     expect(issued.textContent).toContain('ez_live_secret_value')
     expect(eye.getAttribute('aria-label')).toBe('Hide token')
+    eye.click()
+    expect(issued.textContent).not.toContain('ez_live_secret_value')
+    // Closing is the end of it: the value is not kept for a second look.
+    issued.close()
     eye.click()
     expect(issued.textContent).not.toContain('ez_live_secret_value')
   })
@@ -270,12 +273,12 @@ describe('your API tokens in your own settings', () => {
     form().querySelector<HTMLInputElement>('input[value="time_entries:read"]')!.checked = true
     form().dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
 
-    const issued = document.querySelector<HTMLElement>('[data-settings-token-issued]')!
-    await vi.waitFor(() => expect(issued.hidden).toBe(false))
+    const issued = document.querySelector<HTMLDialogElement>('[data-settings-token-issued]')!
+    await vi.waitFor(() => expect(issued.open).toBe(true))
     issued.querySelector<HTMLButtonElement>('[data-settings-token-copy]')!.click()
     await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('ez_live_secret_value'))
     await vi.waitFor(() =>
-      expect(document.querySelector<HTMLElement>('[data-settings-token-result]')!.textContent).toBe(
+      expect(document.querySelector<HTMLElement>('[data-settings-token-copied]')!.textContent).toBe(
         'Copied.',
       ),
     )
@@ -318,7 +321,7 @@ describe('your API tokens in your own settings', () => {
         document.querySelector<HTMLElement>('[data-settings-token-result]')!.textContent,
       ).toContain('cannot grant'),
     )
-    expect(document.querySelector<HTMLElement>('[data-settings-token-issued]')!.hidden).toBe(true)
+    expect(document.querySelector<HTMLDialogElement>('[data-settings-token-issued]')!.open).toBe(false)
   })
 
   it('sends a picked expiry date as the end of that day, which is what the route accepts', async () => {
