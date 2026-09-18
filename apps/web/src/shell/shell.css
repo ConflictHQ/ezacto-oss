@@ -439,6 +439,54 @@
 .team-check--unavailable {
   color: var(--ez-muted);
 }
+.settings-token-issued {
+  max-width: 760px;
+  margin-bottom: 20px;
+  padding: 16px;
+  border: 1px solid var(--ez-live);
+  border-radius: var(--ez-radius);
+}
+.settings-token-issued h3 {
+  margin-top: 0;
+}
+.settings-token-reveal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.settings-token-reveal code {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--ez-border);
+  border-radius: calc(var(--ez-radius) / 2);
+  background: var(--ez-ground);
+  font: 13px/1.6 var(--ez-font-mono), monospace;
+  overflow-wrap: anywhere;
+}
+.settings-token-eye {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  min-width: 36px;
+  padding: 0;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: none;
+  color: inherit;
+}
+/* One button, two drawings: the eye when the value is masked, the crossed eye
+   when it is shown, so the control says what pressing it will do. */
+.settings-token-eye [data-icon='eye-off'],
+.settings-token-eye[aria-pressed='true'] [data-icon='eye'] {
+  display: none;
+}
+.settings-token-eye[aria-pressed='true'] [data-icon='eye-off'] {
+  display: block;
+}
 .team-status-actions {
   max-width: 760px;
   margin-top: 28px;

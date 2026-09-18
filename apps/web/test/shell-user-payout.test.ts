@@ -244,8 +244,41 @@ describe('your API tokens in your own settings', () => {
     await vi.waitFor(() => expect(createApiToken).toHaveBeenCalledTimes(1))
     const issued = document.querySelector<HTMLElement>('[data-settings-token-issued]')!
     await vi.waitFor(() => expect(issued.hidden).toBe(false))
-    expect(issued.textContent).toContain('ez_live_secret_value')
     expect(issued.textContent).toContain('only time')
+    // Masked until asked for: the screen may be shared. The eye reveals it,
+    // and the block is where the person is looking rather than under the form.
+    expect(issued.textContent).not.toContain('ez_live_secret_value')
+    expect(document.activeElement).toBe(issued)
+    expect(issued.compareDocumentPosition(form()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const eye = issued.querySelector<HTMLButtonElement>('[data-settings-token-toggle]')!
+    expect(eye.getAttribute('aria-label')).toBe('Show token')
+    eye.click()
+    expect(issued.textContent).toContain('ez_live_secret_value')
+    expect(eye.getAttribute('aria-label')).toBe('Hide token')
+    eye.click()
+    expect(issued.textContent).not.toContain('ez_live_secret_value')
+  })
+
+  it('copies the real value whether or not it is shown', async () => {
+    renderBrowserShell({ view: 'settings-user' })
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    await mountShell(tokenApi())
+
+    await vi.waitFor(() => expect(form().hidden).toBe(false))
+    ;(form().elements.namedItem('name') as HTMLInputElement).value = 'Laptop CLI'
+    form().querySelector<HTMLInputElement>('input[value="time_entries:read"]')!.checked = true
+    form().dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    const issued = document.querySelector<HTMLElement>('[data-settings-token-issued]')!
+    await vi.waitFor(() => expect(issued.hidden).toBe(false))
+    issued.querySelector<HTMLButtonElement>('[data-settings-token-copy]')!.click()
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('ez_live_secret_value'))
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>('[data-settings-token-result]')!.textContent).toBe(
+        'Copied.',
+      ),
+    )
   })
 
   it('refuses to ask for a token with no scopes rather than letting the server say no', async () => {
@@ -286,6 +319,59 @@ describe('your API tokens in your own settings', () => {
       ).toContain('cannot grant'),
     )
     expect(document.querySelector<HTMLElement>('[data-settings-token-issued]')!.hidden).toBe(true)
+  })
+
+  it('sends a picked expiry date as the end of that day, which is what the route accepts', async () => {
+    // The date control yields "2026-12-31"; the route wants a canonical UTC
+    // timestamp and answered 422 to every token anyone tried to expire
+    // (issue 855).
+    renderBrowserShell({ view: 'settings-user' })
+    const createApiToken = vi.fn(async () => ({ ...token({ id: 6 }), token: 'ez_live_secret_value' }))
+    await mountShell(tokenApi({ createApiToken }))
+
+    await vi.waitFor(() => expect(form().hidden).toBe(false))
+    ;(form().elements.namedItem('name') as HTMLInputElement).value = 'Laptop CLI'
+    ;(form().elements.namedItem('expires_at') as HTMLInputElement).value = '2026-12-31'
+    form().querySelector<HTMLInputElement>('input[value="time_entries:read"]')!.checked = true
+    form().dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() => expect(createApiToken).toHaveBeenCalledTimes(1))
+    expect(createApiToken).toHaveBeenCalledWith({
+      name: 'Laptop CLI',
+      scopes: ['time_entries:read'],
+      expires_at: '2026-12-31T23:59:59Z',
+    })
+  })
+
+  it('says what the route refused rather than that the token could not be issued', async () => {
+    renderBrowserShell({ view: 'settings-user' })
+    await mountShell(
+      tokenApi({
+        createApiToken: vi.fn(async () => {
+          throw new EzactoApiError(
+            422,
+            {
+              error: {
+                code: 'validation_failed',
+                fields: [{ field: 'expires_at', code: 'invalid', message: 'expires_at must be a real canonical UTC timestamp' }],
+              },
+            },
+            null,
+          )
+        }),
+      }),
+    )
+
+    await vi.waitFor(() => expect(form().hidden).toBe(false))
+    ;(form().elements.namedItem('name') as HTMLInputElement).value = 'Laptop CLI'
+    form().querySelector<HTMLInputElement>('input[value="time_entries:read"]')!.checked = true
+    form().dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector<HTMLElement>('[data-settings-token-result]')!.textContent,
+      ).toBe('expires_at must be a real canonical UTC timestamp'),
+    )
   })
 
   it('[security] offers a member only the scopes their profile can grant, and names a refused one', async () => {

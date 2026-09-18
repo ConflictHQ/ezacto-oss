@@ -35,6 +35,8 @@ export type IconName =
   | 'calendar'
   | 'chevron'
   | 'clock'
+  | 'eye'
+  | 'eye-off'
   | 'magnifier'
   | 'overflow'
   | 'padlock'
@@ -66,6 +68,15 @@ const iconGeometry: Readonly<Record<IconName, readonly IconShape[]>> = {
   clock: [
     { element: 'circle', attributes: { cx: '10', cy: '10', r: '7.25' } },
     { element: 'path', attributes: { d: 'M10 5.5V10l3 2' } },
+  ],
+  eye: [
+    { element: 'path', attributes: { d: 'M2 10s3-5.5 8-5.5S18 10 18 10s-3 5.5-8 5.5S2 10 2 10Z' } },
+    { element: 'circle', attributes: { cx: '10', cy: '10', r: '2.5' } },
+  ],
+  'eye-off': [
+    { element: 'path', attributes: { d: 'M2 10s3-5.5 8-5.5S18 10 18 10s-3 5.5-8 5.5S2 10 2 10Z' } },
+    { element: 'circle', attributes: { cx: '10', cy: '10', r: '2.5' } },
+    { element: 'path', attributes: { d: 'm3.5 3.5 13 13' } },
   ],
   magnifier: [
     { element: 'circle', attributes: { cx: '8.75', cy: '8.75', r: '5' } },
