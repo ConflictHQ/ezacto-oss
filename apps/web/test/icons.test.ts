@@ -15,11 +15,13 @@ const attributeMap = (element: Element): Record<string, string> =>
   Object.fromEntries([...element.attributes].map((attribute) => [attribute.name, attribute.value]))
 
 describe('icon set', () => {
-  it('[unit] carries the seven icons the design system names', () => {
+  it('[unit] carries the nine icons the design system names', () => {
     expect(iconNames).toEqual([
       'calendar',
       'chevron',
       'clock',
+      'eye',
+      'eye-off',
       'magnifier',
       'overflow',
       'padlock',

@@ -415,6 +415,20 @@ const twoFactorMessage = (
 const profileLabel = (profile: Whoami['profile']): string =>
   profile.replaceAll('_', ' ')
 
+/**
+ * The first thing a 422 says about a field, or nothing. The route's own
+ * sentence ("expires_at must be a real canonical UTC timestamp") names the
+ * problem; the generic "could not be issued" sends a person to retry the same
+ * form (issue 855).
+ */
+const apiFieldMessage = (error: unknown): string | null => {
+  if (!(error instanceof EzactoApiError) || error.status !== 422) return null
+  const fields = (error.body as { error?: { fields?: readonly { message?: unknown }[] } })
+    ?.error?.fields
+  const message = fields?.[0]?.message
+  return typeof message === 'string' && message !== '' ? message : null
+}
+
 const open = (dialog: HTMLDialogElement): void => {
   if (!dialog.open) dialog.showModal()
 }
@@ -2011,9 +2025,47 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const form = required<HTMLFormElement>('[data-settings-token-form]')
     const result = required<HTMLElement>('[data-settings-token-result]')
     const submit = required<HTMLButtonElement>('[data-settings-token-submit]')
-    const issued = required<HTMLElement>('[data-settings-token-issued]')
+    const issued = required<HTMLDialogElement>('[data-settings-token-issued]')
     const issuedValue = required<HTMLElement>('[data-settings-token-value]')
+    const toggle = required<HTMLButtonElement>('[data-settings-token-toggle]')
+    const copy = required<HTMLButtonElement>('[data-settings-token-copy]')
+    const copied = required<HTMLElement>('[data-settings-token-copied]')
     section.hidden = false
+
+    // The value is shown once and then never again, so it has to land where
+    // the person is looking. It used to be printed under the form: the table
+    // above repainted a moment later, everything below it moved down, and the
+    // one thing worth reading left the screen (issue 855). A modal does not
+    // move when the page behind it does. The value is masked behind an eye so
+    // a shared screen does not print it, and Copy takes the real value either
+    // way. Closing the dialog drops the value: there is no second look.
+    let issuedToken = ''
+    const showIssued = (revealed: boolean): void => {
+      issuedValue.textContent = revealed ? issuedToken : '•'.repeat(24)
+      toggle.setAttribute('aria-pressed', String(revealed))
+      toggle.setAttribute('aria-label', revealed ? 'Hide token' : 'Show token')
+    }
+    toggle.addEventListener('click', () => {
+      showIssued(toggle.getAttribute('aria-pressed') !== 'true')
+    })
+    copy.addEventListener('click', () => {
+      void navigator.clipboard
+        .writeText(issuedToken)
+        .then(() => {
+          copied.textContent = 'Copied.'
+        })
+        .catch(() => {
+          // Clipboard needs a secure context and permission; failing that,
+          // reveal it so it can still be selected by hand.
+          showIssued(true)
+          copied.textContent = 'Could not copy. Select the token and copy it yourself.'
+        })
+    })
+    issued.addEventListener('close', () => {
+      issuedToken = ''
+      issuedValue.textContent = ''
+      copied.textContent = ''
+    })
 
     const paint = (tokens: readonly ApiToken[]): void => {
       const live = tokens.filter((token) => token.revoked_at === null)
@@ -2113,21 +2165,24 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
           const token = await create({
             name,
             scopes: scopes as CreateApiTokenInput['scopes'],
-            ...(expires === '' ? {} : { expires_at: expires }),
+            // The date control yields a day; the route wants a canonical
+            // timestamp. The token stays good through the day that was picked,
+            // which is what a person choosing a date means by it.
+            ...(expires === '' ? {} : { expires_at: `${expires}T23:59:59Z` }),
           })
           // Once. The value is stored hashed, so this is the only moment it
           // exists anywhere a person can read it.
-          issuedValue.textContent = token.token
-          issued.hidden = false
-          result.textContent = ''
+          issuedToken = token.token
+          showIssued(false)
+          result.textContent = `Issued ${token.name}.`
           form.reset()
+          open(issued)
           await reload()
         } catch (error) {
-          issued.hidden = true
           result.textContent =
             error instanceof EzactoApiError && error.status === 403
               ? `Your ${profileLabel(identity.profile)} profile cannot grant one or more of those scopes.`
-              : 'The token could not be issued.'
+              : (apiFieldMessage(error) ?? 'The token could not be issued.')
         } finally {
           submit.disabled = false
         }
