@@ -111,10 +111,12 @@
 }
 
 /* The settings pages carry tables, toggles and fact lists rather than prose,
-   and at the document width they wrapped (issue 800). Wide enough for a table,
-   bounded so a 4K window does not stretch a form across it. */
+   and at the document width they wrapped (issue 800). A fixed 1100px then left
+   most of a wide window empty (issue 857): the page takes nine tenths of a
+   window wider than that, never less than it had, and never more than the
+   narrow screen offers. The forms inside keep their own measure. */
 .page--settings {
-  width: min(1100px, 100%);
+  width: min(max(90vw, 1100px), 100%);
   margin-inline: auto;
 }
 
