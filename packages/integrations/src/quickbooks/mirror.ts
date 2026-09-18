@@ -61,15 +61,6 @@ export interface MirrorInvoiceInput {
   readonly links: MirrorLinkStore
   readonly quickBooks: MirrorQuickBooks
   readonly allowOnlinePayment: boolean
-  /**
-   * Adopt an invoice QuickBooks already holds under our number even though
-   * this mirror did not write it (issue 825). Only the explicit Sync sets
-   * this: an administrator pressed it against this invoice, and books that
-   * came through Harvest hold every invoice already. The document is left as
-   * the books have it -- customer, lines, dates -- and only the link is
-   * written, after the totals agree to the cent.
-   */
-  readonly adoptExisting?: boolean
 }
 
 const centsOf = (amount: number | undefined): number | null =>
@@ -142,7 +133,14 @@ export const mirrorInvoice = async (
   const action = planInvoiceMirror(input.invoice, link, existing)
 
   if (action.kind === 'conflict') {
-    if (input.adoptExisting !== true || existing === null) {
+    // An invoice QuickBooks already holds under our number that this mirror
+    // did not write: the books came through Harvest and hold every invoice
+    // already (issue 825), and everything here is meant to reach QuickBooks
+    // (issue 853) -- a receipt recorded here or a payment made there, on an
+    // invoice sent before this mirror existed. Adopted when the totals agree
+    // to the cent, on every path, not only the Sync button: adoption writes
+    // nothing to the document, so there is nothing to protect by refusing.
+    if (existing === null) {
       return { kind: 'refused', reason: action.reason }
     }
     const theirs = centsOf(existing.TotalAmt)

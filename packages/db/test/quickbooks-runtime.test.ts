@@ -65,6 +65,7 @@ const source = (overrides: Partial<QuickBooksMirrorSource> = {}): QuickBooksMirr
   readPayments: vi.fn((invoiceId: number) => realSource().readPayments(invoiceId)),
   readClients: vi.fn(async () => clients),
   ezactoInvoiceFor: vi.fn(async (_realm: string, id: string) => (id === "qb-inv-7" ? 41 : null)),
+  invoiceByNumber: vi.fn(async () => null),
   recordPayment: vi.fn(async (input) => {
     recordedPayments.push({
       invoiceId: input.invoiceId,
@@ -400,6 +401,73 @@ describe("payments coming back", () => {
       .prepare("SELECT skipped_reason FROM quickbooks_webhook_deliveries WHERE entity_id = 'qb-pay-1'")
       .get() as { skipped_reason: string | null };
     expect(row.skipped_reason).toBe("the payment no longer exists");
+  });
+
+  it("[money #853] a payment made in QuickBooks against an invoice never linked adopts it by number, then records", async () => {
+    // The books hold every invoice from before the mirror existed. A client
+    // paying one of those inside QuickBooks was "no line settles an invoice we
+    // mirrored", and the invoice stayed open here.
+    recordedPayments.length = 0;
+    const fetchImpl = intuit([
+      {
+        match: /\/payment\//u,
+        body: {
+          Payment: { Id: "qb-pay-9", SyncToken: "0", TotalAmt: 2_500, TxnDate: "2026-09-20",
+            Line: [{ Amount: 2_500, LinkedTxn: [{ TxnId: "qb-inv-harvest", TxnType: "Invoice" }] }] },
+        },
+      },
+      {
+        match: /\/invoice\/qb-inv-harvest/u,
+        body: { Invoice: { Id: "qb-inv-harvest", SyncToken: "3", DocNumber: "1316", TotalAmt: 2_500, CustomerRef: { value: "300" }, Line: [] } },
+      },
+    ]);
+    const { service, store } = await runtime(
+      fetchImpl,
+      source({ invoiceByNumber: vi.fn(async (number: string) => (number === "1316" ? { id: 42, amountCents: 250_000 } : null)) }),
+    );
+    await store.saveConnection({
+      realmId: "realm-a", accessToken: "access-1", refreshToken: "refresh-1",
+      accessTokenExpiresAt: t(59), refreshTokenExpiresAt: t(59),
+      scope: "com.intuit.quickbooks.accounting", connectedByUserId: 1, companyName: null, now: t(1),
+    });
+    const payload = JSON.stringify({ eventNotifications: [{ realmId: "realm-a", dataChangeEvent: { entities: [
+      { name: "Payment", id: "qb-pay-9", operation: "Create", lastUpdated: "2026-09-11T12:05:00" } ] } }] });
+    expect((await service.receiveWebhook({ payload, signature: await sign(payload) })).accepted).toBe(true);
+    expect(recordedPayments).toEqual([
+      { invoiceId: 42, amountCents: 250_000, quickBooksPaymentId: "qb-pay-9", realmId: "realm-a" },
+    ]);
+    expect(await store.readLink({ realmId: "realm-a", kind: "invoice", ezactoId: 42 })).toMatchObject({
+      quickBooksId: "qb-inv-harvest", syncToken: "3",
+    });
+  });
+
+  it("[money #853] a QuickBooks payment on an invoice whose total disagrees is left alone", async () => {
+    recordedPayments.length = 0;
+    const fetchImpl = intuit([
+      {
+        match: /\/payment\//u,
+        body: { Payment: { Id: "qb-pay-9", SyncToken: "0", TotalAmt: 2_499, TxnDate: "2026-09-20",
+          Line: [{ Amount: 2_499, LinkedTxn: [{ TxnId: "qb-inv-harvest", TxnType: "Invoice" }] }] } },
+      },
+      {
+        match: /\/invoice\/qb-inv-harvest/u,
+        body: { Invoice: { Id: "qb-inv-harvest", SyncToken: "3", DocNumber: "1316", TotalAmt: 2_499, CustomerRef: { value: "300" }, Line: [] } },
+      },
+    ]);
+    const { service, store } = await runtime(
+      fetchImpl,
+      source({ invoiceByNumber: vi.fn(async () => ({ id: 42, amountCents: 250_000 })) }),
+    );
+    await store.saveConnection({
+      realmId: "realm-a", accessToken: "access-1", refreshToken: "refresh-1",
+      accessTokenExpiresAt: t(59), refreshTokenExpiresAt: t(59),
+      scope: "com.intuit.quickbooks.accounting", connectedByUserId: 1, companyName: null, now: t(1),
+    });
+    const payload = JSON.stringify({ eventNotifications: [{ realmId: "realm-a", dataChangeEvent: { entities: [
+      { name: "Payment", id: "qb-pay-9", operation: "Create", lastUpdated: "2026-09-11T12:05:00" } ] } }] });
+    expect((await service.receiveWebhook({ payload, signature: await sign(payload) })).accepted).toBe(true);
+    expect(recordedPayments).toEqual([]);
+    expect(await store.readLink({ realmId: "realm-a", kind: "invoice", ezactoId: 42 })).toBeNull();
   });
 
   it("[security] a retried delivery does not record the payment twice", async () => {
@@ -907,11 +975,6 @@ describe("sync from the invoice page (issue 819)", () => {
     const built = await runtime(fetchImpl, source({ readInvoice: vi.fn(async () => invoice42) }));
     await connected(built.store);
 
-    // The automatic mirror, as the outbox would run it, refuses.
-    await createQuickBooksMirrorSubscriber(built).deliver({ aggregateType: "invoice", aggregateId: 42, eventType: "invoice.sent" });
-    expect((await built.syncState(42))?.lastOutcome).toMatchObject({ kind: "refused" });
-    expect(posted(fetchImpl)).toEqual([]);
-
     // Paid here, then synced on purpose.
     await markPaid(9);
     const result = await built.sync(42);
@@ -985,6 +1048,43 @@ describe("sync from the invoice page (issue 819)", () => {
     expect(await built.store.readLink({ realmId: "realm-a", kind: "customer", ezactoId: 2 })).toMatchObject({
       quickBooksId: "332",
     });
+  });
+
+  it("[money #853] a receipt recorded here reaches QuickBooks on a Harvest-era invoice with no press", async () => {
+    // What Kestrel Holdings's payment at BILL does: the reconciliation records the
+    // receipt here, the outbox hands payment.recorded to this subscriber,
+    // and the invoice -- sent before the mirror existed -- must be adopted
+    // and the receipt filed, without anyone pressing Sync.
+    const fetchImpl = intuit([]);
+    fetchImpl.mockImplementation(async (request: Request) => {
+      const url = new URL(request.url);
+      const query = url.searchParams.get("query") ?? "";
+      const json = (body: unknown) =>
+        new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      const theirs = { Id: "9862", SyncToken: "7", DocNumber: "1316", TotalAmt: 2500, CustomerRef: { value: "300", name: "kestrel" }, Line: [] };
+      if (query.includes("Invoice") && query.includes("'1316'")) return json({ QueryResponse: { Invoice: [theirs] } });
+      if (url.pathname.endsWith("/invoice/9862") && request.method === "GET") return json({ Invoice: theirs });
+      if (request.method === "POST" && url.pathname.endsWith("/payment")) {
+        return json({ Payment: { Id: "qb-pay-9", SyncToken: "0", TotalAmt: 2500 } });
+      }
+      return json({ QueryResponse: {} });
+    });
+    const built = await runtime(fetchImpl, source({ readInvoice: vi.fn(async () => invoice42) }));
+    await connected(built.store);
+    await markPaid(9);
+    const event = sqlite!
+      .prepare(`SELECT payload_json FROM event_outbox WHERE aggregate_id = 42 AND event_type = 'payment.recorded'`)
+      .get() as { payload_json: string };
+    await createQuickBooksMirrorSubscriber(built).deliver({
+      aggregateType: "invoice",
+      aggregateId: 42,
+      eventType: "payment.recorded",
+      payload: JSON.parse(event.payload_json) as Record<string, unknown>,
+    });
+    expect(posted(fetchImpl)).toEqual(["payment"]);
+    expect(await built.store.readLink({ realmId: "realm-a", kind: "invoice", ezactoId: 42 })).toMatchObject({ quickBooksId: "9862" });
+    expect((await built.syncState(42))?.lastOutcome).toMatchObject({ kind: "created" });
+    expect(await built.store.readPaymentLink({ realmId: "realm-a", paymentId: 9 })).toMatchObject({ quickBooksId: "qb-pay-9" });
   });
 
   it("[money #825] Sync refuses to adopt when the books hold a different total", async () => {

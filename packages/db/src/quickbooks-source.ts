@@ -142,6 +142,14 @@ export const createQuickBooksMirrorSource = (
     return clients;
   },
 
+  invoiceByNumber: async (number) => {
+    const rows = await database.all<{ id: number; amount_cents: number }>(sql`
+      SELECT id, amount_cents FROM invoices
+      WHERE number = ${number} AND state IN ('open', 'paid')
+      ORDER BY id LIMIT 1`);
+    return rows[0] === undefined ? null : { id: rows[0].id, amountCents: rows[0].amount_cents };
+  },
+
   ezactoInvoiceFor: async (realmId, quickBooksInvoiceId) => {
     const rows = await database.all<{ ezacto_id: number }>(sql`
       SELECT ezacto_id FROM quickbooks_links

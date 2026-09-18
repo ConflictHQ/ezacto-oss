@@ -258,6 +258,13 @@ export interface QuickBooksMirrorSource {
   readClients(clientId: number): Promise<ReadonlyMap<number, MirrorClient>>;
   /** Our invoice id for a QuickBooks invoice id, for payments coming back. */
   ezactoInvoiceFor(realmId: string, quickBooksInvoiceId: string): Promise<number | null>;
+  /**
+   * Our invoice under that number, for a payment made in QuickBooks against
+   * an invoice this mirror never linked (issue 853): the books hold every
+   * invoice from before the mirror existed. Null where there is none, or
+   * where it is not a document of record.
+   */
+  invoiceByNumber(number: string): Promise<{ id: number; amountCents: number } | null>;
   recordPayment(input: {
     invoiceId: number;
     amountCents: number;
@@ -449,10 +456,38 @@ export const createQuickBooksRuntime = (
     return outcome;
   };
 
-  const mirrorUnrecorded = async (
-    invoiceId: number,
-    adoptExisting = false,
-  ): Promise<MirrorOutcome> => {
+  /**
+   * A payment made in QuickBooks against an invoice this mirror never linked
+   * (issue 853). The books hold every invoice from before the mirror
+   * existed, under our numbers; when the document's number is an open
+   * invoice here and the totals agree to the cent, the link is written and
+   * the receipt lands. The same rule as the mirror's own adoption, with the
+   * same silence: nothing on the QuickBooks document changes.
+   */
+  const adoptByNumber = async (
+    client: QuickBooksClient,
+    realmId: string,
+    quickBooksInvoiceId: string,
+  ): Promise<number | null> => {
+    const theirs = await client.readInvoice(quickBooksInvoiceId);
+    if (theirs === null || theirs.DocNumber === undefined) return null;
+    const ours = await source.invoiceByNumber(theirs.DocNumber);
+    if (ours === null) return null;
+    if (theirs.TotalAmt === undefined || Math.round(theirs.TotalAmt * 100) !== ours.amountCents) {
+      return null;
+    }
+    await store.saveLink({
+      realmId,
+      kind: "invoice",
+      ezactoId: ours.id,
+      quickBooksId: theirs.Id,
+      syncToken: theirs.SyncToken,
+      now: options.now().toISOString(),
+    });
+    return ours.id;
+  };
+
+  const mirrorUnrecorded = async (invoiceId: number): Promise<MirrorOutcome> => {
     const connection = await store.readConnection();
     if (connection === null) {
       return { kind: "refused", reason: "QuickBooks is not connected" };
@@ -491,7 +526,6 @@ export const createQuickBooksRuntime = (
       },
       quickBooks: client,
       allowOnlinePayment: connection.allowOnlinePayment,
-      adoptExisting,
     });
   };
 
@@ -589,7 +623,7 @@ export const createQuickBooksRuntime = (
     // Pressed on purpose against this invoice, so an invoice the books already
     // hold under our number is adopted rather than refused (issue 825). The
     // outbox's automatic mirror keeps refusing: nobody asked it to.
-    const invoice = await recorded(invoiceId, () => mirrorUnrecorded(invoiceId, true));
+    const invoice = await recorded(invoiceId, () => mirrorUnrecorded(invoiceId));
     if (invoice.kind === "refused") return { invoice, payments: [] };
     const connection = await store.readConnection();
     const payments: { paymentId: number; outcome: MirrorPaymentOutcome }[] = [];
@@ -816,7 +850,8 @@ export const createQuickBooksRuntime = (
             if (linked.TxnType !== "Invoice" || resolved.has(linked.TxnId)) continue;
             resolved.set(
               linked.TxnId,
-              await source.ezactoInvoiceFor(change.realmId, linked.TxnId),
+              (await source.ezactoInvoiceFor(change.realmId, linked.TxnId)) ??
+                (await adoptByNumber(client, change.realmId, linked.TxnId)),
             );
           }
         }

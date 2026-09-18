@@ -178,16 +178,17 @@ from QuickBooks is never sent back, and an edit or deletion of a payment here is
 not copied out: the linked payment is the bookkeeper's pointer.
 
 Books that already hold your invoices (from Harvest, or hand-entered) are the
-common case on day one. The automatic mirror refuses an invoice QuickBooks
-already holds under the same number, because it did not write it and must not
-overwrite it. **Sync to QuickBooks** on the invoice page, pressed by an
-administrator, adopts that invoice instead when its total agrees to the cent:
-nothing on the QuickBooks document changes, only the invoice link is recorded,
-and payments go to the customer the QuickBooks invoice is filed under. That
-customer is never changed afterwards, by adoption or by a later press: Harvest
-filed one client under a sub-customer per project, and an invoice stays where
-the books put it. The client's own customer link only decides where invoices
-created here go.
+common case on day one. An invoice QuickBooks already holds under the same
+number is **adopted** when its total agrees to the cent, on every path: the
+mirror that runs when an invoice is sent or a receipt is recorded here, the
+**Sync to QuickBooks** button on the invoice page, and a payment made inside
+QuickBooks that reaches the webhook. Nothing on the QuickBooks document
+changes on adoption; only the invoice link is recorded, and payments go to the
+customer the QuickBooks invoice is filed under. That customer is never changed
+afterwards: Harvest filed one client under a sub-customer per project, and an
+invoice stays where the books put it. The client's own customer link only
+decides where invoices created here go. A number QuickBooks holds for a
+different total is refused, and the invoice page says so.
 
 Every mirror attempt leaves its result on the invoice, whether it created the
 document, was refused (not connected when the invoice went out, a customer name

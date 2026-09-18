@@ -308,6 +308,19 @@ describe('the mirrors that discover a payment (#595)', () => {
     return { database, orm }
   }
 
+  it('[money #853] QuickBooks finds our open invoice by number, with the total the books must agree to', async () => {
+    const { database, orm } = await sendable()
+    const source = createQuickBooksMirrorSource(orm as never, () => new Date(paidAt))
+    expect(await source.invoiceByNumber('1315')).toEqual({ id: 1, amountCents: 100_000 })
+    expect(await source.invoiceByNumber('9999')).toBeNull()
+    // A draft is not a document of record, and a number QuickBooks holds for
+    // one must not link a document that was never sent.
+    database.exec(`
+      INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date, state, created_at, updated_at)
+        VALUES (2, 1, '1316', 'USD', '2026-09-11', '2026-10-11', 'draft', '${sent}', '${sent}')`)
+    expect(await source.invoiceByNumber('1316')).toBeNull()
+  })
+
   it('[money] QuickBooks records a payment that came back', async () => {
     const { database, orm } = await sendable()
     const source = createQuickBooksMirrorSource(orm as never, () => new Date(paidAt))
