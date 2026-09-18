@@ -311,22 +311,28 @@ describe('adopting an invoice the books already hold (issue 825)', () => {
       ...overrides,
     }) as QuickBooksInvoice
 
-  it('[unit] the automatic mirror still refuses it', async () => {
+  it('[money #853] the automatic mirror adopts it too: everything reaches QuickBooks', async () => {
+    // Refused at first (#825) so the mirror never overwrote a document it did
+    // not write. Adoption writes nothing, and a receipt recorded here for an
+    // invoice sent before the mirror existed has to reach the books.
+    const links = linkStore()
     const qb = quickBooks({ findInvoiceByDocNumber: vi.fn(async () => harvestInvoice()) })
     const outcome = await mirrorInvoice({
-      invoice, clients, links: linkStore(), quickBooks: qb, allowOnlinePayment: false,
+      invoice, clients, links, quickBooks: qb, allowOnlinePayment: false,
     })
-    expect(outcome).toMatchObject({ kind: 'refused', reason: expect.stringContaining('not written by this mirror') })
+    expect(outcome).toEqual({ kind: 'adopted', quickBooksId: 'qb-inv-9862' })
     expect(qb.createInvoice).not.toHaveBeenCalled()
+    expect(qb.updateInvoice).not.toHaveBeenCalled()
+    expect(links.rows.get('invoice:41')).toEqual({ quickBooksId: 'qb-inv-9862', syncToken: '4' })
   })
 
-  it('[money] the explicit sync adopts it when the totals agree, and links only the invoice', async () => {
+  it('[money] adopts it when the totals agree, and links only the invoice', async () => {
     const links = linkStore()
     const qb = quickBooks({
       findInvoiceByDocNumber: vi.fn(async () => harvestInvoice()),
     })
     const outcome = await mirrorInvoice({
-      invoice, clients, links, quickBooks: qb, allowOnlinePayment: false, adoptExisting: true,
+      invoice, clients, links, quickBooks: qb, allowOnlinePayment: false,
     })
     expect(outcome).toEqual({ kind: 'adopted', quickBooksId: 'qb-inv-9862' })
     // Nothing written to the books: no customer made, no invoice created or updated.
@@ -370,7 +376,7 @@ describe('adopting an invoice the books already hold (issue 825)', () => {
   it('[money] refuses when the totals disagree, naming both', async () => {
     const qb = quickBooks({ findInvoiceByDocNumber: vi.fn(async () => harvestInvoice({ TotalAmt: 2499.99 })) })
     const outcome = await mirrorInvoice({
-      invoice, clients, links: linkStore(), quickBooks: qb, allowOnlinePayment: false, adoptExisting: true,
+      invoice, clients, links: linkStore(), quickBooks: qb, allowOnlinePayment: false,
     })
     expect(outcome).toMatchObject({ kind: 'refused', reason: expect.stringContaining('2499.99') })
     expect((outcome as { reason: string }).reason).toContain('2500.00')
@@ -383,7 +389,7 @@ describe('adopting an invoice the books already hold (issue 825)', () => {
       findInvoiceByDocNumber: vi.fn(async () => qbInvoice()),
     })
     const outcome = await mirrorInvoice({
-      invoice, clients, links, quickBooks: qb, allowOnlinePayment: false, adoptExisting: true,
+      invoice, clients, links, quickBooks: qb, allowOnlinePayment: false,
     })
     expect(outcome).toMatchObject({ kind: 'adopted' })
     expect(qb.updateInvoice).toHaveBeenCalledTimes(1)
