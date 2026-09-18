@@ -4640,39 +4640,145 @@ dialog textarea {
   margin: 0;
   color: var(--ez-muted);
 }
+/*
+ * The command bar and the Menu hang from the bar they open from (issue 859).
+ * A modal dialog centres itself on the viewport, and the command bar's list
+ * grows and shrinks with every keystroke -- so its input moved while it was
+ * being typed into. Phone keeps the bottom sheet every dialog takes there.
+ */
+@media (min-width: 721px) {
+  .command-dialog,
+  .menu-dialog {
+    margin-block: 10vh auto;
+    max-height: calc(90vh - 24px);
+  }
+}
+/*
+ * The results run edge to edge between two rules rather than sitting in a
+ * bordered box inside the dialog's own border (issue 859). The negative margin
+ * is the form's padding, so the rows' text still lines up with the heading.
+ */
 .command-results {
   display: grid;
-  gap: 12px;
+  gap: 8px;
   max-height: min(46vh, 340px);
+  margin: 0 -20px;
+  padding: 8px;
   overflow-y: auto;
-  padding: 4px;
-  border: 1px solid var(--ez-border);
-  border-radius: var(--ez-radius);
-  background: var(--ez-surface);
+  border-top: 1px solid var(--ez-border);
+  border-bottom: 1px solid var(--ez-border);
 }
 .command-group {
   display: grid;
   gap: 2px;
 }
 .command-group > .eyebrow {
-  padding: 4px 8px 0;
+  margin: 0;
+  padding: 6px 12px 2px;
   font-size: 12px;
 }
 .command-option {
-  display: block;
-  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  padding: 0 12px;
   border-radius: var(--ez-radius);
   color: var(--ez-ink);
   text-decoration: none;
 }
+.command-option:hover {
+  background: var(--ez-surface-2);
+}
+/*
+ * The row Enter acts on. It takes the tint the tables give the row under the
+ * pointer, the focus colour as a bar down its edge -- it is the focus, by way
+ * of aria-activedescendant -- and the key it answers to at its far end. Hover
+ * is a different tint on purpose: the pointer does not move the highlight
+ * here, so a hovered row and the highlighted row are two different rows that
+ * two different actions reach.
+ *
+ * The key is generated content with empty alternative text, which keeps it
+ * out of the option's accessible name: a reader hears the destination, not
+ * "Time Enter". An engine that does not know the syntax drops the declaration
+ * and draws no key, which is the same row it drew before.
+ */
 .command-option[aria-selected='true'] {
-  background: var(--ez-action);
-  color: var(--ez-action-fg);
+  background: var(--ez-row-hover);
+  box-shadow: inset 3px 0 0 var(--ez-data);
+}
+.command-option[aria-selected='true']::after {
+  content: 'Enter' / '';
 }
 .command-empty {
   margin: 0;
-  padding: 8px;
+  padding: 10px 12px;
   color: var(--ez-muted);
+}
+/* A log line the bar understood is an answer, not an absence, so it is not
+   painted like "nothing matched". */
+.command-empty[data-command-preview] {
+  color: var(--ez-ink);
+}
+/*
+ * The footer: the keys on the left, the button the touch screens need on the
+ * right. The keys are chips in the week hint's style, one per action, so the
+ * line neither wraps at the dialog's width nor reads as a paragraph. Every one
+ * of them is handled on the input; none is wired here.
+ */
+.command-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+}
+.command-footer .primary-action {
+  margin-left: auto;
+}
+.command-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 13px;
+}
+.command-keys span {
+  white-space: nowrap;
+}
+.command-keys kbd,
+.command-option[aria-selected='true']::after {
+  flex: none;
+  padding: 1px 5px;
+  border: 1px solid var(--ez-border);
+  border-radius: 3px;
+  background: var(--ez-surface);
+  color: var(--ez-data);
+  font:
+    11px/1 var(--ez-font-mono),
+    monospace;
+}
+.command-keys kbd + kbd {
+  margin-left: 2px;
+}
+@media (hover: none) {
+  /* No keyboard to hint at, on the row or under the list; the button beside
+     the legend is the whole footer there. */
+  .command-keys,
+  .command-option[aria-selected='true']::after {
+    display: none;
+  }
+}
+@media (max-width: 720px) {
+  .command-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  /* An auto margin absorbs the free space a column would otherwise stretch
+     the button into, so it goes: full width, like the entry dialog's. */
+  .command-footer .primary-action {
+    margin-left: 0;
+  }
 }
 .timer-actions {
   display: flex;
@@ -4683,10 +4789,18 @@ dialog textarea {
   padding: 0 16px;
   border-radius: var(--ez-radius);
 }
+/*
+ * The Menu (issue 859). Its two navs -- the strip's sections and the ones
+ * issue 461 folded out of it -- read as one list with a rule where the second
+ * begins, on rows tall enough to tap and evenly spaced whichever gates are
+ * hiding links. The section you are in is marked the way the tab strip marks
+ * the tab you are on. The timezone form is the dialog's footer, below.
+ */
 .menu-dialog > header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 20px;
   padding: 20px;
   border-bottom: 1px solid var(--ez-border);
 }
@@ -4698,16 +4812,30 @@ dialog textarea {
 }
 .menu-dialog nav {
   display: grid;
+  gap: 2px;
   padding: 8px;
 }
+.menu-dialog nav + nav {
+  border-top: 1px solid var(--ez-border);
+}
 .menu-dialog nav a {
-  padding: 14px 12px;
-  color: var(--ez-ink);
-  text-decoration: none;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 12px;
   border-radius: var(--ez-radius);
+  color: var(--ez-ink);
+  font-weight: 500;
+  text-decoration: none;
+}
+.menu-dialog nav a:hover,
+.menu-dialog nav a:focus-visible {
+  background: var(--ez-surface-2);
 }
 .menu-dialog nav a[aria-current="page"] {
   background: var(--ez-status-bg);
+  box-shadow: inset 3px 0 0 var(--ez-live);
+  font-weight: 600;
 }
 .document-shell {
   min-height: 100vh;
@@ -6225,27 +6353,71 @@ dialog textarea {
   margin: 0;
 }
 
+/* The Menu's footer (issue 859). A band on the surface tint with the field and
+   its button on one row and the hint under both, so it reads as the dialog's
+   foot rather than as more list. The label is the one thing that names the
+   field: the eyebrow that repeated it is gone. Explicit rows, because the hint
+   sits between the field and the button in the markup and auto-placement
+   would put the button under it. */
 .profile-timezone-form {
   display: grid;
-  gap: 8px;
-  margin-top: 16px;
-  padding-top: 16px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px 12px;
+  padding: 16px 20px 20px;
   border-top: 1px solid var(--ez-border);
+  background: var(--ez-surface);
 }
 
 .profile-timezone-form label {
   display: grid;
+  grid-area: 1 / 1;
   gap: 6px;
 }
 
-.profile-timezone-form select,
+.profile-timezone-form select {
+  background: var(--ez-ground);
+}
+
 .profile-timezone-form button {
+  grid-area: 1 / 2;
   min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .profile-timezone-form .field-hint,
 .profile-timezone-form .form-result {
+  grid-column: 1 / -1;
   margin: 0;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+
+.profile-timezone-form .field-hint {
+  grid-row: 2;
+}
+
+.profile-timezone-form .form-result {
+  grid-row: 3;
+}
+
+@media (max-width: 720px) {
+  /* One column: the field, its hint, then the button at full width. */
+  .profile-timezone-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .profile-timezone-form button {
+    grid-area: 3 / 1;
+  }
+  .profile-timezone-form .form-result {
+    grid-row: 4;
+  }
 }
 
 .profile-timezone-form .form-result:empty,

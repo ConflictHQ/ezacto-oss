@@ -839,12 +839,19 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
   <dialog class="command-dialog" data-command-dialog aria-labelledby="command-title">
     <form data-command-form>
       <header><div><p class="eyebrow">Command bar</p><h2 id="command-title">Go or log time</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
-      <label for="ez-command">Command</label>
+      <label for="ez-command" class="visually-hidden">Command</label>
       <input id="ez-command" name="command" autocomplete="off" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="ez-command-results" placeholder="Search, or log 2h northpeak devops" required>
-      <p class="hint">Type to find a destination; ↑↓ to choose, Enter to go. Or “log 2h project task”. Esc to close.</p>
       <div class="command-results" id="ez-command-results" data-command-results role="listbox" aria-label="Destinations"></div>
       <p class="form-result" data-command-result role="status"></p>
-      <button class="primary-action" type="submit">Run command</button>
+      <!--
+        The keys as keys (issue 859). The sentence this replaces wrapped to two
+        lines at the dialog's own width, and it left Shift+Enter out. Nothing
+        here is wired: the handlers on the input own every one of these.
+      -->
+      <div class="command-footer">
+        <p class="hint command-keys"><span><kbd>↑</kbd><kbd>↓</kbd> Choose</span> <span><kbd>Enter</kbd> Go</span> <span><kbd>Shift</kbd>+<kbd>Enter</kbd> Log time</span> <span><kbd>Esc</kbd> Close</span></p>
+        <button class="primary-action" type="submit">Run command</button>
+      </div>
     </form>
   </dialog>
   <dialog class="entry-dialog" data-entry-dialog data-timer-dialog data-note-dialog aria-labelledby="entry-title">
@@ -868,11 +875,15 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
     </form>
   </dialog>
   <dialog class="menu-dialog" data-menu-dialog aria-labelledby="menu-title">
-    <header><h2 id="menu-title">Navigate</h2><button type="button" data-dialog-close aria-label="Close">×</button></header>
+    <header><div><p class="eyebrow">Menu</p><h2 id="menu-title">Navigate</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
     <nav aria-label="Mobile primary">${navigation}</nav>
     <nav class="secondary-nav" data-secondary-nav aria-label="More">${foldedNavigation}</nav>
+    <!--
+      The dialog's footer (issue 859). The form is the footer rather than being
+      wrapped in one: the stylesheet gives it the band, and the browser code
+      and the timezone tests address it by its own attributes.
+    -->
     <form class="profile-timezone-form" data-profile-timezone-form>
-      <p class="eyebrow">Your timezone</p>
       <label>Your timezone
         <select name="timezone" data-profile-timezone required>
           <option value="">Select a timezone</option>
