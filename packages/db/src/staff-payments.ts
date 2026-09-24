@@ -1,3 +1,4 @@
+import { createStaffPaymentProviderStore } from './staff-payment-providers.js'
 import { sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
@@ -29,14 +30,24 @@ const eventSelect = sql`SELECT event.command_json, event.version, event.actor_id
   FROM staff_payment_events event JOIN users actor ON actor.id = event.actor_id`
 
 export const createStaffPaymentStore = (database: Database): StaffPaymentStore => {
+  const providers = createStaffPaymentProviderStore(database)
   const report: StaffPaymentStore['report'] = async (month, today) => {
-    const [people, history] = await Promise.all([
-      database.all<{ user_id: number; name: string; active: number; wise_ready: number }>(sql`
+    const [people, history, providerSettings] = await Promise.all([
+      database.all<{
+        user_id: number
+        name: string
+        active: number
+        wise_ready: number
+        deel_ready: number
+      }>(sql`
         SELECT person.id AS user_id, person.first_name || ' ' || person.last_name AS name,
           person.is_active AS active,
           EXISTS(SELECT 1 FROM user_payout_accounts account WHERE account.user_id = person.id
             AND account.provider = 'wise' AND account.detached_at IS NULL
-            AND account.verified_at IS NOT NULL) AS wise_ready
+            AND account.verified_at IS NOT NULL) AS wise_ready,
+          EXISTS(SELECT 1 FROM user_payout_accounts account WHERE account.user_id = person.id
+            AND account.provider = 'deel' AND account.detached_at IS NULL
+            AND account.verified_at IS NOT NULL) AS deel_ready
         FROM users person WHERE person.is_active = 1 OR EXISTS(
           SELECT 1 FROM staff_payment_events event WHERE event.user_id = person.id
             AND (event.month = ${month} OR (event.kind = 'opening' AND event.month >= ${month})))
@@ -44,23 +55,37 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
       database.all<EventRow>(sql`${eventSelect}
         WHERE event.month = ${month} OR (event.kind = 'opening' AND event.month >= ${month})
         ORDER BY event.month, event.version`),
+      providers.read(),
     ])
     const events = history.map(eventOf)
     return {
       month,
+      provider_settings: providerSettings,
       as_of: today,
-      rows: people.map((person) =>
-        summarizeStaffPayments(
-          { ...person, active: person.active === 1, wise_ready: person.wise_ready === 1 },
+      rows: people.map((person) => {
+        const preference = providerSettings.events
+          .filter((event) => event.user_id === person.user_id)
+          .at(-1)
+        return summarizeStaffPayments(
+          {
+            ...person,
+            active: person.active === 1,
+            wise_ready: person.wise_ready === 1,
+            deel_ready: person.deel_ready === 1,
+            payout_provider: preference?.provider ?? providerSettings.default_provider,
+            provider_override: preference?.provider ?? null,
+            provider_version: preference?.version ?? 0,
+          },
           month,
           events.filter((event) => event.user_id === person.user_id),
           today,
-        ),
-      ),
+        )
+      }),
     }
   }
   return {
     report,
+    configureProvider: providers.append,
     append: async (command, actorId, requestId, now) => {
       const encoded = JSON.stringify(command)
       const existing = async () =>

@@ -13,13 +13,23 @@ The register lists active people and archived people with records for the select
 - **Historically settled:** an administrator confirmed an opening settlement through a completed month; amounts and actual transaction dates are unspecified.
 - **Overdue:** a completed, unsettled period has an explicit due date before the report date. No payment terms are inferred from the month alone.
 
-Amounts remain separate by currency. Unspecified obligations and historical settlement amounts are excluded from monetary totals and explicitly counted. Wise destination readiness means a stored Wise destination has been verified; it does not prove a transfer was sent or received.
+Amounts remain separate by currency. Unspecified obligations and historical settlement amounts are excluded from monetary totals and explicitly counted. Destination readiness is checked separately for Wise and Deel. A ready destination means an attached account for that provider has been verified; it does not prove a transfer was sent or received.
 
-## Recording Wise payments
+## Provider settings
 
-Wise is the current payment provider. After confirming a payment in Wise, select the person and **Record confirmed payment**, enter its actual date and transfer reference, and save. Partial payments are supported. This action records a confirmed payment; it does not initiate a Wise transfer. The existing `payout_transfers` store and Wise webhook log remain provider evidence, and are not automatically interpreted as a recipient receiving money by this register.
+Expand **Payment provider settings** to choose an organization default: **Wise** or **Deel**. Wise is the initial default. Select a person to choose their **Preferred payment provider**: Wise, Deel, or **Use organization default**. Changing the organization default affects only people who inherit it. These preferences apply across months.
 
-For a mistaken payment record, **Void an incorrect payment record**, give a reason, then record the correct receipt. A void corrects this register; it does not reverse money at Wise. The original entry and correction remain in history.
+The preferred provider preselects the source when recording a payment. Each receipt keeps the provider actually used. One person can receive partial payments through both providers in the same month; balances remain per person, month and currency. Changing preferences never rewrites prior receipts.
+
+Setting changes require an administrator session and a reason. They have immutable history, actor, timestamp, request ID, idempotency and version checks. **Provider settings history** shows changes across all dates. Monthly exports include current preferences and both providers’ readiness; audit exports include all provider-setting changes alongside the selected month's payment events.
+
+The existing optional Deel adapter remains available for people/contract matching, timesheet submission and transfer-log deduplication. See [`packages/integrations`](../packages/integrations/README.md). Selecting Deel here does not configure credentials, submit timesheets or confirm a payout automatically; organizations configure that integration separately.
+
+## Recording confirmed payments
+
+After confirming a payment in Wise or Deel, select the person and **Record confirmed payment**, choose the provider actually used, enter its actual date and transfer reference, and save. Partial payments are supported. This action records a confirmed payment; it does not initiate a transfer. The existing `payout_transfers` store and Wise webhook log remain provider evidence, and are not automatically interpreted as a recipient receiving money by this register.
+
+For a mistaken payment record, **Void an incorrect payment record**, give a reason, then record the correct receipt. A void corrects this register; it does not reverse money at either provider. The original entry and correction remain in history.
 
 ## Opening history, including earlier Deel payments
 
@@ -27,7 +37,7 @@ Choose a completed month, expand **Record historical settlement through this mon
 
 An opening settlement covers earlier months without fabricating transaction amounts or payment dates. Explicit obligations and payments in an earlier month retain their balances. **Reopen historical settlement** overrides a cutoff for an individual month.
 
-Exact historical transactions require evidence from the previous provider, such as a Deel export. To enter those receipts, reopen the applicable month's historical settlement, set the documented amount owed, and record each receipt with **Historical payment**, its original reference/date and source in the note. This does not enable Deel payouts or connect to Deel. No historical receipts are fetched automatically.
+Exact historical transactions require evidence from the previous provider, such as a Deel export. To enter those receipts, reopen the applicable month's historical settlement, set the documented amount owed, and record each receipt with its actual provider (**Deel** or **Wise**), or **Other historical payment**, its original reference/date and source in the note. Existing historical entries remain unchanged. No historical receipts are fetched automatically.
 
 ## Reports and audit
 
@@ -35,4 +45,4 @@ Exact historical transactions require evidence from the previous provider, such 
 
 Each command is an immutable event. Repeating an identical command ID is idempotent; changing its payload is refused. Concurrent writes use an atomic per-person/month version check in SQLite and D1. Payments cannot exceed the balance, and a currency cannot change while recorded payments remain. Correction events replace deletion.
 
-Both API routes require an administrator session; API tokens and other roles are refused, matching the payroll cost report's confidentiality boundary. API server failures follow the existing Worker log and Sentry request-ID reporting path when Sentry is configured.
+All register API routes require an administrator session; API tokens and other roles are refused, matching the payroll cost report's confidentiality boundary. API server failures follow the existing Worker log and Sentry request-ID reporting path when Sentry is configured.

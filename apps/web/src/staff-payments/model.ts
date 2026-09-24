@@ -66,6 +66,9 @@ export const staffPaymentCsv = (report: StaffPaymentReport, audit = false): stri
         'Settled through',
         'Wise destination ready',
         'As of',
+        'Preferred provider',
+        'Person override',
+        'Deel destination ready',
       ]
   const rows = audit
     ? report.rows.flatMap((row) =>
@@ -103,6 +106,35 @@ export const staffPaymentCsv = (report: StaffPaymentReport, audit = false): stri
         row.settled_through,
         row.wise_ready,
         report.as_of,
+        row.payout_provider,
+        row.provider_override,
+        row.deel_ready,
       ])
+  if (audit) {
+    for (const event of report.provider_settings.events) {
+      rows.push([
+        event.user_id === null
+          ? 'Organization default'
+          : (report.rows.find((row) => row.user_id === event.user_id)?.name ??
+            `User ${event.user_id}`),
+        event.user_id,
+        '',
+        'provider_setting',
+        null,
+        null,
+        null,
+        null,
+        event.provider ?? 'inherit',
+        '',
+        event.note,
+        event.actor_name,
+        event.actor_id,
+        event.recorded_at,
+        event.request_id,
+        event.id,
+        null,
+      ])
+    }
+  }
   return '\uFEFF' + [header, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n') + '\r\n'
 }

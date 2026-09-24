@@ -1003,6 +1003,8 @@ const withSignal = (signal?: AbortSignal): { signal?: AbortSignal } =>
   signal === undefined ? {} : { signal }
 
 export const createShellApi = (client: EzactoClient): ShellApi => ({
+  configureStaffPaymentProvider: (body, signal) =>
+    client.configureStaffPaymentProvider({ body, ...withSignal(signal) }),
   getStaffPaymentReport: async (month, signal) =>
     (await client.getStaffPaymentReport({ query: { month }, ...withSignal(signal) })).data,
   recordStaffPaymentEvent: (body, signal) =>

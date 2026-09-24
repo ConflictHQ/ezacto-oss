@@ -13698,6 +13698,64 @@
         ]
       }
     },
+    "/api/v1/staff-payments/provider-settings": {
+      "post": {
+        "operationId": "configureStaffPaymentProvider",
+        "summary": "Set the organization payout provider or a person override",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-payments/provider-settings",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffPaymentProviderCommand"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/staff-payments": {
       "get": {
         "operationId": "getStaffPaymentReport",
@@ -21057,6 +21115,149 @@
         },
         "additionalProperties": false
       },
+      "StaffPaymentProviderCommand": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "expected_version",
+          "provider",
+          "note"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "wise",
+                  "deel"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      },
+      "StaffPaymentProviderEvent": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "expected_version",
+          "provider",
+          "note",
+          "version",
+          "actor_id",
+          "actor_name",
+          "recorded_at",
+          "request_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "wise",
+                  "deel"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "actor_id": {
+            "type": "integer"
+          },
+          "actor_name": {
+            "type": "string"
+          },
+          "recorded_at": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        }
+      },
+      "StaffPaymentProviderSettings": {
+        "type": "object",
+        "required": [
+          "default_provider",
+          "version",
+          "events"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "default_provider": {
+            "type": "string",
+            "enum": [
+              "wise",
+              "deel"
+            ]
+          },
+          "version": {
+            "type": "integer"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffPaymentProviderEvent"
+            }
+          }
+        }
+      },
       "StaffPaymentCommand": {
         "type": "object",
         "required": [
@@ -21161,6 +21362,7 @@
             "type": "string",
             "enum": [
               "wise",
+              "deel",
               "historical"
             ]
           }
@@ -21275,6 +21477,7 @@
             "type": "string",
             "enum": [
               "wise",
+              "deel",
               "historical"
             ]
           },
@@ -21302,6 +21505,10 @@
           "name",
           "active",
           "wise_ready",
+          "deel_ready",
+          "payout_provider",
+          "provider_override",
+          "provider_version",
           "month",
           "version",
           "amount_cents",
@@ -21327,6 +21534,33 @@
           },
           "wise_ready": {
             "type": "boolean"
+          },
+          "deel_ready": {
+            "type": "boolean"
+          },
+          "payout_provider": {
+            "type": "string",
+            "enum": [
+              "wise",
+              "deel"
+            ]
+          },
+          "provider_override": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "wise",
+                  "deel"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider_version": {
+            "type": "integer"
           },
           "month": {
             "type": "string"
@@ -21413,7 +21647,8 @@
         "required": [
           "month",
           "as_of",
-          "rows"
+          "rows",
+          "provider_settings"
         ],
         "additionalProperties": false,
         "properties": {
@@ -21428,6 +21663,9 @@
             "items": {
               "$ref": "#/components/schemas/StaffPaymentRow"
             }
+          },
+          "provider_settings": {
+            "$ref": "#/components/schemas/StaffPaymentProviderSettings"
           }
         }
       },

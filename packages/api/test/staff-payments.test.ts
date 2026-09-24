@@ -4,7 +4,8 @@ import { errorResponse } from '../src/errors.js'
 import { installStaffPaymentRoutes } from '../src/staff-payments.js'
 import type { ApiContext } from '../src/context.js'
 const store = () => ({
-  report: vi.fn(async (month: string, as_of: string) => ({ month, as_of, rows: [] })),
+  configureProvider: vi.fn(async () => {}),
+  report: vi.fn(async (month: string, as_of: string) => ({ month, as_of, rows: [], provider_settings: { default_provider: 'wise' as const, version: 0, events: [] } })),
   append: vi.fn(async () => {}),
 })
 const fixture = (profile = 'administrator', kind = 'session') => {

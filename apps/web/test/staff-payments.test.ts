@@ -31,6 +31,7 @@ const event: StaffPaymentEvent = {
   request_id: 'request-1',
 }
 const report = (events: StaffPaymentEvent[] = [event]): StaffPaymentReport => ({
+  provider_settings: { default_provider: 'wise', version: 0, events: [] },
   month: '2026-08',
   as_of: '2026-09-24',
   rows: [summarizeStaffPayments(person, '2026-08', events, '2026-09-24')],
@@ -132,7 +133,7 @@ describe('monthly payment register', () => {
             finish = resolve
           }),
       )
-      .mockResolvedValueOnce({ month: '2026-09', as_of: '2026-09-24', rows: [] })
+      .mockResolvedValueOnce({ month: '2026-09', as_of: '2026-09-24', rows: [], provider_settings: { default_provider: 'wise', version: 0, events: [] } })
     const controller = createStaffPaymentsController({
       getStaffPaymentReport: read,
       recordStaffPaymentEvent: vi.fn(),

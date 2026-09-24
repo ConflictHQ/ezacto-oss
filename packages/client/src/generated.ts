@@ -25,6 +25,33 @@ export type AttachmentListEnvelope = {
   "links": Links;
 };
 
+export type StaffPaymentProviderCommand = {
+  "id": string;
+  "user_id": number | null;
+  "expected_version": number;
+  "provider": "wise" | "deel" | null;
+  "note": string;
+};
+
+export type StaffPaymentProviderEvent = {
+  "id": string;
+  "user_id": number | null;
+  "expected_version": number;
+  "provider": "wise" | "deel" | null;
+  "note": string;
+  "version": number;
+  "actor_id": number;
+  "actor_name": string;
+  "recorded_at": string;
+  "request_id": string;
+};
+
+export type StaffPaymentProviderSettings = {
+  "default_provider": "wise" | "deel";
+  "version": number;
+  "events": Array<StaffPaymentProviderEvent>;
+};
+
 export type StaffPaymentCommand = {
   "id": string;
   "user_id": number;
@@ -38,7 +65,7 @@ export type StaffPaymentCommand = {
   "reference": string;
   "note": string;
   "payment_id": string | null;
-  "source": "wise" | "historical";
+  "source": "wise" | "deel" | "historical";
 };
 
 export type StaffPaymentEvent = {
@@ -54,7 +81,7 @@ export type StaffPaymentEvent = {
   "reference": string;
   "note": string;
   "payment_id": string | null;
-  "source": "wise" | "historical";
+  "source": "wise" | "deel" | "historical";
   "version": number;
   "actor_id": number;
   "actor_name": string;
@@ -67,6 +94,10 @@ export type StaffPaymentRow = {
   "name": string;
   "active": boolean;
   "wise_ready": boolean;
+  "deel_ready": boolean;
+  "payout_provider": "wise" | "deel";
+  "provider_override": "wise" | "deel" | null;
+  "provider_version": number;
   "month": string;
   "version": number;
   "amount_cents": number | null;
@@ -84,6 +115,7 @@ export type StaffPaymentReport = {
   "month": string;
   "as_of": string;
   "rows": Array<StaffPaymentRow>;
+  "provider_settings": StaffPaymentProviderSettings;
 };
 
 export type StaffPaymentReportEnvelope = {
@@ -4784,6 +4816,16 @@ export class EzactoClient {
     return this.request<ArrayBuffer>("GET", "/api/v1/projects/:projectId/attachments/:attachmentId/content".replace(":projectId", encodeURIComponent(String(args["projectId"]))).replace(":attachmentId", encodeURIComponent(String(args["attachmentId"]))), {
       signal: args.signal,
       binary: true,
+      headers,
+    });
+  }
+
+  async configureStaffPaymentProvider(args: { body: StaffPaymentProviderCommand; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/api/v1/staff-payments/provider-settings", {
+      body: args.body,
+      signal: args.signal,
       headers,
     });
   }

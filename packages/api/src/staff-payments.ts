@@ -2,6 +2,7 @@ import {
   StaffPaymentError,
   validPaymentMonth,
   type StaffPaymentCommand,
+  type StaffPaymentProviderCommand,
   type StaffPaymentStore,
 } from '@ezacto/core'
 import type { Hono } from 'hono'
@@ -45,6 +46,41 @@ export const installStaffPaymentRoutes = <Bindings extends object>(
       200,
       { 'cache-control': 'no-store' },
     )
+  })
+  api.post('/staff-payments/provider-settings', async (context) => {
+    const body = await readObjectBody(context)
+    if (
+      typeof body.id !== 'string' ||
+      typeof body.note !== 'string' ||
+      typeof body.expected_version !== 'number' ||
+      (body.user_id !== null && typeof body.user_id !== 'number') ||
+      (body.provider !== null && body.provider !== 'wise' && body.provider !== 'deel')
+    )
+      invalid('settings', 'Provide a valid provider setting, version, person and note.')
+    const command: StaffPaymentProviderCommand = {
+      id: body.id as string,
+      user_id: body.user_id as number | null,
+      expected_version: body.expected_version as number,
+      provider: body.provider as StaffPaymentProviderCommand['provider'],
+      note: (body.note as string).trim(),
+    }
+    try {
+      await store.configureProvider(
+        command,
+        requireSessionPrincipal(context).userId,
+        context.get('requestId'),
+        new Date().toISOString(),
+      )
+    } catch (error) {
+      if (!(error instanceof StaffPaymentError)) throw error
+      if (error.code === 'invalid') invalid('settings', error.message)
+      throw new ApiError({
+        status: error.code === 'not_found' ? 404 : 409,
+        code: error.code,
+        message: error.message,
+      })
+    }
+    return context.body(null, 204, { 'cache-control': 'no-store' })
   })
   api.post('/staff-payments/events', async (context) => {
     const body = await readObjectBody(context)

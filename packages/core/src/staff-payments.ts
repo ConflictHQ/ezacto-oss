@@ -1,5 +1,25 @@
 /** Monthly staff payment register. Recording a payment never initiates a transfer. */
 export type StaffPaymentKind = 'amount' | 'payment' | 'void' | 'opening' | 'reopen' | 'note'
+export type StaffPaymentProvider = 'wise' | 'deel'
+export interface StaffPaymentProviderCommand {
+  id: string
+  user_id: number | null
+  expected_version: number
+  provider: StaffPaymentProvider | null
+  note: string
+}
+export interface StaffPaymentProviderEvent extends StaffPaymentProviderCommand {
+  version: number
+  actor_id: number
+  actor_name: string
+  recorded_at: string
+  request_id: string
+}
+export interface StaffPaymentProviderSettings {
+  default_provider: StaffPaymentProvider
+  version: number
+  events: StaffPaymentProviderEvent[]
+}
 export interface StaffPaymentCommand {
   id: string
   user_id: number
@@ -13,7 +33,7 @@ export interface StaffPaymentCommand {
   reference: string
   note: string
   payment_id: string | null
-  source: 'wise' | 'historical'
+  source: StaffPaymentProvider | 'historical'
 }
 export interface StaffPaymentEvent extends StaffPaymentCommand {
   version: number
@@ -27,8 +47,16 @@ export interface StaffPaymentPerson {
   name: string
   active: boolean
   wise_ready: boolean
+  deel_ready?: boolean
+  payout_provider?: StaffPaymentProvider
+  provider_override?: StaffPaymentProvider | null
+  provider_version?: number
 }
 export interface StaffPaymentRow extends StaffPaymentPerson {
+  deel_ready: boolean
+  payout_provider: StaffPaymentProvider
+  provider_override: StaffPaymentProvider | null
+  provider_version: number
   month: string
   version: number
   amount_cents: number | null
@@ -45,8 +73,15 @@ export interface StaffPaymentReport {
   month: string
   as_of: string
   rows: StaffPaymentRow[]
+  provider_settings: StaffPaymentProviderSettings
 }
 export interface StaffPaymentStore {
+  configureProvider(
+    command: StaffPaymentProviderCommand,
+    actorId: number,
+    requestId: string,
+    now: string,
+  ): Promise<void>
   report(month: string, today: string): Promise<StaffPaymentReport>
   append(
     command: StaffPaymentCommand,
@@ -83,9 +118,7 @@ export const summarizeStaffPayments = (
   events: readonly StaffPaymentEvent[],
   today: string,
 ): StaffPaymentRow => {
-  const own = events
-    .filter((event) => event.month === month)
-    .sort((a, b) => a.version - b.version)
+  const own = events.filter((event) => event.month === month).sort((a, b) => a.version - b.version)
   const openings = events
     .filter((event) => event.kind === 'opening' && event.month >= month)
     .sort((a, b) => b.month.localeCompare(a.month))
@@ -124,6 +157,10 @@ export const summarizeStaffPayments = (
             : 'pending'
   return {
     ...person,
+    deel_ready: person.deel_ready ?? false,
+    payout_provider: person.payout_provider ?? 'wise',
+    provider_override: person.provider_override ?? null,
+    provider_version: person.provider_version ?? 0,
     month,
     version: own.at(-1)?.version ?? 0,
     amount_cents: amount,
@@ -160,8 +197,8 @@ export const validateStaffPayment = (
   if (command.note.trim().length === 0 || command.note.length > 2000)
     fail('Add a note of up to 2,000 characters explaining this entry.')
   if (command.reference.length > 255) fail('Payment reference is too long.')
-  if (!['wise', 'historical'].includes(command.source))
-    fail('Choose Wise or a historical record.')
+  if (!['wise', 'deel', 'historical'].includes(command.source))
+    fail('Choose Wise, Deel, or a historical record.')
   if (!['amount', 'payment', 'void', 'opening', 'reopen', 'note'].includes(command.kind))
     fail('Invalid action.')
   if (command.kind === 'amount' || command.kind === 'payment') {
@@ -190,15 +227,10 @@ export const validateStaffPayment = (
   } else if (command.due_on !== null) fail('Only an amount entry can set a due date.')
   if (command.kind === 'payment') {
     if (row.balance_cents === null) fail('Record the amount owed before recording a payment.')
-    if (command.currency !== row.currency)
-      fail('The payment currency must match the amount owed.')
+    if (command.currency !== row.currency) fail('The payment currency must match the amount owed.')
     if (command.amount_cents! > row.balance_cents!)
       fail('The payment exceeds the remaining balance.')
-    if (
-      command.paid_on === null ||
-      !validPaymentDate(command.paid_on) ||
-      command.paid_on > today
-    )
+    if (command.paid_on === null || !validPaymentDate(command.paid_on) || command.paid_on > today)
       fail('Choose an actual payment date, today or earlier.')
     if (command.reference.trim() === '') fail('Enter the payment or receipt reference.')
     const voided = new Set(
@@ -218,12 +250,8 @@ export const validateStaffPayment = (
     fail('Only a payment entry takes a payment date or reference.')
   if (command.kind === 'void') {
     if (
-      !row.events.some(
-        (event) => event.kind === 'payment' && event.id === command.payment_id,
-      ) ||
-      row.events.some(
-        (event) => event.kind === 'void' && event.payment_id === command.payment_id,
-      )
+      !row.events.some((event) => event.kind === 'payment' && event.id === command.payment_id) ||
+      row.events.some((event) => event.kind === 'void' && event.payment_id === command.payment_id)
     )
       fail('Choose a recorded payment that has not already been voided.')
   } else if (command.payment_id !== null) fail('Only a void entry can name a previous payment.')
@@ -233,7 +261,5 @@ export const validateStaffPayment = (
   )
     fail('Opening settlement is only for completed periods with no exact amounts recorded.')
   if (command.kind === 'reopen' && row.status !== 'settled')
-    fail(
-      'Only historical settlement can be reopened. Correct actual payments with a void entry.',
-    )
+    fail('Only historical settlement can be reopened. Correct actual payments with a void entry.')
 }

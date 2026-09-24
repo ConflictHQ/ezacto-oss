@@ -3,6 +3,7 @@ import {
   paymentMonthEnd,
   validPaymentMonth,
   type StaffPaymentCommand,
+  type StaffPaymentProviderCommand,
   type StaffPaymentReport,
   type StaffPaymentRow,
 } from '@ezacto/core'
@@ -16,6 +17,10 @@ import {
 } from './model.js'
 
 export interface StaffPaymentsApi {
+  configureStaffPaymentProvider?(
+    command: StaffPaymentProviderCommand,
+    signal?: AbortSignal,
+  ): Promise<void>
   getStaffPaymentReport?(month: string, signal?: AbortSignal): Promise<StaffPaymentReport>
   recordStaffPaymentEvent?(command: StaffPaymentCommand, signal?: AbortSignal): Promise<void>
 }
@@ -59,6 +64,9 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   const form = element<HTMLFormElement>(page, '[data-payment-entry-form]')
   const openingForm = element<HTMLFormElement>(page, '[data-payment-opening-form]')
   const result = element<HTMLElement>(page, '[data-payment-entry-result]')
+  const providerForms = [...page.querySelectorAll<HTMLFormElement>('[data-payment-provider-form]')]
+  const providerSettings = element<HTMLElement>(page, '[data-payment-provider-settings]')
+  const providerHistory = element<HTMLElement>(page, '[data-payment-provider-history]')
   const input = (name: string): HTMLInputElement =>
     form.elements.namedItem(name) as HTMLInputElement
   let signal: AbortSignal | null = null
@@ -108,7 +116,19 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       row.status === 'settled'
         ? `Confirmed settled through ${row.settled_through}. Historical amounts are unspecified.`
         : `${staffPaymentStatus(row)}. Remaining: ${staffPaymentMoney(row.balance_cents, row.currency)}.`
+    const preferenceForm = providerForms.find(
+      (item) => item.dataset.paymentProviderForm === 'person',
+    )!
+    preferenceForm.hidden = api.configureStaffPaymentProvider === undefined
+    preferenceForm.reset()
+    element<HTMLElement & { value: string }>(preferenceForm, '[name=provider]').value =
+      row.provider_override ?? ''
+    const inherit = preferenceForm.querySelector<HTMLOptionElement>('option[value=""]')!
+    inherit.textContent = `Use organization default (${report.provider_settings.default_provider === 'wise' ? 'Wise' : 'Deel'})`
+    element<HTMLAnchorElement>(person, '[data-payment-destination]').textContent =
+      row.payout_provider === 'wise' ? 'Manage Wise destination' : 'View person'
     form.reset()
+    input('source').value = row.payout_provider
     input('currency').value = row.currency ?? ''
     input('paid_on').value = report.as_of
     input('paid_on').max = report.as_of
@@ -176,7 +196,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
             : filter.value === 'overdue'
               ? row.overdue
               : filter.value === 'unready'
-                ? !row.wise_ready
+                ? !(row.payout_provider === 'deel' ? row.deel_ready : row.wise_ready)
                 : true),
     )
     list.replaceChildren(
@@ -230,9 +250,18 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
                 : moneyText(staffPaymentMoney(row.balance_cents, row.currency)),
           },
           {
-            key: 'wise',
-            label: 'Wise destination',
-            render: (row) => (row.wise_ready ? 'Ready' : 'Needs setup'),
+            key: 'provider',
+            label: 'Preferred provider',
+            render: (row) =>
+              `${row.payout_provider === 'deel' ? 'Deel' : 'Wise'}${row.provider_override === null ? ' (default)' : ''}`,
+          },
+          {
+            key: 'destination',
+            label: 'Preferred destination',
+            render: (row) =>
+              (row.payout_provider === 'deel' ? row.deel_ready : row.wise_ready)
+                ? 'Ready'
+                : 'Needs setup',
           },
         ],
       }),
@@ -240,6 +269,48 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   }
   const paint = (): void => {
     if (report === null) return
+    providerSettings.hidden = api.configureStaffPaymentProvider === undefined
+    const organizationForm = providerForms.find(
+      (item) => item.dataset.paymentProviderForm === 'organization',
+    )!
+    organizationForm.reset()
+    element<HTMLElement & { value: string }>(organizationForm, '[name=provider]').value =
+      report.provider_settings.default_provider
+    providerHistory.replaceChildren(
+      renderDataTable({
+        caption: 'Provider settings history (all dates)',
+        rows: [...report.provider_settings.events].sort(
+          (a, b) => b.recorded_at.localeCompare(a.recorded_at) || b.version - a.version,
+        ),
+        rowKey: (event) => event.id,
+        empty: 'No provider changes recorded. The initial default is Wise.',
+        columns: [
+          { key: 'when', label: 'Recorded', render: (event) => event.recorded_at },
+          {
+            key: 'person',
+            label: 'Applies to',
+            render: (event) =>
+              event.user_id === null
+                ? 'Organization default'
+                : (report!.rows.find((row) => row.user_id === event.user_id)?.name ??
+                  `User ${event.user_id}`),
+          },
+          {
+            key: 'provider',
+            label: 'Preference',
+            render: (event) =>
+              event.provider === null
+                ? 'Use organization default'
+                : event.provider === 'wise'
+                  ? 'Wise'
+                  : 'Deel',
+          },
+          { key: 'note', label: 'Reason', render: (event) => event.note },
+          { key: 'actor', label: 'Recorded by', render: (event) => event.actor_name },
+          { key: 'request', label: 'Request ID', render: (event) => event.request_id },
+        ],
+      }),
+    )
     const totals = new Map<string, { paid: bigint; remaining: bigint }>()
     for (const row of report.rows) {
       if (row.currency === null) continue
@@ -294,6 +365,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     if (active === null || active.aborted || api.getStaffPaymentReport === undefined) return
     const ownGeneration = ++generation
     report = null
+    providerSettings.hidden = true
     person.hidden = true
     list.replaceChildren()
     summary.replaceChildren()
@@ -377,7 +449,9 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
         note: input('note').value.trim(),
         payment_id: kind === 'void' ? input('payment_id').value : null,
         source:
-          kind === 'payment' ? (input('source').value as 'wise' | 'historical') : 'historical',
+          kind === 'payment'
+            ? (input('source').value as StaffPaymentCommand['source'])
+            : 'historical',
       }
       const saving = command
       setBusy(true)
@@ -456,6 +530,55 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       }
     })()
   })
+  for (const providerForm of providerForms) {
+    let pending: StaffPaymentProviderCommand | null = null
+    providerForm.addEventListener('reset', () => {
+      pending = null
+    })
+    providerForm.addEventListener('input', () => {
+      pending = null
+    })
+    providerForm.addEventListener('change', () => {
+      pending = null
+    })
+    providerForm.addEventListener('submit', (event) => {
+      event.preventDefault()
+      const active = signal
+      const save = api.configureStaffPaymentProvider
+      if (busy || report === null || active === null || active.aborted || save === undefined) return
+      const organization = providerForm.dataset.paymentProviderForm === 'organization'
+      const row = rowForSelection()
+      if (!organization && row === undefined) return
+      const data = new FormData(providerForm)
+      const provider = String(data.get('provider') ?? '')
+      const next = {
+        user_id: organization ? null : row!.user_id,
+        expected_version: organization ? report.provider_settings.version : row!.provider_version,
+        provider: provider === '' ? null : (provider as 'wise' | 'deel'),
+        note: String(data.get('note') ?? '').trim(),
+      }
+      if (
+        pending === null ||
+        JSON.stringify({ ...pending, id: undefined }) !== JSON.stringify(next)
+      )
+        pending = { ...next, id: crypto.randomUUID() }
+      setBusy(true)
+      status.textContent = 'Saving provider preference…'
+      void save(pending, active)
+        .then(async () => {
+          if (active.aborted) return
+          pending = null
+          await load()
+          status.textContent = 'Provider preference saved.'
+        })
+        .catch((error: unknown) => {
+          if (!active.aborted) status.textContent = failure(error)
+        })
+        .finally(() => {
+          if (!active.aborted) setBusy(false)
+        })
+    })
+  }
   const download = (audit: boolean): void => {
     if (report === null || signal?.aborted !== false) return
     const url = URL.createObjectURL(
@@ -498,6 +621,9 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
           summary.replaceChildren()
           history.replaceChildren()
           form.reset()
+          providerForms.forEach((providerForm) => providerForm.reset())
+          providerHistory.replaceChildren()
+          providerSettings.hidden = true
           openingForm.reset()
           result.textContent = ''
           person.hidden = true
