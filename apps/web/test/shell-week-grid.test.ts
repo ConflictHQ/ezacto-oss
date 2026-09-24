@@ -1283,9 +1283,9 @@ describe('week-grid browser behavior', () => {
     const existing = document.querySelector<HTMLInputElement>(
       '[data-week-grid] input[data-cell-key="2:2:2026-08-24"]',
     )
-    expect(document.activeElement).toBe(existing)
-    expect(document.querySelector('[data-session-message]')?.textContent).toContain(
-      'already exists',
+    expect(existing).not.toBeNull()
+    expect(document.querySelector('[data-row-result]')?.textContent).toContain(
+      'already on this week',
     )
 
     openAddRow()

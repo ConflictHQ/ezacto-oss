@@ -4623,6 +4623,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
     const key = `${projectId}:${taskId}`
     const alreadyExists = grid?.rows.some((row) => row.key === key) ?? false
+    if (alreadyExists) {
+      // Keep feedback beside the submit button, including when the existing
+      // day's entry is running or locked and its duration input cannot focus.
+      result.textContent = 'That project and task are already on this week. Choose another pair, or close this dialog to edit the existing row.'
+      return
+    }
     supplementalRows = [
       ...new Map(
         [...supplementalRows, { projectId, taskId }].map((row) => [
@@ -4639,11 +4645,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     if (firstDate !== undefined) {
       const focused = focusCell({ key: `${key}:${firstDate}`, view: visibleGridView() })
       setSessionStatus(
-        alreadyExists
-          ? focused
-            ? 'That project/task row already exists; it is focused now.'
-            : 'That project/task row already exists.'
-          : focused
+        focused
             ? 'Project/task row added. Enter time to save it.'
             : 'Project/task row added.',
         'ready',
