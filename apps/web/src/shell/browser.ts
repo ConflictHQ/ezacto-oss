@@ -151,6 +151,7 @@ interface GridHandlers {
   openEntry(cell: WeekGridCell, view: GridView): void
   // Absent when the build has no restart endpoint; the row then shows no Start.
   restart?(entryId: number): Promise<void>
+  removeRow(seed: WeekRowSeed): void
   // The other half of a row's Start: today holds nothing on this row yet, so
   // there is no entry to restart and a new timer is what it means.
   startToday(seed: WeekRowSeed, notes: string | null): Promise<void>
@@ -669,6 +670,18 @@ const renderCellControl = (
   return wrapper
 }
 
+const emptyRowRemoval = (row: WeekGrid['rows'][number], handlers: GridHandlers): HTMLButtonElement | null => {
+  if (row.cells.some((cell) => cell.entries.length > 0)) return null
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'grid-row-start'
+  button.dataset.removeRow = row.key
+  button.textContent = 'Remove row'
+  button.setAttribute('aria-label', `Remove empty row for ${row.projectLabel} / ${row.taskLabel}`)
+  button.addEventListener('click', () => handlers.removeRow({ projectId: row.projectId, taskId: row.taskId }))
+  return button
+}
+
 /**
  * `today` is the day the server files a timer on -- the operator's zone, then
  * the organization's -- not the browser's clock. The column marked today and
@@ -727,6 +740,8 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
         const task = document.createElement('span')
         task.textContent = row.taskLabel
         label.append(project, task)
+        const remove = emptyRowRemoval(row, handlers)
+        if (remove !== null) label.append(remove)
         // The day list has had this since the timesheet work; the week grid
         // never did, so on a desktop the only way to start a timer was to
         // retype the project and task into the top bar as exact strings.
@@ -920,6 +935,8 @@ const renderPhoneDay = (grid: WeekGrid, selectedDay: number, handlers: GridHandl
       const task = document.createElement('span')
       task.textContent = `${row.taskLabel}${suffix}`
       label.append(project, task)
+      const remove = emptyRowRemoval(row, handlers)
+      if (remove !== null) label.append(remove)
       const note = document.createElement('p')
       note.className = 'day-entry-note'
       note.dataset.entryNote = String(cell.entries[0]?.id ?? '')
@@ -2884,6 +2901,30 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     approvalHistoryLoadMore.hidden = approvedNextCursor === null
   }
 
+  const removeEmptyRow = (seed: WeekRowSeed): void => {
+    const operation = sessionOperation()
+    if (operation === null || operation.userId === null) return
+    const key = `${seed.projectId}:${seed.taskId}`
+    const row = grid?.rows.find((candidate) => candidate.key === key)
+    if (row === undefined || row.cells.some((cell) => cell.entries.length > 0)) return
+    const unfinished = row.cells.some((cell) => {
+      const state = cellStates.get(cell.key)
+      return state !== undefined && state.state !== 'saved' && state.state !== 'removed'
+    })
+    if (unfinished) {
+      setSessionStatus('Save or clear this row’s unfinished edits before removing it.', 'ready')
+      return
+    }
+    supplementalRows = supplementalRows.filter((candidate) =>
+      candidate.projectId !== seed.projectId || candidate.taskId !== seed.taskId,
+    )
+    for (const cell of row.cells) cellStates.delete(cell.key)
+    saveSupplementalRows(operation.userId, within, supplementalRows, weekStartDay)
+    render()
+    setSessionStatus('Empty project/task row removed.', 'ready')
+    required<HTMLButtonElement>('[data-add-row-trigger]').focus()
+  }
+
   const render = (): void => {
     if (snapshot === null) return
     const availableRows = new Set(
@@ -2907,6 +2948,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       retry: retryCell,
       openEntry,
       startToday: startRowToday,
+      removeRow: removeEmptyRow,
       ...(api.restartTimeEntry === undefined ? {} : { restart: restartEntry }),
     }
     // The same data the grid draws, laid out on whichever axis the
