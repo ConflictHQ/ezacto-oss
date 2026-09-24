@@ -1065,7 +1065,7 @@ describe('Reports Stage 1 browser controller', () => {
     // A surviving tab is the marked one, rather than nothing being marked. The
     // fallback is the personal report because it is the one that answers with
     // nothing else chosen.
-    expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual(['page', null])
+    expect(tabs.map((tab) => tab.getAttribute('aria-current'))).toEqual(['page', null, null])
     // ...and the filter card is dressed for that same report.
     expect(document.querySelector<HTMLElement>('[data-report-client-field]')?.hidden).toBe(
       true,
