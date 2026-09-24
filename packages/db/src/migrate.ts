@@ -1,3 +1,4 @@
+import { staffPaymentRegisterMigration } from './migrations/0091_staff_payment_register.js'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js'
 import type BetterSqlite3 from 'better-sqlite3'
@@ -1534,6 +1535,7 @@ const migrations = [
   { id: '0088_invoice_reminder_deliveries', statements: invoiceReminderDeliveriesMigration },
   { id: '0089_quickbooks_mirror_outcomes', statements: quickBooksMirrorOutcomesMigration },
   { id: '0090_reminders_invoice_extra', statements: remindersInvoiceExtraMigration },
+  { id: '0091_staff_payment_register', statements: staffPaymentRegisterMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

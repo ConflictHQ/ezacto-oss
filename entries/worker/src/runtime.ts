@@ -1,3 +1,4 @@
+import { createStaffPaymentStore } from '@ezacto/db/d1'
 import {
   bootstrapInstanceD1,
   createAttachmentStore,
@@ -1011,6 +1012,7 @@ export const createRuntimeServices = async (
     ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
     ...(wise === null ? {} : { wise: wise.service }),
     ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
+    staffPayments: createStaffPaymentStore(drizzle),
     payoutAccounts: (() => {
       const store = createPayoutAccountStore(drizzle)
       return {

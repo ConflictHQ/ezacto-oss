@@ -1,3 +1,4 @@
+import type { StaffPaymentsApi } from '../staff-payments/browser.js'
 import {
   EzactoClient,
   EzactoApiError,
@@ -72,7 +73,8 @@ export interface ApprovalQueuePage {
 }
 
 export interface ShellApi
-  extends Partial<ClientDirectoryApi>,
+  extends StaffPaymentsApi,
+    Partial<ClientDirectoryApi>,
     Partial<ProjectDirectoryApi>,
     Partial<ReportWorkspaceApi>,
     Partial<ExpenseWorkflowApi>,
@@ -1001,6 +1003,10 @@ const withSignal = (signal?: AbortSignal): { signal?: AbortSignal } =>
   signal === undefined ? {} : { signal }
 
 export const createShellApi = (client: EzactoClient): ShellApi => ({
+  getStaffPaymentReport: async (month, signal) =>
+    (await client.getStaffPaymentReport({ query: { month }, ...withSignal(signal) })).data,
+  recordStaffPaymentEvent: (body, signal) =>
+    client.recordStaffPaymentEvent({ body, ...withSignal(signal) }),
   whoami: async (signal) => {
     return (await client.getWhoami(withSignal(signal))).data
   },

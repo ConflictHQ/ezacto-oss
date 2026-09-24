@@ -1,3 +1,4 @@
+import { createStaffPaymentStore } from '@ezacto/db'
 import { sql } from 'drizzle-orm'
 import { chmod, lstat, mkdir, realpath, stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
@@ -670,6 +671,7 @@ export const createContainerRuntime = async (
       ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
       ...(wise === null ? {} : { wise: wise.service }),
       ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
+      staffPayments: createStaffPaymentStore(drizzle),
       payoutAccounts: (() => {
         const store = createPayoutAccountStore(drizzle)
         return {

@@ -397,3 +397,5 @@ export {
   invoicePaymentUrlForSend,
   type InvoicePaymentUrlProviders,
 } from './payment-url.js'
+
+export { installStaffPaymentRoutes } from './staff-payments.js'

@@ -1,3 +1,4 @@
+import { renderStaffPayments } from '../staff-payments/render.js'
 import { shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
 import { iconMarkup } from '../components/icons.js'
 import { INSTANCE_THEME_STYLESHEET_PATH } from '../instance-theme.js'
@@ -82,6 +83,7 @@ export interface AppShellOptions {
     | 'project-detail'
     | 'task-list'
     | 'reports'
+    | 'staff-payments'
     | 'expense-list'
     | 'expense-detail'
     | 'expense-categories'
@@ -689,6 +691,7 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
       <fieldset aria-label="Invoice state">
         <legend class="visually-hidden">Invoice state</legend>
         <button type="button" data-invoice-filter="outstanding" aria-pressed="true">Outstanding</button>
+        <button type="button" data-invoice-filter="overdue" aria-pressed="false">Past due</button>
         <button type="button" data-invoice-filter="paid" aria-pressed="false">Paid</button>
         <button type="button" data-invoice-filter="closed" aria-pressed="false">Closed</button>
         <button type="button" data-invoice-filter="all" aria-pressed="false">All</button>
@@ -823,6 +826,7 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
   ${renderTaskAdminPage(view)}
   ${renderDashboardPage(view)}
   ${renderReportsPage(view)}
+  ${renderStaffPayments(view)}
   ${renderExpenseWorkflowPages(view)}
   ${renderExpenseCategoriesPage(view)}
   ${renderModuleSettingsPage(view)}
