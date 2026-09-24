@@ -66,6 +66,7 @@ import {
   type DetailedTimeGrouping,
   type DetailedTimeHours,
   type DetailedTimeOptions,
+  type DetailedTimeScope,
   type DetailedExpenseOptions,
   type ReportFilters,
   type ActivityLogEntry,
@@ -82,11 +83,12 @@ import {
 /**
  * The kinds that are not the financial surface. `my-hours` is here because it
  * returns the acting user's own rows and nothing else -- the API decides whose
- * they are -- and `project-budget` because a project's own budget is visible
- * wherever the project is.
+ * they are. Detailed time uses self mode for these viewers. Project budgets
+ * are visible wherever the project is.
  */
 const openToEveryProfile: ReadonlySet<ReportKind> = new Set<ReportKind>([
   'my-hours',
+  'detailed-time',
   'project-budget',
 ])
 
@@ -250,6 +252,36 @@ const reportHeading = (
   return header
 }
 
+interface TimeEntryLinkScope extends DetailedTimeScope {
+  readonly client_id?: number | null
+  readonly project_id?: number | null
+  readonly task_id?: number | null
+  readonly user_id?: number | null
+  readonly role_id?: number | null
+  readonly tag_id?: number | null
+  readonly hours?: DetailedTimeHours
+  readonly active_only?: boolean
+  readonly invoice_state?: DetailedTimeReport['invoice_state']
+  readonly group?: DetailedTimeOptions['grouping']
+}
+
+const timeEntriesUrl = (
+  range: { readonly from: string; readonly to: string },
+  scope: TimeEntryLinkScope = {},
+): string => {
+  const params = new URLSearchParams({ report: 'detailed-time', from: range.from, to: range.to, grain: 'entry' })
+  for (const [key, value] of Object.entries(scope)) {
+    if (value !== null && value !== undefined) params.set(key, String(value))
+  }
+  return `/reports?${params}`
+}
+
+const linkedReportCell = (href: string, label: string): HTMLTableCellElement => {
+  const cell = element('td', 'report-numeric')
+  cell.append(linkElement(href, label))
+  return cell
+}
+
 /**
  * One row per project, and both durations on each. The tracked column is the
  * number the week grid shows, so the report and the timesheet a member came
@@ -259,6 +291,8 @@ const reportHeading = (
  */
 const renderMyHours = (report: Readonly<MyHoursReport>): DocumentFragment => {
   const fragment = document.createDocumentFragment()
+  const url = (projectId = report.project_id, hours: DetailedTimeHours = 'all'): string =>
+    timeEntriesUrl(report, { self: true, user_id: report.user_id, project_id: projectId, hours })
   fragment.append(reportHeading('My hours', `${report.from} through ${report.to}`))
   if (report.projects.length === 0) {
     fragment.append(
@@ -268,10 +302,10 @@ const renderMyHours = (report: Readonly<MyHoursReport>): DocumentFragment => {
   }
   const facts = element('dl', 'report-facts')
   facts.append(
-    fact('Tracked time', formatReportHours(report.seconds)),
-    fact('Rounded time', formatReportHours(report.rounded_seconds)),
-    fact('Billable time', formatReportHours(report.billable_seconds)),
-    fact('Time entries', report.time_entry_count.toLocaleString('en-US')),
+    fact('Tracked time', linkElement(url(report.project_id), formatReportHours(report.seconds))),
+    fact('Rounded time', linkElement(url(report.project_id), formatReportHours(report.rounded_seconds))),
+    fact('Billable time', linkElement(url(report.project_id, 'billable'), formatReportHours(report.billable_seconds))),
+    fact('Time entries', linkElement(url(), report.time_entry_count.toLocaleString('en-US'))),
   )
   const wrapper = element('div', 'report-table-wrap')
   const table = element('table', 'report-table')
@@ -312,10 +346,10 @@ const renderMyHours = (report: Readonly<MyHoursReport>): DocumentFragment => {
     row.append(
       client,
       name,
-      textElement('td', formatReportHours(project.seconds)),
-      textElement('td', formatReportHours(project.rounded_seconds)),
-      textElement('td', formatReportHours(project.billable_seconds)),
-      textElement('td', project.time_entry_count.toLocaleString('en-US')),
+      linkedReportCell(url(project.project_id), formatReportHours(project.seconds)),
+      linkedReportCell(url(project.project_id), formatReportHours(project.rounded_seconds)),
+      linkedReportCell(url(project.project_id, 'billable'), formatReportHours(project.billable_seconds)),
+      linkedReportCell(url(project.project_id), project.time_entry_count.toLocaleString('en-US')),
     )
     body.append(row)
   }
@@ -326,10 +360,10 @@ const renderMyHours = (report: Readonly<MyHoursReport>): DocumentFragment => {
   totalLabel.colSpan = 2
   totalRow.append(
     totalLabel,
-    textElement('td', formatReportHours(report.seconds)),
-    textElement('td', formatReportHours(report.rounded_seconds)),
-    textElement('td', formatReportHours(report.billable_seconds)),
-    textElement('td', report.time_entry_count.toLocaleString('en-US')),
+    linkedReportCell(url(report.project_id), formatReportHours(report.seconds)),
+    linkedReportCell(url(report.project_id), formatReportHours(report.rounded_seconds)),
+    linkedReportCell(url(report.project_id, 'billable'), formatReportHours(report.billable_seconds)),
+    linkedReportCell(url(), report.time_entry_count.toLocaleString('en-US')),
   )
   foot.append(totalRow)
   table.append(head, body, foot)
@@ -445,7 +479,7 @@ const renderUninvoiced = (
       // conclusion to hand somebody deciding whether to trust the books. The
       // heading already says "Uninvoiced work", so repeating the word here is
       // the disambiguation rather than a redundancy (issue 534).
-      fact('Uninvoiced billable time', formatReportHours(total.rounded_seconds)),
+      fact('Uninvoiced billable time', linkElement(timeEntriesUrl(report, { client_id: report.client_id, project_id: report.project_id, currency: total.currency, hours: 'uninvoiced', active_only: true }), formatReportHours(total.rounded_seconds))),
       fact('Time amount', reportMoney(total.time_cents, total.currency)),
       fact('Expense amount', reportMoney(total.expense_cents, total.currency)),
       fact('Time entries', total.time_entry_count.toLocaleString('en-US')),
@@ -477,15 +511,15 @@ const renderUninvoiced = (
   return fragment
 }
 
-const metricsFacts = (metrics: Readonly<ClientRollupMetrics>): HTMLDListElement => {
+const metricsFacts = (metrics: Readonly<ClientRollupMetrics>, url: (hours?: DetailedTimeHours) => string): HTMLDListElement => {
   const facts = element('dl', 'report-facts report-rollup-facts')
   facts.append(
     // Genuinely tracked time here, and correct: the rollup counts every entry
     // and reports billable separately on the next line. Issue 534 asked whether
     // this borrowed the same wrong label; it does not, and the pair of facts is
     // what makes it unambiguous.
-    fact('Tracked time', formatReportHours(metrics.rounded_seconds)),
-    fact('Billable time', formatReportHours(metrics.billable_seconds)),
+    fact('Tracked time', linkElement(url(), formatReportHours(metrics.rounded_seconds))),
+    fact('Billable time', linkElement(url('billable'), formatReportHours(metrics.billable_seconds))),
     fact('Time entries', metrics.time_entry_count.toLocaleString('en-US')),
     fact('Expenses', metrics.expense_count.toLocaleString('en-US')),
   )
@@ -532,9 +566,10 @@ const currencyTable = (metrics: Readonly<ClientRollupMetrics>): HTMLElement => {
 const metricsSection = (
   label: string,
   metrics: Readonly<ClientRollupMetrics>,
+  url: (hours?: DetailedTimeHours) => string,
 ): HTMLElement => {
   const section = element('section', 'report-metrics')
-  section.append(textElement('h4', label), metricsFacts(metrics), currencyTable(metrics))
+  section.append(textElement('h4', label), metricsFacts(metrics, url), currencyTable(metrics))
   const unpriced = metrics.unpriced_billable_entry_count + metrics.unpriced_cost_entry_count
   if (unpriced > 0) {
     section.append(
@@ -590,8 +625,8 @@ const renderClientRollup = (
     header.append(identity)
     const comparison = element('div', 'report-rollup-comparison')
     comparison.append(
-      metricsSection('Direct activity', node.direct),
-      metricsSection('Including descendants', node.rollup),
+      metricsSection('Direct activity', node.direct, (hours = 'all') => timeEntriesUrl(report, { client_id: node.client_id, direct_client_only: true, hours })),
+      metricsSection('Including descendants', node.rollup, (hours = 'all') => timeEntriesUrl(report, { client_id: node.client_id, hours })),
     )
     item.append(header, comparison)
     list.append(item)
@@ -1089,7 +1124,19 @@ const renderProfitability = (
       href === null ? row.dimension_name : linkElement(href, row.dimension_name),
     )
     line.append(dimension)
-    line.append(textElement('td', formatReportHours(row.rounded_seconds)))
+    line.append(row.dimension_id === 0
+      ? textElement('td', formatReportHours(row.rounded_seconds))
+      : linkedReportCell(timeEntriesUrl(report, {
+        project_status: report.filters.project_status,
+        ...(report.filters.billing_method === null ? {} : { billing_method: report.filters.billing_method }),
+        ...(report.filters.manager_id === null ? {} : { manager_id: report.filters.manager_id }),
+        tag_id: report.filters.tag_id,
+        currency: row.currency,
+        ...(options.dimension === 'projects' ? { project_id: row.dimension_id }
+          : options.dimension === 'clients' ? { client_id: row.dimension_id, direct_client_only: true }
+            : options.dimension === 'teammates' ? { user_id: row.dimension_id }
+              : { task_id: row.dimension_id }),
+      }), formatReportHours(row.rounded_seconds)))
     // Revenue in the project's own currency, cost always in the
     // organization's: labelling both with one currency would relabel a figure
     // rather than convert it.
@@ -1143,6 +1190,7 @@ const renderDetailedExpense = (
   printButton.dataset.expensePrint = ''
   printButton.addEventListener('click', handlers.onPrint)
   actions.append(exportButton, printButton)
+
   heading.append(actions)
   fragment.append(heading)
   const predicates = [
@@ -1398,7 +1446,7 @@ const renderContractorCost = (
     totalRow.append(
       totalLabel,
       textElement('td', ''),
-      textElement('td', formatReportHours(seconds)),
+      linkedReportCell(timeEntriesUrl(report, { contractors_only: contractorOnly }), formatReportHours(seconds)),
       textElement('td', ''),
       textElement('td', ''),
       textElement('td', ''),
@@ -1503,9 +1551,25 @@ const detailedTimeRecap = (
   return recap
 }
 
+const detailedEntryScope = (report: Readonly<DetailedTimeReport>, options: Readonly<DetailedTimeOptions>): TimeEntryLinkScope => ({
+  ...options.scope,
+  client_id: report.client_id,
+  project_id: report.project_id,
+  task_id: report.task_id,
+  user_id: report.user_id,
+  role_id: report.role_id,
+  tag_id: report.tag_id,
+  hours: report.hours,
+  invoice_state: report.invoice_state,
+  active_only: report.active_projects_only,
+  group: options.grouping,
+})
+
 const detailedTimeCells = (
   row: Readonly<DetailedTimeRow>,
   grain: DetailedTimeGrain,
+  href: string,
+  showRounded: boolean,
 ): readonly Node[] => {
   const client = element('th')
   client.scope = 'row'
@@ -1541,9 +1605,10 @@ const detailedTimeCells = (
   if (grain === 'entry' && row.time_entry_id !== undefined) {
     hours.append(linkElement(`/time?entry_id=${row.time_entry_id}`, decimalHours(row.seconds)))
   } else {
-    hours.append(decimalHours(row.seconds))
+    hours.append(linkElement(href, decimalHours(row.seconds)))
   }
   cells.push(hours)
+  if (showRounded) cells.push(linkedReportCell(href, decimalHours(row.rounded_seconds)))
   return cells
 }
 
@@ -1562,15 +1627,19 @@ const renderDetailedTime = (
       `${report.time_entry_count.toLocaleString('en-US')} time ${report.time_entry_count === 1 ? 'entry' : 'entries'}`,
     ),
   )
+  const scope = detailedEntryScope(report, options)
+  const entryUrl = timeEntriesUrl(report, scope)
+  const showRounded = report.rows.some((row) => row.seconds !== row.rounded_seconds)
   const summary = element('div', 'report-detailed-summary')
   const totals = element('dl', 'report-facts')
   totals.append(
-    fact('Total hours', formatReportHours(report.seconds)),
-    fact('Uninvoiced billable hours', formatReportHours(report.uninvoiced_billable_seconds)),
+    fact('Total hours', linkElement(entryUrl, formatReportHours(report.seconds))),
+    ...(showRounded ? [fact('Rounded hours', linkElement(entryUrl, formatReportHours(report.rounded_seconds)))] : []),
+    fact('Uninvoiced billable hours', report.uninvoiced_billable_seconds === 0 ? formatReportHours(0) : linkElement(timeEntriesUrl(report, { ...scope, hours: 'uninvoiced' }), formatReportHours(report.uninvoiced_billable_seconds))),
     // Tracked, not billable: a band absorbs the period, so the hours nobody
     // ticked billable are part of what it took (#708).
-    fact('Claimed hours', formatReportHours(report.claimed_seconds)),
-    fact('Unclaimed hours', formatReportHours(report.unclaimed_seconds)),
+    fact('Claimed hours', report.claimed_seconds === 0 ? formatReportHours(0) : linkElement(timeEntriesUrl(report, { ...scope, invoice_state: 'invoiced' }), formatReportHours(report.claimed_seconds))),
+    fact('Unclaimed hours', report.unclaimed_seconds === 0 ? formatReportHours(0) : linkElement(timeEntriesUrl(report, { ...scope, invoice_state: 'uninvoiced' }), formatReportHours(report.unclaimed_seconds))),
   )
   for (const currency of report.currencies) {
     // Absent for a profile that cannot read billable rates; the fact is then
@@ -1583,7 +1652,17 @@ const renderDetailedTime = (
       ),
     )
   }
-  summary.append(totals, detailedTimeRecap(labels.client, labels.project, report))
+  const recap = detailedTimeRecap(labels.client, labels.project, report)
+  const extra = options.scope
+  if (extra?.self) recap.append(fact('People', 'My time only'))
+  if (extra?.include_fixed_fee === false) recap.append(fact('Fixed-fee projects', 'Excluded'))
+  if (extra?.direct_client_only) recap.append(fact('Client scope', 'Direct activity only'))
+  if (extra?.contractors_only) recap.append(fact('People', 'Contractors only'))
+  if (extra?.currency) recap.append(fact('Project currency', extra.currency))
+  if (extra?.project_status) recap.append(fact('Project status', extra.project_status))
+  if (extra?.billing_method) recap.append(fact('Billing method', extra.billing_method.replaceAll('_', ' ')))
+  if (extra?.manager_id) recap.append(fact('Project manager', `Person #${extra.manager_id}`))
+  summary.append(totals, recap)
   fragment.append(summary)
 
   const controls = element('div', 'report-detailed-controls')
@@ -1628,8 +1707,8 @@ const renderDetailedTime = (
     ),
     idControl('ez-detailed-task', 'Task ID', options.taskId, (taskId) =>
       handlers.onOptions({ ...options, taskId })),
-    idControl('ez-detailed-person', 'Person ID', options.userId, (userId) =>
-      handlers.onOptions({ ...options, userId })),
+    ...(options.scope?.self ? [] : [idControl('ez-detailed-person', 'Person ID', options.userId, (userId) =>
+      handlers.onOptions({ ...options, userId }))]),
     idControl('ez-detailed-role', 'Role ID', options.roleId, (roleId) =>
       handlers.onOptions({ ...options, roleId })),
     idControl('ez-detailed-tag', 'Tag ID', options.tagId, (tagId) =>
@@ -1672,6 +1751,12 @@ const renderDetailedTime = (
   printButton.dataset['detailedPrint'] = ''
   printButton.addEventListener('click', handlers.onPrint)
   actions.append(exportButton, printButton)
+  if (Object.keys(options.scope ?? {}).some((key) => key !== 'self')) {
+    const clear = textElement('button', 'Clear additional filters')
+    clear.type = 'button'
+    clear.addEventListener('click', () => handlers.onOptions({ ...options, scope: options.scope?.self ? { self: true } : {} }))
+    actions.append(clear)
+  }
   const selected = new Set<number>()
   const mutationButtons: HTMLButtonElement[] = []
   const updateMutationButtons = (): void => {
@@ -1712,10 +1797,11 @@ const renderDetailedTime = (
     options.grain === 'entry'
       ? [...(selectable ? ['Select'] : []), 'Client', 'Project', 'Task', 'Roles', 'Person', 'Notes', 'Claimed by', 'Hours']
       : ['Client', 'Project', 'Task', 'Roles', 'Person', 'Hours']
+  if (showRounded) headers.push('Rounded hours')
   for (const label of headers) {
     const cell = textElement('th', label)
     cell.scope = 'col'
-    if (label === 'Hours') cell.className = 'report-numeric'
+    if (label === 'Hours' || label === 'Rounded hours') cell.className = 'report-numeric'
     headerRow.append(cell)
   }
   head.append(headerRow)
@@ -1723,9 +1809,26 @@ const renderDetailedTime = (
   for (const band of groupDetailedTimeRows(report.rows, options.grouping)) {
     const bandRow = element('tr', 'report-band-row')
     const bandLabel = textElement('th', band.label)
-    bandLabel.colSpan = headers.length - 1
+    bandLabel.colSpan = headers.length - (showRounded ? 2 : 1)
     bandLabel.scope = 'colgroup'
-    bandRow.append(bandLabel, textElement('td', decimalHours(band.seconds), 'report-numeric'))
+    const first = band.rows[0]!
+    const bandScope: TimeEntryLinkScope = {
+      ...scope,
+      ...(options.grouping === 'client' ? { client_id: first.client_id, direct_client_only: true }
+        : options.grouping === 'project' ? { project_id: first.project_id }
+          : options.grouping === 'task' ? { task_id: first.task_id }
+            : options.grouping === 'person' ? { user_id: first.user_id }
+              : options.grouping === 'claimed' ? { invoice_state: first.claimed ? 'invoiced' : 'uninvoiced' }
+                : {}),
+    }
+    const bandRange = options.grouping === 'date' ? { from: first.spent_date, to: first.spent_date } : report
+    const bandUrl = timeEntriesUrl(bandRange, bandScope)
+    // Role groups describe combinations of memberships, not one role id.
+    // Keep that grouping and link to its labelled section of the entry report.
+    bandRow.id = `time-band-${band.key}`
+    const href = options.grouping === 'role' ? `${bandUrl}#${encodeURIComponent(bandRow.id)}` : bandUrl
+    bandRow.append(bandLabel, linkedReportCell(href, decimalHours(band.seconds)))
+    if (showRounded) bandRow.append(linkedReportCell(href, decimalHours(band.rows.reduce((sum, row) => sum + row.rounded_seconds, 0))))
     body.append(bandRow)
     for (const row of band.rows) {
       const line = element('tr')
@@ -1744,7 +1847,13 @@ const renderDetailedTime = (
         cell.append(checkbox)
         line.append(cell)
       }
-      line.append(...detailedTimeCells(row, options.grain))
+      const href = options.grain === 'entry' && row.time_entry_id !== undefined
+        ? `/time?entry_id=${row.time_entry_id}`
+        : timeEntriesUrl({ from: row.spent_date, to: row.spent_date }, {
+          ...scope, project_id: row.project_id, task_id: row.task_id, user_id: row.user_id,
+          invoice_state: row.claimed ? 'invoiced' : 'uninvoiced',
+        })
+      line.append(...detailedTimeCells(row, options.grain, href, showRounded))
       body.append(line)
     }
   }
@@ -1752,8 +1861,9 @@ const renderDetailedTime = (
   const totalRow = element('tr')
   const totalLabel = textElement('th', 'Total')
   totalLabel.scope = 'row'
-  totalLabel.colSpan = headers.length - 1
-  totalRow.append(totalLabel, textElement('td', decimalHours(report.seconds), 'report-numeric'))
+  totalLabel.colSpan = headers.length - (showRounded ? 2 : 1)
+  totalRow.append(totalLabel, linkedReportCell(entryUrl, decimalHours(report.seconds)))
+  if (showRounded) totalRow.append(linkedReportCell(entryUrl, decimalHours(report.rounded_seconds)))
   foot.append(totalRow)
   table.append(head, body, foot)
   wrapper.append(table)
@@ -1779,14 +1889,16 @@ const renderDetailedTime = (
  * response carried no `amounts` -- a card reading "—" would say the month had
  * no billable value rather than that this reader may not see it.
  */
-const timeSummary = (totals: Readonly<TimeReportTotals>): HTMLElement => {
+const timeSummary = (totals: Readonly<TimeReportTotals>, url: (hours?: DetailedTimeHours) => string): HTMLElement => {
   const section = element('section', 'report-summary')
   section.setAttribute('aria-label', 'Time report summary')
   const nonBillableSeconds = totals.rounded_seconds - totals.billable_seconds
   const metric = (label: string, value: string, swatch?: string): HTMLElement => {
     const wrapper = element('div')
     if (swatch !== undefined) wrapper.dataset['swatch'] = swatch
-    wrapper.append(textElement('span', label), textElement('strong', value))
+    const strong = element('strong')
+    strong.append(linkElement(url(swatch === 'billable' ? 'billable' : swatch === 'nonbillable' ? 'non_billable' : 'all'), value))
+    wrapper.append(textElement('span', label), strong)
     return wrapper
   }
   section.append(
@@ -1885,13 +1997,14 @@ const hoursBar = (seconds: number, maximum: number, label: string): HTMLElement 
   return bar
 }
 
-const billableCell = (row: Readonly<TimeRowFigures>): HTMLTableCellElement => {
+const billableCell = (row: Readonly<TimeRowFigures>, href: string): HTMLTableCellElement => {
   const cell = element('td')
   const share = billablePercent(row.billable_seconds, row.rounded_seconds)
-  cell.textContent =
+  cell.append(linkElement(href,
     share === null
       ? formatReportHours(row.billable_seconds)
-      : `${formatReportHours(row.billable_seconds)} (${share}%)`
+      : `${formatReportHours(row.billable_seconds)} (${share}%)`,
+  ))
   return cell
 }
 
@@ -1930,6 +2043,7 @@ const timeTable = <Row extends TimeRowFigures>(
   groups: readonly { readonly label: string | null; readonly rows: readonly Row[] }[],
   totals: Readonly<TimeReportTotals>,
   barLabel: (row: Row) => string,
+  url: (row: Row | null, hours?: DetailedTimeHours) => string,
 ): HTMLElement => {
   const showMoney = totals.amounts !== undefined
   const wrapper = element('div', 'report-table-wrap')
@@ -1974,10 +2088,10 @@ const timeTable = <Row extends TimeRowFigures>(
     for (const row of group.rows) {
       const tableRow = element('tr')
       for (const column of leading) tableRow.append(column.cell(row))
-      const hours = textElement('td', formatReportHours(row.rounded_seconds))
+      const hours = linkedReportCell(url(row), formatReportHours(row.rounded_seconds))
       const bar = element('td', 'report-bar-cell')
       bar.append(hoursBar(row.rounded_seconds, maximum, barLabel(row)))
-      tableRow.append(hours, bar, billableCell(row))
+      tableRow.append(hours, bar, billableCell(row, url(row, 'billable')))
       if (showMoney) {
         tableRow.append(amountCell(row.amounts ?? [], (amount) => amount.billable_cents))
       }
@@ -1993,11 +2107,11 @@ const timeTable = <Row extends TimeRowFigures>(
   totalLabel.colSpan = leading.length
   totalRow.append(
     totalLabel,
-    textElement('td', formatReportHours(totals.rounded_seconds)),
+    linkedReportCell(url(null), formatReportHours(totals.rounded_seconds)),
     // The bar column has no total: the bars rank rows against each other, and a
     // full-width bar on the Total row would read as a fifth data row.
     element('td', 'report-bar-cell'),
-    billableCell(totals),
+    billableCell(totals, url(null, 'billable')),
   )
   if (showMoney) {
     totalRow.append(amountCell(totals.amounts ?? [], (amount) => amount.billable_cents))
@@ -2052,7 +2166,7 @@ const renderTimeReport = (
         : 'Fixed-fee project hours are excluded from every total and grouping.',
       'report-card-note',
     ),
-    timeSummary(report.totals),
+    timeSummary(report.totals, (hours = 'all') => timeEntriesUrl(report, { include_fixed_fee: report.fixed_fee_included, hours })),
     timeTabStrip(filters, onTab, options),
   )
   if (report.totals.unpriced_billable_entry_count > 0 && report.totals.amounts !== undefined) {
@@ -2075,6 +2189,7 @@ const renderTimeReport = (
         [{ label: null, rows: report.clients }],
         report.totals,
         (row) => `${row.client_name} hours`,
+        (row, hours = 'all') => timeEntriesUrl(report, { include_fixed_fee: report.fixed_fee_included, client_id: row?.client_id ?? null, hours, direct_client_only: true }),
       ),
     )
   } else if (filters.tab === 'projects') {
@@ -2098,6 +2213,7 @@ const renderTimeReport = (
         [{ label: null, rows: report.projects }],
         report.totals,
         (row) => `${row.project_name} hours`,
+        (row, hours = 'all') => timeEntriesUrl(report, { include_fixed_fee: report.fixed_fee_included, project_id: row?.project_id ?? null, hours }),
       ),
     )
   } else if (filters.tab === 'tasks') {
@@ -2120,6 +2236,7 @@ const renderTimeReport = (
         [{ label: null, rows: report.tasks }],
         report.totals,
         (row) => `${row.task_name} hours`,
+        (row, hours = 'all') => timeEntriesUrl(report, { include_fixed_fee: report.fixed_fee_included, task_id: row?.task_id ?? null, hours }),
       ),
     )
   } else {
@@ -2156,6 +2273,7 @@ const renderTimeReport = (
         ],
         report.totals,
         (row) => `${row.user_name} hours`,
+        (row, hours = 'all') => timeEntriesUrl(report, { include_fixed_fee: report.fixed_fee_included, user_id: row?.user_id ?? null, hours }),
       ),
     )
   }
@@ -2764,6 +2882,7 @@ export const createReportsController = (
         {
           onOptions: (next) => {
             const regroupOnly =
+              JSON.stringify(next.scope) === JSON.stringify(detailedOptions.scope) &&
               next.hours === detailedOptions.hours &&
               next.grain === detailedOptions.grain &&
               next.activeProjectsOnly === detailedOptions.activeProjectsOnly &&
@@ -2819,6 +2938,9 @@ export const createReportsController = (
         },
       ),
     )
+    const hash = globalThis.location.hash.slice(1)
+    const band = [...results.querySelectorAll<HTMLElement>('.report-band-row')].find((row) => encodeURIComponent(row.id) === hash)
+    band?.scrollIntoView({ block: 'start' })
   }
 
   /**
@@ -3005,6 +3127,9 @@ export const createReportsController = (
       status.textContent = 'Reports are unavailable in this build.'
       return
     }
+    if (filters.kind === 'detailed-time' && !canReadFinancialReports(active.identity.profile)) {
+      detailedOptions = { ...detailedOptions, scope: { ...detailedOptions.scope, self: true } }
+    }
     syncKindHrefs(filters)
     if (updateUrl) {
       const nextUrl = reportFiltersUrl(
@@ -3084,6 +3209,7 @@ export const createReportsController = (
                 ...range,
                 ...(filters.clientId === null ? {} : { client_id: filters.clientId }),
                 ...(filters.projectId === null ? {} : { project_id: filters.projectId }),
+                ...detailedOptions.scope,
                 hours: detailedOptions.hours,
                 grain: detailedOptions.grain,
                 ...(detailedOptions.taskId === null ? {} : { task_id: detailedOptions.taskId }),

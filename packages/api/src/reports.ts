@@ -717,6 +717,13 @@ export interface ReportReader {
   }): Promise<MonthEndManifestRecord>;
   timeReport(filter: Readonly<ReportDateRange & { includeFixedFee?: boolean }>): Promise<TimeReportRecord>;
   detailedTime(filter: {
+    includeFixedFee?: boolean;
+    directClientOnly?: boolean;
+    currency?: string;
+    contractorsOnly?: boolean;
+    projectStatus?: "all" | "active" | "archived";
+    billingMethod?: "non_billable" | "time_materials" | "fixed_fee";
+    managerId?: number;
     from: string;
     to: string;
     clientId?: number;
@@ -783,6 +790,14 @@ const detailedExpenseKeys = new Set([
   "active_projects_only",
 ]);
 const detailedTimeKeys = new Set([
+  "self",
+  "include_fixed_fee",
+  "direct_client_only",
+  "currency",
+  "contractors_only",
+  "project_status",
+  "billing_method",
+  "manager_id",
   ...uninvoicedKeys,
   "hours",
   "utilization_ppm",
@@ -1989,8 +2004,12 @@ export const installReportRoutes = <Bindings extends object>(
   });
 
   api.get("/reports/detailed-time", async (context) => {
-    requireApiScope(context, "reports:read");
-    const parsed = rangeFrom(new URL(context.req.url), detailedTimeKeys);
+    const url = new URL(context.req.url);
+    // My hours drilldowns use the same authority as the summary. The server,
+    // never a person id in a link, decides whose entries this mode can read.
+    requireApiScope(context, url.searchParams.get("self") === "true" ? "time_entries:read" : "reports:read");
+    const parsed = rangeFrom(url, detailedTimeKeys);
+    const self = queryBoolean(parsed.params, "self", parsed.errors);
     const clientId = queryPositiveInteger(
       parsed.params,
       "client_id",
@@ -2028,13 +2047,33 @@ export const installReportRoutes = <Bindings extends object>(
       "active_projects_only",
       parsed.errors,
     );
+    const includeFixedFee = queryBoolean(parsed.params, "include_fixed_fee", parsed.errors);
+    const directClientOnly = queryBoolean(parsed.params, "direct_client_only", parsed.errors);
+    const contractorsOnly = queryBoolean(parsed.params, "contractors_only", parsed.errors);
+    const projectStatus = queryEnum(parsed.params, "project_status", ["all", "active", "archived"] as const, parsed.errors);
+    const billingMethod = queryEnum(parsed.params, "billing_method", ["non_billable", "time_materials", "fixed_fee"] as const, parsed.errors);
+    const managerId = queryPositiveInteger(parsed.params, "manager_id", parsed.errors);
+    const currency = parsed.params.get("currency")?.toUpperCase();
+    if (currency !== undefined && !/^[A-Z]{3}$/u.test(currency)) {
+      parsed.errors.push({ field: "currency", code: "invalid", message: "currency must be a three-letter currency code" });
+    }
+    if (self === true && userId !== undefined && userId !== context.get("principal").userId) {
+      throw new ApiError({ status: 403, code: "profile_forbidden", message: "My hours can only show your own time entries." });
+    }
     assertFields(parsed.errors);
     const result = await reports.detailedTime({
+      ...(includeFixedFee === undefined ? {} : { includeFixedFee }),
+      ...(directClientOnly === undefined ? {} : { directClientOnly }),
+      ...(contractorsOnly === undefined ? {} : { contractorsOnly }),
+      ...(projectStatus === undefined ? {} : { projectStatus }),
+      ...(billingMethod === undefined ? {} : { billingMethod }),
+      ...(managerId === undefined ? {} : { managerId }),
+      ...(currency === undefined ? {} : { currency }),
       ...parsed.range,
       ...(clientId === undefined ? {} : { clientId }),
       ...(projectId === undefined ? {} : { projectId }),
       ...(taskId === undefined ? {} : { taskId }),
-      ...(userId === undefined ? {} : { userId }),
+      ...(self === true ? { userId: context.get("principal").userId } : userId === undefined ? {} : { userId }),
       ...(roleId === undefined ? {} : { roleId }),
       ...(tagId === undefined ? {} : { tagId }),
       ...(hours === undefined ? {} : { hours }),

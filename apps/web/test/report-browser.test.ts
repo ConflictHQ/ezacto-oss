@@ -759,7 +759,7 @@ describe('Reports Stage 1 browser controller', () => {
     expect(results.textContent).toContain('Child of Parent')
     // Every client the rollup names is the name, and a way into that client.
     expect(
-      [...results.querySelectorAll('a')].map((link) => [
+      [...results.querySelectorAll('a[href^="/clients/"]')].map((link) => [
         link.getAttribute('href'),
         link.textContent,
       ]),
@@ -1016,7 +1016,7 @@ describe('Reports Stage 1 browser controller', () => {
       [...document.querySelectorAll('.tabstrip a[href^="/reports"]')].map(
         (tab) => tab.textContent,
       ),
-    ).toEqual(['My hours', 'Project budget'])
+    ).toEqual(['My hours', 'Detailed time', 'Project budget'])
     const results = document.querySelector('[data-report-results]')!
     // No catalog resolves an assignment, so its id stays; the project has one.
     expect(results.textContent).toContain('Task assignment #22')
@@ -1061,7 +1061,7 @@ describe('Reports Stage 1 browser controller', () => {
     )
 
     const tabs = [...document.querySelectorAll('.tabstrip a[href^="/reports"]')]
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['My hours', 'Project budget'])
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['My hours', 'Detailed time', 'Project budget'])
     // A surviving tab is the marked one, rather than nothing being marked. The
     // fallback is the personal report because it is the one that answers with
     // nothing else chosen.
@@ -2089,9 +2089,10 @@ describe('Reports Stage 1 browser controller', () => {
           user_id: 2,
           user_name: 'Grace Hopper',
           seconds: 1_800,
+          rounded_seconds: 1_800,
           roles: [],
         }),
-        detailedTimeRow({ spent_date: '2026-08-11', seconds: 900 }),
+        detailedTimeRow({ spent_date: '2026-08-11', seconds: 900, rounded_seconds: 900 }),
       ],
     })
 

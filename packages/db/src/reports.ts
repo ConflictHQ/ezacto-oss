@@ -475,6 +475,14 @@ export type DetailedTimeGrain = 'day' | 'entry'
 export type DetailedTimeInvoiceState = 'all' | 'invoiced' | 'uninvoiced'
 
 export interface DetailedTimeFilter extends ReportDateRange {
+  includeFixedFee?: boolean
+  directClientOnly?: boolean
+  currency?: string
+  contractorsOnly?: boolean
+  projectStatus?: 'all' | 'active' | 'archived'
+  billingMethod?: 'non_billable' | 'time_materials' | 'fixed_fee'
+  managerId?: number
+
   clientId?: number
   projectId?: number
   taskId?: number
@@ -2846,6 +2854,7 @@ const detailedTimeReport = async (
   if (filter.userId !== undefined) assertId(filter.userId, 'user id')
   if (filter.roleId !== undefined) assertId(filter.roleId, 'role id')
   if (filter.tagId !== undefined) assertId(filter.tagId, 'tag id')
+  if (filter.managerId !== undefined) assertId(filter.managerId, 'manager id')
   const hours = filter.hours ?? 'all'
   const grain = filter.grain ?? 'day'
   const invoiceState = filter.invoiceState ?? 'all'
@@ -2871,6 +2880,17 @@ const detailedTimeReport = async (
     JOIN users person ON person.id = entry.user_id
     WHERE entry.spent_date BETWEEN ${filter.from} AND ${filter.to}
       AND ${detailedTimeHoursFilter(hours)}
+      AND ${filter.includeFixedFee === false ? sql`project.billing_method <> 'fixed_fee'` : sql`1`}
+      AND ${filter.currency === undefined ? sql`1` : sql`upper(coalesce(project.billing_currency, client.currency)) = ${filter.currency.toUpperCase()}`}
+      AND ${filter.contractorsOnly === true ? sql`person.is_contractor = 1` : sql`1`}
+      AND ${filter.projectStatus === 'active' ? sql`project.is_active = 1` : filter.projectStatus === 'archived' ? sql`project.is_active = 0` : sql`1`}
+      AND ${filter.billingMethod === undefined ? sql`1` : sql`project.billing_method = ${filter.billingMethod}`}
+      AND ${filter.managerId === undefined ? sql`1` : sql`EXISTS (
+        SELECT 1 FROM user_assignments manager
+        WHERE manager.project_id = project.id AND manager.user_id = ${filter.managerId}
+          AND manager.is_project_manager = 1
+      )`}
+      AND ${filter.directClientOnly === true && filter.clientId !== undefined ? sql`project.client_id = ${filter.clientId}` : sql`1`}
       AND ${activeProjectsOnly ? sql`project.is_active = 1` : sql`1`}
       AND ${filter.projectId === undefined ? sql`1` : sql`project.id = ${filter.projectId}`}
       AND ${filter.taskId === undefined ? sql`1` : sql`task.id = ${filter.taskId}`}
