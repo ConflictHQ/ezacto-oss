@@ -7,7 +7,7 @@ import {
   type StaffPaymentReport,
   type StaffPaymentRow,
 } from '@ezacto/core'
-import { renderDataTable } from '../components/data-table.js'
+import { renderDataTable, type DataTableSort } from '../components/data-table.js'
 import { moneyText } from '../money-display.js'
 import {
   staffPaymentAmount,
@@ -24,6 +24,13 @@ export interface StaffPaymentsApi {
   getStaffPaymentReport?(month: string, signal?: AbortSignal): Promise<StaffPaymentReport>
   recordStaffPaymentEvent?(command: StaffPaymentCommand, signal?: AbortSignal): Promise<void>
 }
+
+const moneySort = (
+  amount: number | null,
+  currency: string | null,
+): readonly [string, number] | null =>
+  amount === null || currency === null ? null : [currency, amount]
+const moneySortDescription = 'Sort by currency, then amount; unspecified amounts stay last.'
 
 const failure = (error: unknown): string => {
   if (error instanceof EzactoApiError) {
@@ -75,6 +82,9 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   let generation = 0
   let busy = false
   let command: StaffPaymentCommand | null = null
+  let registerSort: DataTableSort = { column: 'name', direction: 'ascending' }
+  let historySort: DataTableSort = { column: 'when', direction: 'descending' }
+  let providerSort: DataTableSort = { column: 'when', direction: 'descending' }
 
   const configureForm = (): void => {
     const kind = input('kind').value
@@ -150,35 +160,58 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     history.replaceChildren(
       renderDataTable({
         caption: 'Payment history',
+        sort: historySort,
+        onSort: (sort) => {
+          historySort = sort
+        },
         rows: [...row.events].sort(
           (a, b) => b.recorded_at.localeCompare(a.recorded_at) || b.version - a.version,
         ),
         rowKey: (event) => event.id,
         empty: 'No records yet.',
         columns: [
-          { key: 'when', label: 'Recorded', render: (event) => event.recorded_at },
+          {
+            key: 'when',
+            label: 'Recorded',
+            sortValue: (event) => event.recorded_at,
+            render: (event) => event.recorded_at,
+          },
           {
             key: 'event',
             label: 'Entry',
+            sortValue: (event) => [event.kind, voided.has(event.id) ? 1 : 0, event.month],
             render: (event) =>
               `${event.kind}${voided.has(event.id) ? ' (voided)' : ''} · ${event.month}`,
           },
           {
             key: 'amount',
             label: 'Amount',
+            sortValue: (event) => moneySort(event.amount_cents, event.currency),
+            sortDescription: moneySortDescription,
             render: (event) =>
               event.amount_cents === null
                 ? '—'
                 : moneyText(staffPaymentMoney(event.amount_cents, event.currency)),
           },
-          { key: 'paid', label: 'Paid on', render: (event) => event.paid_on ?? '—' },
+          {
+            key: 'paid',
+            label: 'Paid on',
+            sortValue: (event) => event.paid_on,
+            render: (event) => event.paid_on ?? '—',
+          },
           {
             key: 'source',
             label: 'Source / reference',
+            sortValue: (event) => [event.source, event.reference],
             render: (event) => `${event.source} ${event.reference}`,
           },
           { key: 'note', label: 'Note', render: (event) => event.note },
-          { key: 'actor', label: 'Recorded by', render: (event) => event.actor_name },
+          {
+            key: 'actor',
+            label: 'Recorded by',
+            sortValue: (event) => event.actor_name,
+            render: (event) => event.actor_name,
+          },
         ],
       }),
     )
@@ -202,6 +235,10 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     list.replaceChildren(
       renderDataTable({
         caption: 'Monthly staff payment register',
+        sort: registerSort,
+        onSort: (sort) => {
+          registerSort = sort
+        },
         rows,
         rowKey: (row) => String(row.user_id),
         empty: 'No people match this view.',
@@ -209,6 +246,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
           {
             key: 'name',
             label: 'Person',
+            sortValue: (row) => row.name,
             render: (row) => {
               const button = document.createElement('button')
               button.type = 'button'
@@ -223,17 +261,32 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
               return button
             },
           },
-          { key: 'status', label: 'Status', render: (row) => staffPaymentStatus(row) },
-          { key: 'due', label: 'Due', render: (row) => row.due_on ?? 'Not set' },
+          {
+            key: 'status',
+            label: 'Status',
+            sortValue: staffPaymentStatus,
+            render: (row) => staffPaymentStatus(row),
+          },
+          {
+            key: 'due',
+            label: 'Due',
+            sortValue: (row) => row.due_on,
+            render: (row) => row.due_on ?? 'Not set',
+          },
           {
             key: 'amount',
             label: 'Amount owed',
+            sortValue: (row) => moneySort(row.amount_cents, row.currency),
+            sortDescription: moneySortDescription,
             numeric: true,
             render: (row) => moneyText(staffPaymentMoney(row.amount_cents, row.currency)),
           },
           {
             key: 'paid',
             label: 'Recorded paid',
+            sortValue: (row) =>
+              moneySort(row.status === 'settled' ? null : row.paid_cents, row.currency),
+            sortDescription: moneySortDescription,
             numeric: true,
             render: (row) =>
               row.status === 'settled'
@@ -243,6 +296,9 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
           {
             key: 'balance',
             label: 'Remaining',
+            sortValue: (row) =>
+              moneySort(row.status === 'settled' ? null : row.balance_cents, row.currency),
+            sortDescription: moneySortDescription,
             numeric: true,
             render: (row) =>
               row.status === 'settled'
@@ -252,12 +308,15 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
           {
             key: 'provider',
             label: 'Preferred provider',
+            sortValue: (row) => [row.payout_provider, row.provider_override === null ? 0 : 1],
             render: (row) =>
               `${row.payout_provider === 'deel' ? 'Deel' : 'Wise'}${row.provider_override === null ? ' (default)' : ''}`,
           },
           {
             key: 'destination',
             label: 'Preferred destination',
+            sortValue: (row) =>
+              (row.payout_provider === 'deel' ? row.deel_ready : row.wise_ready) ? 1 : 0,
             render: (row) =>
               (row.payout_provider === 'deel' ? row.deel_ready : row.wise_ready)
                 ? 'Ready'
@@ -279,16 +338,30 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     providerHistory.replaceChildren(
       renderDataTable({
         caption: 'Provider settings history (all dates)',
+        sort: providerSort,
+        onSort: (sort) => {
+          providerSort = sort
+        },
         rows: [...report.provider_settings.events].sort(
           (a, b) => b.recorded_at.localeCompare(a.recorded_at) || b.version - a.version,
         ),
         rowKey: (event) => event.id,
         empty: 'No provider changes recorded. The initial default is Wise.',
         columns: [
-          { key: 'when', label: 'Recorded', render: (event) => event.recorded_at },
+          {
+            key: 'when',
+            label: 'Recorded',
+            sortValue: (event) => event.recorded_at,
+            render: (event) => event.recorded_at,
+          },
           {
             key: 'person',
             label: 'Applies to',
+            sortValue: (event) =>
+              event.user_id === null
+                ? 'Organization default'
+                : (report!.rows.find((row) => row.user_id === event.user_id)?.name ??
+                  `User ${event.user_id}`),
             render: (event) =>
               event.user_id === null
                 ? 'Organization default'
@@ -298,6 +371,8 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
           {
             key: 'provider',
             label: 'Preference',
+            sortValue: (event) =>
+              event.provider === null ? 'Use organization default' : event.provider,
             render: (event) =>
               event.provider === null
                 ? 'Use organization default'
@@ -306,8 +381,18 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
                   : 'Deel',
           },
           { key: 'note', label: 'Reason', render: (event) => event.note },
-          { key: 'actor', label: 'Recorded by', render: (event) => event.actor_name },
-          { key: 'request', label: 'Request ID', render: (event) => event.request_id },
+          {
+            key: 'actor',
+            label: 'Recorded by',
+            sortValue: (event) => event.actor_name,
+            render: (event) => event.actor_name,
+          },
+          {
+            key: 'request',
+            label: 'Request ID',
+            sortValue: (event) => event.request_id,
+            render: (event) => event.request_id,
+          },
         ],
       }),
     )
