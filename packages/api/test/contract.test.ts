@@ -1,3 +1,4 @@
+import { installStaffPaymentRoutes } from '../src/staff-payments.js';
 import type { GeneralResourceRepository, TeamRepository } from "@ezacto/core";
 import { describe, expect, it } from "vitest";
 import {
@@ -288,6 +289,7 @@ const documentedApp = () =>
       installInvoiceTimeClaimRoutes(api, {
         releaseInvoicedTime: async () => ({ kind: "released", released: 0 }),
       });
+      installStaffPaymentRoutes(api, { configureProvider: async () => {}, report: async (month, as_of) => ({ month, as_of, rows: [], provider_settings: { default_provider: "wise", version: 0, events: [] } }), append: async () => {} });
       installPayoutAccountRoutes(api, {
         listForUser: async () => [],
         link: async () => ({ outcome: "unknown_user" }),

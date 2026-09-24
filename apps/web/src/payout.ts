@@ -61,6 +61,10 @@ export const payoutFailure = (error: unknown): string => {
     typeof body === 'object' && body !== null && 'error' in body
       ? ((body as { error: { fields?: readonly { code?: string }[] } }).error.fields ?? [])
       : []
+  const requestId =
+    typeof error === 'object' && error !== null && 'requestId' in error
+      ? (error as { requestId: unknown }).requestId
+      : null
   if (fields.some((field) => field.code === 'not_discoverable')) {
     return 'Wise has no discoverable profile with that identifier. Check the spelling, and check they have discoverability switched on in Wise.'
   }
@@ -74,7 +78,9 @@ export const payoutFailure = (error: unknown): string => {
     case 503:
       return 'Wise is not connected on this instance.'
     default:
-      return 'The payout destination could not be saved.'
+      return typeof requestId === 'string' && requestId !== ''
+        ? `The payout destination could not be saved. Ask an administrator to check the Wise/API logs with request ID ${requestId}.`
+        : 'The payout destination could not be saved. Ask an administrator to check the Wise/API logs.'
   }
 }
 
@@ -84,5 +90,5 @@ export const payoutSummary = (destination: {
   readonly linkedAt: string
 }): string =>
   destination.kind === 'contact'
-    ? `Paid to the Wise profile shared on ${payoutDate(destination.linkedAt)}. Wise holds the bank details; this instance never sees them.`
-    : `Paid to a Wise recipient account added on ${payoutDate(destination.linkedAt)}.`
+    ? `Payout destination: Wise profile shared on ${payoutDate(destination.linkedAt)}. Wise holds the bank details; this instance never sees them.`
+    : `Payout destination: Wise recipient account added on ${payoutDate(destination.linkedAt)}.`

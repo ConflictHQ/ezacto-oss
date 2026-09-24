@@ -1,3 +1,4 @@
+import { staffPaymentOperations, staffPaymentSchemas } from './staff-payment-contract.js';
 import { commercialTermFields, maximumBulkApprovalSelections } from "@ezacto/core";
 import {
   attachmentContractOperations,
@@ -2666,6 +2667,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...expenseOperations,
   ...moneyOperations,
   ...attachmentContractOperations,
+  ...staffPaymentOperations,
   ...reportOperations,
   ...moduleSettingsOperations,
   ...signInMethodOperations,
@@ -2908,6 +2910,7 @@ const timeReportTotalsRequired: readonly string[] = [
 
 export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...attachmentContractSchemas,
+  ...staffPaymentSchemas,
   InvoiceReminderPolicy: {
     type: "object",
     required: ["first_after_days", "every_days"],

@@ -35,7 +35,7 @@ export type InvoiceState = Invoice['state']
  */
 export const defaultInvoiceStates: readonly InvoiceState[] = ['draft', 'open']
 
-export type InvoiceListFilter = 'outstanding' | 'paid' | 'closed' | 'all'
+export type InvoiceListFilter = 'outstanding' | 'overdue' | 'paid' | 'closed' | 'all'
 
 /**
  * The states each toolbar position asks the server for. "All" asks for none,
@@ -47,6 +47,7 @@ export const invoiceStatesFor = (
 ): readonly InvoiceState[] | undefined => {
   if (filter === 'all') return undefined
   if (filter === 'outstanding') return defaultInvoiceStates
+  if (filter === 'overdue') return ['open']
   return [filter]
 }
 

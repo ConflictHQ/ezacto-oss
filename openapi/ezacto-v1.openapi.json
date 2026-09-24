@@ -13698,6 +13698,187 @@
         ]
       }
     },
+    "/api/v1/staff-payments/provider-settings": {
+      "post": {
+        "operationId": "configureStaffPaymentProvider",
+        "summary": "Set the organization payout provider or a person override",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-payments/provider-settings",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffPaymentProviderCommand"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/staff-payments": {
+      "get": {
+        "operationId": "getStaffPaymentReport",
+        "summary": "Monthly staff payment register and audit history",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffPaymentReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-payments",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/staff-payments/events": {
+      "post": {
+        "operationId": "recordStaffPaymentEvent",
+        "summary": "Record a staff payment, obligation, correction, or historical settlement",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-payments/events",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffPaymentCommand"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/report-definitions/registry": {
       "get": {
         "operationId": "getReportDefinitionRegistry",
@@ -20933,6 +21114,572 @@
           }
         },
         "additionalProperties": false
+      },
+      "StaffPaymentProviderCommand": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "expected_version",
+          "provider",
+          "note"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "wise",
+                  "deel"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      },
+      "StaffPaymentProviderEvent": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "expected_version",
+          "provider",
+          "note",
+          "version",
+          "actor_id",
+          "actor_name",
+          "recorded_at",
+          "request_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "wise",
+                  "deel"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "actor_id": {
+            "type": "integer"
+          },
+          "actor_name": {
+            "type": "string"
+          },
+          "recorded_at": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        }
+      },
+      "StaffPaymentProviderSettings": {
+        "type": "object",
+        "required": [
+          "default_provider",
+          "version",
+          "events"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "default_provider": {
+            "type": "string",
+            "enum": [
+              "wise",
+              "deel"
+            ]
+          },
+          "version": {
+            "type": "integer"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffPaymentProviderEvent"
+            }
+          }
+        }
+      },
+      "StaffPaymentCommand": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "month",
+          "expected_version",
+          "kind",
+          "amount_cents",
+          "currency",
+          "paid_on",
+          "due_on",
+          "reference",
+          "note",
+          "payment_id",
+          "source"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "month": {
+            "type": "string"
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "amount",
+              "payment",
+              "void",
+              "opening",
+              "reopen",
+              "note"
+            ]
+          },
+          "amount_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "due_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reference": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "payment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "wise",
+              "deel",
+              "historical"
+            ]
+          }
+        }
+      },
+      "StaffPaymentEvent": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "month",
+          "expected_version",
+          "kind",
+          "amount_cents",
+          "currency",
+          "paid_on",
+          "due_on",
+          "reference",
+          "note",
+          "payment_id",
+          "source",
+          "version",
+          "actor_id",
+          "actor_name",
+          "recorded_at",
+          "request_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "month": {
+            "type": "string"
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "amount",
+              "payment",
+              "void",
+              "opening",
+              "reopen",
+              "note"
+            ]
+          },
+          "amount_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "due_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reference": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "payment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "wise",
+              "deel",
+              "historical"
+            ]
+          },
+          "version": {
+            "type": "integer"
+          },
+          "actor_id": {
+            "type": "integer"
+          },
+          "actor_name": {
+            "type": "string"
+          },
+          "recorded_at": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        }
+      },
+      "StaffPaymentRow": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "name",
+          "active",
+          "wise_ready",
+          "deel_ready",
+          "payout_provider",
+          "provider_override",
+          "provider_version",
+          "month",
+          "version",
+          "amount_cents",
+          "currency",
+          "paid_cents",
+          "balance_cents",
+          "due_on",
+          "settled_through",
+          "status",
+          "overdue",
+          "events"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "user_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "wise_ready": {
+            "type": "boolean"
+          },
+          "deel_ready": {
+            "type": "boolean"
+          },
+          "payout_provider": {
+            "type": "string",
+            "enum": [
+              "wise",
+              "deel"
+            ]
+          },
+          "provider_override": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "wise",
+                  "deel"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider_version": {
+            "type": "integer"
+          },
+          "month": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "amount_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paid_cents": {
+            "type": "integer"
+          },
+          "balance_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "due_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "settled_through": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "in_progress",
+              "pending",
+              "partial",
+              "paid",
+              "settled"
+            ]
+          },
+          "overdue": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffPaymentEvent"
+            }
+          }
+        }
+      },
+      "StaffPaymentReport": {
+        "type": "object",
+        "required": [
+          "month",
+          "as_of",
+          "rows",
+          "provider_settings"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "month": {
+            "type": "string"
+          },
+          "as_of": {
+            "type": "string"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffPaymentRow"
+            }
+          },
+          "provider_settings": {
+            "$ref": "#/components/schemas/StaffPaymentProviderSettings"
+          }
+        }
+      },
+      "StaffPaymentReportEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/StaffPaymentReport"
+          }
+        }
       },
       "InvoiceReminderPolicy": {
         "type": "object",

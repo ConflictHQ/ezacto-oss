@@ -1238,6 +1238,10 @@
   font: 600 11px/1.2 var(--ez-font-mono), monospace;
   text-transform: uppercase;
 }
+.invoice-past-due {
+  color: var(--ez-status-fg);
+  font-weight: 700;
+}
 .invoice-load-more {
   min-height: 44px;
   margin-top: 16px;
@@ -6468,3 +6472,20 @@ dialog textarea {
 .org-timezone-form .form-result:empty {
   display: none;
 }
+
+/* Staff payment register: amounts stay aligned with the shared table. */
+.staff-payment-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 24px 0; }
+.staff-payment-toolbar label, .staff-payment-person form > label, .staff-payment-opening form > label { display: grid; gap: 6px; }
+.staff-payments input:not([type='checkbox']), .staff-payments select, .staff-payments textarea, .staff-payments button { min-height: 44px; padding: 8px 12px; border: 1px solid var(--ez-border); border-radius: var(--ez-radius); background: var(--ez-ground); color: var(--ez-ink); font: inherit; }
+.staff-payment-summary { padding: 12px 16px; background: var(--ez-status-bg); margin-bottom: 20px; }
+.staff-payment-person, .staff-payment-opening { margin-top: 28px; border-top: 1px solid var(--ez-border); padding-top: 20px; }
+.staff-payment-person form, .staff-payment-opening form { display: grid; gap: 12px; max-width: 640px; margin: 20px 0; }
+.staff-payment-person header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+[data-payment-opening-people] { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+[data-payment-opening-people] label { display: flex; align-items: center; gap: 8px; }
+.staff-payments [hidden] { display: none !important; }
+.staff-payments .data-table { min-width: 1000px; table-layout: auto; }
+.staff-payments .data-table tbody td { max-width: none; padding-top: 6px; padding-bottom: 6px; }
+.staff-payments .data-table [data-column='status'] { min-width: 180px; }
+.staff-payments .data-table [data-column='due'] { min-width: 105px; }
+.staff-payments .data-table [data-column='note'] { min-width: 260px; max-width: 440px; white-space: normal; overflow-wrap: anywhere; }

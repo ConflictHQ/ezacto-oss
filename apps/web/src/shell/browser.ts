@@ -1,3 +1,4 @@
+import { createStaffPaymentsController } from '../staff-payments/browser.js'
 import {
   EzactoApiError,
   type GeneralResource,
@@ -1305,6 +1306,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const roleAdmin = createRoleAdminController(api)
   const teamDirectory = createTeamDirectoryController(api)
   const calendar = createCalendarController()
+  const staffPayments = createStaffPaymentsController(api)
   const dashboard = createDashboardController(api)
   // Reads only when the api offers the endpoint; an install without it still
   // serves the page and simply says it cannot load.
@@ -1461,7 +1463,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   let invoiceNextCursor: string | null = null
   let invoiceListRows: readonly Invoice[] = []
   /** Which states the list is asking the server for. Outstanding is the open question. */
-  let invoiceFilter: 'outstanding' | 'paid' | 'closed' | 'all' = 'outstanding'
+  let invoiceFilter: 'outstanding' | 'overdue' | 'paid' | 'closed' | 'all' = 'outstanding'
   let invoiceClientNamesLoaded = false
   let invoiceListCount = 0
   let approvalModuleAvailable = false
@@ -1849,7 +1851,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const revealCompanySettings = (identity: Readonly<Whoami>): void => {
     const visible = identity.profile === 'administrator'
     for (const tab of document.querySelectorAll<HTMLElement>(
-      '[data-settings-company-tab], [data-settings-activity-tab], [data-settings-templates-tab], [data-settings-roles-tab], [data-settings-deliveries-tab]',
+      '[data-staff-payments-nav], [data-settings-company-tab], [data-settings-activity-tab], [data-settings-templates-tab], [data-settings-roles-tab], [data-settings-deliveries-tab]',
     )) {
       tab.hidden = !visible
     }
@@ -3299,19 +3301,30 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
    */
   const renderInvoiceList = (): void => {
     const searching = invoiceSearch.value.trim() !== ''
-    const matching = invoiceListRows.filter((invoice) =>
-      invoiceMatchesSearch(invoice, invoiceSearch.value),
+    const overdue = invoiceFilter === 'overdue'
+    const today = localDate()
+    const complete = invoiceNextCursor === null
+    const matching = invoiceListRows.filter(
+      (invoice) =>
+        invoiceMatchesSearch(invoice, invoiceSearch.value) &&
+        (!overdue ||
+          (invoice.state === 'open' && invoice.due_amount_cents > 0 && invoice.due_date < today)),
     )
     invoiceListCount = renderInvoiceListItems(
       matching,
-      searching ? 'No loaded invoices match that search.' : undefined,
+      searching
+        ? 'No loaded invoices match that search.'
+        : overdue
+          ? complete ? 'No past-due invoices.' : 'No past-due invoices in the loaded pages.'
+          : undefined,
     )
-    const complete = invoiceNextCursor === null
     invoiceListStatus.textContent = searching
       ? `${invoiceListCount} of ${invoiceListRows.length} loaded ${invoiceListRows.length === 1 ? 'invoice matches' : 'invoices match'}${complete ? '.' : '; load more to search the rest.'}`
-      : invoiceListCount === 0
-        ? 'No invoices found.'
-        : `${invoiceListCount} ${invoiceListCount === 1 ? 'invoice' : 'invoices'} loaded${complete ? '.' : '; more are available.'}`
+      : overdue
+        ? `${invoiceListCount} past-due ${invoiceListCount === 1 ? 'invoice' : 'invoices'}${complete ? '.' : ' in loaded pages; load more to check the rest.'}`
+        : invoiceListCount === 0
+          ? 'No invoices found.'
+          : `${invoiceListCount} ${invoiceListCount === 1 ? 'invoice' : 'invoices'} loaded${complete ? '.' : '; more are available.'}`
   }
 
   const loadInvoiceList = async (
@@ -3467,6 +3480,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       await Promise.all([activity.activate(authenticated.signal), loadWeek(authenticated)])
     } else if (document.querySelector('[data-deliveries-page]:not([hidden])') !== null) {
       await Promise.all([deliveries.activate(authenticated.signal), loadWeek(authenticated)])
+    } else if (document.documentElement.dataset.appView === 'staff-payments') {
+      await staffPayments.activate(identity, authenticated.signal)
     } else if (reportsPage) {
       await Promise.all([
         reports.activate(
@@ -5134,7 +5149,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       const next = control.dataset.invoiceFilter
       if (
         operation === null ||
-        (next !== 'outstanding' && next !== 'paid' && next !== 'closed' && next !== 'all') ||
+        (next !== 'outstanding' && next !== 'overdue' &&
+          next !== 'paid' && next !== 'closed' && next !== 'all') ||
         next === invoiceFilter
       )
         return

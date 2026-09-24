@@ -91,6 +91,21 @@ const instantLabel = (value: string): string => {
 const paymentDateLabel = (payment: Readonly<InvoicePayment>): string =>
   payment.paid_at === null ? dateLabel(payment.paid_date) : instantLabel(payment.paid_at)
 
+const invoiceDueLabel = (invoice: Readonly<Invoice>): CellContent => {
+  const today = new Date()
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  if (invoice.state !== 'open' || invoice.due_amount_cents <= 0 || invoice.due_date >= todayKey) {
+    return dateLabel(invoice.due_date)
+  }
+  const due = new Date(`${invoice.due_date.slice(0, 10)}T00:00:00.000Z`)
+  const now = new Date(`${todayKey}T00:00:00.000Z`)
+  const days = Math.floor((now.valueOf() - due.valueOf()) / 86_400_000)
+  const label = document.createElement('span')
+  label.className = 'invoice-past-due'
+  label.textContent = `${dateLabel(invoice.due_date)} · ${days} ${days === 1 ? 'day' : 'days'} past due`
+  return label
+}
+
 // The API returns client_id, not the client. "Client #12" is an internal
 // identifier on a page a client can be sent, so the shell hands over the names
 // it has already loaded and this falls back only when it has none.
@@ -179,7 +194,7 @@ export const renderInvoiceListItems = (
         { key: 'number', label: 'Invoice', render: invoiceNumberLink },
         { key: 'client', label: 'Client', render: (invoice) => clientLabel(invoice.client_id) },
         { key: 'issued', label: 'Issued', render: (invoice) => dateLabel(invoice.issue_date) },
-        { key: 'due-date', label: 'Due', render: (invoice) => dateLabel(invoice.due_date) },
+        { key: 'due-date', label: 'Due', render: invoiceDueLabel },
         {
           key: 'amount',
           label: 'Amount',
