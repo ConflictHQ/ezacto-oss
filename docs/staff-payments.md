@@ -25,6 +25,12 @@ Setting changes require an administrator session and a reason. They have immutab
 
 The existing optional Deel adapter remains available for people/contract matching, timesheet submission and transfer-log deduplication. See [`packages/integrations`](../packages/integrations/README.md). Selecting Deel here does not configure credentials, submit timesheets or confirm a payout automatically; organizations configure that integration separately.
 
+## Sorting tables
+
+Click a column heading to sort ascending; click it again to sort descending. The monthly register, payment history and provider settings history each retain their own selection when refreshed or filtered. Sorting leaves open payment forms intact. Comments, notes and reasons are not sortable.
+
+Dates sort chronologically, numbers numerically, and text naturally (including identifiers). Money sorts by currency and then the exact amount; unspecified values remain last in either direction. Arrow indicators and accessible header state identify the current ordering. CSV exports continue to include the complete selected month in their standard order.
+
 ## Recording confirmed payments
 
 After confirming a payment in Wise or Deel, select the person and **Record confirmed payment**, choose the provider actually used, enter its actual date and transfer reference, and save. Partial payments are supported. This action records a confirmed payment; it does not initiate a transfer. The existing `payout_transfers` store and Wise webhook log remain provider evidence, and are not automatically interpreted as a recipient receiving money by this register.

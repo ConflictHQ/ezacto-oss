@@ -19,6 +19,11 @@ import { icon } from './icons.js'
 
 /** A cell's content. Strings are text; nodes are appended as given. */
 export type CellContent = string | Node
+export type DataSortValue = string | number | readonly (string | number)[] | null
+export interface DataTableSort {
+  readonly column: string
+  readonly direction: 'ascending' | 'descending'
+}
 
 export interface DataColumn<Row> {
   /** Stable identifier, used for the cell's `data-column`. */
@@ -31,6 +36,9 @@ export interface DataColumn<Row> {
    */
   readonly numeric?: boolean
   readonly render: (row: Row) => CellContent
+  /** Enables sorting by underlying values. Nulls stay last in both directions. */
+  readonly sortValue?: (row: Row) => DataSortValue
+  readonly sortDescription?: string
   /**
    * Contributes this column's total. Columns without one leave the cell blank
    * in the totals row, which is why the row only appears when at least one
@@ -61,6 +69,9 @@ export interface RowAction {
 export interface DataTableOptions<Row> {
   readonly columns: readonly DataColumn<Row>[]
   readonly rows: readonly Row[]
+  readonly sort?: DataTableSort
+  /** Retain the selected sort across caller-driven refreshes and filtering. */
+  readonly onSort?: (sort: DataTableSort) => void
   /** Distinguishes rows for `data-row-key`; must be stable across renders. */
   readonly rowKey: (row: Row) => string
   /**
@@ -137,7 +148,48 @@ const actionsCell = (actions: readonly RowAction[]): HTMLTableCellElement => {
 }
 
 export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElement => {
-  const { columns, rows, rowKey, groupBy, renderGroup, actions, caption, empty } = options
+  const { columns, rowKey, groupBy, renderGroup, actions, caption, empty, sort } = options
+  const sortValue = columns.find((column) => column.key === sort?.column)?.sortValue
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+  const groups = new Map<string, number>()
+  if (sortValue !== undefined && groupBy !== undefined) {
+    for (const row of options.rows) {
+      const group = groupBy(row)
+      if (!groups.has(group)) groups.set(group, groups.size)
+    }
+  }
+  const rows =
+    sortValue === undefined
+      ? options.rows
+      : [...options.rows].sort((a, b) => {
+          // Keep group bands and their totals intact for grouped callers.
+          if (groupBy !== undefined) {
+            const groupOrder = groups.get(groupBy(a))! - groups.get(groupBy(b))!
+            if (groupOrder !== 0) return groupOrder
+          }
+          const left = sortValue(a)
+          const right = sortValue(b)
+          if (left === null) return right === null ? 0 : 1
+          if (right === null) return -1
+          const first: readonly (string | number)[] = typeof left === 'object' ? left : [left]
+          const second: readonly (string | number)[] = typeof right === 'object' ? right : [right]
+          for (let index = 0; index < Math.max(first.length, second.length); index += 1) {
+            const x = first[index]
+            const y = second[index]
+            const order =
+              x === undefined
+                ? y === undefined
+                  ? 0
+                  : -1
+                : y === undefined
+                  ? 1
+                  : typeof x === 'number' && typeof y === 'number'
+                    ? x - y
+                    : collator.compare(String(x), String(y))
+            if (order !== 0) return sort?.direction === 'descending' ? -order : order
+          }
+          return 0
+        })
   const table = document.createElement('table')
   table.className = 'data-table'
 
@@ -155,6 +207,39 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
     cell.scope = 'col'
     cell.textContent = column.label
     cell.dataset.column = column.key
+    if (column.sortValue !== undefined) {
+      const active = sort?.column === column.key
+      const next: DataTableSort = {
+        column: column.key,
+        direction: active && sort.direction === 'ascending' ? 'descending' : 'ascending',
+      }
+      cell.setAttribute('aria-sort', active ? sort.direction : 'none')
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'data-table-sort'
+      button.dataset.sortColumn = column.key
+      button.setAttribute('aria-label', `${column.label}: sort ${next.direction}`)
+      if (column.sortDescription !== undefined) button.title = column.sortDescription
+      button.appendChild(document.createTextNode(column.label))
+      const indicator = document.createElement('span')
+      indicator.setAttribute('aria-hidden', 'true')
+      indicator.textContent = active ? (sort.direction === 'ascending' ? '↑' : '↓') : '↕'
+      button.appendChild(indicator)
+      button.addEventListener('click', () => {
+        options.onSort?.(next)
+        const replacement = renderDataTable({ ...options, sort: next })
+        const scrollLeft = scroll.scrollLeft
+        const scrollTop = scroll.scrollTop
+        scroll.replaceWith(replacement)
+        replacement.scrollLeft = scrollLeft
+        replacement.scrollTop = scrollTop
+        const selectedHeader = [
+          ...replacement.querySelectorAll<HTMLButtonElement>('[data-sort-column]'),
+        ].find((header) => header.dataset.sortColumn === next.column)
+        selectedHeader?.focus({ preventScroll: true })
+      })
+      cell.replaceChildren(button)
+    }
     if (column.numeric === true) cell.classList.add('is-numeric')
     headRow.appendChild(cell)
   }
