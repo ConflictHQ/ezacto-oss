@@ -69,7 +69,7 @@ describe('monthly payment register', () => {
     })
     const active = new AbortController()
     await controller.activate({ profile: 'administrator' }, active.signal)
-    document.querySelector<HTMLButtonElement>('[data-payment-list] button')!.click()
+    document.querySelector<HTMLButtonElement>('[data-payment-list] tbody button')!.click()
     field('kind').value = 'payment'
     field('kind').dispatchEvent(new Event('change'))
     expect(field('amount').value).toBe('100.00')
@@ -155,7 +155,7 @@ describe('monthly payment register', () => {
       recordStaffPaymentEvent: save,
     })
     await controller.activate({ profile: 'administrator' }, new AbortController().signal)
-    document.querySelector<HTMLButtonElement>('[data-payment-list] button')!.click()
+    document.querySelector<HTMLButtonElement>('[data-payment-list] tbody button')!.click()
     const month = document.querySelector<HTMLInputElement>('[data-payment-month]')!
     month.value = ''
     month.dispatchEvent(new Event('change'))

@@ -5484,6 +5484,26 @@ dialog textarea {
   white-space: nowrap;
 }
 
+.data-table-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: var(--ez-row-h);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.data-table-sort:hover { text-decoration: underline; }
+.data-table-sort:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+.data-table .is-numeric .data-table-sort { justify-content: flex-end; }
+
 /* The row's own actions are the exception: the overflow menu is a popup inside
    this cell, and clipping the cell clips the menu. */
 .data-table tbody td.data-table-actions {
