@@ -72,9 +72,6 @@ export const modeForEntryDraft = (
       : 'start_end'
 
 export const contextLabel = (context: EntryEditorContext, editing: boolean): string => {
-  if (context === 'quick-add') return 'Quick add time'
   if (context === 'timer') return editing ? 'Running timer' : 'Start a timer'
-  if (context === 'day') return editing ? 'Edit day entry' : 'Add day entry'
-  if (context === 'week-cell') return editing ? 'Edit week entry' : 'Add week entry'
-  return 'Edit time entry'
+  return editing ? 'Edit time entry' : 'Add time entry'
 }
