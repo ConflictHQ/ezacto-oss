@@ -17,6 +17,7 @@ import {
   tokenHint,
   writeConfig,
   type CliConfig,
+  type OrganizationConfig,
 } from './config.js'
 import {
   confidentialityFilteredFetch,
@@ -31,6 +32,7 @@ import {
   sendInvoice,
   uninvoiced,
   validReportDefinitions,
+  requiredReportScope,
   type MoneyCommandResult,
 } from './money.js'
 import {
@@ -53,9 +55,9 @@ Commands:
   log          Log a duration: ez log 2h northpeak devops -m "note"
   timer        Start, stop, or inspect the one running timer
   week         Show the Monday–Sunday time grid
-  uninvoiced   Show uninvoiced amounts for a date range
+  uninvoiced   Show uninvoiced amounts (requires reports:read)
   invoice      Generate, send, or list invoices
-  report       List or run a report definition
+  report       List or run reports; report list shows each required scope
   export       Export time entries or expenses as CSV (or --verify a backup bundle)
   backup       Create a full backup bundle from a local database
   restore      Restore a backup bundle into a fresh database
@@ -158,6 +160,20 @@ const requireConfig = async (path: string): Promise<CliConfig> => {
 const selectedClient = async (configPath: string, org?: string) => {
   const selected = selectOrganization(await requireConfig(configPath), org)
   return { ...selected, client: clientFor(selected.organization) }
+}
+
+class CliScopeError extends Error {
+  readonly code = 'insufficient_scope'
+  constructor(readonly required_scope: string, readonly profile: string) {
+    const guidance = required_scope === 'reports:read' && !['accounting', 'executive_manager', 'administrator'].includes(profile)
+      ? ' Organization reports require accounting, executive_manager, or administrator access. Members can use ez report run my-hours with time_entries:read.'
+      : ' Issue a token with this scope if your profile allows it, then run ez login again.'
+    super(`The stored token for profile ${profile} lacks the required ${required_scope} scope.${guidance}`)
+  }
+}
+
+const requireStoredScope = (organization: OrganizationConfig, scope: string): void => {
+  if (!organization.scopes.includes(scope)) throw new CliScopeError(scope, organization.profile)
 }
 
 const printTimeResult = (
@@ -530,6 +546,7 @@ export const runCli = async (
     }
     const range = requireRange()
     const selected = await selectedClient(configPath, values.org)
+    requireStoredScope(selected.organization, 'reports:read')
     const clientId = values.client !== undefined
       ? await resolveClientId(selected.client, values.client)
       : undefined
@@ -625,7 +642,7 @@ export const runCli = async (
       return printMoneyResult(
         {
           json: validReportDefinitions(),
-          human: validReportDefinitions().join('\n'),
+          human: validReportDefinitions().map((definition) => `${definition} (requires ${requiredReportScope(definition)})`).join('\n'),
           csv: ['report', ...validReportDefinitions()].join('\n'),
         },
         values.json,
@@ -643,6 +660,7 @@ export const runCli = async (
     if (commandArguments.length > 2) {
       throw new Error('ez report run accepts no additional positional arguments')
     }
+    const requiredScope = requiredReportScope(definition)
     if (definition === 'receivables' && values['as-of'] === undefined) {
       throw new Error('receivables report requires --as-of')
     }
@@ -653,6 +671,7 @@ export const runCli = async (
       ? { from: values['as-of']!, to: values['as-of']! }
       : requireRange()
     const selected = await selectedClient(configPath, values.org)
+    requireStoredScope(selected.organization, requiredScope)
     const clientId = values.client !== undefined
       ? await resolveClientId(selected.client, values.client)
       : undefined
@@ -919,12 +938,43 @@ export const runCli = async (
   throw new Error(`unknown command: ${command}`)
 }
 
-const errorMessage = (error: unknown): string => {
-  if (error instanceof EzactoApiError) {
-    if (error.status === 401) return 'authentication failed: the API token is invalid or revoked'
-    return `ezacto API request failed (${error.status}, request ${error.requestId ?? 'unknown'})`
+interface CliErrorDetails {
+  readonly message: string
+  readonly code?: string
+  readonly status?: number
+  readonly request_id?: string
+  readonly required_scope?: string
+  readonly profile?: string
+}
+
+const errorDetails = (error: unknown): CliErrorDetails => {
+  if (error instanceof CliScopeError) {
+    return { message: error.message, code: error.code, required_scope: error.required_scope, profile: error.profile }
   }
-  return error instanceof Error ? error.message : String(error)
+  if (error instanceof EzactoApiError) {
+    const body = error.body !== null && typeof error.body === 'object'
+      ? Reflect.get(error.body, 'error') as unknown : undefined
+    const detail = body !== null && typeof body === 'object' ? body : {}
+    const code: unknown = Reflect.get(detail, 'code')
+    const message: unknown = Reflect.get(detail, 'message')
+    return {
+      message: error.status === 401
+        ? 'authentication failed: the API token is invalid or revoked'
+        : typeof message === 'string' && message.trim() !== '' ? message : 'ezacto API request failed',
+      ...(typeof code === 'string' ? { code } : {}),
+      status: error.status,
+      ...(typeof error.requestId === 'string' ? { request_id: error.requestId } : {}),
+    }
+  }
+  return { message: error instanceof Error ? error.message : String(error) }
+}
+
+const errorMessage = (error: unknown): string => {
+  const details = errorDetails(error)
+  if (details.status === undefined) return details.message
+  const context = [String(details.status), details.code, details.request_id === undefined ? undefined : `request ${details.request_id}`]
+    .filter((part) => part !== undefined).join(', ')
+  return `${details.message} (${context})`
 }
 
 const isMain = ((): boolean => {
@@ -945,7 +995,7 @@ if (isMain) {
     .catch((error: unknown) => {
       const message = errorMessage(error)
       if (process.argv.includes('--json')) {
-        process.stderr.write(`${json({ error: { message } })}\n`)
+        process.stderr.write(`${json({ error: errorDetails(error) })}\n`)
       } else {
         process.stderr.write(`error: ${message}\n`)
       }

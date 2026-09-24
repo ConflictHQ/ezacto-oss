@@ -138,7 +138,7 @@ describe('ez CLI dev-server round trip', () => {
       badToken,
     )
     expect(rejected.code).toBe(1)
-    expect(JSON.parse(rejected.stderr)).toEqual({
+    expect(JSON.parse(rejected.stderr)).toMatchObject({
       error: {
         message: 'authentication failed: the API token is invalid or revoked',
       },
