@@ -146,6 +146,29 @@ describe('monthly payment register', () => {
     await loading
     expect(document.querySelector('[data-payment-list]')!.textContent).not.toContain(person.name)
   })
+  it('clears the previous report when the month is emptied and refuses stale writes', async () => {
+    const read = vi.fn(async () => report())
+    const save = vi.fn()
+    const controller = createStaffPaymentsController({
+      getStaffPaymentReport: read,
+      recordStaffPaymentEvent: save,
+    })
+    await controller.activate({ profile: 'administrator' }, new AbortController().signal)
+    document.querySelector<HTMLButtonElement>('[data-payment-list] button')!.click()
+    const month = document.querySelector<HTMLInputElement>('[data-payment-month]')!
+    month.value = ''
+    month.dispatchEvent(new Event('change'))
+    submit()
+    expect(save).not.toHaveBeenCalled()
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('[data-payment-list]')!.textContent).toBe('')
+    expect(document.querySelector('[data-payment-history]')!.textContent).toBe('')
+    expect(document.querySelector('[data-payment-opening-people]')!.textContent).toBe('')
+    expect(document.querySelector<HTMLElement>('[data-payment-person]')!.hidden).toBe(true)
+    expect(document.querySelector('[data-staff-payment-status]')!.textContent).toBe(
+      'Choose a valid month.',
+    )
+  })
 })
 describe('payment report exports', () => {
   it('keeps unknown historical totals blank and neutralizes spreadsheet formulas', () => {

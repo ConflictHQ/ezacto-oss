@@ -293,14 +293,16 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     const active = signal
     if (active === null || active.aborted || api.getStaffPaymentReport === undefined) return
     const ownGeneration = ++generation
-    if (!validPaymentMonth(month.value)) {
-      status.textContent = 'Choose a valid month.'
-      return
-    }
     report = null
     person.hidden = true
     list.replaceChildren()
     summary.replaceChildren()
+    history.replaceChildren()
+    element<HTMLElement>(page, '[data-payment-opening-people]').replaceChildren()
+    if (!validPaymentMonth(month.value)) {
+      status.textContent = 'Choose a valid month.'
+      return
+    }
     status.textContent = 'Loading payment register…'
     try {
       const response = await api.getStaffPaymentReport(month.value, active)
