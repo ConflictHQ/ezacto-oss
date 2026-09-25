@@ -2583,6 +2583,85 @@ test('[e2e:invoice-cycle] records a final payment, restores the open balance on 
   await expect(record).toBeDisabled()
 })
 
+// #863: use real mouse focus/blur in Chromium. A DOM-only assertion misses
+// the render/refocus loop triggered by clicking Submit week from an invalid cell.
+for (const corrected of ['1', '2.5', '2:30']) {
+  test(`[e2e:track-week #863] rejects invalid duration without freezing and recovers with ${corrected}`, async ({
+    context,
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 900 })
+    const seeded = await context.request.post('/__ezacto_browser_fixture__/start-end', {
+      data: { action: 'approval-seed' },
+      headers: { 'x-ezacto-browser-fixture-control': 'start-end-round-trip' },
+    })
+    expect(seeded.status()).toBe(204)
+    await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+    // Observe submission attempts without locking this shared D1 fixture.
+    // The approval suite below covers successful server-side transitions.
+    await page.route('**/api/v1/timesheet-submissions', (route) =>
+      route.request().method() === 'POST'
+        ? fulfillJson(route, { error: { code: 'state_conflict', message: 'Regression fixture intercepted submission.', fields: [] } }, 409)
+        : route.continue(),
+    )
+    await page.goto('/?week=2026-08-17')
+    await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
+    await page.getByLabel('Password').fill(fixturePassword)
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+    const input = page.locator('[data-week-grid-rows] input[data-cell-key="1:1:2026-08-19"]')
+    const cell = page.locator('[data-week-grid-rows] .week-cell[data-cell-key="1:1:2026-08-19"]')
+    const submit = page.getByRole('button', { name: 'Submit week' })
+    await expect(input).toHaveValue('1')
+    await expect(submit).toBeEnabled()
+    const writes: string[] = []
+    page.on('request', (request) => {
+      const path = new URL(request.url()).pathname
+      if (['POST', 'PATCH', 'DELETE'].includes(request.method()) &&
+          (path.startsWith('/api/v1/time-entries') || path === '/api/v1/timesheet-submissions')) {
+        writes.push(path)
+      }
+    })
+
+    await input.fill('2h 30m')
+    // Clicking, rather than dispatching a synthetic click, exercises the blur
+    // that originally froze the page before the submit handler could finish.
+    await submit.click()
+    await expect(input).toHaveValue('2h 30m')
+    await expect(input).toHaveAttribute('aria-invalid', 'true')
+    await expect(cell.locator('[role="status"]')).toContainText('H:MM')
+    await expect(page.locator('[data-timesheet-result]')).toContainText('decimal hours (2.5) or H:MM (2:30)')
+    await expect(page.locator('[data-timesheet-status-label]')).toHaveText('Not submitted')
+    await submit.click()
+    const neighbor = page.locator('[data-week-grid-rows] input[data-cell-key="1:1:2026-08-20"]')
+    await neighbor.click()
+    await expect(neighbor).toBeFocused()
+    expect(writes).toEqual([])
+
+    // Restoring the saved value must clear the invalid state too; otherwise
+    // the user is stuck even after correcting their input.
+    await input.fill(corrected)
+    await input.press('Enter')
+    await expect(input).not.toHaveAttribute('aria-invalid', 'true')
+    if (corrected === '1') {
+      expect(writes).toEqual([])
+    } else {
+      await expect(cell).toHaveAttribute('data-cell-state', 'saved')
+      await expect(input).toHaveValue(corrected)
+      await expect(input).toHaveAttribute('data-saved-value', '2.5')
+      expect(writes).toEqual(['/api/v1/time-entries/901'])
+    }
+    const submitted = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === '/api/v1/timesheet-submissions' &&
+      response.request().method() === 'POST',
+    )
+    await submit.click()
+    expect((await submitted).status()).toBe(409)
+    await expect(page.locator('[data-timesheet-status-label]')).toHaveText('Not submitted')
+    expect(writes.filter((path) => path === '/api/v1/timesheet-submissions')).toHaveLength(1)
+  })
+}
+
 test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, policy-locks, and unlocks a real D1 timesheet', async ({
   context,
   page,
