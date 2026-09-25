@@ -50,3 +50,17 @@ Durations accept compact hour/minute forms such as `2h`, `90m`, and `1h30m`.
 date in the Monday–Sunday week to render. Starting a timer relies on the same API
 invariant as the web app: the previous running timer is stopped atomically before
 the new one starts.
+
+## Report permissions
+
+`ez report list` names the scope required by each report. `ez uninvoiced` and
+organization reports require `reports:read`, available to accounting, executive
+managers and administrators. Members can use `ez report run my-hours --from
+YYYY-MM-DD --to YYYY-MM-DD` with `time_entries:read`. Project budgets use
+`projects:read` and the server enforces project visibility.
+
+Before resolving filters or loading a report, the CLI checks the scopes stored
+at login. If a required scope is missing, it names that scope and the stored
+profile. API failures retain their code, message, HTTP status and request ID in
+`--json` output and readable error text. Permissions are still enforced by the
+server; local config cannot grant access.

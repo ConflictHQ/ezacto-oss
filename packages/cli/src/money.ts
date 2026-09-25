@@ -342,6 +342,13 @@ const reportDefinitions: ReadonlySet<string> = new Set(
 
 export const validReportDefinitions = (): readonly string[] => [...reportDefinitions]
 
+export const requiredReportScope = (definition: string): string => {
+  const report = REPORT_CAPABILITIES.find((candidate) => candidate.id === definition)
+  if (report === undefined) throw new Error(`unknown report: ${definition}; available: ${[...reportDefinitions].join(', ')}`)
+  // Project-budget reads use the same project visibility as the web screen.
+  return definition === 'project-budget' ? 'projects:read' : report.scope
+}
+
 export const runReport = async (
   client: EzactoClient,
   input: {

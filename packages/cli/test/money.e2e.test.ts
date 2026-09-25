@@ -244,7 +244,7 @@ describe('ez money commands against the native API', () => {
       noMoneyConfigPath,
     )
     expect(result.code).toBe(1)
-    expect(result.stderr).toContain('API request failed')
+    expect(result.stderr).toContain('reports:read')
   })
 
   it('[unit] ez uninvoiced shows human-readable output', async () => {
