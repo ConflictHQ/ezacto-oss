@@ -5100,7 +5100,7 @@ export class EzactoClient {
     });
   }
 
-  async getDetailedTimeReport(args: { query: { "from": string; "to": string; "client_id"?: number; "project_id"?: number; "task_id"?: number; "user_id"?: number; "role_id"?: number; "tag_id"?: number; "hours"?: "all" | "billable" | "non_billable" | "uninvoiced" | "claimed" | "unclaimed"; "grain"?: "day" | "entry"; "invoice_state"?: "all" | "invoiced" | "uninvoiced"; "active_projects_only"?: boolean }; signal?: AbortSignal; headers?: HeadersInit }): Promise<DetailedTimeReportEnvelope> {
+  async getDetailedTimeReport(args: { query: { "self"?: boolean; "include_fixed_fee"?: boolean; "direct_client_only"?: boolean; "contractors_only"?: boolean; "currency"?: string; "project_status"?: "all" | "active" | "archived"; "billing_method"?: "non_billable" | "time_materials" | "fixed_fee"; "manager_id"?: number; "from": string; "to": string; "client_id"?: number; "project_id"?: number; "task_id"?: number; "user_id"?: number; "role_id"?: number; "tag_id"?: number; "hours"?: "all" | "billable" | "non_billable" | "uninvoiced" | "claimed" | "unclaimed"; "grain"?: "day" | "entry"; "invoice_state"?: "all" | "invoiced" | "uninvoiced"; "active_projects_only"?: boolean }; signal?: AbortSignal; headers?: HeadersInit }): Promise<DetailedTimeReportEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<DetailedTimeReportEnvelope>("GET", "/api/v1/reports/detailed-time", {

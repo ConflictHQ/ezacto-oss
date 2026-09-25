@@ -82,6 +82,8 @@ export const REPORT_CAPABILITIES: readonly ReportCapability[] = [
     optionalFilters: [
       'client', 'project', 'task_id', 'user_id', 'role_id', 'tag_id',
       'hours', 'grain', 'invoice_state', 'active_projects_only',
+      'self', 'include_fixed_fee', 'direct_client_only', 'contractors_only',
+      'currency', 'project_status', 'billing_method', 'manager_id',
     ],
     scope: 'reports:read', administratorOnly: false,
   }),
