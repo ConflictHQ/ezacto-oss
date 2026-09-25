@@ -151,6 +151,7 @@ interface GridHandlers {
   openEntry(cell: WeekGridCell, view: GridView): void
   // Absent when the build has no restart endpoint; the row then shows no Start.
   restart?(entryId: number): Promise<void>
+  stop(entryId: number): Promise<void>
   // The other half of a row's Start: today holds nothing on this row yet, so
   // there is no entry to restart and a new timer is what it means.
   startToday(seed: WeekRowSeed, notes: string | null): Promise<void>
@@ -682,6 +683,20 @@ const renderCellControl = (
   return wrapper
 }
 
+const rowStopButton = (entryId: number, label: string, className: string, handlers: GridHandlers): HTMLButtonElement => {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = className
+  button.dataset.stopEntry = String(entryId)
+  button.textContent = 'Stop'
+  button.setAttribute('aria-label', `Stop the timer on ${label}`)
+  button.addEventListener('click', () => {
+    button.disabled = true
+    void handlers.stop(entryId).finally(() => { button.disabled = false })
+  })
+  return button
+}
+
 /**
  * `today` is the day the server files a timer on -- the operator's zone, then
  * the organization's -- not the browser's clock. The column marked today and
@@ -800,6 +815,10 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
             })
           })
           label.append(start)
+        }
+        const running = row.cells.flatMap((cell) => cell.entries).find((entry) => entry.is_running)
+        if (running !== undefined) {
+          label.append(rowStopButton(running.id, `${row.projectLabel} / ${row.taskLabel}`, 'grid-row-start', handlers))
         }
         tr.append(label)
         row.cells.forEach((cell, dayIndex) => {
@@ -959,6 +978,9 @@ const renderPhoneDay = (grid: WeekGrid, selectedDay: number, handlers: GridHandl
           })
         })
         label.append(start)
+      }
+      if (entryId !== undefined && cell.isRunning) {
+        label.append(rowStopButton(entryId, `${row.projectLabel} / ${row.taskLabel}`, 'day-row-start', handlers))
       }
       const nextCell = dayItems[(itemIndex + 1) % dayItems.length]?.cell
       item.append(
@@ -2920,6 +2942,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       retry: retryCell,
       openEntry,
       startToday: startRowToday,
+      stop: stopRowTimer,
       ...(api.restartTimeEntry === undefined ? {} : { restart: restartEntry }),
     }
     // The same data the grid draws, laid out on whichever axis the
@@ -3054,6 +3077,23 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       // week worth showing.
       if (error instanceof EzactoApiError && error.status === 401) throw error
       return null
+    }
+  }
+
+  const stoppingTimers = new Set<number>()
+  const stopRowTimer = async (entryId: number): Promise<void> => {
+    const operation = sessionOperation()
+    if (operation === null || stoppingTimers.has(entryId)) return
+    stoppingTimers.add(entryId)
+    try {
+      await api.stopTimeEntry(entryId, operation.signal)
+      if (!isSessionCurrent(operation)) return
+      await refresh(operation)
+    } catch (error: unknown) {
+      if (handleSessionFailure(error, operation)) return
+      status.textContent = messageFor(error)
+    } finally {
+      stoppingTimers.delete(entryId)
     }
   }
 
