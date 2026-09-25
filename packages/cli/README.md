@@ -51,6 +51,14 @@ date in the Monday–Sunday week to render. Starting a timer relies on the same 
 invariant as the web app: the previous running timer is stopped atomically before
 the new one starts.
 
+## Packaging
+
+The CLI bundles the shared report capability inventory into `dist/money.js`.
+`@ezacto/core` is a build dependency only; it must never appear in the published
+runtime dependencies. Build before packing, and publish version 0.1.3 through the
+existing `npm-v0.1.3` release workflow after the fix is merged. Version 0.1.2
+cannot be repaired in place; pin 0.1.1 until the patch is published.
+
 ## Report permissions
 
 `ez report list` names the scope required by each report. `ez uninvoiced` and
