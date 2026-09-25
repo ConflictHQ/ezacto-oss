@@ -62,7 +62,19 @@ export type DetailedTimeGrouping =
  * filter ends up half-applied. They travel in the address all the same: a
  * report you send somebody has to arrive grouped the way you were reading it.
  */
+export interface DetailedTimeScope {
+  readonly self?: boolean
+  readonly include_fixed_fee?: boolean
+  readonly direct_client_only?: boolean
+  readonly contractors_only?: boolean
+  readonly currency?: string
+  readonly project_status?: ProfitabilityProjectStatus
+  readonly billing_method?: ProfitabilityBillingMethod
+  readonly manager_id?: number
+}
+
 export interface DetailedTimeOptions {
+  readonly scope?: DetailedTimeScope
   readonly hours: DetailedTimeHours
   readonly grouping: DetailedTimeGrouping
   readonly grain: DetailedTimeReport['grain']
@@ -260,7 +272,7 @@ export interface ReportWorkspaceApi {
     signal?: AbortSignal,
   ): Promise<DetailedExpenseReport>
   getDetailedTimeReport(
-    filter: {
+    filter: DetailedTimeScope & {
       readonly from: string
       readonly to: string
       readonly client_id?: number
@@ -438,12 +450,25 @@ export const detailedTimeOptionsFromUrl = (url: URL): DetailedTimeOptions => {
   const grouping = url.searchParams.get('group')
   const grain = url.searchParams.get('grain')
   const invoiceState = url.searchParams.get('invoice_state')
+  const scope: DetailedTimeScope = {
+    ...(url.searchParams.get('self') === 'true' ? { self: true } : {}),
+    ...(url.searchParams.get('include_fixed_fee') === 'false' ? { include_fixed_fee: false } : {}),
+    ...(url.searchParams.get('direct_client_only') === 'true' ? { direct_client_only: true } : {}),
+    ...(url.searchParams.get('contractors_only') === 'true' ? { contractors_only: true } : {}),
+    ...(url.searchParams.has('currency') ? { currency: url.searchParams.get('currency')!.toUpperCase() } : {}),
+    ...(url.searchParams.get('project_status') === 'active' || url.searchParams.get('project_status') === 'archived'
+      ? { project_status: url.searchParams.get('project_status') as ProfitabilityProjectStatus } : {}),
+    ...(['non_billable', 'time_materials', 'fixed_fee'].includes(url.searchParams.get('billing_method') ?? '')
+      ? { billing_method: url.searchParams.get('billing_method') as ProfitabilityBillingMethod } : {}),
+    ...(positiveId(url.searchParams.get('manager_id')) === null ? {} : { manager_id: positiveId(url.searchParams.get('manager_id'))! }),
+  }
   return {
     hours: hours !== null && detailedTimeHours.has(hours) ? (hours as DetailedTimeHours) : 'all',
     grouping:
       grouping !== null && detailedTimeGroupings.has(grouping)
         ? (grouping as DetailedTimeGrouping)
         : 'date',
+    ...(Object.keys(scope).length === 0 ? {} : { scope }),
     grain: grain === 'entry' ? 'entry' : 'day',
     activeProjectsOnly: url.searchParams.get('active_only') === 'true',
     taskId: positiveId(url.searchParams.get('task_id')),
@@ -559,6 +584,7 @@ export const reportFiltersUrl = (
     params.set('project_id', String(filters.projectId))
   }
   if (filters.kind === 'detailed-time' && options !== undefined) {
+    for (const [key, value] of Object.entries(options.scope ?? {})) params.set(key, String(value))
     params.set('hours', options.hours)
     params.set('group', options.grouping)
     params.set('grain', options.grain)
@@ -855,7 +881,9 @@ export const detailedTimeCsv = (
   grouping: DetailedTimeGrouping,
 ): string => {
   const money = report.rows.some((row) => row.billable_amount_cents !== undefined)
+  const rounded = report.rows.some((row) => row.seconds !== row.rounded_seconds)
   const header = ['Date', 'Client', 'Project', 'Task', 'Roles', 'Person', 'Hours']
+  if (rounded) header.push('Rounded hours')
   if (money) header.push('Currency', 'Billable amount')
   const lines = [header.map(csvCell).join(',')]
   for (const band of groupDetailedTimeRows(report.rows, grouping)) {
@@ -869,6 +897,7 @@ export const detailedTimeCsv = (
         row.user_name,
         decimalHours(row.seconds),
       ]
+      if (rounded) cells.push(decimalHours(row.rounded_seconds))
       if (money) {
         cells.push(
           row.currency,
@@ -881,6 +910,7 @@ export const detailedTimeCsv = (
     }
   }
   const totals = ['Total', '', '', '', '', '', decimalHours(report.seconds)]
+  if (rounded) totals.push(decimalHours(report.rounded_seconds))
   if (money) totals.push('', '')
   lines.push(totals.map(csvCell).join(','))
   return `${lines.join('\r\n')}\r\n`

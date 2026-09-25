@@ -118,7 +118,7 @@ interface CellSaveState {
   // -- a destructive action indistinguishable from saving a number. It stays
   // possible, because it is how people correct a week quickly, and it now
   // reports what it did.
-  readonly state: 'dirty' | 'saving' | 'saved' | 'retry' | 'removed'
+  readonly state: 'dirty' | 'saving' | 'saved' | 'retry' | 'removed' | 'invalid'
   readonly rawValue: string
   readonly message?: string
   readonly notes?: string | null
@@ -151,6 +151,7 @@ interface GridHandlers {
   openEntry(cell: WeekGridCell, view: GridView): void
   // Absent when the build has no restart endpoint; the row then shows no Start.
   restart?(entryId: number): Promise<void>
+  stop(entryId: number): Promise<void>
   // The other half of a row's Start: today holds nothing on this row yet, so
   // there is no entry to restart and a new timer is what it means.
   startToday(seed: WeekRowSeed, notes: string | null): Promise<void>
@@ -502,6 +503,7 @@ const cellInput = (
   input.value = state?.rawValue ?? input.dataset.savedValue
   input.ariaLabel = `${dayLabel(cell.date)} hours`
   input.placeholder = '0'
+  if (state?.state === 'invalid') input.setAttribute('aria-invalid', 'true')
   const mode = modeForEntryDraft(cell.entries[0] ?? null, organizationMode)
   input.disabled = cell.isConflict || cell.isLocked || cell.isRunning || mode === 'start_end'
   if (cell.isConflict)
@@ -548,6 +550,13 @@ const renderCellControl = (
   )
   input.addEventListener('input', () => {
     const current = handlers.cellStates.get(cell.key)
+    if (input.value === input.dataset.savedValue && current?.notes === undefined) {
+      handlers.cellStates.delete(cell.key)
+      wrapper.dataset.cellState = 'idle'
+      input.removeAttribute('aria-invalid')
+      status.textContent = ''
+      return
+    }
     const dirty: CellSaveState = {
       state: 'dirty',
       rawValue: input.value,
@@ -558,10 +567,13 @@ const renderCellControl = (
     }
     handlers.cellStates.set(cell.key, dirty)
     wrapper.dataset.cellState = 'dirty'
+    input.removeAttribute('aria-invalid')
     status.textContent = 'Unsaved'
   })
   input.addEventListener('blur', () => {
-    if (input.value === input.dataset.savedValue) return
+    if (!input.isConnected || input.value === input.dataset.savedValue) return
+    const current = handlers.cellStates.get(cell.key)
+    if ((current?.state === 'invalid' || current?.state === 'retry') && current.rawValue === input.value) return
     void handlers.commit(input, cell, view)
   })
   input.addEventListener('keydown', (event) => {
@@ -632,6 +644,8 @@ const renderCellControl = (
       ? 'Locked'
       : cell.isRunning
         ? 'Running'
+        : state?.state === 'invalid'
+          ? state.message ?? 'Use decimal hours or H:MM.'
         : state?.state === 'retry'
           ? (state.message ?? 'Retry')
           : state?.state === 'saving'
@@ -667,6 +681,20 @@ const renderCellControl = (
     wrapper.append(retry)
   }
   return wrapper
+}
+
+const rowStopButton = (entryId: number, label: string, className: string, handlers: GridHandlers): HTMLButtonElement => {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = className
+  button.dataset.stopEntry = String(entryId)
+  button.textContent = 'Stop'
+  button.setAttribute('aria-label', `Stop the timer on ${label}`)
+  button.addEventListener('click', () => {
+    button.disabled = true
+    void handlers.stop(entryId).finally(() => { button.disabled = false })
+  })
+  return button
 }
 
 /**
@@ -787,6 +815,10 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
             })
           })
           label.append(start)
+        }
+        const running = row.cells.flatMap((cell) => cell.entries).find((entry) => entry.is_running)
+        if (running !== undefined) {
+          label.append(rowStopButton(running.id, `${row.projectLabel} / ${row.taskLabel}`, 'grid-row-start', handlers))
         }
         tr.append(label)
         row.cells.forEach((cell, dayIndex) => {
@@ -946,6 +978,9 @@ const renderPhoneDay = (grid: WeekGrid, selectedDay: number, handlers: GridHandl
           })
         })
         label.append(start)
+      }
+      if (entryId !== undefined && cell.isRunning) {
+        label.append(rowStopButton(entryId, `${row.projectLabel} / ${row.taskLabel}`, 'day-row-start', handlers))
       }
       const nextCell = dayItems[(itemIndex + 1) % dayItems.length]?.cell
       item.append(
@@ -2907,6 +2942,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       retry: retryCell,
       openEntry,
       startToday: startRowToday,
+      stop: stopRowTimer,
       ...(api.restartTimeEntry === undefined ? {} : { restart: restartEntry }),
     }
     // The same data the grid draws, laid out on whichever axis the
@@ -3041,6 +3077,23 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       // week worth showing.
       if (error instanceof EzactoApiError && error.status === 401) throw error
       return null
+    }
+  }
+
+  const stoppingTimers = new Set<number>()
+  const stopRowTimer = async (entryId: number): Promise<void> => {
+    const operation = sessionOperation()
+    if (operation === null || stoppingTimers.has(entryId)) return
+    stoppingTimers.add(entryId)
+    try {
+      await api.stopTimeEntry(entryId, operation.signal)
+      if (!isSessionCurrent(operation)) return
+      await refresh(operation)
+    } catch (error: unknown) {
+      if (handleSessionFailure(error, operation)) return
+      status.textContent = messageFor(error)
+    } finally {
+      stoppingTimers.delete(entryId)
     }
   }
 
@@ -3711,28 +3764,42 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     if (current?.state === 'saving') return false
     const rawValue = input.value
     if (rawValue === input.dataset.savedValue && current?.notes === undefined) {
+      cellStates.delete(cell.key)
       focusCell(focus)
       return true
     }
+    // Invalid syntax is a local editing state. Replacing the focused input and
+    // focusing it again from a blur handler can start another blur/save cycle.
+    let seconds: number
+    try {
+      seconds = parseCellSeconds(rawValue)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Use decimal hours or H:MM.'
+      cellStates.set(cell.key, { ...current, state: 'invalid', rawValue, message })
+      input.setAttribute('aria-invalid', 'true')
+      const wrapper = input.closest<HTMLElement>('.week-cell')
+      if (wrapper !== null) {
+        wrapper.dataset.cellState = 'invalid'
+        const status = wrapper.querySelector<HTMLElement>('.cell-status')
+        if (status !== null) status.textContent = message
+      }
+      return false
+    }
     const minimumNoteLength = effectiveMinimumNoteLength(cell, current)
     const pendingNotes = notesForCell(cell, current)
-    try {
-      if (
-        parseCellSeconds(rawValue) > 0 &&
-        timeEntryNoteLength(pendingNotes) < minimumNoteLength
-      ) {
-        cellStates.set(cell.key, {
-          state: 'dirty',
-          rawValue,
-          notes: pendingNotes,
-          minimumNoteLength,
-        })
-        render()
-        openEntry(cell, view, noteRequirementMessage(minimumNoteLength))
-        return false
-      }
-    } catch {
-      // Duration syntax errors use the normal retry result and retain the input.
+    if (
+      seconds > 0 &&
+      timeEntryNoteLength(pendingNotes) < minimumNoteLength
+    ) {
+      cellStates.set(cell.key, {
+        state: 'dirty',
+        rawValue,
+        notes: pendingNotes,
+        minimumNoteLength,
+      })
+      render()
+      openEntry(cell, view, noteRequirementMessage(minimumNoteLength))
+      return false
     }
     cellStates.set(cell.key, {
       state: 'saving',
@@ -3781,7 +3848,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
           : { minimumNoteLength }),
       })
       render()
-      focusCell({ key: cell.key, view })
+      if (focus !== undefined) focusCell({ key: cell.key, view })
       return false
     }
     // A commit that zeroed a cell holding an entry removed it, note and all.
@@ -4623,6 +4690,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
     const key = `${projectId}:${taskId}`
     const alreadyExists = grid?.rows.some((row) => row.key === key) ?? false
+    if (alreadyExists) {
+      // Keep feedback beside the submit button, including when the existing
+      // day's entry is running or locked and its duration input cannot focus.
+      result.textContent = 'That project and task are already on this week. Choose another pair, or close this dialog to edit the existing row.'
+      return
+    }
     supplementalRows = [
       ...new Map(
         [...supplementalRows, { projectId, taskId }].map((row) => [
@@ -4639,11 +4712,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     if (firstDate !== undefined) {
       const focused = focusCell({ key: `${key}:${firstDate}`, view: visibleGridView() })
       setSessionStatus(
-        alreadyExists
-          ? focused
-            ? 'That project/task row already exists; it is focused now.'
-            : 'That project/task row already exists.'
-          : focused
+        focused
             ? 'Project/task row added. Enter time to save it.'
             : 'Project/task row added.',
         'ready',
@@ -4657,6 +4726,19 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   submitTimesheet.addEventListener('click', () => {
     const operation = sessionOperation()
     if (operation === null || timesheetTransitionPending || api.submitTimesheet === undefined) {
+      return
+    }
+    const unfinished = [...cellStates].find(([, state]) =>
+      state.state === 'dirty' || state.state === 'invalid' ||
+      state.state === 'saving' || state.state === 'retry',
+    )
+    if (unfinished !== undefined) {
+      timesheetResult.textContent = unfinished[1].state === 'saving'
+        ? 'Wait for your changes to finish saving, then submit the week.'
+        : 'Fix or save the unfinished time entries before submitting the week. Use decimal hours (2.5) or H:MM (2:30).'
+      if (unfinished[1].state !== 'saving') {
+        focusCell({ key: unfinished[0], view: visibleGridView() })
+      }
       return
     }
     const range = weekRange(within, snapshot?.timeEntrySettings.week_start_day ?? weekStartDay)

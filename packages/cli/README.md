@@ -58,3 +58,17 @@ The CLI bundles the shared report capability inventory into `dist/money.js`.
 runtime dependencies. Build before packing, and publish version 0.1.3 through the
 existing `npm-v0.1.3` release workflow after the fix is merged. Version 0.1.2
 cannot be repaired in place; pin 0.1.1 until the patch is published.
+
+## Report permissions
+
+`ez report list` names the scope required by each report. `ez uninvoiced` and
+organization reports require `reports:read`, available to accounting, executive
+managers and administrators. Members can use `ez report run my-hours --from
+YYYY-MM-DD --to YYYY-MM-DD` with `time_entries:read`. Project budgets use
+`projects:read` and the server enforces project visibility.
+
+Before resolving filters or loading a report, the CLI checks the scopes stored
+at login. If a required scope is missing, it names that scope and the stored
+profile. API failures retain their code, message, HTTP status and request ID in
+`--json` output and readable error text. Permissions are still enforced by the
+server; local config cannot grant access.

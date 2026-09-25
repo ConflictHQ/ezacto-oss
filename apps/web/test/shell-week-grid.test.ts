@@ -1283,9 +1283,9 @@ describe('week-grid browser behavior', () => {
     const existing = document.querySelector<HTMLInputElement>(
       '[data-week-grid] input[data-cell-key="2:2:2026-08-24"]',
     )
-    expect(document.activeElement).toBe(existing)
-    expect(document.querySelector('[data-session-message]')?.textContent).toContain(
-      'already exists',
+    expect(existing).not.toBeNull()
+    expect(document.querySelector('[data-row-result]')?.textContent).toContain(
+      'already on this week',
     )
 
     openAddRow()
@@ -1366,15 +1366,13 @@ describe('week-grid browser behavior', () => {
     document
       .querySelector<HTMLFormElement>('[data-row-form]')!
       .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
-    expect(document.activeElement?.getAttribute('data-cell-key')).toBe(
-      '1:1:2026-08-24:entry:1',
-    )
+    expect(document.querySelector('[data-row-result]')?.textContent).toContain('already on this week')
   })
 
   it.each([
     ['locked', { spent_date: '2026-08-24', is_locked: true }],
     ['running', { spent_date: '2026-08-24', is_running: true, timer_started_at: timestamp }],
-  ])('[e2e:track-week] focuses the %s cell wrapper for an existing row', async (_state, patch) => {
+  ])('[e2e:track-week] explains an existing %s row inside the dialog', async (_state, patch) => {
     renderBrowserShell()
     const api = browserApi()
     api.entries[0] = { ...api.entries[0]!, ...patch }
@@ -1390,9 +1388,9 @@ describe('week-grid browser behavior', () => {
     const wrapper = document.querySelector<HTMLElement>(
       '[data-week-grid] .week-cell[data-cell-key="1:1:2026-08-24"]',
     )
-    expect(document.activeElement).toBe(wrapper)
-    expect(document.querySelector('[data-session-message]')?.textContent).toContain(
-      'focused now',
+    expect(wrapper).not.toBeNull()
+    expect(document.querySelector('[data-row-result]')?.textContent).toContain(
+      'already on this week',
     )
   })
 

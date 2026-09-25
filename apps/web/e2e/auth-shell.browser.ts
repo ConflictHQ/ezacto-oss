@@ -782,14 +782,12 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await expect(secondaryCell).toBeFocused()
   expect(timeEntryWrites).toEqual([])
 
-  // Submitting the same pair focuses its existing row rather than duplicating it.
+  // Submitting the same pair explains the duplicate beside the form.
   await page.getByRole('button', { name: 'Add row', exact: true }).click()
   await rowForm.getByLabel('Project').selectOption('2')
   await rowForm.getByRole('button', { name: 'Add row', exact: true }).click()
-  await expect(page.locator('[data-session-message]')).toHaveText(
-    'That project/task row already exists; it is focused now.',
-  )
-  await expect(secondaryCell).toBeFocused()
+  await expect(page.locator('[data-row-result]')).toContainText('already on this week')
+  await page.keyboard.press('Escape')
 
   // The browser must reject a forged cross-product which the options endpoint
   // never returned; it must not reach D1 or supplemental-row storage.

@@ -6509,3 +6509,9 @@ dialog textarea {
 .staff-payments .data-table [data-column='status'] { min-width: 180px; }
 .staff-payments .data-table [data-column='due'] { min-width: 105px; }
 .staff-payments .data-table [data-column='note'] { min-width: 260px; max-width: 440px; white-space: normal; overflow-wrap: anywhere; }
+
+/* Every granted scope must be readable without a token detail screen. */
+[data-settings-tokens-table] .data-table [data-column='scopes'] {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
