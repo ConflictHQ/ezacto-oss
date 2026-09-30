@@ -235,3 +235,5 @@ export {
 export * from './wise/runtime.js'
 export * from './wise/webhook.js'
 export * from './wise/client.js'
+
+export { createWisePaymentProvider } from './wise/payments.js'

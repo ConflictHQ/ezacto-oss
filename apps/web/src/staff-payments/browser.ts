@@ -1,3 +1,4 @@
+import { createPaymentRunsController, type PaymentRunsApi } from './runs-browser.js'
 import { EzactoApiError } from '@conflict-hq/ezacto-client'
 import {
   paymentMonthEnd,
@@ -16,7 +17,7 @@ import {
   staffPaymentStatus,
 } from './model.js'
 
-export interface StaffPaymentsApi {
+export interface StaffPaymentsApi extends PaymentRunsApi {
   configureStaffPaymentProvider?(
     command: StaffPaymentProviderCommand,
     signal?: AbortSignal,
@@ -85,6 +86,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   let registerSort: DataTableSort = { column: 'name', direction: 'ascending' }
   let historySort: DataTableSort = { column: 'when', direction: 'descending' }
   let providerSort: DataTableSort = { column: 'when', direction: 'descending' }
+  const runs = createPaymentRunsController(api, () => load())
 
   const configureForm = (): void => {
     const kind = input('kind').value
@@ -305,6 +307,8 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
                 ? 'Settled'
                 : moneyText(staffPaymentMoney(row.balance_cents, row.currency)),
           },
+          {key:'reserved',label:'Scheduled / processing',numeric:true,render:row=>moneyText(staffPaymentMoney(row.reserved_cents ?? 0,row.currency))},
+          {key:'available',label:'Available to pay',numeric:true,render:row=>moneyText(staffPaymentMoney(row.available_cents ?? row.balance_cents,row.currency))},
           {
             key: 'provider',
             label: 'Preferred provider',
@@ -466,6 +470,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       if (active.aborted || generation !== ownGeneration) return
       report = response
       paint()
+      runs.ledger(response)
       status.textContent = ''
     } catch (error) {
       if (!active.aborted && generation === ownGeneration) status.textContent = failure(error)
@@ -726,7 +731,15 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
           : new Date().toISOString().slice(0, 7)
       setBusy(false)
       content.hidden = false
-      await load()
+      const reportMode = location.pathname === '/payments/report'
+      const ledger = page.querySelector<HTMLElement>('[data-payment-ledger]')
+      if (ledger) ledger.hidden = reportMode
+      const toolbar = page.querySelector<HTMLElement>('[data-payment-ledger-toolbar]')
+      if (toolbar) toolbar.hidden = reportMode
+      const heading = page.querySelector('h1')
+      if (heading) heading.textContent = reportMode ? 'Payments report' : 'Payments'
+      await runs.activate(active)
+      if (!reportMode) await load()
     },
   }
 }

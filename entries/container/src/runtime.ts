@@ -1,3 +1,5 @@
+import { createPaymentRunsService } from '@ezacto/db'
+import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createStaffPaymentStore } from '@ezacto/db'
 import { sql } from 'drizzle-orm'
 import { chmod, lstat, mkdir, realpath, stat } from 'node:fs/promises'
@@ -406,6 +408,12 @@ export const createContainerRuntime = async (
 
     // And the same Wise connection. A contractor paid by a self-hoster connects
     // their own account exactly as one paid by the hosted deployment does.
+    const paymentRuns = createPaymentRunsService(
+      drizzle,
+      config.wise === undefined
+        ? null
+        : createWisePaymentProvider({ token: config.wise.token, profileId: config.wise.profileId }),
+    )
     const wise =
       config.wise === undefined
         ? null
@@ -603,6 +611,7 @@ export const createContainerRuntime = async (
       // pass. Cheap when nothing is due: one indexed read. The BILL receipts
       // it records are drained in the same pass too.
       beforeDrain: async () => {
+        await paymentRuns.processDue(new Date().toISOString())
         await processDueReminders(new Date().toISOString())
         await reconcileBillPayments()
       },
@@ -671,6 +680,7 @@ export const createContainerRuntime = async (
       ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
       ...(wise === null ? {} : { wise: wise.service }),
       ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
+      paymentRuns,
       staffPayments: createStaffPaymentStore(drizzle),
       payoutAccounts: (() => {
         const store = createPayoutAccountStore(drizzle)

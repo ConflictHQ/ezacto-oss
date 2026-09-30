@@ -1003,6 +1003,11 @@ const withSignal = (signal?: AbortSignal): { signal?: AbortSignal } =>
   signal === undefined ? {} : { signal }
 
 export const createShellApi = (client: EzactoClient): ShellApi => ({
+  getPaymentRunReport: async (from,to,signal) => (await client.getPaymentRunReport({query:{from,to},...withSignal(signal)})).data,
+  previewPaymentRun: async (body,signal) => (await client.previewPaymentRun({body,...withSignal(signal)})).data,
+  approvePaymentRun: async (id,body,signal) => (await client.approvePaymentRun({id,body,...withSignal(signal)})).data,
+  cancelPaymentRun: async (id,signal) => (await client.cancelPaymentRun({id,...withSignal(signal)})).data,
+  reconcilePaymentRunItem: async (id,itemId,signal) => (await client.reconcilePaymentRunItem({id,itemId,...withSignal(signal)})).data,
   configureStaffPaymentProvider: (body, signal) =>
     client.configureStaffPaymentProvider({ body, ...withSignal(signal) }),
   getStaffPaymentReport: async (month, signal) =>

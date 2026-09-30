@@ -6515,3 +6515,9 @@ dialog textarea {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+.payment-runs { margin-block: 1.5rem; }
+.payment-runs > section, .payment-runs [data-run-history] > section { border: 1px solid var(--ez-border); border-radius: var(--ez-radius); padding: 1rem; margin-block: 1rem; }
+.payment-runs .data-table input:not([type='checkbox']) { width: 10rem; }
+.payment-runs [data-run-timezone] { align-self: end; padding: 12px; }
+[data-payments-report] .staff-payment-toolbar { flex-wrap: wrap; }

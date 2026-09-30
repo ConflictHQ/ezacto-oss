@@ -1,3 +1,5 @@
+import type { PaymentRunsService } from '@ezacto/core'
+import { installPaymentRunRoutes } from '@ezacto/api'
 import { installStaffPaymentRoutes } from '@ezacto/api'
 import type { StaffPaymentStore } from '@ezacto/core'
 import { captureException } from "@sentry/cloudflare";
@@ -388,6 +390,7 @@ export interface RuntimeServices {
    * talks to BILL, and a setting an operator changes should not need it.
    */
   /** Administrator payment register, available without provider credentials. */
+  paymentRuns?: PaymentRunsService
   staffPayments?: StaffPaymentStore
   /** Linking a person to their payout provider account (#421). */
   payoutAccounts?: PayoutAccountService
@@ -598,6 +601,7 @@ export const createApp = (
             })
             installAttachmentRoutes(api, services.attachments)
             installReportRoutes(api, services.reports)
+            if (services.paymentRuns !== undefined) installPaymentRunRoutes(api, services.paymentRuns)
             if (services.staffPayments !== undefined) {
               installStaffPaymentRoutes(api, services.staffPayments)
             }
@@ -1295,17 +1299,18 @@ export const createApp = (
         ),
       )
 
-      app.get('/payments', async (context) =>
+      for (const paymentsPath of ['/payments','/payments/report']) app.get(paymentsPath, async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
             ...(await shellChrome(context.env)),
-            activeSection: 'Team',
+            activeSection: 'Payments',
             view: 'staff-payments',
             tabs: [
               { label: 'People', href: '/team' },
-              { label: 'Staff payments', href: '/payments', current: true },
+              { label: 'Payments', href: '/payments', current: context.req.path === '/payments' },
+              { label: 'Payments report', href: '/payments/report', current: context.req.path === '/payments/report' },
             ],
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),

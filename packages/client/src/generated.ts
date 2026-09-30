@@ -104,6 +104,8 @@ export type StaffPaymentRow = {
   "currency": string | null;
   "paid_cents": number;
   "balance_cents": number | null;
+  "reserved_cents": number;
+  "available_cents": number | null;
   "due_on": string | null;
   "settled_through": string | null;
   "status": "in_progress" | "pending" | "partial" | "paid" | "settled";
@@ -120,6 +122,105 @@ export type StaffPaymentReport = {
 
 export type StaffPaymentReportEnvelope = {
   "data": StaffPaymentReport;
+};
+
+export type PaymentSelection = {
+  "user_id": number;
+  "month": string;
+  "amount_cents": number;
+  "expected_version": number;
+};
+
+export type PaymentRunCommand = {
+  "id": string;
+  "name": string;
+  "source_currency": string;
+  "scheduled_at": string;
+  "timezone": string;
+  "items": Array<PaymentSelection>;
+};
+
+export type PaymentQuote = {
+  "id": string;
+  "profile_id": string;
+  "recipient_id": string;
+  "recipient_name": string;
+  "source_currency": string;
+  "target_currency": string;
+  "target_cents": number;
+  "source_cents": number;
+  "fee_cents": number;
+  "rate": number;
+  "expires_at": string;
+  "estimated_arrival": string | null;
+};
+
+export type PaymentDestination = {
+  "id": number;
+  "external_id": string;
+  "kind": "account" | "contact";
+};
+
+export type PaymentItem = {
+  "user_id": number;
+  "month": string;
+  "amount_cents": number;
+  "expected_version": number;
+  "id": string;
+  "run_id": string;
+  "name": string;
+  "currency": string;
+  "destination": PaymentDestination;
+  "quote": PaymentQuote;
+  "execution_quote": PaymentQuote | null;
+  "max_source_cents": number;
+  "state": "draft" | "queued" | "creating" | "funding" | "processing" | "paid" | "failed" | "attention" | "cancelled";
+  "transfer_id": string | null;
+  "provider_status": string | null;
+  "failure": string | null;
+  "attempts": number;
+  "next_attempt_at": string;
+  "updated_at": string;
+  "version": number;
+  "lease_token": string | null;
+  "lease_until": string | null;
+};
+
+export type PaymentRun = {
+  "id": string;
+  "name": string;
+  "source_currency": string;
+  "scheduled_at": string;
+  "timezone": string;
+  "state": "draft" | "approved" | "cancelled";
+  "actor_id": number;
+  "approved_by": number | null;
+  "created_at": string;
+  "approved_at": string | null;
+  "request_id": string;
+  "items": Array<PaymentItem>;
+};
+
+export type PaymentRunApproval = {
+  "limits": Array<{
+  "item_id": string;
+  "max_source_cents": number;
+}>;
+};
+
+export type PaymentRunEnvelope = {
+  "data": PaymentRun;
+};
+
+export type PaymentRunReport = {
+  "from": string;
+  "to": string;
+  "ledgers": Array<StaffPaymentReport>;
+  "runs": Array<PaymentRun>;
+};
+
+export type PaymentRunReportEnvelope = {
+  "data": PaymentRunReport;
 };
 
 export type InvoiceReminderPolicy = {
@@ -4845,6 +4946,54 @@ export class EzactoClient {
 
     return this.request<void>("POST", "/api/v1/staff-payments/events", {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getPaymentRunReport(args: { query?: { "from"?: string; "to"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<PaymentRunReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PaymentRunReportEnvelope>("GET", "/api/v1/payment-runs/report", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async previewPaymentRun(args: { body: PaymentRunCommand; signal?: AbortSignal; headers?: HeadersInit }): Promise<PaymentRunEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PaymentRunEnvelope>("POST", "/api/v1/payment-runs/preview", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async approvePaymentRun(args: { "id": string; body: PaymentRunApproval; signal?: AbortSignal; headers?: HeadersInit }): Promise<PaymentRunEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PaymentRunEnvelope>("POST", "/api/v1/payment-runs/:id/approve".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async cancelPaymentRun(args: { "id": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<PaymentRunEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PaymentRunEnvelope>("POST", "/api/v1/payment-runs/:id/cancel".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async reconcilePaymentRunItem(args: { "id": string; "itemId": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<PaymentRunEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PaymentRunEnvelope>("POST", "/api/v1/payment-runs/:id/items/:itemId/reconcile".replace(":id", encodeURIComponent(String(args["id"]))).replace(":itemId", encodeURIComponent(String(args["itemId"]))), {
       signal: args.signal,
       headers,
     });

@@ -13879,6 +13879,357 @@
         }
       }
     },
+    "/api/v1/payment-runs/report": {
+      "get": {
+        "operationId": "getPaymentRunReport",
+        "summary": "Payment ledger and individual transfer outcomes over a period range",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRunReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/payment-runs/report",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/payment-runs/preview": {
+      "post": {
+        "operationId": "previewPaymentRun",
+        "summary": "Prepare a payment run for review without sending money",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRunEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/payment-runs/preview",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentRunCommand"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payment-runs/{id}/approve": {
+      "post": {
+        "operationId": "approvePaymentRun",
+        "summary": "Authorize and reserve a payment run for immediate or scheduled execution",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRunEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/payment-runs/:id/approve",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentRunApproval"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payment-runs/{id}/cancel": {
+      "post": {
+        "operationId": "cancelPaymentRun",
+        "summary": "Cancel payments that have not entered transfer creation",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRunEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/payment-runs/:id/cancel",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/payment-runs/{id}/items/{itemId}/reconcile": {
+      "post": {
+        "operationId": "reconcilePaymentRunItem",
+        "summary": "Request a status check without initiating a replacement transfer",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRunEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/payment-runs/:id/items/:itemId/reconcile",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/report-definitions/registry": {
       "get": {
         "operationId": "getReportDefinitionRegistry",
@@ -21591,6 +21942,8 @@
           "currency",
           "paid_cents",
           "balance_cents",
+          "reserved_cents",
+          "available_cents",
           "due_on",
           "settled_through",
           "status",
@@ -21677,6 +22030,19 @@
               }
             ]
           },
+          "reserved_cents": {
+            "type": "integer"
+          },
+          "available_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "due_on": {
             "anyOf": [
               {
@@ -21754,6 +22120,461 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/StaffPaymentReport"
+          }
+        }
+      },
+      "PaymentSelection": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "month",
+          "amount_cents",
+          "expected_version"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "user_id": {
+            "type": "integer"
+          },
+          "month": {
+            "type": "string"
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "expected_version": {
+            "type": "integer"
+          }
+        }
+      },
+      "PaymentRunCommand": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "source_currency",
+          "scheduled_at",
+          "timezone",
+          "items"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "source_currency": {
+            "type": "string"
+          },
+          "scheduled_at": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaymentSelection"
+            }
+          }
+        }
+      },
+      "PaymentQuote": {
+        "type": "object",
+        "required": [
+          "id",
+          "profile_id",
+          "recipient_id",
+          "recipient_name",
+          "source_currency",
+          "target_currency",
+          "target_cents",
+          "source_cents",
+          "fee_cents",
+          "rate",
+          "expires_at",
+          "estimated_arrival"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "recipient_id": {
+            "type": "string"
+          },
+          "recipient_name": {
+            "type": "string"
+          },
+          "source_currency": {
+            "type": "string"
+          },
+          "target_currency": {
+            "type": "string"
+          },
+          "target_cents": {
+            "type": "integer"
+          },
+          "source_cents": {
+            "type": "integer"
+          },
+          "fee_cents": {
+            "type": "integer"
+          },
+          "rate": {
+            "type": "number"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "estimated_arrival": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "PaymentDestination": {
+        "type": "object",
+        "required": [
+          "id",
+          "external_id",
+          "kind"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "external_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "account",
+              "contact"
+            ]
+          }
+        }
+      },
+      "PaymentItem": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "month",
+          "amount_cents",
+          "expected_version",
+          "id",
+          "run_id",
+          "name",
+          "currency",
+          "destination",
+          "quote",
+          "execution_quote",
+          "max_source_cents",
+          "state",
+          "transfer_id",
+          "provider_status",
+          "failure",
+          "attempts",
+          "next_attempt_at",
+          "updated_at",
+          "version",
+          "lease_token",
+          "lease_until"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "user_id": {
+            "type": "integer"
+          },
+          "month": {
+            "type": "string"
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "expected_version": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/PaymentDestination"
+          },
+          "quote": {
+            "$ref": "#/components/schemas/PaymentQuote"
+          },
+          "execution_quote": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PaymentQuote"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_source_cents": {
+            "type": "integer"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "queued",
+              "creating",
+              "funding",
+              "processing",
+              "paid",
+              "failed",
+              "attention",
+              "cancelled"
+            ]
+          },
+          "transfer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attempts": {
+            "type": "integer"
+          },
+          "next_attempt_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "lease_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lease_until": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "PaymentRun": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "source_currency",
+          "scheduled_at",
+          "timezone",
+          "state",
+          "actor_id",
+          "approved_by",
+          "created_at",
+          "approved_at",
+          "request_id",
+          "items"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "source_currency": {
+            "type": "string"
+          },
+          "scheduled_at": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "approved",
+              "cancelled"
+            ]
+          },
+          "actor_id": {
+            "type": "integer"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "approved_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaymentItem"
+            }
+          }
+        }
+      },
+      "PaymentRunApproval": {
+        "type": "object",
+        "required": [
+          "limits"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "limits": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "item_id",
+                "max_source_cents"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "item_id": {
+                  "type": "string"
+                },
+                "max_source_cents": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      },
+      "PaymentRunEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PaymentRun"
+          }
+        }
+      },
+      "PaymentRunReport": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "ledgers",
+          "runs"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "ledgers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffPaymentReport"
+            }
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaymentRun"
+            }
+          }
+        }
+      },
+      "PaymentRunReportEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PaymentRunReport"
           }
         }
       },

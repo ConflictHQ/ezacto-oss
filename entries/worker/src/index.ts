@@ -174,6 +174,8 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
   },
   async scheduled(controller, env) {
     const services = await createRuntimeServices(env)
+    if (controller.cron === '* * * * *')
+      await services.paymentRuns?.processDue(new Date().toISOString())
     if (controller.cron === '0 3 * * *' && env.ATTACHMENTS !== undefined) {
       await runNightlyExport(env.DB, env.ATTACHMENTS)
     }
