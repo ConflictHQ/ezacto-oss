@@ -22236,6 +22236,7 @@
           "version",
           "amount_cents",
           "currency",
+          "amount_basis",
           "paid_cents",
           "balance_cents",
           "reserved_cents",
@@ -22311,6 +22312,13 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "amount_basis": {
+            "type": "string",
+            "enum": [
+              "ledger",
+              "contractor_cost"
             ]
           },
           "paid_cents": {

@@ -107,6 +107,7 @@ export const staffPaymentSchemas = {
     version: integer,
     amount_cents: nullable(integer),
     currency: nullable(string),
+    amount_basis: { type: 'string', enum: ['ledger', 'contractor_cost'] },
     paid_cents: integer,
     balance_cents: nullable(integer),
     reserved_cents: integer,

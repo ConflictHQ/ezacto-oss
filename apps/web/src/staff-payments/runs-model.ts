@@ -66,7 +66,8 @@ export const filteredPaymentReport = (
           (filters.status === "outstanding" &&
             row.status !== "paid" &&
             row.status !== "settled") ||
-          (filters.status === "paid" && row.status === "paid") ||
+          (filters.status === "paid" &&
+            (row.status === "paid" || row.status === "settled")) ||
           items.some(
             (item) => item.user_id === row.user_id && item.month === row.month,
           )),
@@ -84,21 +85,28 @@ export const filteredPaymentReport = (
 export const paymentReportTotals = (rows: StaffPaymentRow[]) => {
   const totals = new Map<
     string,
-    { owed: bigint; paid: bigint; reserved: bigint; available: bigint }
+    {
+      owed: bigint;
+      paid: bigint;
+      reserved: bigint;
+      available: bigint;
+      historical: bigint;
+    }
   >();
   for (const row of rows) {
-    if (
-      row.currency === null ||
-      row.amount_cents === null ||
-      row.status === "settled"
-    )
-      continue;
+    if (row.currency === null || row.amount_cents === null) continue;
     const t = totals.get(row.currency) ?? {
       owed: 0n,
       paid: 0n,
       reserved: 0n,
       available: 0n,
+      historical: 0n,
     };
+    if (row.status === "settled") {
+      t.historical += BigInt(row.amount_cents);
+      totals.set(row.currency, t);
+      continue;
+    }
     t.owed += BigInt(row.amount_cents);
     t.paid += BigInt(row.paid_cents);
     t.reserved += BigInt(row.reserved_cents ?? 0);
@@ -139,6 +147,7 @@ export const paymentRunCsv = (
       "Cost basis",
       "Maximum source cents",
       "Failure",
+      "Amount basis",
     ],
   ];
   for (const r of rows)
@@ -148,10 +157,12 @@ export const paymentRunCsv = (
       r.month,
       r.currency,
       r.amount_cents,
-      r.paid_cents,
+      r.status === "settled" ? null : r.paid_cents,
       r.reserved_cents ?? 0,
       r.available_cents ?? r.balance_cents,
       r.status,
+      ...Array.from({ length: 11 }, () => ""),
+      r.amount_basis,
     ]);
   for (const i of items) {
     const q = i.execution_quote ?? i.quote;

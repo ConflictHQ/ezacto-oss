@@ -24,7 +24,8 @@ export const staffPaymentMoney = (
 ): string => {
   if (cents === null || currency === null) return 'Unspecified'
   const value = BigInt(cents)
-  return `${currency} ${(value / 100n).toLocaleString('en-US')}.${(value % 100n).toString().padStart(2, '0')}`
+  const magnitude = value < 0n ? -value : value
+  return `${currency} ${value < 0n ? '-' : ''}${(magnitude / 100n).toLocaleString('en-US')}.${(magnitude % 100n).toString().padStart(2, '0')}`
 }
 const csvCell = (value: unknown): string => {
   let text = value === null || value === undefined ? '' : String(value)
@@ -69,6 +70,7 @@ export const staffPaymentCsv = (report: StaffPaymentReport, audit = false): stri
         'Preferred provider',
         'Person override',
         'Deel destination ready',
+        'Amount basis',
       ]
   const rows = audit
     ? report.rows.flatMap((row) =>
@@ -109,6 +111,7 @@ export const staffPaymentCsv = (report: StaffPaymentReport, audit = false): stri
         row.payout_provider,
         row.provider_override,
         row.deel_ready,
+        row.amount_basis,
       ])
   if (audit) {
     for (const event of report.provider_settings.events) {
