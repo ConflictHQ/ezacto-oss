@@ -68,7 +68,9 @@ export const paymentActualsMigration = [
     INSERT INTO staff_payment_events(id,user_id,month,version,kind,command_json,actor_id,recorded_at,request_id)
       VALUES(NEW.id,NEW.user_id,NEW.month,NEW.expected_version+1,'amount',
         json_object('id',NEW.id,'user_id',NEW.user_id,'month',NEW.month,'expected_version',NEW.expected_version,'kind','amount',
-          'amount_cents',NEW.amount_cents,'currency',NEW.currency,'paid_on',NULL,'due_on',NULL,'reference','','note',NEW.note,
+          'amount_cents',NEW.amount_cents,'currency',NEW.currency,'paid_on',NULL,'due_on',
+          (SELECT json_extract(command_json,'$.due_on') FROM staff_payment_effective_events WHERE user_id=NEW.user_id AND month=NEW.month AND kind='amount' ORDER BY version DESC LIMIT 1),
+          'reference','','note',NEW.note,
           'payment_id',NULL,'source','historical'),NEW.actor_id,NEW.recorded_at,NEW.request_id);
   END`,
   ...['staff_payment_period_moves', 'staff_payment_actuals'].flatMap((table) => [

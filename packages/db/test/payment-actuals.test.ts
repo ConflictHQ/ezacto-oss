@@ -276,3 +276,10 @@ it('[d1] atomically confirms reviewed actuals and rejects changed source entries
     await runtime.dispose()
   }
 })
+
+it('preserves an explicitly agreed due date when confirming actuals', async () => {
+  const store=fixture(), command=await review(store)
+  await store.append({id:'agreed-amount',user_id:2,month:'2026-08',expected_version:0,kind:'amount',amount_cents:5000,currency:'USD',paid_on:null,due_on:'2026-10-15',reference:'',note:'Agreed payment date',payment_id:null,source:'historical'},1,'due-date',now)
+  await store.confirmActuals!({...command,expected_version:1},1,'actuals',now)
+  expect((await store.report('2026-08','2026-09-30')).rows.find(r=>r.user_id===2)).toMatchObject({amount_cents:10000,due_on:'2026-10-15'})
+})
