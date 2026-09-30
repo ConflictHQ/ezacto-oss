@@ -52,9 +52,13 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
         wise_ready: number
         deel_ready: number
         reserved_cents: number
+        has_hours: number
       }>(sql`
         SELECT person.id AS user_id, person.first_name || ' ' || person.last_name AS name,
           person.is_active AS active,
+          EXISTS(SELECT 1 FROM time_entries entry WHERE entry.user_id = person.id
+            AND entry.spent_date BETWEEN ${month + '-01'} AND ${paymentMonthEnd(month)}
+            AND entry.rounded_seconds != 0) AS has_hours,
           (SELECT COALESCE(SUM(amount_cents),0) FROM payment_run_items item WHERE item.user_id=person.id AND item.month=${month}
             AND item.state IN ('queued','creating','funding','processing','attention')) AS reserved_cents,
           EXISTS(SELECT 1 FROM user_payout_accounts account WHERE account.user_id = person.id
@@ -97,6 +101,7 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
         )
         return {
           ...summary,
+          has_hours: person.has_hours === 1,
           reserved_cents: person.reserved_cents,
           available_cents:
             summary.balance_cents === null ? null : summary.balance_cents - person.reserved_cents,

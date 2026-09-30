@@ -82,6 +82,7 @@ for (const runtime of ['sqlite', 'd1'] as const) {
         status: 'settled',
         amount_cents: 2,
         amount_basis: 'contractor_cost',
+        has_hours: true,
         currency: 'USD',
         paid_cents: 0,
         balance_cents: null,
@@ -93,6 +94,7 @@ for (const runtime of ['sqlite', 'd1'] as const) {
         status: 'settled',
         amount_cents: null,
         amount_basis: 'ledger',
+        has_hours: false,
       })
       expect(await read('2026-09')).toMatchObject({
         status: 'in_progress',
@@ -100,11 +102,16 @@ for (const runtime of ['sqlite', 'd1'] as const) {
         paid_cents: 0,
       })
       await execute('UPDATE time_entries SET cost_rate_cents=NULL WHERE id=11')
-      expect(await read()).toMatchObject({ status: 'settled', amount_cents: null, currency: null })
+      expect(await read()).toMatchObject({
+        status: 'settled',
+        amount_cents: null,
+        currency: null,
+        has_hours: true,
+      })
       await execute('UPDATE time_entries SET cost_rate_cents=1800, rounded_seconds=-1 WHERE id=11')
       expect(await read()).toMatchObject({ amount_cents: 0, amount_basis: 'contractor_cost' })
       await execute('UPDATE users SET is_contractor=0 WHERE id=2')
-      expect(await read()).toMatchObject({ amount_cents: null })
+      expect(await read()).toMatchObject({ amount_cents: null, has_hours: true })
       await execute('UPDATE users SET is_contractor=1 WHERE id=2')
       await execute(
         "UPDATE time_entries SET spent_date='2026-07-15', rounded_seconds=3600 WHERE id=11",

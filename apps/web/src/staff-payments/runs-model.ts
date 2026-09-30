@@ -1,3 +1,4 @@
+import { hasPaymentActivity } from './model.js';
 import type {
   PaymentRunReport,
   PaymentItem,
@@ -27,6 +28,7 @@ export interface PaymentReportFilters {
   person: string;
   currency: string;
   status: string;
+  show_empty?: boolean;
 }
 export const filteredPaymentReport = (
   report: PaymentRunReport,
@@ -61,6 +63,9 @@ export const filteredPaymentReport = (
     .flatMap((ledger) => ledger.rows)
     .filter(
       (row) =>
+        (filters.show_empty || hasPaymentActivity(row) || items.some(
+          (item) => item.user_id === row.user_id && item.month === row.month,
+        )) &&
         matches(row.name, row.currency) &&
         (filters.status === "all" ||
           (filters.status === "outstanding" &&

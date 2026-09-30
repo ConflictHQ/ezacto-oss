@@ -234,6 +234,7 @@ export const createPaymentRunsController = (
     person: input(reportForm, "person").value,
     currency: input(reportForm, "currency").value,
     status: input(reportForm, "status").value,
+    show_empty: input(reportForm, "show_empty").checked,
   });
   const paintReport = () => {
     if (!data) return;
@@ -573,6 +574,7 @@ export const createPaymentRunsController = (
     review.hidden = true;
     form.hidden = false;
   });
+  input(reportForm, "show_empty").addEventListener("change", paintReport);
   reportForm.addEventListener("submit", (event) => {
     event.preventDefault();
     void action(refresh, reportStatus);
