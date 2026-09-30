@@ -135,3 +135,13 @@ have a separate total from recorded payments; they do not create payable balance
 receipts, dates, or transfers. Reopening a month removes this fallback so its exact
 earnings can be reviewed normally. This reporting change requires no data repair or
 schema migration.
+
+### Hide empty people
+
+Payments and the payments report default to people with hours or payment activity
+in the selected work month. Enable **Show people with no hours or payments** to
+include everyone. Nonzero captured hours remain visible even without rates or
+confirmed earnings; amounts, reservations and payment history also keep a person
+visible. A blanket historical settlement by itself does not count as activity.
+Monthly and filtered report exports follow this checkbox; the full audit export
+keeps all records. The filter changes visibility only, not ledger records.

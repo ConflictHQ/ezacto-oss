@@ -289,3 +289,15 @@ it("reports historical costs separately and includes settlements in the paid fil
     document.querySelector("[data-run-report-balances]")!.textContent,
   ).toContain("5,298.70 · contractor cost");
 });
+
+it("hides empty report rows and exports by default, with an explicit opt-in", () => {
+  const empty = { ...row, name: "Empty Person", amount_cents: null, balance_cents: null, reserved_cents: 0, available_cents: null };
+  const hours = { ...empty, user_id: 3, name: "Hours Only", has_hours: true };
+  const reserved = { ...empty, user_id: 4, name: "Reserved Person", reserved_cents: 100 };
+  const data = { ...report, runs: [], ledgers: [{ ...ledger, rows: [empty, hours, reserved] }] };
+  const filters = { person: "", currency: "", status: "all" };
+  expect(filteredPaymentReport(data, filters).rows.map(r => r.name)).toEqual(["Hours Only", "Reserved Person"]);
+  expect(paymentRunCsv(data, filters)).not.toContain("Empty Person");
+  expect(filteredPaymentReport(data, { ...filters, show_empty: true }).rows).toHaveLength(3);
+  expect(paymentRunCsv(data, { ...filters, show_empty: true })).toContain("Empty Person");
+});

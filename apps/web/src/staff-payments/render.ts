@@ -32,6 +32,7 @@ export const renderStaffPayments = (view?: string): string =>
       <section id="payment-panel-balances" role="tabpanel" aria-labelledby="payment-tab-balances" data-payment-panel="balances">
       <div class="staff-payment-toolbar">
         <label>Show<select data-payment-filter><option value="all">Everyone</option><option value="outstanding">Outstanding</option><option value="overdue">Overdue</option><option value="paid">Paid / settled</option><option value="unready">Preferred destination missing</option></select></label>
+        <label><input type="checkbox" data-payment-show-empty>Show people with no hours or payments</label>
         <label>Find a person<input type="search" data-payment-search></label>
         <a data-payment-costs href="/reports?report=contractor-cost">Review payroll costs</a>
         <button type="button" data-payment-export>Export monthly report</button>

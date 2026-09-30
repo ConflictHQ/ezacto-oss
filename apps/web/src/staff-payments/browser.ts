@@ -15,6 +15,7 @@ import {
 import { renderDataTable, type DataTableSort } from '../components/data-table.js'
 import { moneyText } from '../money-display.js'
 import {
+  hasPaymentActivity,
   staffPaymentAmount,
   staffPaymentCsv,
   staffPaymentMoney,
@@ -68,6 +69,8 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   const status = element<HTMLElement>(page, '[data-staff-payment-status]')
   const month = element<HTMLInputElement>(page, '[data-payment-month]')
   const filter = element<HTMLInputElement>(page, '[data-payment-filter]')
+  const showEmpty = element<HTMLInputElement>(page, '[data-payment-show-empty]')
+  const activityRows = () => report?.rows.filter((row) => showEmpty.checked || hasPaymentActivity(row)) ?? []
   const search = element<HTMLInputElement>(page, '[data-payment-search]')
   const list = element<HTMLElement>(page, '[data-payment-list]')
   const summary = element<HTMLElement>(page, '[data-payment-summary]')
@@ -245,7 +248,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   }
   const paintList = (): void => {
     if (report === null) return
-    const rows = report.rows.filter(
+    const rows = activityRows().filter(
       (row) =>
         row.name.toLocaleLowerCase().includes(search.value.toLocaleLowerCase()) &&
         (filter.value === 'outstanding'
@@ -492,7 +495,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       bucket.remaining += BigInt(row.balance_cents ?? 0)
       totals.set(row.currency, bucket)
     }
-    const pending = report.rows.filter((row) => row.status !== 'paid' && row.status !== 'settled')
+    const pending = activityRows().filter((row) => row.status !== 'paid' && row.status !== 'settled')
     summary.replaceChildren(
       text(
         'p',
@@ -571,6 +574,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     void load()
   })
   filter.addEventListener('change', paintList)
+  showEmpty.addEventListener('change', paint)
   search.addEventListener('input', paintList)
   element<HTMLElement>(page, '[data-payment-refresh]').addEventListener('click', () => {
     command = null
@@ -761,7 +765,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   const download = (audit: boolean): void => {
     if (report === null || signal?.aborted !== false) return
     const url = URL.createObjectURL(
-      new Blob([staffPaymentCsv(report, audit)], {
+      new Blob([staffPaymentCsv(audit ? report : { ...report, rows: activityRows() }, audit)], {
         type: 'text/csv;charset=utf-8',
       }),
     )

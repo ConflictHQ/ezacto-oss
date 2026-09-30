@@ -1,5 +1,13 @@
 import type { StaffPaymentReport, StaffPaymentRow } from '@ezacto/core'
 
+/** A historical cutoff alone is not activity for an individual work month. */
+export const hasPaymentActivity = (row: StaffPaymentRow): boolean =>
+  row.has_hours ||
+  (row.amount_cents !== null && row.amount_cents !== 0) ||
+  row.paid_cents !== 0 ||
+  (row.reserved_cents ?? 0) > 0 ||
+  row.events.some((event) => event.month === row.month && event.kind === 'payment')
+
 export const staffPaymentStatus = (row: StaffPaymentRow): string => {
   const status = {
     in_progress: 'In progress',

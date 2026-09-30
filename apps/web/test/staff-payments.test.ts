@@ -236,3 +236,28 @@ it('formats negative contractor cost corrections without corrupting cents', () =
   expect(staffPaymentMoney(-50, 'USD')).toBe('USD -0.50')
   expect(staffPaymentMoney(-105050, 'USD')).toBe('USD -1,050.50')
 })
+
+it('hides empty people by default while keeping unrated hours, balances and payment history visible', async () => {
+  const empty = { ...report([]).rows[0]!, user_id: 10, name: 'Empty Person' }
+  const cutoff = { ...empty, user_id: 11, name: 'Empty Cutoff', status: 'settled' as const, events: [{ ...event, kind: 'opening' as const, amount_cents: null, currency: null }] }
+  const unrated = { ...empty, user_id: 12, name: 'Unrated Hours', has_hours: true }
+  const payment = { ...empty, user_id: 13, name: 'Payment History', events: [{ ...event, kind: 'payment' as const }] }
+  const value = { ...report(), rows: [report().rows[0]!, empty, cutoff, unrated, payment] }
+  const controller = createStaffPaymentsController({ getStaffPaymentReport: async () => value, recordStaffPaymentEvent: vi.fn() })
+  await controller.activate({ profile: 'administrator' }, new AbortController().signal)
+  const list = document.querySelector('[data-payment-list]')!
+  const checkbox = document.querySelector<HTMLInputElement>('[data-payment-show-empty]')!
+  expect(checkbox.checked).toBe(false)
+  expect(list.textContent).not.toContain('Empty Person')
+  expect(list.textContent).not.toContain('Empty Cutoff')
+  expect(list.textContent).toContain('Unrated Hours')
+  expect(list.textContent).toContain('Payment History')
+  expect(list.textContent).toContain('Fixture Person')
+  checkbox.checked = true
+  checkbox.dispatchEvent(new Event('change'))
+  expect(list.textContent).toContain('Empty Person')
+  expect(list.textContent).toContain('Empty Cutoff')
+  checkbox.checked = false
+  checkbox.dispatchEvent(new Event('change'))
+  expect(list.textContent).not.toContain('Empty Person')
+})

@@ -38,6 +38,7 @@ export const renderPaymentRuns = (): string => `
     <label>Person<input type="search" name="person" placeholder="Name"></label>
     <label>Currency<input name="currency" maxlength="3" placeholder="All"></label>
     <label>Status<select name="status"><option value="all">All</option><option value="outstanding">Outstanding</option><option value="paid">Paid</option><option value="queued">Scheduled / queued</option><option value="processing">Processing</option><option value="attention">Needs attention</option><option value="failed">Failed / refunded</option><option value="cancelled">Cancelled</option></select></label>
+    <label><input type="checkbox" name="show_empty">Show people with no hours or payments</label>
     <button type="submit">Update report</button><button type="button" data-run-report-export>Export filtered CSV</button>
   </form>
   <p data-run-report-status role="status" aria-live="polite"></p>
