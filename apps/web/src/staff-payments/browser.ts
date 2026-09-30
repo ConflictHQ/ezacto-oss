@@ -1,9 +1,11 @@
+import { createActualsController, type PaymentActualsApi } from './actuals-browser.js'
 import { createPaymentTabs } from './tabs.js'
 import { canPayNow } from './runs-model.js'
 import { createPaymentRunsController, type PaymentRunsApi } from './runs-browser.js'
 import { EzactoApiError } from '@conflict-hq/ezacto-client'
 import {
   paymentMonthEnd,
+  previousPaymentMonth,
   validPaymentMonth,
   type StaffPaymentCommand,
   type StaffPaymentProviderCommand,
@@ -19,7 +21,7 @@ import {
   staffPaymentStatus,
 } from './model.js'
 
-export interface StaffPaymentsApi extends PaymentRunsApi {
+export interface StaffPaymentsApi extends PaymentRunsApi, PaymentActualsApi {
   configureStaffPaymentProvider?(
     command: StaffPaymentProviderCommand,
     signal?: AbortSignal,
@@ -90,6 +92,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   let providerSort: DataTableSort = { column: 'when', direction: 'descending' }
   const tabs = createPaymentTabs(page)
   const runs = createPaymentRunsController(api, () => load(), () => tabs.select('history', true))
+  const actuals = createActualsController(page, api, () => load(), (userId) => { tabs.select('send'); runs.payNow(userId) }, failure)
   const payNow = element<HTMLButtonElement>(page, '[data-payment-pay-now]')
   payNow.addEventListener('click', () => {
     tabs.select('send')
@@ -518,6 +521,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       report = response
       paint()
       runs.ledger(response)
+      actuals.ledger(response, active)
       status.textContent = ''
     } catch (error) {
       if (!active.aborted && generation === ownGeneration) status.textContent = failure(error)
@@ -525,6 +529,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   }
   month.addEventListener('change', () => {
     runs.resetSelection()
+    actuals.reset()
     selected = null
     command = null
     void load()
@@ -776,7 +781,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       month.value =
         queryMonth !== null && validPaymentMonth(queryMonth)
           ? queryMonth
-          : new Date().toISOString().slice(0, 7)
+          : previousPaymentMonth(new Intl.DateTimeFormat('en-CA',{year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()))
       setBusy(false)
       content.hidden = false
       const reportMode = location.pathname === '/payments/report'
@@ -787,6 +792,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       payNow.hidden = reportMode || api.previewPaymentRun === undefined
       const heading = page.querySelector('h1')
       if (heading) heading.textContent = reportMode ? 'Payments report' : 'Payments'
+      actuals.activate(active)
       await runs.activate(active)
       tabs.activate(reportMode, api.previewPaymentRun !== undefined)
       if (!reportMode) await load()

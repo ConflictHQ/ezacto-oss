@@ -1,3 +1,4 @@
+import { paymentActualsMigration } from './migrations/0094_payment_actuals.js'
 import { paymentRunsMigration } from './migrations/0093_payment_runs.js'
 import { staffPaymentProvidersMigration } from './migrations/0092_staff_payment_providers.js'
 import { staffPaymentRegisterMigration } from './migrations/0091_staff_payment_register.js'
@@ -1540,6 +1541,7 @@ const migrations = [
   { id: '0091_staff_payment_register', statements: staffPaymentRegisterMigration },
   { id: '0092_staff_payment_providers', statements: staffPaymentProvidersMigration },
   { id: '0093_payment_runs', statements: paymentRunsMigration },
+  { id: '0094_payment_actuals', statements: paymentActualsMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

@@ -1010,6 +1010,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   reconcilePaymentRunItem: async (id,itemId,signal) => (await client.reconcilePaymentRunItem({id,itemId,...withSignal(signal)})).data,
   configureStaffPaymentProvider: (body, signal) =>
     client.configureStaffPaymentProvider({ body, ...withSignal(signal) }),
+  getPaymentActuals: async (month, signal) => (await client.getPaymentActuals({ query: { month }, ...withSignal(signal) })).data,
+  confirmPaymentActuals: (body, signal) => client.confirmPaymentActuals({ body, ...withSignal(signal) }),
   getStaffPaymentReport: async (month, signal) =>
     (await client.getStaffPaymentReport({ query: { month }, ...withSignal(signal) })).data,
   recordStaffPaymentEvent: (body, signal) =>

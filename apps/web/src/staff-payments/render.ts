@@ -4,7 +4,7 @@ export const renderStaffPayments = (view?: string): string =>
     ? `
   <main class="app-content page--grid staff-payments" data-staff-payments-page${view === 'staff-payments' ? '' : ' hidden'}>
     <header class="context-row"><div><p class="eyebrow">Team</p><h1>Payments</h1></div><a href="/team">Back to team</a></header>
-    <p data-payment-intro>Review balances, pay your team, and track each payment.</p>
+    <p data-payment-intro>Choose the month the work was done. Pay it after that month ends; the actual payment date is recorded separately.</p>
     <p data-staff-payment-status class="form-result" role="status" aria-live="polite"></p>
     <div data-staff-payment-content hidden>
       <div data-payment-ledger-toolbar>
@@ -17,6 +17,7 @@ export const renderStaffPayments = (view?: string): string =>
         <div class="payment-tabs" role="tablist" aria-label="Payments sections" data-payment-tabs>
           ${[
             ['balances', 'Balances'],
+            ['actuals', 'Review actuals'],
             ['send', 'Send or schedule'],
             ['history', 'History'],
             ['settings', 'Settings'],
@@ -65,6 +66,13 @@ export const renderStaffPayments = (view?: string): string =>
         <h3>Payment history and audit log</h3><div data-payment-history></div>
       </section>
       </div>
+      </section>
+      <section id="payment-panel-actuals" role="tabpanel" aria-labelledby="payment-tab-actuals" data-payment-panel="actuals" data-payment-actuals hidden>
+        <h2>Review contractor actuals</h2>
+        <p>Captured time and cost rates from the contractor report. Includes tracked hours regardless of timesheet approval; review before confirming.</p>
+        <button type="button" data-actuals-load>Load actuals for work month</button>
+        <p role="status" aria-live="polite" data-actuals-status></p>
+        <div data-actuals-review></div>
       </section>
       ${renderPaymentRuns()}
       <section id="payment-panel-settings" role="tabpanel" aria-labelledby="payment-tab-settings" data-payment-panel="settings" hidden>

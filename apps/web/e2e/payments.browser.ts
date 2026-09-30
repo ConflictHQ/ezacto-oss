@@ -242,3 +242,38 @@ test("[e2e:payments] schedules only after review and exposes the filtered paymen
     "No matching balances.",
   );
 });
+
+test('[e2e:payments] reviews actual hours before confirming earnings and handing off to Pay now',async({page})=>{
+  let saved=false,previews=0
+  await page.route('**/api/v1/staff-payments?*',route=>route.fulfill({json:{data:{...ledger,rows:[{...row,amount_cents:saved?5000:null,balance_cents:saved?5000:null,available_cents:saved?5000:null,version:saved?1:0}]}}}))
+  await page.route('**/api/v1/payment-runs/report?*',route=>route.fulfill({json:{data:{from:'2026-08',to:'2026-08',ledgers:[ledger],runs:[]}}}))
+  await page.route('**/api/v1/staff-payments/actuals?*',route=>route.fulfill({json:{data:{month:'2026-08',currency:'USD',completed:true,people:[{user_id:2,name:row.name,entries:[{entry_id:10,project_id:1,project_name:'Actuals project',spent_date:'2026-08-10',rounded_seconds:7200,cost_rate_cents:5000,selected_seconds:7200}]}]}}}))
+  await page.route('**/api/v1/staff-payments/actuals',route=>{
+    const body=route.request().postDataJSON()
+    expect(body.entries[0].selected_seconds).toBe(3600);expect(body.month).toBe('2026-08');expect(body.expected_version).toBe(0)
+    saved=true;return route.fulfill({status:204})
+  })
+  await page.route('**/api/v1/payment-runs/preview',route=>{previews++;return route.fulfill({status:500})})
+  await page.goto('/payments?month=2026-08')
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(email);await page.getByLabel('Password').fill(password)
+  await page.getByRole('button',{name:'Sign in',exact:true}).click()
+  await page.getByRole('tab',{name:'Review actuals',exact:true}).click()
+  await page.getByRole('button',{name:'Load actuals for work month'}).click()
+  await expect(page.locator('[data-actuals-total]')).toContainText('USD 100.00')
+  await page.getByLabel('Included hours for Actuals project 2026-08-10 entry 10').fill('1')
+  await expect(page.locator('[data-actuals-total]')).toContainText('USD 50.00')
+  const project=page.getByRole('checkbox',{name:'Actuals project',exact:true})
+  await expect(project).toHaveJSProperty('indeterminate',true)
+  await project.check();await expect(page.locator('[data-actuals-total]')).toContainText('USD 100.00')
+  await project.uncheck();await expect(page.locator('[data-actuals-total]')).toContainText('USD 0.00')
+  await project.check();await page.getByLabel('Included hours for Actuals project 2026-08-10 entry 10').fill('1')
+  expect(saved).toBe(false);expect(previews).toBe(0)
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
+  await page.getByRole('button',{name:'Confirm earnings',exact:true}).click()
+  await expect(page.locator('[data-actuals-status]')).toHaveText('Earnings saved. No money has been sent.')
+  expect(previews).toBe(0)
+  await page.locator('[data-payment-actuals]').getByRole('button',{name:'Pay now',exact:true}).click()
+  await expect(page.getByRole('tab',{name:'Send or schedule',exact:true})).toHaveAttribute('aria-selected','true')
+  await expect(page.locator('[data-run-form]')).toBeVisible()
+  expect(previews).toBe(0)
+})
