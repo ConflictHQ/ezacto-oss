@@ -378,7 +378,7 @@ export const createPaymentRunsController = (
     review.hidden = false;
     form.hidden = true;
     el(section, "[data-run-review-summary]").textContent =
-      `${run.name}: ${run.items.length} payments from the Wise ${run.source_currency} balance. ${input(form, "timing").value === "now" ? "Starts after approval" : `Starts ${new Date(run.scheduled_at).toLocaleString()} (${timezone})`}. Review expires in 30 minutes.`;
+      `${run.name}: ${run.items.length} ${run.items.length === 1 ? "payment" : "payments"} from the Wise ${run.source_currency} balance. ${input(form, "timing").value === "now" ? "Starts after approval" : `Starts ${new Date(run.scheduled_at).toLocaleString()} (${timezone})`}. Review expires in 30 minutes.`;
     el(section, "[data-run-review-items]").replaceChildren(
       renderDataTable({
         caption: "Payment confirmation",
@@ -440,7 +440,7 @@ export const createPaymentRunsController = (
       0n,
     );
     el(section, "[data-run-confirm]").textContent =
-      `${input(form, "timing").value === "now" ? "Send" : "Schedule"} ${run.items.length} payments · estimated ${staffPaymentMoney(total, run.source_currency)}`;
+      `${input(form, "timing").value === "now" ? "Send" : "Schedule"} ${run.items.length} ${run.items.length === 1 ? "payment" : "payments"} · estimated ${staffPaymentMoney(total, run.source_currency)}`;
   };
   approvalForm.addEventListener("input", () => {
     if (!draft) return;
@@ -451,7 +451,7 @@ export const createPaymentRunsController = (
         0n,
       );
       el(section, "[data-run-confirm]").textContent =
-        `${input(form, "timing").value === "now" ? "Send" : "Schedule"} ${draft.items.length} payments · up to ${staffPaymentMoney(total, draft.source_currency)}`;
+        `${input(form, "timing").value === "now" ? "Send" : "Schedule"} ${draft.items.length} ${draft.items.length === 1 ? "payment" : "payments"} · up to ${staffPaymentMoney(total, draft.source_currency)}`;
     } catch {
       el(section, "[data-run-confirm]").textContent =
         "Confirm approved amounts";

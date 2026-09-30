@@ -147,7 +147,7 @@ test("[e2e:payments] schedules only after review and exposes the filtered paymen
     path: "/tmp/ezacto-payment-review.png",
     fullPage: true,
   });
-  await review.getByRole("button", { name: /Schedule 1 payments/ }).click();
+  await review.getByRole("button", { name: /Schedule 1 payment ·/ }).click();
   await expect(page.locator("[data-run-status]")).toHaveText("");
   await expect.poll(() => approved).toBe(true);
   await expect(page.locator("[data-run-history]")).toContainText(
