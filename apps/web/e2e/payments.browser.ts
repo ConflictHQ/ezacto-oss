@@ -147,6 +147,20 @@ test("[e2e:payments] schedules only after review and exposes the filtered paymen
     path: "/tmp/ezacto-payment-review.png",
     fullPage: true,
   });
+  await page
+    .getByRole("button", { name: "Hide money amounts ($)", exact: true })
+    .click();
+  await expect(review.locator(".money").first()).toHaveCSS(
+    "visibility",
+    "hidden",
+  );
+  await page
+    .getByRole("button", { name: "Show money amounts ($)", exact: true })
+    .click();
+  await expect(review.locator(".money").first()).toHaveCSS(
+    "visibility",
+    "visible",
+  );
   await review.getByRole("button", { name: /Schedule 1 payment ·/ }).click();
   await expect(page.locator("[data-run-status]")).toHaveText("");
   await expect.poll(() => approved).toBe(true);

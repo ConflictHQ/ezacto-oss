@@ -5,6 +5,7 @@ import type {
   PaymentRunReport,
   StaffPaymentReport,
 } from "@ezacto/core";
+import { moneyText } from "../money-display.js";
 import { renderDataTable } from "../components/data-table.js";
 import { staffPaymentAmount, staffPaymentMoney } from "./model.js";
 import {
@@ -35,6 +36,8 @@ export interface PaymentRunsApi {
     signal?: AbortSignal,
   ): Promise<PaymentRun>;
 }
+const money = (...args: Parameters<typeof staffPaymentMoney>) =>
+  moneyText(staffPaymentMoney(...args));
 const node = (tag: string, value: string): HTMLElement => {
   const e = document.createElement(tag);
   e.textContent = value;
@@ -152,7 +155,7 @@ export const createPaymentRunsController = (
             {
               key: "amount",
               label: "Recipient receives",
-              render: (i) => staffPaymentMoney(i.amount_cents, i.currency),
+              render: (i) => money(i.amount_cents, i.currency),
             },
             {
               key: "state",
@@ -224,13 +227,19 @@ export const createPaymentRunsController = (
     const { rows, items, receipts } = filteredPaymentReport(data, filters());
     const totals = el(reportSection, "[data-run-report-totals]");
     totals.replaceChildren();
-    for (const [currency, t] of paymentReportTotals(rows))
-      totals.appendChild(
-        node(
-          "p",
-          `${currency} · owed ${staffPaymentMoney(t.owed, currency)} · paid ${staffPaymentMoney(t.paid, currency)} · reserved ${staffPaymentMoney(t.reserved, currency)} · available to pay ${staffPaymentMoney(t.available, currency)}`,
-        ),
+    for (const [currency, t] of paymentReportTotals(rows)) {
+      const line = node("p", `${currency} · owed `);
+      line.append(
+        money(t.owed, currency),
+        " · paid ",
+        money(t.paid, currency),
+        " · reserved ",
+        money(t.reserved, currency),
+        " · available to pay ",
+        money(t.available, currency),
       );
+      totals.appendChild(line);
+    }
     totals.appendChild(
       node(
         "p",
@@ -259,26 +268,23 @@ export const createPaymentRunsController = (
           {
             key: "owed",
             label: "Owed",
-            render: (r) => staffPaymentMoney(r.amount_cents, r.currency),
+            render: (r) => money(r.amount_cents, r.currency),
           },
           {
             key: "paid",
             label: "Paid",
-            render: (r) => staffPaymentMoney(r.paid_cents, r.currency),
+            render: (r) => money(r.paid_cents, r.currency),
           },
           {
             key: "reserved",
             label: "Reserved",
-            render: (r) => staffPaymentMoney(r.reserved_cents ?? 0, r.currency),
+            render: (r) => money(r.reserved_cents ?? 0, r.currency),
           },
           {
             key: "available",
             label: "Available to pay",
             render: (r) =>
-              staffPaymentMoney(
-                r.available_cents ?? r.balance_cents,
-                r.currency,
-              ),
+              money(r.available_cents ?? r.balance_cents, r.currency),
           },
           { key: "status", label: "Status", render: (r) => r.status },
         ],
@@ -297,7 +303,7 @@ export const createPaymentRunsController = (
           {
             key: "amount",
             label: "Recipient amount",
-            render: (i) => staffPaymentMoney(i.amount_cents, i.currency),
+            render: (i) => money(i.amount_cents, i.currency),
           },
           {
             key: "schedule",
@@ -313,7 +319,7 @@ export const createPaymentRunsController = (
             key: "cost",
             label: "Source cost (quote)",
             render: (i) =>
-              staffPaymentMoney(
+              money(
                 (i.execution_quote ?? i.quote).source_cents,
                 i.quote.source_currency,
               ),
@@ -322,7 +328,7 @@ export const createPaymentRunsController = (
             key: "fee",
             label: "Fee (quote)",
             render: (i) =>
-              staffPaymentMoney(
+              money(
                 (i.execution_quote ?? i.quote).fee_cents,
                 i.quote.source_currency,
               ),
@@ -353,7 +359,7 @@ export const createPaymentRunsController = (
           {
             key: "amount",
             label: "Amount",
-            render: (r) => staffPaymentMoney(r.amount_cents, r.currency),
+            render: (r) => money(r.amount_cents, r.currency),
           },
           { key: "provider", label: "Provider", render: (r) => r.source },
           { key: "reference", label: "Reference", render: (r) => r.reference },
@@ -372,6 +378,14 @@ export const createPaymentRunsController = (
     data = result;
     if (reportMode) paintReport();
     else paintHistory();
+  };
+  const confirmLabel = (run: PaymentRun, total: bigint, basis: string) => {
+    el(section, "[data-run-confirm]").replaceChildren(
+      document.createTextNode(
+        `${input(form, "timing").value === "now" ? "Send" : "Schedule"} ${run.items.length} ${run.items.length === 1 ? "payment" : "payments"} · ${basis} `,
+      ),
+      money(total, run.source_currency),
+    );
   };
   const paintReview = (run: PaymentRun) => {
     draft = run;
@@ -399,19 +413,17 @@ export const createPaymentRunsController = (
           {
             key: "amount",
             label: "Recipient receives",
-            render: (i) => staffPaymentMoney(i.amount_cents, i.currency),
+            render: (i) => money(i.amount_cents, i.currency),
           },
           {
             key: "fee",
             label: "Fee estimate",
-            render: (i) =>
-              staffPaymentMoney(i.quote.fee_cents, run.source_currency),
+            render: (i) => money(i.quote.fee_cents, run.source_currency),
           },
           {
             key: "source",
             label: "Total cost estimate",
-            render: (i) =>
-              staffPaymentMoney(i.quote.source_cents, run.source_currency),
+            render: (i) => money(i.quote.source_cents, run.source_currency),
           },
           {
             key: "arrival",
@@ -439,8 +451,7 @@ export const createPaymentRunsController = (
       (sum, i) => sum + BigInt(i.quote.source_cents),
       0n,
     );
-    el(section, "[data-run-confirm]").textContent =
-      `${input(form, "timing").value === "now" ? "Send" : "Schedule"} ${run.items.length} ${run.items.length === 1 ? "payment" : "payments"} · estimated ${staffPaymentMoney(total, run.source_currency)}`;
+    confirmLabel(run, total, "estimated");
   };
   approvalForm.addEventListener("input", () => {
     if (!draft) return;
@@ -450,8 +461,7 @@ export const createPaymentRunsController = (
           sum + BigInt(staffPaymentAmount(input(approvalForm, item.id).value)),
         0n,
       );
-      el(section, "[data-run-confirm]").textContent =
-        `${input(form, "timing").value === "now" ? "Send" : "Schedule"} ${draft.items.length} ${draft.items.length === 1 ? "payment" : "payments"} · up to ${staffPaymentMoney(total, draft.source_currency)}`;
+      confirmLabel(draft, total, "up to");
     } catch {
       el(section, "[data-run-confirm]").textContent =
         "Confirm approved amounts";
@@ -629,10 +639,7 @@ export const createPaymentRunsController = (
               key: "available",
               label: "Available",
               render: (r) =>
-                staffPaymentMoney(
-                  r.available_cents ?? r.balance_cents,
-                  r.currency,
-                ),
+                money(r.available_cents ?? r.balance_cents, r.currency),
             },
             {
               key: "amount",
