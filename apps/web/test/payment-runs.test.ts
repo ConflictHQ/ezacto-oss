@@ -96,6 +96,33 @@ beforeEach(() => {
   document.body.innerHTML = renderStaffPayments("staff-payments");
 });
 describe("payment run review", () => {
+  it("shows the request ID when the payment API fails", async () => {
+    const controller = createPaymentRunsController(
+      {
+        getPaymentRunReport: async () => report,
+        previewPaymentRun: async () => {
+          throw {
+            body: {
+              error: { message: "The request could not be completed." },
+              request_id: "payment-request-123",
+            },
+            requestId: "payment-request-123",
+          };
+        },
+      },
+      async () => {},
+    );
+    await controller.activate(new AbortController().signal);
+    controller.ledger(ledger);
+    const form = document.querySelector<HTMLFormElement>("[data-run-form]")!;
+    (form.elements.namedItem("select-2") as HTMLInputElement).checked = true;
+    form.dispatchEvent(new SubmitEvent("submit", { cancelable: true }));
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector("[data-run-status]")!.textContent,
+      ).toContain("Reference: payment-request-123"),
+    );
+  });
   it("requires a separate confirmation showing recipient, fees and cost before approval", async () => {
     const api = {
       previewPaymentRun: vi.fn(async () => run),

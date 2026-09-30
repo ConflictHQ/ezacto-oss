@@ -26,7 +26,7 @@ const quote: PaymentQuote = {
   expires_at: '2026-09-30T13:00:00.000Z',
   estimated_arrival: null,
 }
-const fixture = async () => {
+const fixture = async (reportError?: Parameters<typeof createPaymentRunsService>[2]) => {
   db = new BetterSqlite3(':memory:')
   migrateContainer(db)
   db.exec(`INSERT INTO organizations(name,modules,created_at,updated_at) VALUES('Fixture','{}','${now}','${now}');
@@ -78,7 +78,7 @@ const fixture = async () => {
       target_currency: 'USD',
     })),
   }
-  const service = createPaymentRunsService(database, provider)
+  const service = createPaymentRunsService(database, provider, reportError)
   const command: PaymentRunCommand = {
     id: crypto.randomUUID(),
     name: 'August payroll',
@@ -113,6 +113,25 @@ const fixture = async () => {
 }
 afterEach(() => db?.close())
 describe('scheduled payment runs', () => {
+  it('reports handled provider failures without letting a reporter failure lose the reservation', async () => {
+    const reportError = vi.fn(() => {
+      throw new Error('Reporter unavailable')
+    })
+    const f = await fixture(reportError)
+    const approved = await f.approve()
+    const error = new PaymentProviderError('Wise 403 during lookup. Trace: fixture', 403)
+    vi.mocked(f.provider.quote).mockRejectedValueOnce(error)
+    await f.service.processDue(now)
+    expect(reportError).toHaveBeenCalledWith(error, {
+      run_id: approved.id,
+      item_id: approved.items[0]!.id,
+      stage: 'queued',
+    })
+    const report = await f.service.report('2026-08', '2026-08', now)
+    expect(report.runs[0]!.items[0]!.state).toBe('attention')
+    expect(report.ledgers[0]!.rows.find((x) => x.user_id === 2)!.reserved_cents).toBe(5000)
+    expect(f.provider.create).not.toHaveBeenCalled()
+  })
   it('previews without sending or reserving; approval reserves only approved amounts', async () => {
     const f = await fixture()
     await f.preview()

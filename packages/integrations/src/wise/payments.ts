@@ -109,9 +109,23 @@ export const createWisePaymentProvider = (options: {
         body.targetAccount ?? (destination.kind === 'account' ? destination.external_id : null),
         'resolved recipient',
       )
-      const recipient = await request(`/accounts/${encodeURIComponent(recipientId)}`)
-      if (recipient.active === false || recipient.ownedByCustomer === true)
-        throw new PaymentProviderError('This recipient cannot be used for staff payments.', 422)
+      // Contacts resolve to another Wise customer's account, which this token
+      // cannot read (403). The authenticated quote is the contact-to-account
+      // mapping; only ordinary saved account recipients use the account lookup.
+      let recipientName: string
+      if (destination.kind === 'contact') {
+        if (body.contactId !== destination.external_id)
+          throw new PaymentProviderError('Wise quote does not match the saved contact.', 502)
+        recipientName = `Wise contact ${destination.external_id}`
+      } else {
+        const recipient = await request(`/accounts/${encodeURIComponent(recipientId)}`)
+        if (recipient.active === false || recipient.ownedByCustomer === true)
+          throw new PaymentProviderError('This recipient cannot be used for staff payments.', 422)
+        recipientName = required(
+          recipient.accountHolderName ?? object(recipient.name).fullName,
+          'recipient name',
+        )
+      }
       const target = cents(choice.targetAmount ?? body.targetAmount)
       const source = cents(choice.sourceAmount ?? body.sourceAmount)
       if (
@@ -133,10 +147,7 @@ export const createWisePaymentProvider = (options: {
         id: required(body.id, 'quote id'),
         profile_id: profile.id,
         recipient_id: recipientId,
-        recipient_name: required(
-          recipient.accountHolderName ?? object(recipient.name).fullName,
-          'recipient name',
-        ),
+        recipient_name: recipientName,
         source_currency: sourceCurrency,
         target_currency: targetCurrency,
         target_cents: target,
