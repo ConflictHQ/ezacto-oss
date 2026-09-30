@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 import { installPaymentRunRoutes } from "../src/payment-runs.js";
 import { errorResponse } from "../src/errors.js";
 import type { ApiContext } from "../src/context.js";
-import type { PaymentRunsService } from "@ezacto/core";
+import { PaymentProviderError, type PaymentRunsService } from "@ezacto/core";
 const fixture = (profile = "administrator", kind = "session") => {
   const api = new Hono<ApiContext<object>>();
   const service = {
@@ -29,11 +29,33 @@ const fixture = (profile = "administrator", kind = "session") => {
     c.set("requestId", "request");
     await next();
   });
-  api.onError((e, c) => errorResponse(e, c));
+  const reportError = vi.fn();
+  api.onError((e, c) => errorResponse(e, c, reportError));
   installPaymentRunRoutes(api, service as unknown as PaymentRunsService);
-  return { api, service };
+  return { api, service, reportError };
 };
 describe("payment run authorization", () => {
+  it("reports provider failures with the request ID through the API reporter", async () => {
+    const { api, service, reportError } = fixture();
+    service.approve.mockRejectedValueOnce(
+      new PaymentProviderError("Wise 403 during lookup. Trace: fixture", 403),
+    );
+    const response = await api.request("/payment-runs/id/approve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        limits: [{ item_id: "item", max_source_cents: 5000 }],
+      }),
+    });
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ request_id: "request" });
+    expect(reportError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Wise 403 during lookup. Trace: fixture",
+      }),
+      "request",
+    );
+  });
   it.each([
     ["member", "session"],
     ["accounting", "session"],

@@ -1,3 +1,4 @@
+import { captureException } from '@sentry/cloudflare'
 import { createPaymentRunsService } from '@ezacto/db/d1'
 import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createStaffPaymentStore } from '@ezacto/db/d1'
@@ -658,6 +659,9 @@ export const createRuntimeServices = async (
           profileId: env.WISE_PROFILE_ID,
           fetch: (input, init) => fetch(input as RequestInfo, init as RequestInit),
         }),
+    (error, context) => {
+      captureException(error, { tags: { component: 'payment-processing', ...context } })
+    },
   )
   const wise =
     env.WISE_TOKEN === undefined

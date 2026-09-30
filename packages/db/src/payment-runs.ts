@@ -55,6 +55,10 @@ const safeError = (error: unknown) =>
 export const createPaymentRunsService = (
   database: Database,
   provider: PaymentProvider | null,
+  reportError?: (
+    error: unknown,
+    context: { run_id: string; item_id: string; stage: string },
+  ) => void,
 ): PaymentRunsService => {
   const ledger = createStaffPaymentStore(database)
   const get = async (id: string): Promise<PaymentRun> => {
@@ -266,8 +270,14 @@ export const createPaymentRunsService = (
       // Funding's marker was persisted before I/O; retain it if the reply was
       // lost. The next tick reads the transfer and never issues another debit.
       const message = safeError(error)
-      if (!(error instanceof PaymentProviderError))
-        console.error('[payments] processing failed', item.id, error)
+      console.error('[payments] processing failed', item.run_id, item.id, error)
+      // These exceptions are handled to preserve reconciliation state, so the
+      // scheduler wrapper cannot capture them. Reporting must not alter money state.
+      try {
+        reportError?.(error, { run_id: item.run_id, item_id: item.id, stage: item.state })
+      } catch {
+        // The original failure is logged above; continue holding the reservation.
+      }
       if (error instanceof PaymentProviderError && error.status === 429) {
         const delay = Math.max(
           60,

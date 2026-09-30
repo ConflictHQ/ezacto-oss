@@ -49,18 +49,22 @@ const el = <T extends HTMLElement>(root: HTMLElement, selector: string): T => {
   return e;
 };
 const errorText = (error: unknown): string => {
-  const body = (
-    error as {
-      body?: { error?: { message?: string; fields?: { message?: string }[] } };
-    }
-  )?.body;
-  return (
+  const failure = error as {
+    requestId?: string;
+    body?: {
+      request_id?: string;
+      error?: { message?: string; fields?: { message?: string }[] };
+    };
+  } | null;
+  const body = failure?.body;
+  const message =
     body?.error?.fields?.[0]?.message ??
     body?.error?.message ??
     (error instanceof Error
       ? error.message
-      : "Unable to complete the payment request.")
-  );
+      : "Unable to complete the payment request.");
+  const requestId = failure?.requestId ?? body?.request_id;
+  return requestId ? `${message} Reference: ${requestId}` : message;
 };
 export const createPaymentRunsController = (
   api: PaymentRunsApi,

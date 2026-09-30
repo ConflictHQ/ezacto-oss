@@ -8,6 +8,7 @@ const quote = {
   sourceCurrency: 'USD',
   targetCurrency: 'USD',
   targetAccount: 456,
+  contactId: 'contact-uuid',
   rate: 1,
   expirationTime: '2026-10-01T12:00:00Z',
   paymentOptions: [
@@ -22,18 +23,12 @@ const quote = {
   ],
 }
 describe('Wise payment provider', () => {
-  it('resolves contacts through quotes, verifies the recipient name and excludes bank details', async () => {
+  it('quotes contacts without trying to read their private resolved account', async () => {
     const call = vi
       .fn()
       .mockResolvedValueOnce(response([{ id: 123, type: 'BUSINESS' }]))
       .mockResolvedValueOnce(response(quote))
-      .mockResolvedValueOnce(
-        response({
-          id: 456,
-          accountHolderName: 'Person Two',
-          details: { accountNumber: 'private-bank-number' },
-        }),
-      )
+      .mockResolvedValueOnce(response({ message: 'Access denied to contact account' }, 403))
     const provider = createWisePaymentProvider({ token: 'fixture-token', fetch: call })
     const result = await provider.quote(
       { id: 1, kind: 'contact', external_id: 'contact-uuid' },
@@ -43,7 +38,7 @@ describe('Wise payment provider', () => {
     )
     expect(result).toMatchObject({
       recipient_id: '456',
-      recipient_name: 'Person Two',
+      recipient_name: 'Wise contact contact-uuid',
       target_cents: 5000,
       source_cents: 5050,
       fee_cents: 50,
@@ -53,8 +48,53 @@ describe('Wise payment provider', () => {
       targetAmount: 50,
       preferredPayIn: 'BALANCE',
     })
-    expect(JSON.stringify(result)).not.toContain('private-bank-number')
+    expect(call).toHaveBeenCalledTimes(2)
   })
+  it('refuses a quote that resolves a different contact', async () => {
+    const call = vi
+      .fn()
+      .mockResolvedValueOnce(response([{ id: 123, type: 'BUSINESS' }]))
+      .mockResolvedValueOnce(response({ ...quote, contactId: 'different-contact' }))
+    await expect(
+      createWisePaymentProvider({ token: 'test', fetch: call }).quote(
+        { id: 1, kind: 'contact', external_id: 'contact-uuid' },
+        'USD',
+        'USD',
+        5000,
+      ),
+    ).rejects.toThrow('does not match the saved contact')
+    expect(call).toHaveBeenCalledTimes(2)
+  })
+  it.each([false, true])(
+    'still validates ordinary account recipients (owned=%s)',
+    async (owned) => {
+      const call = vi
+        .fn()
+        .mockResolvedValueOnce(response([{ id: 123, type: 'BUSINESS' }]))
+        .mockResolvedValueOnce(response(quote))
+        .mockResolvedValueOnce(
+          response({
+            id: 456,
+            accountHolderName: 'Person Two',
+            ownedByCustomer: owned,
+            details: { accountNumber: 'private-bank-number' },
+          }),
+        )
+      const result = createWisePaymentProvider({ token: 'test', fetch: call }).quote(
+        { id: 1, kind: 'account', external_id: '456' },
+        'USD',
+        'USD',
+        5000,
+      )
+      if (owned) await expect(result).rejects.toThrow('cannot be used for staff payments')
+      else {
+        const q = await result
+        expect(q.recipient_name).toBe('Person Two')
+        expect(JSON.stringify(q)).not.toContain('private-bank-number')
+      }
+      expect(call.mock.calls[2]![0]).toBe('https://api.wise.com/2026Q3/accounts/456')
+    },
+  )
   it('refuses ambiguous business profiles before quoting', async () => {
     const call = vi.fn().mockResolvedValue(
       response([
@@ -73,18 +113,16 @@ describe('Wise payment provider', () => {
     expect(call).toHaveBeenCalledTimes(1)
   })
   it('preserves the transaction identity across transfer retries', async () => {
-    const call = vi
-      .fn()
-      .mockImplementation(async () =>
-        response({
-          id: 999,
-          status: 'incoming_payment_waiting',
-          customerTransactionId: 'tx',
-          targetAccount: 456,
-          targetValue: 50,
-          targetCurrency: 'USD',
-        }),
-      )
+    const call = vi.fn().mockImplementation(async () =>
+      response({
+        id: 999,
+        status: 'incoming_payment_waiting',
+        customerTransactionId: 'tx',
+        targetAccount: 456,
+        targetValue: 50,
+        targetCurrency: 'USD',
+      }),
+    )
     const provider = createWisePaymentProvider({ token: 'test', fetch: call })
     const item = { id: 'tx', month: '2026-09' } as PaymentItem
     const q = { recipient_id: '456', id: 'persisted-quote' } as PaymentItem['quote']
