@@ -3,6 +3,14 @@ import type {
   PaymentItem,
   StaffPaymentRow,
 } from "@ezacto/core";
+export const canPayNow = (row: StaffPaymentRow): boolean =>
+  row.active &&
+  row.payout_provider === "wise" &&
+  row.wise_ready &&
+  row.currency !== null &&
+  row.status !== "settled" &&
+  (row.available_cents ?? row.balance_cents ?? 0) > 0;
+
 export const paymentStateLabel = (state: PaymentItem["state"]): string =>
   ({
     draft: "Awaiting approval",

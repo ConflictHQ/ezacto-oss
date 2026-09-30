@@ -96,6 +96,35 @@ beforeEach(() => {
   document.body.innerHTML = renderStaffPayments("staff-payments");
 });
 describe("payment run review", () => {
+  it("discards an old month's in-flight preview after the selection is reset", async () => {
+    let finish!: (value: PaymentRun) => void;
+    const api = {
+      getPaymentRunReport: async () => report,
+      previewPaymentRun: vi.fn(
+        () =>
+          new Promise<PaymentRun>((resolve) => {
+            finish = resolve;
+          }),
+      ),
+      approvePaymentRun: vi.fn(async () => run),
+    };
+    const controller = createPaymentRunsController(api, async () => {});
+    await controller.activate(new AbortController().signal);
+    controller.ledger(ledger);
+    const form = document.querySelector<HTMLFormElement>("[data-run-form]")!;
+    (form.elements.namedItem("select-2") as HTMLInputElement).checked = true;
+    form.dispatchEvent(new SubmitEvent("submit", { cancelable: true }));
+    expect(api.previewPaymentRun).toHaveBeenCalledTimes(1);
+    controller.resetSelection();
+    finish(run);
+    await vi.waitFor(() =>
+      expect(document.querySelector("[data-run-status]")!.textContent).toBe(""),
+    );
+    expect(
+      document.querySelector<HTMLElement>("[data-run-review]")!.hidden,
+    ).toBe(true);
+    expect(api.approvePaymentRun).not.toHaveBeenCalled();
+  });
   it("shows the request ID when the payment API fails", async () => {
     const controller = createPaymentRunsController(
       {

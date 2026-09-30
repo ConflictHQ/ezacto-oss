@@ -93,6 +93,7 @@ test("[e2e:payments] schedules only after review and exposes the filtered paymen
   page,
 }) => {
   let approved = false;
+  let previews = 0;
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.route("**/api/v1/staff-payments?*", (route) =>
     route.fulfill({ json: { data: ledger } }),
@@ -118,6 +119,7 @@ test("[e2e:payments] schedules only after review and exposes the filtered paymen
     }),
   );
   await page.route("**/api/v1/payment-runs/preview", (route) => {
+    previews++;
     const body = route.request().postDataJSON() as {
       items: { amount_cents: number }[];
       scheduled_at: string;
@@ -137,7 +139,45 @@ test("[e2e:payments] schedules only after review and exposes the filtered paymen
   await expect(
     page.getByRole("heading", { name: "Payments", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("tab", { name: "Balances", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("[data-run-form]")).toBeHidden();
+  const balancesTab = page.getByRole("tab", { name: "Balances", exact: true });
+  await balancesTab.focus();
+  await balancesTab.press("End");
+  await expect(
+    page.getByRole("tab", { name: "Settings", exact: true }),
+  ).toBeFocused();
+  await expect(page.locator("[data-payment-panel=settings]")).toBeVisible();
+  await page.getByRole("tab", { name: "Settings", exact: true }).press("Home");
+  await expect(balancesTab).toBeFocused();
+  await expect(page.locator("[data-payment-runs]")).toBeHidden();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(
+    page.getByRole("button", { name: "Pay now", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page
+    .getByRole("button", { name: "Pay now: Payment Fixture", exact: true })
+    .click();
+  await expect(
+    page.getByRole("tab", { name: "Send or schedule", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   const form = page.locator("[data-run-form]");
+  await expect(
+    form.getByLabel("Pay Payment Fixture", { exact: true }),
+  ).toBeChecked();
+  expect(approved).toBe(false);
+  expect(previews).toBe(0);
+  await expect(form.getByLabel("Run name")).toHaveValue(
+    "Payment Fixture · 2026-08",
+  );
   await form.getByLabel("Run name").fill("August payroll");
   await form.getByLabel("When", { exact: true }).selectOption("scheduled");
   await form.getByLabel("Start at").fill("2026-10-01T09:00");
@@ -150,6 +190,14 @@ test("[e2e:payments] schedules only after review and exposes the filtered paymen
   await expect(review).toContainText("Verified Wise Person");
   await expect(review).toContainText("USD 50.50");
   expect(approved).toBe(false);
+  await page.getByRole("tab", { name: "History", exact: true }).click();
+  await expect(review).toBeHidden();
+  await page
+    .getByRole("tab", { name: "Send or schedule", exact: true })
+    .click();
+  await expect(review).toBeVisible();
+  await expect(review).toContainText("USD 50.50");
+  expect(previews).toBe(1);
   await page.screenshot({
     path: "/tmp/ezacto-payment-review.png",
     fullPage: true,
@@ -171,6 +219,10 @@ test("[e2e:payments] schedules only after review and exposes the filtered paymen
   await review.getByRole("button", { name: /Schedule 1 payment ·/ }).click();
   await expect(page.locator("[data-run-status]")).toHaveText("");
   await expect.poll(() => approved).toBe(true);
+  await expect(
+    page.getByRole("tab", { name: "History", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("[data-run-history]")).toBeVisible();
   await expect(page.locator("[data-run-history]")).toContainText(
     "Scheduled / queued",
   );

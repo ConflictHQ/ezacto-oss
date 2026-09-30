@@ -6521,3 +6521,10 @@ dialog textarea {
 .payment-runs .data-table input:not([type='checkbox']) { width: 10rem; }
 .payment-runs [data-run-timezone] { align-self: end; padding: 12px; }
 [data-payments-report] .staff-payment-toolbar { flex-wrap: wrap; }
+
+/* Payments: one task per panel, with a keyboard-accessible horizontal tab bar. */
+.payment-tabs { display: flex; gap: 8px; overflow-x: auto; border-bottom: 1px solid var(--ez-border); scrollbar-width: thin; }
+.staff-payments .payment-tabs button { flex: 0 0 auto; border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; color: var(--ez-muted); }
+.staff-payments .payment-tabs button[aria-selected='true'] { border-bottom-color: var(--ez-action); color: var(--ez-ink); font-weight: 700; }
+.staff-payments [role='tabpanel'] { padding-block: 20px; }
+.staff-payments .primary-action { background: var(--ez-action); color: var(--ez-action-fg); }
