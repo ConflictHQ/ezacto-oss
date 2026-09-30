@@ -1,6 +1,6 @@
 # Monthly staff payment register
 
-Administrators open **Team → Staff payments** (`/payments`). The same register is linked from Reports. It is available on the Worker and container, independently of payment-provider configuration.
+Administrators open **Payments** (`/payments`) from the main navigation or Team. **Reports → Payments report** opens `/payments/report`. It is available on the Worker and container, independently of payment-provider configuration.
 
 ## Monthly review
 
@@ -52,3 +52,27 @@ Exact historical transactions require evidence from the previous provider, such 
 Each command is an immutable event. Repeating an identical command ID is idempotent; changing its payload is refused. Concurrent writes use an atomic per-person/month version check in SQLite and D1. Payments cannot exceed the balance, and a currency cannot change while recorded payments remain. Correction events replace deletion.
 
 All register API routes require an administrator session; API tokens and other roles are refused, matching the payroll cost report's confidentiality boundary. API server failures follow the existing Worker log and Sentry request-ID reporting path when Sentry is configured.
+
+## Payment runs and the Payments page
+
+**Payments** (`/payments`) combines the existing obligation ledger with Wise payment runs. Administrators select people and amounts from the chosen work month, then **Review selected payments**. Partial payments are allowed up to the unreserved balance. Only people whose preferred provider is Wise and who have a verified Wise destination can be selected; existing manual Wise/Deel receipts remain available in the ledger.
+
+Review shows the work period, Wise's recipient name and resolved destination, recipient amount, estimated fee, estimated source cost, estimated arrival, and an editable maximum source cost per payment. Funding uses the organization's Wise balance in the selected source currency. **Send** or **Schedule** on this separate confirmation screen authorizes the payments. Viewing a quote alone never authorizes a transfer. Reviews expire after 30 minutes. The schedule is saved as a UTC instant alongside the browser's IANA timezone; the screen labels its local timezone. The scheduled instant is the start of processing, not a guaranteed arrival time.
+
+Approval atomically reserves each recipient amount against its person/month obligation. A competing run, manual payment, currency change, or reduction in the amount owed cannot consume those reservations. If any selected balance or destination changed, the entire approval rolls back. A run may contain up to 100 payments. Source costs and fees are additional company expenses and do not reduce the agreed recipient amount.
+
+The Worker checks due payments every minute; the container processes them on its existing scheduler tick. Each tick advances up to ten due payments, at most three durable stages apiece. Runs are processed individually through Wise's quote, transfer and balance-funding APIs. This implementation does not use Wise batch groups; scheduling and the common run history belong to ezacto. Individual outcomes are retained when part of a run succeeds.
+
+Execution refreshes the quote, checks the source profile, recipient and approved cost ceiling, and pauses a payment that no longer matches. It saves the execution quote and stable transaction UUID before creating a transfer. Retries of an uncertain creation reuse the same payload and UUID. Funding is marked before the request: a lost response causes status reconciliation, never an automatic second funding attempt. Authentication, insufficient funds and other unresolved funding failures retain their reservations and direct the operator to the existing transfer in Wise. HTTP 429 delays subsequent attempts using Retry-After and bounded backoff. Creation recovery is bounded; **Check status** can request another reconciliation with the original transaction identity.
+
+**Cancel unsent payments** releases only items that have never entered transfer creation. Payments already creating, funding or processing must be reconciled/cancelled at Wise. Changing a destination does not redirect an approved payment. The original destination remains in the run's review and audit history.
+
+Wise's `outgoing_payment_sent` status records a payment in the immutable register exactly once and releases its reservation. This means Wise confirmed dispatch; it is not an assertion of final bank receipt. Where a verified webhook supplies the event time, its UTC date is used; otherwise the observed confirmation date is recorded and identified in the note. Confirmed refunds append a void event and restore the outstanding balance. Paid transfers are polled for 90 days; later verified webhook deliveries can request reconciliation too. Operators cannot manually void these provider-created receipts. The original receipt and any refund remain visible in the ledger audit.
+
+Run approvals, cancellation requests, reconciliation requests and processing transitions have a durable audit in `payment_run_audit`. No test or migration initiates a transfer. API funding availability depends on the Wise account and currency route; a route must offer balance funding before it can be reviewed.
+
+## Payments report
+
+**Reports → Payments report**, or `/payments/report`, shows up to twelve work months. It includes balances by person/month, individual transfer progress, and recorded receipts with actual provider/reference and payment or confirmation date. Filter by person, currency and status; **Export filtered CSV** exports those same filtered rows. Amounts owed, paid, reserved, and available to pay are summed separately by currency. Unspecified historical amounts are counted but excluded from monetary totals. Transfer costs are labelled as review estimates or execution quotes, not bank-statement expenses.
+
+The report describes the current ledger for the selected work months, not a historical “as of” snapshot. Its receipt section includes manual payments from Wise, Deel and historical providers as well as new automatic Wise payments, excluding voided receipts.

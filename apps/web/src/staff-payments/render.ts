@@ -1,11 +1,13 @@
+import { renderPaymentRuns } from './runs-render.js'
 export const renderStaffPayments = (view?: string): string =>
   view === 'staff-payments'
     ? `
   <main class="app-content page--grid staff-payments" data-staff-payments-page${view === 'staff-payments' ? '' : ' hidden'}>
-    <header class="context-row"><div><p class="eyebrow">Team</p><h1>Staff payments</h1></div><a href="/team">Back to team</a></header>
-    <p>Track monthly amounts, Wise and Deel payments, and historical settlement. Record payments here after confirming them with the provider.</p>
+    <header class="context-row"><div><p class="eyebrow">Team</p><h1>Payments</h1></div><a href="/team">Back to team</a></header>
+    <p>Review amounts owed, schedule Wise payments, and track payment history.</p>
     <p data-staff-payment-status class="form-result" role="status" aria-live="polite"></p>
     <div data-staff-payment-content hidden>
+      <div data-payment-ledger-toolbar>
       <div class="staff-payment-toolbar">
         <label>Month<input type="month" data-payment-month required></label>
         <label>Show<select data-payment-filter><option value="all">Everyone</option><option value="outstanding">Outstanding</option><option value="overdue">Overdue</option><option value="paid">Paid / settled</option><option value="unready">Preferred destination missing</option></select></label>
@@ -15,6 +17,11 @@ export const renderStaffPayments = (view?: string): string =>
         <button type="button" data-payment-export>Export monthly report</button>
         <button type="button" data-payment-audit-export>Export audit log</button>
       </div>
+      <section data-payment-summary aria-label="Monthly totals" class="staff-payment-summary"></section>
+      </div>
+      ${renderPaymentRuns()}
+      <div data-payment-ledger>
+      <h2>Payment ledger</h2>
       <details data-payment-provider-settings hidden class="staff-payment-opening">
         <summary>Payment provider settings</summary>
         <p>Choose the organization default. Each person can inherit it or use another provider. Payment receipts keep the provider actually used.</p>
@@ -25,7 +32,6 @@ export const renderStaffPayments = (view?: string): string =>
         </form>
         <h3>Provider settings history</h3><div data-payment-provider-history></div>
       </details>
-      <section data-payment-summary aria-label="Monthly totals" class="staff-payment-summary"></section>
       <div data-payment-list></div>
       <details class="staff-payment-opening">
         <summary>Record historical settlement through this month</summary>
@@ -60,6 +66,7 @@ export const renderStaffPayments = (view?: string): string =>
         </form>
         <h3>Payment history and audit log</h3><div data-payment-history></div>
       </section>
+      </div>
     </div>
   </main>`
     : ''

@@ -62,6 +62,8 @@ export interface StaffPaymentRow extends StaffPaymentPerson {
   amount_cents: number | null
   currency: string | null
   paid_cents: number
+  reserved_cents?: number
+  available_cents?: number | null
   balance_cents: number | null
   due_on: string | null
   settled_through: string | null
@@ -193,6 +195,7 @@ export const validateStaffPayment = (
     fail('Invalid version.')
   if (command.expected_version !== row.version)
     throw new StaffPaymentError('conflict', 'This record changed. Refresh before saving.')
+  if (command.id.startsWith('run-payment:') || command.id.startsWith('run-refund:')) fail('This identifier is reserved for provider reconciliation.')
   if (!/^[a-zA-Z0-9._:-]{1,128}$/u.test(command.id)) fail('Invalid command identifier.')
   if (command.note.trim().length === 0 || command.note.length > 2000)
     fail('Add a note of up to 2,000 characters explaining this entry.')

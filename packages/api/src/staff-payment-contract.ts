@@ -73,6 +73,8 @@ export const staffPaymentSchemas = {
     currency: nullable(string),
     paid_cents: integer,
     balance_cents: nullable(integer),
+    reserved_cents: integer,
+    available_cents: nullable(integer),
     due_on: nullable(string),
     settled_through: nullable(string),
     status: { type: 'string', enum: ['in_progress', 'pending', 'partial', 'paid', 'settled'] },

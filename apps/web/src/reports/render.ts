@@ -43,7 +43,7 @@ export const renderReportsPage = (view?: string): string => `
   <main class="app-content reports-workspace page--grid" data-reports-page${view === 'reports' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Analysis</p><h1>Reports</h1></div>
-      <div class="report-actions"><a href="/payments" data-staff-payments-nav hidden>Staff payments</a><button type="button" data-saved-reports-open>Saved reports</button><button class="primary-action" type="button" data-report-builder-open>New report</button></div>
+      <div class="report-actions"><a href="/payments/report" data-staff-payments-nav hidden>Payments report</a><button type="button" data-saved-reports-open>Saved reports</button><button class="primary-action" type="button" data-report-builder-open>New report</button></div>
     </header>
     <p class="reports-intro">Review live operational totals. Each currency remains separate.</p>
     <form class="report-filters" data-report-form>

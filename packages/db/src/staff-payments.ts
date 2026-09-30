@@ -25,6 +25,15 @@ const eventOf = (row: EventRow): StaffPaymentEvent => {
   const { command_json, ...audit } = row
   return { ...(JSON.parse(command_json) as StaffPaymentCommand), ...audit }
 }
+const reservationError = (error: unknown): boolean => {
+  let current = error
+  for (let depth = 0; depth < 5 && current !== undefined; depth++) {
+    if (String(current).includes('reserved') || String(current).includes('provider payments'))
+      return true
+    current = current instanceof Error ? current.cause : undefined
+  }
+  return false
+}
 const eventSelect = sql`SELECT event.command_json, event.version, event.actor_id,
   actor.first_name || ' ' || actor.last_name AS actor_name, event.recorded_at, event.request_id
   FROM staff_payment_events event JOIN users actor ON actor.id = event.actor_id`
@@ -39,9 +48,12 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
         active: number
         wise_ready: number
         deel_ready: number
+        reserved_cents: number
       }>(sql`
         SELECT person.id AS user_id, person.first_name || ' ' || person.last_name AS name,
           person.is_active AS active,
+          (SELECT COALESCE(SUM(amount_cents),0) FROM payment_run_items item WHERE item.user_id=person.id AND item.month=${month}
+            AND item.state IN ('queued','creating','funding','processing','attention')) AS reserved_cents,
           EXISTS(SELECT 1 FROM user_payout_accounts account WHERE account.user_id = person.id
             AND account.provider = 'wise' AND account.detached_at IS NULL
             AND account.verified_at IS NOT NULL) AS wise_ready,
@@ -66,7 +78,7 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
         const preference = providerSettings.events
           .filter((event) => event.user_id === person.user_id)
           .at(-1)
-        return summarizeStaffPayments(
+        const summary = summarizeStaffPayments(
           {
             ...person,
             active: person.active === 1,
@@ -80,6 +92,12 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
           events.filter((event) => event.user_id === person.user_id),
           today,
         )
+        return {
+          ...summary,
+          reserved_cents: person.reserved_cents,
+          available_cents:
+            summary.balance_cents === null ? null : summary.balance_cents - person.reserved_cents,
+        }
       }),
     }
   }
@@ -108,14 +126,23 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
       validateStaffPayment(command, row, now.slice(0, 10))
       // One statement is atomic in both D1 and SQLite. The comparison prevents
       // two operators spending the same remaining balance after reading it.
-      const inserted = await database.all<{ id: string }>(sql`
+      const inserted = await Promise.resolve(
+        database.all<{ id: string }>(sql`
         INSERT INTO staff_payment_events
           (id, user_id, month, version, kind, command_json, actor_id, recorded_at, request_id)
         SELECT ${command.id}, ${command.user_id}, ${command.month}, ${command.expected_version + 1},
           ${command.kind}, ${encoded}, ${actorId}, ${now}, ${requestId}
         WHERE COALESCE((SELECT MAX(version) FROM staff_payment_events
           WHERE user_id = ${command.user_id} AND month = ${command.month}), 0) = ${command.expected_version}
-        ON CONFLICT(id) DO NOTHING RETURNING id`)
+        ON CONFLICT(id) DO NOTHING RETURNING id`),
+      ).catch((error: unknown) => {
+        if (reservationError(error))
+          throw new StaffPaymentError(
+            'conflict',
+            'This balance is reserved by a payment run, or the payment requires provider reconciliation.',
+          )
+        throw error
+      })
       if (inserted.length === 0) {
         const raced = await existing()
         if (raced?.command_json === encoded && raced.actor_id === actorId) return

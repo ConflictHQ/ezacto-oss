@@ -1,3 +1,5 @@
+import { createPaymentRunsService } from '@ezacto/db/d1'
+import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createStaffPaymentStore } from '@ezacto/db/d1'
 import {
   bootstrapInstanceD1,
@@ -647,6 +649,16 @@ export const createRuntimeServices = async (
   // Same gating, and for the same reason: a connect button that cannot connect
   // is worse than no button. `entry-surface.ts` declares it so both halves of
   // the contract guard agree.
+  const paymentRuns = createPaymentRunsService(
+    drizzle,
+    env.WISE_TOKEN === undefined
+      ? null
+      : createWisePaymentProvider({
+          token: env.WISE_TOKEN,
+          profileId: env.WISE_PROFILE_ID,
+          fetch: (input, init) => fetch(input as RequestInfo, init as RequestInit),
+        }),
+  )
   const wise =
     env.WISE_TOKEN === undefined
       ? null
@@ -1012,6 +1024,7 @@ export const createRuntimeServices = async (
     ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
     ...(wise === null ? {} : { wise: wise.service }),
     ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
+    paymentRuns,
     staffPayments: createStaffPaymentStore(drizzle),
     payoutAccounts: (() => {
       const store = createPayoutAccountStore(drizzle)

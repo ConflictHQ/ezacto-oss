@@ -14,7 +14,7 @@ export const renderTeamPages = (view?: string): string => `
   <main class="app-content team-workspace page--grid" data-team-list-page${view === 'team-list' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Organize</p><h1>Team</h1></div>
-      <a href="/payments" data-staff-payments-nav hidden>Staff payments</a>
+      <a href="/payments" data-staff-payments-nav hidden>Payments</a>
       <button class="primary-action" type="button" data-team-person-create hidden disabled>Add person</button>
     </header>
     <section class="team-period" aria-label="Utilization period">
