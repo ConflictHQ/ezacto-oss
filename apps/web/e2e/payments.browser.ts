@@ -6,6 +6,13 @@ import {
 } from "@ezacto/core";
 const email = process.env.EZACTO_BROWSER_FIXTURE_EMAIL!;
 const password = process.env.EZACTO_BROWSER_FIXTURE_PASSWORD!;
+test.beforeEach(async ({ request }) => {
+  const reset = await request.post("/__ezacto_browser_fixture__/start-end", {
+    data: { action: "payment-run-reset" },
+    headers: { "x-ezacto-browser-fixture-control": "start-end-round-trip" },
+  });
+  expect(reset.status()).toBe(204);
+});
 const row = {
   ...summarizeStaffPayments(
     { user_id: 2, name: "Payment Fixture", active: true, wise_ready: true },

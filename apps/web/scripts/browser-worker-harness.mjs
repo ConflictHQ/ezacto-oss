@@ -825,6 +825,8 @@ const fixtureControl = async (request, response) => {
       database.prepare('DELETE FROM users WHERE id >= 9000'),
       database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
     ])
+  } else if (action === 'payment-run-reset') {
+    await database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`).run()
   } else if (action === 'task-admin-cleanup') {
     await database.batch([
       database.prepare(
