@@ -229,7 +229,7 @@ export const createPaymentRunsController = (
     totals.replaceChildren();
     for (const [currency, t] of paymentReportTotals(rows)) {
       const line = node("p", `${currency} · owed `);
-      line.append(
+      for (const part of [
         money(t.owed, currency),
         " · paid ",
         money(t.paid, currency),
@@ -237,7 +237,10 @@ export const createPaymentRunsController = (
         money(t.reserved, currency),
         " · available to pay ",
         money(t.available, currency),
-      );
+      ])
+        line.appendChild(
+          typeof part === "string" ? document.createTextNode(part) : part,
+        );
       totals.appendChild(line);
     }
     totals.appendChild(
