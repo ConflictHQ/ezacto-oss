@@ -312,7 +312,9 @@ export const createWiseClient = (options: Readonly<WiseClientOptions>): WiseClie
         throw new WiseApiError(`Wise refused the contact lookup (${String(status)})`, status)
       }
       const body = asObject(parsed)
-      const id = text(body.contactId)
+      // The live endpoint returns `id`; Wise's reference documents `contactId`.
+      // Accept both so a successful lookup can be stored as a destination.
+      const id = text(body.id) ?? text(body.contactId)
       if (id === null) throw new WiseApiError('Wise returned a contact with no id', status)
       // `name` only. A contact also carries `display.details`, which holds the
       // routing and account numbers in plain text; it is not on the type, so it

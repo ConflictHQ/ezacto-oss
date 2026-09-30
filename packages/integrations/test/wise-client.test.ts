@@ -241,7 +241,7 @@ describe("a contractor sharing their own Wise account (#543)", () => {
   // Read back from the live API: the response is these two fields and nothing
   // else, and the refusal really does arrive as a 422 with this message.
   const FOUND = JSON.stringify({
-    contactId: "00000000-0000-4000-8000-000000000001",
+    id: "00000000-0000-4000-8000-000000000001",
     name: "R. Adeyemi",
   });
   const NOT_DISCOVERABLE = JSON.stringify({
@@ -273,6 +273,25 @@ describe("a contractor sharing their own Wise account (#543)", () => {
       contact: { id: "00000000-0000-4000-8000-000000000001", name: "R. Adeyemi" },
     });
   });
+
+  it("[unit] also accepts the documented contactId response field", async () => {
+    const { wise } = client(JSON.stringify({
+      contactId: "00000000-0000-4000-8000-000000000001",
+      name: "R. Adeyemi",
+    }));
+    expect(await wise.findContact(lookup)).toEqual({
+      outcome: "found",
+      contact: { id: "00000000-0000-4000-8000-000000000001", name: "R. Adeyemi" },
+    });
+  });
+
+  it.each([{}, { id: "" }, { contactId: " " }])(
+    "[unit] rejects a successful response without a usable contact id: %j",
+    async (fields) => {
+      const { wise } = client(JSON.stringify({ ...fields, name: "R. Adeyemi" }));
+      await expect(wise.findContact(lookup)).rejects.toThrow(/contact with no id/u);
+    },
+  );
 
   it("[unit] treats not-discoverable as an answer, not a failure", async () => {
     // The ordinary case: a mistyped tag, or somebody who has discoverability
