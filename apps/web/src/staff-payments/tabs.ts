@@ -1,4 +1,4 @@
-export type PaymentTab = 'balances' | 'send' | 'history' | 'settings'
+export type PaymentTab = 'balances' | 'actuals' | 'send' | 'history' | 'settings'
 
 export const createPaymentTabs = (page: HTMLElement) => {
   const tabs = [

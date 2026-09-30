@@ -25,6 +25,45 @@ export type AttachmentListEnvelope = {
   "links": Links;
 };
 
+export type PaymentActualsEnvelope = {
+  "data": {
+  "month": string;
+  "currency": string;
+  "completed": boolean;
+  "people": Array<{
+  "user_id": number;
+  "name": string;
+  "entries": Array<{
+  "entry_id": number;
+  "project_id": number;
+  "project_name": string;
+  "spent_date": string;
+  "rounded_seconds": number;
+  "cost_rate_cents": number | null;
+  "selected_seconds": number;
+}>;
+}>;
+};
+};
+
+export type ConfirmPaymentActuals = {
+  "id": string;
+  "user_id": number;
+  "month": string;
+  "expected_version": number;
+  "currency": string;
+  "entries": Array<{
+  "entry_id": number;
+  "project_id": number;
+  "project_name": string;
+  "spent_date": string;
+  "rounded_seconds": number;
+  "cost_rate_cents": number | null;
+  "selected_seconds": number;
+}>;
+  "note": string;
+};
+
 export type StaffPaymentProviderCommand = {
   "id": string;
   "user_id": number | null;
@@ -4917,6 +4956,26 @@ export class EzactoClient {
     return this.request<ArrayBuffer>("GET", "/api/v1/projects/:projectId/attachments/:attachmentId/content".replace(":projectId", encodeURIComponent(String(args["projectId"]))).replace(":attachmentId", encodeURIComponent(String(args["attachmentId"]))), {
       signal: args.signal,
       binary: true,
+      headers,
+    });
+  }
+
+  async getPaymentActuals(args: { query?: { "month"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<PaymentActualsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PaymentActualsEnvelope>("GET", "/api/v1/staff-payments/actuals", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async confirmPaymentActuals(args: { body: ConfirmPaymentActuals; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/api/v1/staff-payments/actuals", {
+      body: args.body,
+      signal: args.signal,
       headers,
     });
   }

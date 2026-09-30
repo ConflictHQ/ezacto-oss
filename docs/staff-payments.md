@@ -76,3 +76,45 @@ Run approvals, cancellation requests, reconciliation requests and processing tra
 **Reports → Payments report**, or `/payments/report`, shows up to twelve work months. It includes balances by person/month, individual transfer progress, and recorded receipts with actual provider/reference and payment or confirmation date. Filter by person, currency and status; **Export filtered CSV** exports those same filtered rows. Amounts owed, paid, reserved, and available to pay are summed separately by currency. Unspecified historical amounts are counted but excluded from monetary totals. Transfer costs are labelled as review estimates or execution quotes, not bank-statement expenses.
 
 The report describes the current ledger for the selected work months, not a historical “as of” snapshot. Its receipt section includes manual payments from Wise, Deel and historical providers as well as new automatic Wise payments, excluding voided receipts.
+
+## Work months and actuals review
+
+The work month is the period the earnings belong to. August work paid in
+September stays in the August ledger; its receipt separately records the real
+September payment date. Payments and the payment report default to the previous
+completed month. September earnings can be confirmed from October 1 in the
+organization's timezone. Manual entries remain available for reasoned overrides.
+
+In **Payments → Review actuals**, load the selected work month and choose a
+contractor. The review uses the contractor report's captured rounded seconds and
+captured cost rates, priced per entry with the same rounding. It includes tracked
+time regardless of timesheet approval. Select projects or change included hours
+on individual entries. Missing selected rates must be resolved before confirmation.
+
+**Confirm earnings** saves an immutable snapshot and sets the month's total owed;
+it never adds the total twice and never transfers money. Revisions show the
+existing balance and cannot reduce earnings below paid or reserved funds. Changed
+source entries or concurrent ledger edits require a fresh review. Excluded hours
+are not added to the balance; return to the review to include them later. To make
+a partial payment against the whole month's earnings, confirm all hours and
+change the payment amount at the separate **Pay now → review → send/schedule** step.
+
+Historical settlements block actuals imports until explicitly reopened. Contractor
+invoices and advance credits are separate follow-up capabilities; importing actuals
+does not generate invoices or record deposits.
+
+### Correcting a work-month allocation
+
+A completed register can be reassigned to an empty work month through a targeted
+operator insert into `staff_payment_period_moves`. This is an operational data
+correction, never deployment seed data. Verify the person, source and destination,
+latest source version, receipts and all payment-run states before writing. The
+insert must specify its actor, request ID, timestamp and reason. The database
+rejects a changed source, an occupied destination or active payment runs.
+
+Original event rows and receipt dates remain immutable. The effective ledger
+projects those entries into the corrected period and leaves correction notes in
+the original period; payment-run items and audit history record the new work month.
+Future refunds reconcile against that corrected month. After the correction,
+verify balances, receipt reference and date, run history, and both monthly reports.
+Historical settlement entries should be recorded separately after those checks.

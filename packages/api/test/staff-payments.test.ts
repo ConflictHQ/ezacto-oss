@@ -4,8 +4,24 @@ import { errorResponse } from '../src/errors.js'
 import { installStaffPaymentRoutes } from '../src/staff-payments.js'
 import type { ApiContext } from '../src/context.js'
 const store = () => ({
+  actuals: vi.fn(async (month: string) => ({
+    month,
+    currency: 'USD',
+    completed: true,
+    people: [],
+  })),
+  confirmActuals: vi.fn(async () => {}),
   configureProvider: vi.fn(async () => {}),
-  report: vi.fn(async (month: string, as_of: string) => ({ month, as_of, rows: [], provider_settings: { default_provider: 'wise' as const, version: 0, events: [] } })),
+  report: vi.fn(async (month: string, as_of: string) => ({
+    month,
+    as_of,
+    rows: [],
+    provider_settings: {
+      default_provider: 'wise' as const,
+      version: 0,
+      events: [],
+    },
+  })),
   append: vi.fn(async () => {}),
 })
 const fixture = (profile = 'administrator', kind = 'session') => {
@@ -31,7 +47,9 @@ describe('staff payment permissions and request validation', () => {
     async (profile) => {
       const { api, service } = fixture(profile)
       expect((await api.request('/staff-payments?month=2026-08')).status).toBe(403)
-      expect((await api.request('/staff-payments/events', { method: 'POST' })).status).toBe(403)
+      expect((await api.request('/staff-payments/events', { method: 'POST' })).status).toBe(
+        403,
+      )
       expect(service.report).not.toHaveBeenCalled()
       expect(service.append).not.toHaveBeenCalled()
     },
@@ -39,7 +57,8 @@ describe('staff payment permissions and request validation', () => {
   it('allows an administrator session and refuses tokens', async () => {
     expect((await fixture().api.request('/staff-payments?month=2026-08')).status).toBe(200)
     expect(
-      (await fixture('administrator', 'token').api.request('/staff-payments?month=2026-08')).status,
+      (await fixture('administrator', 'token').api.request('/staff-payments?month=2026-08'))
+        .status,
     ).toBe(403)
   })
   it('rejects invalid months and malformed commands before persistence', async () => {
@@ -84,4 +103,78 @@ describe('staff payment permissions and request validation', () => {
     ).toBe(204)
     expect(service.append).toHaveBeenCalledWith(body, 1, 'audit-request', expect.any(String))
   })
+})
+
+it('protects actuals reads and confirmations with administrator sessions', async () => {
+  for (const [profile, kind] of [
+    ['member', 'session'],
+    ['administrator', 'token'],
+  ]) {
+    const { api } = fixture(profile, kind)
+    expect((await api.request('/staff-payments/actuals?month=2026-08')).status).toBe(403)
+    expect(
+      (
+        await api.request('/staff-payments/actuals', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        })
+      ).status,
+    ).toBe(403)
+  }
+  const { api } = fixture()
+  expect((await api.request('/staff-payments/actuals?month=bad')).status).toBe(422)
+  expect(
+    (
+      await api.request('/staff-payments/actuals', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          id: 'review',
+          user_id: 2,
+          month: '2026-08',
+          expected_version: 0,
+          currency: 'USD',
+          note: 'Review',
+          entries: [null],
+        }),
+      })
+    ).status,
+  ).toBe(422)
+})
+
+it('passes actuals confirmation with authenticated actor and request ID', async () => {
+  const { api, service } = fixture()
+  expect((await api.request('/staff-payments/actuals?month=2026-08')).status).toBe(200)
+  const command = {
+    id: 'actuals',
+    user_id: 2,
+    month: '2026-08',
+    expected_version: 0,
+    currency: 'USD',
+    note: 'Reviewed',
+    entries: [
+      {
+        entry_id: 1,
+        project_id: 1,
+        project_name: 'Project',
+        spent_date: '2026-08-01',
+        rounded_seconds: 3600,
+        cost_rate_cents: 5000,
+        selected_seconds: 1800,
+      },
+    ],
+  }
+  const result = await api.request('/staff-payments/actuals', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(command),
+  })
+  expect(result.status).toBe(204)
+  expect(service.confirmActuals).toHaveBeenCalledWith(
+    command,
+    1,
+    'audit-request',
+    expect.any(String),
+  )
 })

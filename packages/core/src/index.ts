@@ -29,3 +29,5 @@ export * from './totp.js'
 export * from './staff-payments.js'
 
 export * from './payment-runs.js'
+
+export * from './payment-actuals.js'

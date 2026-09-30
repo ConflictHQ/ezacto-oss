@@ -17,7 +17,10 @@ const command = {
   user_id: { ...integer, minimum: 1 },
   month: string,
   expected_version: { ...integer, minimum: 0 },
-  kind: { type: 'string', enum: ['amount', 'payment', 'void', 'opening', 'reopen', 'note'] },
+  kind: {
+    type: 'string',
+    enum: ['amount', 'payment', 'void', 'opening', 'reopen', 'note'],
+  },
   amount_cents: nullable(integer),
   currency: nullable(string),
   paid_on: nullable(string),
@@ -34,7 +37,40 @@ const providerCommand = {
   provider: nullable(provider),
   note: string,
 }
+const actualEntry = object({
+  entry_id: integer,
+  project_id: integer,
+  project_name: string,
+  spent_date: string,
+  rounded_seconds: integer,
+  cost_rate_cents: nullable(integer),
+  selected_seconds: integer,
+})
 export const staffPaymentSchemas = {
+  PaymentActualsEnvelope: object({
+    data: object({
+      month: string,
+      currency: string,
+      completed: bool,
+      people: {
+        type: 'array',
+        items: object({
+          user_id: integer,
+          name: string,
+          entries: { type: 'array', items: actualEntry },
+        }),
+      },
+    }),
+  }),
+  ConfirmPaymentActuals: object({
+    id: string,
+    user_id: integer,
+    month: string,
+    expected_version: integer,
+    currency: string,
+    entries: { type: 'array', items: actualEntry },
+    note: string,
+  }),
   StaffPaymentProviderCommand: object(providerCommand),
   StaffPaymentProviderEvent: object({
     ...providerCommand,
@@ -77,7 +113,10 @@ export const staffPaymentSchemas = {
     available_cents: nullable(integer),
     due_on: nullable(string),
     settled_through: nullable(string),
-    status: { type: 'string', enum: ['in_progress', 'pending', 'partial', 'paid', 'settled'] },
+    status: {
+      type: 'string',
+      enum: ['in_progress', 'pending', 'partial', 'paid', 'settled'],
+    },
     overdue: bool,
     events: { type: 'array', items: ref('StaffPaymentEvent') },
   }),
@@ -90,6 +129,28 @@ export const staffPaymentSchemas = {
   StaffPaymentReportEnvelope: object({ data: ref('StaffPaymentReport') }),
 }
 export const staffPaymentOperations: readonly ApiContractOperation[] = [
+  {
+    method: 'get',
+    path: '/api/v1/staff-payments/actuals',
+    operationId: 'getPaymentActuals',
+    summary: 'Review captured contractor time and cost rates for a work month',
+    tag: 'staff-payments',
+    responseStatus: 200,
+    responseSchema: 'PaymentActualsEnvelope',
+    sessionOnly: true,
+    parameters: [{ name: 'month', location: 'query', schema: string }],
+  },
+  {
+    method: 'post',
+    path: '/api/v1/staff-payments/actuals',
+    operationId: 'confirmPaymentActuals',
+    summary: 'Confirm reviewed contractor actuals as the monthly amount owed',
+    tag: 'staff-payments',
+    responseStatus: 204,
+    requestSchema: 'ConfirmPaymentActuals',
+    requestRequired: true,
+    sessionOnly: true,
+  },
   {
     method: 'post',
     path: '/api/v1/staff-payments/provider-settings',

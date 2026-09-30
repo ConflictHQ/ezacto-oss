@@ -452,3 +452,17 @@ it('[d1] atomically approves runs and shares reservations with manual payments',
     await runtime.dispose()
   }
 }, 60000)
+
+it('corrects a paid work period and applies a later Wise refund to that corrected period',async()=>{
+  const f=await fixture();await f.approve();await f.service.processDue(now)
+  f.setStatus('outgoing_payment_sent');await f.service.processDue('2026-09-30T12:02:00.000Z')
+  expect((await f.ledger.report('2026-08','2026-09-30')).rows.find(r=>r.user_id===2)?.paid_cents).toBe(5000)
+  db.exec(`INSERT INTO staff_payment_period_moves VALUES('fix-month',2,'2026-08','2026-07',2,1,'${now}','fix-request','Correct work month')`)
+  expect((await f.service.report('2026-07','2026-07',now)).runs[0]?.items[0]).toMatchObject({month:'2026-07',state:'paid',transfer_id:'999'})
+  expect((await f.ledger.report('2026-08','2026-09-30')).rows.find(r=>r.user_id===2)).toMatchObject({paid_cents:0,amount_cents:null})
+  f.setStatus('funds_refunded');await f.service.processDue('2026-09-30T14:00:00.000Z')
+  expect((await f.ledger.report('2026-07','2026-09-30')).rows.find(r=>r.user_id===2)).toMatchObject({paid_cents:0,amount_cents:10000,balance_cents:10000})
+  expect(db.prepare("SELECT month FROM staff_payment_events WHERE kind='payment'").get()).toEqual({month:'2026-08'})
+  expect(db.prepare("SELECT month FROM staff_payment_events WHERE kind='void'").get()).toEqual({month:'2026-07'})
+  expect(f.provider.create).toHaveBeenCalledTimes(1)
+})

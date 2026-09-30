@@ -1,3 +1,4 @@
+import { previousPaymentMonth } from "@ezacto/core";
 import type {
   PaymentRun,
   PaymentRunCommand,
@@ -665,7 +666,7 @@ export const createPaymentRunsController = (
         { once: true },
       );
       if (reportMode) {
-        const month = new Date().toISOString().slice(0, 7);
+        const month = previousPaymentMonth(new Intl.DateTimeFormat('en-CA',{year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()));
         input(reportForm, "from").value = month;
         input(reportForm, "to").value = month;
         await action(refresh, reportStatus);

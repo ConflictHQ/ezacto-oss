@@ -1,3 +1,4 @@
+import { createPaymentActualsStore } from './payment-actuals.js'
 import { createStaffPaymentProviderStore } from './staff-payment-providers.js'
 import { sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -36,7 +37,7 @@ const reservationError = (error: unknown): boolean => {
 }
 const eventSelect = sql`SELECT event.command_json, event.version, event.actor_id,
   actor.first_name || ' ' || actor.last_name AS actor_name, event.recorded_at, event.request_id
-  FROM staff_payment_events event JOIN users actor ON actor.id = event.actor_id`
+  FROM staff_payment_effective_events event JOIN users actor ON actor.id = event.actor_id`
 
 export const createStaffPaymentStore = (database: Database): StaffPaymentStore => {
   const providers = createStaffPaymentProviderStore(database)
@@ -61,7 +62,7 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
             AND account.provider = 'deel' AND account.detached_at IS NULL
             AND account.verified_at IS NOT NULL) AS deel_ready
         FROM users person WHERE person.is_active = 1 OR EXISTS(
-          SELECT 1 FROM staff_payment_events event WHERE event.user_id = person.id
+          SELECT 1 FROM staff_payment_effective_events event WHERE event.user_id = person.id
             AND (event.month = ${month} OR (event.kind = 'opening' AND event.month >= ${month})))
         ORDER BY person.first_name, person.last_name, person.id`),
       database.all<EventRow>(sql`${eventSelect}
@@ -102,6 +103,7 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
     }
   }
   return {
+    ...createPaymentActualsStore(database, { report }),
     report,
     configureProvider: providers.append,
     append: async (command, actorId, requestId, now) => {
@@ -132,7 +134,7 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
           (id, user_id, month, version, kind, command_json, actor_id, recorded_at, request_id)
         SELECT ${command.id}, ${command.user_id}, ${command.month}, ${command.expected_version + 1},
           ${command.kind}, ${encoded}, ${actorId}, ${now}, ${requestId}
-        WHERE COALESCE((SELECT MAX(version) FROM staff_payment_events
+        WHERE COALESCE((SELECT MAX(version) FROM staff_payment_effective_events
           WHERE user_id = ${command.user_id} AND month = ${command.month}), 0) = ${command.expected_version}
         ON CONFLICT(id) DO NOTHING RETURNING id`),
       ).catch((error: unknown) => {

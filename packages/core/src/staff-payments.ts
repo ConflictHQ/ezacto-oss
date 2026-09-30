@@ -1,3 +1,4 @@
+import type { PaymentActuals, ConfirmPaymentActuals } from './payment-actuals.js'
 /** Monthly staff payment register. Recording a payment never initiates a transfer. */
 export type StaffPaymentKind = 'amount' | 'payment' | 'void' | 'opening' | 'reopen' | 'note'
 export type StaffPaymentProvider = 'wise' | 'deel'
@@ -78,6 +79,8 @@ export interface StaffPaymentReport {
   provider_settings: StaffPaymentProviderSettings
 }
 export interface StaffPaymentStore {
+  actuals?(month: string, today: string): Promise<PaymentActuals>
+  confirmActuals?(command: ConfirmPaymentActuals, actorId: number, requestId: string, now: string): Promise<void>
   configureProvider(
     command: StaffPaymentProviderCommand,
     actorId: number,
@@ -195,7 +198,7 @@ export const validateStaffPayment = (
     fail('Invalid version.')
   if (command.expected_version !== row.version)
     throw new StaffPaymentError('conflict', 'This record changed. Refresh before saving.')
-  if (command.id.startsWith('run-payment:') || command.id.startsWith('run-refund:')) fail('This identifier is reserved for provider reconciliation.')
+  if (command.id.startsWith('run-payment:') || command.id.startsWith('run-refund:') || command.id.startsWith('period-moved:')) fail('This identifier is reserved for provider reconciliation.')
   if (!/^[a-zA-Z0-9._:-]{1,128}$/u.test(command.id)) fail('Invalid command identifier.')
   if (command.note.trim().length === 0 || command.note.length > 2000)
     fail('Add a note of up to 2,000 characters explaining this entry.')

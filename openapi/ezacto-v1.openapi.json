@@ -13698,6 +13698,127 @@
         ]
       }
     },
+    "/api/v1/staff-payments/actuals": {
+      "get": {
+        "operationId": "getPaymentActuals",
+        "summary": "Review captured contractor time and cost rates for a work month",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentActualsEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-payments/actuals",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "confirmPaymentActuals",
+        "summary": "Confirm reviewed contractor actuals as the monthly amount owed",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-payments/actuals",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmPaymentActuals"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/staff-payments/provider-settings": {
       "post": {
         "operationId": "configureStaffPaymentProvider",
@@ -21541,6 +21662,181 @@
           }
         },
         "additionalProperties": false
+      },
+      "PaymentActualsEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "month",
+              "currency",
+              "completed",
+              "people"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "month": {
+                "type": "string"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "completed": {
+                "type": "boolean"
+              },
+              "people": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "user_id",
+                    "name",
+                    "entries"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "user_id": {
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "entry_id",
+                          "project_id",
+                          "project_name",
+                          "spent_date",
+                          "rounded_seconds",
+                          "cost_rate_cents",
+                          "selected_seconds"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "entry_id": {
+                            "type": "integer"
+                          },
+                          "project_id": {
+                            "type": "integer"
+                          },
+                          "project_name": {
+                            "type": "string"
+                          },
+                          "spent_date": {
+                            "type": "string"
+                          },
+                          "rounded_seconds": {
+                            "type": "integer"
+                          },
+                          "cost_rate_cents": {
+                            "anyOf": [
+                              {
+                                "type": "integer"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "selected_seconds": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "ConfirmPaymentActuals": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "month",
+          "expected_version",
+          "currency",
+          "entries",
+          "note"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer"
+          },
+          "month": {
+            "type": "string"
+          },
+          "expected_version": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "entry_id",
+                "project_id",
+                "project_name",
+                "spent_date",
+                "rounded_seconds",
+                "cost_rate_cents",
+                "selected_seconds"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "entry_id": {
+                  "type": "integer"
+                },
+                "project_id": {
+                  "type": "integer"
+                },
+                "project_name": {
+                  "type": "string"
+                },
+                "spent_date": {
+                  "type": "string"
+                },
+                "rounded_seconds": {
+                  "type": "integer"
+                },
+                "cost_rate_cents": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "selected_seconds": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "note": {
+            "type": "string"
+          }
+        }
       },
       "StaffPaymentProviderCommand": {
         "type": "object",
