@@ -8,8 +8,17 @@ import {
 } from '@ezacto/core'
 import { renderStaffPayments } from '../src/staff-payments/render.js'
 import { createStaffPaymentsController } from '../src/staff-payments/browser.js'
-import { staffPaymentAmount, staffPaymentCsv } from '../src/staff-payments/model.js'
-const person = { user_id: 2, name: 'Fixture Person', active: true, wise_ready: false }
+import {
+  staffPaymentAmount,
+  staffPaymentCsv,
+  staffPaymentMoney,
+} from '../src/staff-payments/model.js'
+const person = {
+  user_id: 2,
+  name: 'Fixture Person',
+  active: true,
+  wise_ready: false,
+}
 const event: StaffPaymentEvent = {
   id: 'amount-1',
   user_id: 2,
@@ -133,7 +142,12 @@ describe('monthly payment register', () => {
             finish = resolve
           }),
       )
-      .mockResolvedValueOnce({ month: '2026-09', as_of: '2026-09-24', rows: [], provider_settings: { default_provider: 'wise', version: 0, events: [] } })
+      .mockResolvedValueOnce({
+        month: '2026-09',
+        as_of: '2026-09-24',
+        rows: [],
+        provider_settings: { default_provider: 'wise', version: 0, events: [] },
+      })
     const controller = createStaffPaymentsController({
       getStaffPaymentReport: read,
       recordStaffPaymentEvent: vi.fn(),
@@ -192,4 +206,33 @@ describe('payment report exports', () => {
     expect(() => staffPaymentAmount('1.001')).toThrow()
     expect(() => staffPaymentAmount('1e3')).toThrow()
   })
+})
+
+it('shows historical contractor costs without inventing receipts or enabling Pay now', async () => {
+  const value = report([{ ...event, kind: 'opening', amount_cents: null, currency: null }])
+  Object.assign(value.rows[0]!, {
+    amount_cents: 529870,
+    currency: 'USD',
+    amount_basis: 'contractor_cost',
+  })
+  const controller = createStaffPaymentsController({
+    getStaffPaymentReport: async () => value,
+    recordStaffPaymentEvent: vi.fn(),
+  })
+  await controller.activate({ profile: 'administrator' }, new AbortController().signal)
+  const list = document.querySelector('[data-payment-list]')!
+  expect(list.textContent).toContain('USD 5,298.70 · contractor cost')
+  expect(list.textContent).toContain('Historically settled')
+  expect(list.textContent).not.toContain('Pay now')
+  expect(staffPaymentCsv(value)).toContain('"529870","USD","",""')
+  expect(staffPaymentCsv(value)).toContain('"contractor_cost"')
+  expect(staffPaymentCsv(value, true)).not.toContain('529870')
+  document.querySelector<HTMLButtonElement>('[data-payment-list] tbody button')!.click()
+  expect(document.querySelector('[data-payment-person-summary]')!.textContent).toContain(
+    'payment receipts and dates are unspecified',
+  )
+})
+it('formats negative contractor cost corrections without corrupting cents', () => {
+  expect(staffPaymentMoney(-50, 'USD')).toBe('USD -0.50')
+  expect(staffPaymentMoney(-105050, 'USD')).toBe('USD -1,050.50')
 })

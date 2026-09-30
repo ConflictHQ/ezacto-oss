@@ -91,8 +91,21 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   let historySort: DataTableSort = { column: 'when', direction: 'descending' }
   let providerSort: DataTableSort = { column: 'when', direction: 'descending' }
   const tabs = createPaymentTabs(page)
-  const runs = createPaymentRunsController(api, () => load(), () => tabs.select('history', true))
-  const actuals = createActualsController(page, api, () => load(), (userId) => { tabs.select('send'); runs.payNow(userId) }, failure)
+  const runs = createPaymentRunsController(
+    api,
+    () => load(),
+    () => tabs.select('history', true),
+  )
+  const actuals = createActualsController(
+    page,
+    api,
+    () => load(),
+    (userId) => {
+      tabs.select('send')
+      runs.payNow(userId)
+    },
+    failure,
+  )
   const payNow = element<HTMLButtonElement>(page, '[data-payment-pay-now]')
   payNow.addEventListener('click', () => {
     tabs.select('send')
@@ -137,7 +150,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     element<HTMLAnchorElement>(person, '[data-payment-destination]').href = `/team/${row.user_id}`
     element<HTMLElement>(person, '[data-payment-person-summary]').textContent =
       row.status === 'settled'
-        ? `Confirmed settled through ${row.settled_through}. Historical amounts are unspecified.`
+        ? `Confirmed settled through ${row.settled_through}. ${row.amount_basis === 'contractor_cost' ? 'Amount reflects current contractor cost for this work month; payment receipts and dates are unspecified.' : 'Historical amounts are unspecified.'}`
         : `${staffPaymentStatus(row)}. Remaining: ${staffPaymentMoney(row.balance_cents, row.currency)}.`
     const preferenceForm = providerForms.find(
       (item) => item.dataset.paymentProviderForm === 'person',
@@ -331,7 +344,12 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
             sortValue: (row) => moneySort(row.amount_cents, row.currency),
             sortDescription: moneySortDescription,
             numeric: true,
-            render: (row) => moneyText(staffPaymentMoney(row.amount_cents, row.currency)),
+            render: (row) => {
+              const value = moneyText(staffPaymentMoney(row.amount_cents, row.currency))
+              if (row.amount_basis === 'contractor_cost')
+                value.appendChild(document.createTextNode(' · contractor cost'))
+              return value
+            },
           },
           {
             key: 'paid',
@@ -357,8 +375,19 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
                 ? 'Settled'
                 : moneyText(staffPaymentMoney(row.balance_cents, row.currency)),
           },
-          {key:'reserved',label:'Scheduled / processing',numeric:true,render:row=>moneyText(staffPaymentMoney(row.reserved_cents ?? 0,row.currency))},
-          {key:'available',label:'Available to pay',numeric:true,render:row=>moneyText(staffPaymentMoney(row.available_cents ?? row.balance_cents,row.currency))},
+          {
+            key: 'reserved',
+            label: 'Scheduled / processing',
+            numeric: true,
+            render: (row) => moneyText(staffPaymentMoney(row.reserved_cents ?? 0, row.currency)),
+          },
+          {
+            key: 'available',
+            label: 'Available to pay',
+            numeric: true,
+            render: (row) =>
+              moneyText(staffPaymentMoney(row.available_cents ?? row.balance_cents, row.currency)),
+          },
           {
             key: 'provider',
             label: 'Preferred provider',
@@ -450,10 +479,15 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
         ],
       }),
     )
-    const totals = new Map<string, { paid: bigint; remaining: bigint }>()
+    const totals = new Map<string, { paid: bigint; remaining: bigint; historical: bigint }>()
     for (const row of report.rows) {
       if (row.currency === null) continue
-      const bucket = totals.get(row.currency) ?? { paid: 0n, remaining: 0n }
+      const bucket = totals.get(row.currency) ?? {
+        paid: 0n,
+        remaining: 0n,
+        historical: 0n,
+      }
+      if (row.amount_basis === 'contractor_cost') bucket.historical += BigInt(row.amount_cents ?? 0)
       bucket.paid += BigInt(row.paid_cents)
       bucket.remaining += BigInt(row.balance_cents ?? 0)
       totals.set(row.currency, bucket)
@@ -471,13 +505,15 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       line.appendChild(moneyText(staffPaymentMoney(values.paid, currency)))
       line.appendChild(document.createTextNode(' · remaining: '))
       line.appendChild(moneyText(staffPaymentMoney(values.remaining, currency)))
+      line.appendChild(document.createTextNode(' · historically settled contractor cost: '))
+      line.appendChild(moneyText(staffPaymentMoney(values.historical, currency)))
       summary.appendChild(line)
     }
     if (report.rows.some((row) => row.status === 'settled'))
       summary.appendChild(
         text(
           'p',
-          'Historical settlements with unspecified amounts are excluded from monetary totals.',
+          'Historical amounts use current contractor costs where available. They are separate from recorded payments; missing rates or absent hours remain unspecified.',
         ),
       )
     element<HTMLAnchorElement>(page, '[data-payment-costs]').href =
@@ -725,7 +761,9 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   const download = (audit: boolean): void => {
     if (report === null || signal?.aborted !== false) return
     const url = URL.createObjectURL(
-      new Blob([staffPaymentCsv(report, audit)], { type: 'text/csv;charset=utf-8' }),
+      new Blob([staffPaymentCsv(report, audit)], {
+        type: 'text/csv;charset=utf-8',
+      }),
     )
     const link = document.createElement('a')
     link.href = url
@@ -781,7 +819,13 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       month.value =
         queryMonth !== null && validPaymentMonth(queryMonth)
           ? queryMonth
-          : previousPaymentMonth(new Intl.DateTimeFormat('en-CA',{year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()))
+          : previousPaymentMonth(
+              new Intl.DateTimeFormat('en-CA', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+              }).format(new Date()),
+            )
       setBusy(false)
       content.hidden = false
       const reportMode = location.pathname === '/payments/report'

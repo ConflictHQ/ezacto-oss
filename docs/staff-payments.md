@@ -118,3 +118,20 @@ the original period; payment-run items and audit history record the new work mon
 Future refunds reconcile against that corrected month. After the correction,
 verify balances, receipt reference and date, run history, and both monthly reports.
 Historical settlement entries should be recorded separately after those checks.
+
+### Historical amounts from contractor costs
+
+A settled month without an exact ledger amount displays the selected work month's
+current contractor cost, using the same captured rounded seconds, captured cost
+rates, and per-entry rounding as the contractor cost report. The API identifies
+this amount with `amount_basis: contractor_cost`; exact ledger amounts use
+`amount_basis: ledger` and always take precedence. Missing rates, absent entries,
+and non-contractors remain unspecified. This is a live report valuation, not a
+frozen historical receipt: editing the source time entries changes the displayed
+cost. The settlement cutoff and original audit records remain unchanged.
+
+Balances, the payments report, and CSV label the amount basis. Historical costs
+have a separate total from recorded payments; they do not create payable balances,
+receipts, dates, or transfers. Reopening a month removes this fallback so its exact
+earnings can be reviewed normally. This reporting change requires no data repair or
+schema migration.

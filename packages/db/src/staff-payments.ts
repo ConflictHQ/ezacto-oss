@@ -1,3 +1,4 @@
+import { createReportRepository } from './reports.js'
 import { createPaymentActualsStore } from './payment-actuals.js'
 import { createStaffPaymentProviderStore } from './staff-payment-providers.js'
 import { sql } from 'drizzle-orm'
@@ -6,6 +7,7 @@ import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
 import {
   StaffPaymentError,
+  paymentMonthEnd,
   summarizeStaffPayments,
   validateStaffPayment,
   type StaffPaymentCommand,
@@ -71,7 +73,7 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
       providers.read(),
     ])
     const events = history.map(eventOf)
-    return {
+    const result = {
       month,
       provider_settings: providerSettings,
       as_of: today,
@@ -101,6 +103,27 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
         }
       }),
     }
+    // A cutoff confirms settlement, but supplies neither an amount nor a receipt.
+    // Value only those unknown historical amounts using the canonical cost report.
+    // Keep ledger balances/receipts untouched: this valuation cannot create payable funds.
+    if (result.rows.some((row) => row.status === 'settled' && row.amount_cents === null)) {
+      const costs = await createReportRepository(database).contractorCost({
+        from: `${month}-01`,
+        to: paymentMonthEnd(month),
+      })
+      const byPerson = new Map(
+        costs.rows.filter((row) => row.isContractor).map((row) => [row.userId, row]),
+      )
+      for (const row of result.rows) {
+        const cost = byPerson.get(row.user_id)
+        if (row.status === 'settled' && row.amount_cents === null && cost?.costCents != null) {
+          row.amount_cents = cost.costCents
+          row.currency = cost.currency
+          row.amount_basis = 'contractor_cost'
+        }
+      }
+    }
+    return result
   }
   return {
     ...createPaymentActualsStore(database, { report }),
@@ -125,7 +148,13 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
       const row = snapshot.rows.find((person) => person.user_id === command.user_id)
       if (row === undefined)
         throw new StaffPaymentError('not_found', 'This person is not in the payment register.')
-      validateStaffPayment(command, row, now.slice(0, 10))
+      validateStaffPayment(
+        command,
+        row.amount_basis === 'contractor_cost'
+          ? { ...row, amount_cents: null, currency: null }
+          : row,
+        now.slice(0, 10),
+      )
       // One statement is atomic in both D1 and SQLite. The comparison prevents
       // two operators spending the same remaining balance after reading it.
       const inserted = await Promise.resolve(

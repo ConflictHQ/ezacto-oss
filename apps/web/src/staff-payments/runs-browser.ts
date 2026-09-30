@@ -244,12 +244,14 @@ export const createPaymentRunsController = (
       const line = node("p", `${currency} · owed `);
       for (const part of [
         money(t.owed, currency),
-        " · paid ",
+        " · recorded paid ",
         money(t.paid, currency),
         " · reserved ",
         money(t.reserved, currency),
         " · available to pay ",
         money(t.available, currency),
+        " · historically settled contractor cost ",
+        money(t.historical, currency),
       ])
         line.appendChild(
           typeof part === "string" ? document.createTextNode(part) : part,
@@ -259,7 +261,7 @@ export const createPaymentRunsController = (
     totals.appendChild(
       node(
         "p",
-        `${rows.filter((r) => r.amount_cents === null).length} unspecified amounts excluded from monetary totals. ${items.filter((i) => i.state === "failed").length} failed/refunded transfers. Figures reflect current records for the selected work months.`,
+        `${rows.filter((r) => r.amount_cents === null).length} unspecified amounts excluded from monetary totals. ${items.filter((i) => i.state === "failed").length} failed/refunded transfers. Historical amounts reflect current contractor costs, separate from recorded payments. Figures reflect current records for the selected work months.`,
       ),
     );
     el(reportSection, "[data-run-report-balances]").replaceChildren(
@@ -284,12 +286,20 @@ export const createPaymentRunsController = (
           {
             key: "owed",
             label: "Owed",
-            render: (r) => money(r.amount_cents, r.currency),
+            render: (r) => {
+              const value = money(r.amount_cents, r.currency);
+              if (r.amount_basis === "contractor_cost")
+                value.appendChild(
+                  document.createTextNode(" · contractor cost"),
+                );
+              return value;
+            },
           },
           {
             key: "paid",
-            label: "Paid",
-            render: (r) => money(r.paid_cents, r.currency),
+            label: "Recorded paid",
+            render: (r) =>
+              money(r.status === "settled" ? null : r.paid_cents, r.currency),
           },
           {
             key: "reserved",
@@ -666,7 +676,13 @@ export const createPaymentRunsController = (
         { once: true },
       );
       if (reportMode) {
-        const month = previousPaymentMonth(new Intl.DateTimeFormat('en-CA',{year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()));
+        const month = previousPaymentMonth(
+          new Intl.DateTimeFormat("en-CA", {
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+          }).format(new Date()),
+        );
         input(reportForm, "from").value = month;
         input(reportForm, "to").value = month;
         await action(refresh, reportStatus);

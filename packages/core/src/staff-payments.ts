@@ -62,6 +62,8 @@ export interface StaffPaymentRow extends StaffPaymentPerson {
   version: number
   amount_cents: number | null
   currency: string | null
+  /** Historical contractor cost is a live report valuation, never a payment receipt. */
+  amount_basis: 'ledger' | 'contractor_cost'
   paid_cents: number
   reserved_cents?: number
   available_cents?: number | null
@@ -170,6 +172,7 @@ export const summarizeStaffPayments = (
     version: own.at(-1)?.version ?? 0,
     amount_cents: amount,
     currency,
+    amount_basis: 'ledger',
     paid_cents: paid,
     balance_cents: balance,
     due_on: due,

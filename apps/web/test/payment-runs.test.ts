@@ -244,3 +244,48 @@ describe("payment run review", () => {
     expect(document.querySelector("[data-run-history]")!.textContent).toBe("");
   });
 });
+
+it("reports historical costs separately and includes settlements in the paid filter", async () => {
+  history.replaceState({}, "", "/payments/report");
+  const historical = {
+    ...row,
+    amount_cents: 529870,
+    amount_basis: "contractor_cost" as const,
+    status: "settled" as const,
+    paid_cents: 0,
+    balance_cents: null,
+    reserved_cents: 0,
+    available_cents: null,
+  };
+  const data = {
+    ...report,
+    runs: [],
+    ledgers: [{ ...ledger, rows: [historical] }],
+  };
+  expect(paymentReportTotals([historical]).get("USD")).toEqual({
+    owed: 0n,
+    paid: 0n,
+    reserved: 0n,
+    available: 0n,
+    historical: 529870n,
+  });
+  const filters = { person: "", currency: "USD", status: "paid" };
+  expect(filteredPaymentReport(data, filters).rows).toHaveLength(1);
+  expect(filteredPaymentReport(data, filters).receipts).toHaveLength(0);
+  const csv = paymentRunCsv(data, filters).split("\r\n");
+  expect(csv[0]).toContain('"Amount basis"');
+  expect(csv[1]).toContain('"529870","","0","","settled"');
+  expect(csv[1]?.split(",")).toHaveLength(csv[0]!.split(",").length);
+  expect(csv[1]).toContain('"contractor_cost"');
+  const controller = createPaymentRunsController(
+    { getPaymentRunReport: async () => data },
+    async () => {},
+  );
+  await controller.activate(new AbortController().signal);
+  expect(
+    document.querySelector("[data-run-report-totals]")!.textContent,
+  ).toContain("historically settled contractor cost");
+  expect(
+    document.querySelector("[data-run-report-balances]")!.textContent,
+  ).toContain("5,298.70 · contractor cost");
+});

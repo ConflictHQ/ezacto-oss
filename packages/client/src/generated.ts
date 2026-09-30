@@ -141,6 +141,7 @@ export type StaffPaymentRow = {
   "version": number;
   "amount_cents": number | null;
   "currency": string | null;
+  "amount_basis": "ledger" | "contractor_cost";
   "paid_cents": number;
   "balance_cents": number | null;
   "reserved_cents": number;
