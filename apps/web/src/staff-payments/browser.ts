@@ -1,3 +1,5 @@
+import { createPaymentTabs } from './tabs.js'
+import { canPayNow } from './runs-model.js'
 import { createPaymentRunsController, type PaymentRunsApi } from './runs-browser.js'
 import { EzactoApiError } from '@conflict-hq/ezacto-client'
 import {
@@ -86,7 +88,13 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   let registerSort: DataTableSort = { column: 'name', direction: 'ascending' }
   let historySort: DataTableSort = { column: 'when', direction: 'descending' }
   let providerSort: DataTableSort = { column: 'when', direction: 'descending' }
-  const runs = createPaymentRunsController(api, () => load())
+  const tabs = createPaymentTabs(page)
+  const runs = createPaymentRunsController(api, () => load(), () => tabs.select('history', true))
+  const payNow = element<HTMLButtonElement>(page, '[data-payment-pay-now]')
+  payNow.addEventListener('click', () => {
+    tabs.select('send')
+    runs.payNow()
+  })
 
   const configureForm = (): void => {
     const kind = input('kind').value
@@ -261,6 +269,45 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
                 person.scrollIntoView({ block: 'nearest' })
               })
               return button
+            },
+          },
+          {
+            key: 'pay',
+            label: 'Action',
+            render: (row) => {
+              if (api.previewPaymentRun && canPayNow(row)) {
+                const button = document.createElement('button')
+                button.type = 'button'
+                button.className = 'primary-action'
+                button.textContent = 'Pay now'
+                button.setAttribute('aria-label', `Pay now: ${row.name}`)
+                button.addEventListener('click', () => {
+                  tabs.select('send')
+                  runs.payNow(row.user_id)
+                })
+                return button
+              }
+              if (row.amount_cents === null && row.status !== 'settled') {
+                const button = document.createElement('button')
+                button.type = 'button'
+                button.textContent = 'Set amount'
+                button.addEventListener('click', () => {
+                  selected = row.user_id
+                  command = null
+                  result.textContent = ''
+                  paintPerson()
+                  person.scrollIntoView({ block: 'nearest' })
+                  input('amount').focus()
+                })
+                return button
+              }
+              if (row.payout_provider === 'wise' && !row.wise_ready) {
+                const link = document.createElement('a')
+                link.href = `/team/${row.user_id}`
+                link.textContent = 'Set up Wise'
+                return link
+              }
+              return '—'
             },
           },
           {
@@ -477,6 +524,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     }
   }
   month.addEventListener('change', () => {
+    runs.resetSelection()
     selected = null
     command = null
     void load()
@@ -736,9 +784,11 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       if (ledger) ledger.hidden = reportMode
       const toolbar = page.querySelector<HTMLElement>('[data-payment-ledger-toolbar]')
       if (toolbar) toolbar.hidden = reportMode
+      payNow.hidden = reportMode || api.previewPaymentRun === undefined
       const heading = page.querySelector('h1')
       if (heading) heading.textContent = reportMode ? 'Payments report' : 'Payments'
       await runs.activate(active)
+      tabs.activate(reportMode, api.previewPaymentRun !== undefined)
       if (!reportMode) await load()
     },
   }

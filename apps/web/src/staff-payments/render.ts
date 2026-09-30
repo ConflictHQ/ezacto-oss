@@ -4,44 +4,42 @@ export const renderStaffPayments = (view?: string): string =>
     ? `
   <main class="app-content page--grid staff-payments" data-staff-payments-page${view === 'staff-payments' ? '' : ' hidden'}>
     <header class="context-row"><div><p class="eyebrow">Team</p><h1>Payments</h1></div><a href="/team">Back to team</a></header>
-    <p>Review amounts owed, schedule Wise payments, and track payment history.</p>
+    <p data-payment-intro>Review balances, pay your team, and track each payment.</p>
     <p data-staff-payment-status class="form-result" role="status" aria-live="polite"></p>
     <div data-staff-payment-content hidden>
       <div data-payment-ledger-toolbar>
+        <div class="staff-payment-toolbar">
+          <label>Work month<input type="month" data-payment-month required></label>
+          <button type="button" data-payment-refresh>Refresh</button>
+          <button type="button" class="primary-action" data-payment-pay-now>Pay now</button>
+          <a href="/payments/report">Payments report</a>
+        </div>
+        <div class="payment-tabs" role="tablist" aria-label="Payments sections" data-payment-tabs>
+          ${[
+            ['balances', 'Balances'],
+            ['send', 'Send or schedule'],
+            ['history', 'History'],
+            ['settings', 'Settings'],
+          ]
+            .map(
+              ([key, label]) =>
+                `<button type="button" role="tab" id="payment-tab-${key}" aria-controls="payment-panel-${key}" aria-selected="${key === 'balances'}" tabindex="${key === 'balances' ? '0' : '-1'}" data-payment-tab="${key}">${label}</button>`,
+            )
+            .join('')}
+        </div>
+      </div>
+      <section id="payment-panel-balances" role="tabpanel" aria-labelledby="payment-tab-balances" data-payment-panel="balances">
       <div class="staff-payment-toolbar">
-        <label>Month<input type="month" data-payment-month required></label>
         <label>Show<select data-payment-filter><option value="all">Everyone</option><option value="outstanding">Outstanding</option><option value="overdue">Overdue</option><option value="paid">Paid / settled</option><option value="unready">Preferred destination missing</option></select></label>
         <label>Find a person<input type="search" data-payment-search></label>
-        <button type="button" data-payment-refresh>Refresh</button>
         <a data-payment-costs href="/reports?report=contractor-cost">Review payroll costs</a>
         <button type="button" data-payment-export>Export monthly report</button>
         <button type="button" data-payment-audit-export>Export audit log</button>
       </div>
       <section data-payment-summary aria-label="Monthly totals" class="staff-payment-summary"></section>
-      </div>
-      ${renderPaymentRuns()}
       <div data-payment-ledger>
       <h2>Payment ledger</h2>
-      <details data-payment-provider-settings hidden class="staff-payment-opening">
-        <summary>Payment provider settings</summary>
-        <p>Choose the organization default. Each person can inherit it or use another provider. Payment receipts keep the provider actually used.</p>
-        <form data-payment-provider-form="organization">
-          <label>Organization default<select name="provider"><option value="wise">Wise</option><option value="deel">Deel</option></select></label>
-          <label>Reason for change<textarea name="note" required maxlength="2000"></textarea></label>
-          <button type="submit">Save organization default</button>
-        </form>
-        <h3>Provider settings history</h3><div data-payment-provider-history></div>
-      </details>
       <div data-payment-list></div>
-      <details class="staff-payment-opening">
-        <summary>Record historical settlement through this month</summary>
-        <p>Choose the people whose earlier periods are confirmed settled. Amounts and payment dates remain unspecified until exact historical records are entered. Existing amount and payment records keep their own balances.</p>
-        <form data-payment-opening-form>
-          <fieldset><legend>People confirmed settled</legend><div data-payment-opening-people></div></fieldset>
-          <label>Source and explanation<textarea name="note" required maxlength="2000" placeholder="For example: payments through this month confirmed in Deel"></textarea></label>
-          <button type="submit">Record settlement for selected people</button>
-        </form>
-      </details>
       <section data-payment-person hidden class="staff-payment-person" aria-labelledby="staff-payment-person-title">
         <header><h2 id="staff-payment-person-title" data-payment-person-title></h2><a data-payment-destination href="/team">Manage Wise destination</a></header>
         <p data-payment-person-summary></p>
@@ -67,6 +65,30 @@ export const renderStaffPayments = (view?: string): string =>
         <h3>Payment history and audit log</h3><div data-payment-history></div>
       </section>
       </div>
+      </section>
+      ${renderPaymentRuns()}
+      <section id="payment-panel-settings" role="tabpanel" aria-labelledby="payment-tab-settings" data-payment-panel="settings" hidden>
+        <h2>Payment settings</h2>
+      <details data-payment-provider-settings hidden class="staff-payment-opening">
+        <summary>Payment provider settings</summary>
+        <p>Choose the organization default. Each person can inherit it or use another provider. Payment receipts keep the provider actually used.</p>
+        <form data-payment-provider-form="organization">
+          <label>Organization default<select name="provider"><option value="wise">Wise</option><option value="deel">Deel</option></select></label>
+          <label>Reason for change<textarea name="note" required maxlength="2000"></textarea></label>
+          <button type="submit">Save organization default</button>
+        </form>
+        <h3>Provider settings history</h3><div data-payment-provider-history></div>
+      </details>
+      <details class="staff-payment-opening">
+        <summary>Record historical settlement through this month</summary>
+        <p>Choose the people whose earlier periods are confirmed settled. Amounts and payment dates remain unspecified until exact historical records are entered. Existing amount and payment records keep their own balances.</p>
+        <form data-payment-opening-form>
+          <fieldset><legend>People confirmed settled</legend><div data-payment-opening-people></div></fieldset>
+          <label>Source and explanation<textarea name="note" required maxlength="2000" placeholder="For example: payments through this month confirmed in Deel"></textarea></label>
+          <button type="submit">Record settlement for selected people</button>
+        </form>
+      </details>
+      </section>
     </div>
   </main>`
     : ''

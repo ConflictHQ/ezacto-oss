@@ -1,8 +1,9 @@
 export const renderPaymentRuns = (): string => `
 <section data-payment-runs hidden class="payment-runs">
-  <header class="context-row"><h2>Payment runs</h2><a href="/payments/report">Payments report</a></header>
-  <p>Choose outstanding amounts, review Wise recipients and costs, then approve a payment run. Processing starts within the next minute. Scheduled and processing payments reserve their balances.</p>
   <p data-run-status role="status" aria-live="polite"></p>
+  <section id="payment-panel-send" role="tabpanel" aria-labelledby="payment-tab-send" data-payment-panel="send" hidden>
+  <h2>Send or schedule payments</h2>
+  <p>Choose outstanding amounts, review Wise recipients and costs, then approve a payment run. Processing starts within the next minute. Scheduled and processing payments reserve their balances.</p>
   <form data-run-form>
     <div class="staff-payment-toolbar">
       <label>Run name<input name="run_name" required maxlength="100" placeholder="September payments"></label>
@@ -22,7 +23,12 @@ export const renderPaymentRuns = (): string => `
       <button type="button" data-run-back>Back to selection</button>
     </form>
   </section>
-  <div data-run-history></div>
+  </section>
+  <section id="payment-panel-history" role="tabpanel" aria-labelledby="payment-tab-history" data-payment-panel="history" hidden>
+    <h2>Payment history</h2>
+    <p>Runs for the selected work month. Track scheduled payments, check their status, or cancel unsent payments.</p>
+    <div data-run-history></div>
+  </section>
 </section>
 <section data-payments-report hidden>
   <header class="context-row"><h2>Payments report</h2><a href="/payments">Manage payments</a></header>

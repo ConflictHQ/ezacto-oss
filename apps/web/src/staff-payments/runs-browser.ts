@@ -9,6 +9,7 @@ import { moneyText } from "../money-display.js";
 import { renderDataTable } from "../components/data-table.js";
 import { staffPaymentAmount, staffPaymentMoney } from "./model.js";
 import {
+  canPayNow,
   filteredPaymentReport,
   paymentReportTotals,
   paymentRunCsv,
@@ -69,6 +70,7 @@ const errorText = (error: unknown): string => {
 export const createPaymentRunsController = (
   api: PaymentRunsApi,
   reload: () => Promise<void>,
+  onApproved: () => void = () => {},
 ) => {
   const page = document.querySelector<HTMLElement>(
     "[data-staff-payments-page]",
@@ -77,6 +79,10 @@ export const createPaymentRunsController = (
   if (!page || !section)
     return {
       activate: async () => {},
+      resetSelection: () => {},
+      payNow: (_userId?: number) => {
+        void _userId;
+      },
       ledger: (report: StaffPaymentReport) => {
         void report;
       },
@@ -134,7 +140,9 @@ export const createPaymentRunsController = (
   };
   const paintHistory = () => {
     const host = el(section, "[data-run-history]");
-    host.replaceChildren(node("h3", "Recent payment runs"));
+    host.replaceChildren();
+    if (!data?.runs.length)
+      host.appendChild(node("p", "No payment runs for this month yet."));
     for (const run of data?.runs ?? []) {
       const block = document.createElement("section");
       block.appendChild(node("h4", `${run.name} · ${run.state}`));
@@ -486,6 +494,7 @@ export const createPaymentRunsController = (
     event.preventDefault();
     void action(async () => {
       if (!snapshot || !api.previewPaymentRun) return;
+      const selectedLedger = snapshot;
       pendingCommand ??= {
         id: crypto.randomUUID(),
         name: input(form, "run_name").value.trim(),
@@ -518,7 +527,7 @@ export const createPaymentRunsController = (
       if (!pendingCommand.items.length)
         throw new Error("Select at least one person to pay.");
       const run = await api.previewPaymentRun(pendingCommand, signal);
-      if (!signal?.aborted) paintReview(run);
+      if (!signal?.aborted && snapshot === selectedLedger) paintReview(run);
     });
   });
   approvalForm.addEventListener("submit", (event) => {
@@ -544,6 +553,7 @@ export const createPaymentRunsController = (
       form.hidden = false;
       await reload();
       await refresh();
+      if (!signal?.aborted) onApproved();
     });
   });
   el(section, "[data-run-back]").addEventListener("click", () => {
@@ -575,6 +585,56 @@ export const createPaymentRunsController = (
     },
   );
   return {
+    resetSelection: () => {
+      snapshot = null;
+      draft = null;
+      pendingCommand = null;
+      review.hidden = true;
+      form.hidden = false;
+      el(section, "[data-run-selection]").replaceChildren();
+    },
+    payNow: (userId?: number) => {
+      if (busy || !signal || signal.aborted) return;
+      if (!input(form, "run_name").value.trim() && snapshot) {
+        const name =
+          snapshot.rows.find((row) => row.user_id === userId)?.name ??
+          "Payments";
+        input(form, "run_name").value = `${name} · ${snapshot.month}`.slice(
+          0,
+          100,
+        );
+      }
+      if (userId !== undefined) {
+        if (
+          !snapshot?.rows.some(
+            (row) => row.user_id === userId && canPayNow(row),
+          )
+        )
+          return;
+        draft = null;
+        pendingCommand = null;
+        review.hidden = true;
+        form.hidden = false;
+        for (const checkbox of form.querySelectorAll<HTMLInputElement>(
+          'input[type="checkbox"]',
+        )) {
+          checkbox.checked = checkbox.name === `select-${userId}`;
+        }
+        input(form, "timing").value = "now";
+        input(form, "timing").dispatchEvent(new Event("change"));
+        const row = snapshot.rows.find((row) => row.user_id === userId)!;
+        input(form, `amount-${userId}`).value = (
+          (row.available_cents ?? row.balance_cents ?? 0) / 100
+        ).toFixed(2);
+        input(form, `amount-${userId}`).focus();
+        input(form, `amount-${userId}`).select();
+      } else {
+        (draft
+          ? el<HTMLButtonElement>(section, "[data-run-confirm]")
+          : input(form, "run_name")
+        ).focus();
+      }
+    },
     activate: async (active: AbortSignal) => {
       signal = active;
       section.hidden = reportMode || !api.previewPaymentRun;
@@ -612,16 +672,15 @@ export const createPaymentRunsController = (
       }
     },
     ledger: (report: StaffPaymentReport) => {
+      if (snapshot && snapshot.month !== report.month) {
+        draft = null;
+        pendingCommand = null;
+        review.hidden = true;
+        form.hidden = false;
+      }
       snapshot = report;
       if (reportMode) return;
-      const eligible = report.rows.filter(
-        (r) =>
-          r.active &&
-          r.payout_provider === "wise" &&
-          r.wise_ready &&
-          r.status !== "settled" &&
-          (r.available_cents ?? r.balance_cents ?? 0) > 0,
-      );
+      const eligible = report.rows.filter(canPayNow);
       el(section, "[data-run-selection]").replaceChildren(
         renderDataTable({
           caption: "Choose payments from the selected month",
