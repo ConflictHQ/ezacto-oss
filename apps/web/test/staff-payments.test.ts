@@ -253,8 +253,11 @@ it('hides empty people by default while keeping unrated hours, balances and paym
   expect(list.textContent).toContain('Unrated Hours')
   expect(list.textContent).toContain('Payment History')
   expect(list.textContent).toContain('Fixture Person')
+  document.querySelector<HTMLButtonElement>('[data-payment-list] tbody button')!.click()
+  field('amount').value = '123.45'
   checkbox.checked = true
   checkbox.dispatchEvent(new Event('change'))
+  expect(field('amount').value).toBe('123.45')
   expect(list.textContent).toContain('Empty Person')
   expect(list.textContent).toContain('Empty Cutoff')
   checkbox.checked = false

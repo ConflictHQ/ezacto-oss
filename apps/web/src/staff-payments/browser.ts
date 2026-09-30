@@ -495,7 +495,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       bucket.remaining += BigInt(row.balance_cents ?? 0)
       totals.set(row.currency, bucket)
     }
-    const pending = activityRows().filter((row) => row.status !== 'paid' && row.status !== 'settled')
+    const pending = report.rows.filter((row) => hasPaymentActivity(row) && row.status !== 'paid' && row.status !== 'settled')
     summary.replaceChildren(
       text(
         'p',
@@ -574,7 +574,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     void load()
   })
   filter.addEventListener('change', paintList)
-  showEmpty.addEventListener('change', paint)
+  showEmpty.addEventListener('change', paintList)
   search.addEventListener('input', paintList)
   element<HTMLElement>(page, '[data-payment-refresh]').addEventListener('click', () => {
     command = null
