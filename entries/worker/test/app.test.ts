@@ -266,7 +266,10 @@ describe('worker entry', () => {
     )
     expect(html).not.toContain('data-time-views')
     expect(html).toContain('Each currency remains separate.')
-    expect(html).not.toContain('Export')
+    // Scoped to the reports section: the shell serves every page's markup in
+    // one document, and the invoice page's "Export hours" is not a report.
+    const reportsStart = html.indexOf('data-reports-page')
+    expect(html.slice(reportsStart, html.indexOf('</main>', reportsStart))).not.toContain('Export')
     // The strip carries a Profitability tab now, so the bare word appears as a
     // navigation label -- the same way Contractor cost has always appeared to
     // every profile, with the browser dropping the unreadable kinds once whoami

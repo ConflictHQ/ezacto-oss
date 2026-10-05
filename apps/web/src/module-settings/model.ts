@@ -77,7 +77,21 @@ export const reminderPolicyFromForm = (input: {
     ? { first_after_days: Number(input.firstAfterDays), every_days: Number(input.everyDays) }
     : null
 
+/** Invoices › Configure: what every invoice prints and every new draft starts with. */
+export interface InvoiceDefaultsSetting {
+  readonly company_name: string
+  readonly company_address: string | null
+  readonly notes: string | null
+  readonly subject: string | null
+}
+
 export interface CompanySettingsApi {
+  /** Optional: a build without the route hides nothing it cannot save. */
+  getInvoiceDefaults?(signal?: AbortSignal): Promise<InvoiceDefaultsSetting>
+  updateInvoiceDefaults?(
+    patch: Partial<InvoiceDefaultsSetting>,
+    signal?: AbortSignal,
+  ): Promise<InvoiceDefaultsSetting>
   getTimeEntrySettings(signal?: AbortSignal): Promise<TimeEntrySettings>
   getTimeEntryNoteSettings(signal?: AbortSignal): Promise<TimeEntryNoteSettings>
   updateTimeEntryNoteSettings(

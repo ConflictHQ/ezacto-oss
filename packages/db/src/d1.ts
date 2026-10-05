@@ -64,10 +64,11 @@ export {
   type TimesheetPolicyLockResolution,
   type UpdateTimesheetLockPolicySettings,
 } from './timesheet-lock-policy.js'
-export { createMoneyResourceRepository } from './money-resources.js'
+export { createMoneyResourceRepository, type InvoiceDocumentContext } from './money-resources.js'
 export {
   createInvoiceGenerationService,
   InvoiceGenerationError,
+  type GenerateFreeFormInvoiceRequest,
   type GenerateInvoiceCommand,
   type GenerateInvoiceRequest,
   type InvoiceGenerationService,
@@ -241,6 +242,12 @@ export {
   type ReminderSettings,
 } from './reminder-preference.js'
 export {
+  readInvoiceDefaults,
+  updateInvoiceDefaults,
+  type InvoiceDefaults,
+  type InvoiceDefaultsPatch,
+} from './invoice-defaults.js'
+export {
   readTimeEntryClaim,
   releaseInvoicedTimeEntries,
   type ReleaseOutcome,
@@ -260,6 +267,12 @@ export {
   readOrganizationJournalPolicy,
   setInvoiceJournalPolicy,
   setOrganizationJournalPolicy,
+  readInvoiceHoursReport,
+  readJournalFormatsPreference,
+  readOrganizationJournalFormats,
+  resolveJournalFormats,
+  setInvoiceJournalFormats,
+  setOrganizationJournalFormats,
   readOrganizationAttachPolicy,
   invoiceDocumentFilename,
   invoiceDocumentKey,

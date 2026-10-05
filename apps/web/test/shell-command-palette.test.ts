@@ -79,7 +79,7 @@ describe('command palette browser behavior', () => {
     expect(document.querySelector('[data-command-option][aria-selected="true"]')).toBeNull()
 
     edit(command, 'invo')
-    expect(paletteLabels()).toEqual(['Invoices', 'Generate invoice'])
+    expect(paletteLabels()).toEqual(['Invoices', 'New invoice'])
     expect(
       document.querySelector<HTMLElement>('[data-command-option][aria-selected="true"]')
         ?.textContent,
@@ -91,7 +91,7 @@ describe('command palette browser behavior', () => {
     expect(
       document.querySelector<HTMLElement>('[data-command-option][aria-selected="true"]')
         ?.textContent,
-    ).toBe('Generate invoice')
+    ).toBe('New invoice')
     expect(command.getAttribute('aria-activedescendant')).toBe(
       document.querySelector<HTMLElement>('[data-command-option][aria-selected="true"]')?.id,
     )

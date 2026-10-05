@@ -6,8 +6,10 @@ import { captureException } from "@sentry/cloudflare";
 import type { BillRuntime, QuickBooksService, WiseRuntime } from "@ezacto/integrations";
 import type {
   InvoiceDocumentPreferenceService,
+  InvoiceHoursReportService,
   ThankYouPreferenceService,
   ReminderSettingsService,
+  InvoiceDefaultsService,
   RecurringRepairService,
   InvoiceTimeClaimService,
   StripeService,
@@ -55,8 +57,10 @@ import {
   installBillRoutes,
   installPayoutAccountRoutes,
   installInvoiceDocumentPreferenceRoutes,
+  installInvoiceHoursReportRoutes,
   installThankYouPreferenceRoutes,
   installReminderSettingsRoutes,
+  installInvoiceDefaultsRoutes,
   installRecurringRepairRoutes,
   installInvoiceTimeClaimRoutes,
   installStripeRoutes,
@@ -371,9 +375,12 @@ export interface RuntimeServices {
   stripe?: StripeService
   invoiceTimeClaims?: InvoiceTimeClaimService
   invoiceDocumentPreference?: InvoiceDocumentPreferenceService
+  /** The work journal as a file on demand (issue 647); both entries compose it. */
+  invoiceHoursReport?: InvoiceHoursReportService
   thankYouPreference?: ThankYouPreferenceService
   /** The organisation's default payment reminder policy (issue 801). */
   reminderSettings?: ReminderSettingsService
+  invoiceDefaults?: InvoiceDefaultsService
   /**
    * Sends the reminders that have come due. Called from the daily cron in the
    * Worker and from the outbox tick in the container; either way it is the
@@ -629,6 +636,9 @@ export const createApp = (
                 services.invoiceDocumentPreference,
               )
             }
+            if (services.invoiceHoursReport !== undefined) {
+              installInvoiceHoursReportRoutes(api, services.invoiceHoursReport)
+            }
             if (services.recurringRepair !== undefined) {
               installRecurringRepairRoutes(api, services.recurringRepair, () =>
                 new Date().toISOString(),
@@ -639,6 +649,9 @@ export const createApp = (
             }
             if (services.reminderSettings !== undefined) {
               installReminderSettingsRoutes(api, services.reminderSettings)
+            }
+            if (services.invoiceDefaults !== undefined) {
+              installInvoiceDefaultsRoutes(api, services.invoiceDefaults)
             }
             if (services.payoutAccounts !== undefined) {
               installPayoutAccountRoutes(api, services.payoutAccounts)

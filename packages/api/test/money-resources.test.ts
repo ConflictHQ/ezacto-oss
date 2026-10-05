@@ -2158,6 +2158,86 @@ for (const [runtime, factory] of factories) {
       expect(captured).toHaveLength(1);
     });
 
+    it("[api] passes an open start and a free-form draft to the engine as their own shapes", async () => {
+      const captured: InvoiceGenerationCommand[] = [];
+      const test = await setup((command) => captured.push(command));
+      const tracked = {
+        client_id: 1,
+        to: "2026-08-31",
+        project_ids: [3],
+        time_summary_type: "task",
+        expense_summary_type: null,
+      };
+      for (const [commandId, body] of [
+        ["generate-open-absent", tracked],
+        ["generate-open-null", { ...tracked, from: null }],
+        ["generate-open-named-kind", { ...tracked, kind: "tracked" }],
+        ["generate-free-form", { kind: "free_form", client_id: 1 }],
+      ] as const) {
+        const response = await test.request(
+          "/api/v1/invoice-generations",
+          jsonRequest("POST", body, commandId),
+        );
+        expect(response.status).toBe(201);
+      }
+
+      // Strict, because an absent kind is the point: a request that names the
+      // default arrives exactly as one that leaves it out, so it fingerprints
+      // the same way.
+      const open = {
+        clientId: 1,
+        from: null,
+        to: "2026-08-31",
+        projectIds: [3],
+        timeSummaryType: "task",
+        expenseSummaryType: null,
+      };
+      expect(captured.map(({ request }) => request)).toStrictEqual([
+        open,
+        open,
+        open,
+        { kind: "free_form", clientId: 1 },
+      ]);
+    });
+
+    it("[api] refuses a free-form draft with tracked fields, an unknown kind, or no client", async () => {
+      const captured: InvoiceGenerationCommand[] = [];
+      const test = await setup((command) => captured.push(command));
+      const cases: Array<[Record<string, unknown>, string[]]> = [
+        [
+          { kind: "free_form", client_id: 1, project_ids: [1], from: "2026-08-01" },
+          ["project_ids", "from"],
+        ],
+        [{ kind: "free_form", client_id: 1, time_summary_type: null }, ["time_summary_type"]],
+        [{ kind: "free_form" }, ["client_id"]],
+        [{ kind: "blank", client_id: 1 }, ["kind"]],
+        [{ kind: null, client_id: 1 }, ["kind"]],
+        [
+          {
+            client_id: 1,
+            from: "2026-09-01",
+            to: "2026-08-31",
+            project_ids: [1],
+            time_summary_type: "task",
+            expense_summary_type: null,
+          },
+          ["to"],
+        ],
+      ];
+      for (const [index, [body, fields]] of cases.entries()) {
+        const response = await test.request(
+          "/api/v1/invoice-generations",
+          jsonRequest("POST", body, `refused-generation-${index}`),
+        );
+        expect(response.status).toBe(422);
+        const error = (
+          (await response.json()) as { error: { fields: Array<{ field: string }> } }
+        ).error;
+        expect(error.fields.map(({ field }) => field)).toEqual(fields);
+      }
+      expect(captured).toEqual([]);
+    });
+
     it("[api] translates invoice generation domain failures without masking unexpected faults", async () => {
       let failure: Error = Object.assign(new Error("selected rows have no usable billable rate"), {
         code: "invalid_command_input",

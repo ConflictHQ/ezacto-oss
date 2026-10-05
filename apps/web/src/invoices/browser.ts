@@ -50,7 +50,10 @@ import {
   invoiceSendAttemptFor,
   invoiceSendFailure,
   invoiceSendWork,
+  invoiceIsPastDue,
   invoiceStateLabel,
+  invoiceStatusPill,
+  type InvoiceHoursReportFormat,
   type InvoiceOverflowCommand,
   type InvoicePaymentApi,
   type InvoiceQuickBooksState,
@@ -94,7 +97,7 @@ const paymentDateLabel = (payment: Readonly<InvoicePayment>): string =>
 const invoiceDueLabel = (invoice: Readonly<Invoice>): CellContent => {
   const today = new Date()
   const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-  if (invoice.state !== 'open' || invoice.due_amount_cents <= 0 || invoice.due_date >= todayKey) {
+  if (!invoiceIsPastDue(invoice, todayKey)) {
     return dateLabel(invoice.due_date)
   }
   const due = new Date(`${invoice.due_date.slice(0, 10)}T00:00:00.000Z`)
@@ -139,7 +142,9 @@ const invoiceStatePill = (invoice: Readonly<Invoice>): HTMLSpanElement => {
   const state = document.createElement('span')
   state.className = 'invoice-state'
   state.dataset.state = invoice.state
-  state.textContent = invoiceStateLabel(invoice)
+  const pill = invoiceStatusPill(invoice, localDate())
+  state.dataset.tone = pill.tone
+  state.textContent = pill.label
   return state
 }
 
@@ -235,7 +240,10 @@ export const renderInvoiceDetail = (
   },
 ): void => {
   required<HTMLElement>('[data-invoice-detail-number]').textContent = invoice.number
-  required<HTMLElement>('[data-invoice-detail-state]').textContent = invoiceStateLabel(invoice)
+  const detailState = required<HTMLElement>('[data-invoice-detail-state]')
+  const detailPill = invoiceStatusPill(invoice, localDate())
+  detailState.dataset.tone = detailPill.tone
+  detailState.textContent = detailPill.label
   required<HTMLElement>('[data-invoice-detail-client]').textContent = clientLabel(
     invoice.client_id,
   )
@@ -556,6 +564,9 @@ export const createInvoicePaymentController = (
   const transitionResult = required<HTMLElement>('[data-invoice-transition-result]')
   const transitionSubmit = required<HTMLButtonElement>('[data-invoice-transition-submit]')
   const printInvoice = required<HTMLButtonElement>('[data-invoice-print]')
+  const hoursExport = required<HTMLElement>('[data-invoice-hours-export]')
+  const hoursToggle = required<HTMLButtonElement>('[data-invoice-hours-toggle]')
+  const hoursMenu = required<HTMLElement>('[data-invoice-hours-menu]')
   const editInvoice = required<HTMLButtonElement>('[data-invoice-edit]')
   const editDialog = required<HTMLDialogElement>('[data-invoice-edit-dialog]')
   const editForm = required<HTMLFormElement>('[data-invoice-edit-form]')
@@ -742,6 +753,11 @@ export const createInvoicePaymentController = (
     overflowToggle.setAttribute('aria-expanded', 'false')
   }
 
+  const closeHoursMenu = (): void => {
+    hoursMenu.hidden = true
+    hoursToggle.setAttribute('aria-expanded', 'false')
+  }
+
   const syncControls = (): void => {
     const session = current()
     const canWrite =
@@ -817,6 +833,9 @@ export const createInvoicePaymentController = (
       if (available) anyTransition = true
     }
     overflow.hidden = !anyTransition
+    // Reading, not writing: anyone who can see the invoice can export its hours.
+    hoursExport.hidden = invoice === null || api.downloadInvoiceHoursReport === undefined
+    if (hoursExport.hidden) closeHoursMenu()
     overflowToggle.disabled = controlsLocked || !anyTransition
     if (!anyTransition || controlsLocked) closeOverflow()
     readonlyNotice.hidden = session === null || canWrite
@@ -2544,6 +2563,43 @@ export const createInvoicePaymentController = (
   printInvoice.addEventListener('click', () => {
     window.print()
   })
+  hoursToggle.addEventListener('click', () => {
+    const opening = hoursMenu.hidden
+    hoursMenu.hidden = !opening
+    hoursToggle.setAttribute('aria-expanded', opening ? 'true' : 'false')
+  })
+  document.addEventListener('click', (event) => {
+    if (hoursMenu.hidden) return
+    const target = event.target
+    if (target instanceof Node && hoursExport.contains(target)) return
+    closeHoursMenu()
+  })
+  for (const item of hoursMenu.querySelectorAll<HTMLButtonElement>('[data-hours-format]')) {
+    item.addEventListener('click', () => {
+      closeHoursMenu()
+      const session = current()
+      const download = api.downloadInvoiceHoursReport
+      if (session === null || invoice === null || download === undefined) return
+      const format = item.dataset.hoursFormat as InvoiceHoursReportFormat
+      const detail = item.dataset.hoursDetail === 'summary' ? 'summary' : 'detailed'
+      status.textContent = 'Preparing the hours report…'
+      void download(invoice.id, format, detail, session.signal)
+        .then(({ blob, filename }) => {
+          if (current() !== session) return
+          const url = URL.createObjectURL(blob)
+          const link = document.createElement('a')
+          link.href = url
+          link.download = filename
+          link.click()
+          setTimeout(() => URL.revokeObjectURL(url), 0)
+          status.textContent = ''
+        })
+        .catch((error: unknown) => {
+          if (current() !== session) return
+          status.textContent = apiMessage(error)
+        })
+    })
+  }
 
   return {
     async activate(identity, signal, onSessionFailure) {

@@ -13,6 +13,7 @@ import {
   secondIdentity,
   timestamp,
   type SenderIdentity,
+  type ShellApi,
   type SsoDomain,
 } from './support/shell-harness.js'
 
@@ -171,6 +172,59 @@ describe('company settings', () => {
     globalThis.location.hash = `#${section}`
     globalThis.dispatchEvent(new Event('hashchange'))
   }
+
+  it('[browser] edits the company information and default values invoices print', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    globalThis.location.hash = '#invoices'
+    const updateInvoiceDefaults = vi.fn(async (patch: Record<string, unknown>) => ({
+      company_name: 'CONFLICT LLC',
+      company_address: null,
+      notes: null,
+      subject: null,
+      ...patch,
+    }))
+    const api: ShellApi = {
+      ...companyApi(),
+      getInvoiceDefaults: vi.fn(async () => ({
+        company_name: 'CONFLICT LLC',
+        company_address: null,
+        notes: null,
+        subject: null,
+      })),
+      updateInvoiceDefaults,
+    }
+    await mountShell(api)
+
+    const form = document.querySelector<HTMLFormElement>('[data-invoice-defaults-form]')!
+    await vi.waitFor(() => expect(form.hidden).toBe(false))
+    // A missing address is said, because the invoice prints without it.
+    expect(document.querySelector('[data-settings-invoices-status]')?.textContent).toContain(
+      'No company address yet',
+    )
+    expect(document.querySelector<HTMLInputElement>('[data-invoice-defaults-name]')!.value).toBe(
+      'CONFLICT LLC',
+    )
+    document.querySelector<HTMLTextAreaElement>('[data-invoice-defaults-address]')!.value =
+      '100 Example Ave, STE 200\nSpringfield, IL, 62701'
+    document.querySelector<HTMLTextAreaElement>('[data-invoice-defaults-notes]')!.value =
+      'Beneficiary:\n*CONFLICT LLC*'
+    form.requestSubmit()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-defaults-result]')?.textContent).toBe('Saved.'),
+    )
+    // Blank subject is no default, sent as null rather than an empty string.
+    expect(updateInvoiceDefaults).toHaveBeenLastCalledWith(
+      {
+        company_name: 'CONFLICT LLC',
+        company_address: '100 Example Ave, STE 200\nSpringfield, IL, 62701',
+        subject: null,
+        notes: 'Beneficiary:\n*CONFLICT LLC*',
+      },
+      expect.any(AbortSignal),
+    )
+    globalThis.location.hash = ''
+  })
 
   it('[browser #801] shows the payment reminder default, saves a change, and switches it off', async () => {
     stubModulesEndpoint()

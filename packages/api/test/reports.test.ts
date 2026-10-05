@@ -2525,6 +2525,43 @@ for (const [runtime, factory] of factories) {
       expect((await harness.request(`${base}&grain=week`)).status).toBe(422);
     });
 
+    it("[security] withholds an internal note from a client audience and keeps it for staff (D20)", async () => {
+      // The client portal shows this report to clients; the staff report is
+      // the same rows with every note, as it always was.
+      const reader = await factory();
+      harness = reader;
+      await seedDetailedDay(reader);
+      await reader.run(
+        `UPDATE time_entries SET notes = CASE id
+           WHEN 101 THEN 'shown to the client' WHEN 111 THEN 'internal: margin is thin'
+           ELSE 'follows the organization' END,
+         client_visible = CASE id WHEN 101 THEN 1 WHEN 111 THEN 0 ELSE NULL END
+         WHERE id IN (101, 111, 112)`,
+        [],
+      );
+      const base = "/reports/detailed-time?from=2026-08-10&to=2026-08-10&project_id=1&grain=entry";
+      const notes = async (query: string) =>
+        ((await (await reader.request(`${base}${query}`)).json()) as {
+          data: { rows: Array<{ notes: string | null }> };
+        }).data.rows.map((row) => row.notes);
+
+      expect(await notes("")).toEqual([
+        "shown to the client",
+        "internal: margin is thin",
+        "follows the organization",
+      ]);
+      expect(await notes("&audience=internal")).toEqual(await notes(""));
+      expect(await notes("&audience=client")).toEqual([
+        "shown to the client",
+        null,
+        "follows the organization",
+      ]);
+      // An organization that defaults to internal withholds the unmarked one too.
+      await reader.run(`UPDATE organizations SET report_notes_client_visible_default = 0`, []);
+      expect(await notes("&audience=client")).toEqual(["shown to the client", null, null]);
+      expect((await reader.request(`${base}&audience=everyone`)).status).toBe(422);
+    });
+
     /**
      * Issue 708. An unclaimed hour on a banded project is ambiguous today:
      * work a band will absorb at the next generation, work a ceiling left over

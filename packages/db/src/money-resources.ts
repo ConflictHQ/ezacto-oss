@@ -147,6 +147,29 @@ export interface InvoiceDeliveryContext {
   lineItems: InvoiceDeliveryLine[]
 }
 
+/**
+ * Everything the invoice document prints (issue 626), read as one snapshot:
+ * the delivery context's money and lines, and the parts of Harvest's page the
+ * email does not carry -- both addresses, the purchase order, the notes, the
+ * terms, the rates beside each adjustment, what has been paid, and which
+ * uploaded mark goes in the corner.
+ */
+export interface InvoiceDocumentContext extends InvoiceDeliveryContext {
+  purchaseOrder: string | null
+  notes: string | null
+  paymentTerms: 'upon_receipt' | 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'custom'
+  discountRatePpm: number | null
+  taxRatePpm: number | null
+  tax2RatePpm: number | null
+  dueAmountCents: number
+  paidAmountCents: number
+  /** Null where the organization has entered none. */
+  organizationAddress: string | null
+  clientAddress: string | null
+  /** The light-ground wordmark, where one has been uploaded. */
+  logo: { fileKey: string; contentType: string } | null
+}
+
 export interface InvoiceDeliveryJob {
   deliveryId: number
   senderIdentityId: number
@@ -689,6 +712,70 @@ const deliveryLinesSelect = `SELECT kind, description, quantity,
 
 type RawDeliveryContext = Omit<InvoiceDeliveryContext, 'lineItems'>
 
+const documentContextSelect = `SELECT invoice.id AS "invoiceId", invoice.number, invoice.subject,
+    invoice.currency, invoice.amount_cents AS "amountCents",
+    invoice.discount_amount_cents AS "discountAmountCents",
+    invoice.tax_amount_cents AS "taxAmountCents",
+    invoice.tax2_amount_cents AS "tax2AmountCents",
+    invoice.issue_date AS "issueDate", invoice.due_date AS "dueDate",
+    organization.name AS "organizationName", client.name AS "clientName",
+    invoice.purchase_order AS "purchaseOrder", invoice.notes,
+    invoice.payment_terms AS "paymentTerms",
+    invoice.discount_rate_ppm AS "discountRatePpm",
+    invoice.tax_rate_ppm AS "taxRatePpm", invoice.tax2_rate_ppm AS "tax2RatePpm",
+    invoice.due_amount_cents AS "dueAmountCents",
+    (SELECT coalesce(sum(payment.amount_cents), 0) FROM invoice_payments payment
+     WHERE payment.invoice_id = invoice.id) AS "paidAmountCents",
+    organization.address AS "organizationAddress", client.address AS "clientAddress",
+    mark.file_key AS "logoFileKey", mark.content_type AS "logoContentType"
+  FROM invoices invoice
+  JOIN clients client ON client.id = invoice.client_id
+  JOIN organizations organization ON organization.id = 1
+  LEFT JOIN brand_assets mark ON mark.slot = 'wordmark_light'
+  WHERE invoice.id = ?`
+
+type RawDocumentContext = Omit<InvoiceDocumentContext, 'lineItems' | 'logo'> & {
+  logoFileKey: string | null
+  logoContentType: string | null
+}
+
+const documentContext = (
+  { logoFileKey, logoContentType, ...row }: RawDocumentContext,
+  lineItems: InvoiceDeliveryLine[],
+): InvoiceDocumentContext => ({
+  ...row,
+  lineItems,
+  logo:
+    logoFileKey === null || logoContentType === null
+      ? null
+      : { fileKey: logoFileKey, contentType: logoContentType },
+})
+
+/** The same one-snapshot read as the delivery context, for the same reason. */
+const readConsistentDocumentContext = async (
+  database: MoneyResourceDatabase,
+  invoiceId: number,
+): Promise<InvoiceDocumentContext | null> => {
+  const client = database.$client
+  if (isD1Client(client)) {
+    const [header, lines] = await client.batch([
+      client.prepare(documentContextSelect).bind(invoiceId),
+      client.prepare(deliveryLinesSelect).bind(invoiceId),
+    ])
+    if (header === undefined || lines === undefined) {
+      throw new Error('D1 invoice document snapshot batch returned incomplete results')
+    }
+    const row = (header.results[0] as RawDocumentContext | undefined) ?? null
+    if (row === null) return null
+    return documentContext(row, lines.results as unknown as InvoiceDeliveryLine[])
+  }
+  return client.transaction(() => {
+    const row = client.prepare(documentContextSelect).get(invoiceId) as RawDocumentContext | undefined
+    if (row === undefined) return null
+    return documentContext(row, client.prepare(deliveryLinesSelect).all(invoiceId) as InvoiceDeliveryLine[])
+  })()
+}
+
 /**
  * The email states a total and then lists what makes it up, so the lines and
  * every header component of that total -- discount and both taxes included --
@@ -1046,6 +1133,11 @@ export class MoneyResourceRepository {
   async getInvoiceDeliveryContext(id: number): Promise<InvoiceDeliveryContext | null> {
     assertPositiveId(id, 'invoice id')
     return readConsistentDeliveryContext(this.database, id)
+  }
+
+  async getInvoiceDocumentContext(id: number): Promise<InvoiceDocumentContext | null> {
+    assertPositiveId(id, 'invoice id')
+    return readConsistentDocumentContext(this.database, id)
   }
 
   async listInvoiceDeliveryJobs(eventId: string): Promise<InvoiceDeliveryJob[]> {

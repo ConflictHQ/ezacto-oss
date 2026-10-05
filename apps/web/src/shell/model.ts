@@ -72,6 +72,12 @@ export interface ApprovalQueuePage {
   readonly nextCursor: string | null
 }
 
+/** Whether the hours report goes with an invoice, at which detail, in which files. */
+export interface InvoiceJournalChoice {
+  readonly level: 'detailed' | 'summary' | false
+  readonly formats: readonly ('pdf' | 'csv' | 'xlsx')[]
+}
+
 export interface ShellApi
   extends StaffPaymentsApi,
     Partial<ClientDirectoryApi>,
@@ -245,6 +251,13 @@ export interface ShellApi
     input: InvoiceGenerationInput,
     signal?: AbortSignal,
   ): Promise<Invoice>
+  /** The hours report (work journal, issue 647) rendered when an invoice is emailed. */
+  getOrganizationInvoiceJournal?(signal?: AbortSignal): Promise<InvoiceJournalChoice>
+  setInvoiceJournal?(
+    invoiceId: number,
+    choice: InvoiceJournalChoice,
+    signal?: AbortSignal,
+  ): Promise<void>
   transitionInvoice?(
     id: number,
     commandId: string,
@@ -502,7 +515,7 @@ export const paletteDestinations: readonly PaletteDestination[] = [
     gate: primaryNav('/invoices'),
   },
   {
-    label: 'Generate invoice',
+    label: 'New invoice',
     href: '/invoices/new',
     group: 'Bill',
     keywords: 'new draft',
@@ -2202,13 +2215,51 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+
+  getInvoiceDefaults: async (signal) =>
+    (await client.getInvoiceDefaults({ ...withSignal(signal) })).data,
+  updateInvoiceDefaults: async (patch, signal) =>
+    (await client.updateInvoiceDefaults({ body: patch, ...withSignal(signal) })).data,
+  getOrganizationInvoiceJournal: async (signal) => {
+    const data = (await client.getOrganizationInvoiceDocuments({ ...withSignal(signal) })).data
+    const level = data.attach_journal
+    return {
+      level: level === 'detailed' || level === 'summary' ? level : false,
+      formats: data.journal_formats,
+    }
+  },
+  setInvoiceJournal: async (invoiceId, choice, signal) => {
+    await client.setInvoiceDocumentPreference({
+      id: invoiceId,
+      body:
+        choice.level === false
+          ? { attach_journal: false }
+          : { attach_journal: choice.level, journal_formats: [...choice.formats] },
+      ...withSignal(signal),
+    })
+  },
 })
 
-export const createSameOriginShellApi = (): ShellApi =>
-  createShellApi(
+export const createSameOriginShellApi = (): ShellApi => ({
+  ...createShellApi(
     new EzactoClient({
       baseUrl: globalThis.location.origin,
       fetch: (input, init) =>
         globalThis.fetch(input, { ...init, credentials: 'same-origin' }),
     }),
-  )
+  ),
+  // A file, not JSON, so it is fetched here rather than through the client.
+  downloadInvoiceHoursReport: async (id, format, detail, signal) => {
+    const response = await globalThis.fetch(
+      `/api/v1/invoices/${encodeURIComponent(String(id))}/hours-report?format=${format}&detail=${detail}`,
+      { credentials: 'same-origin', ...(signal === undefined ? {} : { signal }) },
+    )
+    if (!response.ok) {
+      const body: unknown = await response.json().catch(() => null)
+      throw new EzactoApiError(response.status, body, response.headers.get('x-request-id'))
+    }
+    const disposition = response.headers.get('content-disposition') ?? ''
+    const named = /filename="([^"]+)"/u.exec(disposition)?.[1]
+    return { blob: await response.blob(), filename: named ?? `hours-${String(id)}.${format}` }
+  },
+})

@@ -19,6 +19,10 @@ const app = (
     setInvoiceJournal?: ReturnType<typeof vi.fn>
     readOrganizationJournal?: ReturnType<typeof vi.fn>
     setOrganizationJournal?: ReturnType<typeof vi.fn>
+    readInvoiceJournalFormats?: ReturnType<typeof vi.fn>
+    setInvoiceJournalFormats?: ReturnType<typeof vi.fn>
+    readOrganizationJournalFormats?: ReturnType<typeof vi.fn>
+    setOrganizationJournalFormats?: ReturnType<typeof vi.fn>
   } = {},
   profile = 'administrator',
 ) => {
@@ -34,6 +38,14 @@ const app = (
     setInvoiceJournal: overrides.setInvoiceJournal ?? vi.fn(async () => true),
     readOrganizationJournal: overrides.readOrganizationJournal ?? vi.fn(async () => false),
     setOrganizationJournal: overrides.setOrganizationJournal ?? vi.fn(async () => undefined),
+    readInvoiceJournalFormats:
+      overrides.readInvoiceJournalFormats ??
+      vi.fn(async () => ({ invoice: null, organization: ['pdf'] })),
+    setInvoiceJournalFormats: overrides.setInvoiceJournalFormats ?? vi.fn(async () => true),
+    readOrganizationJournalFormats:
+      overrides.readOrganizationJournalFormats ?? vi.fn(async () => ['pdf']),
+    setOrganizationJournalFormats:
+      overrides.setOrganizationJournalFormats ?? vi.fn(async () => undefined),
   }
   const instance = new Hono<{ Bindings: object; Variables: Record<string, unknown> }>()
   instance.use('*', async (context, next) => {
@@ -78,6 +90,9 @@ describe('reading what an invoice will do', () => {
         attach_journal: null,
         organization_attach_journal: false,
         effective_journal: false,
+        journal_formats: null,
+        organization_journal_formats: ['pdf'],
+        effective_journal_formats: ['pdf'],
       },
     })
   })
@@ -156,7 +171,9 @@ describe('the organization default', () => {
       await (
         await (instance as never as Hono<never>).request('/settings/invoice-documents')
       ).json(),
-    ).toEqual({ data: { attach_pdf: true, attach_files: true, attach_journal: false } })
+    ).toEqual({
+      data: { attach_pdf: true, attach_files: true, attach_journal: false, journal_formats: ['pdf'] },
+    })
 
     const response = await post(
       instance as never as Hono<never>,
@@ -362,5 +379,131 @@ describe('the work journal, which is not a yes or no', () => {
     expect(service.setInvoicePreference).toHaveBeenCalledWith(1315, 'document', true)
     expect(service.setInvoicePreference).toHaveBeenCalledWith(1315, 'files', false)
     expect(service.setInvoiceJournal).toHaveBeenCalledWith(1315, 'detailed')
+  })
+})
+
+describe('the files the journal goes as', () => {
+  it('[unit] reports the invoice set, the organization set and which one goes', async () => {
+    const { app: instance } = app({
+      readInvoiceJournalFormats: vi.fn(async () => ({
+        invoice: ['pdf', 'xlsx'],
+        organization: ['csv'],
+      })),
+    })
+    const body = (await (
+      await (instance as never as Hono<never>).request('/invoices/1315/document-preference')
+    ).json()) as { data: Record<string, unknown> }
+    expect(body.data).toMatchObject({
+      journal_formats: ['pdf', 'xlsx'],
+      organization_journal_formats: ['csv'],
+      effective_journal_formats: ['pdf', 'xlsx'],
+    })
+  })
+
+  it('[unit] accepts any non-empty set in the product order, and null to follow', async () => {
+    for (const [sent, stored] of [
+      [['xlsx', 'csv'], ['csv', 'xlsx']],
+      [['pdf'], ['pdf']],
+      [null, null],
+    ] as const) {
+      const { app: instance, service } = app()
+      const response = await post(
+        instance as never as Hono<never>,
+        '/invoices/1315/document-preference',
+        { journal_formats: sent },
+      )
+      expect(response.status).toBe(200)
+      expect(service.setInvoiceJournalFormats).toHaveBeenCalledWith(1315, stored)
+    }
+  })
+
+  it('[api] names journal_formats, and never writes, on anything that is not a set', async () => {
+    for (const sent of [[], ['pdf', 'pdf'], ['docx'], 'pdf', [true], {}, ['PDF']]) {
+      const { app: instance, service } = app()
+      const response = await post(
+        instance as never as Hono<never>,
+        '/invoices/1315/document-preference',
+        { journal_formats: sent },
+      )
+      expect(response.status).toBe(422)
+      const body = (await response.json()) as { error: { fields: { field: string }[] } }
+      expect(body.error.fields.map((field) => field.field)).toEqual(['journal_formats'])
+      expect(service.setInvoiceJournalFormats).not.toHaveBeenCalled()
+    }
+  })
+
+  it('[api] writes nothing when any field in the body is at fault', async () => {
+    // Saving the valid half of a refused body would leave a setting nobody
+    // chose: the level changed, the files the caller sent with it not.
+    const { app: instance, service } = app()
+    const response = await post(
+      instance as never as Hono<never>,
+      '/invoices/1315/document-preference',
+      { attach_journal: 'summary', journal_formats: ['docx'] },
+    )
+    expect(response.status).toBe(422)
+    expect(service.setInvoiceJournal).not.toHaveBeenCalled()
+    expect(service.setInvoiceJournalFormats).not.toHaveBeenCalled()
+    const organization = await post(
+      instance as never as Hono<never>,
+      '/settings/invoice-documents',
+      { journal_formats: ['csv'], attach_pdf: 'yes' },
+    )
+    expect(organization.status).toBe(422)
+    expect(service.setOrganizationJournalFormats).not.toHaveBeenCalled()
+  })
+
+  it('[unit] sets the level and the files together on an invoice', async () => {
+    // How the invoice screen saves its choice: one call, both answers.
+    const { app: instance, service } = app()
+    const response = await post(instance as never as Hono<never>, '/invoices/1315/document-preference', {
+      attach_journal: 'detailed',
+      journal_formats: ['pdf', 'csv'],
+    })
+    expect(response.status).toBe(200)
+    expect(service.setInvoiceJournal).toHaveBeenCalledWith(1315, 'detailed')
+    expect(service.setInvoiceJournalFormats).toHaveBeenCalledWith(1315, ['pdf', 'csv'])
+  })
+
+  it('[api] answers 404 when the invoice does not exist', async () => {
+    const { app: instance } = app({ setInvoiceJournalFormats: vi.fn(async () => false) })
+    const response = await post(
+      instance as never as Hono<never>,
+      '/invoices/1315/document-preference',
+      { journal_formats: ['csv'] },
+    )
+    expect(response.status).toBe(404)
+  })
+
+  it('[unit] sets and reads the organization set, and refuses null there', async () => {
+    const { app: instance, service } = app({
+      readOrganizationJournalFormats: vi.fn(async () => ['pdf', 'xlsx']),
+    })
+    const response = await post(instance as never as Hono<never>, '/settings/invoice-documents', {
+      journal_formats: ['xlsx', 'pdf'],
+    })
+    expect(response.status).toBe(200)
+    expect(service.setOrganizationJournalFormats).toHaveBeenCalledWith(['pdf', 'xlsx'])
+    expect(((await response.json()) as { data: Record<string, unknown> }).data.journal_formats).toEqual([
+      'pdf',
+      'xlsx',
+    ])
+    const refused = await post(instance as never as Hono<never>, '/settings/invoice-documents', {
+      journal_formats: null,
+    })
+    expect(refused.status).toBe(422)
+    expect(service.setOrganizationJournalFormats).toHaveBeenCalledTimes(1)
+  })
+
+  it('[security] refuses a profile that does not raise invoices', async () => {
+    const { app: instance, service } = app({}, 'member')
+    expect(
+      (
+        await post(instance as never as Hono<never>, '/invoices/1315/document-preference', {
+          journal_formats: ['csv'],
+        })
+      ).status,
+    ).toBe(403)
+    expect(service.setInvoiceJournalFormats).not.toHaveBeenCalled()
   })
 })

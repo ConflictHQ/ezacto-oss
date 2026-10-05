@@ -1,4 +1,5 @@
 import BetterSqlite3 from 'better-sqlite3'
+import { crc32, deflateSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createContainerDatabase } from '@ezacto/db'
 import { migrateContainer } from '@ezacto/db'
@@ -9,7 +10,10 @@ import {
   setInvoiceFilesPolicy,
   setOrganizationJournalPolicy,
   setInvoiceJournalPolicy,
+  setOrganizationJournalFormats,
+  setInvoiceJournalFormats,
 } from '@ezacto/db'
+import type { InvoiceDocumentContext } from '@ezacto/db/d1'
 import { createAttachmentResolver, createInvoiceDocumentPort } from '../src/invoice-documents.js'
 
 /**
@@ -22,7 +26,7 @@ import { createAttachmentResolver, createInvoiceDocumentPort } from '../src/invo
 const at = '2026-09-12T12:00:00.000Z'
 let sqlite: BetterSqlite3.Database | null = null
 
-const context = {
+const context: InvoiceDocumentContext = {
   invoiceId: 1,
   number: '1315',
   subject: 'Tracked work',
@@ -38,14 +42,28 @@ const context = {
   lineItems: [
     { kind: 'Service', description: 'Advisory', quantity: 1, unitPriceCents: 319_495, amountCents: 319_495 },
   ],
+  purchaseOrder: null,
+  notes: null,
+  paymentTerms: 'net_30',
+  discountRatePpm: null,
+  taxRatePpm: null,
+  tax2RatePpm: null,
+  dueAmountCents: 319_495,
+  paidAmountCents: 0,
+  organizationAddress: null,
+  clientAddress: null,
+  logo: null,
 }
 
 const objectStore = () => {
   const written = new Map<string, Uint8Array>()
+  const types = new Map<string, string>()
   return {
     written,
-    put: vi.fn(async (key: string, bytes: ArrayBuffer, _contentType: string) => {
+    types,
+    put: vi.fn(async (key: string, bytes: ArrayBuffer, contentType: string) => {
       written.set(key, new Uint8Array(bytes))
+      types.set(key, contentType)
     }),
     get: vi.fn(async (key: string) => {
       const bytes = written.get(key)
@@ -54,7 +72,12 @@ const objectStore = () => {
   }
 }
 
-const harness = async (overrides: { paymentUrl?: () => Promise<string | null> } = {}) => {
+const harness = async (
+  overrides: {
+    paymentUrl?: () => Promise<string | null>
+    documentContext?: () => Promise<InvoiceDocumentContext>
+  } = {},
+) => {
   const database = new BetterSqlite3(':memory:')
   await migrateContainer(database)
   for (const trigger of database
@@ -80,7 +103,7 @@ const harness = async (overrides: { paymentUrl?: () => Promise<string | null> } 
     objects,
     now: () => at,
     source: {
-      deliveryContext: async () => context as never,
+      documentContext: overrides.documentContext ?? (async () => context),
       invoiceVersion: async () => 7,
       paymentUrl: overrides.paymentUrl ?? (async () => null),
     },
@@ -301,14 +324,21 @@ describe('the work behind the invoice', () => {
         VALUES (1, 1, 1, 1, '${at}', '${at}');
     `)
 
-  const claim = (seconds: number, notes: string, spentDate = '2026-09-01') => {
+  const claim = (
+    seconds: number,
+    notes: string,
+    spentDate = '2026-09-01',
+    clientVisible: 0 | 1 | null = null,
+  ) => {
     entryId += 1
     sqlite!.exec(`
       INSERT INTO time_entries (id, user_id, project_id, task_id, user_assignment_id,
                                 task_assignment_id, spent_date, seconds, seconds_without_timer,
-                                rounded_seconds, billable, notes, invoice_id, created_at, updated_at)
+                                rounded_seconds, billable, notes, client_visible, invoice_id,
+                                created_at, updated_at)
         VALUES (${String(entryId)}, 1, 1, 1, 1, 1, '${spentDate}', ${String(seconds)},
-                ${String(seconds)}, ${String(seconds)}, 1, '${notes}', 1, '${at}', '${at}');
+                ${String(seconds)}, ${String(seconds)}, 1, '${notes}',
+                ${clientVisible === null ? 'NULL' : String(clientVisible)}, 1, '${at}', '${at}');
     `)
   }
 
@@ -383,7 +413,230 @@ describe('the work behind the invoice', () => {
     const stored = objects.written.get(ref!.key)!
     const text = Array.from(stored, (b) => String.fromCharCode(b)).join('')
     expect(text.startsWith('%PDF-')).toBe(true)
-    expect(text).toContain('(WORK DETAIL) Tj')
+    expect(text).toContain('(Detailed time report) Tj')
     expect(text).toContain('(1.50) Tj')
+  })
+})
+
+describe('the files the work goes as', () => {
+  // The same chain as the journal tests above.
+  let entryId = 100
+  const seedWork = () =>
+    sqlite!.exec(`
+      INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+        VALUES (1, 'R.', 'Adeyemi', 'administrator', '[]', '${at}', '${at}');
+      INSERT INTO projects (id, client_id, name, code, is_active, billing_method, created_at, updated_at)
+        VALUES (1, 1, 'Phase 1', 'P1', 1, 'time_materials', '${at}', '${at}');
+      INSERT INTO tasks (id, name, billable_by_default, is_default, is_active, created_at, updated_at)
+        VALUES (1, 'Advisory', 1, 1, 1, '${at}', '${at}');
+      INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+        VALUES (1, 1, 1, '${at}', '${at}');
+      INSERT INTO task_assignments (id, project_id, task_id, billable, created_at, updated_at)
+        VALUES (1, 1, 1, 1, '${at}', '${at}');
+    `)
+  const claim = (notes: string, clientVisible: 0 | 1 | null = null) => {
+    entryId += 1
+    sqlite!.exec(`
+      INSERT INTO time_entries (id, user_id, project_id, task_id, user_assignment_id,
+                                task_assignment_id, spent_date, seconds, seconds_without_timer,
+                                rounded_seconds, billable, notes, client_visible, invoice_id,
+                                created_at, updated_at)
+        VALUES (${String(entryId)}, 1, 1, 1, 1, 1, '2026-09-01', 5400, 5400, 5400, 1, '${notes}',
+                ${clientVisible === null ? 'NULL' : String(clientVisible)}, 1, '${at}', '${at}');
+    `)
+  }
+  const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
+
+  it('[money] attaches one file per format, in order, each typed for what it is', async () => {
+    const { orm, port, objects } = await harness()
+    seedWork()
+    claim('Reviewed the forecast model')
+    await setOrganizationAttachPolicy(orm as never, true)
+    await setOrganizationJournalPolicy(orm as never, 'detailed')
+    await setOrganizationJournalFormats(orm as never, ['xlsx', 'csv', 'pdf'])
+    const refs = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    expect(refs).toEqual([
+      { key: 'invoice-documents/1/100.pdf', filename: 'invoice-1315.pdf', contentType: 'application/pdf' },
+      {
+        key: 'invoice-documents/1/100-journal.pdf',
+        filename: 'work-detailed-1315.pdf',
+        contentType: 'application/pdf',
+      },
+      {
+        key: 'invoice-documents/1/100-journal.csv',
+        filename: 'work-detailed-1315.csv',
+        contentType: 'text/csv; charset=utf-8',
+      },
+      {
+        key: 'invoice-documents/1/100-journal.xlsx',
+        filename: 'work-detailed-1315.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      },
+    ])
+    // Stored as what they are, so the queue consumer attaches real files.
+    for (const ref of refs) expect(objects.types.get(ref.key)).toBe(ref.contentType)
+    expect(text(objects.written.get('invoice-documents/1/100-journal.csv')!)).toContain(
+      'Reviewed the forecast model,1.50',
+    )
+    expect(Array.from(objects.written.get('invoice-documents/1/100-journal.xlsx')!.slice(0, 4))).toEqual([
+      0x50, 0x4b, 0x03, 0x04,
+    ])
+  })
+
+  it('[money] sends exactly the PDF it always sent when nobody chose a format', async () => {
+    const { orm, port, objects } = await harness()
+    seedWork()
+    claim('Reviewed the forecast model')
+    await setOrganizationJournalPolicy(orm as never, 'summary')
+    expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toEqual([
+      {
+        key: 'invoice-documents/1/100-journal.pdf',
+        filename: 'work-summary-1315.pdf',
+        contentType: 'application/pdf',
+      },
+    ])
+    expect(objects.put).toHaveBeenCalledTimes(1)
+  })
+
+  it("[money] lets one invoice send a spreadsheet while the default sends the PDF", async () => {
+    const { orm, port } = await harness()
+    seedWork()
+    claim('Reviewed the forecast model')
+    await setOrganizationJournalPolicy(orm as never, 'detailed')
+    await setInvoiceJournalFormats(orm as never, { invoiceId: 1, formats: ['csv'] })
+    expect((await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).map((ref) => ref.filename)).toEqual([
+      'work-detailed-1315.csv',
+    ])
+  })
+
+  it('[money] renders none of the files when the invoice claimed no time', async () => {
+    const { orm, port, objects } = await harness()
+    await setOrganizationJournalPolicy(orm as never, 'detailed')
+    await setOrganizationJournalFormats(orm as never, ['pdf', 'csv', 'xlsx'])
+    expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toEqual([])
+    expect(objects.put).not.toHaveBeenCalled()
+  })
+
+  it('[security] sends no internal note in any file (D20)', async () => {
+    const { orm, port, objects } = await harness()
+    seedWork()
+    claim('Shared with the client', 1)
+    claim('Internal: discount fight', 0)
+    await setOrganizationJournalPolicy(orm as never, 'detailed')
+    await setOrganizationJournalFormats(orm as never, ['pdf', 'csv', 'xlsx'])
+    await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    const csv = text(objects.written.get('invoice-documents/1/100-journal.csv')!)
+    expect(csv).toContain('Shared with the client')
+    expect(csv).not.toContain('discount fight')
+    // The PDF sets text as Latin-1 literals and the workbook stores it as
+    // UTF-8 XML; neither carries the note.
+    for (const key of ['invoice-documents/1/100-journal.pdf', 'invoice-documents/1/100-journal.xlsx']) {
+      const raw = Array.from(objects.written.get(key)!, (byte) => String.fromCharCode(byte)).join('')
+      expect(raw).not.toContain('discount fight')
+    }
+    // The hours are still billed and still shown.
+    expect(csv.split('\r\n').filter((row) => row.endsWith(',1.50'))).toHaveLength(2)
+  })
+
+  it('[money] renders the same files to the same keys on a retried delivery', async () => {
+    // Rendered rather than recorded, so a retry must reproduce what the first
+    // attempt wrote, byte for byte, under the same names.
+    const { orm, port, objects } = await harness()
+    seedWork()
+    claim('Reviewed the forecast model')
+    await setOrganizationJournalPolicy(orm as never, 'detailed')
+    await setOrganizationJournalFormats(orm as never, ['pdf', 'csv', 'xlsx'])
+    const first = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    const bytes = new Map([...objects.written].map(([key, value]) => [key, Array.from(value)]))
+    const second = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    expect(second).toEqual(first)
+    for (const [key, value] of bytes) expect(Array.from(objects.written.get(key)!)).toEqual(value)
+  })
+})
+
+describe('the document laid out as Harvest\'s', () => {
+  /** A 1x1 RGB PNG, built here: the real wordmark is the operator's to upload. */
+  const tinyPng = (): Uint8Array => {
+    const chunk = (type: string, data: number[]) => {
+      const body = [...[...type].map((c) => c.charCodeAt(0)), ...data]
+      const crc = crc32(Uint8Array.from(body))
+      return [0, 0, 0, data.length, ...body, crc >>> 24, (crc >>> 16) & 255, (crc >>> 8) & 255, crc & 255]
+    }
+    return Uint8Array.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      ...chunk('IHDR', [0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0]),
+      ...chunk('IDAT', [...deflateSync(Uint8Array.from([0, 37, 79, 232]))]),
+      ...chunk('IEND', []),
+    ])
+  }
+  const pdfText = (bytes: Uint8Array) => Array.from(bytes, (b) => String.fromCharCode(b)).join('')
+
+  it('[unit] draws the uploaded light wordmark where the logo goes', async () => {
+    const key = 'brand/sha256/ab/' + 'a'.repeat(64)
+    const { orm, port, objects } = await harness({
+      documentContext: async () => ({ ...context, logo: { fileKey: key, contentType: 'image/png' } }),
+    })
+    await objects.put(key, tinyPng().buffer as ArrayBuffer, 'image/png')
+    await setOrganizationAttachPolicy(orm as never, true)
+    await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    const rendered = pdfText(objects.written.get('invoice-documents/1/100.pdf')!)
+    expect(rendered).toContain('/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB')
+    // The name stays in the From block; it is not also set where the logo went.
+    expect(rendered).not.toContain('39 738.5 Td\n(CONFLICT) Tj')
+  })
+
+  it('[unit] sets the company name instead when the mark cannot be fetched or decoded', async () => {
+    // A logo is never why an invoice does not go.
+    for (const stored of [null, Uint8Array.from([1, 2, 3])]) {
+      const key = 'brand/sha256/cd/' + 'c'.repeat(64)
+      const { orm, port, objects } = await harness({
+        documentContext: async () => ({ ...context, logo: { fileKey: key, contentType: 'image/png' } }),
+      })
+      if (stored !== null) await objects.put(key, stored.buffer as ArrayBuffer, 'image/png')
+      await setOrganizationAttachPolicy(orm as never, true)
+      expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toHaveLength(1)
+      const rendered = pdfText(objects.written.get('invoice-documents/1/100.pdf')!)
+      expect(rendered).not.toContain('/Subtype /Image')
+      expect(rendered).toContain('39 738.5 Td\n(CONFLICT) Tj')
+      sqlite?.close()
+      sqlite = null
+    }
+  })
+
+  it('[money] prints the purchase order, terms, adjustments, payments and notes it is given', async () => {
+    const { orm, port, objects } = await harness({
+      documentContext: async () => ({
+        ...context,
+        purchaseOrder: '4500000001',
+        paymentTerms: 'net_45',
+        discountAmountCents: 40_000,
+        discountRatePpm: 200_000,
+        amountCents: 160_000,
+        dueAmountCents: 0,
+        paidAmountCents: 160_000,
+        organizationAddress: '100 Example Ave, STE 200\nSpringfield, IL, 62701',
+        clientAddress: '13031 W. Jefferson Blvd.\nLA, CA 90094',
+        notes: 'Beneficiary:\n*CONFLICT LLC*',
+      }),
+    })
+    await setOrganizationAttachPolicy(orm as never, true)
+    await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    const rendered = pdfText(objects.written.get('invoice-documents/1/100.pdf')!)
+    for (const shown of [
+      '(PO Number) Tj',
+      '(4500000001) Tj',
+      '(2026-10-12 \\(Net 45\\)) Tj',
+      '(Discount \\(20%\\)) Tj',
+      '(-$400.00 USD) Tj',
+      '(Payments) Tj',
+      '(-$1,600.00 USD) Tj',
+      '(Amount Due) Tj',
+      '($0.00 USD) Tj',
+      '(Springfield, IL, 62701) Tj',
+      '(LA, CA 90094) Tj',
+      '(Notes) Tj',
+    ]) {
+      expect(rendered).toContain(shown)
+    }
   })
 })

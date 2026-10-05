@@ -51,8 +51,17 @@ export const invoiceStatesFor = (
   return [filter]
 }
 
+export type InvoiceHoursReportFormat = 'pdf' | 'csv' | 'xlsx'
+
 export interface InvoicePaymentApi {
   getInvoice(id: number, signal?: AbortSignal): Promise<Invoice>
+  /** The hours this invoice billed, as a file (the work journal, issue 647). */
+  downloadInvoiceHoursReport?(
+    id: number,
+    format: InvoiceHoursReportFormat,
+    detail: 'detailed' | 'summary',
+    signal?: AbortSignal,
+  ): Promise<{ readonly blob: Blob; readonly filename: string }>
   listInvoiceMessages(id: number, signal?: AbortSignal): Promise<readonly InvoiceMessage[]>
   listInvoicePayments(id: number, signal?: AbortSignal): Promise<readonly InvoicePayment[]>
   listInvoiceAttachments?(id: number, signal?: AbortSignal): Promise<readonly Attachment[]>
@@ -228,6 +237,29 @@ export const invoiceStateLabel = (invoice: Readonly<Invoice>): string => {
   // without ever being sent, so sending is not a step in the sequence.
   if (invoice.state === 'open' && typeof invoice.sent_at === 'string') return 'Sent'
   return invoice.state[0]!.toLocaleUpperCase('en-US') + invoice.state.slice(1)
+}
+
+/** `today` is the viewer's local calendar day, `YYYY-MM-DD`. */
+export const invoiceIsPastDue = (invoice: Readonly<Invoice>, today: string): boolean =>
+  invoice.state === 'open' && invoice.due_amount_cents > 0 && invoice.due_date < today
+
+export type InvoiceStatusTone = 'draft' | 'sent' | 'late' | 'paid' | 'neutral'
+
+/**
+ * The pill: the state label, except that an open invoice past its due date
+ * reads Late, and the colour it is drawn in. Open-but-unsent and closed stay
+ * neutral -- the four tones are the four states someone scans the list for.
+ */
+export const invoiceStatusPill = (
+  invoice: Readonly<Invoice>,
+  today: string,
+): { readonly label: string; readonly tone: InvoiceStatusTone } => {
+  if (invoiceIsPastDue(invoice, today)) return { label: 'Late', tone: 'late' }
+  const label = invoiceStateLabel(invoice)
+  if (invoice.state === 'draft') return { label, tone: 'draft' }
+  if (invoice.state === 'paid') return { label, tone: 'paid' }
+  if (label === 'Sent') return { label, tone: 'sent' }
+  return { label, tone: 'neutral' }
 }
 
 export const invoiceMessageLabel = (

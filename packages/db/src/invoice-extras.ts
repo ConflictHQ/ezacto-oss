@@ -1,3 +1,4 @@
+import { parseJournalFormats, type JournalFormat } from '@ezacto/core'
 import { sql } from 'drizzle-orm'
 import type { InvoiceStateDatabase } from './invoice-state.js'
 
@@ -16,7 +17,14 @@ import type { InvoiceStateDatabase } from './invoice-state.js'
  * something off today expects that to govern an invoice raised yesterday.
  */
 
-export const invoiceExtraKinds = ['document', 'files', 'thank_you', 'journal', 'reminders'] as const
+export const invoiceExtraKinds = [
+  'document',
+  'files',
+  'thank_you',
+  'journal',
+  'reminders',
+  'journal_formats',
+] as const
 export type InvoiceExtraKind = (typeof invoiceExtraKinds)[number]
 
 /**
@@ -24,16 +32,26 @@ export type InvoiceExtraKind = (typeof invoiceExtraKinds)[number]
  * because it is not a yes/no question -- it renders every entry that was billed
  * or the same hours totalled per project, and a preference that could only say
  * yes would have forced a second column beside it on the day it landed.
+ *
+ * `journal_formats` answers with the files that level goes as (migration
+ * 0096): a non-empty set of `pdf`, `csv` and `xlsx`, held in that order.
  */
-export type InvoiceExtraValue = boolean | 'detailed' | 'summary'
+export type InvoiceExtraValue = boolean | 'detailed' | 'summary' | readonly JournalFormat[]
 
 export type InvoiceExtras = Partial<Record<InvoiceExtraKind, InvoiceExtraValue>>
 
 const isKind = (value: string): value is InvoiceExtraKind =>
   (invoiceExtraKinds as readonly string[]).includes(value)
 
-const isValue = (value: unknown): value is InvoiceExtraValue =>
-  typeof value === 'boolean' || value === 'detailed' || value === 'summary'
+/**
+ * A stored value as this version reads it, or `null` when it cannot be read.
+ * Per kind, because a format list under `document` is as unreadable as a
+ * boolean under `journal_formats`.
+ */
+const valueFor = (kind: InvoiceExtraKind, value: unknown): InvoiceExtraValue | null => {
+  if (kind === 'journal_formats') return parseJournalFormats(value)
+  return typeof value === 'boolean' || value === 'detailed' || value === 'summary' ? value : null
+}
 
 /**
  * Reads a stored object, keeping only what this version understands.
@@ -54,7 +72,9 @@ export const parseInvoiceExtras = (stored: string | null): InvoiceExtras => {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
   const extras: InvoiceExtras = {}
   for (const [key, value] of Object.entries(parsed)) {
-    if (isKind(key) && isValue(value)) extras[key] = value
+    if (!isKind(key)) continue
+    const read = valueFor(key, value)
+    if (read !== null) extras[key] = read
   }
   return extras
 }

@@ -10030,7 +10030,7 @@
     "/api/v1/invoice-generations": {
       "post": {
         "operationId": "generateInvoice",
-        "summary": "Delegate transactional tracked-resource invoice generation",
+        "summary": "Create one draft invoice from tracked work, or a blank free-form draft",
         "tags": [
           "invoices"
         ],
@@ -16629,6 +16629,18 @@
             }
           },
           {
+            "name": "audience",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "internal",
+                "client"
+              ]
+            }
+          },
+          {
             "name": "invoice_state",
             "in": "query",
             "required": false,
@@ -19168,7 +19180,17 @@
               "minimum": 1
             }
           }
-        ]
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceDocumentPreferenceInput"
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/settings/invoice-documents": {
@@ -19276,7 +19298,230 @@
           }
         },
         "x-ezacto-runtime-path": "/api/v1/settings/invoice-documents",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationInvoiceDocumentsInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/invoices/{id}/hours-report": {
+      "get": {
+        "operationId": "downloadInvoiceHoursReport",
+        "summary": "Download the hours an invoice billed as a PDF, CSV or Excel workbook",
+        "tags": [
+          "money"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attachment content",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoices/:id/hours-report",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pdf",
+                "csv",
+                "xlsx"
+              ]
+            }
+          },
+          {
+            "name": "detail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "detailed",
+                "summary"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/settings/invoice-defaults": {
+      "get": {
+        "operationId": "getInvoiceDefaults",
+        "summary": "The company information invoices print and the values new drafts start with",
+        "tags": [
+          "money"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceDefaultsEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/settings/invoice-defaults",
         "x-ezacto-generate-client": true
+      },
+      "post": {
+        "operationId": "updateInvoiceDefaults",
+        "summary": "Change the company information or the default notes and subject",
+        "tags": [
+          "money"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceDefaultsEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/settings/invoice-defaults",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceDefaultsInput"
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/invoices/{id}/thank-you-preference": {
@@ -29756,72 +30001,102 @@
         "additionalProperties": false
       },
       "InvoiceGenerationInput": {
-        "type": "object",
-        "required": [
-          "client_id",
-          "from",
-          "to",
-          "project_ids",
-          "time_summary_type",
-          "expense_summary_type"
-        ],
-        "properties": {
-          "client_id": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "from": {
-            "type": "string",
-            "format": "date"
-          },
-          "to": {
-            "type": "string",
-            "format": "date"
-          },
-          "project_ids": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 10000,
-            "uniqueItems": true,
-            "items": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          "time_summary_type": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "project",
-                  "task",
-                  "people",
-                  "detailed"
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "client_id",
+              "to",
+              "project_ids",
+              "time_summary_type",
+              "expense_summary_type"
+            ],
+            "properties": {
+              "kind": {
+                "const": "tracked"
+              },
+              "client_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "from": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  {
+                    "type": "null"
+                  }
                 ]
               },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "expense_summary_type": {
-            "anyOf": [
-              {
+              "to": {
                 "type": "string",
-                "enum": [
-                  "project",
-                  "category",
-                  "people",
-                  "detailed"
+                "format": "date"
+              },
+              "project_ids": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 10000,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "time_summary_type": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "project",
+                      "task",
+                      "people",
+                      "detailed"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
                 ]
               },
-              {
-                "type": "null"
+              "expense_summary_type": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "project",
+                      "category",
+                      "people",
+                      "detailed"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
-            ]
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "client_id"
+            ],
+            "properties": {
+              "kind": {
+                "const": "free_form"
+              },
+              "client_id": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
           }
-        },
-        "additionalProperties": false
+        ]
       },
       "InvoiceCommandSnapshot": {
         "type": "object",
@@ -37204,6 +37479,220 @@
         },
         "additionalProperties": false
       },
+      "JournalFormats": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "pdf",
+            "csv",
+            "xlsx"
+          ]
+        },
+        "minItems": 1,
+        "maxItems": 3,
+        "uniqueItems": true
+      },
+      "InvoiceDocumentPreferenceInput": {
+        "type": "object",
+        "minProperties": 1,
+        "properties": {
+          "attach_pdf": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attach_files": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attach_journal": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "detailed",
+                      "summary"
+                    ]
+                  },
+                  {
+                    "type": "boolean",
+                    "enum": [
+                      false
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "journal_formats": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JournalFormats"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "OrganizationInvoiceDocumentsInput": {
+        "type": "object",
+        "minProperties": 1,
+        "properties": {
+          "attach_pdf": {
+            "type": "boolean"
+          },
+          "attach_files": {
+            "type": "boolean"
+          },
+          "attach_journal": {
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "detailed",
+                  "summary"
+                ]
+              },
+              {
+                "type": "boolean",
+                "enum": [
+                  false
+                ]
+              }
+            ]
+          },
+          "journal_formats": {
+            "$ref": "#/components/schemas/JournalFormats"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceDefaults": {
+        "type": "object",
+        "required": [
+          "company_name",
+          "company_address",
+          "notes",
+          "subject"
+        ],
+        "properties": {
+          "company_name": {
+            "type": "string"
+          },
+          "company_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceDefaultsEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InvoiceDefaults"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceDefaultsInput": {
+        "type": "object",
+        "minProperties": 1,
+        "properties": {
+          "company_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "company_address": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 998
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "InvoiceDocumentPreferenceEnvelope": {
         "type": "object",
         "required": [
@@ -37222,7 +37711,10 @@
               "effective_files",
               "attach_journal",
               "organization_attach_journal",
-              "effective_journal"
+              "effective_journal",
+              "journal_formats",
+              "organization_journal_formats",
+              "effective_journal_formats"
             ],
             "properties": {
               "invoice_id": {
@@ -37291,6 +37783,22 @@
                     "type": "boolean"
                   }
                 ]
+              },
+              "journal_formats": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/JournalFormats"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "organization_journal_formats": {
+                "$ref": "#/components/schemas/JournalFormats"
+              },
+              "effective_journal_formats": {
+                "$ref": "#/components/schemas/JournalFormats"
               }
             },
             "additionalProperties": false
@@ -37309,7 +37817,8 @@
             "required": [
               "attach_pdf",
               "attach_files",
-              "attach_journal"
+              "attach_journal",
+              "journal_formats"
             ],
             "properties": {
               "attach_pdf": {
@@ -37331,6 +37840,9 @@
                     "type": "boolean"
                   }
                 ]
+              },
+              "journal_formats": {
+                "$ref": "#/components/schemas/JournalFormats"
               }
             },
             "additionalProperties": false

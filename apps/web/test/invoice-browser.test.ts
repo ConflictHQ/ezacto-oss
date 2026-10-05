@@ -236,7 +236,7 @@ describe('invoice payment controller', () => {
       getInvoice: vi.fn(async () =>
         selectedSession === 1
           ? invoice('FIRST')
-          : invoice('SECOND', { notes: 'Only second user can see this' }),
+          : invoice('SECOND', { notes: 'Only second user can see this', due_date: '2099-08-31' }),
       ),
       listInvoiceMessages: vi.fn(async () => []),
       listInvoicePayments: vi.fn(async () => []),
