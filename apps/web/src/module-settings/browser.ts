@@ -28,6 +28,7 @@ import {
   ssoVerificationMessage,
   timeTrackingFacts,
   type CompanySettingsApi,
+  type InvoiceDefaultsSetting,
   type InstanceThemeView,
   type BackupRun,
 } from './model.js'
@@ -384,6 +385,14 @@ export const createModuleSettingsController = (
   const ssoInput = required<HTMLInputElement>('[data-sso-domain-input]')
   const ssoSubmit = required<HTMLButtonElement>('[data-sso-domain-submit]')
   const ssoResult = required<HTMLElement>('[data-sso-domain-result]')
+  const invoicesStatus = required<HTMLElement>('[data-settings-invoices-status]')
+  const invoiceDefaultsForm = required<HTMLFormElement>('[data-invoice-defaults-form]')
+  const invoiceDefaultsName = required<HTMLInputElement>('[data-invoice-defaults-name]')
+  const invoiceDefaultsAddress = required<HTMLTextAreaElement>('[data-invoice-defaults-address]')
+  const invoiceDefaultsSubject = required<HTMLInputElement>('[data-invoice-defaults-subject]')
+  const invoiceDefaultsNotes = required<HTMLTextAreaElement>('[data-invoice-defaults-notes]')
+  const invoiceDefaultsSubmit = required<HTMLButtonElement>('[data-invoice-defaults-submit]')
+  const invoiceDefaultsResult = required<HTMLElement>('[data-invoice-defaults-result]')
   const remindersStatus = required<HTMLElement>('[data-settings-reminders-status]')
   const remindersForm = required<HTMLFormElement>('[data-reminder-settings-form]')
   const remindersEnabled = required<HTMLInputElement>('[data-reminder-settings-enabled]')
@@ -475,6 +484,52 @@ export const createModuleSettingsController = (
     remindersEvery.value = String(policy?.every_days ?? 7)
     syncReminderFields()
   }
+
+  const showInvoiceDefaults = (defaults: InvoiceDefaultsSetting): void => {
+    invoiceDefaultsName.value = defaults.company_name
+    invoiceDefaultsAddress.value = defaults.company_address ?? ''
+    invoiceDefaultsSubject.value = defaults.subject ?? ''
+    invoiceDefaultsNotes.value = defaults.notes ?? ''
+  }
+
+  invoiceDefaultsForm.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    if (active === null || api.updateInvoiceDefaults === undefined) return
+    if (invoiceDefaultsName.value.trim() === '') {
+      invoiceDefaultsResult.textContent = 'The company name cannot be blank.'
+      return
+    }
+    invoiceDefaultsResult.textContent = 'Saving…'
+    invoiceDefaultsSubmit.disabled = true
+    // Blank is no default; the server stores it as one.
+    const text = (value: string): string | null => (value.trim() === '' ? null : value)
+    try {
+      const saved = await api.updateInvoiceDefaults(
+        {
+          company_name: invoiceDefaultsName.value,
+          company_address: text(invoiceDefaultsAddress.value),
+          subject: text(invoiceDefaultsSubject.value),
+          notes: text(invoiceDefaultsNotes.value),
+        },
+        active.signal,
+      )
+      active.present(() => {
+        showInvoiceDefaults(saved)
+        invoiceDefaultsResult.textContent = 'Saved.'
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        invoiceDefaultsResult.textContent = messageFor(
+          error,
+          'Only administrators and accounting can change invoice settings.',
+          'Invoice settings could not be saved.',
+        )
+      })
+    } finally {
+      if (currentSession() === active) invoiceDefaultsSubmit.disabled = false
+    }
+  })
 
   remindersForm.addEventListener('submit', async (event) => {
     event.preventDefault()
@@ -914,6 +969,34 @@ export const createModuleSettingsController = (
           error,
           'Only executive managers and administrators can read the time tracking settings.',
           'Time tracking settings could not be loaded.',
+        )
+      })
+    }
+  }
+
+  const loadInvoiceDefaults = async (active: ActiveSession): Promise<void> => {
+    if (api.getInvoiceDefaults === undefined) {
+      invoicesStatus.textContent = 'This build has no invoice settings endpoint.'
+      return
+    }
+    try {
+      const defaults = await api.getInvoiceDefaults(active.signal)
+      active.present(() => {
+        showInvoiceDefaults(defaults)
+        invoiceDefaultsForm.hidden = false
+        invoicesStatus.textContent =
+          defaults.company_address === null
+            ? 'No company address yet: invoices print the name alone until one is saved.'
+            : ''
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        sectionFailed(
+          'invoices',
+          invoicesStatus,
+          error,
+          'Only administrators and accounting can read invoice settings.',
+          'Invoice settings could not be loaded.',
         )
       })
     }
@@ -1732,6 +1815,7 @@ export const createModuleSettingsController = (
     'sign-in': loadSignInMethods,
     time: loadTimeTracking,
     email: (active) => loadEmail(active.identity, active),
+    invoices: loadInvoiceDefaults,
     reminders: loadReminders,
     payouts: loadWiseConnection,
     backup: (active) => loadBackups(active.identity, active),

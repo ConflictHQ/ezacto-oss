@@ -60,6 +60,11 @@ import {
   readOrganizationJournalPolicy,
   setInvoiceJournalPolicy,
   setOrganizationJournalPolicy,
+  readInvoiceHoursReport,
+  readJournalFormatsPreference,
+  readOrganizationJournalFormats,
+  setInvoiceJournalFormats,
+  setOrganizationJournalFormats,
   readOrganizationAttachPolicy,
   setInvoiceAttachPolicy,
   setOrganizationAttachPolicy,
@@ -68,6 +73,8 @@ import {
   createThankYouPort,
   createReminderPort,
   createReminderSettings,
+  readInvoiceDefaults,
+  updateInvoiceDefaults,
   readThankYouPreference,
   readOrganizationThankYouPolicy,
   setInvoiceThankYouPolicy,
@@ -788,8 +795,8 @@ export const createRuntimeServices = async (
           objects: createR2AttachmentObjectStore(env.ATTACHMENTS),
           now: () => new Date().toISOString(),
           source: {
-            deliveryContext: (invoiceId: number) =>
-              moneyResources.getInvoiceDeliveryContext(invoiceId),
+            documentContext: (invoiceId: number) =>
+              moneyResources.getInvoiceDocumentContext(invoiceId),
             invoiceVersion: async (invoiceId: number) => {
               const rows = await database
                 .prepare(`SELECT version FROM invoices WHERE id = ?`)
@@ -900,6 +907,12 @@ export const createRuntimeServices = async (
     recurringInvoices: createRecurringInvoiceEngine(drizzle),
     reminders: { processDue: processDueReminders },
     reminderSettings: createReminderSettings(drizzle, reminders, () => new Date().toISOString()),
+    // Invoices › Configure: what every invoice prints and every draft starts with.
+    invoiceDefaults: {
+      read: () => readInvoiceDefaults(drizzle),
+      update: (patch: Parameters<typeof updateInvoiceDefaults>[1]) =>
+        updateInvoiceDefaults(drizzle, patch, new Date().toISOString()),
+    },
     // #712. Adapted rather than passed through: the port declares the shape the
     // route needs, and the reader takes the database as its first argument.
     bandClaimBackfill: {
@@ -1077,6 +1090,21 @@ export const createRuntimeServices = async (
       readOrganizationJournal: () => readOrganizationJournalPolicy(drizzle),
       setOrganizationJournal: (level: 'detailed' | 'summary' | false) =>
         setOrganizationJournalPolicy(drizzle, level),
+      // The files the journal goes as, at whichever level (647).
+      readInvoiceJournalFormats: (invoiceId: number) =>
+        readJournalFormatsPreference(drizzle, invoiceId),
+      setInvoiceJournalFormats: (
+        invoiceId: number,
+        formats: readonly ('pdf' | 'csv' | 'xlsx')[] | null,
+      ) => setInvoiceJournalFormats(drizzle, { invoiceId, formats }),
+      readOrganizationJournalFormats: () => readOrganizationJournalFormats(drizzle),
+      setOrganizationJournalFormats: (formats: readonly ('pdf' | 'csv' | 'xlsx')[]) =>
+        setOrganizationJournalFormats(drizzle, formats),
+    },
+    // The same journal as a download (647), from the same store the email
+    // reads, so the file an operator checks is the file a client is sent.
+    invoiceHoursReport: {
+      readHoursReport: (invoiceId: number) => readInvoiceHoursReport(drizzle, invoiceId),
     },
     // Suppressing the thank-you for one invoice, which is the half that has to
     // be reachable before the payment lands: some invoices settle a dispute.

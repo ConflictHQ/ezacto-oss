@@ -782,7 +782,7 @@ const moneyOperations: ApiContractOperation[] = [
     method: "post",
     path: "/api/v1/invoice-generations",
     operationId: "generateInvoice",
-    summary: "Delegate transactional tracked-resource invoice generation",
+    summary: "Create one draft invoice from tracked work, or a blank free-form draft",
     tag: "invoices",
     responseStatus: 201,
     responseSchema: "InvoiceEnvelope",
@@ -1602,6 +1602,32 @@ const invoiceThankYouPreferenceOperations: ApiContractOperation[] = [
   },
 ];
 
+// Invoices › Configure: company information and default values.
+const invoiceDefaultsOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/settings/invoice-defaults",
+    operationId: "getInvoiceDefaults",
+    summary: "The company information invoices print and the values new drafts start with",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "InvoiceDefaultsEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/invoice-defaults",
+    operationId: "updateInvoiceDefaults",
+    summary: "Change the company information or the default notes and subject",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "InvoiceDefaultsEnvelope",
+    requestSchema: "InvoiceDefaultsInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+];
+
 const invoiceDocumentPreferenceOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -1622,6 +1648,8 @@ const invoiceDocumentPreferenceOperations: ApiContractOperation[] = [
     tag: "money",
     responseStatus: 200,
     responseSchema: "InvoiceDocumentPreferenceEnvelope",
+    requestSchema: "InvoiceDocumentPreferenceInput",
+    requestRequired: true,
     sessionOnly: true,
     parameters: [path("id")],
   },
@@ -1643,7 +1671,33 @@ const invoiceDocumentPreferenceOperations: ApiContractOperation[] = [
     tag: "money",
     responseStatus: 200,
     responseSchema: "OrganizationInvoiceDocumentsEnvelope",
+    requestSchema: "OrganizationInvoiceDocumentsInput",
+    requestRequired: true,
     sessionOnly: true,
+  },
+  // The work journal as a file, on demand (issue 647): the email's journal
+  // rendered from the same source, internal notes withheld the same way. Read
+  // with the invoice's own authority, so a token with invoices:read may.
+  {
+    method: "get",
+    path: "/api/v1/invoices/:id/hours-report",
+    operationId: "downloadInvoiceHoursReport",
+    summary: "Download the hours an invoice billed as a PDF, CSV or Excel workbook",
+    tag: "money",
+    responseStatus: 200,
+    binaryResponse: true,
+    parameters: [
+      path("id"),
+      {
+        name: "format",
+        location: "query",
+        schema: { type: "string", enum: ["pdf", "csv", "xlsx"] },
+        required: true,
+      },
+      // Absent is the invoice's own journal level, or detailed when its
+      // journal is off.
+      query("detail", { type: "string", enum: ["detailed", "summary"] }),
+    ],
   },
 ];
 
@@ -2077,6 +2131,10 @@ const reportOperations: ApiContractOperation[] = [
       // `entry` is one row per time entry with its id and notes; `day` (the
       // default) is the folded grain the report screen draws.
       query("grain", { type: "string", enum: ["day", "entry"] }),
+      // Who reads the notes (D20). `client` withholds a note its entry, or the
+      // organization's default, keeps internal -- for a reader such as the
+      // client portal that shows them to a client. Absent is `internal`.
+      query("audience", { type: "string", enum: ["internal", "client"] }),
       query("invoice_state", {
         type: "string",
         enum: ["all", "invoiced", "uninvoiced"],
@@ -2690,6 +2748,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...stripeOperations,
   ...invoiceTimeClaimOperations,
   ...invoiceDocumentPreferenceOperations,
+  ...invoiceDefaultsOperations,
   ...invoiceThankYouPreferenceOperations,
   ...recurringRepairOperations,
   ...payoutAccountOperations,
@@ -5469,36 +5528,53 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   EstimateConversionEnvelope: envelope("EstimateConversion"),
   InvoiceGenerationInput: {
-    type: "object",
-    required: [
-      "client_id",
-      "from",
-      "to",
-      "project_ids",
-      "time_summary_type",
-      "expense_summary_type",
-    ],
-    properties: {
-      client_id: integerSchema,
-      from: dateSchema,
-      to: dateSchema,
-      project_ids: {
-        type: "array",
-        minItems: 1,
-        maxItems: 10_000,
-        uniqueItems: true,
-        items: integerSchema,
+    oneOf: [
+      {
+        type: "object",
+        required: [
+          "client_id",
+          "to",
+          "project_ids",
+          "time_summary_type",
+          "expense_summary_type",
+        ],
+        properties: {
+          // Absent means tracked, which is every request sent before blank drafts.
+          kind: { const: "tracked" },
+          client_id: integerSchema,
+          // Absent or null takes every uninvoiced billable row up to `to`; the
+          // invoice's period then starts on the earliest row it bills.
+          from: nullable(dateSchema),
+          to: dateSchema,
+          project_ids: {
+            type: "array",
+            minItems: 1,
+            maxItems: 10_000,
+            uniqueItems: true,
+            items: integerSchema,
+          },
+          time_summary_type: nullable({
+            type: "string",
+            enum: ["project", "task", "people", "detailed"],
+          }),
+          expense_summary_type: nullable({
+            type: "string",
+            enum: ["project", "category", "people", "detailed"],
+          }),
+        },
+        additionalProperties: false,
       },
-      time_summary_type: nullable({
-        type: "string",
-        enum: ["project", "task", "people", "detailed"],
-      }),
-      expense_summary_type: nullable({
-        type: "string",
-        enum: ["project", "category", "people", "detailed"],
-      }),
-    },
-    additionalProperties: false,
+      {
+        // A blank draft for the client: no lines, no period, nothing claimed.
+        type: "object",
+        required: ["kind", "client_id"],
+        properties: {
+          kind: { const: "free_form" },
+          client_id: integerSchema,
+        },
+        additionalProperties: false,
+      },
+    ],
   },
   InvoiceCommandSnapshot: {
     type: "object",
@@ -8091,6 +8167,69 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  // The files the work journal goes as (issue 647): a non-empty set, held in
+  // this order, which is the order they attach in. One level serves them all.
+  JournalFormats: {
+    type: "array",
+    items: { type: "string", enum: ["pdf", "csv", "xlsx"] },
+    minItems: 1,
+    maxItems: 3,
+    uniqueItems: true,
+  },
+  // The route takes any combination of the four, at least one. Null on any of
+  // them hands that choice back to the organization.
+  InvoiceDocumentPreferenceInput: {
+    type: "object",
+    minProperties: 1,
+    properties: {
+      attach_pdf: nullable({ type: "boolean" }),
+      attach_files: nullable({ type: "boolean" }),
+      attach_journal: nullable({
+        oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean", enum: [false] }],
+      }),
+      journal_formats: nullable(reference("JournalFormats")),
+    },
+    additionalProperties: false,
+  },
+  // The organization's answers are complete, so none of them can be null.
+  OrganizationInvoiceDocumentsInput: {
+    type: "object",
+    minProperties: 1,
+    properties: {
+      attach_pdf: { type: "boolean" },
+      attach_files: { type: "boolean" },
+      attach_journal: {
+        oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean", enum: [false] }],
+      },
+      journal_formats: reference("JournalFormats"),
+    },
+    additionalProperties: false,
+  },
+  InvoiceDefaults: {
+    type: "object",
+    required: ["company_name", "company_address", "notes", "subject"],
+    properties: {
+      company_name: { type: "string" },
+      company_address: nullable({ type: "string" }),
+      // Harvest's lightweight markup (*bold*, _italic_) is kept verbatim.
+      notes: nullable({ type: "string" }),
+      subject: nullable({ type: "string" }),
+    },
+    additionalProperties: false,
+  },
+  InvoiceDefaultsEnvelope: envelope("InvoiceDefaults"),
+  // Any combination, at least one. Null clears a default; the name cannot be.
+  InvoiceDefaultsInput: {
+    type: "object",
+    minProperties: 1,
+    properties: {
+      company_name: { type: "string", minLength: 1, maxLength: 255 },
+      company_address: nullable({ type: "string", maxLength: 2000 }),
+      notes: nullable({ type: "string", maxLength: 100000 }),
+      subject: nullable({ type: "string", maxLength: 998 }),
+    },
+    additionalProperties: false,
+  },
   InvoiceDocumentPreferenceEnvelope: {
     type: "object",
     required: ["data"],
@@ -8108,6 +8247,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           "attach_journal",
           "organization_attach_journal",
           "effective_journal",
+          "journal_formats",
+          "organization_journal_formats",
+          "effective_journal_formats",
         ],
         properties: {
           invoice_id: integerSchema,
@@ -8126,6 +8268,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           attach_journal: { ...{ oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean" }] }, nullable: true },
           organization_attach_journal: { oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean" }] },
           effective_journal: { oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean" }] },
+          // Null when this invoice follows the organization's set.
+          journal_formats: nullable(reference("JournalFormats")),
+          organization_journal_formats: reference("JournalFormats"),
+          effective_journal_formats: reference("JournalFormats"),
         },
         additionalProperties: false,
       },
@@ -8138,11 +8284,13 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       data: {
         type: "object",
-        required: ["attach_pdf", "attach_files", "attach_journal"],
+        required: ["attach_pdf", "attach_files", "attach_journal", "journal_formats"],
         properties: {
           attach_pdf: { type: "boolean" },
           attach_files: { type: "boolean" },
           attach_journal: { oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean" }] },
+          // The PDF alone until somebody chooses otherwise.
+          journal_formats: reference("JournalFormats"),
         },
         additionalProperties: false,
       },

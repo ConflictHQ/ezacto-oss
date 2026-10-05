@@ -1,5 +1,6 @@
 import {
   calculateInvoiceLineAmountCents,
+  reportNoteIsClientVisible,
   trackedAmountCents,
   uninvoicedGenerationPreview,
 } from '@ezacto/core'
@@ -28,12 +29,28 @@ export type InvoiceGenerationTimeSummary = 'project' | 'task' | 'people' | 'deta
 export type InvoiceGenerationExpenseSummary = 'project' | 'category' | 'people' | 'detailed'
 
 export interface GenerateInvoiceRequest {
+  /** Absent is 'tracked', the only kind there was before blank drafts. */
+  kind?: 'tracked'
   clientId: number
-  from: string
+  /**
+   * Null leaves the start open: every uninvoiced billable row up to and
+   * including `to`, with the period starting on the earliest row billed.
+   */
+  from: string | null
   to: string
   projectIds: readonly number[]
   timeSummaryType: InvoiceGenerationTimeSummary | null
   expenseSummaryType: InvoiceGenerationExpenseSummary | null
+}
+
+/**
+ * Harvest's free-form invoice: a numbered draft for one client with no lines,
+ * no period and no project, written by hand afterwards. Nothing tracked is
+ * read or claimed.
+ */
+export interface GenerateFreeFormInvoiceRequest {
+  kind: 'free_form'
+  clientId: number
 }
 
 export interface GenerateInvoicePrincipal {
@@ -44,7 +61,7 @@ export interface GenerateInvoicePrincipal {
 export interface GenerateInvoiceCommand {
   commandId: string
   principal: GenerateInvoicePrincipal
-  request: GenerateInvoiceRequest
+  request: GenerateInvoiceRequest | GenerateFreeFormInvoiceRequest
 }
 
 export type InvoiceGenerationErrorCode =
@@ -91,6 +108,9 @@ interface ClientDefaults {
   id: number
   currency: string
   paymentTerms: 'upon_receipt' | 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'custom'
+  /** The organization's Default values, copied onto the draft (migration 0097). */
+  defaultSubject: string | null
+  defaultNotes: string | null
 }
 
 interface GeneratedLine {
@@ -116,6 +136,26 @@ interface ExpenseGroup {
   projectId: number
   description: string
   expenses: UninvoicedExpenseCandidateRow[]
+}
+
+type NormalizedRequest = GenerateInvoiceRequest | GenerateFreeFormInvoiceRequest
+
+interface InvoiceHeader {
+  subject: string | null
+  periodStart: string | null
+  periodEnd: string | null
+  projectId: number | null
+}
+
+/** Everything one creation command writes, before the manifests describing it. */
+interface GenerationContent {
+  client: ClientDefaults
+  header: InvoiceHeader
+  timeEntries: readonly UninvoicedTimeCandidateRow[]
+  expenses: readonly UninvoicedExpenseCandidateRow[]
+  lines: readonly GeneratedLine[]
+  currency: string
+  amountCents: number
 }
 
 const commandIdPattern = /^[A-Za-z0-9._:-]{1,128}$/
@@ -153,7 +193,15 @@ const assertTimestamp = (value: string): void => {
   }
 }
 
-const normalizedRequest = (input: GenerateInvoiceCommand): GenerateInvoiceRequest => {
+const trackedOnlyFields = [
+  'from',
+  'to',
+  'projectIds',
+  'timeSummaryType',
+  'expenseSummaryType',
+] as const
+
+const normalizedRequest = (input: GenerateInvoiceCommand): NormalizedRequest => {
   if (!commandIdPattern.test(input.commandId)) {
     invalid('commandId must be 1-128 ASCII characters from [A-Za-z0-9._:-]')
   }
@@ -164,9 +212,24 @@ const normalizedRequest = (input: GenerateInvoiceCommand): GenerateInvoiceReques
   if (!Number.isSafeInteger(request.clientId) || request.clientId < 1) {
     invalid('clientId must be a positive safe integer')
   }
-  assertDate(request.from, 'from')
+  const kind: unknown = request.kind
+  if (kind !== undefined && kind !== 'tracked' && kind !== 'free_form') {
+    invalid('kind must be tracked or free_form')
+  }
+  if (request.kind === 'free_form') {
+    // Refused rather than ignored: a range or a project on a blank draft says
+    // the caller expected tracked work on it, and none will be there.
+    for (const field of trackedOnlyFields) {
+      if (Reflect.get(request, field) !== undefined) {
+        invalid(`a free-form invoice takes no ${field}`)
+      }
+    }
+    return { kind: 'free_form', clientId: request.clientId }
+  }
+  const from = request.from ?? null
+  if (from !== null) assertDate(from, 'from')
   assertDate(request.to, 'to')
-  if (request.from > request.to) invalid('generation date range is inverted')
+  if (from !== null && from > request.to) invalid('generation date range is inverted')
   if (
     !Array.isArray(request.projectIds) ||
     request.projectIds.length === 0 ||
@@ -179,7 +242,11 @@ const normalizedRequest = (input: GenerateInvoiceCommand): GenerateInvoiceReques
   if (request.timeSummaryType === null && request.expenseSummaryType === null) {
     invalid('at least one generation summary type is required')
   }
-  return { ...request, projectIds: [...request.projectIds].sort((left, right) => left - right) }
+  return {
+    ...request,
+    from,
+    projectIds: [...request.projectIds].sort((left, right) => left - right),
+  }
 }
 
 const canonicalJson = (value: unknown): string => {
@@ -215,22 +282,28 @@ const stableId = async (namespace: string, commandId: string, suffix = ''): Prom
 const fingerprint = async (
   commandId: string,
   userId: number,
-  request: GenerateInvoiceRequest,
+  request: NormalizedRequest,
 ): Promise<string> =>
   `sha256:${await digest(
     canonicalJson({
       invoice_id: await stableId('invoice-generation', commandId),
       command_kind: 'invoice.create',
       actor: { type: 'user', id: userId },
-      input: {
-        expected_version: 0,
-        client_id: request.clientId,
-        from: request.from,
-        to: request.to,
-        project_ids: request.projectIds,
-        time_summary_type: request.timeSummaryType,
-        expense_summary_type: request.expenseSummaryType,
-      },
+      // A tracked request hashes the keys it always has, so every receipt
+      // written before blank drafts still replays; an open start hashes as a
+      // null `from`. A free-form one carries the kind no tracked input has.
+      input:
+        request.kind === 'free_form'
+          ? { expected_version: 0, kind: request.kind, client_id: request.clientId }
+          : {
+              expected_version: 0,
+              client_id: request.clientId,
+              from: request.from,
+              to: request.to,
+              project_ids: request.projectIds,
+              time_summary_type: request.timeSummaryType,
+              expense_summary_type: request.expenseSummaryType,
+            },
     }),
   )}`
 
@@ -445,8 +518,14 @@ const lineManifest = (lines: readonly GeneratedLine[]): string =>
     })),
   })
 
+/**
+ * The creation CHECK and event guard read this against the header, so a
+ * tracked `from` is the period the invoice covers -- for an open start, the
+ * first date it bills -- and a blank draft records its kind and no selection.
+ */
 const requestManifest = (
-  request: GenerateInvoiceRequest,
+  request: NormalizedRequest,
+  periodStart: string | null,
   currency: string,
   amountCents: number,
   lineCount: number,
@@ -456,12 +535,16 @@ const requestManifest = (
   canonicalJson({
     schema_version: 1,
     expected_version: 0,
-    client_id: request.clientId,
-    from: request.from,
-    to: request.to,
-    project_ids: request.projectIds,
-    time_summary_type: request.timeSummaryType,
-    expense_summary_type: request.expenseSummaryType,
+    ...(request.kind === 'free_form'
+      ? { kind: request.kind, client_id: request.clientId }
+      : {
+          client_id: request.clientId,
+          from: periodStart,
+          to: request.to,
+          project_ids: request.projectIds,
+          time_summary_type: request.timeSummaryType,
+          expense_summary_type: request.expenseSummaryType,
+        }),
     currency,
     amount_cents: amountCents,
     line_count: lineCount,
@@ -486,9 +569,16 @@ const exactLinePrice = (
   return { quantity: 1, unitPriceCents: amountCents }
 }
 
+/**
+ * A detailed line carries the entry's note only where a client may read it
+ * (D20): the entry's own `client_visible`, else the organization's default. The
+ * line is printed on the invoice, listed in its email, and mirrored to the
+ * books, so an internal note written into it would leave by all three.
+ */
 const timeDescription = (
   entry: UninvoicedTimeCandidateRow,
   summary: InvoiceGenerationTimeSummary,
+  notesVisibleByDefault: boolean,
 ): string => {
   switch (summary) {
     case 'project':
@@ -499,7 +589,13 @@ const timeDescription = (
       return `${entry.projectName} — ${entry.userName}`
     case 'detailed': {
       const detail = `${entry.spentDate} · ${entry.userName} · ${entry.projectName} · ${entry.taskName}`
-      return entry.notes === null || entry.notes.trim() === '' ? detail : `${detail}\n${entry.notes}`
+      const visible = reportNoteIsClientVisible(
+        { clientVisible: entry.clientVisible === null ? null : entry.clientVisible === 1 },
+        notesVisibleByDefault,
+      )
+      return !visible || entry.notes === null || entry.notes.trim() === ''
+        ? detail
+        : `${detail}\n${entry.notes}`
     }
   }
 }
@@ -523,6 +619,7 @@ const timeKey = (
 const groupTime = (
   entries: readonly UninvoicedTimeCandidateRow[],
   summary: InvoiceGenerationTimeSummary,
+  notesVisibleByDefault: boolean,
 ): TimeGroup[] => {
   const groups = new Map<string, TimeGroup>()
   for (const entry of entries) {
@@ -532,7 +629,7 @@ const groupTime = (
       groups.set(key, {
         key,
         projectId: entry.projectId,
-        description: timeDescription(entry, summary),
+        description: timeDescription(entry, summary, notesVisibleByDefault),
         entries: [entry],
       })
     } else {
@@ -605,10 +702,11 @@ const buildLines = async (
   timeEntries: readonly UninvoicedTimeCandidateRow[],
   expenses: readonly UninvoicedExpenseCandidateRow[],
   request: GenerateInvoiceRequest,
+  notesVisibleByDefault: boolean,
 ): Promise<GeneratedLine[]> => {
   const draft: Omit<GeneratedLine, 'id' | 'position'>[] = []
   if (request.timeSummaryType !== null) {
-    for (const group of groupTime(timeEntries, request.timeSummaryType)) {
+    for (const group of groupTime(timeEntries, request.timeSummaryType, notesVisibleByDefault)) {
       const roundedSeconds = checkedIntegerSum(
         group.entries.map((entry) => entry.roundedSeconds),
         'time duration',
@@ -691,17 +789,38 @@ const dueDate = (issueDate: string, terms: ClientDefaults['paymentTerms']): stri
   return value.toISOString().slice(0, 10)
 }
 
+const readClient = async (
+  database: InvoiceGenerationDatabase,
+  clientId: number,
+): Promise<ClientDefaults> => {
+  const client = await first<Omit<ClientDefaults, 'defaultSubject' | 'defaultNotes'>>(database, {
+    text: `SELECT id, upper(currency) AS currency, payment_terms AS "paymentTerms"
+      FROM clients WHERE id = ?`,
+    params: [clientId],
+  })
+  if (client === null) return invalid('the selected client does not exist')
+  if (!/^[A-Z]{3}$/.test(client.currency)) invalid('the selected client currency is invalid')
+  // What a new draft starts with (migration 0097). `*` rather than the two
+  // columns by name, so a database the defaults have not reached yet starts a
+  // draft with none instead of refusing to make one. The notes carry the
+  // payment details; once copied they belong to the invoice.
+  const organization = await first<Record<string, unknown>>(database, {
+    text: `SELECT * FROM organizations ORDER BY id LIMIT 1`,
+    params: [],
+  })
+  const text = (value: unknown): string | null => (typeof value === 'string' ? value : null)
+  return {
+    ...client,
+    defaultSubject: text(organization?.invoice_default_subject),
+    defaultNotes: text(organization?.invoice_default_notes),
+  }
+}
+
 const validateSelection = async (
   database: InvoiceGenerationDatabase,
   request: GenerateInvoiceRequest,
 ): Promise<ClientDefaults> => {
-  const client = await first<ClientDefaults>(database, {
-    text: `SELECT id, upper(currency) AS currency, payment_terms AS "paymentTerms"
-      FROM clients WHERE id = ?`,
-    params: [request.clientId],
-  })
-  if (client === null) return invalid('the selected client does not exist')
-  if (!/^[A-Z]{3}$/.test(client.currency)) invalid('the selected client currency is invalid')
+  const client = await readClient(database, request.clientId)
   const projects = await all<{ id: number; clientId: number; isActive: number }>(database, {
     text: `SELECT id, client_id AS "clientId", is_active AS "isActive" FROM projects
       WHERE id IN (SELECT CAST(value AS INTEGER) FROM json_each(?)) ORDER BY id`,
@@ -766,7 +885,7 @@ const timeClaim = (
   inputFingerprint: string,
   sourceManifestJson: string,
   currency: string,
-  request: GenerateInvoiceRequest,
+  clientId: number,
 ): SqlStatement => ({
   text: `UPDATE time_entries SET invoice_id = ?
     WHERE id IN (
@@ -792,7 +911,7 @@ const timeClaim = (
   params: [
     invoiceId,
     sourceManifestJson,
-    request.clientId,
+    clientId,
     currency,
     invoiceId,
     commandId,
@@ -806,7 +925,7 @@ const expenseClaim = (
   inputFingerprint: string,
   sourceManifestJson: string,
   currency: string,
-  request: GenerateInvoiceRequest,
+  clientId: number,
 ): SqlStatement => ({
   text: `UPDATE expenses SET invoice_id = ?
     WHERE id IN (
@@ -830,7 +949,7 @@ const expenseClaim = (
   params: [
     invoiceId,
     sourceManifestJson,
-    request.clientId,
+    clientId,
     currency,
     invoiceId,
     commandId,
@@ -1015,8 +1134,8 @@ const completion = (
 
 const createStatements = (input: {
   command: GenerateInvoiceCommand
-  request: GenerateInvoiceRequest
   client: ClientDefaults
+  header: InvoiceHeader
   invoiceId: number
   eventId: string
   fingerprint: string
@@ -1031,7 +1150,6 @@ const createStatements = (input: {
   lineManifestJson: string
 }): SqlStatement[] => {
   const issueDate = input.occurredAt.slice(0, 10)
-  const projectId = input.request.projectIds.length === 1 ? input.request.projectIds[0]! : null
   const statements: SqlStatement[] = [
     {
       text: `INSERT INTO invoice_command_ledger (
@@ -1052,10 +1170,10 @@ const createStatements = (input: {
     },
     {
       text: `INSERT INTO invoices (
-          id, client_id, created_by_user_id, number, subject, currency,
+          id, client_id, created_by_user_id, number, subject, notes, currency,
           issue_date, due_date, payment_terms, period_start, period_end,
           project_id, created_at, updated_at
-        ) SELECT ?, ?, ?, CAST(sequence.next_number AS TEXT), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ) SELECT ?, ?, ?, CAST(sequence.next_number AS TEXT), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         FROM invoice_number_sequence sequence
         WHERE sequence.singleton = 1
           AND EXISTS (
@@ -1072,21 +1190,24 @@ const createStatements = (input: {
           )`,
       params: [
         input.invoiceId,
-        input.request.clientId,
+        input.client.id,
         input.command.principal.userId,
-        `Tracked work ${input.request.from} – ${input.request.to}`,
+        // The organization's defaults win over the period subject: a draft
+        // starts the way Harvest's Default values said it should.
+        input.client.defaultSubject ?? input.header.subject,
+        input.client.defaultNotes,
         input.currency,
         issueDate,
         dueDate(issueDate, input.client.paymentTerms),
         input.client.paymentTerms,
-        input.request.from,
-        input.request.to,
-        projectId,
+        input.header.periodStart,
+        input.header.periodEnd,
+        input.header.projectId,
         input.occurredAt,
         input.occurredAt,
         input.command.principal.userId,
         input.command.principal.profile,
-        input.request.clientId,
+        input.client.id,
         input.invoiceId,
         input.command.commandId,
         input.fingerprint,
@@ -1108,7 +1229,7 @@ const createStatements = (input: {
         input.fingerprint,
         input.sourceManifestJson,
         input.currency,
-        input.request,
+        input.client.id,
       ),
     )
   }
@@ -1120,7 +1241,7 @@ const createStatements = (input: {
         input.fingerprint,
         input.sourceManifestJson,
         input.currency,
-        input.request,
+        input.client.id,
       ),
     )
   }
@@ -1145,6 +1266,100 @@ const createStatements = (input: {
   return statements
 }
 
+const trackedContent = async (
+  database: InvoiceGenerationDatabase,
+  commandId: string,
+  request: GenerateInvoiceRequest,
+): Promise<GenerationContent> => {
+  const client = await validateSelection(database, request)
+  const candidates = await readUninvoicedCandidates(database, {
+    clientId: request.clientId,
+    from: request.from,
+    to: request.to,
+    projectIds: request.projectIds,
+  })
+  const timeEntries = request.timeSummaryType === null ? [] : candidates.timeEntries
+  const expenses = request.expenseSummaryType === null ? [] : candidates.expenses
+  if (timeEntries.length === 0 && expenses.length === 0) {
+    invalid('the selected filter has no uninvoiced billable content')
+  }
+  if (timeEntries.length + expenses.length > maximumGenerationSourceRows) {
+    invalid(
+      `one generation command can consume at most ${maximumGenerationSourceRows} tracked rows`,
+    )
+  }
+  let preview: ReturnType<typeof uninvoicedGenerationPreview>
+  try {
+    preview = uninvoicedGenerationPreview({ timeEntries, expenses })
+  } catch (error) {
+    if (error instanceof RangeError) invalid(error.message)
+    throw error
+  }
+  if (preview.length !== 1) invalid('selected tracked rows must use one invoice currency')
+  const currencyTotal = preview[0]!
+  // Read once, beside the rows: the organization default for a note's
+  // visibility, which an entry with no answer of its own follows (D20). An
+  // instance with no organization row yet takes the column's own default.
+  const organization = await first<{ visibleDefault: number }>(database, {
+    text: `SELECT report_notes_client_visible_default AS "visibleDefault"
+      FROM organizations ORDER BY id LIMIT 1`,
+    params: [],
+  })
+  const lines = await buildLines(
+    commandId,
+    timeEntries,
+    expenses,
+    request,
+    organization === null || organization.visibleDefault !== 0,
+  )
+  const amountCents = checkedSum(
+    lines.map((line) => line.amountCents),
+    'invoice amount',
+  )
+  if (amountCents !== currencyTotal.totalCents) {
+    throw new Error('invoice generation lines diverged from the canonical uninvoiced preview')
+  }
+  // An open start has no date of its own, so the period begins on the earliest
+  // row this invoice bills: a date the document can stand behind, where a
+  // placeholder would print as a 1970 period on the invoice and its subject.
+  const periodStart =
+    request.from ??
+    [...timeEntries, ...expenses]
+      .map((row) => row.spentDate)
+      .reduce((earliest, date) => (date < earliest ? date : earliest))
+  return {
+    client,
+    header: {
+      subject: `Tracked work ${periodStart} – ${request.to}`,
+      periodStart,
+      periodEnd: request.to,
+      projectId: request.projectIds.length === 1 ? request.projectIds[0]! : null,
+    },
+    timeEntries,
+    expenses,
+    lines,
+    currency: currencyTotal.currency,
+    amountCents,
+  }
+}
+
+/** A blank draft reads nothing tracked, so it bills in the client's own currency. */
+const freeFormContent = async (
+  database: InvoiceGenerationDatabase,
+  request: GenerateFreeFormInvoiceRequest,
+): Promise<GenerationContent> => {
+  const client = await readClient(database, request.clientId)
+  return {
+    client,
+    header: { subject: null, periodStart: null, periodEnd: null, projectId: null },
+    timeEntries: [],
+    expenses: [],
+    lines: [],
+    currency: client.currency,
+    amountCents: 0,
+  }
+}
+
 export const createInvoiceGenerationService = (
   database: InvoiceGenerationDatabase,
   options: InvoiceGenerationServiceOptions = {},
@@ -1164,45 +1379,15 @@ export const createInvoiceGenerationService = (
       return parseStoredInvoice(existing, inputFingerprint, input.principal.userId)
     }
 
-    const client = await validateSelection(database, request)
-    const candidates = await readUninvoicedCandidates(database, {
-      clientId: request.clientId,
-      from: request.from,
-      to: request.to,
-      projectIds: request.projectIds,
-    })
-    const timeEntries = request.timeSummaryType === null ? [] : candidates.timeEntries
-    const expenses = request.expenseSummaryType === null ? [] : candidates.expenses
-    if (timeEntries.length === 0 && expenses.length === 0) {
-      invalid('the selected filter has no uninvoiced billable content')
-    }
-    if (timeEntries.length + expenses.length > maximumGenerationSourceRows) {
-      invalid(
-        `one generation command can consume at most ${maximumGenerationSourceRows} tracked rows`,
-      )
-    }
-    let preview: ReturnType<typeof uninvoicedGenerationPreview>
-    try {
-      preview = uninvoicedGenerationPreview({ timeEntries, expenses })
-    } catch (error) {
-      if (error instanceof RangeError) invalid(error.message)
-      throw error
-    }
-    if (preview.length !== 1) invalid('selected tracked rows must use one invoice currency')
-    const currencyTotal = preview[0]!
-    const currency = currencyTotal.currency
-    const lines = await buildLines(input.commandId, timeEntries, expenses, request)
-    const amountCents = checkedSum(
-      lines.map((line) => line.amountCents),
-      'invoice amount',
-    )
-    if (amountCents !== currencyTotal.totalCents) {
-      throw new Error('invoice generation lines diverged from the canonical uninvoiced preview')
-    }
+    const { client, header, timeEntries, expenses, lines, currency, amountCents } =
+      request.kind === 'free_form'
+        ? await freeFormContent(database, request)
+        : await trackedContent(database, input.commandId, request)
     const sourceManifestJson = sourceManifest(timeEntries, expenses)
     const lineManifestJson = lineManifest(lines)
     const requestJson = requestManifest(
       request,
+      header.periodStart,
       currency,
       amountCents,
       lines.length,
@@ -1223,8 +1408,8 @@ export const createInvoiceGenerationService = (
         database,
         createStatements({
           command: input,
-          request,
           client,
+          header,
           invoiceId,
           eventId,
           fingerprint: inputFingerprint,
@@ -1246,6 +1431,8 @@ export const createInvoiceGenerationService = (
         return parseStoredInvoice(winner, inputFingerprint, input.principal.userId)
       }
       await assertAuthorized(database, input.principal)
+      // A blank draft read no tracked rows, so none can have moved under it.
+      if (request.kind === 'free_form') throw error
       const current = await readUninvoicedCandidates(database, {
         clientId: request.clientId,
         from: request.from,

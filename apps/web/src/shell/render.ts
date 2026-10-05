@@ -683,10 +683,10 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
       <div class="timesheet-lock-list" data-timesheet-lock-list aria-live="polite"></div>
     </section>
   </main>
-  <main class="app-content invoice-workspace page--grid" data-invoice-list-page${view === 'invoice-list' ? '' : ' hidden'}>
+  <main class="app-content invoice-workspace page--grid" data-invoice-list-page${view === 'invoice-list' || view === 'invoice-generation' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Money</p><h1>Invoices</h1></div>
-      <a class="primary-action invoice-create-link" href="/invoices/new">Generate invoice</a>
+      <a class="primary-action invoice-create-link" href="/invoices/new" data-invoice-new>+ New invoice</a>
     </header>
     <p class="invoice-intro">Browse generated and imported invoices. Amounts are shown in each invoice's own currency.</p>
     <div class="invoice-list-toolbar">
@@ -720,7 +720,7 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
           <h2 data-invoice-detail-number>—</h2>
           <p data-invoice-detail-subject hidden></p>
         </div>
-        <div class="invoice-document-actions"><strong class="invoice-state" data-invoice-detail-state>—</strong><button type="button" data-invoice-print>Print</button><button type="button" data-invoice-edit disabled hidden>Edit invoice</button><button type="button" data-invoice-send disabled hidden>Send invoice</button><button type="button" data-invoice-quickbooks-sync disabled hidden>Sync to QuickBooks</button><button type="button" class="primary-action" data-invoice-payment-settle data-auth-action disabled hidden>Mark paid</button>${renderInvoiceOverflowMenu()}</div>
+        <div class="invoice-document-actions"><strong class="invoice-state" data-invoice-detail-state>—</strong><button type="button" data-invoice-print>Print</button><div class="invoice-overflow invoice-hours-export" data-invoice-hours-export hidden><button type="button" data-invoice-hours-toggle aria-haspopup="true" aria-expanded="false" aria-controls="ez-invoice-hours-menu">Export hours</button><div class="invoice-overflow-menu" id="ez-invoice-hours-menu" data-invoice-hours-menu role="menu" hidden><p class="invoice-hours-menu-label">Every entry</p><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="pdf" data-hours-detail="detailed">PDF</button><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="csv" data-hours-detail="detailed">CSV</button><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="xlsx" data-hours-detail="detailed">Excel</button><p class="invoice-hours-menu-label">Summary</p><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="pdf" data-hours-detail="summary">PDF</button><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="csv" data-hours-detail="summary">CSV</button><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="xlsx" data-hours-detail="summary">Excel</button></div></div><button type="button" data-invoice-edit disabled hidden>Edit invoice</button><button type="button" data-invoice-send disabled hidden>Send invoice</button><button type="button" data-invoice-quickbooks-sync disabled hidden>Sync to QuickBooks</button><button type="button" class="primary-action" data-invoice-payment-settle data-auth-action disabled hidden>Mark paid</button>${renderInvoiceOverflowMenu()}</div>
       </header>
       <p class="invoice-reminder-line" data-invoice-reminder-line hidden></p>
       <dl class="invoice-facts">
@@ -756,68 +756,97 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
       </section>
     </article>
   </main>
-  <main class="app-content invoice-generation page--document" data-invoice-generation-page${view === 'invoice-generation' ? '' : ' hidden'}>
-    <header class="context-row">
-      <div><p class="eyebrow">Invoices</p><h1>Generate an invoice</h1></div>
-      <a href="/invoices">Back to invoices</a>
-    </header>
-    <p class="invoice-intro">Choose one client, a bounded date range, and the tracked work to turn into a draft invoice.</p>
-    <form class="invoice-generation-form" data-invoice-generation-form>
-      <fieldset>
-        <legend>1. Client and period</legend>
+  <!--
+    New invoice is one step, as it was in Harvest: who, and whether the draft is
+    filled from tracked work or starts empty. Everything after that is the draft.
+    It hangs off the invoice list; /invoices/new is the same list with the dialog
+    already open, so a report handoff and the command palette still land here.
+  -->
+  <dialog class="invoice-new-dialog" data-invoice-new-dialog aria-labelledby="invoice-new-title">
+    <form class="invoice-generation-form" data-invoice-generation-form method="dialog" novalidate>
+      <header>
+        <div><p class="eyebrow">Invoices</p><h2 id="invoice-new-title">New invoice</h2></div>
+        <button type="button" data-dialog-close aria-label="Close new invoice dialog">×</button>
+      </header>
+      <div class="invoice-new-body">
         <label for="ez-invoice-client">Client
-          <select id="ez-invoice-client" name="client" data-invoice-client required></select>
+          <select id="ez-invoice-client" name="client" data-invoice-client required autofocus></select>
         </label>
-        <!--
-          The mount point for the shared period control, which replaces the bare
-          From/To pair that stood here. Empty in the served HTML because the
-          control is DOM the way data-table is DOM: one implementation, built
-          once, rather than a string copy in this renderer to keep in step with
-          the browser one. It takes the fieldset's own date fields, so no band is
-          added to §6's budget of three between the tab strip and the first data
-          row.
-        -->
-        <div class="invoice-period" data-invoice-period></div>
-      </fieldset>
-      <fieldset>
-        <legend>2. Projects</legend>
-        <div class="invoice-projects" data-invoice-projects role="group" aria-label="Projects">
-          <p>Loading projects…</p>
+        <fieldset class="invoice-new-kind">
+          <legend>Type</legend>
+          <label class="invoice-new-kind-card">
+            <input type="radio" name="kind" value="tracked" data-invoice-kind checked>
+            <span><strong>From tracked time &amp; expenses</strong><small>Fill the draft from uninvoiced work</small></span>
+          </label>
+          <label class="invoice-new-kind-card">
+            <input type="radio" name="kind" value="free_form" data-invoice-kind>
+            <span><strong>Free form</strong><small>Start empty and add your own lines</small></span>
+          </label>
+        </fieldset>
+        <div class="invoice-new-tracked" data-invoice-tracked>
+          <fieldset class="invoice-new-section">
+            <legend>Projects</legend>
+            <div class="invoice-projects" data-invoice-projects role="group" aria-label="Projects">
+              <p class="hint">Choose a client to see its projects.</p>
+            </div>
+          </fieldset>
+          <fieldset class="invoice-new-section">
+            <legend>Period</legend>
+            <div class="invoice-new-period-choice">
+              <label><input type="radio" name="period" value="all" data-invoice-period-choice checked> All uninvoiced</label>
+              <label><input type="radio" name="period" value="range" data-invoice-period-choice> Date range</label>
+            </div>
+            <!--
+              The shared period control, mounted by the browser: one implementation,
+              built once, rather than a string copy here to keep in step with it.
+            -->
+            <div class="invoice-period" data-invoice-period hidden></div>
+          </fieldset>
+          <div class="invoice-new-detail">
+            <label for="ez-invoice-time-summary">Group time by
+              <select id="ez-invoice-time-summary" name="timeSummary">
+                <option value="project">Project</option>
+                <option value="task">Task</option>
+                <option value="people">Person</option>
+                <option value="detailed">Detailed (one line per entry)</option>
+                <option value="">Do not include time</option>
+              </select>
+            </label>
+            <label for="ez-invoice-expense-summary">Expenses
+              <select id="ez-invoice-expense-summary" name="expenseSummary" data-invoice-expense-summary aria-describedby="ez-invoice-expense-hint">
+                <option value="project">Group by project</option>
+                <option value="category">Group by category</option>
+                <option value="people">Group by person</option>
+                <option value="detailed">Detailed (one line per expense)</option>
+                <option value="">Do not include expenses</option>
+              </select>
+            </label>
+          </div>
+          <p class="field-hint" id="ez-invoice-expense-hint" data-invoice-expense-hint hidden></p>
+          <div class="invoice-new-journal">
+            <label class="invoice-new-check"><input type="checkbox" name="attachJournal" data-invoice-attach-journal> Attach an hours report when this invoice is emailed</label>
+            <label class="visually-hidden" for="ez-invoice-journal-level">Hours report detail</label>
+            <select id="ez-invoice-journal-level" name="journalLevel" data-invoice-journal-level hidden>
+              <option value="detailed">Every entry</option>
+              <option value="summary">Summary</option>
+            </select>
+            <fieldset class="invoice-new-formats" data-invoice-journal-formats hidden>
+              <legend class="visually-hidden">Hours report formats</legend>
+              <label><input type="checkbox" name="journalFormat" value="pdf" checked> PDF</label>
+              <label><input type="checkbox" name="journalFormat" value="csv"> CSV</label>
+              <label><input type="checkbox" name="journalFormat" value="xlsx"> Excel</label>
+            </fieldset>
+          </div>
         </div>
-      </fieldset>
-      <fieldset>
-        <legend>3. Line detail</legend>
-        <label for="ez-invoice-time-summary">Time entries
-          <select id="ez-invoice-time-summary" name="timeSummary">
-            <option value="project">Summarize by project</option>
-            <option value="task">Summarize by task</option>
-            <option value="people">Summarize by person</option>
-            <option value="detailed">One line per entry</option>
-            <option value="">Do not include time</option>
-          </select>
-        </label>
-        <label for="ez-invoice-expense-summary">Expenses
-          <select id="ez-invoice-expense-summary" name="expenseSummary">
-            <option value="project">Summarize by project</option>
-            <option value="category">Summarize by category</option>
-            <option value="people">Summarize by person</option>
-            <option value="detailed">One line per expense</option>
-            <option value="">Do not include expenses</option>
-          </select>
-        </label>
-      </fieldset>
-      <p class="form-result" data-invoice-generation-result role="status" aria-live="polite"></p>
-      <button type="button" data-retry-invoice-catalog hidden>Retry loading clients and projects</button>
-      <button class="primary-action" type="submit" data-invoice-generation-submit data-auth-action disabled>Generate draft invoice</button>
+        <p class="form-result" data-invoice-generation-result role="status" aria-live="polite"></p>
+      </div>
+      <footer>
+        <button type="button" data-retry-invoice-catalog hidden>Retry loading clients and projects</button>
+        <button type="button" data-dialog-close>Cancel</button>
+        <button class="primary-action" type="submit" data-invoice-generation-submit data-auth-action disabled>Create draft</button>
+      </footer>
     </form>
-    <section class="invoice-generation-success" data-invoice-generation-success hidden aria-live="polite">
-      <p class="eyebrow">Draft created</p>
-      <h2 data-generated-invoice-number>Invoice</h2>
-      <p data-generated-invoice-total></p>
-      <p>The draft is saved and ready to review.</p>
-      <a data-generated-invoice-link href="/invoices" hidden>Open draft invoice</a>
-    </section>
-  </main>
+  </dialog>
   ${renderRecurringPage(view)}
   ${renderEstimatesPage(view)}
   ${renderRetainerPage(view)}

@@ -11,8 +11,10 @@ import {
   installBillRoutes,
   installPayoutAccountRoutes,
   installInvoiceDocumentPreferenceRoutes,
+  installInvoiceHoursReportRoutes,
   installThankYouPreferenceRoutes,
   installReminderSettingsRoutes,
+  installInvoiceDefaultsRoutes,
   installRecurringRepairRoutes,
   installInvoiceTimeClaimRoutes,
   installStripeRoutes,
@@ -269,7 +271,12 @@ const documentedApp = () =>
         setInvoiceJournal: async () => true,
         readOrganizationJournal: async () => false,
         setOrganizationJournal: async () => undefined,
+        readInvoiceJournalFormats: async () => ({ invoice: null, organization: ["pdf"] }),
+        setInvoiceJournalFormats: async () => true,
+        readOrganizationJournalFormats: async () => ["pdf"],
+        setOrganizationJournalFormats: async () => undefined,
       } as never);
+      installInvoiceHoursReportRoutes(api, { readHoursReport: async () => null });
       installRecurringRepairRoutes(
         api,
         { listIncomplete: async () => [], complete: async () => ({ outcome: 'completed' }) } as never,
@@ -286,6 +293,10 @@ const documentedApp = () =>
         setOrganizationReminderPolicy: async () => 0,
         readInvoiceReminders: async () => null,
         setInvoiceReminders: async () => false,
+      });
+      installInvoiceDefaultsRoutes(api, {
+        read: async () => ({ companyName: "Org", companyAddress: null, notes: null, subject: null }),
+        update: async () => ({ companyName: "Org", companyAddress: null, notes: null, subject: null }),
       });
       installInvoiceTimeClaimRoutes(api, {
         releaseInvoicedTime: async () => ({ kind: "released", released: 0 }),
@@ -466,6 +477,22 @@ describe("OpenAPI contract", () => {
       expect.arrayContaining(["paid_at"]),
       expect.arrayContaining(["paid_date"]),
     ]);
+    const generations = schemas.InvoiceGenerationInput?.oneOf as Array<{
+      properties: Record<string, unknown>;
+      required: string[];
+      additionalProperties: boolean;
+    }>;
+    expect(generations).toHaveLength(2);
+    expect(generations[0]?.required).not.toContain("from");
+    expect(generations[1]).toEqual({
+      type: "object",
+      required: ["kind", "client_id"],
+      properties: {
+        kind: { const: "free_form" },
+        client_id: { type: "integer", minimum: 1 },
+      },
+      additionalProperties: false,
+    });
 
     const reminder = schemas.InvoiceReminderPolicy as {
       required: string[];

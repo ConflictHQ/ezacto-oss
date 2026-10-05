@@ -12,6 +12,7 @@
  * one invoice needs to know both what it will do and why.
  */
 
+import { parseJournalFormats, type JournalFormat } from '@ezacto/core'
 import type { Context, Hono } from 'hono'
 import { requireSessionPrincipal } from './auth.js'
 import type { ApiContext } from './context.js'
@@ -37,6 +38,14 @@ export type AttachmentKind = 'document' | 'files'
  */
 export type JournalPreference = 'detailed' | 'summary' | false
 
+/**
+ * The files the journal goes as (issue 647): a non-empty set of `pdf`, `csv`
+ * and `xlsx`, one level shared by all of them. The organization's set is
+ * complete -- the PDF alone until somebody chooses -- and an invoice's is an
+ * override, `null` when it follows.
+ */
+export type JournalFormats = readonly JournalFormat[]
+
 export interface InvoiceDocumentPreferenceService {
   /** `null` on the invoice means it follows the organization. */
   readInvoicePreference(
@@ -56,6 +65,12 @@ export interface InvoiceDocumentPreferenceService {
   setInvoiceJournal(invoiceId: number, level: JournalPreference | null): Promise<boolean>
   readOrganizationJournal(): Promise<JournalPreference>
   setOrganizationJournal(level: JournalPreference): Promise<void>
+  readInvoiceJournalFormats(
+    invoiceId: number,
+  ): Promise<{ invoice: JournalFormats | null; organization: JournalFormats } | null>
+  setInvoiceJournalFormats(invoiceId: number, formats: JournalFormats | null): Promise<boolean>
+  readOrganizationJournalFormats(): Promise<JournalFormats>
+  setOrganizationJournalFormats(formats: JournalFormats): Promise<void>
 }
 
 /**
@@ -83,6 +98,34 @@ const journalOf = (
     },
   ])
 }
+
+/**
+ * Reads the journal's files out of a body, in the product's order.
+ *
+ * A repeat is refused rather than collapsed and an empty set rather than read
+ * as "none": turning the journal off is `attach_journal: false`, and a set
+ * that says nothing is a caller that meant something else.
+ */
+const journalFormatsOf = (
+  body: Record<string, unknown>,
+  nullable: boolean,
+): JournalFormats | null => {
+  const value = body.journal_formats
+  if (nullable && value === null) return null
+  const formats = parseJournalFormats(value)
+  if (formats !== null) return formats
+  throw validationError([
+    {
+      field: 'journal_formats',
+      code: 'invalid',
+      message: nullable
+        ? 'journal_formats must be a non-empty list of distinct formats from "pdf", "csv" and "xlsx", or null to follow the organization.'
+        : 'journal_formats must be a non-empty list of distinct formats from "pdf", "csv" and "xlsx".',
+    },
+  ])
+}
+
+const preferenceFields = ['attach_pdf', 'attach_files', 'attach_journal', 'journal_formats'] as const
 
 const assertMoneyWriter = <Bindings extends object>(
   context: Context<ApiContext<Bindings>>,
@@ -151,12 +194,13 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
   api.get('/invoices/:id/document-preference', async (context) => {
     assertMoneyWriter(context)
     const invoiceId = invoiceIdOf(context)
-    const [document, files, journal] = await Promise.all([
+    const [document, files, journal, formats] = await Promise.all([
       service.readInvoicePreference(invoiceId, 'document'),
       service.readInvoicePreference(invoiceId, 'files'),
       service.readInvoiceJournal(invoiceId),
+      service.readInvoiceJournalFormats(invoiceId),
     ])
-    if (document === null || files === null || journal === null) {
+    if (document === null || files === null || journal === null || formats === null) {
       throw new ApiError({
         status: 404,
         code: 'not_found',
@@ -178,6 +222,9 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
           attach_journal: journal.invoice,
           organization_attach_journal: journal.organization,
           effective_journal: journal.invoice ?? journal.organization,
+          journal_formats: formats.invoice,
+          organization_journal_formats: formats.organization,
+          effective_journal_formats: formats.invoice ?? formats.organization,
         },
       },
       200,
@@ -191,48 +238,51 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
     const body = (await context.req.json().catch(() => ({}))) as Record<string, unknown>
     // At least one, or the call is a write that changes nothing and reports
     // success -- which reads as a saved setting that was never saved.
-    if (!('attach_pdf' in body) && !('attach_files' in body) && !('attach_journal' in body)) {
+    if (!preferenceFields.some((field) => field in body)) {
       throw validationError([
         {
           field: 'attach_pdf',
           code: 'required',
-          message: 'Provide attach_pdf, attach_files, attach_journal, or any combination.',
+          message:
+            'Provide attach_pdf, attach_files, attach_journal, journal_formats, or any combination.',
         },
       ])
     }
-    if ('attach_journal' in body) {
-      if (!(await service.setInvoiceJournal(invoiceId, journalOf(body, true)))) {
-        throw new ApiError({
-          status: 404,
-          code: 'not_found',
-          message: 'The requested resource does not exist.',
-        })
-      }
+    // Every field read before any is written, so a body with one bad field
+    // changes nothing rather than saving the half that came first.
+    const journal = 'attach_journal' in body ? journalOf(body, true) : undefined
+    const formats = 'journal_formats' in body ? journalFormatsOf(body, true) : undefined
+    const attachPdf = 'attach_pdf' in body ? flagOf(body, 'attach_pdf', true) : undefined
+    const attachFiles = 'attach_files' in body ? flagOf(body, 'attach_files', true) : undefined
+    const notFound = () =>
+      new ApiError({
+        status: 404,
+        code: 'not_found',
+        message: 'The requested resource does not exist.',
+      })
+    if (journal !== undefined && !(await service.setInvoiceJournal(invoiceId, journal))) {
+      throw notFound()
     }
-    if ('attach_pdf' in body) {
-      const wanted = flagOf(body, 'attach_pdf', true)
-      if (!(await service.setInvoicePreference(invoiceId, 'document', wanted))) {
-        throw new ApiError({
-          status: 404,
-          code: 'not_found',
-          message: 'The requested resource does not exist.',
-        })
-      }
+    if (formats !== undefined && !(await service.setInvoiceJournalFormats(invoiceId, formats))) {
+      throw notFound()
     }
-    if ('attach_files' in body) {
-      const wanted = flagOf(body, 'attach_files', true)
-      if (!(await service.setInvoicePreference(invoiceId, 'files', wanted))) {
-        throw new ApiError({
-          status: 404,
-          code: 'not_found',
-          message: 'The requested resource does not exist.',
-        })
-      }
+    if (
+      attachPdf !== undefined &&
+      !(await service.setInvoicePreference(invoiceId, 'document', attachPdf))
+    ) {
+      throw notFound()
     }
-    const [document, files, journal] = await Promise.all([
+    if (
+      attachFiles !== undefined &&
+      !(await service.setInvoicePreference(invoiceId, 'files', attachFiles))
+    ) {
+      throw notFound()
+    }
+    const [document, files, journalAnswer, formatsAnswer] = await Promise.all([
       service.readInvoicePreference(invoiceId, 'document'),
       service.readInvoicePreference(invoiceId, 'files'),
       service.readInvoiceJournal(invoiceId),
+      service.readInvoiceJournalFormats(invoiceId),
     ])
     return context.json(
       {
@@ -244,9 +294,12 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
           attach_files: files?.invoice ?? null,
           organization_attach_files: files?.organization ?? false,
           effective_files: files?.invoice ?? files?.organization ?? false,
-          attach_journal: journal?.invoice ?? null,
-          organization_attach_journal: journal?.organization ?? false,
-          effective_journal: journal?.invoice ?? journal?.organization ?? false,
+          attach_journal: journalAnswer?.invoice ?? null,
+          organization_attach_journal: journalAnswer?.organization ?? false,
+          effective_journal: journalAnswer?.invoice ?? journalAnswer?.organization ?? false,
+          journal_formats: formatsAnswer?.invoice ?? null,
+          organization_journal_formats: formatsAnswer?.organization ?? ['pdf'],
+          effective_journal_formats: formatsAnswer?.invoice ?? formatsAnswer?.organization ?? ['pdf'],
         },
       },
       200,
@@ -256,10 +309,11 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
 
   api.get('/settings/invoice-documents', async (context) => {
     assertMoneyWriter(context)
-    const [attachPdf, attachFiles, attachJournal] = await Promise.all([
+    const [attachPdf, attachFiles, attachJournal, journalFormats] = await Promise.all([
       service.readOrganizationPreference('document'),
       service.readOrganizationPreference('files'),
       service.readOrganizationJournal(),
+      service.readOrganizationJournalFormats(),
     ])
     return context.json(
       {
@@ -267,6 +321,7 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
           attach_pdf: attachPdf,
           attach_files: attachFiles,
           attach_journal: attachJournal,
+          journal_formats: journalFormats,
         },
       },
       200,
@@ -277,35 +332,37 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
   api.post('/settings/invoice-documents', async (context) => {
     assertMoneyWriter(context)
     const body = (await context.req.json().catch(() => ({}))) as Record<string, unknown>
-    if (!('attach_pdf' in body) && !('attach_files' in body) && !('attach_journal' in body)) {
+    if (!preferenceFields.some((field) => field in body)) {
       throw validationError([
         {
           field: 'attach_pdf',
           code: 'required',
-          message: 'Provide attach_pdf, attach_files, attach_journal, or any combination.',
+          message:
+            'Provide attach_pdf, attach_files, attach_journal, journal_formats, or any combination.',
         },
       ])
     }
-    if ('attach_journal' in body) {
-      await service.setOrganizationJournal(journalOf(body, false)!)
-    }
-    if ('attach_pdf' in body) {
-      await service.setOrganizationPreference('document', flagOf(body, 'attach_pdf', false)!)
-    }
-    if ('attach_files' in body) {
-      await service.setOrganizationPreference('files', flagOf(body, 'attach_files', false)!)
-    }
-    const [attachPdf, attachFiles, attachJournal] = await Promise.all([
+    const journal = 'attach_journal' in body ? journalOf(body, false)! : undefined
+    const formats = 'journal_formats' in body ? journalFormatsOf(body, false)! : undefined
+    const attachPdf = 'attach_pdf' in body ? flagOf(body, 'attach_pdf', false)! : undefined
+    const attachFiles = 'attach_files' in body ? flagOf(body, 'attach_files', false)! : undefined
+    if (journal !== undefined) await service.setOrganizationJournal(journal)
+    if (formats !== undefined) await service.setOrganizationJournalFormats(formats)
+    if (attachPdf !== undefined) await service.setOrganizationPreference('document', attachPdf)
+    if (attachFiles !== undefined) await service.setOrganizationPreference('files', attachFiles)
+    const [currentPdf, currentFiles, currentJournal, currentFormats] = await Promise.all([
       service.readOrganizationPreference('document'),
       service.readOrganizationPreference('files'),
       service.readOrganizationJournal(),
+      service.readOrganizationJournalFormats(),
     ])
     return context.json(
       {
         data: {
-          attach_pdf: attachPdf,
-          attach_files: attachFiles,
-          attach_journal: attachJournal,
+          attach_pdf: currentPdf,
+          attach_files: currentFiles,
+          attach_journal: currentJournal,
+          journal_formats: currentFormats,
         },
       },
       200,

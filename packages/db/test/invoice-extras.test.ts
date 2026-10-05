@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase } from '../src/adapters.js'
 import { migrateContainer, migrateContainerThrough } from '../src/migrate.js'
 import { invoiceExtrasSetMigration } from '../src/migrations/0058_invoice_extras_set.js'
+import { journalFormatsInvoiceExtraMigration } from '../src/migrations/0096_journal_formats_invoice_extra.js'
 import {
   parseInvoiceExtras,
   readInvoiceExtras,
@@ -224,5 +225,102 @@ describe('the surfaces that were three triples', () => {
     expect(parseInvoiceExtras('not json')).toEqual({})
     expect(parseInvoiceExtras('[1,2]')).toEqual({})
     expect(parseInvoiceExtras(null)).toEqual({})
+  })
+})
+
+describe('the journal formats kind (0096)', () => {
+  const upTo0095 = () => {
+    const database = new BetterSqlite3(':memory:')
+    migrateContainerThrough(database, '0095_free_form_invoice_create')
+    database.exec(`
+      INSERT INTO organizations (name, modules, invoice_extras, created_at, updated_at)
+        VALUES ('CONFLICT', '{}', '{"document":true,"journal":"summary"}', '${at}', '${at}');
+      INSERT INTO clients (id, name, currency, created_at, updated_at)
+        VALUES (1, 'Kestrel Environmental', 'USD', '${at}', '${at}');
+      INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date, state,
+                            invoice_extras, created_at, updated_at)
+        VALUES (1, 1, '1315', 'USD', '2026-09-12', '2026-10-12', 'draft',
+                '{"journal":"detailed","reminders":false}', '${at}', '${at}'),
+               (2, 1, '1316', 'USD', '2026-09-12', '2026-10-12', 'draft', NULL, '${at}', '${at}');
+    `)
+    sqlite = database
+    return database
+  }
+
+  it('[money] leaves every stored answer byte for byte as it was', () => {
+    // Nothing is backfilled: absent already means "follow the organization",
+    // and on the organization "the PDF it always sent".
+    const database = upTo0095()
+    const before = database
+      .prepare(`SELECT 'org' AS kind, invoice_extras AS extras FROM organizations
+                UNION ALL SELECT 'invoice' || id, invoice_extras FROM invoices ORDER BY kind`)
+      .all()
+    for (const statement of journalFormatsInvoiceExtraMigration) database.exec(statement)
+    expect(
+      database
+        .prepare(`SELECT 'org' AS kind, invoice_extras AS extras FROM organizations
+                  UNION ALL SELECT 'invoice' || id, invoice_extras FROM invoices ORDER BY kind`)
+        .all(),
+    ).toEqual(before)
+  })
+
+  it('[security] was refused as an unknown kind before 0096 and is accepted after it', () => {
+    const database = upTo0095()
+    const write = () =>
+      database.exec(`UPDATE invoices SET invoice_extras = '{"journal_formats":["csv"]}' WHERE id = 2`)
+    expect(write).toThrow(/unknown invoice extra/u)
+    for (const statement of journalFormatsInvoiceExtraMigration) database.exec(statement)
+    write()
+    expect(database.prepare(`SELECT invoice_extras AS extras FROM invoices WHERE id = 2`).get()).toEqual({
+      extras: '{"journal_formats":["csv"]}',
+    })
+  })
+
+  it('[security] refuses a format set that would silently read back as the default', async () => {
+    // Dropped on read, any of these would send the PDF while the stored value
+    // said otherwise -- a preference that never applies.
+    const database = new BetterSqlite3(':memory:')
+    await migrateContainer(database)
+    sqlite = database
+    database.exec(`
+      INSERT INTO organizations (name, modules, created_at, updated_at)
+        VALUES ('CONFLICT', '{}', '${at}', '${at}');
+      INSERT INTO clients (id, name, currency, created_at, updated_at)
+        VALUES (1, 'Kestrel Environmental', 'USD', '${at}', '${at}');
+      INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date, state,
+                            created_at, updated_at)
+        VALUES (1, 1, '1315', 'USD', '2026-09-12', '2026-10-12', 'draft', '${at}', '${at}');
+    `)
+    for (const value of ['[]', '["pdf","pdf"]', '["docx"]', '"pdf"', 'true', '[1]', '["PDF"]', 'null']) {
+      const extras = `{"journal_formats":${value}}`
+      expect(() =>
+        database.exec(`UPDATE invoices SET invoice_extras = '${extras}' WHERE id = 1`),
+      ).toThrow(/invalid journal formats/u)
+      expect(() => database.exec(`UPDATE organizations SET invoice_extras = '${extras}'`)).toThrow(
+        /invalid journal formats/u,
+      )
+      expect(() =>
+        database.exec(`
+          INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date, state,
+                                invoice_extras, created_at, updated_at)
+            VALUES (9, 1, '1399', 'USD', '2026-09-12', '2026-10-12', 'draft', '${extras}',
+                    '${at}', '${at}')`),
+      ).toThrow(/invalid journal formats/u)
+    }
+    // Any order of distinct known formats is a set.
+    database.exec(`UPDATE invoices SET invoice_extras = '{"journal_formats":["xlsx","pdf"]}' WHERE id = 1`)
+    database.exec(`UPDATE organizations SET invoice_extras = '{"journal_formats":["pdf","csv","xlsx"]}'`)
+    expect((await readInvoiceExtras(createContainerDatabase(database), 1))!.invoice).toEqual({
+      journal_formats: ['pdf', 'xlsx'],
+    })
+  })
+
+  it('[unit] reads a format set only under its own kind, in the product order', () => {
+    expect(parseInvoiceExtras('{"journal_formats":["csv","pdf"]}')).toEqual({
+      journal_formats: ['pdf', 'csv'],
+    })
+    // A list under any other kind, or a non-list under this one, is unreadable.
+    expect(parseInvoiceExtras('{"document":["pdf"],"journal_formats":true}')).toEqual({})
+    expect(parseInvoiceExtras('{"journal_formats":["pdf","pdf"],"files":true}')).toEqual({ files: true })
   })
 })

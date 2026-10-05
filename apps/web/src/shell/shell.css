@@ -1206,10 +1206,6 @@
   font-weight: 700;
 }
 
-.invoice-generation {
-  width: min(880px, 100%);
-  margin-inline: auto;
-}
 .invoice-workspace {
   width: 100%;
 }
@@ -1237,6 +1233,21 @@
   color: var(--ez-status-fg);
   font: 600 11px/1.2 var(--ez-font-mono), monospace;
   text-transform: uppercase;
+}
+/* The four states someone scans the list for, each in a theme slot rather
+   than a literal so every theme keeps its own contrast. The tint is the ink
+   mixed into the ground, so the word still carries the meaning either way. */
+.invoice-state[data-tone='sent'] {
+  background: color-mix(in srgb, var(--ez-action) 10%, var(--ez-ground));
+  color: var(--ez-action);
+}
+.invoice-state[data-tone='late'] {
+  background: color-mix(in srgb, var(--ez-red) 12%, var(--ez-ground));
+  color: var(--ez-red);
+}
+.invoice-state[data-tone='paid'] {
+  background: color-mix(in srgb, var(--ez-data) 12%, var(--ez-ground));
+  color: var(--ez-data);
 }
 .invoice-past-due {
   color: var(--ez-status-fg);
@@ -1622,29 +1633,14 @@
   display: block !important;
   color: var(--ez-muted);
 }
-.invoice-generation-form {
-  display: grid;
-  gap: 18px;
-  margin-top: 24px;
+.invoice-generation-form select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
-.invoice-generation-form input:not([type='checkbox']),
-.invoice-generation-form select,
-.invoice-generation-form button {
-  min-height: 44px;
-}
-.invoice-generation-form input:not([type='checkbox']),
-.invoice-generation-form select {
-  width: 100%;
-}
-.invoice-generation-form fieldset,
-.invoice-generation-success {
-  display: grid;
-  gap: 14px;
-  margin: 0;
-  padding: 20px;
-  border: 1px solid var(--ez-border);
-  border-radius: var(--ez-radius);
-  background: var(--ez-surface);
+.invoice-generation-form .field-hint {
+  margin: -6px 0 0;
+  color: var(--ez-muted);
+  font-size: 13px;
 }
 .invoice-payment-amount-fields {
   display: grid;
@@ -1707,6 +1703,51 @@
 .invoice-composer-dialog {
   width: min(920px, calc(100vw - 32px));
 }
+/* The invoice dialogs share one frame: the title and the actions stay put in
+   bands of their own while a long form scrolls between them, so Save is never
+   below the fold. */
+:is(.invoice-payment-dialog, .invoice-line-dialog, .invoice-transition-dialog, .invoice-composer-dialog) > form {
+  max-height: calc(100dvh - 48px);
+  padding: 0 24px;
+  overflow-y: auto;
+}
+:is(.invoice-payment-dialog, .invoice-line-dialog, .invoice-transition-dialog, .invoice-composer-dialog) > form > header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 -24px;
+  padding: 20px 24px 14px;
+  border-bottom: 1px solid var(--ez-border);
+  background: var(--ez-ground);
+}
+:is(.invoice-payment-dialog, .invoice-line-dialog, .invoice-transition-dialog, .invoice-composer-dialog) h2 {
+  margin: 0;
+}
+:is(.invoice-payment-dialog, .invoice-line-dialog, .invoice-transition-dialog, .invoice-composer-dialog) > form > .invoice-payment-dialog-actions {
+  position: sticky;
+  bottom: 0;
+  margin: 4px -24px 0;
+  padding: 14px 24px;
+  border-top: 1px solid var(--ez-border);
+  background: var(--ez-surface);
+}
+:is(.invoice-payment-dialog, .invoice-line-dialog, .invoice-transition-dialog, .invoice-composer-dialog) .hint {
+  margin-top: -6px;
+  font-size: 13px;
+}
+.invoice-payment-dialog-actions button:not(.primary-action) {
+  background: var(--ez-ground);
+}
+.invoice-edit-rate-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 560px) {
+  .invoice-edit-rate-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .invoice-composer-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(230px, 0.8fr);
@@ -1756,33 +1797,268 @@
   color: var(--ez-muted);
   font-size: 12px;
 }
-.invoice-generation-form legend {
-  padding-inline: 6px;
-  font-weight: 700;
+/* New invoice (one step, then the draft). A header and a footer band hold
+   the title and the actions still while the body scrolls on a short screen. */
+.invoice-new-dialog {
+  width: min(600px, calc(100vw - 32px));
 }
-/* One control now, where two labelled date fields used to sit side by side.
-   The control lays out its own row and its own custom pair. */
+.invoice-new-dialog > form {
+  gap: 0;
+  padding: 0;
+}
+.invoice-new-dialog > form > header {
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--ez-border);
+}
+.invoice-new-dialog h2 {
+  margin: 0;
+}
+.invoice-new-body {
+  display: grid;
+  gap: 20px;
+  max-height: min(64vh, 640px);
+  padding: 20px 24px;
+  overflow-y: auto;
+}
+.invoice-new-body > .form-result:empty {
+  display: none;
+}
+.invoice-new-tracked {
+  display: grid;
+  gap: 20px;
+}
+.invoice-new-tracked[hidden],
+.invoice-period[hidden] {
+  display: none;
+}
+.invoice-new-dialog fieldset {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.invoice-new-dialog legend {
+  margin-bottom: 8px;
+  padding: 0;
+  color: var(--ez-ink);
+  font-weight: 600;
+  font-size: 13px;
+}
+.invoice-new-dialog > form > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--ez-border);
+  background: var(--ez-surface);
+  border-radius: 0 0 calc(var(--ez-radius) * 2) calc(var(--ez-radius) * 2);
+}
+.invoice-new-dialog > form > footer button {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+}
+.invoice-new-dialog > form > footer .primary-action {
+  border-color: var(--ez-action);
+  background: var(--ez-action);
+  color: var(--ez-action-fg);
+}
+.invoice-new-dialog > form > footer [data-retry-invoice-catalog] {
+  margin-right: auto;
+}
+/* The two types as cards, the chosen one in the action colour. */
+.invoice-new-kind {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.invoice-new-kind legend {
+  grid-column: 1 / -1;
+}
+.invoice-new-dialog .invoice-new-kind-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: calc(var(--ez-radius) * 1.5);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.invoice-new-kind-card:hover {
+  border-color: color-mix(in srgb, var(--ez-action) 45%, var(--ez-border));
+}
+.invoice-new-kind-card:has(input:checked) {
+  border-color: var(--ez-action);
+  background: color-mix(in srgb, var(--ez-action) 6%, var(--ez-ground));
+  box-shadow: 0 0 0 1px var(--ez-action);
+}
+.invoice-new-kind-card:has(input:focus-visible) {
+  outline: 2px solid var(--ez-action);
+  outline-offset: 2px;
+}
+.invoice-new-kind-card span {
+  display: grid;
+  gap: 2px;
+}
+.invoice-new-kind-card strong {
+  font-size: 14px;
+}
+.invoice-new-kind-card small {
+  color: var(--ez-muted);
+  font-size: 12px;
+}
+.invoice-new-dialog input[type='radio'],
+.invoice-new-dialog input[type='checkbox'] {
+  width: 16px;
+  min-height: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  padding: 0;
+  accent-color: var(--ez-action);
+}
+/* Projects as one bordered list, each with what it has waiting. */
+.invoice-projects {
+  display: grid;
+  max-height: 232px;
+  overflow-y: auto;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+.invoice-projects > p {
+  margin: 0;
+  padding: 12px;
+}
+.invoice-new-dialog .invoice-projects label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--ez-border);
+  color: var(--ez-ink);
+  font-size: 14px;
+  cursor: pointer;
+}
+.invoice-new-dialog .invoice-projects label:last-child {
+  border-bottom: 0;
+}
+.invoice-new-dialog .invoice-projects label:hover {
+  background: var(--ez-row-hover);
+}
+.invoice-new-dialog .invoice-projects input {
+  margin: 0;
+}
+.invoice-projects small {
+  color: var(--ez-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.invoice-new-period-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+.invoice-new-dialog .invoice-new-period-choice label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  color: var(--ez-ink);
+  font-size: 14px;
+  cursor: pointer;
+}
+.invoice-new-dialog .invoice-new-period-choice input {
+  margin: 0;
+}
+.invoice-new-journal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding-top: 4px;
+}
+.invoice-new-journal[hidden],
+.invoice-new-journal select[hidden] {
+  display: none;
+}
+.invoice-new-dialog .invoice-new-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  color: var(--ez-ink);
+  font-size: 14px;
+  cursor: pointer;
+}
+.invoice-new-dialog .invoice-new-check input {
+  margin: 0;
+}
+.invoice-new-dialog .invoice-new-journal select {
+  width: auto;
+  min-height: 36px;
+  padding: 4px 10px;
+  font-size: 14px;
+}
+.invoice-new-dialog .invoice-new-formats {
+  display: inline-flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+.invoice-new-dialog .invoice-new-formats[hidden] {
+  display: none;
+}
+.invoice-new-dialog .invoice-new-formats label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  color: var(--ez-ink);
+  font-size: 14px;
+  cursor: pointer;
+}
+.invoice-new-dialog .invoice-new-formats input {
+  margin: 0;
+}
+.invoice-hours-menu-label {
+  margin: 0;
+  padding: 8px 12px 2px;
+  color: var(--ez-muted);
+  font: 600 11px/1.2 var(--ez-font-mono), monospace;
+  text-transform: uppercase;
+}
+/* The period control's arrows and fields keep a phone-sized tap target here,
+   as they had on the generation page this dialog replaced. */
+.invoice-new-dialog .invoice-period button,
+.invoice-new-dialog .invoice-period select,
+.invoice-new-dialog .invoice-period input {
+  min-height: 44px;
+}
+.invoice-new-dialog .invoice-period .period-step {
+  min-width: 44px;
+}
+/* One control, mounted by the browser; it lays out its own row. */
 .invoice-period {
   display: grid;
   min-width: 0;
 }
-.invoice-projects {
+.invoice-new-detail {
   display: grid;
-  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
-.invoice-projects label {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  justify-content: start;
-  align-items: center;
-  min-height: 44px;
-}
-.invoice-projects input {
-  width: auto;
-}
-.invoice-generation-success {
-  margin-top: 24px;
-  border-color: var(--ez-action);
+@media (max-width: 560px) {
+  .invoice-new-kind,
+  .invoice-new-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .client-workspace {
@@ -4629,12 +4905,28 @@ dialog {
   width: min(640px, calc(100vw - 32px));
   padding: 0;
   border: 1px solid var(--ez-border);
-  border-radius: var(--ez-radius);
+  border-radius: calc(var(--ez-radius) * 2);
   background: var(--ez-ground);
   color: var(--ez-ink);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--ez-ink) 8%, transparent),
+    0 24px 56px -12px color-mix(in srgb, var(--ez-ink) 32%, transparent);
 }
 dialog::backdrop {
-  background: color-mix(in srgb, var(--ez-ink) 72%, transparent);
+  background: color-mix(in srgb, var(--ez-ink) 48%, transparent);
+  backdrop-filter: blur(2px);
+}
+@media (prefers-reduced-motion: no-preference) {
+  dialog[open] {
+    animation: ez-dialog-in 140ms ease-out;
+  }
+}
+@keyframes ez-dialog-in {
+  from {
+    opacity: 0;
+    /* Translate only: a scale would shrink tap targets below 44px mid-open. */
+    transform: translateY(6px);
+  }
 }
 dialog form {
   display: grid;
@@ -4644,6 +4936,7 @@ dialog form {
 dialog header {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
   gap: 20px;
 }
 dialog header button {
@@ -4651,6 +4944,20 @@ dialog header button {
   background: transparent;
   color: var(--ez-muted);
   font-size: 24px;
+}
+/* The × alone gets a square hit area; text buttons in a header keep theirs. */
+dialog header button[aria-label^='Close'] {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--ez-radius);
+  font-size: 22px;
+  line-height: 1;
+}
+dialog header button[aria-label^='Close']:hover {
+  background: var(--ez-surface-2);
+  color: var(--ez-ink);
 }
 dialog label {
   display: grid;
@@ -5856,6 +6163,9 @@ dialog textarea {
     border: 1px solid var(--ez-status-fg);
     background: transparent;
     color: var(--ez-status-fg);
+  }
+  .invoice-state[data-tone] {
+    background: transparent;
   }
 }
 

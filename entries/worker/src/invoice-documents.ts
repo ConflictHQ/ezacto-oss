@@ -5,13 +5,24 @@ import {
   recordAttachedDocument,
   resolveAttachPolicy,
   resolveFilesPolicy,
+  resolveJournalFormats,
   resolveJournalPolicy,
   readInvoiceJournal,
   readStagedAttachments,
+  type InvoiceDocumentContext,
 } from "@ezacto/db/d1";
-import { renderInvoiceDocument, renderJournalDocument } from "@ezacto/core";
+import {
+  defaultJournalFormats,
+  journalDocumentFor,
+  journalFilename,
+  journalFormatContentType,
+  pdfImageFrom,
+  renderInvoiceDocument,
+  renderJournalFile,
+  type PdfImage,
+} from "@ezacto/core";
 import type { EmailAttachmentRef, EmailAttachmentResolver } from "@ezacto/mailer";
-import type { InvoiceDeliveryContext, InvoiceDocumentPort } from "@ezacto/api";
+import type { InvoiceDocumentPort } from "@ezacto/api";
 
 /**
  * The document half of issue 626, composed where the storage lives.
@@ -27,7 +38,7 @@ import type { InvoiceDeliveryContext, InvoiceDocumentPort } from "@ezacto/api";
  */
 
 interface DocumentSource {
-  deliveryContext(invoiceId: number): Promise<InvoiceDeliveryContext | null>;
+  documentContext(invoiceId: number): Promise<InvoiceDocumentContext | null>;
   invoiceVersion(invoiceId: number): Promise<number | null>;
   paymentUrl(invoiceId: number): Promise<string | null>;
 }
@@ -36,6 +47,33 @@ interface ObjectStore {
   put(key: string, bytes: ArrayBuffer, contentType: string): Promise<void>;
   get(key: string): Promise<{ body: BodyInit } | null>;
 }
+
+/**
+ * The organization's light-ground wordmark, ready to draw, or `null` -- in
+ * which case the document sets the company's name in its place. Any failure
+ * to fetch or decode it lands here too: a logo is never why an invoice does
+ * not go.
+ */
+const logoFor = async (
+  context: InvoiceDocumentContext,
+  objects: ObjectStore,
+): Promise<PdfImage | null> => {
+  if (context.logo === null) return null;
+  try {
+    const object = await objects.get(context.logo.fileKey);
+    if (object === null) return null;
+    const bytes = new Uint8Array(await new Response(object.body).arrayBuffer());
+    return await pdfImageFrom(bytes, context.logo.contentType);
+  } catch {
+    return null;
+  }
+};
+
+/** The bytes alone: a view's buffer can be larger than the view. */
+const exactBuffer = (bytes: Uint8Array): ArrayBuffer =>
+  bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+    ? (bytes.buffer as ArrayBuffer)
+    : (bytes.slice().buffer as ArrayBuffer);
 
 export const createInvoiceDocumentPort = (options: {
   readonly database: Parameters<typeof resolveAttachPolicy>[0];
@@ -60,45 +98,51 @@ export const createInvoiceDocumentPort = (options: {
     // here rather than stored, because unlike the invoice document it is
     // derived entirely from entries this invoice already claimed -- there is no
     // version of it a client could dispute that re-rendering would not
-    // reproduce.
+    // reproduce. One file per format asked for, every one at the same level;
+    // the PDF keeps the key and name it always had, so an organization that
+    // never chose a format sends exactly what it sent before.
     const journalLevel = await resolveJournalPolicy(options.database, invoiceId);
     const journal = async (
-      context: InvoiceDeliveryContext,
+      context: InvoiceDocumentContext,
     ): Promise<readonly EmailAttachmentRef[]> => {
       if (journalLevel === null) return [];
+      // Notes a client may not read are already withheld here (D20).
       const entries = await readInvoiceJournal(options.database, invoiceId);
       // Nothing claimed means nothing to show. An empty journal would tell a
       // client their invoice is backed by no work at all, which is a stronger
       // claim than "this invoice was not raised from tracked time".
       if (entries.length === 0) return [];
-      const bytes = renderJournalDocument({
-        detail: journalLevel,
-        invoiceNumber: context.number,
-        companyName: context.organizationName,
-        clientName: context.clientName,
-        periodStart: entries[0]!.spentDate,
-        periodEnd: entries[entries.length - 1]!.spentDate,
-        timeFormat: "decimal",
-        entries,
-      });
-      const journalKey = `invoice-documents/${String(invoiceId)}/${String(invoiceMessageId)}-journal.pdf`;
-      await options.objects.put(
-        journalKey,
-        bytes.buffer as ArrayBuffer,
-        "application/pdf",
-      );
-      return [
+      const formats =
+        (await resolveJournalFormats(options.database, invoiceId)) ?? defaultJournalFormats;
+      const document = journalDocumentFor(
         {
-          key: journalKey,
-          filename: `work-${journalLevel}-${context.number}.pdf`,
-          contentType: "application/pdf",
+          invoiceNumber: context.number,
+          companyName: context.organizationName,
+          clientName: context.clientName,
+          entries,
         },
-      ];
+        journalLevel,
+      );
+      const references: EmailAttachmentRef[] = [];
+      for (const format of formats) {
+        const bytes = renderJournalFile(format, document);
+        const key = `invoice-documents/${String(invoiceId)}/${String(invoiceMessageId)}-journal.${format}`;
+        const contentType = journalFormatContentType[format];
+        // A retried delivery renders the same bytes to the same key, so the
+        // object a first attempt wrote is replaced by its own copy.
+        await options.objects.put(key, exactBuffer(bytes), contentType);
+        references.push({
+          key,
+          filename: journalFilename(journalLevel, context.number, format),
+          contentType,
+        });
+      }
+      return references;
     };
 
     const decision = await resolveAttachPolicy(options.database, invoiceId);
     if (!decision.attach) {
-      const context = await options.source.deliveryContext(invoiceId);
+      const context = await options.source.documentContext(invoiceId);
       return context === null ? staged : [...(await journal(context)), ...staged];
     }
 
@@ -117,7 +161,7 @@ export const createInvoiceDocumentPort = (options: {
       ];
     }
 
-    const context = await options.source.deliveryContext(invoiceId);
+    const context = await options.source.documentContext(invoiceId);
     // Nothing to render from, but a staged purchase order is still worth
     // sending: it was attached by a person, not derived from the invoice.
     if (context === null) return staged;
@@ -129,9 +173,14 @@ export const createInvoiceDocumentPort = (options: {
     const bytes = renderInvoiceDocument({
       number: context.number,
       companyName: context.organizationName,
+      companyAddress: context.organizationAddress,
+      logo: await logoFor(context, options.objects),
       clientName: context.clientName,
+      clientAddress: context.clientAddress,
       issueDate: context.issueDate,
       dueDate: context.dueDate,
+      paymentTerms: context.paymentTerms,
+      purchaseOrder: context.purchaseOrder,
       currency: context.currency,
       subject: context.subject,
       lines: context.lineItems,
@@ -143,8 +192,15 @@ export const createInvoiceDocumentPort = (options: {
         context.taxAmountCents -
         context.tax2AmountCents,
       discountCents: context.discountAmountCents,
-      taxCents: context.taxAmountCents + context.tax2AmountCents,
+      discountRatePpm: context.discountRatePpm,
+      taxCents: context.taxAmountCents,
+      taxRatePpm: context.taxRatePpm,
+      tax2Cents: context.tax2AmountCents,
+      tax2RatePpm: context.tax2RatePpm,
       totalCents: context.amountCents,
+      paidCents: context.paidAmountCents,
+      dueAmountCents: context.dueAmountCents,
+      notes: context.notes,
       ...(paymentUrl === null ? {} : { paymentUrl }),
     });
 

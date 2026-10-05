@@ -651,6 +651,110 @@ describe("Worker D1 runtime composition", () => {
     ).toEqual({ timeEntries: 2, expenses: 1, createdEvents: 1, updatedEvents: 0 });
   });
 
+  it("[api] creates and replays a blank free-form draft through the deployed Worker binding", async () => {
+    const client = new EzactoClient({
+      baseUrl: "https://worker.test",
+      token: moneyBearer,
+      fetch: workerFetch,
+    });
+    const generation = {
+      "Idempotency-Key": "runtime-free-form-draft",
+      body: { kind: "free_form" as const, client_id: 1 },
+    };
+
+    const created = await client.generateInvoice(generation);
+    expect(await client.generateInvoice(generation)).toEqual(created);
+    expect(created.data).toMatchObject({
+      client_id: 1,
+      currency: "USD",
+      payment_terms: "custom",
+      due_date: created.data.issue_date,
+      state: "draft",
+      subject: null,
+      period_start: null,
+      period_end: null,
+      project_id: null,
+      amount_cents: 0,
+      line_items: [],
+    });
+    expect(
+      await database
+        .prepare(
+          `SELECT
+             (SELECT count(*) FROM time_entries WHERE invoice_id = ?) AS timeEntries,
+             (SELECT count(*) FROM expenses WHERE invoice_id = ?) AS expenses,
+             (SELECT count(*) FROM event_outbox
+               WHERE aggregate_id = ? AND event_type = 'invoice.created') AS createdEvents`,
+        )
+        .bind(created.data.id, created.data.id, created.data.id)
+        .first(),
+    ).toEqual({ timeEntries: 0, expenses: 0, createdEvents: 1 });
+  });
+
+  it("[api] downloads an invoice's hours report through the deployed Worker, internal notes withheld", async () => {
+    // Two entries the invoice billed; one note its author marked internal (D20).
+    await run(
+      `INSERT INTO invoices (
+        id, client_id, created_by_user_id, number, currency, issue_date, due_date,
+        created_at, updated_at
+      ) VALUES (9040, 1, 1, 'RUN-9040', 'USD', '2026-08-28', '2026-09-27', ?, ?),
+               (9041, 1, 1, 'RUN-9041', 'USD', '2026-08-28', '2026-09-27', ?, ?)`,
+      timestamp,
+      timestamp,
+      timestamp,
+      timestamp,
+    );
+    await run(
+      `INSERT INTO time_entries (
+        id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+        spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+        billable_rate_cents, cost_rate_cents, budgeted, notes, client_visible, invoice_id,
+        created_at, updated_at
+      ) VALUES
+        (9040, 2, 1, 1, 1, 1, '2026-08-20', 3600, 3600, 3600, 1, 10000, 5000, 1,
+         'Shared with the client', NULL, 9040, ?, ?),
+        (9041, 2, 1, 1, 1, 1, '2026-08-21', 1800, 1800, 1800, 1, 10000, 5000, 1,
+         'Internal: margin is thin', 0, 9040, ?, ?)`,
+      timestamp,
+      timestamp,
+      timestamp,
+      timestamp,
+    );
+    const download = (path: string, token = moneyBearer) =>
+      request(path, { headers: { authorization: `Bearer ${token}` } });
+
+    const csv = await download("/api/v1/invoices/9040/hours-report?format=csv");
+    expect(csv.status).toBe(200);
+    expect(csv.headers.get("content-type")).toBe("text/csv; charset=utf-8");
+    expect(csv.headers.get("cache-control")).toBe("no-store");
+    expect(csv.headers.get("content-disposition")).toContain('filename="work-detailed-RUN-9040.csv"');
+    const body = await csv.text();
+    expect(body).toContain("Shared with the client");
+    expect(body).not.toContain("margin is thin");
+    expect(body).toContain("Total,,,,,,1.50");
+
+    for (const [format, type, magic] of [
+      ["pdf", "application/pdf", "%PDF"],
+      ["xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "PK"],
+    ] as const) {
+      const response = await download(`/api/v1/invoices/9040/hours-report?format=${format}&detail=summary`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe(type);
+      expect(response.headers.get("content-disposition")).toContain(`work-summary-RUN-9040.${format}`);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      expect(String.fromCharCode(...bytes.slice(0, magic.length))).toBe(magic);
+    }
+
+    // The member's token carries no invoices:read; nothing is rendered for it.
+    expect((await download("/api/v1/invoices/9040/hours-report?format=pdf", bearer)).status).toBe(403);
+    expect((await request("/api/v1/invoices/9040/hours-report?format=pdf")).status).toBe(401);
+    expect((await download("/api/v1/invoices/999999/hours-report?format=pdf")).status).toBe(404);
+    expect((await download("/api/v1/invoices/9040/hours-report?format=docx")).status).toBe(422);
+    const empty = await download("/api/v1/invoices/9041/hours-report?format=pdf");
+    expect(empty.status).toBe(409);
+    expect(await empty.json()).toMatchObject({ error: { code: "no_billed_time" } });
+  });
+
   it("[api] uploads and downloads an owner-scoped attachment through real D1 and R2 bindings", async () => {
     const client = new EzactoClient({
       baseUrl: "https://worker.test",

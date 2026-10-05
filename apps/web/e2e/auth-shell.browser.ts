@@ -1926,52 +1926,51 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await page.goto('/invoices/new')
 
   await expect(page).toHaveTitle('ezacto — Sign in')
-  await expect(page.locator('[data-invoice-generation-page]')).toBeHidden()
+  await expect(page.locator('[data-invoice-new-dialog]')).toBeHidden()
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
   await page.getByLabel('Password').fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
-  const wizard = page.locator('[data-invoice-generation-page]')
+  // One step, as in Harvest: /invoices/new is the list with the dialog open.
+  const wizard = page.locator('[data-invoice-new-dialog]')
   await expect(wizard).toBeVisible()
-  await expect(page).toHaveTitle('ezacto — Generate invoice')
-  await expect(wizard.getByRole('heading', { name: 'Generate an invoice' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+  await expect(page).toHaveTitle('ezacto — New invoice')
+  await expect(wizard.getByRole('heading', { name: 'New invoice' })).toBeVisible()
+  await expect(page.locator('[data-invoice-list-page]')).toBeVisible()
   await expect(wizard.getByLabel('Client')).toHaveValue('1')
-  await expect(wizard.getByLabel('From')).toHaveValue('2026-08-01')
-  await expect(wizard.getByLabel('To')).toHaveValue('2026-08-30')
-  const primaryProject = wizard.getByRole('checkbox', {
-    name: 'Browser Acceptance Project',
-    exact: true,
-  })
-  const secondaryProject = wizard.getByRole('checkbox', {
-    name: 'Browser Secondary Project',
-    exact: true,
-  })
+  await expect(wizard.getByRole('radio', { name: /From tracked time/u })).toBeChecked()
+  // A project's name is followed by what it has waiting, so match its start.
+  const primaryProject = wizard.getByRole('checkbox', { name: /^Browser Acceptance Project/u })
+  const secondaryProject = wizard.getByRole('checkbox', { name: /^Browser Secondary Project/u })
   await expect(primaryProject).toHaveCount(1)
   await expect(primaryProject).toHaveValue('1')
   await expect(secondaryProject).toHaveCount(1)
   await expect(secondaryProject).toHaveValue('2')
-  await expectPhoneControl(
-    primaryProject.locator('..'),
-  )
+  await expectPhoneControl(primaryProject.locator('..'))
   for (const projectChoice of await wizard.locator('input[name="project"]').all()) {
     await projectChoice.setChecked((await projectChoice.inputValue()) === '1')
   }
-  await wizard.getByLabel('Expenses').selectOption('')
+  // Whether Expenses is greyed out depends on what earlier specs left in the
+  // shared database (the receipt spec files expenses for this client), so it
+  // is set to none either way; the greying itself is covered in the unit suite.
+  const expenses = wizard.locator('[data-invoice-expense-summary]')
+  if (await expenses.isEnabled()) await expenses.selectOption('')
+  // All uninvoiced is the default; a range shows the shared period control.
+  await wizard.getByRole('radio', { name: 'Date range' }).check()
+  await expect(wizard.getByLabel('From', { exact: true })).toHaveValue('2026-08-01')
+  await expect(wizard.getByLabel('To', { exact: true })).toHaveValue('2026-08-30')
   for (const control of [
     wizard.getByLabel('Client'),
-    // The period control's own three, which replaced the fieldset's bare date
-    // pair. Exact on the label: `getByLabel` matches on substring, case
+    // Exact on the label: `getByLabel` matches on substring, case
     // insensitively, so a bare 'Period' also resolves 'Previous period' and
     // 'Next period' and Playwright refuses the three-element locator.
     wizard.getByRole('button', { name: 'Previous period' }),
     wizard.getByLabel('Period', { exact: true }),
     wizard.getByRole('button', { name: 'Next period' }),
-    wizard.getByLabel('From'),
-    wizard.getByLabel('To'),
-    wizard.getByLabel('Time entries'),
-    wizard.getByLabel('Expenses'),
-    wizard.getByRole('button', { name: 'Generate draft invoice' }),
+    wizard.getByLabel('From', { exact: true }),
+    wizard.getByLabel('To', { exact: true }),
+    wizard.getByLabel('Group time by'),
+    wizard.getByRole('button', { name: 'Create draft' }),
   ]) {
     await expectPhoneControl(control)
   }
@@ -1982,30 +1981,27 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
       new URL(response.url()).pathname === '/api/v1/invoice-generations' &&
       response.request().method() === 'POST',
   )
-  await wizard.getByRole('button', { name: 'Generate draft invoice' }).click()
+  await wizard.getByRole('button', { name: 'Create draft' }).click()
   const generatedResponse = await generated
   expect(generatedResponse.status()).toBe(201)
   expect(generatedResponse.request().postDataJSON()).toMatchObject({
+    kind: 'tracked',
     client_id: 1,
+    from: '2026-08-01',
+    to: '2026-08-30',
     project_ids: [1],
+    expense_summary_type: null,
   })
-  const generatedPayload = (await generatedResponse.json()) as {
-    data: { id: number; due_date: string }
-  }
-
-  await expect(page.locator('[data-invoice-generation-result]')).toHaveText(
-    'Draft invoice generated successfully.',
-  )
-  const success = page.locator('[data-invoice-generation-success]')
-  await expect(success).toBeVisible()
-  await expect(success.locator('[data-generated-invoice-number]')).toHaveText(/^\d+$/u)
-  await expect(success.locator('[data-generated-invoice-total]')).toContainText('$75.00')
-  await expect(success.locator('[data-generated-invoice-total]')).toContainText('1 line')
-  await expect(success).toContainText('The draft is saved and ready to review.')
-
-  const generatedNumber = await success.locator('[data-generated-invoice-number]').innerText()
-  await success.getByRole('link', { name: 'Open draft invoice' }).click()
+  // The draft is the next step: the dialog opens it. The navigation discards
+  // the generation response's body, so the invoice is read back by its id.
   await expect(page).toHaveURL(/\/invoices\/\d+$/u)
+  const generatedId = Number(new URL(page.url()).pathname.split('/').pop())
+  const generatedPayload = (await page.evaluate(
+    async (id) => (await fetch(`/api/v1/invoices/${String(id)}`)).json(),
+    generatedId,
+  )) as { data: { id: number; number: string; due_date: string } }
+  expect(generatedPayload.data.id).toBe(generatedId)
+  const generatedNumber = generatedPayload.data.number
   const detail = page.locator('[data-invoice-document]')
   await expect(detail).toBeVisible()
   await expect(detail.locator('[data-invoice-detail-number]')).toHaveText(generatedNumber)

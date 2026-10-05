@@ -57,6 +57,31 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <div class="settings-table" data-settings-sender-identities hidden></div>
       <dl class="settings-facts" data-settings-email-reputation hidden></dl>
     </section>
+    <section class="settings-section" data-settings-section="invoices" aria-labelledby="settings-invoices-title">
+      <header><h2 id="settings-invoices-title">Invoices</h2>
+      <p>What every invoice prints, and what a new draft starts with. The company name and address print on every invoice when it is sent, existing ones included. The default subject and notes are copied onto each new draft, where they can still be changed. Payment terms are set on each client.</p></header>
+      <p class="form-result" data-settings-invoices-status role="status" aria-live="polite">Loading invoice settings…</p>
+      <form class="settings-form invoice-defaults-form" data-invoice-defaults-form hidden>
+        <h3>Company information</h3>
+        <label>Name
+          <input name="company_name" data-invoice-defaults-name maxlength="255" autocomplete="organization" required>
+        </label>
+        <label>Address
+          <textarea name="company_address" data-invoice-defaults-address rows="4" maxlength="2000" autocomplete="street-address"></textarea>
+        </label>
+        <p class="hint">The logo is the light-background wordmark under Brand.</p>
+        <h3>Default values</h3>
+        <label>Invoice subject
+          <input name="subject" data-invoice-defaults-subject maxlength="998" autocomplete="off">
+        </label>
+        <label>Invoice notes
+          <textarea name="notes" data-invoice-defaults-notes rows="9" maxlength="100000"></textarea>
+        </label>
+        <p class="hint">Printed below the line items: how to pay, bank and wire details, terms. Formatting: <code>*bold*</code> and <code>_italic_</code>.</p>
+        <button class="primary-action" type="submit" data-invoice-defaults-submit>Save invoice settings</button>
+      </form>
+      <p class="form-result" data-invoice-defaults-result role="status" aria-live="polite"></p>
+    </section>
     <section class="settings-section" data-settings-section="reminders" aria-labelledby="settings-reminders-title">
       <header><h2 id="settings-reminders-title">Payment reminders</h2>
       <p>What an open invoice sends once it is past due, until it is paid, written off or cancelled. This is the default for every invoice sent from now on; an invoice with a policy of its own keeps it. The wording is the reminder template under Templates, and each reminder goes to whoever was sent the invoice.</p></header>

@@ -33,6 +33,7 @@ import {
   invoiceSendFailure,
   invoiceSendWork,
   invoiceStateLabel,
+  invoiceStatusPill,
   type InvoiceSendAttempt,
 } from '../src/invoices/model.js'
 
@@ -104,6 +105,36 @@ describe('invoice workspace model', () => {
     expect(invoiceIdFromPathname('/invoices/-1')).toBeNull()
     expect(invoiceIdFromPathname('/invoices/12/edit')).toBeNull()
     expect(invoiceIdFromPathname('/invoices/9007199254740992')).toBeNull()
+  })
+
+  it('[unit] colours the status pill draft, sent, late and paid', () => {
+    const today = '2026-10-05'
+    const sent = '2026-09-01T10:00:00.000Z'
+    const owing = { due_amount_cents: 500, due_date: '2026-10-05' }
+    expect(invoiceStatusPill(invoice(), today)).toEqual({ label: 'Draft', tone: 'draft' })
+    expect(invoiceStatusPill(invoice({ state: 'open', sent_at: sent, ...owing }), today))
+      .toEqual({ label: 'Sent', tone: 'sent' })
+    // Due today is not late; the day after is, sent or not.
+    expect(
+      invoiceStatusPill(invoice({ state: 'open', sent_at: sent, ...owing }), '2026-10-06'),
+    ).toEqual({ label: 'Late', tone: 'late' })
+    expect(invoiceStatusPill(invoice({ state: 'open', ...owing }), '2026-10-06'))
+      .toEqual({ label: 'Late', tone: 'late' })
+    // Nothing left to collect is not late.
+    expect(
+      invoiceStatusPill(
+        invoice({ state: 'open', due_amount_cents: 0, due_date: '2026-09-01' }),
+        today,
+      ),
+    ).toEqual({ label: 'Open', tone: 'neutral' })
+    expect(
+      invoiceStatusPill(
+        invoice({ state: 'paid', due_amount_cents: 0, due_date: '2026-09-01' }),
+        today,
+      ),
+    ).toEqual({ label: 'Paid', tone: 'paid' })
+    expect(invoiceStatusPill(invoice({ state: 'closed', close_reason: 'cancelled' }), today))
+      .toEqual({ label: 'Cancelled', tone: 'neutral' })
   })
 
   it('[unit] describes invoice state and period without inventing data', () => {

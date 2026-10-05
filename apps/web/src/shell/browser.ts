@@ -14,6 +14,7 @@ import {
   type ApiToken,
   type CreateApiTokenInput,
   type TwoFactorStatus,
+  type UninvoicedCurrencyTotal,
 } from '@conflict-hq/ezacto-client'
 import { browserDensityStore, createDensityRuntime, type Density } from '../density.js'
 import {
@@ -105,6 +106,7 @@ import {
   type DisplayTimeEntry,
   type PaletteDestination,
   type ApprovalQueueFilters,
+  type InvoiceJournalChoice,
   type ShellApi,
   type ShellSnapshot,
   TimeEntryNoteValidationError,
@@ -1187,7 +1189,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   // `week` parameter while catalogs load. Keep the report handoff before that
   // concurrent navigation can replace the address we arrived on.
   const invoiceGenerationPrefill = new URL(globalThis.location.href).searchParams
-  const invoiceListPage = document.documentElement.dataset.appView === 'invoice-list'
+  // /invoices/new is the list with the new-invoice dialog open over it.
+  const invoiceListPage =
+    document.documentElement.dataset.appView === 'invoice-list' || invoiceGenerationPage
   const invoiceDetailPage = document.documentElement.dataset.appView === 'invoice-detail'
   const invoiceRecurringPage =
     document.documentElement.dataset.appView === 'invoice-recurring'
@@ -1221,7 +1225,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const authenticatedDocumentTitle = signedOutDocumentTitle.replace(
     / — Sign in$/u,
     invoiceGenerationPage
-      ? ' — Generate invoice'
+      ? ' — New invoice'
       : invoiceListPage
         ? ' — Invoices'
         : invoiceDetailPage
@@ -1331,6 +1335,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }, 8_000)
   }
   const invoiceForm = required<HTMLFormElement>('[data-invoice-generation-form]')
+  const invoiceNewDialog = required<HTMLDialogElement>('[data-invoice-new-dialog]')
+  const invoiceTracked = required<HTMLElement>('[data-invoice-tracked]')
+  const invoicePeriodMount = required<HTMLElement>('[data-invoice-period]')
+  const invoiceAttachJournal = required<HTMLInputElement>('[data-invoice-attach-journal]')
+  const invoiceJournalLevel = required<HTMLSelectElement>('[data-invoice-journal-level]')
+  const invoiceJournalFormats = required<HTMLFieldSetElement>('[data-invoice-journal-formats]')
   /**
    * The From/To pair the generation fieldset used to carry, as the shared
    * control. Nothing runs on an arrow here: the wizard has no results to
@@ -1344,14 +1354,14 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     today: localDate,
     onChange: () => {},
   })
-  required<HTMLElement>('[data-invoice-period]').appendChild(invoicePeriod.element)
+  invoicePeriodMount.appendChild(invoicePeriod.element)
   const invoiceClient = required<HTMLSelectElement>('[data-invoice-client]')
   const invoiceProjects = required<HTMLElement>('[data-invoice-projects]')
+  const invoiceExpenseSummary = required<HTMLSelectElement>('[data-invoice-expense-summary]')
+  const invoiceExpenseHint = required<HTMLElement>('[data-invoice-expense-hint]')
   const invoiceResult = required<HTMLElement>('[data-invoice-generation-result]')
   const invoiceSubmit = required<HTMLButtonElement>('[data-invoice-generation-submit]')
   const invoiceRetry = required<HTMLButtonElement>('[data-retry-invoice-catalog]')
-  const invoiceSuccess = required<HTMLElement>('[data-invoice-generation-success]')
-  const generatedInvoiceLink = required<HTMLAnchorElement>('[data-generated-invoice-link]')
   const clientDirectory = createClientDirectoryController(api)
   const projectDirectory = createProjectDirectoryController(api)
   const taskAdmin = createTaskAdminController(api)
@@ -1511,6 +1521,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     readonly projects: readonly GeneralResource[]
   } | null = null
   let invoiceGenerationPending = false
+  let invoiceExpenseCheck = 0
+  // What the organization attaches by default; the dialog writes an invoice's
+  // own choice only when it differs, so following the default stays following.
+  let invoiceJournalDefault: InvoiceJournalChoice = { level: false, formats: ['pdf'] }
+  let invoiceExpenseChoice = invoiceExpenseSummary.value
   let invoiceCommandId: string | null = null
   let invoiceNextCursor: string | null = null
   let invoiceListRows: readonly Invoice[] = []
@@ -1549,6 +1564,25 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
     invoiceSubmit.disabled = pending
     invoiceRetry.disabled = pending
+  }
+
+  /**
+   * Most months have no expenses, so the Expenses choice is greyed out unless
+   * the selection has some to bill. Enabled is the fallback: a check that
+   * cannot run (no report scope, an older server) leaves the choice to the
+   * reader, as it always was, rather than silently dropping expenses.
+   */
+  const setInvoiceExpensesAvailable = (available: boolean): void => {
+    if (available === !invoiceExpenseSummary.disabled) return
+    if (available) {
+      invoiceExpenseSummary.value = invoiceExpenseChoice
+    } else {
+      invoiceExpenseChoice = invoiceExpenseSummary.value
+      invoiceExpenseSummary.value = ''
+    }
+    invoiceExpenseSummary.disabled = !available
+    invoiceExpenseHint.hidden = available
+    invoiceExpenseHint.textContent = available ? '' : 'No uninvoiced expenses for this selection.'
   }
 
   const configureNoteInput = (
@@ -1712,11 +1746,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     invoiceClient.replaceChildren()
     invoiceProjects.replaceChildren()
     invoiceResult.textContent = ''
-    invoiceSuccess.hidden = true
-    generatedInvoiceLink.hidden = true
-    generatedInvoiceLink.href = '/invoices'
     invoiceRetry.hidden = true
+    invoiceNewDialog.close()
     invoiceCatalog = null
+    invoiceExpenseCheck += 1
+    setInvoiceExpensesAvailable(true)
     setInvoiceFormPending(false)
     invoiceCommandId = null
     invoiceList.replaceChildren()
@@ -3278,10 +3312,93 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         input.name = 'project'
         input.value = String(project.id)
         input.checked = true
-        label.append(input, document.createTextNode(resourceLabel(project)))
+        const name = document.createElement('span')
+        name.textContent = resourceLabel(project)
+        const waiting = document.createElement('small')
+        waiting.dataset.projectUninvoiced = String(project.id)
+        label.append(input, name, waiting)
         return label
       }),
     )
+  }
+
+  /**
+   * The period the dialog bills. All uninvoiced sends no start: the server
+   * takes every billable row up to today and dates the draft from the earliest
+   * one it consumed. The report the dialog reads to preview that has no open
+   * start, so it is asked from a day older than any tracked work.
+   */
+  const invoiceRange = (): { readonly from: string | undefined; readonly to: string } => {
+    const choice = invoiceForm.querySelector<HTMLInputElement>('[data-invoice-period-choice]:checked')
+    return choice?.value === 'range' ? invoicePeriod.range() : { from: undefined, to: localDate() }
+  }
+
+  const invoiceKind = (): 'tracked' | 'free_form' =>
+    invoiceForm.querySelector<HTMLInputElement>('[data-invoice-kind]:checked')?.value === 'free_form'
+      ? 'free_form'
+      : 'tracked'
+
+  /** What each project has waiting, so choosing projects is not choosing blind. */
+  const paintInvoiceProjectTotals = (
+    rows: ReadonlyMap<number, readonly UninvoicedCurrencyTotal[]> | null,
+  ): void => {
+    for (const label of invoiceProjects.querySelectorAll<HTMLElement>('[data-project-uninvoiced]')) {
+      const totals = rows?.get(Number(label.dataset.projectUninvoiced))
+      if (rows === null) {
+        label.replaceChildren()
+      } else if (totals === undefined || totals.length === 0) {
+        label.replaceChildren('Nothing uninvoiced')
+      } else {
+        label.replaceChildren(
+          ...totals.flatMap((total, index) => [
+            ...(index === 0 ? [] : [' + ']),
+            total.total_cents === undefined
+              ? `${(total.rounded_seconds / 3_600).toFixed(2)} h`
+              : moneyText(formatMoney(total.total_cents, total.currency)),
+          ]),
+        )
+      }
+    }
+  }
+
+  const checkInvoiceExpenses = async (operation: AuthOperation): Promise<void> => {
+    const check = ++invoiceExpenseCheck
+    const clientId = Number(invoiceClient.value)
+    const { from, to } = invoiceRange()
+    const projectIds = new Set(
+      [...invoiceProjects.querySelectorAll<HTMLInputElement>('input[name="project"]:checked')]
+        .map((input) => Number(input.value)),
+    )
+    if (
+      api.getUninvoicedReport === undefined ||
+      !Number.isSafeInteger(clientId) ||
+      clientId < 1 ||
+      (from !== undefined && (!isCalendarDay(from) || from > to)) ||
+      !isCalendarDay(to)
+    ) {
+      paintInvoiceProjectTotals(null)
+      setInvoiceExpensesAvailable(true)
+      return
+    }
+    try {
+      const report = await api.getUninvoicedReport(
+        { from: from ?? '1970-01-01', to, client_id: clientId },
+        operation.signal,
+      )
+      if (!isSessionCurrent(operation) || check !== invoiceExpenseCheck) return
+      paintInvoiceProjectTotals(
+        new Map(report.projects.map((project) => [project.project_id, project.totals])),
+      )
+      const expenses = report.projects
+        .filter((project) => projectIds.has(project.project_id))
+        .flatMap((project) => project.totals)
+        .reduce((sum, total) => sum + total.expense_count, 0)
+      setInvoiceExpensesAvailable(expenses > 0)
+    } catch {
+      if (check !== invoiceExpenseCheck) return
+      paintInvoiceProjectTotals(null)
+      setInvoiceExpensesAvailable(true)
+    }
   }
 
   const publishInvoiceClientNames = (
@@ -3314,6 +3431,76 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   }
 
+  const setInvoicePeriodChoice = (choice: 'all' | 'range'): void => {
+    for (const input of invoiceForm.querySelectorAll<HTMLInputElement>('[data-invoice-period-choice]')) {
+      input.checked = input.value === choice
+    }
+    syncInvoiceDialog()
+  }
+
+  const loadInvoiceJournalDefault = async (operation: AuthOperation): Promise<void> => {
+    const journal = invoiceAttachJournal.closest<HTMLElement>('.invoice-new-journal')!
+    if (api.setInvoiceJournal === undefined) {
+      journal.hidden = true
+      return
+    }
+    if (api.getOrganizationInvoiceJournal === undefined) return
+    try {
+      invoiceJournalDefault = await api.getOrganizationInvoiceJournal(operation.signal)
+    } catch {
+      // Unchecked is the safe reading: nothing is attached that was not asked for.
+      return
+    }
+    if (!isSessionCurrent(operation)) return
+    invoiceAttachJournal.checked = invoiceJournalDefault.level !== false
+    invoiceJournalLevel.value =
+      invoiceJournalDefault.level === false ? 'detailed' : invoiceJournalDefault.level
+    for (const box of invoiceJournalFormats.querySelectorAll<HTMLInputElement>('input')) {
+      box.checked = invoiceJournalDefault.formats.includes(box.value as 'pdf' | 'csv' | 'xlsx')
+    }
+    syncInvoiceDialog()
+  }
+
+  /** `null` when the report is wanted but no format is ticked. */
+  const invoiceJournalChoice = (): InvoiceJournalChoice | null => {
+    if (!invoiceAttachJournal.checked) return { level: false, formats: [] }
+    const formats = [
+      ...invoiceJournalFormats.querySelectorAll<HTMLInputElement>('input:checked'),
+    ].map((box) => box.value as 'pdf' | 'csv' | 'xlsx')
+    if (formats.length === 0) return null
+    return { level: invoiceJournalLevel.value === 'summary' ? 'summary' : 'detailed', formats }
+  }
+
+  const sameInvoiceJournal = (
+    left: InvoiceJournalChoice,
+    right: InvoiceJournalChoice,
+  ): boolean =>
+    left.level === right.level &&
+    (left.level === false ||
+      [...left.formats].sort().join() === [...right.formats].sort().join())
+
+  /** Free form needs only the client; a date range shows the period control. */
+  const syncInvoiceDialog = (): void => {
+    invoiceJournalLevel.hidden = !invoiceAttachJournal.checked
+    invoiceJournalFormats.hidden = !invoiceAttachJournal.checked
+    invoiceTracked.hidden = invoiceKind() !== 'tracked'
+    invoicePeriodMount.hidden =
+      invoiceForm.querySelector<HTMLInputElement>('[data-invoice-period-choice]:checked')
+        ?.value !== 'range'
+  }
+
+  const openInvoiceDialog = (operation: AuthOperation): void => {
+    invoiceCommandId = null
+    if (!invoiceGenerationPending) invoiceResult.textContent = ''
+    syncInvoiceDialog()
+    if (!invoiceNewDialog.open) invoiceNewDialog.showModal()
+    if (invoiceCatalog === null) {
+      if (!invoiceGenerationPending) void loadInvoiceGeneration(operation)
+    } else if (invoiceKind() === 'tracked') {
+      void checkInvoiceExpenses(operation)
+    }
+  }
+
   const loadInvoiceGeneration = async (operation: AuthOperation): Promise<void> => {
     if (!isSessionCurrent(operation)) return
     if (api.listClients === undefined || api.generateInvoice === undefined) {
@@ -3332,6 +3519,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       if (!isSessionCurrent(operation)) return
       invoiceCatalog = { clients, projects }
       publishInvoiceClientNames(clients)
+      void loadInvoiceJournalDefault(operation)
       invoiceClient.replaceChildren(
         ...clients.map((client) => option(client.id, resourceLabel(client))),
       )
@@ -3358,6 +3546,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         prefilledFrom <= prefilledTo
       ) {
         invoicePeriod.setRange({ from: prefilledFrom, to: prefilledTo })
+        setInvoicePeriodChoice('range')
       }
       renderInvoiceProjects()
       const prefilledProjectId = Number(prefill.get('project_id'))
@@ -3379,6 +3568,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       }
       invoiceResult.textContent = 'Review the selection, then generate a draft.'
       setInvoiceFormPending(false)
+      void checkInvoiceExpenses(operation)
     } catch (error) {
       if (handleSessionFailure(error, operation)) return
       invoiceResult.textContent = messageFor(error)
@@ -3504,7 +3694,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
     void loadTeamNavigation(identity, authenticated)
     if (invoiceGenerationPage) {
-      await Promise.all([loadInvoiceGeneration(authenticated), loadWeek(authenticated)])
+      openInvoiceDialog(authenticated)
+      await Promise.all([loadInvoiceList(authenticated), loadWeek(authenticated)])
     } else if (invoiceListPage) {
       await Promise.all([loadInvoiceList(authenticated), loadWeek(authenticated)])
     } else if (invoiceDetailPage) {
@@ -5253,11 +5444,39 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     if (operation === null) return
     void loadInvoiceGeneration(operation)
   })
-  invoiceForm.addEventListener('change', () => {
+  invoiceForm.addEventListener('change', (event) => {
+    syncInvoiceDialog()
+    // The hours report is not part of the generation command, so changing it
+    // keeps the key: a retry after its setting failed replays the same draft.
+    if (
+      event.target === invoiceAttachJournal ||
+      event.target === invoiceJournalLevel ||
+      (event.target instanceof Node && invoiceJournalFormats.contains(event.target))
+    ) {
+      return
+    }
     invoiceCommandId = null
-    invoiceSuccess.hidden = true
-    generatedInvoiceLink.hidden = true
+    const operation = sessionOperation()
+    if (
+      operation !== null &&
+      invoiceKind() === 'tracked' &&
+      event.target !== invoiceExpenseSummary
+    ) {
+      void checkInvoiceExpenses(operation)
+    }
     if (!invoiceGenerationPending) invoiceResult.textContent = ''
+  })
+  required<HTMLAnchorElement>('[data-invoice-new]').addEventListener('click', (event) => {
+    const operation = sessionOperation()
+    if (operation === null) return
+    event.preventDefault()
+    openInvoiceDialog(operation)
+  })
+  // /invoices/new is the list with this open; closing it leaves the list.
+  invoiceNewDialog.addEventListener('close', () => {
+    if (globalThis.location.pathname.replace(/\/$/u, '') === '/invoices/new') {
+      globalThis.history.replaceState(null, '', '/invoices')
+    }
   })
   invoiceLoadMore.addEventListener('click', () => {
     const operation = sessionOperation()
@@ -5303,84 +5522,102 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
     const data = new FormData(invoiceForm)
     const clientId = Number(data.get('client'))
-    // Off the control rather than the FormData: its date inputs carry no
-    // `name`, because the range is the control's state and a second copy in the
-    // form would be a second answer to the same question.
-    const { from, to } = invoicePeriod.range()
-    const projectIds = data
-      .getAll('project')
-      .map(Number)
-      .filter((projectId) => Number.isSafeInteger(projectId) && projectId > 0)
-    const rawTimeSummary = data.get('timeSummary')
-    const rawExpenseSummary = data.get('expenseSummary')
-    const timeSummaries = new Set(['project', 'task', 'people', 'detailed'])
-    const expenseSummaries = new Set(['project', 'category', 'people', 'detailed'])
-    if (
-      !Number.isSafeInteger(clientId) ||
-      clientId < 1 ||
-      // Both ends read as real days, in order. The fields this replaced were
-      // `required` on a `type="date"` input, so an empty range never reached
-      // here -- the browser refused the submit. The control's inputs are not
-      // required, because a half-typed custom range is a normal state to be in
-      // while choosing one, so the check that used to be the browser's is ours.
-      !isCalendarDay(from) ||
-      !isCalendarDay(to) ||
-      from > to ||
-      projectIds.length === 0 ||
-      typeof rawTimeSummary !== 'string' ||
-      typeof rawExpenseSummary !== 'string' ||
-      (rawTimeSummary !== '' && !timeSummaries.has(rawTimeSummary)) ||
-      (rawExpenseSummary !== '' && !expenseSummaries.has(rawExpenseSummary))
-    ) {
-      invoiceResult.textContent = 'Choose a client, date range, and at least one project.'
+    if (!Number.isSafeInteger(clientId) || clientId < 1) {
+      invoiceResult.textContent = 'Choose a client.'
       return
     }
-    if (rawTimeSummary === '' && rawExpenseSummary === '') {
-      invoiceResult.textContent = 'Include time, expenses, or both.'
-      return
+    let input: InvoiceGenerationInput
+    if (invoiceKind() === 'free_form') {
+      input = { kind: 'free_form', client_id: clientId }
+    } else {
+      const { from, to } = invoiceRange()
+      const projectIds = data
+        .getAll('project')
+        .map(Number)
+        .filter((projectId) => Number.isSafeInteger(projectId) && projectId > 0)
+      const rawTimeSummary = data.get('timeSummary')
+      // A disabled control is not in the FormData; greyed out means none.
+      const rawExpenseSummary = data.get('expenseSummary') ?? ''
+      const timeSummaries = new Set(['project', 'task', 'people', 'detailed'])
+      const expenseSummaries = new Set(['project', 'category', 'people', 'detailed'])
+      if (
+        // A date range reads as real days, in order. The control's inputs are
+        // not required, because a half-typed custom range is a normal state to
+        // be in while choosing one, so the check that would be the browser's is ours.
+        (from !== undefined && (!isCalendarDay(from) || from > to)) ||
+        !isCalendarDay(to) ||
+        projectIds.length === 0 ||
+        typeof rawTimeSummary !== 'string' ||
+        typeof rawExpenseSummary !== 'string' ||
+        (rawTimeSummary !== '' && !timeSummaries.has(rawTimeSummary)) ||
+        (rawExpenseSummary !== '' && !expenseSummaries.has(rawExpenseSummary))
+      ) {
+        invoiceResult.textContent = 'Choose a client, date range, and at least one project.'
+        return
+      }
+      if (rawTimeSummary === '' && rawExpenseSummary === '') {
+        invoiceResult.textContent = 'Include time, expenses, or both.'
+        return
+      }
+      input = {
+        kind: 'tracked',
+        client_id: clientId,
+        ...(from === undefined ? {} : { from }),
+        to,
+        project_ids: projectIds,
+        time_summary_type: (rawTimeSummary === '' ? null : rawTimeSummary) as
+          | 'project'
+          | 'task'
+          | 'people'
+          | 'detailed'
+          | null,
+        expense_summary_type: (rawExpenseSummary === '' ? null : rawExpenseSummary) as
+          | 'project'
+          | 'category'
+          | 'people'
+          | 'detailed'
+          | null,
+      }
     }
-    const input: InvoiceGenerationInput = {
-      client_id: clientId,
-      from,
-      to,
-      project_ids: projectIds,
-      time_summary_type: (rawTimeSummary === '' ? null : rawTimeSummary) as
-        | 'project'
-        | 'task'
-        | 'people'
-        | 'detailed'
-        | null,
-      expense_summary_type: (rawExpenseSummary === '' ? null : rawExpenseSummary) as
-        | 'project'
-        | 'category'
-        | 'people'
-        | 'detailed'
-        | null,
+    const journal = invoiceJournalChoice()
+    if (input.kind !== 'free_form' && journal === null) {
+      invoiceResult.textContent = 'Choose at least one format for the hours report.'
+      return
     }
     invoiceCommandId ??= `web.invoice.create:${globalThis.crypto.randomUUID()}`
     const commandId = invoiceCommandId
     setInvoiceFormPending(true)
     invoiceSubmit.textContent = 'Generating…'
-    invoiceResult.textContent = 'Atomically claiming tracked work and creating the draft…'
-    invoiceSuccess.hidden = true
+    invoiceResult.textContent =
+      input.kind === 'free_form'
+        ? 'Creating the draft…'
+        : 'Atomically claiming tracked work and creating the draft…'
     void api
       .generateInvoice(commandId, input, operation.signal)
-      .then((invoice) => {
+      .then(async (invoice) => {
         if (!isSessionCurrent(operation)) return
-        required<HTMLElement>('[data-generated-invoice-number]').textContent = invoice.number
-        // The total and the line count share a line, so only the figure carries
-        // the marker -- masking the whole node would take the count with it.
-        // This panel stays on screen until the next generation or a navigation,
-        // so it is a standing headline amount rather than transient prose.
-        const generatedTotal = required<HTMLElement>('[data-generated-invoice-total]')
-        generatedTotal.replaceChildren(
-          moneyText(formatMoney(invoice.amount_cents, invoice.currency)),
-          ` · ${invoice.line_items.length} ${invoice.line_items.length === 1 ? 'line' : 'lines'}`,
-        )
-        generatedInvoiceLink.href = `/invoices/${invoice.id}`
-        generatedInvoiceLink.hidden = false
-        invoiceResult.textContent = 'Draft invoice generated successfully.'
-        invoiceSuccess.hidden = false
+        // The hours report is rendered when the invoice is emailed, from the
+        // entries this draft just claimed; here it is only the invoice's choice.
+        if (
+          journal !== null &&
+          input.kind !== 'free_form' &&
+          api.setInvoiceJournal !== undefined &&
+          !sameInvoiceJournal(journal, invoiceJournalDefault)
+        ) {
+          try {
+            await api.setInvoiceJournal(invoice.id, journal, operation.signal)
+          } catch (error) {
+            if (handleSessionFailure(error, operation)) return
+            // The command id is kept, so submitting again replays the same
+            // draft rather than making a second one, then retries this.
+            invoiceResult.textContent = `Draft invoice ${invoice.number} was created, but the hours report setting was not saved: ${messageFor(error)} Create draft again to retry; it will not make a second invoice.`
+            return
+          }
+          if (!isSessionCurrent(operation)) return
+        }
+        // The draft is the next step, as it was in Harvest: open it.
+        invoiceResult.textContent = `Draft invoice ${invoice.number} created. Opening it…`
+        globalThis.location.assign(`/invoices/${invoice.id}`)
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
@@ -5389,7 +5626,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       .finally(() => {
         if (!isSessionCurrent(operation)) return
         setInvoiceFormPending(false)
-        invoiceSubmit.textContent = 'Generate draft invoice'
+        invoiceSubmit.textContent = 'Create draft'
       })
   })
 

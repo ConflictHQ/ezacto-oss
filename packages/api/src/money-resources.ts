@@ -549,18 +549,27 @@ export type InvoiceGenerationExpenseSummary =
   "project" | "category" | "people" | "detailed";
 
 export interface InvoiceGenerationRequest {
+  /** Absent is "tracked"; the route leaves it absent either way. */
+  kind?: "tracked";
   clientId: number;
-  from: string;
+  /** Null takes every uninvoiced billable row up to and including `to`. */
+  from: string | null;
   to: string;
   projectIds: readonly number[];
   timeSummaryType: InvoiceGenerationTimeSummary | null;
   expenseSummaryType: InvoiceGenerationExpenseSummary | null;
 }
 
+/** A blank draft for one client: no lines, no period, nothing claimed. */
+export interface InvoiceGenerationFreeFormRequest {
+  kind: "free_form";
+  clientId: number;
+}
+
 export interface InvoiceGenerationCommand {
   commandId: string;
   principal: UserPrincipal;
-  request: InvoiceGenerationRequest;
+  request: InvoiceGenerationRequest | InvoiceGenerationFreeFormRequest;
 }
 
 /** Implemented by #50; this API story only owns validation and delegation. */
@@ -783,6 +792,7 @@ const lifecycleCommands = [
   "write_off",
   "reopen",
 ] as const;
+const generationKinds = ["tracked", "free_form"] as const;
 const timeSummaryTypes = ["project", "task", "people", "detailed"] as const;
 const expenseSummaryTypes = [
   "project",
@@ -1169,11 +1179,28 @@ const serializeRetainerLedgerEntry = (
 
 const parseGenerationRequest = async <Bindings extends object>(
   context: Context<ApiContext<Bindings>>,
-): Promise<InvoiceGenerationRequest> => {
+): Promise<InvoiceGenerationCommand["request"]> => {
   const body = await readObjectBody(context);
+  const kindErrors: FieldError[] = [];
+  const kind =
+    enumValue(body, "kind", generationKinds, kindErrors) ?? "tracked";
+  assertFields(kindErrors);
+  if (kind === "free_form") {
+    // The client is the whole request. A range, a project or a summary type
+    // would describe tracked work a blank draft never reads, so each is
+    // refused rather than ignored.
+    const errors = unknownFieldErrors(body, new Set(["kind", "client_id"]));
+    const clientId = integerValue(body, "client_id", errors, {
+      required: true,
+      minimum: 1,
+    });
+    assertFields(errors);
+    return { kind, clientId: clientId! };
+  }
   const errors = unknownFieldErrors(
     body,
     new Set([
+      "kind",
       "client_id",
       "from",
       "to",
@@ -1186,7 +1213,8 @@ const parseGenerationRequest = async <Bindings extends object>(
     required: true,
     minimum: 1,
   });
-  const from = dateValue(body, "from", errors, { required: true });
+  // Absent or null: everything uninvoiced up to `to`.
+  const from = dateValue(body, "from", errors, { nullable: true });
   const to = dateValue(body, "to", errors, { required: true });
   if (typeof from === "string" && typeof to === "string" && from > to) {
     errors.push({
@@ -1233,7 +1261,7 @@ const parseGenerationRequest = async <Bindings extends object>(
   assertFields(errors);
   return {
     clientId: clientId!,
-    from: from!,
+    from: from ?? null,
     to: to!,
     projectIds: projectIds as number[],
     timeSummaryType: timeSummaryType!,

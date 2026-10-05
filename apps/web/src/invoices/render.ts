@@ -115,15 +115,17 @@ export const renderInvoiceEditDialog = (): string => `
       <label for="ez-invoice-edit-payment-terms">Payment terms
         <select id="ez-invoice-edit-payment-terms" name="payment_terms" data-invoice-edit-payment-terms><option value="upon_receipt">Upon receipt</option><option value="net_15">Net 15</option><option value="net_30">Net 30</option><option value="net_45">Net 45</option><option value="net_60">Net 60</option><option value="custom">Custom</option></select>
       </label>
-      <label for="ez-invoice-edit-tax">Tax 1 rate (%)
-        <input id="ez-invoice-edit-tax" name="tax_rate" data-invoice-edit-tax inputmode="decimal" autocomplete="off">
-      </label>
-      <label for="ez-invoice-edit-tax2">Tax 2 rate (%)
-        <input id="ez-invoice-edit-tax2" name="tax2_rate" data-invoice-edit-tax2 inputmode="decimal" autocomplete="off">
-      </label>
-      <label for="ez-invoice-edit-discount">Discount rate (%)
-        <input id="ez-invoice-edit-discount" name="discount_rate" data-invoice-edit-discount inputmode="decimal" autocomplete="off">
-      </label>
+      <div class="invoice-edit-rate-fields">
+        <label for="ez-invoice-edit-tax">Tax 1 rate (%)
+          <input id="ez-invoice-edit-tax" name="tax_rate" data-invoice-edit-tax inputmode="decimal" autocomplete="off">
+        </label>
+        <label for="ez-invoice-edit-tax2">Tax 2 rate (%)
+          <input id="ez-invoice-edit-tax2" name="tax2_rate" data-invoice-edit-tax2 inputmode="decimal" autocomplete="off">
+        </label>
+        <label for="ez-invoice-edit-discount">Discount rate (%)
+          <input id="ez-invoice-edit-discount" name="discount_rate" data-invoice-edit-discount inputmode="decimal" autocomplete="off">
+        </label>
+      </div>
       <p class="hint">Leave a rate blank for none. Rates apply to the lines already marked taxed and are saved as a separate command from the document fields.</p>
       <p class="form-result" data-invoice-edit-result role="status" aria-live="polite"></p>
       <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-edit-submit>Save invoice</button></div>
@@ -189,7 +191,7 @@ export const renderInvoiceComposerDialog = (): string => `
             <input id="ez-invoice-reminder-date" name="reminderDate" data-invoice-composer-reminder-date type="date">
           </label>
           <label class="invoice-composer-check"><input name="deliver" data-invoice-composer-deliver-toggle type="checkbox" aria-describedby="invoice-deliver-hint"> Also deliver by email</label>
-          <p class="hint" id="invoice-deliver-hint">The email goes out from the verified organization sender on the configured invoice template, not the subject and message above. It lists this invoice's line items; no PDF is attached.</p>
+          <p class="hint" id="invoice-deliver-hint">The email goes out from the verified organization sender on the configured invoice template, not the subject and message above. It lists this invoice's line items, with whatever attachments are set for this invoice, such as the hours report.</p>
           <label class="invoice-composer-check" data-invoice-composer-confirm-label hidden><input name="confirmed" data-invoice-composer-confirm type="checkbox"> I confirm these recipients and want to send this invoice.</label>
         </section>
         <aside class="invoice-variable-reference" aria-labelledby="invoice-variable-title">

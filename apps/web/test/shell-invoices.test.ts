@@ -104,6 +104,11 @@ describe('invoice generation browser behavior', () => {
     )
     wizard.querySelector<HTMLInputElement>('[data-invoice-projects] [name="project"]')!.checked =
       true
+    // The dialog opens on All uninvoiced; a range is the other choice.
+    const range = wizard.querySelector<HTMLInputElement>('[data-invoice-period-choice][value="range"]')!
+    range.checked = true
+    range.dispatchEvent(new Event('change', { bubbles: true }))
+    expect(period.hidden).toBe(false)
 
     // An empty range no longer reaches the command: nothing marks these inputs
     // required, because a half-typed custom range is a normal state to be in.
@@ -127,6 +132,308 @@ describe('invoice generation browser behavior', () => {
     // A whole month, and the one before the month the wizard opened on.
     expect(billed.from.slice(8)).toBe('01')
     expect(billed.from < billed.to).toBe(true)
+  })
+
+  it('[browser] greys out Expenses unless the selected projects have some to bill', async () => {
+    renderBrowserShell({ view: 'invoice-generation' })
+    const expenseRow = (projectId: number, expenseCount: number) => ({
+      client_id: 11,
+      client_name: 'Northwind Freight',
+      project_id: projectId,
+      project_name: `Project ${projectId}`,
+      project_code: '',
+      totals: [{
+        currency: 'USD',
+        rounded_seconds: 3_600,
+        time_entry_count: 1,
+        unpriced_time_entry_count: 0,
+        expense_count: expenseCount,
+      }],
+    })
+    const getUninvoicedReport = vi.fn<NonNullable<ShellApi['getUninvoicedReport']>>(
+      async (filter) => ({
+        from: filter.from,
+        to: filter.to,
+        client_id: 11,
+        project_id: null,
+        totals: [],
+        projects: [expenseRow(1, 0), expenseRow(2, 3)],
+      }),
+    )
+    const generateInvoice = vi
+      .fn<NonNullable<ShellApi['generateInvoice']>>()
+      .mockResolvedValue(invoice(21))
+    const api: ShellApi = {
+      ...browserApi(),
+      listClients: async () => ({
+        data: [resource(11, 'Northwind Freight')],
+        page: { next_cursor: null },
+      }),
+      listProjects: async () => ({
+        data: [
+          { ...resource(1, 'Retainer'), client_id: 11 },
+          { ...resource(2, 'Site visit'), client_id: 11 },
+        ],
+        page: { next_cursor: null },
+      }),
+      getUninvoicedReport,
+      generateInvoice,
+    }
+    await mountShell(api)
+
+    const wizard = document.querySelector<HTMLFormElement>('[data-invoice-generation-form]')!
+    const expenses = wizard.querySelector<HTMLSelectElement>('[data-invoice-expense-summary]')!
+    const hint = wizard.querySelector<HTMLElement>('[data-invoice-expense-hint]')!
+    const clientSelect = wizard.querySelector<HTMLSelectElement>('[data-invoice-client]')!
+    await vi.waitFor(() => expect(clientSelect.options.length).toBe(1))
+    clientSelect.value = '11'
+    clientSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    const project = (id: number) =>
+      wizard.querySelector<HTMLInputElement>(`[data-invoice-projects] [value="${id}"]`)!
+
+    // Both projects checked: project 2 has expenses, so the choice is live.
+    await vi.waitFor(() => expect(getUninvoicedReport).toHaveBeenCalled())
+    expect(getUninvoicedReport.mock.lastCall![0]).toMatchObject({ client_id: 11 })
+    await vi.waitFor(() => expect(expenses.disabled).toBe(false))
+    expect(hint.hidden).toBe(true)
+
+    // Only the project without expenses: greyed out, and nothing to choose.
+    project(2).checked = false
+    project(2).dispatchEvent(new Event('change', { bubbles: true }))
+    await vi.waitFor(() => expect(expenses.disabled).toBe(true))
+    expect(expenses.value).toBe('')
+    expect(hint.hidden).toBe(false)
+    expect(hint.textContent).toBe('No uninvoiced expenses for this selection.')
+
+    // A disabled select is absent from the form data; that reads as no expenses.
+    wizard.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(generateInvoice).toHaveBeenCalledTimes(1))
+    expect(generateInvoice.mock.calls[0]![1]).toMatchObject({
+      project_ids: [1],
+      expense_summary_type: null,
+    })
+
+    // Back on, the earlier choice comes back with it.
+    project(2).checked = true
+    project(2).dispatchEvent(new Event('change', { bubbles: true }))
+    await vi.waitFor(() => expect(expenses.disabled).toBe(false))
+    expect(expenses.value).toBe('project')
+  })
+
+  it('[browser] leaves Expenses available when the check cannot run', async () => {
+    renderBrowserShell({ view: 'invoice-generation' })
+    const api: ShellApi = {
+      ...browserApi(),
+      listClients: async () => ({
+        data: [resource(11, 'Northwind Freight')],
+        page: { next_cursor: null },
+      }),
+      listProjects: async () => ({
+        data: [{ ...resource(1, 'Retainer'), client_id: 11 }],
+        page: { next_cursor: null },
+      }),
+      getUninvoicedReport: vi.fn(async () => {
+        throw new EzactoApiError(403, { error: 'forbidden' }, null)
+      }),
+      generateInvoice: vi.fn(async () => invoice(21)),
+    }
+    await mountShell(api)
+
+    const wizard = document.querySelector<HTMLFormElement>('[data-invoice-generation-form]')!
+    const clientSelect = wizard.querySelector<HTMLSelectElement>('[data-invoice-client]')!
+    await vi.waitFor(() => expect(clientSelect.options.length).toBe(1))
+    clientSelect.value = '11'
+    clientSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    await vi.waitFor(() => expect(api.getUninvoicedReport).toHaveBeenCalled())
+    expect(wizard.querySelector<HTMLSelectElement>('[data-invoice-expense-summary]')!.disabled)
+      .toBe(false)
+  })
+
+  it('[browser] creates from all uninvoiced work, or free form, and opens the draft', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-14T12:00:00.000Z'))
+    renderBrowserShell({ view: 'invoice-generation' })
+    const assign = vi.fn()
+    vi.stubGlobal('location', Object.assign(new URL(globalThis.location.href), { assign }))
+    const generateInvoice = vi
+      .fn<NonNullable<ShellApi['generateInvoice']>>()
+      .mockResolvedValue(invoice(21))
+    const api: ShellApi = {
+      ...browserApi(),
+      listClients: async () => ({
+        data: [resource(11, 'Northwind Freight')],
+        page: { next_cursor: null },
+      }),
+      listProjects: async () => ({
+        data: [{ ...resource(1, 'Retainer'), client_id: 11 }],
+        page: { next_cursor: null },
+      }),
+      generateInvoice,
+    }
+    try {
+      await mountShell(api)
+      const dialog = document.querySelector<HTMLDialogElement>('[data-invoice-new-dialog]')!
+      const wizard = dialog.querySelector<HTMLFormElement>('[data-invoice-generation-form]')!
+      // /invoices/new is the list with the dialog already open over it.
+      expect(dialog.open).toBe(true)
+      expect(document.querySelector<HTMLElement>('[data-invoice-list-page]')!.hidden).toBe(false)
+      const clientSelect = wizard.querySelector<HTMLSelectElement>('[data-invoice-client]')!
+      await vi.waitFor(() => expect(clientSelect.options.length).toBe(1))
+      clientSelect.value = '11'
+      clientSelect.dispatchEvent(new Event('change', { bubbles: true }))
+
+      // All uninvoiced sends no start; the server dates the draft from what it takes.
+      wizard.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      await vi.waitFor(() => expect(generateInvoice).toHaveBeenCalledTimes(1))
+      const tracked = generateInvoice.mock.calls[0]![1]
+      expect(tracked).toMatchObject({
+        kind: 'tracked',
+        client_id: 11,
+        to: '2026-09-14',
+        project_ids: [1],
+        time_summary_type: 'project',
+      })
+      expect(tracked).not.toHaveProperty('from')
+      // The draft is the next step.
+      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/21'))
+      const submit = wizard.querySelector<HTMLButtonElement>('[data-invoice-generation-submit]')!
+      await vi.waitFor(() => expect(submit.disabled).toBe(false))
+
+      // Free form needs only the client, and hides everything else.
+      const freeForm = wizard.querySelector<HTMLInputElement>('[data-invoice-kind][value="free_form"]')!
+      freeForm.checked = true
+      freeForm.dispatchEvent(new Event('change', { bubbles: true }))
+      expect(wizard.querySelector<HTMLElement>('[data-invoice-tracked]')!.hidden).toBe(true)
+      wizard.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      await vi.waitFor(() => expect(generateInvoice).toHaveBeenCalledTimes(2))
+      expect(generateInvoice.mock.calls[1]![1]).toEqual({ kind: 'free_form', client_id: 11 })
+      // A different command, so a second draft rather than a replay of the first.
+      expect(generateInvoice.mock.calls[1]![0]).not.toBe(generateInvoice.mock.calls[0]![0])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('[browser] attaches the hours report when asked, and retries without a second draft', async () => {
+    renderBrowserShell({ view: 'invoice-generation' })
+    const assign = vi.fn()
+    vi.stubGlobal('location', Object.assign(new URL(globalThis.location.href), { assign }))
+    const generateInvoice = vi
+      .fn<NonNullable<ShellApi['generateInvoice']>>()
+      .mockResolvedValue(invoice(21))
+    const setInvoiceJournal = vi
+      .fn<NonNullable<ShellApi['setInvoiceJournal']>>()
+      .mockRejectedValueOnce(new EzactoApiError(500, { error: 'boom' }, null))
+      .mockResolvedValue(undefined)
+    const api: ShellApi = {
+      ...browserApi(),
+      listClients: async () => ({
+        data: [resource(11, 'Northwind Freight')],
+        page: { next_cursor: null },
+      }),
+      listProjects: async () => ({
+        data: [{ ...resource(1, 'Retainer'), client_id: 11 }],
+        page: { next_cursor: null },
+      }),
+      generateInvoice,
+      // The organization attaches a summary by default.
+      getOrganizationInvoiceJournal: vi.fn(async () => ({ level: 'summary' as const, formats: ['pdf' as const] })),
+      setInvoiceJournal,
+    }
+    try {
+      await mountShell(api)
+      const wizard = document.querySelector<HTMLFormElement>('[data-invoice-generation-form]')!
+      const attach = wizard.querySelector<HTMLInputElement>('[data-invoice-attach-journal]')!
+      const level = wizard.querySelector<HTMLSelectElement>('[data-invoice-journal-level]')!
+      const clientSelect = wizard.querySelector<HTMLSelectElement>('[data-invoice-client]')!
+      await vi.waitFor(() => expect(clientSelect.options.length).toBe(1))
+      clientSelect.value = '11'
+      clientSelect.dispatchEvent(new Event('change', { bubbles: true }))
+      // Opens on the organization's choice.
+      await vi.waitFor(() => expect(attach.checked).toBe(true))
+      expect(level.value).toBe('summary')
+      expect(level.hidden).toBe(false)
+
+      const format = (value: string) =>
+        wizard.querySelector<HTMLInputElement>(`[data-invoice-journal-formats] [value="${value}"]`)!
+      expect(format('pdf').checked).toBe(true)
+      expect(format('csv').checked).toBe(false)
+
+      // No format at all is refused before anything is created.
+      format('pdf').checked = false
+      format('pdf').dispatchEvent(new Event('change', { bubbles: true }))
+      const submit = wizard.querySelector<HTMLButtonElement>('[data-invoice-generation-submit]')!
+      wizard.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      expect(generateInvoice).not.toHaveBeenCalled()
+      expect(document.querySelector('[data-invoice-generation-result]')?.textContent).toBe(
+        'Choose at least one format for the hours report.',
+      )
+
+      // Every entry, as PDF and CSV: the invoice's own choice, saved after the draft.
+      format('pdf').checked = true
+      format('csv').checked = true
+      format('csv').dispatchEvent(new Event('change', { bubbles: true }))
+      level.value = 'detailed'
+      level.dispatchEvent(new Event('change', { bubbles: true }))
+      wizard.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      await vi.waitFor(() => expect(setInvoiceJournal).toHaveBeenCalledTimes(1))
+      expect(setInvoiceJournal.mock.calls[0]!.slice(0, 2)).toEqual([
+        21,
+        { level: 'detailed', formats: ['pdf', 'csv'] },
+      ])
+      // The setting failed: the draft exists, nothing navigates, and it says so.
+      await vi.waitFor(() => expect(submit.disabled).toBe(false))
+      expect(assign).not.toHaveBeenCalled()
+      expect(document.querySelector('[data-invoice-generation-result]')?.textContent).toContain(
+        'it will not make a second invoice',
+      )
+
+      // Retrying replays the same command, then saves the setting.
+      wizard.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/21'))
+      expect(generateInvoice).toHaveBeenCalledTimes(2)
+      expect(generateInvoice.mock.calls[1]![0]).toBe(generateInvoice.mock.calls[0]![0])
+      expect(setInvoiceJournal).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('[browser] leaves the hours report to the organization when the dialog agrees with it', async () => {
+    renderBrowserShell({ view: 'invoice-generation' })
+    const assign = vi.fn()
+    vi.stubGlobal('location', Object.assign(new URL(globalThis.location.href), { assign }))
+    const setInvoiceJournal = vi.fn<NonNullable<ShellApi['setInvoiceJournal']>>()
+    const api: ShellApi = {
+      ...browserApi(),
+      listClients: async () => ({
+        data: [resource(11, 'Northwind Freight')],
+        page: { next_cursor: null },
+      }),
+      listProjects: async () => ({
+        data: [{ ...resource(1, 'Retainer'), client_id: 11 }],
+        page: { next_cursor: null },
+      }),
+      generateInvoice: vi.fn(async () => invoice(21)),
+      getOrganizationInvoiceJournal: vi.fn(async () => ({ level: false as const, formats: ['pdf' as const] })),
+      setInvoiceJournal,
+    }
+    try {
+      await mountShell(api)
+      const wizard = document.querySelector<HTMLFormElement>('[data-invoice-generation-form]')!
+      const clientSelect = wizard.querySelector<HTMLSelectElement>('[data-invoice-client]')!
+      await vi.waitFor(() => expect(clientSelect.options.length).toBe(1))
+      clientSelect.value = '11'
+      clientSelect.dispatchEvent(new Event('change', { bubbles: true }))
+      await vi.waitFor(() => expect(api.getOrganizationInvoiceJournal).toHaveBeenCalled())
+      expect(wizard.querySelector<HTMLInputElement>('[data-invoice-attach-journal]')!.checked)
+        .toBe(false)
+      wizard.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/21'))
+      expect(setInvoiceJournal).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('[browser #713] accepts a report handoff as a bounded invoice-generation prefill', async () => {
@@ -165,6 +472,62 @@ describe('invoice generation browser behavior', () => {
       ['7', false],
       ['9', true],
     ])
+  })
+})
+
+describe('invoice hours export', () => {
+  it('[browser] downloads the hours report in the chosen format and detail', async () => {
+    renderBrowserShell({ view: 'invoice-detail' })
+    const downloadInvoiceHoursReport = vi
+      .fn<NonNullable<ShellApi['downloadInvoiceHoursReport']>>()
+      .mockResolvedValueOnce({ blob: new Blob(['a,b']), filename: 'work-summary-INV-7.csv' })
+      .mockRejectedValueOnce(new EzactoApiError(409, { message: 'nothing' }, null))
+    const api: ShellApi = {
+      ...browserApi(),
+      getInvoice: vi.fn(async () => invoice(7)),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+      downloadInvoiceHoursReport,
+    }
+    const createObjectURL = vi.fn(() => 'blob:hours')
+    const { createObjectURL: originalCreate, revokeObjectURL: originalRevoke } = URL
+    URL.createObjectURL = createObjectURL
+    URL.revokeObjectURL = vi.fn()
+    // happy-dom follows a download link as a navigation; a browser saves it.
+    const saved = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    try {
+      await mountShell(api)
+      const exportMenu = document.querySelector<HTMLElement>('[data-invoice-hours-export]')!
+      await vi.waitFor(() => expect(exportMenu.hidden).toBe(false))
+      const toggle = exportMenu.querySelector<HTMLButtonElement>('[data-invoice-hours-toggle]')!
+      const menu = exportMenu.querySelector<HTMLElement>('[data-invoice-hours-menu]')!
+      toggle.click()
+      expect(menu.hidden).toBe(false)
+      expect([...menu.querySelectorAll('[data-hours-format]')].map((item) => item.textContent))
+        .toEqual(['PDF', 'CSV', 'Excel', 'PDF', 'CSV', 'Excel'])
+      menu.querySelector<HTMLButtonElement>('[data-hours-format="csv"][data-hours-detail="summary"]')!
+        .click()
+      expect(menu.hidden).toBe(true)
+      await vi.waitFor(() => expect(createObjectURL).toHaveBeenCalled())
+      expect(saved).toHaveBeenCalledTimes(1)
+      expect(downloadInvoiceHoursReport.mock.calls[0]!.slice(0, 3)).toEqual([7, 'csv', 'summary'])
+
+      // A refusal (nothing tracked on this invoice) is said, not swallowed.
+      toggle.click()
+      menu.querySelector<HTMLButtonElement>('[data-hours-format="pdf"][data-hours-detail="detailed"]')!
+        .click()
+      await vi.waitFor(() => expect(downloadInvoiceHoursReport).toHaveBeenCalledTimes(2))
+      await vi.waitFor(() =>
+        expect(document.querySelector('[data-invoice-detail-status]')?.textContent).not.toBe(
+          'Preparing the hours report…',
+        ),
+      )
+      expect(document.querySelector('[data-invoice-detail-status]')?.textContent).not.toBe('')
+    } finally {
+      URL.createObjectURL = originalCreate
+      URL.revokeObjectURL = originalRevoke
+      saved.mockRestore()
+    }
   })
 })
 
@@ -563,7 +926,7 @@ describe('invoice browse browser behavior', () => {
     expect(dialog.open).toBe(true)
     // The dialog says the two things are separate and which order they run in.
     expect(dialog.textContent).toContain('Also deliver by email')
-    expect(dialog.textContent).toContain("It lists this invoice's line items; no PDF is attached")
+    expect(dialog.textContent).toContain("It lists this invoice's line items, with whatever attachments are set for this invoice")
     expect(dialog.textContent).toContain('%invoice_number%')
 
     const recipients = document.querySelector<HTMLTextAreaElement>(
@@ -1194,6 +1557,7 @@ describe('invoice browse browser behavior', () => {
       version: 1,
       amount_cents: 6_250,
       due_amount_cents: 6_250,
+      due_date: '2099-09-30',
     })
     let effectivePayments: InvoicePayment[] = []
     let recordAttempts = 0

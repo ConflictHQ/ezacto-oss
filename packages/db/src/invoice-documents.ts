@@ -1,3 +1,10 @@
+import {
+  defaultJournalFormats,
+  parseJournalFormats,
+  reportNoteIsClientVisible,
+  type JournalFormat,
+  type JournalSource,
+} from '@ezacto/core'
 import { sql } from 'drizzle-orm'
 import type { InvoiceStateDatabase } from './invoice-state.js'
 import {
@@ -220,35 +227,104 @@ export const invoiceDocumentFilename = (invoiceNumber: string): string =>
  * `rounded_seconds` where it exists, because that is what was billed. Showing
  * the raw duration next to a total computed from the rounded one is a client
  * asking why the arithmetic does not work.
+ *
+ * Every reader of this sends it to the client, so a note comes back only where
+ * a client may read it (D20): the entry's own `client_visible`, else the
+ * organization's default. An internal note is `null` here, the same as an
+ * entry with none -- the client is told nothing was written, not that
+ * something was withheld.
  */
 export interface InvoiceJournalEntry {
   readonly spentDate: string
   readonly personName: string
+  /**
+   * The project's client -- for a claimed entry always the invoice's own,
+   * which migration 0004 enforces -- printed on every row as Harvest does.
+   */
+  readonly clientName: string
   readonly projectName: string
+  readonly projectCode: string
   readonly taskName: string | null
+  /** The person's roles, name-ordered; empty when they hold none. */
+  readonly roles: readonly string[]
   readonly notes: string | null
   readonly seconds: number
+  readonly billable: boolean
 }
 
 export const readInvoiceJournal = async (
   database: InvoiceStateDatabase,
   invoiceId: number,
-): Promise<readonly InvoiceJournalEntry[]> =>
-  database.all<InvoiceJournalEntry>(
+): Promise<readonly InvoiceJournalEntry[]> => {
+  const rows = await database.all<{
+    spentDate: string
+    personId: number
+    personName: string
+    clientName: string
+    projectName: string
+    projectCode: string
+    taskName: string | null
+    notes: string | null
+    seconds: number
+    billable: number
+    clientVisible: number | null
+    visibleDefault: number | null
+  }>(
     sql`SELECT entry.spent_date AS spentDate,
+               person.id AS personId,
                trim(coalesce(person.first_name, '') || ' ' || coalesce(person.last_name, ''))
                  AS personName,
+               client.name AS clientName,
                project.name AS projectName,
+               project.code AS projectCode,
                task.name AS taskName,
                entry.notes AS notes,
+               entry.billable AS billable,
+               entry.client_visible AS clientVisible,
+               (SELECT report_notes_client_visible_default FROM organizations
+                ORDER BY id LIMIT 1) AS visibleDefault,
                coalesce(entry.rounded_seconds, entry.seconds) AS seconds
         FROM time_entries entry
         JOIN users person ON person.id = entry.user_id
         JOIN projects project ON project.id = entry.project_id
+        JOIN clients client ON client.id = project.client_id
         LEFT JOIN tasks task ON task.id = entry.task_id
         WHERE entry.invoice_id = ${invoiceId}
         ORDER BY entry.spent_date, entry.id`,
   )
+  // Roles in one read for everybody on the invoice, rather than one per entry
+  // for a question that has as many answers as there are people.
+  const memberships =
+    rows.length === 0
+      ? []
+      : await database.all<{ userId: number; name: string }>(
+          sql`SELECT membership.user_id AS userId, role.name AS name
+              FROM user_roles membership
+              JOIN roles role ON role.id = membership.role_id
+              WHERE membership.user_id IN (
+                SELECT user_id FROM time_entries WHERE invoice_id = ${invoiceId}
+              )
+              ORDER BY membership.user_id, role.name, role.id`,
+        )
+  const roles = new Map<number, string[]>()
+  for (const membership of memberships) {
+    const held = roles.get(membership.userId)
+    if (held === undefined) roles.set(membership.userId, [membership.name])
+    else held.push(membership.name)
+  }
+  return rows.map(({ clientVisible, visibleDefault, personId, billable, ...entry }) => ({
+    ...entry,
+    roles: roles.get(personId) ?? [],
+    billable: billable === 1,
+    notes: reportNoteIsClientVisible(
+      { clientVisible: clientVisible === null ? null : clientVisible === 1 },
+      // No organization row yet is the column's own default: visible.
+      visibleDefault !== 0,
+    )
+      ? entry.notes
+      : null,
+  }))
+}
 
 /**
  * Whether the work journal goes with this invoice, and at which level.
@@ -307,4 +383,111 @@ export const readOrganizationJournalPolicy = async (
     'journal',
   ).organization
   return value === 'detailed' || value === 'summary' ? value : false
+}
+
+/**
+ * The files the journal goes as, whichever level it goes at (issue 647).
+ *
+ * Its own answer beside the level rather than part of it, with the same
+ * precedence: an invoice's set wins, an invoice with none follows the
+ * organization, and an organization that never chose sends the PDF the journal
+ * has always been. Asked at send time, like every other extra.
+ */
+const formatsOf = (value: InvoiceExtraValue | undefined): readonly JournalFormat[] | null =>
+  Array.isArray(value) ? (value as readonly JournalFormat[]) : null
+
+export const readJournalFormatsPreference = async (
+  database: InvoiceStateDatabase,
+  invoiceId: number,
+): Promise<{
+  invoice: readonly JournalFormat[] | null
+  organization: readonly JournalFormat[]
+} | null> => {
+  const both = await readInvoiceExtras(database, invoiceId)
+  if (both === null) return null
+  return {
+    invoice: formatsOf(both.invoice.journal_formats),
+    organization: formatsOf(both.organization.journal_formats) ?? defaultJournalFormats,
+  }
+}
+
+/** What will actually go, or `null` for an invoice that does not exist. */
+export const resolveJournalFormats = async (
+  database: InvoiceStateDatabase,
+  invoiceId: number,
+): Promise<readonly JournalFormat[] | null> => {
+  const both = await readJournalFormatsPreference(database, invoiceId)
+  return both === null ? null : (both.invoice ?? both.organization)
+}
+
+export const readOrganizationJournalFormats = async (
+  database: InvoiceStateDatabase,
+): Promise<readonly JournalFormat[]> =>
+  formatsOf((await readOrganizationInvoiceExtras(database)).journal_formats) ??
+  defaultJournalFormats
+
+/**
+ * Stored in the product's order whatever order it arrived in. Anything that
+ * is not a format set is refused here as well as at the route, so no caller
+ * can store a list that would read back as the default.
+ */
+const storedFormats = (formats: readonly JournalFormat[]): readonly JournalFormat[] => {
+  const parsed = parseJournalFormats(formats)
+  if (parsed === null) {
+    throw new RangeError('journal formats must be a non-empty set of pdf, csv and xlsx')
+  }
+  return parsed
+}
+
+/** `null` on the invoice hands it back to the organization. */
+export const setInvoiceJournalFormats = async (
+  database: InvoiceStateDatabase,
+  input: Readonly<{ invoiceId: number; formats: readonly JournalFormat[] | null }>,
+): Promise<boolean> =>
+  setInvoiceExtra(
+    database,
+    input.invoiceId,
+    'journal_formats',
+    input.formats === null ? null : storedFormats(input.formats),
+  )
+
+export const setOrganizationJournalFormats = async (
+  database: InvoiceStateDatabase,
+  formats: readonly JournalFormat[],
+): Promise<void> => setOrganizationInvoiceExtra(database, 'journal_formats', storedFormats(formats))
+
+/**
+ * Everything the hours report is rendered from, for the download beside the
+ * email (issue 647): the invoice, the work it billed with notes reduced to
+ * those a client may read, and the level its journal would go at -- `null`
+ * when it would not go at all. `null` for an invoice that does not exist.
+ */
+export const readInvoiceHoursReport = async (
+  database: InvoiceStateDatabase,
+  invoiceId: number,
+): Promise<(JournalSource & { readonly level: JournalLevel | null }) | null> => {
+  const rows = await database.all<{
+    invoiceNumber: string
+    clientName: string
+    companyName: string | null
+  }>(
+    sql`SELECT invoice.number AS invoiceNumber, client.name AS clientName,
+               (SELECT name FROM organizations ORDER BY id LIMIT 1) AS companyName
+        FROM invoices invoice
+        JOIN clients client ON client.id = invoice.client_id
+        WHERE invoice.id = ${invoiceId}`,
+  )
+  const header = rows[0]
+  if (header === undefined) return null
+  const [level, entries] = await Promise.all([
+    resolveJournalPolicy(database, invoiceId),
+    readInvoiceJournal(database, invoiceId),
+  ])
+  return {
+    invoiceNumber: header.invoiceNumber,
+    clientName: header.clientName,
+    companyName: header.companyName ?? '',
+    level,
+    entries,
+  }
 }

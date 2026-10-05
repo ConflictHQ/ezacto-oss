@@ -26,7 +26,7 @@ interface TestDatabase {
   run(sql: string, ...params: unknown[]): Promise<void>
   rows<T>(sql: string, ...params: unknown[]): Promise<T[]>
   migrate(): Promise<void>
-  migrateThrough(id: '0025_time_entry_note_requirements'): Promise<void>
+  migrateThrough(id: '0025_time_entry_note_requirements' | '0094_payment_actuals'): Promise<void>
   close(): Promise<void>
 }
 
@@ -186,6 +186,19 @@ const generator = (database: TestDatabase) =>
   createInvoiceGenerationService(database.orm, { clock: () => occurredAt })
 
 const command = (commandId: string) => ({ commandId, principal, request })
+
+const freeForm = (commandId: string, clientId = 1) => ({
+  commandId,
+  principal,
+  request: { kind: 'free_form' as const, clientId },
+})
+
+const storedReceipt = (database: TestDatabase, commandId: string) =>
+  database.rows<{ inputFingerprint: string; requestJson: string }>(
+    `SELECT input_fingerprint AS inputFingerprint, request_json AS requestJson
+     FROM invoice_command_ledger WHERE command_id = ?`,
+    commandId,
+  )
 
 for (const [runtime, factory] of factories) {
   describe(`transactional invoice generation (${runtime})`, () => {
@@ -732,6 +745,52 @@ for (const [runtime, factory] of factories) {
       ])
     })
 
+    it('[security] writes a detailed time line without a note its entry marks internal (D20)', async () => {
+      // The line is printed on the invoice, listed in its email and mirrored to
+      // the books, so the rule has to hold where the description is written.
+      const database = await setup()
+      await database.run(`UPDATE time_entries SET client_visible = 0 WHERE id = 1`)
+      const invoice = await generator(database).generate({
+        commandId: 'detailed-internal-note',
+        principal,
+        request: { ...request, timeSummaryType: 'detailed', expenseSummaryType: 'detailed' },
+      })
+
+      expect(invoice.line_items.map(({ description }) => description)).toEqual([
+        '2026-08-10 · Tracked Person · Generation Project · Design',
+        '2026-08-11 · Tracked Person · Generation Project · Review\nReview notes',
+        // Expense notes carry no visibility flag and are unchanged.
+        '2026-08-12 · Tracked Person · Generation Project · Travel\nTrain',
+      ])
+      expect(
+        await database.rows<{ description: string }>(
+          `SELECT description FROM invoice_line_items ORDER BY position`,
+        ),
+      ).not.toContainEqual({ description: expect.stringContaining('Design notes') })
+    })
+
+    it('[security] withholds an unmarked note when the organization default is internal', async () => {
+      const database = await setup()
+      await database.run(`UPDATE organizations SET report_notes_client_visible_default = 0`)
+      await database.run(`UPDATE time_entries SET client_visible = 1 WHERE id = 2`)
+      const generate = () =>
+        generator(database).generate({
+          commandId: 'detailed-default-internal',
+          principal,
+          request: { ...request, timeSummaryType: 'detailed', expenseSummaryType: null },
+        })
+      const invoice = await generate()
+      expect(invoice.line_items.map(({ description }) => description)).toEqual([
+        '2026-08-10 · Tracked Person · Generation Project · Design',
+        '2026-08-11 · Tracked Person · Generation Project · Review\nReview notes',
+      ])
+
+      // A replay answers with the stored invoice, not a re-derivation: turning
+      // the default back to visible afterwards changes nothing already written.
+      await database.run(`UPDATE organizations SET report_notes_client_visible_default = 1`)
+      expect(await generate()).toEqual(invoice)
+    })
+
     it('[unit] rejects a grouped duration whose sum exceeds a safe integer', async () => {
       const database = await setup()
       await database.run(
@@ -934,38 +993,422 @@ for (const [runtime, factory] of factories) {
         { count: 0 },
       ])
     })
+
+    it('[unit] keeps the receipt fingerprint and manifest of an explicit range byte-identical', async () => {
+      // Both values were recorded by the service as it stood before open starts
+      // and blank drafts. A receipt written then replays only if the same request
+      // still hashes, and still records, exactly as it did.
+      const database = await setup()
+      const service = generator(database)
+      const invoice = await service.generate(command('fingerprint-pin'))
+
+      expect(await storedReceipt(database, 'fingerprint-pin')).toEqual([
+        {
+          inputFingerprint:
+            'sha256:6deabc72e9fd737e732f107e68a095e406860ba89b2d152da5df702e87526310',
+          requestJson:
+            '{"amount_cents":7834,"client_id":1,"currency":"USD","expected_version":0,' +
+            '"expense_count":1,"expense_summary_type":"category","from":"2026-08-01",' +
+            '"line_count":3,"project_ids":[1],"schema_version":1,"time_entry_count":2,' +
+            '"time_summary_type":"task","to":"2026-08-31"}',
+        },
+      ])
+      // Naming the default kind is the same request as leaving it out.
+      expect(
+        await service.generate({
+          ...command('fingerprint-pin'),
+          request: { ...request, kind: 'tracked' },
+        }),
+      ).toEqual(invoice)
+    })
+
+    it('[unit] bills everything uninvoiced up to the end date when the start is open', async () => {
+      // June time and a May expense are older than any month a person would
+      // pick; September time is after `to` and has to be left for next time.
+      const database = await setup()
+      await database.run(
+        `INSERT INTO time_entries (
+           id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+           spent_date, seconds, seconds_without_timer, rounded_seconds, notes, billable,
+           billable_rate_cents, cost_rate_cents, created_at, updated_at
+         ) VALUES
+           (3, 2, 1, 1, 1, 1, '2026-06-15', 3600, 3600, 3600, 'June design', 1,
+            10001, 5000, ?, ?),
+           (4, 2, 1, 1, 1, 1, '2026-09-02', 3600, 3600, 3600, 'September design', 1,
+            10001, 5000, ?, ?)`,
+        occurredAt,
+        occurredAt,
+        occurredAt,
+        occurredAt,
+      )
+      await database.run(
+        `INSERT INTO expenses (
+           id, user_id, project_id, expense_category_id, spent_date, notes,
+           total_cost_cents, billable, created_at, updated_at
+         ) VALUES (2, 2, 1, 1, '2026-05-20', 'May train', 444, 1, ?, ?)`,
+        occurredAt,
+        occurredAt,
+      )
+      const service = generator(database)
+
+      // Time only, so the older May expense is not billed and cannot date it.
+      const time = await service.generate({
+        commandId: 'all-uninvoiced-time',
+        principal,
+        request: { ...request, from: null, expenseSummaryType: null },
+      })
+      expect(time).toMatchObject({
+        period_start: '2026-06-15',
+        period_end: '2026-08-31',
+        subject: 'Tracked work 2026-06-15 – 2026-08-31',
+        // 5001 + 2500 for August, plus June's 3600s at 100.01/h.
+        amount_cents: 17_502,
+      })
+      expect(
+        await database.rows('SELECT id FROM time_entries WHERE invoice_id = ? ORDER BY id', time.id),
+      ).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }])
+      // The receipt records the period the invoice covers, which is what the
+      // creation guard holds the header to.
+      const [timeReceipt] = await storedReceipt(database, 'all-uninvoiced-time')
+      expect(JSON.parse(timeReceipt!.requestJson)).toMatchObject({
+        from: '2026-06-15',
+        to: '2026-08-31',
+      })
+
+      const expenses = await service.generate({
+        commandId: 'all-uninvoiced-expenses',
+        principal,
+        request: { ...request, from: null, timeSummaryType: null },
+      })
+      expect(expenses).toMatchObject({
+        period_start: '2026-05-20',
+        period_end: '2026-08-31',
+        subject: 'Tracked work 2026-05-20 – 2026-08-31',
+        amount_cents: 777,
+      })
+      expect(
+        await database.rows('SELECT id FROM expenses WHERE invoice_id = ? ORDER BY id', expenses.id),
+      ).toEqual([{ id: 1 }, { id: 2 }])
+      expect(
+        await database.rows('SELECT invoice_id AS invoiceId FROM time_entries WHERE id = 4'),
+      ).toEqual([{ invoiceId: null }])
+    })
+
+    it('[unit] replays an open start as itself, not as the range it resolved to', async () => {
+      const database = await setup()
+      const service = generator(database)
+      const open = {
+        commandId: 'open-start-replay',
+        principal,
+        request: { ...request, from: null },
+      }
+
+      const invoice = await service.generate(open)
+      expect(invoice.period_start).toBe('2026-08-10')
+      expect(await service.generate(open)).toEqual(invoice)
+      await expect(
+        service.generate({ ...open, request: { ...request, from: '2026-08-10' } }),
+      ).rejects.toMatchObject({ code: 'command_id_reused' })
+    })
+
+    it('[unit] creates a numbered blank free-form draft in the client currency and terms', async () => {
+      // The project bills in euros on purpose: a blank draft has no tracked row
+      // to take a currency from, so it takes the client's.
+      const database = await setup()
+      await database.run(`UPDATE projects SET billing_currency = 'EUR' WHERE id = 1`)
+      await database.run(`UPDATE clients SET payment_terms = 'net_15' WHERE id = 1`)
+
+      const draft = await generator(database).generate(freeForm('blank-draft'))
+
+      expect(draft).toMatchObject({
+        client_id: 1,
+        created_by_user_id: 1,
+        number: '1',
+        subject: null,
+        currency: 'USD',
+        issue_date: '2026-08-31',
+        due_date: '2026-09-15',
+        payment_terms: 'net_15',
+        state: 'draft',
+        version: 0,
+        period_start: null,
+        period_end: null,
+        project_id: null,
+        amount_cents: 0,
+        due_amount_cents: 0,
+        line_items: [],
+      })
+      const [receipt] = await storedReceipt(database, 'blank-draft')
+      expect(JSON.parse(receipt!.requestJson)).toEqual({
+        schema_version: 1,
+        expected_version: 0,
+        kind: 'free_form',
+        client_id: 1,
+        currency: 'USD',
+        amount_cents: 0,
+        line_count: 0,
+        time_entry_count: 0,
+        expense_count: 0,
+      })
+      expect(
+        await database.rows(
+          `SELECT
+             (SELECT count(*) FROM invoice_line_items) AS lines,
+             (SELECT count(*) FROM time_entries WHERE invoice_id IS NOT NULL) AS timeEntries,
+             (SELECT count(*) FROM expenses WHERE invoice_id IS NOT NULL) AS expenses,
+             (SELECT count(*) FROM invoice_command_ledger
+               WHERE command_kind = 'invoice.create' AND completed = 1) AS receipts,
+             (SELECT count(*) FROM event_outbox
+               WHERE event_type = 'invoice.created') AS createdEvents`,
+        ),
+      ).toEqual([{ lines: 0, timeEntries: 0, expenses: 0, receipts: 1, createdEvents: 1 }])
+
+      // One sequence: the next tracked invoice takes the following number.
+      expect((await generator(database).generate(command('after-blank-draft'))).number).toBe('2')
+    })
+
+    it('[money] starts every new draft with the organization default subject and notes', async () => {
+      const database = await setup()
+      // Without defaults a draft starts with no subject and no notes.
+      const plain = await generator(database).generate(freeForm('before-defaults'))
+      expect(plain.subject).toBeNull()
+      expect(plain.notes).toBeNull()
+
+      const notes =
+        'Beneficiary:\n*CONFLICT LLC*\n\n*_For wire transfers, please use routing number 021000021._*'
+      await database.run(
+        `UPDATE organizations SET invoice_default_notes = ?, invoice_default_subject = ?`,
+        notes,
+        'Conflict <> CLIENT Invoice: MONTH YEAR',
+      )
+      const tracked = await generator(database).generate(command('after-defaults'))
+      expect(tracked.subject).toBe('Conflict <> CLIENT Invoice: MONTH YEAR')
+      expect(tracked.notes).toBe(notes)
+      const blank = await generator(database).generate(freeForm('blank-with-defaults'))
+      expect(blank.subject).toBe('Conflict <> CLIENT Invoice: MONTH YEAR')
+      expect(blank.notes).toBe(notes)
+
+      // The default is copied, not linked: changing it leaves drafts alone.
+      await database.run(`UPDATE organizations SET invoice_default_notes = NULL`)
+      expect((await generator(database).generate(freeForm('blank-with-defaults'))).notes).toBe(notes)
+    })
+
+    it('[unit] replays a free-form draft and refuses its command id for any other input', async () => {
+      const database = await setup()
+      await database.run(
+        `INSERT INTO clients (id, name, currency, payment_terms, created_at, updated_at)
+         VALUES (2, 'Second Client', 'CAD', 'upon_receipt', ?, ?)`,
+        occurredAt,
+        occurredAt,
+      )
+      const service = generator(database)
+
+      const [first, concurrent] = await Promise.all([
+        service.generate(freeForm('blank-replay')),
+        service.generate(freeForm('blank-replay')),
+      ])
+      expect(concurrent).toEqual(first)
+      expect(await service.generate(freeForm('blank-replay'))).toEqual(first)
+      for (const reused of [freeForm('blank-replay', 2), command('blank-replay')]) {
+        await expect(service.generate(reused)).rejects.toMatchObject({
+          code: 'command_id_reused',
+        })
+      }
+      // Nor is a tracked command's id free for a blank draft.
+      await service.generate(command('tracked-first'))
+      await expect(service.generate(freeForm('tracked-first'))).rejects.toMatchObject({
+        code: 'command_id_reused',
+      })
+      expect(await database.rows('SELECT count(*) AS count FROM invoices')).toEqual([{ count: 2 }])
+    })
+
+    it('[unit] refuses a free-form request naming a selection, a missing client, or a non-money actor', async () => {
+      const database = await setup()
+      const service = generator(database)
+      for (const [field, value] of [
+        ['projectIds', [1]],
+        ['from', '2026-08-01'],
+        ['to', '2026-08-31'],
+        ['timeSummaryType', 'task'],
+        ['expenseSummaryType', null],
+      ] as const) {
+        const selection = { kind: 'free_form' as const, clientId: 1, [field]: value }
+        await expect(
+          service.generate({ commandId: `blank-with-${field}`, principal, request: selection }),
+        ).rejects.toMatchObject({
+          code: 'invalid_command_input',
+          message: `a free-form invoice takes no ${field}`,
+        })
+      }
+      await expect(service.generate(freeForm('blank-missing-client', 99))).rejects.toMatchObject({
+        code: 'invalid_command_input',
+        message: 'the selected client does not exist',
+      })
+      await expect(
+        service.generate({
+          ...freeForm('blank-by-member'),
+          principal: { userId: 2, profile: 'member' },
+        }),
+      ).rejects.toMatchObject({ code: 'forbidden' })
+      expect(
+        await database.rows(
+          `SELECT (SELECT count(*) FROM invoices) AS invoices,
+             (SELECT count(*) FROM invoice_command_ledger) AS receipts`,
+        ),
+      ).toEqual([{ invoices: 0, receipts: 0 }])
+    })
+
+    it('[unit] rolls a failed free-form draft back rather than naming a conflict', async () => {
+      const database = await setup()
+      await database.run(
+        `CREATE TRIGGER fail_generated_event BEFORE INSERT ON event_outbox
+         WHEN NEW.event_type = 'invoice.created'
+         BEGIN SELECT RAISE(ABORT, 'injected generation failure'); END`,
+      )
+
+      await expect(generator(database).generate(freeForm('blank-late-failure'))).rejects.toThrow(
+        'injected generation failure',
+      )
+      expect(
+        await database.rows(
+          `SELECT (SELECT count(*) FROM invoices) AS invoices,
+             (SELECT count(*) FROM invoice_command_ledger) AS receipts,
+             (SELECT count(*) FROM event_outbox) AS events`,
+        ),
+      ).toEqual([{ invoices: 0, receipts: 0, events: 0 }])
+    })
+
+    it('[unit] refuses a free-form creation whose header carries a period', async () => {
+      // The creation guard compares the request's range to the header's period
+      // with IS, so a draft whose request has none is held to none. Forced here
+      // by stamping a period behind the command's back.
+      const database = await setup()
+      await database.run('DROP TRIGGER invoice_period_d22_derived_update')
+      await database.run(
+        `CREATE TRIGGER stamp_generated_period AFTER INSERT ON invoices
+         BEGIN
+           UPDATE invoices SET period_start = '2026-08-01', period_end = '2026-08-31'
+           WHERE id = NEW.id;
+         END`,
+      )
+
+      await expect(generator(database).generate(freeForm('blank-with-period'))).rejects.toThrow(
+        'invoice creation event does not match its pending command',
+      )
+      expect(await database.rows('SELECT count(*) AS count FROM invoices')).toEqual([{ count: 0 }])
+    })
+
+    it('[unit] holds a free-form invoice.create manifest to an empty draft', async () => {
+      const database = await setup()
+      const blank = {
+        schema_version: 1,
+        expected_version: 0,
+        kind: 'free_form',
+        client_id: 1,
+        currency: 'USD',
+        amount_cents: 0,
+        line_count: 0,
+        time_entry_count: 0,
+        expense_count: 0,
+      }
+      const insert = (invoiceId: number, manifest: object, lines: readonly object[] = []) =>
+        database.run(
+          `INSERT INTO invoice_command_ledger (
+             invoice_id, command_id, command_kind, input_fingerprint, actor_type, actor_id,
+             expected_invoice_version, occurred_at, request_json, source_manifest_json,
+             line_manifest_json
+           ) VALUES (?, ?, 'invoice.create', ?, 'user', 1, 0, ?, ?, ?, ?)`,
+          invoiceId,
+          `free-form-manifest-${invoiceId}`,
+          `sha256:${'0'.repeat(64)}`,
+          occurredAt,
+          JSON.stringify(manifest),
+          JSON.stringify({ schema_version: 1, time_entries: [], expenses: [] }),
+          JSON.stringify({ schema_version: 1, lines }),
+        )
+
+      await insert(500, blank)
+      for (const [invoiceId, manifest, lines] of [
+        [501, { ...blank, amount_cents: 100 }, []],
+        [502, { ...blank, line_count: 1 }, []],
+        [503, blank, [{ id: 1, position: 0 }]],
+        [504, { ...blank, from: '2026-08-01', to: '2026-08-31' }, []],
+        [505, { ...blank, project_ids: [1] }, []],
+        [506, { ...blank, time_entry_count: 1 }, []],
+      ] as const) {
+        await expect(insert(invoiceId, manifest, lines)).rejects.toThrow(/CHECK constraint failed/)
+      }
+      expect(
+        await database.rows('SELECT invoice_id AS invoiceId FROM invoice_command_ledger'),
+      ).toEqual([{ invoiceId: 500 }])
+    })
+
+    it('[unit] carries every receipt across the 0095 ledger rebuild', async () => {
+      active = await factory(false)
+      await active.migrateThrough('0094_payment_actuals')
+      await seed(active)
+      const before = await generator(active).generate(command('before-ledger-rebuild'))
+      // Red before green: the old creation CHECK has no shape for a blank draft.
+      await expect(
+        generator(active).generate(freeForm('blank-before-rebuild')),
+      ).rejects.toThrow(/CHECK constraint failed/)
+
+      await active.migrate()
+
+      expect(await generator(active).generate(command('before-ledger-rebuild'))).toEqual(before)
+      expect(await generator(active).generate(freeForm('blank-after-rebuild'))).toMatchObject({
+        number: '2',
+        amount_cents: 0,
+        line_items: [],
+      })
+      expect(
+        await active.rows(
+          `SELECT command_id AS commandId FROM invoice_command_ledger
+           WHERE command_kind = 'invoice.create' AND completed = 1 ORDER BY command_id`,
+        ),
+      ).toEqual([{ commandId: 'before-ledger-rebuild' }, { commandId: 'blank-after-rebuild' }])
+    })
   })
 }
 
 describe('transactional invoice generation (two SQLite handles)', () => {
-  it('[unit] serializes competing commands with an immediate transaction', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'ezacto-invoice-generation-'))
-    const path = join(directory, 'race.sqlite')
-    const firstClient = new BetterSqlite3(path)
-    firstClient.pragma('busy_timeout = 5000')
-    migrateContainer(firstClient)
-    const first = containerDatabaseFrom(firstClient)
-    const secondClient = new BetterSqlite3(path)
-    secondClient.pragma('busy_timeout = 5000')
-    const second = containerDatabaseFrom(secondClient)
-    try {
-      await seed(first)
-      const results = await Promise.allSettled([
-        generator(first).generate(command('two-handle-a')),
-        generator(second).generate(command('two-handle-b')),
-      ])
+  // The conflict guard re-reads the loser's candidates, and an open start is a
+  // read of its own, so it is raced the same way.
+  for (const [competing, from] of [
+    ['competing commands', request.from],
+    ['competing open-start commands', null],
+  ] as const) {
+    it(`[unit] serializes ${competing} with an immediate transaction`, async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'ezacto-invoice-generation-'))
+      const path = join(directory, 'race.sqlite')
+      const firstClient = new BetterSqlite3(path)
+      firstClient.pragma('busy_timeout = 5000')
+      migrateContainer(firstClient)
+      const first = containerDatabaseFrom(firstClient)
+      const secondClient = new BetterSqlite3(path)
+      secondClient.pragma('busy_timeout = 5000')
+      const second = containerDatabaseFrom(secondClient)
+      try {
+        await seed(first)
+        const results = await Promise.allSettled([
+          generator(first).generate({ ...command('two-handle-a'), request: { ...request, from } }),
+          generator(second).generate({ ...command('two-handle-b'), request: { ...request, from } }),
+        ])
 
-      expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
-      expect(results.find(({ status }) => status === 'rejected')).toMatchObject({
-        status: 'rejected',
-        reason: expect.objectContaining({ code: 'generation_conflict' }),
-      })
-      expect(await first.rows('SELECT count(*) AS count FROM invoices')).toEqual([{ count: 1 }])
-      expect(await first.rows('SELECT count(*) AS count FROM event_outbox')).toEqual([{ count: 1 }])
-    } finally {
-      await second.close()
-      await first.close()
-      await rm(directory, { recursive: true, force: true })
-    }
-  })
+        expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
+        expect(results.find(({ status }) => status === 'rejected')).toMatchObject({
+          status: 'rejected',
+          reason: expect.objectContaining({ code: 'generation_conflict' }),
+        })
+        expect(await first.rows('SELECT count(*) AS count FROM invoices')).toEqual([{ count: 1 }])
+        expect(await first.rows('SELECT count(*) AS count FROM event_outbox')).toEqual([
+          { count: 1 },
+        ])
+      } finally {
+        await second.close()
+        await first.close()
+        await rm(directory, { recursive: true, force: true })
+      }
+    })
+  }
 })

@@ -1644,12 +1644,16 @@ export type EstimateConversionEnvelope = {
 };
 
 export type InvoiceGenerationInput = {
+  "kind"?: "tracked";
   "client_id": number;
-  "from": string;
+  "from"?: string | null;
   "to": string;
   "project_ids": Array<number>;
   "time_summary_type": "project" | "task" | "people" | "detailed" | null;
   "expense_summary_type": "project" | "category" | "people" | "detailed" | null;
+} | {
+  "kind": "free_form";
+  "client_id": number;
 };
 
 export type InvoiceCommandSnapshot = {
@@ -3122,6 +3126,41 @@ export type OrganizationInvoiceRemindersEnvelope = {
 };
 };
 
+export type JournalFormats = Array<"pdf" | "csv" | "xlsx">;
+
+export type InvoiceDocumentPreferenceInput = {
+  "attach_pdf"?: boolean | null;
+  "attach_files"?: boolean | null;
+  "attach_journal"?: "detailed" | "summary" | false | null;
+  "journal_formats"?: JournalFormats | null;
+};
+
+export type OrganizationInvoiceDocumentsInput = {
+  "attach_pdf"?: boolean;
+  "attach_files"?: boolean;
+  "attach_journal"?: "detailed" | "summary" | false;
+  "journal_formats"?: JournalFormats;
+};
+
+export type InvoiceDefaults = {
+  "company_name": string;
+  "company_address": string | null;
+  "notes": string | null;
+  "subject": string | null;
+};
+
+export type InvoiceDefaultsEnvelope = {
+  "data": InvoiceDefaults;
+  "links": Links;
+};
+
+export type InvoiceDefaultsInput = {
+  "company_name"?: string;
+  "company_address"?: string | null;
+  "notes"?: string | null;
+  "subject"?: string | null;
+};
+
 export type InvoiceDocumentPreferenceEnvelope = {
   "data": {
   "invoice_id": number;
@@ -3134,6 +3173,9 @@ export type InvoiceDocumentPreferenceEnvelope = {
   "attach_journal": "detailed" | "summary" | boolean;
   "organization_attach_journal": "detailed" | "summary" | boolean;
   "effective_journal": "detailed" | "summary" | boolean;
+  "journal_formats": JournalFormats | null;
+  "organization_journal_formats": JournalFormats;
+  "effective_journal_formats": JournalFormats;
 };
 };
 
@@ -3142,6 +3184,7 @@ export type OrganizationInvoiceDocumentsEnvelope = {
   "attach_pdf": boolean;
   "attach_files": boolean;
   "attach_journal": "detailed" | "summary" | boolean;
+  "journal_formats": JournalFormats;
 };
 };
 
@@ -5310,7 +5353,7 @@ export class EzactoClient {
     });
   }
 
-  async getDetailedTimeReport(args: { query: { "self"?: boolean; "include_fixed_fee"?: boolean; "direct_client_only"?: boolean; "contractors_only"?: boolean; "currency"?: string; "project_status"?: "all" | "active" | "archived"; "billing_method"?: "non_billable" | "time_materials" | "fixed_fee"; "manager_id"?: number; "from": string; "to": string; "client_id"?: number; "project_id"?: number; "task_id"?: number; "user_id"?: number; "role_id"?: number; "tag_id"?: number; "hours"?: "all" | "billable" | "non_billable" | "uninvoiced" | "claimed" | "unclaimed"; "grain"?: "day" | "entry"; "invoice_state"?: "all" | "invoiced" | "uninvoiced"; "active_projects_only"?: boolean }; signal?: AbortSignal; headers?: HeadersInit }): Promise<DetailedTimeReportEnvelope> {
+  async getDetailedTimeReport(args: { query: { "self"?: boolean; "include_fixed_fee"?: boolean; "direct_client_only"?: boolean; "contractors_only"?: boolean; "currency"?: string; "project_status"?: "all" | "active" | "archived"; "billing_method"?: "non_billable" | "time_materials" | "fixed_fee"; "manager_id"?: number; "from": string; "to": string; "client_id"?: number; "project_id"?: number; "task_id"?: number; "user_id"?: number; "role_id"?: number; "tag_id"?: number; "hours"?: "all" | "billable" | "non_billable" | "uninvoiced" | "claimed" | "unclaimed"; "grain"?: "day" | "entry"; "audience"?: "internal" | "client"; "invoice_state"?: "all" | "invoiced" | "uninvoiced"; "active_projects_only"?: boolean }; signal?: AbortSignal; headers?: HeadersInit }): Promise<DetailedTimeReportEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<DetailedTimeReportEnvelope>("GET", "/api/v1/reports/detailed-time", {
@@ -5665,10 +5708,11 @@ export class EzactoClient {
     });
   }
 
-  async setInvoiceDocumentPreference(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceDocumentPreferenceEnvelope> {
+  async setInvoiceDocumentPreference(args: { "id": number; body: InvoiceDocumentPreferenceInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceDocumentPreferenceEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<InvoiceDocumentPreferenceEnvelope>("POST", "/api/v1/invoices/:id/document-preference".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });
@@ -5683,10 +5727,41 @@ export class EzactoClient {
     });
   }
 
-  async setOrganizationInvoiceDocuments(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<OrganizationInvoiceDocumentsEnvelope> {
+  async setOrganizationInvoiceDocuments(args: { body: OrganizationInvoiceDocumentsInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<OrganizationInvoiceDocumentsEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<OrganizationInvoiceDocumentsEnvelope>("POST", "/api/v1/settings/invoice-documents", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async downloadInvoiceHoursReport(args: { "id": number; query: { "format": "pdf" | "csv" | "xlsx"; "detail"?: "detailed" | "summary" }; signal?: AbortSignal; headers?: HeadersInit }): Promise<ArrayBuffer> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ArrayBuffer>("GET", "/api/v1/invoices/:id/hours-report".replace(":id", encodeURIComponent(String(args["id"]))), {
+      query: args.query,
+      signal: args.signal,
+      binary: true,
+      headers,
+    });
+  }
+
+  async getInvoiceDefaults(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<InvoiceDefaultsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoiceDefaultsEnvelope>("GET", "/api/v1/settings/invoice-defaults", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateInvoiceDefaults(args: { body: InvoiceDefaultsInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceDefaultsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoiceDefaultsEnvelope>("POST", "/api/v1/settings/invoice-defaults", {
+      body: args.body,
       signal: args.signal,
       headers,
     });

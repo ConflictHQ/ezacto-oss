@@ -1,6 +1,8 @@
 import {
+  reportNoteIsClientVisible,
   trackedAmountCents,
   uninvoicedGenerationPreview,
+  type ReportAudience,
   type UninvoicedCurrencyTotal,
   type UserProfile,
 } from '@ezacto/core'
@@ -492,6 +494,14 @@ export interface DetailedTimeFilter extends ReportDateRange {
   invoiceState?: DetailedTimeInvoiceState
   hours?: DetailedTimeHours
   grain?: DetailedTimeGrain
+  /**
+   * Who will read the notes (D20). `client` keeps an entry's note only where a
+   * client may read it -- the entry's own `client_visible`, else the
+   * organization's default -- for a reader that shows the report to a client,
+   * as the client portal does. Absent is `internal`: the staff report, every
+   * note, as it always was.
+   */
+  audience?: ReportAudience
   /**
    * Harvest's "Active projects only" checkbox, off by default. This report
    * answers what was worked on, and a project archived last week still absorbed
@@ -1037,6 +1047,12 @@ export interface UninvoicedTimeCandidateRow {
   userName: string
   spentDate: string
   notes: string | null
+  /**
+   * The entry's own answer to whether a client may read its note (D20): 1, 0,
+   * or null to follow the organization. Carried so that a line written from
+   * this row can apply the rule; the row itself is never shown to a client.
+   */
+  clientVisible: number | null
   currency: string
   roundedSeconds: number
   billableRateCents: number | null
@@ -1062,7 +1078,9 @@ export interface UninvoicedExpenseCandidateRow {
   updatedAt: string
 }
 
-export interface UninvoicedCandidateFilter extends UninvoicedReportFilter {
+export interface UninvoicedCandidateFilter extends Omit<UninvoicedReportFilter, 'from'> {
+  /** Null leaves the start open: every uninvoiced row up to and including `to`. */
+  from: string | null
   projectIds?: readonly number[]
 }
 
@@ -1102,7 +1120,8 @@ export const readUninvoicedCandidates = async (
   timeEntries: readonly UninvoicedTimeCandidateRow[]
   expenses: readonly UninvoicedExpenseCandidateRow[]
 }> => {
-  assertRange(filter)
+  if (filter.from === null) assertDate(filter.to, 'report to')
+  else assertRange({ from: filter.from, to: filter.to })
   if (filter.clientId !== undefined) assertId(filter.clientId, 'client id')
   if (filter.projectId !== undefined) assertId(filter.projectId, 'project id')
   if (filter.projectId !== undefined && filter.projectIds !== undefined) {
@@ -1119,12 +1138,22 @@ export const readUninvoicedCandidates = async (
   }
   const projectWhere = projectFilter(filter)
   const clientWhere = clientFilter(filter.clientId)
+  // A closed range keeps the BETWEEN every caller has always issued.
+  const entryDates =
+    filter.from === null
+      ? sql`entry.spent_date <= ${filter.to}`
+      : sql`entry.spent_date BETWEEN ${filter.from} AND ${filter.to}`
+  const expenseDates =
+    filter.from === null
+      ? sql`expense.spent_date <= ${filter.to}`
+      : sql`expense.spent_date BETWEEN ${filter.from} AND ${filter.to}`
   const timeEntries = await database.all<UninvoicedTimeCandidateRow>(sql`
     SELECT entry.id AS "id", project.client_id AS "clientId", client.name AS "clientName",
       project.id AS "projectId", project.name AS "projectName", project.code AS "projectCode",
       task.id AS "taskId", task.name AS "taskName", user.id AS "userId",
       trim(user.first_name || ' ' || coalesce(user.last_name, '')) AS "userName",
       entry.spent_date AS "spentDate", entry.notes AS "notes",
+      entry.client_visible AS "clientVisible",
       upper(coalesce(project.billing_currency, client.currency)) AS "currency",
       entry.rounded_seconds AS "roundedSeconds",
       entry.billable_rate_cents AS "billableRateCents", entry.updated_at AS "updatedAt"
@@ -1133,7 +1162,7 @@ export const readUninvoicedCandidates = async (
     JOIN clients client ON client.id = project.client_id
     JOIN tasks task ON task.id = entry.task_id
     JOIN users user ON user.id = entry.user_id
-    WHERE entry.spent_date BETWEEN ${filter.from} AND ${filter.to}
+    WHERE ${entryDates}
       AND entry.billable = 1 AND entry.invoice_id IS NULL AND project.is_active = 1
       AND entry.timer_started_at IS NULL
       AND NOT (entry.started_time IS NOT NULL AND entry.ended_time IS NULL)
@@ -1154,7 +1183,7 @@ export const readUninvoicedCandidates = async (
     JOIN clients client ON client.id = project.client_id
     JOIN expense_categories category ON category.id = expense.expense_category_id
     JOIN users user ON user.id = expense.user_id
-    WHERE expense.spent_date BETWEEN ${filter.from} AND ${filter.to}
+    WHERE ${expenseDates}
       AND expense.billable = 1 AND expense.invoice_id IS NULL AND project.is_active = 1
       AND ${projectWhere} AND ${clientWhere}
     ORDER BY expense.id
@@ -2806,6 +2835,8 @@ interface DetailedTimeQueryRow {
   billableRateCents: number | null
   timeEntryId: number
   notes: string | null
+  clientVisible: number | null
+  visibleDefault: number | null
 }
 
 const detailedTimeHoursFilter = (hours: DetailedTimeHours) => {
@@ -2859,8 +2890,12 @@ const detailedTimeReport = async (
   const grain = filter.grain ?? 'day'
   const invoiceState = filter.invoiceState ?? 'all'
   const activeProjectsOnly = filter.activeProjectsOnly ?? false
+  const audience = filter.audience ?? 'internal'
   const rows = await database.all<DetailedTimeQueryRow>(sql`
     SELECT entry.id AS "timeEntryId", entry.notes AS "notes",
+      entry.client_visible AS "clientVisible",
+      (SELECT report_notes_client_visible_default FROM organizations
+       ORDER BY id LIMIT 1) AS "visibleDefault",
       entry.spent_date AS "spentDate",
       client.id AS "clientId", client.name AS "clientName",
       project.id AS "projectId", project.name AS "projectName",
@@ -2971,7 +3006,16 @@ const detailedTimeReport = async (
       claimed: row.invoiceId !== null,
       timeEntryId: grain === 'entry' ? row.timeEntryId : null,
       invoiceId: grain === 'entry' ? row.invoiceId : null,
-      notes: grain === 'entry' ? row.notes : null,
+      notes:
+        grain !== 'entry'
+          ? null
+          : audience === 'internal' ||
+              reportNoteIsClientVisible(
+                { clientVisible: row.clientVisible === null ? null : row.clientVisible === 1 },
+                row.visibleDefault !== 0,
+              )
+            ? row.notes
+            : null,
       projectActive: row.projectActive === 1,
     }
     line.seconds = checkedAdd(line.seconds, row.seconds, 'detailed time seconds')

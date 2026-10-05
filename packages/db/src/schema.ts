@@ -117,6 +117,9 @@ export const organizations = sqliteTable(
     })
       .notNull()
       .default(true),
+    // Migration 0097: what every new invoice starts with.
+    invoiceDefaultNotes: text('invoice_default_notes'),
+    invoiceDefaultSubject: text('invoice_default_subject'),
     timeRounding: text('time_rounding', {
       enum: ['none', 'nearest_6', 'nearest_15', 'nearest_30', 'up_6', 'up_15', 'up_30'],
     })

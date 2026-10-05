@@ -834,7 +834,7 @@ describe('S-1 through S-5 application shell', () => {
     expect(detail).toContain('Also deliver by email')
     expect(detail).toContain('data-invoice-composer-confirm')
     // What the client actually receives: the lines, and still no PDF.
-    expect(detail).toContain("It lists this invoice's line items; no PDF is attached")
+    expect(detail).toContain("It lists this invoice's line items, with whatever attachments are set for this invoice")
     expect(detail).toContain('data-invoice-reminder-line')
     expect(detail).toContain('data-invoice-composer-dialog')
     expect(detail).toContain('%invoice_number%')
@@ -852,8 +852,9 @@ describe('S-1 through S-5 application shell', () => {
     expect(detail).toMatch(
       /class="invoice-overflow-item invoice-overflow-destructive"[^>]*data-invoice-transition="cancel"/u,
     )
-    expect(generation).toContain('data-generated-invoice-link')
-    expect(generation).toContain('The draft is saved and ready to review.')
+    // One step, then the draft: client and type, and the draft is what follows.
+    expect(generation).toContain('data-invoice-new-dialog')
+    expect(generation).toContain('value="free_form"')
     expect(detail).not.toMatch(/>Send<|Download PDF|Send reminder/u)
     expect(detail).not.toMatch(/name="(?:provider|reference|send_thank_you)"/u)
     expect(webAssets.stylesheet).toContain('.invoice-document {')

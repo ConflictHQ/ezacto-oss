@@ -70,7 +70,13 @@ export {
 export {
   installInvoiceDocumentPreferenceRoutes,
   type InvoiceDocumentPreferenceService,
+  type JournalFormats,
 } from './invoice-document-preference.js'
+export {
+  installInvoiceHoursReportRoutes,
+  type InvoiceHoursReport,
+  type InvoiceHoursReportService,
+} from './invoice-hours-report.js'
 export {
   installInvoiceTimeClaimRoutes,
   type InvoiceTimeClaimService,
@@ -154,6 +160,7 @@ export {
   type InvoiceDeliveryJob,
   type InvoiceGenerationCommand,
   type InvoiceGenerationExpenseSummary,
+  type InvoiceGenerationFreeFormRequest,
   type InvoiceGenerationPort,
   type BandClaimBackfillPort,
   type RecurringGenerationPort,
@@ -390,6 +397,7 @@ export * from './thank-you-subscriber.js'
 
 export * from './thank-you-preference.js'
 export * from './reminder-settings.js'
+export * from './invoice-defaults.js'
 
 export * from './recurring-repair.js'
 export {

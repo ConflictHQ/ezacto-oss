@@ -735,6 +735,8 @@ export interface ReportReader {
     invoiceState?: DetailedTimeInvoiceState;
     hours?: DetailedTimeHours;
     grain?: DetailedTimeGrain;
+    /** `client` withholds a note a client may not read (D20); absent is `internal`. */
+    audience?: "internal" | "client";
     activeProjectsOnly?: boolean;
   }): Promise<DetailedTimeReportResult>;
   uninvoiced(filter: {
@@ -802,6 +804,7 @@ const detailedTimeKeys = new Set([
   "hours",
   "utilization_ppm",
   "grain",
+  "audience",
   "active_projects_only",
   "task_id",
   "user_id",
@@ -2036,6 +2039,15 @@ export const installReportRoutes = <Bindings extends object>(
       detailedTimeGrains,
       parsed.errors,
     );
+    // Who reads the notes (D20). A reader that shows this report to a client
+    // -- the client portal -- asks for `client` and is handed only the notes
+    // a client may read; the staff report is unchanged without it.
+    const audience = queryEnum(
+      parsed.params,
+      "audience",
+      ["internal", "client"] as const,
+      parsed.errors,
+    );
     const invoiceState = queryEnum(
       parsed.params,
       "invoice_state",
@@ -2078,6 +2090,7 @@ export const installReportRoutes = <Bindings extends object>(
       ...(tagId === undefined ? {} : { tagId }),
       ...(hours === undefined ? {} : { hours }),
       ...(grain === undefined ? {} : { grain }),
+      ...(audience === undefined ? {} : { audience }),
       ...(invoiceState === undefined ? {} : { invoiceState }),
       ...(activeProjectsOnly === undefined ? {} : { activeProjectsOnly }),
     });
