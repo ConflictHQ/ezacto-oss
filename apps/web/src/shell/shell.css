@@ -1856,7 +1856,7 @@
   border-radius: 0 0 calc(var(--ez-radius) * 2) calc(var(--ez-radius) * 2);
 }
 .invoice-new-dialog > form > footer button {
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 16px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
@@ -2033,6 +2033,16 @@
   color: var(--ez-muted);
   font: 600 11px/1.2 var(--ez-font-mono), monospace;
   text-transform: uppercase;
+}
+/* The period control's arrows and fields keep a phone-sized tap target here,
+   as they had on the generation page this dialog replaced. */
+.invoice-new-dialog .invoice-period button,
+.invoice-new-dialog .invoice-period select,
+.invoice-new-dialog .invoice-period input {
+  min-height: 44px;
+}
+.invoice-new-dialog .invoice-period .period-step {
+  min-width: 44px;
 }
 /* One control, mounted by the browser; it lays out its own row. */
 .invoice-period {
@@ -4914,7 +4924,8 @@ dialog::backdrop {
 @keyframes ez-dialog-in {
   from {
     opacity: 0;
-    transform: translateY(6px) scale(0.99);
+    /* Translate only: a scale would shrink tap targets below 44px mid-open. */
+    transform: translateY(6px);
   }
 }
 dialog form {
