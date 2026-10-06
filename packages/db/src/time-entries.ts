@@ -11,6 +11,8 @@ import {
 } from './time-entry-note-requirements.js'
 import {
   executeAtomicTrackedMutation,
+  executeAtomicWrite,
+  type CompiledQuery,
   type RunningTimeEntryReplacementReference,
   type TrackedEntityReference,
 } from './tracked-state.js'
@@ -347,9 +349,14 @@ export const startTimeEntry = async (
   return mapReturnedTimeEntry(created)
 }
 
+/**
+ * `followUps` commit with the insert or not at all; see
+ * `executeAtomicWrite`. Without any, the insert runs exactly as it always has.
+ */
 export const createStoppedTimeEntry = async (
   database: Database,
   input: CreateStoppedTimeEntryInput,
+  followUps: readonly CompiledQuery[] = [],
 ): Promise<TimeEntry> => {
   parseDate(input.spentDate)
   parseInstant(input.createdAt)
@@ -388,7 +395,7 @@ export const createStoppedTimeEntry = async (
     input.projectId,
     input.notes,
   )
-  const [created] = await database
+  const insert = database
     .insert(timeEntries)
     .select(
       sql`SELECT
@@ -423,6 +430,13 @@ export const createStoppedTimeEntry = async (
       WHERE ${currentTimeEntryNotePolicyAllows(input.userId, input.projectId, input.notes)}`,
     )
     .returning()
+  let created: TimeEntry | undefined
+  if (followUps.length === 0) {
+    ;[created] = await insert
+  } else {
+    const row = await executeAtomicWrite(database, insert, followUps)
+    created = row === undefined ? undefined : mapReturnedTimeEntry(row)
+  }
   if (!created) {
     await assertStoredTimeEntryNoteRequirement(
       database,
@@ -440,6 +454,7 @@ export const stopTimeEntry = async (
   timeEntryId: number,
   boundary: TimeBoundary,
   policyLocked: boolean,
+  followUps: readonly CompiledQuery[] = [],
 ): Promise<TimeEntry> => {
   validateBoundary(boundary)
   const mutationReference: TrackedEntityReference = {
@@ -497,6 +512,7 @@ export const stopTimeEntry = async (
         .where(and(runningWhere, expectedCheckpoint, mutationPredicate))
         .returning(),
     () => new Error(`time entry ${timeEntryId} stopped concurrently`),
+    followUps,
   )
   return mapReturnedTimeEntry(stopped)
 }

@@ -7,6 +7,7 @@ import {
   type ApprovalStatus,
   type TrackedState,
   type TeamViewer,
+  canManageTeammateTime,
   dateInTimeZone,
   timeInTimeZone,
 } from '@ezacto/core'
@@ -32,6 +33,7 @@ import {
   resolveStoredTimeEntryNoteRequirement,
 } from './time-entry-note-requirements.js'
 import { resolveEntryRates } from './rate-resolver.js'
+import { timeEntryOnBehalfEvent, type TimeEntryChange } from './time-entry-audit.js'
 import {
   clients,
   expenseCategories,
@@ -49,6 +51,7 @@ import {
   executeAtomicTrackedMutation,
   getTrackedState,
   TrackedEntityNotFoundError,
+  type CompiledQuery,
 } from './tracked-state.js'
 import {
   and,
@@ -86,6 +89,27 @@ const assignmentProblem = () => new TrackedResourceAssignmentError()
 const concurrentProblem = (resource: 'time entry' | 'expense') =>
   new TrackedResourceConflictError(resource)
 const notFound = (resource: 'time entry' | 'expense') => new TrackedResourceNotFoundError(resource)
+
+/**
+ * The audit of a write, or nothing: only a change made to somebody else's time
+ * is recorded (#917), and it rides in the write's own transaction.
+ */
+const onBehalfAudit = (
+  actor: TimeEntryActor,
+  ownerUserId: number,
+  change: TimeEntryChange,
+  occurredAt: string,
+): readonly CompiledQuery[] =>
+  ownerUserId === actor.userId
+    ? []
+    : [timeEntryOnBehalfEvent({ ...change, actorUserId: actor.userId, ownerUserId, occurredAt })]
+
+const timerForSomebodyElse = () =>
+  inputProblem(
+    'user_id',
+    'timer_owned',
+    'a timer can only be started by the person it tracks; log stopped time for somebody else',
+  )
 
 const approvalPeriodWriteErrorPattern =
   /(?:approved (?:or pending )?timesheet period|(?:time entry|expense) does not match its timesheet submission)/
@@ -173,6 +197,13 @@ export interface TrackedResourceClock {
   now(): TimeBoundary
 }
 
+/**
+ * Who is acting on a time entry. The profile is part of it because an
+ * administrator may reach anybody's time (#917); everybody else reaches only
+ * their own, and a bare user id could not say which of the two this is.
+ */
+export type TimeEntryActor = Readonly<Pick<TeamViewer, 'userId' | 'profile'>>
+
 export interface TimeEntryRecord extends TimeEntry {
   state: TrackedState
   noteMinimumLength: number
@@ -183,6 +214,11 @@ export interface ExpenseRecord extends Expense {
 }
 
 export interface TimeEntryFilters {
+  /**
+   * Whose entries: the actor's own unless named. Naming somebody else matches
+   * nothing unless the actor may manage teammates' time.
+   */
+  userId?: number
   clientId?: number
   projectId?: number
   taskId?: number
@@ -233,6 +269,12 @@ export interface UpdateOrganizationTimeEntryNoteSettings {
 }
 
 export interface CreateTimeEntryRequest {
+  /**
+   * Whose time this is: the actor's own unless named. Only an administrator
+   * names somebody else, and only for stopped time -- a timer belongs to the
+   * person it is running for.
+   */
+  userId?: number
   projectId: number
   taskId: number
   spentDate?: string
@@ -518,11 +560,20 @@ export class DrizzleTrackedResourceRepository {
     if (!assignment) throw assignmentProblem()
   }
 
-  async #ownedTimeEntry(userId: number, id: number): Promise<TimeEntry> {
+  /**
+   * Which time entries the actor reaches (#917): an administrator anybody's,
+   * everybody else their own. Every time-entry read and write goes through
+   * this, so no path can widen it on its own.
+   */
+  #timeEntryAccess(actor: TimeEntryActor): SQL {
+    return canManageTeammateTime(actor.profile) ? sql`1` : eq(timeEntries.userId, actor.userId)
+  }
+
+  async #accessibleTimeEntry(actor: TimeEntryActor, id: number): Promise<TimeEntry> {
     const [entry] = await this.#database
       .select()
       .from(timeEntries)
-      .where(and(eq(timeEntries.id, id), eq(timeEntries.userId, userId)))
+      .where(and(eq(timeEntries.id, id), this.#timeEntryAccess(actor)))
       .limit(1)
     if (!entry) throw notFound('time entry')
     return entry
@@ -628,8 +679,11 @@ export class DrizzleTrackedResourceRepository {
     }
   }
 
-  #timeConditions(userId: number, filters: Readonly<TimeEntryFilters>): SQL[] {
-    const conditions: SQL[] = [eq(timeEntries.userId, userId)]
+  #timeConditions(actor: TimeEntryActor, filters: Readonly<TimeEntryFilters>): SQL[] {
+    const conditions: SQL[] = [
+      eq(timeEntries.userId, filters.userId ?? actor.userId),
+      this.#timeEntryAccess(actor),
+    ]
     if (filters.clientId !== undefined) {
       conditions.push(sql`EXISTS (
         SELECT 1 FROM ${projects} filter_project
@@ -756,10 +810,10 @@ export class DrizzleTrackedResourceRepository {
   }
 
   timeEntries(
-    userId: number,
+    actor: TimeEntryActor,
     filters: Readonly<TimeEntryFilters>,
   ): ResourceSource<TimeEntryRecord> {
-    const conditions = this.#timeConditions(userId, filters)
+    const conditions = this.#timeConditions(actor, filters)
     return {
       highWatermark: async () => {
         const [row] = await this.#database
@@ -845,8 +899,8 @@ export class DrizzleTrackedResourceRepository {
     }
   }
 
-  async getTimeEntry(userId: number, id: number): Promise<TimeEntryRecord> {
-    return this.#timeRecord(await this.#ownedTimeEntry(userId, id))
+  async getTimeEntry(actor: TimeEntryActor, id: number): Promise<TimeEntryRecord> {
+    return this.#timeRecord(await this.#accessibleTimeEntry(actor, id))
   }
 
   async getExpense(
@@ -860,10 +914,17 @@ export class DrizzleTrackedResourceRepository {
   }
 
   async createTimeEntry(
-    userId: number,
+    actor: TimeEntryActor,
     input: Readonly<CreateTimeEntryRequest>,
     boundary: TimeBoundary,
   ): Promise<TimeEntryRecord> {
+    // Everything below is the owner's: their assignments, their timesheet,
+    // their rates. Only the audit names the actor.
+    const userId = input.userId ?? actor.userId
+    const onBehalf = userId !== actor.userId
+    if (onBehalf && !canManageTeammateTime(actor.profile)) {
+      throw inputProblem('user_id', 'forbidden', 'only an administrator may log time for another person')
+    }
     const settings = await this.#timeSettings()
     // The clock is UTC, because an instant is. The *date* a running timer is
     // filed under is the operator's, not UTC's: west of UTC those differ every
@@ -897,6 +958,7 @@ export class DrizzleTrackedResourceRepository {
         )
       }
       if (input.seconds === undefined) {
+        if (onBehalf) throw timerForSomebodyElse()
         if (input.spentDate !== undefined && input.spentDate !== local.date) {
           throw inputProblem(
             'spent_date',
@@ -927,14 +989,18 @@ export class DrizzleTrackedResourceRepository {
         await this.#assertPolicyDateUnlocked(input.spentDate)
         const approval = await this.#approvalMembership(userId, input.spentDate, false)
         try {
-          created = await createStoppedTimeEntry(this.#database, {
-            ...base,
-            ...approval,
-            spentDate: input.spentDate,
-            seconds: input.seconds,
-            createdAt: boundary.instant,
-            updatedAt: boundary.instant,
-          })
+          created = await createStoppedTimeEntry(
+            this.#database,
+            {
+              ...base,
+              ...approval,
+              spentDate: input.spentDate,
+              seconds: input.seconds,
+              createdAt: boundary.instant,
+              updatedAt: boundary.instant,
+            },
+            onBehalfAudit(actor, userId, { action: 'create' }, boundary.instant),
+          )
         } catch (error) {
           return this.#translateApprovalPeriodWriteError(error, userId, input.spentDate, false)
         }
@@ -948,6 +1014,7 @@ export class DrizzleTrackedResourceRepository {
         )
       }
       if (input.endedTime === undefined) {
+        if (onBehalf) throw timerForSomebodyElse()
         if (input.spentDate !== undefined && input.spentDate !== local.date) {
           throw inputProblem(
             'spent_date',
@@ -989,15 +1056,19 @@ export class DrizzleTrackedResourceRepository {
         await this.#assertPolicyDateUnlocked(input.spentDate)
         const approval = await this.#approvalMembership(userId, input.spentDate, false)
         try {
-          created = await createStoppedTimeEntry(this.#database, {
-            ...base,
-            ...approval,
-            spentDate: input.spentDate,
-            startedTime: input.startedTime,
-            endedTime: input.endedTime,
-            createdAt: boundary.instant,
-            updatedAt: boundary.instant,
-          })
+          created = await createStoppedTimeEntry(
+            this.#database,
+            {
+              ...base,
+              ...approval,
+              spentDate: input.spentDate,
+              startedTime: input.startedTime,
+              endedTime: input.endedTime,
+              createdAt: boundary.instant,
+              updatedAt: boundary.instant,
+            },
+            onBehalfAudit(actor, userId, { action: 'create' }, boundary.instant),
+          )
         } catch (error) {
           return this.#translateApprovalPeriodWriteError(error, userId, input.spentDate, false)
         }
@@ -1007,12 +1078,16 @@ export class DrizzleTrackedResourceRepository {
   }
 
   async updateTimeEntry(
-    userId: number,
+    actor: TimeEntryActor,
     id: number,
     input: Readonly<UpdateTimeEntryRequest>,
     boundary: TimeBoundary,
   ): Promise<TimeEntryRecord> {
-    const entry = await this.#ownedTimeEntry(userId, id)
+    const entry = await this.#accessibleTimeEntry(actor, id)
+    // The owner's rules, not the actor's: an administrator correcting somebody
+    // else's time is held to that person's assignments, timesheet and note
+    // requirement, and the entry stays theirs (#917).
+    const userId = entry.userId
     const settings = await this.#timeSettings()
     const timingOrAssignmentChange =
       input.projectId !== undefined ||
@@ -1155,6 +1230,7 @@ export class DrizzleTrackedResourceRepository {
             )
             .returning(),
         () => concurrentProblem('time entry'),
+        onBehalfAudit(actor, userId, { action: 'update', before: entry }, boundary.instant),
       )
     } catch (error) {
       throwIfPolicyLockWriteError(error)
@@ -1167,8 +1243,12 @@ export class DrizzleTrackedResourceRepository {
     return this.#timeRecord(mapReturnedTimeEntry(updated))
   }
 
-  async deleteTimeEntry(userId: number, id: number): Promise<TimeEntryRecord> {
-    const entry = await this.#ownedTimeEntry(userId, id)
+  async deleteTimeEntry(
+    actor: TimeEntryActor,
+    id: number,
+    boundary: TimeBoundary,
+  ): Promise<TimeEntryRecord> {
+    const entry = await this.#accessibleTimeEntry(actor, id)
     const noteRequirement = await resolveStoredTimeEntryNoteRequirement(
       this.#database,
       entry.userId,
@@ -1185,13 +1265,14 @@ export class DrizzleTrackedResourceRepository {
             .delete(timeEntries)
             .where(
               and(
-                eq(timeEntries.userId, userId),
+                eq(timeEntries.userId, entry.userId),
                 eq(timeEntries.updatedAt, entry.updatedAt),
                 mutationPredicate,
               ),
             )
             .returning(),
         () => concurrentProblem('time entry'),
+        onBehalfAudit(actor, entry.userId, { action: 'delete', before: entry }, boundary.instant),
       )
     } catch (error) {
       return translateTrackedNotFound(error, 'time entry')
@@ -1212,28 +1293,46 @@ export class DrizzleTrackedResourceRepository {
   }
 
   async stopTimeEntry(
-    userId: number,
+    actor: TimeEntryActor,
     id: number,
     boundary: TimeBoundary,
   ): Promise<TimeEntryRecord> {
-    const entry = await this.#ownedTimeEntry(userId, id)
+    const entry = await this.#accessibleTimeEntry(actor, id)
     if (!isRunning(entry)) {
       throw inputProblem('time_entry', 'not_running', 'time entry is not running')
     }
     const policyLocked = await this.#policy.isLocked({ entityType: 'time_entry', entityId: id })
     try {
-      return this.#timeRecord(await stopTimeEntry(this.#database, id, boundary, policyLocked))
+      return this.#timeRecord(
+        await stopTimeEntry(
+          this.#database,
+          id,
+          boundary,
+          policyLocked,
+          onBehalfAudit(actor, entry.userId, { action: 'stop', before: entry }, boundary.instant),
+        ),
+      )
     } catch (error) {
       return translateTrackedNotFound(error, 'time entry')
     }
   }
 
   async restartTimeEntry(
-    userId: number,
+    actor: TimeEntryActor,
     id: number,
     boundary: TimeBoundary,
   ): Promise<TimeEntryRecord> {
-    const entry = await this.#ownedTimeEntry(userId, id)
+    const entry = await this.#accessibleTimeEntry(actor, id)
+    // Restarting is starting a timer, and a timer is its owner's to start: an
+    // administrator may stop somebody's timer but not set one running (#917).
+    if (entry.userId !== actor.userId) {
+      throw inputProblem(
+        'time_entry',
+        'timer_owned',
+        'a timer can only be restarted by the person it tracks',
+      )
+    }
+    const userId = entry.userId
     if (isRunning(entry)) {
       throw inputProblem('time_entry', 'already_running', 'time entry is already running')
     }

@@ -19,6 +19,9 @@ import { DrizzleTrackedResourceRepository } from '../src/tracked-resource-reposi
 const at = '2026-09-01T12:00:00.000Z'
 let sqlite: BetterSqlite3.Database | null = null
 
+/** The fixture's one person, an administrator tracking their own time. */
+const adeyemi = { userId: 1, profile: 'administrator' } as const
+
 afterEach(() => {
   sqlite?.close()
   sqlite = null
@@ -66,7 +69,7 @@ describe('the day a running timer is filed on', () => {
   it('[money] is the organization local day, not the UTC one', async () => {
     const tracked = await fixture('America/Costa_Rica')
     const entry = await tracked.createTimeEntry(
-      1,
+      adeyemi,
       { projectId: 1, taskId: 1 },
       utcBoundary(EVENING),
     )
@@ -80,7 +83,7 @@ describe('the day a running timer is filed on', () => {
     // The default, and every deployment that has not set a timezone.
     const tracked = await fixture('UTC')
     const entry = await tracked.createTimeEntry(
-      1,
+      adeyemi,
       { projectId: 1, taskId: 1 },
       utcBoundary(EVENING),
     )
@@ -93,7 +96,7 @@ describe('the day a running timer is filed on', () => {
     // either be obeyed or told. It was neither -- it was ignored.
     const tracked = await fixture('America/Costa_Rica')
     const entry = await tracked.createTimeEntry(
-      1,
+      adeyemi,
       { projectId: 1, taskId: 1, spentDate: '2026-09-12' },
       utcBoundary(EVENING),
     )
@@ -102,7 +105,7 @@ describe('the day a running timer is filed on', () => {
     const second = await fixture('America/Costa_Rica')
     await expect(
       second.createTimeEntry(
-        1,
+        adeyemi,
         { projectId: 1, taskId: 1, spentDate: '2026-09-13' },
         utcBoundary(EVENING),
       ),
@@ -115,7 +118,7 @@ describe('the day a running timer is filed on', () => {
     // evening session is still the 12th for them, and that is the day it files.
     const tracked = await fixture('UTC', 'America/Costa_Rica')
     const entry = await tracked.createTimeEntry(
-      1,
+      adeyemi,
       { projectId: 1, taskId: 1 },
       utcBoundary(EVENING),
     )
@@ -128,7 +131,7 @@ describe('the day a running timer is filed on', () => {
     // organization timezone decides the day.
     const tracked = await fixture('America/Costa_Rica', 'UTC')
     const entry = await tracked.createTimeEntry(
-      1,
+      adeyemi,
       { projectId: 1, taskId: 1 },
       utcBoundary(EVENING),
     )
@@ -143,7 +146,7 @@ describe('the day a running timer is filed on', () => {
     // restored the wrong-day bug for every imported person at once.
     const tracked = await fixture('America/Costa_Rica', 'Central America')
     const entry = await tracked.createTimeEntry(
-      1,
+      adeyemi,
       { projectId: 1, taskId: 1 },
       utcBoundary(EVENING),
     )
@@ -158,7 +161,7 @@ describe('the day a running timer is filed on', () => {
     // was before any of this and is better than losing the session.
     const tracked = await fixture('Central America', 'Warsaw')
     const entry = await tracked.createTimeEntry(
-      1,
+      adeyemi,
       { projectId: 1, taskId: 1 },
       utcBoundary(EVENING),
     )
@@ -170,7 +173,7 @@ describe('the day a running timer is filed on', () => {
     // entry a day early rather than a day late.
     const tracked = await fixture('Asia/Tokyo')
     const entry = await tracked.createTimeEntry(
-      1,
+      adeyemi,
       { projectId: 1, taskId: 1 },
       utcBoundary('2026-09-12T22:40:00.000Z'),
     )
@@ -182,7 +185,7 @@ describe('the day a running timer is filed on', () => {
     // it would make a cosmetic misconfiguration stop the day's work.
     const tracked = await fixture('Not/AZone')
     const entry = await tracked.createTimeEntry(
-      1,
+      adeyemi,
       { projectId: 1, taskId: 1 },
       utcBoundary(EVENING),
     )

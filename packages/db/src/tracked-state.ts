@@ -46,7 +46,11 @@ interface TrackedStateFactRow {
   task_active: number
 }
 
-interface CompiledQuery {
+/**
+ * A statement compiled for the native client. Exported for the follow-ups below:
+ * statements that have to commit with a tracked write or not at all.
+ */
+export interface CompiledQuery {
   sql: string
   params: unknown[]
 }
@@ -248,14 +252,20 @@ const executeContainerAtomic = (
   client: BetterSqlite3.Database,
   factQueries: readonly CompiledQuery[],
   mutationQuery: CompiledQuery,
+  followUps: readonly CompiledQuery[],
 ): AtomicResult => {
-  const execute = client.transaction(() => ({
-    factRows: factQueries.map(
-      (query) => client.prepare(query.sql).get(...query.params) as TrackedStateFactRow | undefined,
-    ),
-    mutationRow: client.prepare(mutationQuery.sql).get(...mutationQuery.params) as
-      Record<string, unknown> | undefined,
-  }))
+  const execute = client.transaction(() => {
+    const result: AtomicResult = {
+      factRows: factQueries.map(
+        (query) =>
+          client.prepare(query.sql).get(...query.params) as TrackedStateFactRow | undefined,
+      ),
+      mutationRow: client.prepare(mutationQuery.sql).get(...mutationQuery.params) as
+        Record<string, unknown> | undefined,
+    }
+    for (const query of followUps) client.prepare(query.sql).run(...query.params)
+    return result
+  })
   return execute.immediate()
 }
 
@@ -263,16 +273,17 @@ const executeD1Atomic = async (
   client: D1Database,
   factQueries: readonly CompiledQuery[],
   mutationQuery: CompiledQuery,
+  followUps: readonly CompiledQuery[],
 ): Promise<AtomicResult> => {
-  const statements = [...factQueries, mutationQuery].map((query) =>
+  const statements = [...factQueries, mutationQuery, ...followUps].map((query) =>
     client.prepare(query.sql).bind(...query.params),
   )
   const results = await client.batch(statements)
   return {
     factRows: results
-      .slice(0, -1)
+      .slice(0, factQueries.length)
       .map((result) => result.results[0] as TrackedStateFactRow | undefined),
-    mutationRow: results.at(-1)?.results[0] as Record<string, unknown> | undefined,
+    mutationRow: results[factQueries.length]?.results[0] as Record<string, unknown> | undefined,
   }
 }
 
@@ -306,12 +317,19 @@ export const getTrackedState = async (
  * The mutation returns the exact raw RETURNING row captured by the serialized
  * unit. Callers that expose a domain row must map its driver values rather than
  * reload ambient state after the transaction has completed.
+ *
+ * `followUps` run after the mutation inside the same unit, so they commit with
+ * it or not at all: the audit of a change made on somebody else's behalf
+ * (#917) is one. A denied mutation does not stop the unit, so each follow-up
+ * must guard itself on `changes() = 1` or it records a write that never
+ * happened.
  */
 export const executeAtomicTrackedMutation = async (
   database: Database,
   referenceOrReferences: TrackedMutationReference | readonly TrackedMutationReference[],
   mutate: (predicate: SQL) => CompilableQuery,
   unlockedFailure: () => Error,
+  followUps: readonly CompiledQuery[] = [],
 ): Promise<Record<string, unknown>> => {
   const references = Array.isArray(referenceOrReferences)
     ? referenceOrReferences
@@ -320,8 +338,8 @@ export const executeAtomicTrackedMutation = async (
   const mutationQuery = mutate(combinePredicates(references)).toSQL()
   const client = nativeClient(database)
   const result = isD1Client(client)
-    ? await executeD1Atomic(client, factQueries, mutationQuery)
-    : executeContainerAtomic(client, factQueries, mutationQuery)
+    ? await executeD1Atomic(client, factQueries, mutationQuery, followUps)
+    : executeContainerAtomic(client, factQueries, mutationQuery, followUps)
 
   if (result.mutationRow) return result.mutationRow
   for (const [index, reference] of references.entries()) {
@@ -335,4 +353,35 @@ export const executeAtomicTrackedMutation = async (
     assertTrackedMutationAllowed(factsFromRow(row, reference.policyLocked))
   }
   throw unlockedFailure()
+}
+
+/**
+ * One write and the statements that have to commit with it, as a single
+ * serialized unit, answering with the write's first RETURNING row.
+ *
+ * For writes that carry no tracked-state guard of their own -- creating a
+ * stopped entry -- and still need a follow-up to land atomically with them. The
+ * same `changes() = 1` rule applies to each follow-up.
+ */
+export const executeAtomicWrite = async (
+  database: Database,
+  write: CompilableQuery,
+  followUps: readonly CompiledQuery[],
+): Promise<Record<string, unknown> | undefined> => {
+  const writeQuery = write.toSQL()
+  const client = nativeClient(database)
+  if (isD1Client(client)) {
+    const results = await client.batch(
+      [writeQuery, ...followUps].map((query) => client.prepare(query.sql).bind(...query.params)),
+    )
+    return results[0]?.results[0] as Record<string, unknown> | undefined
+  }
+  return client
+    .transaction(() => {
+      const row = client.prepare(writeQuery.sql).get(...writeQuery.params) as
+        Record<string, unknown> | undefined
+      for (const query of followUps) client.prepare(query.sql).run(...query.params)
+      return row
+    })
+    .immediate()
 }
