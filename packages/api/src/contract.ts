@@ -877,12 +877,51 @@ const moneyOperations: ApiContractOperation[] = [
     path: "/api/v1/invoices/:id/deliveries",
     operationId: "deliverInvoiceEmail",
     summary: "Confirm and durably enqueue invoice email delivery",
+    description:
+      "One email: To the recipients, Cc the copies, the organization's always-Cc addresses and, when send_me_a_copy is true, the person sending. The subject and message are templates; the body is the message followed by the invoice summary.",
     tag: "invoice-messages",
     responseStatus: 202,
     responseSchema: "InvoiceCommandEnvelope",
     requestSchema: "InvoiceEmailDeliveryInput",
     requestRequired: true,
     parameters: [path("id"), idempotency],
+  },
+  {
+    method: "post",
+    path: "/api/v1/invoices/:id/deliveries/preview",
+    operationId: "previewInvoiceEmail",
+    summary: "Compose the invoice email a delivery would send, without sending or recording anything",
+    tag: "invoice-messages",
+    responseStatus: 200,
+    responseSchema: "InvoiceEmailPreviewEnvelope",
+    requestSchema: "InvoiceEmailPreviewInput",
+    requestRequired: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "get",
+    path: "/api/v1/invoices/:id/deliveries/preview/document",
+    operationId: "downloadInvoiceEmailPreviewDocument",
+    summary: "Download the invoice PDF a delivery would carry, stamped PREVIEW on every page",
+    tag: "invoice-messages",
+    responseStatus: 200,
+    binaryResponse: true,
+    parameters: [path("id"), query("append_pdfs", { type: "string", enum: ["true", "false"] })],
+  },
+  {
+    method: "post",
+    path: "/api/v1/invoices/:id/deliveries/preview/send",
+    operationId: "sendInvoiceEmailPreview",
+    summary: "Send the invoice email, stamped PREVIEW, to the signed-in user only",
+    description:
+      "Not a delivery: no invoice message, no delivery record, no event. Limited to a few per invoice per hour.",
+    tag: "invoice-messages",
+    responseStatus: 202,
+    additionalResponseStatuses: [429],
+    responseSchema: "InvoiceEmailPreviewSentEnvelope",
+    requestSchema: "InvoiceEmailPreviewInput",
+    requestRequired: true,
+    parameters: [path("id")],
   },
   {
     method: "get",
@@ -1663,6 +1702,63 @@ const invoiceDocumentPreferenceOperations: ApiContractOperation[] = [
     requestRequired: true,
     sessionOnly: true,
     parameters: [path("id")],
+  },
+  {
+    method: "get",
+    path: "/api/v1/invoices/:id/email-defaults",
+    operationId: "getInvoiceEmailDefaults",
+    summary: "What the Send dialog opens on for this invoice: subject, message, To, Cc and copies",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "InvoiceEmailDefaultsEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "get",
+    path: "/api/v1/clients/:id/invoice-sending",
+    operationId: "getClientInvoiceSending",
+    summary: "Who this client's invoices go to and what they carry",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "ClientInvoiceSendingEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "post",
+    path: "/api/v1/clients/:id/invoice-sending",
+    operationId: "setClientInvoiceSending",
+    summary: "Save who this client's invoices go to and what they carry",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "ClientInvoiceSendingEnvelope",
+    requestSchema: "ClientInvoiceSendingInput",
+    requestRequired: true,
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "get",
+    path: "/api/v1/settings/invoice-sending",
+    operationId: "getOrganizationInvoiceSending",
+    summary: "The addresses copied on every invoice email",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "OrganizationInvoiceSendingEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/invoice-sending",
+    operationId: "setOrganizationInvoiceSending",
+    summary: "Set the addresses copied on every invoice email",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "OrganizationInvoiceSendingEnvelope",
+    requestSchema: "OrganizationInvoiceSendingInput",
+    requestRequired: true,
+    sessionOnly: true,
   },
   {
     method: "get",
@@ -3214,6 +3310,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "from",
       "reply_to",
       "to",
+      "cc",
       "template",
       "subject",
       "provider",
@@ -3234,6 +3331,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       from: nullable(reference("EmailRecipient")),
       reply_to: { type: "array", items: reference("EmailRecipient") },
       to: { type: "array", items: reference("EmailRecipient") },
+      cc: { type: "array", items: reference("EmailRecipient") },
       template: stringSchema,
       subject: stringSchema,
       provider: nullable(stringSchema),
@@ -4673,6 +4771,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       user_id: integerSchema,
       timezone: { type: "string", minLength: 1 },
+      // Whether this person is copied on the invoice emails they send. Absent
+      // where the deployment sends no invoice email.
+      invoice_copy_to_self: booleanSchema,
     },
     additionalProperties: false,
   },
@@ -4681,6 +4782,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     minProperties: 1,
     properties: {
       timezone: { type: "string", minLength: 1 },
+      invoice_copy_to_self: booleanSchema,
     },
     additionalProperties: false,
   },
@@ -5926,6 +6028,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "sent_from",
       "sent_from_email",
       "recipients",
+      "cc",
       "subject",
       "body",
       "attach_pdf",
@@ -5947,6 +6050,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       sent_from: nullable(stringSchema),
       sent_from_email: nullable(stringSchema),
       recipients: { type: "array", items: reference("InvoiceRecipient") },
+      // Who the email was copied to; empty for a message that copied nobody.
+      cc: { type: "array", items: reference("InvoiceRecipient") },
       subject: nullable(stringSchema),
       body: nullable(stringSchema),
       attach_pdf: booleanSchema,
@@ -6024,15 +6129,275 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     required: ["expected_version", "recipients", "confirmed"],
     properties: {
       expected_version: { type: "integer", minimum: 0 },
+      // The To header.
       recipients: {
         type: "array",
         minItems: 1,
         maxItems: 1_000,
         items: reference("InvoiceRecipient"),
       },
+      // The Cc header, never an address already in To.
+      cc: { type: "array", maxItems: 99, items: reference("InvoiceRecipient") },
+      // Templates over the invoice's variables. Absent takes the
+      // organization's invoice template.
+      subject: { type: "string", maxLength: 998 },
+      message: { type: "string", maxLength: 100_000 },
+      // Copies the person sending on this email.
+      send_me_a_copy: booleanSchema,
       sender_identity_id: { type: "integer", minimum: 1 },
       template_version: { type: "integer", minimum: 1 },
       confirmed: { type: "boolean", enum: [true] },
+    },
+    additionalProperties: false,
+  },
+  // The delivery's fields, with the Send dialog's unsaved attachment choices
+  // laid over the invoice's own. A preview changes nothing, so it names no
+  // version.
+  InvoiceEmailPreviewInput: {
+    type: "object",
+    required: ["recipients"],
+    properties: {
+      expected_version: { type: "integer", minimum: 0 },
+      recipients: {
+        type: "array",
+        minItems: 1,
+        maxItems: 1_000,
+        items: reference("InvoiceRecipient"),
+      },
+      cc: { type: "array", maxItems: 99, items: reference("InvoiceRecipient") },
+      subject: { type: "string", maxLength: 998 },
+      message: { type: "string", maxLength: 100_000 },
+      send_me_a_copy: booleanSchema,
+      sender_identity_id: { type: "integer", minimum: 1 },
+      template_version: { type: "integer", minimum: 1 },
+      attach_pdf: booleanSchema,
+      attach_files: booleanSchema,
+      append_pdfs: booleanSchema,
+      attach_journal: {
+        oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean", enum: [false] }],
+      },
+      journal_formats: reference("JournalFormats"),
+    },
+    additionalProperties: false,
+  },
+  InvoiceEmailPreviewAttachment: {
+    type: "object",
+    required: ["kind", "filename", "content_type", "byte_size", "appended", "not_appended"],
+    properties: {
+      kind: { type: "string", enum: ["invoice", "journal", "file"] },
+      filename: stringSchema,
+      content_type: stringSchema,
+      byte_size: { type: "integer", minimum: 0 },
+      // The invoice document's own: the files bound into its back, in order.
+      appended: { type: "array", items: stringSchema },
+      // A file meant for the back of the document that goes beside it, and why.
+      not_appended: nullable({
+        type: "string",
+        enum: ["encrypted", "unreadable", "empty", "too_large"],
+      }),
+    },
+    additionalProperties: false,
+  },
+  InvoiceEmailPreviewEnvelope: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: {
+        type: "object",
+        required: [
+          "invoice_id",
+          "from",
+          "reply_to",
+          "to",
+          "cc",
+          "send_me_a_copy",
+          "subject",
+          "text",
+          "html",
+          "attachments",
+        ],
+        properties: {
+          invoice_id: integerSchema,
+          from: reference("InvoiceRecipient"),
+          reply_to: nullable(stringSchema),
+          to: { type: "array", items: reference("InvoiceRecipient") },
+          cc: { type: "array", items: reference("InvoiceRecipient") },
+          send_me_a_copy: booleanSchema,
+          subject: stringSchema,
+          text: stringSchema,
+          // The invoice email is one plain-text part.
+          html: nullable(stringSchema),
+          attachments: { type: "array", items: reference("InvoiceEmailPreviewAttachment") },
+        },
+        additionalProperties: false,
+      },
+      links: {
+        type: "object",
+        required: ["document"],
+        properties: { document: stringSchema },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  InvoiceEmailPreviewSentEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["invoice_id", "delivery_id", "to", "subject"],
+        properties: {
+          invoice_id: integerSchema,
+          delivery_id: integerSchema,
+          to: { type: "array", items: reference("InvoiceRecipient") },
+          subject: stringSchema,
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  InvoiceEmailDefaultsEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: [
+          "invoice_id",
+          "client_id",
+          "company_name",
+          "client_name",
+          "template_version",
+          "subject",
+          "message",
+          "to",
+          "cc",
+          "recipients_source",
+          "always_cc",
+          "sender",
+          "send_me_a_copy",
+        ],
+        properties: {
+          invoice_id: integerSchema,
+          client_id: integerSchema,
+          company_name: stringSchema,
+          client_name: stringSchema,
+          template_version: integerSchema,
+          subject: stringSchema,
+          message: stringSchema,
+          to: { type: "array", items: reference("InvoiceRecipient") },
+          cc: { type: "array", items: reference("InvoiceRecipient") },
+          // Where To and Cc came from: the client's saved lists, or its
+          // contacts' invoice routing.
+          recipients_source: { type: "string", enum: ["client", "contacts"] },
+          always_cc: { type: "array", items: reference("InvoiceRecipient") },
+          sender: {
+            type: "object",
+            required: ["name", "email"],
+            properties: { name: stringSchema, email: nullable(stringSchema) },
+            additionalProperties: false,
+          },
+          send_me_a_copy: booleanSchema,
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  InvoiceRecipientLists: {
+    type: "object",
+    required: ["to", "cc"],
+    properties: {
+      to: { type: "array", maxItems: 50, items: reference("InvoiceRecipient") },
+      cc: { type: "array", maxItems: 50, items: reference("InvoiceRecipient") },
+    },
+    additionalProperties: false,
+  },
+  ClientInvoiceSendingEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: [
+          "client_id",
+          "recipients",
+          "contacts",
+          "attach_pdf",
+          "append_pdfs",
+          "attach_files",
+          "attach_journal",
+          "journal_formats",
+          "organization",
+        ],
+        properties: {
+          client_id: integerSchema,
+          // Null follows the contacts' invoice routing.
+          recipients: nullable(reference("InvoiceRecipientLists")),
+          contacts: reference("InvoiceRecipientLists"),
+          // Null on any rule follows the organization.
+          attach_pdf: nullable({ type: "boolean" }),
+          append_pdfs: nullable({ type: "boolean" }),
+          attach_files: nullable({ type: "boolean" }),
+          attach_journal: nullable({
+            oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean" }],
+          }),
+          journal_formats: nullable(reference("JournalFormats")),
+          organization: {
+            type: "object",
+            required: ["attach_pdf", "append_pdfs", "attach_files", "attach_journal", "journal_formats"],
+            properties: {
+              attach_pdf: booleanSchema,
+              append_pdfs: booleanSchema,
+              attach_files: booleanSchema,
+              attach_journal: { oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean" }] },
+              journal_formats: reference("JournalFormats"),
+            },
+            additionalProperties: false,
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  // Any combination, at least one. Null hands recipients back to the contacts
+  // and a rule back to the organization.
+  ClientInvoiceSendingInput: {
+    type: "object",
+    minProperties: 1,
+    properties: {
+      recipients: nullable(reference("InvoiceRecipientLists")),
+      attach_pdf: nullable({ type: "boolean" }),
+      append_pdfs: nullable({ type: "boolean" }),
+      attach_files: nullable({ type: "boolean" }),
+      attach_journal: nullable({
+        oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean", enum: [false] }],
+      }),
+      journal_formats: nullable(reference("JournalFormats")),
+    },
+    additionalProperties: false,
+  },
+  OrganizationInvoiceSendingEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["always_cc"],
+        properties: { always_cc: { type: "array", items: reference("InvoiceRecipient") } },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  OrganizationInvoiceSendingInput: {
+    type: "object",
+    required: ["always_cc"],
+    properties: {
+      always_cc: { type: "array", maxItems: 20, items: reference("InvoiceRecipient") },
     },
     additionalProperties: false,
   },
@@ -6337,6 +6702,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "claim_ceiling_cents",
       "claim_scope",
       "cost_alert_basis_points",
+      "purchase_order",
       "created_at",
       "updated_at",
     ],
@@ -6397,6 +6763,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         minimum: 1,
         maximum: 20000,
       }),
+      // Copied onto every invoice the definition issues.
+      purchase_order: nullable({ type: "string", maxLength: 1000 }),
       created_at: timestampSchema,
       updated_at: timestampSchema,
     },
@@ -6574,6 +6942,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         minimum: 1,
         maximum: 20000,
       }),
+      // Absent leaves the stored purchase order as it is; null or blank clears it.
+      purchase_order: nullable({ type: "string", maxLength: 1000 }),
     },
     additionalProperties: false,
   },
@@ -8313,6 +8683,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       attach_pdf: nullable({ type: "boolean" }),
       attach_files: nullable({ type: "boolean" }),
+      append_pdfs: nullable({ type: "boolean" }),
       attach_journal: nullable({
         oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean", enum: [false] }],
       }),
@@ -8327,6 +8698,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       attach_pdf: { type: "boolean" },
       attach_files: { type: "boolean" },
+      append_pdfs: { type: "boolean" },
       attach_journal: {
         oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean", enum: [false] }],
       },
@@ -8368,15 +8740,23 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         required: [
           "invoice_id",
           "attach_pdf",
+          "client_attach_pdf",
           "organization_attach_pdf",
           "effective",
           "attach_files",
+          "client_attach_files",
           "organization_attach_files",
           "effective_files",
+          "append_pdfs",
+          "client_append_pdfs",
+          "organization_append_pdfs",
+          "effective_append_pdfs",
           "attach_journal",
+          "client_attach_journal",
           "organization_attach_journal",
           "effective_journal",
           "journal_formats",
+          "client_journal_formats",
           "organization_journal_formats",
           "effective_journal_formats",
         ],
@@ -8385,20 +8765,30 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           // Null is a third answer, not a missing one: it means this invoice
           // follows the organization.
           attach_pdf: { type: "boolean", nullable: true },
+          // The client's standing rule; null follows the organization.
+          client_attach_pdf: nullable({ type: "boolean" }),
           organization_attach_pdf: { type: "boolean" },
           effective: { type: "boolean" },
           // The files staged against the invoice are a separate choice from
           // the invoice document itself.
           attach_files: { type: "boolean", nullable: true },
+          client_attach_files: nullable({ type: "boolean" }),
           organization_attach_files: { type: "boolean" },
           effective_files: { type: "boolean" },
+          // The invoice's PDF files bound into the back of its document.
+          append_pdfs: nullable({ type: "boolean" }),
+          client_append_pdfs: nullable({ type: "boolean" }),
+          organization_append_pdfs: { type: "boolean" },
+          effective_append_pdfs: { type: "boolean" },
           // Not a boolean: the journal renders detailed or summary, which is
           // the value a fourth boolean pair could not have carried.
           attach_journal: { ...{ oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean" }] }, nullable: true },
+          client_attach_journal: nullable({ oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean" }] }),
           organization_attach_journal: { oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean" }] },
           effective_journal: { oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean" }] },
           // Null when this invoice follows the organization's set.
           journal_formats: nullable(reference("JournalFormats")),
+          client_journal_formats: nullable(reference("JournalFormats")),
           organization_journal_formats: reference("JournalFormats"),
           effective_journal_formats: reference("JournalFormats"),
         },
@@ -8413,10 +8803,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       data: {
         type: "object",
-        required: ["attach_pdf", "attach_files", "attach_journal", "journal_formats"],
+        required: ["attach_pdf", "attach_files", "append_pdfs", "attach_journal", "journal_formats"],
         properties: {
           attach_pdf: { type: "boolean" },
           attach_files: { type: "boolean" },
+          append_pdfs: { type: "boolean" },
           attach_journal: { oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean" }] },
           // The PDF alone until somebody chooses otherwise.
           journal_formats: reference("JournalFormats"),

@@ -63,7 +63,7 @@ Two optional values:
 
 | variable | effect |
 | --- | --- |
-| `BILL_REPLY_TO_USER_ID` | a BILL user id beginning `006`. Set it and BILL sends its own invoice email with that user as the reply-to; leave it and ezacto sends its invoice email as always, with a BILL payment link in it (`%invoice_payment_url%` in the template) and the invoice also in BILL for the client's own BILL account to pay. |
+| `BILL_REPLY_TO_USER_ID` | a BILL user id beginning `006`. Set it and BILL sends its own invoice email with that user as the reply-to; leave it and ezacto sends its invoice email as always, with a BILL payment link in it (the "View invoice" link under the amount due, and `%invoice_payment_url%` for a message that names it) and the invoice also in BILL for the client's own BILL account to pay. |
 | `BILL_ENVIRONMENT` | `sandbox` reaches BILL's test organisation. **Anything else is the real book**, including leaving it unset. |
 
 Set all four or none. A deployment with three has a configuration that cannot

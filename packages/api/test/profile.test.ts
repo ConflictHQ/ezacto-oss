@@ -136,3 +136,62 @@ describe('reading your own profile', () => {
     expect(readTimezone).not.toHaveBeenCalled()
   })
 })
+
+describe('being copied on the invoice emails you send', () => {
+  const copyHarness = () => {
+    const store: SessionStorePort = {
+      issue: vi.fn(async () => ({ token: issuedToken, session })),
+      authenticate: vi.fn(async (presented) =>
+        presented === issuedToken
+          ? { principal: { userId: 7, profile: 'member' as const, managerGrants: [] }, session }
+          : null,
+      ),
+      list: vi.fn(async () => [session]),
+      revoke: vi.fn(async () => null),
+    }
+    let copy = true
+    const updateInvoiceCopy = vi.fn(async (_userId: number, value: boolean) => {
+      copy = value
+    })
+    const updateTimezone = vi.fn(async () => undefined)
+    const app = createApiApp({
+      authentication: { sessions: createApiSessionService(store) },
+      installApi: (api) =>
+        installProfileRoutes(api, {
+          repository: {
+            readTimezone: async () => 'America/Costa_Rica',
+            updateTimezone,
+            readInvoiceCopy: async () => copy,
+            updateInvoiceCopy,
+          },
+          clock: () => at,
+        }),
+    })
+    return { app, updateInvoiceCopy, updateTimezone, cookie: `${SESSION_COOKIE_NAME}=${issuedToken}` }
+  }
+
+  it('[api] reads it on, and turns it off without touching the timezone', async () => {
+    const { app, updateInvoiceCopy, updateTimezone, cookie } = copyHarness()
+    const read = await app.request('/api/v1/profile', { headers: { cookie } })
+    expect(((await read.json()) as { data: unknown }).data).toEqual({
+      user_id: 7,
+      timezone: 'America/Costa_Rica',
+      invoice_copy_to_self: true,
+    })
+    const res = await patch(app, { invoice_copy_to_self: false }, cookie)
+    expect(res.status).toBe(200)
+    expect(updateInvoiceCopy).toHaveBeenCalledWith(7, false, at)
+    expect(updateTimezone).not.toHaveBeenCalled()
+    expect(((await res.json()) as { data: unknown }).data).toEqual({
+      user_id: 7,
+      timezone: 'America/Costa_Rica',
+      invoice_copy_to_self: false,
+    })
+  })
+
+  it('[api] refuses a value that is not true or false', async () => {
+    const { app, updateInvoiceCopy, cookie } = copyHarness()
+    expect((await patch(app, { invoice_copy_to_self: 'yes' }, cookie)).status).toBe(422)
+    expect(updateInvoiceCopy).not.toHaveBeenCalled()
+  })
+})

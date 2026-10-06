@@ -17,6 +17,7 @@ const message = (overrides: Partial<ThankYouMessage> = {}): ThankYouMessage => (
   fromEmail: "billing@example.test",
   replyToEmail: null,
   to: [{ name: "Accounts Payable", email: "ap@example.test" }],
+  cc: [],
   templateVersion: 3,
   subject: "Thank you for your payment",
   textBody: "We received your payment.",

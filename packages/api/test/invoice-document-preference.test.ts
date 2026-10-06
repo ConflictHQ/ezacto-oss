@@ -29,18 +29,19 @@ const app = (
   const service = {
     readInvoicePreference:
       overrides.readInvoicePreference ??
-      vi.fn(async () => ({ invoice: null, organization: true })),
+      vi.fn(async () => ({ invoice: null, client: null, organization: true })),
     setInvoicePreference: overrides.setInvoicePreference ?? vi.fn(async () => true),
     readOrganizationPreference: overrides.readOrganizationPreference ?? vi.fn(async () => true),
     setOrganizationPreference: overrides.setOrganizationPreference ?? vi.fn(async () => undefined),
     readInvoiceJournal:
-      overrides.readInvoiceJournal ?? vi.fn(async () => ({ invoice: null, organization: false })),
+      overrides.readInvoiceJournal ??
+      vi.fn(async () => ({ invoice: null, client: null, organization: false })),
     setInvoiceJournal: overrides.setInvoiceJournal ?? vi.fn(async () => true),
     readOrganizationJournal: overrides.readOrganizationJournal ?? vi.fn(async () => false),
     setOrganizationJournal: overrides.setOrganizationJournal ?? vi.fn(async () => undefined),
     readInvoiceJournalFormats:
       overrides.readInvoiceJournalFormats ??
-      vi.fn(async () => ({ invoice: null, organization: ['pdf'] })),
+      vi.fn(async () => ({ invoice: null, client: null, organization: ['pdf'] })),
     setInvoiceJournalFormats: overrides.setInvoiceJournalFormats ?? vi.fn(async () => true),
     readOrganizationJournalFormats:
       overrides.readOrganizationJournalFormats ?? vi.fn(async () => ['pdf']),
@@ -82,15 +83,23 @@ describe('reading what an invoice will do', () => {
       data: {
         invoice_id: 1315,
         attach_pdf: null,
+        client_attach_pdf: null,
         organization_attach_pdf: true,
         effective: true,
         attach_files: null,
+        client_attach_files: null,
         organization_attach_files: true,
         effective_files: true,
+        append_pdfs: null,
+        client_append_pdfs: null,
+        organization_append_pdfs: true,
+        effective_append_pdfs: true,
         attach_journal: null,
+        client_attach_journal: null,
         organization_attach_journal: false,
         effective_journal: false,
         journal_formats: null,
+        client_journal_formats: null,
         organization_journal_formats: ['pdf'],
         effective_journal_formats: ['pdf'],
       },
@@ -103,12 +112,45 @@ describe('reading what an invoice will do', () => {
       [true, false, true],
     ] as const) {
       const { app: instance } = app({
-        readInvoicePreference: vi.fn(async () => ({ invoice, organization })),
+        readInvoicePreference: vi.fn(async () => ({ invoice, client: null, organization })),
       })
       const body = (await (
         await (instance as never as Hono<never>).request('/invoices/1315/document-preference')
       ).json()) as { data: { effective: boolean } }
       expect(body.data.effective).toBe(effective)
+    }
+  })
+
+  it("[unit] puts the client's standing rule between the invoice and the organization", async () => {
+    // An accounts payable department that wants the purchase order bound into
+    // every invoice wants it on every invoice: the client's rule answers where
+    // the invoice has not, and the invoice can still say otherwise.
+    for (const [invoice, client, organization, effective] of [
+      [null, true, false, true],
+      [false, true, false, false],
+      [null, null, true, true],
+    ] as const) {
+      const { app: instance } = app({
+        readInvoicePreference: vi.fn(async () => ({ invoice, client, organization })),
+      })
+      const body = (await (
+        await (instance as never as Hono<never>).request('/invoices/1315/document-preference')
+      ).json()) as { data: { effective_append_pdfs: boolean; client_append_pdfs: boolean | null } }
+      expect(body.data.effective_append_pdfs).toBe(effective)
+      expect(body.data.client_append_pdfs).toBe(client)
+    }
+  })
+
+  it('[unit] sets an invoice to bind its PDF files into the document, or to follow', async () => {
+    for (const wanted of [true, false, null]) {
+      const { app: instance, service } = app()
+      const response = await post(
+        instance as never as Hono<never>,
+        '/invoices/1315/document-preference',
+        { append_pdfs: wanted },
+      )
+      expect(response.status).toBe(200)
+      expect(service.setInvoicePreference).toHaveBeenCalledWith(1315, 'append', wanted)
     }
   })
 
@@ -172,7 +214,13 @@ describe('the organization default', () => {
         await (instance as never as Hono<never>).request('/settings/invoice-documents')
       ).json(),
     ).toEqual({
-      data: { attach_pdf: true, attach_files: true, attach_journal: false, journal_formats: ['pdf'] },
+      data: {
+        attach_pdf: true,
+        attach_files: true,
+        append_pdfs: true,
+        attach_journal: false,
+        journal_formats: ['pdf'],
+      },
     })
 
     const response = await post(

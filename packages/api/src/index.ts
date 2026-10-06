@@ -71,7 +71,18 @@ export {
   installInvoiceDocumentPreferenceRoutes,
   type InvoiceDocumentPreferenceService,
   type JournalFormats,
+  type LayeredAnswer,
 } from './invoice-document-preference.js'
+export {
+  installInvoiceSendingRoutes,
+  type ClientAttachmentRules,
+  type ClientInvoiceSending,
+  type ClientInvoiceSendingChange,
+  type InvoiceEmailDefaults,
+  type InvoiceSendingRouteOptions,
+  type InvoiceSendingService,
+  type OrganizationAttachmentRules,
+} from './invoice-sending.js'
 export {
   installInvoiceHoursReportRoutes,
   type InvoiceHoursReport,
@@ -155,9 +166,12 @@ export {
 export {
   createInvoiceEmailOutboxSubscriber,
   installMoneyResourceRoutes,
+  type InvoiceAttachmentChoices,
+  type InvoiceAttachmentPreview,
   type InvoiceDeliveryContext,
   type InvoiceDocumentPort,
   type InvoiceDeliveryJob,
+  type InvoiceSendingPort,
   type InvoiceGenerationCommand,
   type InvoiceGenerationExpenseSummary,
   type InvoiceGenerationFreeFormRequest,
