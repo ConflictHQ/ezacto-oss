@@ -243,12 +243,18 @@ export const parseCellSeconds = (rawValue: string): number => {
   return seconds
 }
 
+/**
+ * `userId` is the teammate whose week this is, when an administrator is
+ * editing somebody else's timesheet (issue 917): a new entry is created as theirs.
+ * Existing entries need nothing -- they already belong to someone.
+ */
 const saveWeekCell = async (
   api: ShellApi,
   cell: WeekGridCell,
   rawValue: string,
   notes?: string | null,
   signal?: AbortSignal,
+  userId?: number,
 ): Promise<TimeEntry | null> => {
   if (cell.isConflict) throw new Error('multiple entries share this cell; edit them in day view')
   if (cell.isLocked) throw new Error('this cell is locked')
@@ -264,6 +270,7 @@ const saveWeekCell = async (
   }
   if (existing === undefined) {
     const input = {
+      ...(userId === undefined ? {} : { user_id: userId }),
       project_id: cell.projectId,
       task_id: cell.taskId,
       spent_date: cell.date,
@@ -289,11 +296,12 @@ export const saveWeekCellWithRetry = async (
   rawValue: string,
   notes?: string | null,
   signal?: AbortSignal,
+  userId?: number,
 ): Promise<WeekCellSaveResult> => {
   try {
     return {
       state: 'saved',
-      entry: await saveWeekCell(api, cell, rawValue, notes, signal),
+      entry: await saveWeekCell(api, cell, rawValue, notes, signal, userId),
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'time could not be saved'
@@ -302,7 +310,7 @@ export const saveWeekCellWithRetry = async (
       rawValue,
       message,
       error,
-      retry: () => saveWeekCellWithRetry(api, cell, rawValue, notes, signal),
+      retry: () => saveWeekCellWithRetry(api, cell, rawValue, notes, signal, userId),
     }
   }
 }

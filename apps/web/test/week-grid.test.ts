@@ -16,6 +16,7 @@ import {
   parseCellSeconds,
   saveWeekCellWithRetry,
   seedsFromEntries,
+  timePersonChoices,
   weekDates,
   weekRange,
   type DisplayTimeEntry,
@@ -340,6 +341,96 @@ describe('timesheet week grid', () => {
     await saveWeekCellWithRetry(api, updatedCell, '')
     expect(api.deleteTimeEntry).toHaveBeenCalledWith(1)
     expect(entries).toEqual([])
+  })
+
+  it("[unit issue 917] creates a cell's entry as the teammate's whose week it is", async () => {
+    const entries: TimeEntry[] = []
+    const api = apiFor(entries)
+    const emptyCell = buildWeekGrid(snapshot([]), '2026-08-28', [{ projectId: 1, taskId: 1 }])
+      .rows[0]!.cells[4]!
+    const saved = await saveWeekCellWithRetry(api, emptyCell, '1.5', undefined, undefined, 7)
+    expect(saved.state).toBe('saved')
+    expect(api.createTimeEntry).toHaveBeenCalledWith({
+      user_id: 7,
+      project_id: 1,
+      task_id: 1,
+      spent_date: '2026-08-28',
+      seconds: 5_400,
+    })
+    // An entry that exists belongs to somebody already, so an edit names nobody.
+    const populatedCell = buildWeekGrid(snapshot(entries as DisplayTimeEntry[]), '2026-08-28')
+      .rows[0]!.cells[4]!
+    await saveWeekCellWithRetry(api, populatedCell, '2', undefined, undefined, 7)
+    expect(api.updateTimeEntry).toHaveBeenCalledWith(1, { seconds: 7_200 })
+
+    // A retry is the same request, owner and all.
+    api.createTimeEntry.mockRejectedValueOnce(new Error('network unavailable'))
+    const secondCell = buildWeekGrid(snapshot([]), '2026-08-28', [{ projectId: 1, taskId: 1 }])
+      .rows[0]!.cells[3]!
+    const failed = await saveWeekCellWithRetry(api, secondCell, '1', undefined, undefined, 7)
+    if (failed.state !== 'retry') throw new Error('retry result expected')
+    await failed.retry()
+    expect(api.createTimeEntry).toHaveBeenLastCalledWith(
+      expect.objectContaining({ user_id: 7, spent_date: '2026-08-27' }),
+    )
+  })
+
+  it("[unit issue 917] loads a teammate's entries and options, and keeps the timer yours", async () => {
+    const api = apiFor([])
+    const page = (data: readonly GeneralResource[]) => ({ data, page: { next_cursor: null } })
+    api.listProjects = vi.fn(async () => page([project(1, 'Northpeak')]))
+    api.listTasks = vi.fn(async () => page([task(1, 'Development')]))
+    const listTimeEntries = vi.fn<ShellApi['listTimeEntries']>(async (query) =>
+      query.is_running === true ? [] : [entry(9, { user_id: 7 })],
+    )
+    api.listTimeEntries = listTimeEntries
+    const listTimeEntryOptions = vi.fn<ShellApi['listTimeEntryOptions']>(async () => [
+      { project_id: 1, task_id: 1, minimum_note_length: 0 },
+    ])
+    api.listTimeEntryOptions = listTimeEntryOptions
+
+    const loaded = await loadShellSnapshot(api, new Date('2026-08-28T12:00:00'), undefined, 7)
+    expect(loaded.entries.map(({ id, user_id }) => ({ id, user_id }))).toEqual([{ id: 9, user_id: 7 }])
+    expect(listTimeEntries).toHaveBeenCalledWith(
+      { from: '2026-08-24', to: '2026-08-30', user_id: 7 },
+      undefined,
+    )
+    // The header timer is the signed-in person's, so its query names nobody.
+    expect(listTimeEntries).toHaveBeenCalledWith({ is_running: true }, undefined)
+    expect(listTimeEntryOptions).toHaveBeenCalledWith(undefined, 7)
+
+    // Without a teammate the week is yours, asked for exactly as before.
+    await loadShellSnapshot(api, new Date('2026-08-28T12:00:00'))
+    expect(listTimeEntries).toHaveBeenLastCalledWith({ is_running: true }, undefined)
+    expect(listTimeEntries).toHaveBeenCalledWith({ from: '2026-08-24', to: '2026-08-30' }, undefined)
+    expect(listTimeEntryOptions).toHaveBeenLastCalledWith(undefined)
+  })
+
+  it('[unit issue 917] offers everyone active but yourself, by name', () => {
+    const person = (id: number, first: string, last: string, fields: Record<string, unknown> = {}) => ({
+      id,
+      first_name: first,
+      last_name: last,
+      created_at: timestamp,
+      updated_at: timestamp,
+      ...fields,
+    })
+    expect(
+      timePersonChoices(
+        [
+          person(1, 'Ada', 'Admin', { is_active: true }),
+          person(4, 'Zoe', 'Fictional', { is_active: true }),
+          person(5, 'Gone', 'Person', { is_active: false }),
+          person(6, '', '', { email: 'nameless@example.test', is_active: true }),
+          person(3, 'Bea', 'Fictional', { is_active: true }),
+        ],
+        1,
+      ),
+    ).toEqual([
+      { id: 3, name: 'Bea Fictional' },
+      { id: 6, name: 'nameless@example.test' },
+      { id: 4, name: 'Zoe Fictional' },
+    ])
   })
 
   it('[unit] preserves a failed value in an explicit retry result until it saves', async () => {

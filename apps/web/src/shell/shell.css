@@ -4977,6 +4977,47 @@ button[data-auth-action]:disabled {
   color: var(--ez-data);
   font-size: 12px;
 }
+/*
+ * An administrator's person picker on Time and the band saying whose week is on
+ * screen (issue 917). The band uses the status tint and the action colour for its
+ * rule: it is the one thing on the page that must not be mistaken for your own
+ * week, so it is not the quiet grey of a passing notice.
+ */
+.time-person {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--ez-muted);
+}
+.time-person[hidden],
+.time-person-banner[hidden] {
+  display: none;
+}
+.time-person select {
+  min-height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+}
+.time-person-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--ez-action);
+  background: var(--ez-status-bg);
+  color: var(--ez-status-fg);
+}
+.time-person-banner button {
+  min-height: 36px;
+  flex: 0 0 auto;
+}
 .week-hint kbd {
   padding: 1px 5px;
   border: 1px solid var(--ez-border);
@@ -6349,6 +6390,7 @@ dialog textarea {
      test lifts the FIRST `@media print` it finds as the paper stylesheet, so a
      second block earlier in the file silently became the whole of it. */
   .report-detailed-controls,
+  .report-entry-actions,
   .topbar,
   .tabstrip,
   .build-stamp,
@@ -6669,28 +6711,40 @@ dialog textarea {
   border-color: var(--ez-live);
   background: var(--ez-orange-tint);
 }
-.recurring-confirm-dialog::backdrop {
+.recurring-confirm-dialog::backdrop,
+.report-confirm-dialog::backdrop {
   background: color-mix(in srgb, var(--ez-ink) 45%, transparent);
 }
-.recurring-confirm-dialog form {
+.recurring-confirm-dialog form,
+.report-confirm-dialog form {
   display: grid;
   gap: 16px;
   min-width: min(420px, 90vw);
 }
-.recurring-confirm-dialog header {
+.recurring-confirm-dialog header,
+.report-confirm-dialog header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
 }
-.recurring-confirm-dialog footer {
+.recurring-confirm-dialog footer,
+.report-confirm-dialog footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
 }
-.recurring-confirm-dialog button {
+.recurring-confirm-dialog button,
+.report-confirm-dialog button {
   min-height: 44px;
   padding: 8px 16px;
+}
+/* Edit and Delete on a Detailed time row, for an administrator (issue 917). */
+.report-entry-actions {
+  white-space: nowrap;
+}
+.report-entry-actions button + button {
+  margin-left: 6px;
 }
 .recurring-detail-actions {
   display: flex;

@@ -167,4 +167,23 @@ export const renderReportsPage = (view?: string): string => `
         <footer><button type="button" data-builder-preview>Preview</button><button class="primary-action" type="submit">Save report</button></footer>
       </form>
     </dialog>
+    <!--
+      Deleting one entry from a Detailed time row (issue 917). An administrator is
+      removing somebody else's time from a table, so the dialog says whose hours
+      on which day before anything is sent.
+    -->
+    <dialog class="report-confirm-dialog" data-report-entry-delete-dialog aria-labelledby="report-entry-delete-title">
+      <form data-report-entry-delete-form>
+        <header>
+          <div><p class="eyebrow">Detailed time</p><h2 id="report-entry-delete-title">Delete this time entry?</h2></div>
+          <button type="button" data-report-entry-delete-cancel aria-label="Close">×</button>
+        </header>
+        <p data-report-entry-delete-body></p>
+        <footer>
+          <button type="button" data-report-entry-delete-cancel>Cancel</button>
+          <button class="primary-action danger-action" type="submit" data-report-entry-delete-submit>Delete entry</button>
+        </footer>
+        <p class="form-result" data-report-entry-delete-result role="status" aria-live="polite"></p>
+      </form>
+    </dialog>
   </main>`

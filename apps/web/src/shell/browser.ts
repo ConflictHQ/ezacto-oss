@@ -5,6 +5,7 @@ import {
   type Invoice,
   type InvoiceGenerationInput,
   type TimeEntryInput,
+  type TimeEntryOption,
   type TimeEntryPatch,
   type TimesheetLockPolicy,
   type TimesheetLockWindow,
@@ -102,7 +103,7 @@ import {
   type WeekGridCell,
   type WeekRowSeed,
 } from '../week-grid/model.js'
-import { canProfileUseApiScope, isApiScope } from '@ezacto/core'
+import { canManageTeammateTime, canProfileUseApiScope, isApiScope } from '@ezacto/core'
 import {
   canBrowseDirectories,
   createSameOriginShellApi,
@@ -119,6 +120,7 @@ import {
   prepareQuickAdd,
   runningElapsedSeconds,
   timeEntryNoteLength,
+  timePersonChoices,
   weekRange,
   type DisplayTimeEntry,
   type PaletteDestination,
@@ -192,6 +194,18 @@ interface ActiveEntryEditor {
   readonly minimumNoteLength: number
   readonly initialDurationValue?: string
   readonly durationWasEditedBeforeOpen?: boolean
+  /**
+   * Whose time the editor writes when it is not the signed-in person's (issue 917):
+   * the teammate an administrator has open on Time, or the owner of a report
+   * row. Their project/task pairs are the ones offered, and a new entry is
+   * created as theirs. Absent for your own time.
+   */
+  readonly owner?: {
+    readonly userId: number
+    readonly options: readonly TimeEntryOption[]
+  }
+  /** Runs after a save, stop or delete -- how a report that opened it reloads. */
+  readonly onChanged?: () => void
 }
 
 const IDENTITY_CACHE_KEY = 'ezacto.identity'
@@ -1340,6 +1354,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const stopTimer = required<HTMLButtonElement>('[data-stop-timer]')
   const deleteEntry = required<HTMLButtonElement>('[data-entry-delete]')
   const weekRemoved = required<HTMLElement>('[data-week-removed]')
+  const timePersonField = required<HTMLElement>('[data-time-person-field]')
+  const timePerson = required<HTMLSelectElement>('[data-time-person]')
+  const timePersonBanner = required<HTMLElement>('[data-time-person-banner]')
+  const timePersonBannerText = required<HTMLElement>('[data-time-person-banner-text]')
+  const timePage = document.documentElement.dataset.appView === 'time'
   let removalTimer: ReturnType<typeof setTimeout> | undefined
   /**
    * Say what a removal took (issue 753).
@@ -1428,7 +1447,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         ? undefined
         : api.retryOutboxDelivery(subscriberId, eventId, signal),
   })
-  const reports = createReportsController(api)
+  const reports = createReportsController(api, {
+    editTimeEntry: (entryId, onChanged) => editReportedEntry(entryId, onChanged),
+  })
   const expenseWorkflow = createExpenseWorkflowController(api)
   const expenseCategories = createExpenseCategoryDirectoryController(api)
   const emailConfiguration = createEmailConfigurationController(api)
@@ -1511,6 +1532,13 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
   const cellStates = new Map<string, CellSaveState>()
   let within = initialWithin()
+  /**
+   * Whose week Time shows when it is not the signed-in person's (issue 917): the
+   * teammate an administrator picked. The grid, its editor, Add row and Copy
+   * last week then read and write that person's time; the header timer stays
+   * yours. Null is your own week, and every sign-in starts there.
+   */
+  let viewedPerson: { readonly id: number; readonly name: string } | null = null
   let weekStartDay: WeekStartDay = 'monday'
   /**
    * The week stepper the toolbar used to hand-roll: two chevrons, a static
@@ -1663,6 +1691,13 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     currentIdentity === null
       ? null
       : currentAuthOperation(currentIdentity.user_id)
+
+  /**
+   * Whose rows the local empty-row layout belongs to: the week on screen, so a
+   * teammate's week never picks up the rows you added to your own (issue 917).
+   */
+  const weekPersonId = (operation: AuthOperation): number =>
+    viewedPerson?.id ?? operation.userId!
 
   const setSessionStatus = (
     message: string,
@@ -1849,6 +1884,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     snapshot = null
     grid = null
     cellStates.clear()
+    // Every sign-in starts on your own week, with the picker filled again only
+    // for an administrator (issue 917).
+    viewedPerson = null
+    timePerson.disabled = true
+    timePersonField.hidden = true
+    renderTimePerson()
     for (const dialog of [
       commandDialog,
       entryDialog,
@@ -2548,6 +2589,81 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
   }
 
+  /**
+   * Says whose week is on screen (issue 917): the band naming the teammate, with the
+   * way back. The header's Log time logs your own time, so it is not offered
+   * while somebody else's week is open -- typing into their grid is how their
+   * time is logged.
+   */
+  const renderTimePerson = (): void => {
+    timePersonBanner.hidden = viewedPerson === null
+    timePersonBannerText.textContent =
+      viewedPerson === null ? '' : `Editing ${viewedPerson.name}'s timesheet`
+    for (const trigger of document.querySelectorAll<HTMLElement>('[data-time-log-time]')) {
+      trigger.hidden = viewedPerson !== null
+    }
+  }
+
+  /**
+   * The picker an administrator opens a teammate's week with (issue 917), filled
+   * with everyone active but themselves. Nobody else is shown it, and a build
+   * that cannot list people shows it to nobody.
+   */
+  const loadTimePeople = async (identity: Whoami, operation: AuthOperation): Promise<void> => {
+    const listUsers = api.listDirectoryUsers
+    if (!timePage || !canManageTeammateTime(identity.profile) || listUsers === undefined) return
+    try {
+      const people: GeneralResource[] = []
+      let cursor: string | undefined
+      do {
+        const page = await listUsers(cursor, operation.signal)
+        people.push(...page.data)
+        cursor = page.page.next_cursor ?? undefined
+      } while (cursor !== undefined)
+      if (!isSessionCurrent(operation)) return
+      const yours = document.createElement('option')
+      yours.value = ''
+      yours.textContent = 'Yours'
+      timePerson.replaceChildren(
+        yours,
+        ...timePersonChoices(people, identity.user_id).map((person) =>
+          option(person.id, person.name),
+        ),
+      )
+      timePerson.value = viewedPerson === null ? '' : String(viewedPerson.id)
+      timePerson.disabled = false
+      timePersonField.hidden = false
+    } catch (error) {
+      handleSessionFailure(error, operation)
+    }
+  }
+
+  /** Opens somebody's week, or yours with null, in the same grid and editor. */
+  const showTimePerson = (person: { readonly id: number; readonly name: string } | null): void => {
+    const operation = sessionOperation()
+    if (operation === null || operation.userId === null) return
+    viewedPerson = person
+    timePerson.value = person === null ? '' : String(person.id)
+    if (entryDialog.open) entryDialog.close()
+    activeEntry = null
+    cellStates.clear()
+    supplementalRows = loadSupplementalRows(weekPersonId(operation), within, weekStartDay)
+    renderTimePerson()
+    void loadWeek(operation)
+  }
+
+  timePerson.addEventListener('change', () => {
+    const chosen = timePerson.options[timePerson.selectedIndex]
+    showTimePerson(
+      timePerson.value === '' || chosen === undefined
+        ? null
+        : { id: Number(timePerson.value), name: chosen.textContent ?? '' },
+    )
+  })
+  required<HTMLButtonElement>('[data-time-person-reset]').addEventListener('click', () =>
+    showTimePerson(null),
+  )
+
   const updateRowTaskOptions = (projectId: number): void => {
     if (snapshot === null) return
     const taskIds = new Set(
@@ -2600,6 +2716,13 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
 
   /**
+   * The project/task pairs the open editor offers: its owner's when it writes
+   * somebody else's time (issue 917), otherwise the week's.
+   */
+  const editorOptions = (): readonly TimeEntryOption[] =>
+    activeEntry?.owner?.options ?? snapshot?.catalog.timeEntryOptions ?? []
+
+  /**
    * `wanted` is the assignment an entry already has, as opposed to whatever the
    * two controls happen to be showing.
    *
@@ -2621,9 +2744,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     readonly task: string
   }): void => {
     if (snapshot === null) return
-    const projectIds = new Set(
-      snapshot.catalog.timeEntryOptions.map((entry) => entry.project_id),
-    )
+    const offered = editorOptions()
+    const projectIds = new Set(offered.map((entry) => entry.project_id))
     const projects = snapshot.catalog.projects.filter((resource) =>
       projectIds.has(resource.id),
     )
@@ -2643,7 +2765,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       (resource) => resourceLabel(resource).toLowerCase() === typed.toLowerCase(),
     )
     const taskIds = new Set(
-      snapshot.catalog.timeEntryOptions
+      offered
         .filter((entry) => matched === undefined || entry.project_id === matched.id)
         .map((entry) => entry.task_id),
     )
@@ -2705,8 +2827,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
 
   const renderTimesheetStatus = (): void => {
-    timesheetStatus.hidden = !approvalModuleAvailable
-    if (!approvalModuleAvailable) return
+    // Submitting, reopening or withdrawing a week is its owner's to do, and the
+    // submission loaded beside it is the signed-in person's: on a teammate's
+    // week (issue 917) none of it applies.
+    timesheetStatus.hidden = !approvalModuleAvailable || viewedPerson !== null
+    if (timesheetStatus.hidden) return
     const status = currentSubmission?.status ?? 'unsubmitted'
     timesheetStatus.dataset.status = status
     // A week the person took back themselves carries the same three columns a
@@ -3031,7 +3156,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       candidate.projectId !== seed.projectId || candidate.taskId !== seed.taskId,
     )
     for (const cell of row.cells) cellStates.delete(cell.key)
-    saveSupplementalRows(operation.userId, within, supplementalRows, weekStartDay)
+    saveSupplementalRows(weekPersonId(operation), within, supplementalRows, weekStartDay)
     render()
     setSessionStatus('Empty project/task row removed.', 'ready')
     required<HTMLButtonElement>('[data-add-row-trigger]').focus()
@@ -3062,7 +3187,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       startToday: startRowToday,
       removeRow: removeEmptyRow,
       stop: stopRowTimer,
-      ...(api.restartTimeEntry === undefined ? {} : { restart: restartEntry }),
+      // A timer is its owner's to start (issue 917): a teammate's rows offer Stop on
+      // a running timer and never Start, which a row only draws with restart.
+      ...(api.restartTimeEntry === undefined || viewedPerson !== null
+        ? {}
+        : { restart: restartEntry }),
     }
     // The same data the grid draws, laid out on whichever axis the
     // organization's tracking mode makes true.
@@ -3265,12 +3394,14 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     focus: FocusTarget | undefined = focusedCell(),
   ): Promise<boolean> => {
     const requestedWithin = within
+    const requestedPerson = viewedPerson
     const selectedDate =
       grid?.dates[selectedDay] ?? weekDates(requestedWithin, weekStartDay)[selectedDay]
     const loaded = await loadShellSnapshot(
       api,
       new Date(`${requestedWithin}T12:00:00`),
       operation.signal,
+      requestedPerson?.id,
     )
     const loadedWeekStartDay = loaded.timeEntrySettings.week_start_day
     const [approval, policy, zone] = await Promise.all([
@@ -3278,7 +3409,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       loadLockPolicyData(operation),
       loadProfileZone(operation),
     ])
-    if (!isSessionCurrent(operation) || within !== requestedWithin) return false
+    // A week that answers after the person on screen changed is somebody
+    // else's week now, the same as one that answers after the week changed.
+    if (
+      !isSessionCurrent(operation) ||
+      within !== requestedWithin ||
+      viewedPerson !== requestedPerson
+    ) {
+      return false
+    }
     weekStartDay = loadedWeekStartDay
     weekPeriod.setWeekStartDay(loadedWeekStartDay)
     // The generation wizard offers Week too, and was computing Monday-Sunday
@@ -3298,7 +3437,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     // running-timer elapsed all format seconds, and all of them run ahead of
     // the grid render where this used to be set.
     setActiveTimeFormat(loaded.timeEntrySettings.time_format)
-    supplementalRows = loadSupplementalRows(operation.userId!, within, weekStartDay)
+    supplementalRows = loadSupplementalRows(weekPersonId(operation), within, weekStartDay)
     const loadedDates = weekDates(within, weekStartDay)
     const preservedIndex = selectedDate === undefined ? -1 : loadedDates.indexOf(selectedDate)
     selectedDay = preservedIndex >= 0 ? preservedIndex : Math.max(0, loadedDates.indexOf(localDate()))
@@ -4059,7 +4198,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       renderUserSettings(identity)
       await loadWeek(authenticated)
     } else {
-      await loadWeek(authenticated)
+      await Promise.all([loadTimePeople(identity, authenticated), loadWeek(authenticated)])
     }
   }
 
@@ -4263,6 +4402,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       rawValue,
       current?.notes,
       operation.signal,
+      viewedPerson?.id,
     )
     if (!isSessionCurrent(operation)) return false
     if (result.state === 'retry') {
@@ -4489,6 +4629,58 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     ).focus()
   }
 
+  /**
+   * Opens the editor on one entry from a Detailed time row, for an
+   * administrator correcting it (issue 917). The entry is read fresh rather than
+   * trusted from the report, and when it is somebody else's the editor offers
+   * that person's project/task pairs. `onChanged` is the report reloading once
+   * the entry is saved, stopped or removed. Failures are thrown for the report
+   * to show where it is being looked at.
+   */
+  async function editReportedEntry(entryId: number, onChanged: () => void): Promise<void> {
+    const operation = sessionOperation()
+    const getTimeEntry = api.getTimeEntry
+    if (operation === null || getTimeEntry === undefined) return
+    try {
+      const entry = await getTimeEntry(entryId, operation.signal)
+      const theirs = entry.user_id !== operation.userId
+      const options = theirs
+        ? await api.listTimeEntryOptions(operation.signal, entry.user_id)
+        : undefined
+      const week = snapshot
+      if (!isSessionCurrent(operation) || week === null) return
+      const project = week.catalog.projects.find((resource) => resource.id === entry.project_id)
+      const task = week.catalog.tasks.find((resource) => resource.id === entry.task_id)
+      const displayed: DisplayTimeEntry = {
+        ...entry,
+        project_label: project === undefined ? `#${entry.project_id}` : resourceLabel(project),
+        task_label: task === undefined ? `#${entry.task_id}` : resourceLabel(task),
+      }
+      configureEntryEditor(
+        {
+          context: 'edit',
+          entry: displayed,
+          projectId: entry.project_id,
+          taskId: entry.task_id,
+          spentDate: entry.spent_date,
+          seconds: entry.seconds,
+          notes: entry.notes ?? null,
+          mode: modeForEntryDraft(entry, week.timeEntrySettings.time_entry_mode),
+          timer: false,
+          minimumNoteLength: entry.minimum_note_length,
+          ...(options === undefined ? {} : { owner: { userId: entry.user_id, options } }),
+          onChanged,
+        },
+        entry.is_locked === true
+          ? `This entry cannot be changed: ${entry.locked_reason ?? 'it is locked'}.`
+          : '',
+      )
+    } catch (error) {
+      if (handleSessionFailure(error, operation)) return
+      throw error
+    }
+  }
+
   function openEntry(
     cell: WeekGridCell,
     view: GridView,
@@ -4528,6 +4720,14 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         mode: modeForEntryDraft(entry, snapshot.timeEntrySettings.time_entry_mode),
         timer: false,
         minimumNoteLength,
+        ...(viewedPerson === null
+          ? {}
+          : {
+              owner: {
+                userId: viewedPerson.id,
+                options: snapshot.catalog.timeEntryOptions,
+              },
+            }),
         durationWasEditedBeforeOpen:
           state?.rawValue !== undefined &&
           state.rawValue !==
@@ -4559,6 +4759,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         timer: false,
         minimumNoteLength: running.minimum_note_length,
       })
+      return
+    }
+    // The week on screen is a teammate's (issue 917) and so are its project/task
+    // pairs; a timer of your own starts from your own week.
+    if (viewedPerson !== null) {
+      setSessionStatus('Go back to your own timesheet to start a timer.', 'ready')
       return
     }
     configureEntryEditor({
@@ -4902,7 +5108,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const notes = entryNoteInput.value
     const projectId = editorResourceId('project', projectValue, editor.projectId)
     const taskId = editorResourceId('task', taskValue, editor.taskId)
-    const selectedOption = snapshot.catalog.timeEntryOptions.find(
+    const selectedOption = editorOptions().find(
       (option) => option.project_id === projectId && option.task_id === taskId,
     )
     const sameExistingAssignment =
@@ -4969,7 +5175,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       ? api.createTimeEntry(
           editor.timer
             ? common
-            : { ...common, spent_date: entryDate.value, ...timing },
+            : {
+                ...(editor.owner === undefined ? {} : { user_id: editor.owner.userId }),
+                ...common,
+                spent_date: entryDate.value,
+                ...timing,
+              },
           operation.signal,
         )
       : api.updateTimeEntry(
@@ -4996,6 +5207,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         if (editor.entry === null) {
           document.dispatchEvent(new CustomEvent('ezacto:time-entry-created', { detail: entry }))
         }
+        editor.onChanged?.()
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
@@ -5026,7 +5238,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     if (activeEntry === null || snapshot === null) return
     const projectId = editorResourceId('project', entryProject.value, activeEntry.projectId)
     const taskId = editorResourceId('task', entryTask.value, activeEntry.taskId)
-    const option = snapshot.catalog.timeEntryOptions.find(
+    const option = editorOptions().find(
       (candidate) => candidate.project_id === projectId && candidate.task_id === taskId,
     )
     if (option === undefined) return
@@ -5057,7 +5269,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   stopTimer.addEventListener('click', () => {
     const operation = sessionOperation()
     if (operation === null) return
-    const running = activeEntry?.entry
+    const editor = activeEntry
+    const running = editor?.entry
     if (running?.is_running !== true) {
       entryResult.textContent = 'No timer is running.'
       return
@@ -5071,6 +5284,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         if (!(await refresh(operation))) return
         entryDialog.close()
         activeEntry = null
+        editor?.onChanged?.()
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
@@ -5083,7 +5297,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
 
   deleteEntry.addEventListener('click', () => {
     const operation = sessionOperation()
-    const existing = activeEntry?.entry
+    const editor = activeEntry
+    const existing = editor?.entry
     if (operation === null || existing === undefined || existing === null) return
     // The button is already hidden in both of the cases it could be pressed in
     // error, so this is belt and braces -- but only one of them has a second
@@ -5103,6 +5318,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         if (!(await refresh(operation))) return
         entryDialog.close()
         activeEntry = null
+        editor?.onChanged?.()
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
@@ -5151,7 +5367,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         ]),
       ).values(),
     ]
-    saveSupplementalRows(operation.userId, within, supplementalRows, weekStartDay)
+    saveSupplementalRows(weekPersonId(operation), within, supplementalRows, weekStartDay)
     render()
     rowDialog.close()
     result.textContent = ''
@@ -5566,7 +5782,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const operation = sessionOperation()
     if (operation === null || operation.userId === null) return
     within = nextWithin
-    supplementalRows = loadSupplementalRows(operation.userId, within, weekStartDay)
+    supplementalRows = loadSupplementalRows(weekPersonId(operation), within, weekStartDay)
     selectedDay = 0
     cellStates.clear()
     setWeekUrl(within, weekStartDay)
@@ -5595,7 +5811,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const operation = sessionOperation()
     if (operation === null || operation.userId === null) return
     within = localDate()
-    supplementalRows = loadSupplementalRows(operation.userId, within, weekStartDay)
+    supplementalRows = loadSupplementalRows(weekPersonId(operation), within, weekStartDay)
     selectedDay = Math.max(0, weekDates(within, weekStartDay).indexOf(localDate()))
     cellStates.clear()
     setWeekUrl(within, weekStartDay)
@@ -5627,17 +5843,22 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     if (operation === null || operation.userId === null || grid === null) return
     setSessionStatus('Copying project/task rows from last week…', 'loading')
     const previousMonday = shiftDate(grid.dates[0]!, -7)
+    const personId = weekPersonId(operation)
+    const lastWeek = weekRange(previousMonday, weekStartDay)
     void api
-      .listTimeEntries(weekRange(previousMonday, weekStartDay), operation.signal)
+      .listTimeEntries(
+        viewedPerson === null ? lastWeek : { ...lastWeek, user_id: viewedPerson.id },
+        operation.signal,
+      )
       .then((entries) => {
-        if (!isSessionCurrent(operation)) return
+        if (!isSessionCurrent(operation) || weekPersonId(operation) !== personId) return
         const copied = seedsFromEntries(entries)
         supplementalRows = [
           ...new Map(
             [...supplementalRows, ...copied].map((row) => [`${row.projectId}:${row.taskId}`, row]),
           ).values(),
         ]
-        saveSupplementalRows(operation.userId!, within, supplementalRows, weekStartDay)
+        saveSupplementalRows(personId, within, supplementalRows, weekStartDay)
         render()
         setSessionStatus(
           copied.length === 0

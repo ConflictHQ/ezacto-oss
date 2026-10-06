@@ -29,6 +29,7 @@ import {
   type UninvoicedReport,
   type Whoami,
 } from '@conflict-hq/ezacto-client'
+import { canManageTeammateTime } from '@ezacto/core'
 import { createPeriodControl } from '../components/period.js'
 import { invoiceIdentityCanWrite, invoicePagePath } from '../invoices/model.js'
 import { moneyText } from '../money-display.js'
@@ -1486,6 +1487,39 @@ interface DetailedTimeHandlers {
     action: 'mark_invoiced' | 'mark_uninvoiced' | 'move',
     entryIds: readonly number[],
   ) => void
+  /**
+   * An administrator correcting one entry from its row (issue 917): Edit opens the
+   * same editor the timesheet uses, Delete asks first. Absent for everyone
+   * else, and then the table has no actions column at all.
+   */
+  readonly onEditEntry?: (row: Readonly<DetailedTimeRow>) => void
+  readonly onDeleteEntry?: (row: Readonly<DetailedTimeRow>) => void
+}
+
+const entryActionsCell = (
+  row: Readonly<DetailedTimeRow>,
+  handlers: DetailedTimeHandlers,
+): HTMLTableCellElement => {
+  const cell = element('td', 'report-entry-actions')
+  if (row.time_entry_id === undefined) return cell
+  const entryId = row.time_entry_id
+  if (handlers.onEditEntry !== undefined) {
+    const edit = textElement('button', 'Edit')
+    edit.type = 'button'
+    edit.dataset['reportEntryEdit'] = String(entryId)
+    edit.setAttribute('aria-label', `Edit ${row.user_name}'s entry on ${row.spent_date}`)
+    edit.addEventListener('click', () => handlers.onEditEntry?.(row))
+    cell.append(edit)
+  }
+  if (handlers.onDeleteEntry !== undefined) {
+    const remove = textElement('button', 'Delete')
+    remove.type = 'button'
+    remove.dataset['reportEntryDelete'] = String(entryId)
+    remove.setAttribute('aria-label', `Delete ${row.user_name}'s entry on ${row.spent_date}`)
+    remove.addEventListener('click', () => handlers.onDeleteEntry?.(row))
+    cell.append(remove)
+  }
+  return cell
 }
 
 const detailedExportFormats: readonly (readonly [DetailedTimeExportFormat, string])[] = [
@@ -1886,15 +1920,23 @@ const renderDetailedTime = (
   const head = element('thead')
   const headerRow = element('tr')
   const selectable = handlers.onAction !== undefined && report.grain === 'entry'
+  const entryActions =
+    report.grain === 'entry' &&
+    (handlers.onEditEntry !== undefined || handlers.onDeleteEntry !== undefined)
   const headers =
     options.grain === 'entry'
       ? [...(selectable ? ['Select'] : []), 'Client', 'Project', 'Task', 'Roles', 'Person', 'Notes', 'Claimed by', 'Hours']
       : ['Client', 'Project', 'Task', 'Roles', 'Person', 'Hours']
   if (showRounded) headers.push('Rounded hours')
+  // Last, after the figures, so the band and total rows keep their hours under
+  // the hours column and only gain an empty cell at the end.
+  if (entryActions) headers.push('Actions')
+  const figureColumns = (showRounded ? 2 : 1) + (entryActions ? 1 : 0)
   for (const label of headers) {
     const cell = textElement('th', label)
     cell.scope = 'col'
     if (label === 'Hours' || label === 'Rounded hours') cell.className = 'report-numeric'
+    if (label === 'Actions') cell.className = 'report-entry-actions'
     headerRow.append(cell)
   }
   head.append(headerRow)
@@ -1902,7 +1944,7 @@ const renderDetailedTime = (
   for (const band of groupDetailedTimeRows(report.rows, options.grouping)) {
     const bandRow = element('tr', 'report-band-row')
     const bandLabel = textElement('th', band.label)
-    bandLabel.colSpan = headers.length - (showRounded ? 2 : 1)
+    bandLabel.colSpan = headers.length - figureColumns
     bandLabel.scope = 'colgroup'
     const first = band.rows[0]!
     const bandScope: TimeEntryLinkScope = {
@@ -1922,6 +1964,7 @@ const renderDetailedTime = (
     const href = options.grouping === 'role' ? `${bandUrl}#${encodeURIComponent(bandRow.id)}` : bandUrl
     bandRow.append(bandLabel, linkedReportCell(href, decimalHours(band.seconds)))
     if (showRounded) bandRow.append(linkedReportCell(href, decimalHours(band.rows.reduce((sum, row) => sum + row.rounded_seconds, 0))))
+    if (entryActions) bandRow.append(element('td', 'report-entry-actions'))
     body.append(bandRow)
     for (const row of band.rows) {
       const line = element('tr')
@@ -1947,6 +1990,7 @@ const renderDetailedTime = (
           invoice_state: row.claimed ? 'invoiced' : 'uninvoiced',
         })
       line.append(...detailedTimeCells(row, options.grain, href, showRounded))
+      if (entryActions) line.append(entryActionsCell(row, handlers))
       body.append(line)
     }
   }
@@ -1954,9 +1998,10 @@ const renderDetailedTime = (
   const totalRow = element('tr')
   const totalLabel = textElement('th', 'Total')
   totalLabel.scope = 'row'
-  totalLabel.colSpan = headers.length - (showRounded ? 2 : 1)
+  totalLabel.colSpan = headers.length - figureColumns
   totalRow.append(totalLabel, linkedReportCell(entryUrl, decimalHours(report.seconds)))
   if (showRounded) totalRow.append(linkedReportCell(entryUrl, decimalHours(report.rounded_seconds)))
+  if (entryActions) totalRow.append(element('td', 'report-entry-actions'))
   foot.append(totalRow)
   table.append(head, body, foot)
   wrapper.append(table)
@@ -2387,8 +2432,28 @@ export interface ReportsController {
   ): Promise<void>
 }
 
+export interface ReportsControllerHooks {
+  /**
+   * Opens the timesheet's entry editor on one entry, for an administrator
+   * correcting a Detailed time row (issue 917). `onChanged` runs once the entry has
+   * been saved, stopped or deleted there, so the report can be read again. A
+   * rejection is the entry failing to open, and the report says why.
+   */
+  readonly editTimeEntry?: (entryId: number, onChanged: () => void) => Promise<void>
+}
+
+/** Why an entry from a row could not be opened or removed, in words the report can show. */
+const entryActionFailure = (error: unknown, verb: 'opened' | 'deleted'): string => {
+  if (error instanceof EzactoApiError && error.status === 404) return 'This entry no longer exists.'
+  if (error instanceof EzactoApiError && error.status === 422) {
+    return `This entry cannot be ${verb}: ${messageFor(error)}.`
+  }
+  return messageFor(error)
+}
+
 export const createReportsController = (
   api: Partial<ReportWorkspaceApi>,
+  hooks: ReportsControllerHooks = {},
 ): ReportsController => {
   const reportsPage = document.documentElement.dataset.appView === 'reports'
   const page = required<HTMLElement>('[data-reports-page]')
@@ -2491,6 +2556,11 @@ export const createReportsController = (
   const builderZero = required<HTMLInputElement>('[data-builder-zero]')
   const builderStatus = required<HTMLElement>('[data-builder-status]')
   const builderPreview = required<HTMLButtonElement>('[data-builder-preview]')
+  const entryDeleteDialog = required<HTMLDialogElement>('[data-report-entry-delete-dialog]')
+  const entryDeleteForm = required<HTMLFormElement>('[data-report-entry-delete-form]')
+  const entryDeleteBody = required<HTMLElement>('[data-report-entry-delete-body]')
+  const entryDeleteSubmit = required<HTMLButtonElement>('[data-report-entry-delete-submit]')
+  const entryDeleteResult = required<HTMLElement>('[data-report-entry-delete-result]')
   page.hidden = !reportsPage
 
   let session: ActiveSession | null = null
@@ -2576,6 +2646,61 @@ export const createReportsController = (
 
   const currentSession = (): ActiveSession | null =>
     session === null || session.signal.aborted ? null : session
+
+  /**
+   * The row an administrator asked to delete (issue 917), held while the dialog
+   * asks, with the reload that follows. Asking in the page rather than with
+   * `confirm()`: the question names whose time and which day, and the answer
+   * to a refusal -- an approved week, an invoiced hour -- is shown in place.
+   */
+  let entryDeletion: {
+    readonly row: Readonly<DetailedTimeRow>
+    readonly reload: () => void
+  } | null = null
+
+  const confirmEntryDeletion = (row: Readonly<DetailedTimeRow>, reload: () => void): void => {
+    entryDeletion = { row, reload }
+    entryDeleteBody.textContent =
+      `${row.user_name}'s ${decimalHours(row.seconds)} hours on ${row.project_name} / ` +
+      `${row.task_name} on ${row.spent_date} will be removed from their timesheet. ` +
+      'This cannot be undone.'
+    entryDeleteResult.textContent = ''
+    entryDeleteSubmit.disabled = false
+    entryDeleteDialog.showModal()
+  }
+
+  const closeEntryDeletion = (): void => {
+    entryDeletion = null
+    if (entryDeleteDialog.open) entryDeleteDialog.close()
+  }
+
+  entryDeleteForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    const deletion = entryDeletion
+    const entryId = deletion?.row.time_entry_id
+    if (active === null || deletion === null || entryId === undefined) return
+    if (api.deleteTimeEntry === undefined) return
+    entryDeleteSubmit.disabled = true
+    entryDeleteResult.textContent = 'Deleting entry…'
+    void api
+      .deleteTimeEntry(entryId, active.signal)
+      .then(() => {
+        if (currentSession() !== active) return
+        closeEntryDeletion()
+        deletion.reload()
+      })
+      .catch((error: unknown) => {
+        if (currentSession() !== active || active.onSessionFailure(error)) return
+        entryDeleteSubmit.disabled = false
+        entryDeleteResult.textContent = entryActionFailure(error, 'deleted')
+      })
+  })
+  for (const cancel of document.querySelectorAll<HTMLButtonElement>(
+    '[data-report-entry-delete-cancel]',
+  )) {
+    cancel.addEventListener('click', closeEntryDeletion)
+  }
 
   const savedReportInput = (): SavedReportInput => {
     const ids = (input: HTMLInputElement): number[] => input.value
@@ -2995,6 +3120,13 @@ export const createReportsController = (
   const renderDetailed = (report: Readonly<DetailedTimeReport>): void => {
     const filters = filtersFromForm()
     const active = currentSession()
+    const reload = (): void => {
+      void loadReport({ ...filters, kind: 'detailed-time' }, false)
+    }
+    const editTimeEntry = hooks.editTimeEntry
+    // Correcting the rows themselves is the administrator's alone (issue 917),
+    // unlike the claim and move actions beside it.
+    const corrects = active !== null && canManageTeammateTime(active.identity.profile)
     results.replaceChildren(
       renderDetailedTime(
         report,
@@ -3063,6 +3195,22 @@ export const createReportsController = (
                     void loadReport({ ...filters, kind: 'detailed-time' }, false)
                   }).catch((error: unknown) => { status.textContent = messageFor(error) })
                 },
+              }
+            : {}),
+          ...(corrects && editTimeEntry !== undefined
+            ? {
+                onEditEntry: (row: Readonly<DetailedTimeRow>) => {
+                  if (row.time_entry_id === undefined) return
+                  void editTimeEntry(row.time_entry_id, reload).catch((error: unknown) => {
+                    status.textContent = entryActionFailure(error, 'opened')
+                  })
+                },
+              }
+            : {}),
+          ...(corrects && api.deleteTimeEntry !== undefined
+            ? {
+                onDeleteEntry: (row: Readonly<DetailedTimeRow>) =>
+                  confirmEntryDeletion(row, reload),
               }
             : {}),
         },
