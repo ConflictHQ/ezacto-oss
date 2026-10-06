@@ -745,11 +745,13 @@ export const createRuntimeServices = async (
       readInvoice: async (invoiceId: number) => {
         const rows = await database
           .prepare(
-            `SELECT id, number, currency, due_amount_cents AS due
+            `SELECT id, number, currency, due_amount_cents AS due,
+               EXISTS (SELECT 1 FROM json_each(payment_options)
+                       WHERE value = 'stripe_checkout') AS card
              FROM invoices WHERE id = ?`,
           )
           .bind(invoiceId)
-          .all<{ id: number; number: string; currency: string; due: number }>()
+          .all<{ id: number; number: string; currency: string; due: number; card: number }>()
         const row = rows.results[0]
         return row === undefined
           ? null
@@ -758,6 +760,7 @@ export const createRuntimeServices = async (
               number: row.number,
               currency: row.currency,
               dueAmountCents: row.due,
+              acceptsCard: row.card === 1,
             }
       },
       readLink: (invoiceId: number) =>

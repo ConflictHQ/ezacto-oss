@@ -21,6 +21,8 @@ export interface StripeInvoice {
   readonly currency: string
   /** What is still owed. A link for the whole invoice would over-collect. */
   readonly dueAmountCents: number
+  /** Whether the invoice offers card payment (`stripe_checkout`). */
+  readonly acceptsCard: boolean
 }
 
 export interface StripeLink {
@@ -87,16 +89,22 @@ export const createStripeRuntime = (
       if (apiKey === null) {
         return { kind: 'refused', reason: 'Stripe is not configured for this deployment' }
       }
+      const invoice = await source.readInvoice(invoiceId)
+      if (invoice === null) {
+        return { kind: 'refused', reason: 'the invoice does not exist' }
+      }
+      // Checked before any reuse: an invoice paid by wire carries no card link,
+      // even one minted before its payment options said so.
+      if (!invoice.acceptsCard) {
+        return { kind: 'refused', reason: 'this invoice does not offer card payment' }
+      }
+
       // Reused rather than re-minted. The URL that went out in an email has to
       // keep working, and a second mint would leave a second Price on the
       // account for every time somebody opened the invoice.
       const existing = await source.readLink(invoiceId)
       if (existing !== null) return { kind: 'linked', url: existing.url }
 
-      const invoice = await source.readInvoice(invoiceId)
-      if (invoice === null) {
-        return { kind: 'refused', reason: 'the invoice does not exist' }
-      }
       if (invoice.dueAmountCents <= 0) {
         // Nothing is owed. A link for zero is one Stripe refuses and a link for
         // the original total would collect money that is not due.
