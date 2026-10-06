@@ -114,6 +114,11 @@ export interface InvoicePaymentApi {
    * "089" is not "89".
    */
   findInvoiceByNumber(number: string, signal?: AbortSignal): Promise<Invoice | null>
+  /**
+   * The client the invoice is for, so the page can name it. A name is a
+   * nicety: the page reads without one, and says "Client #id" instead.
+   */
+  getDirectoryClient?(id: number, signal?: AbortSignal): Promise<GeneralResource>
   /** The hours this invoice billed, as a file (the work journal, issue 647). */
   downloadInvoiceHoursReport?(
     id: number,

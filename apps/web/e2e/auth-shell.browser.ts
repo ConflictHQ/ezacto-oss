@@ -2409,6 +2409,10 @@ test('[e2e:invoice-lines] adds, edits, and removes exact lines on the edit page 
   expect(commandIds[0]).toBe(commandIds[1])
   await expect(page).toHaveURL(new RegExp(`/invoices/${draft.number}$`, 'u'))
   await expect(page.locator('[data-invoice-detail-status]')).toHaveText('Invoice saved.')
+  // A fresh page after the save, and the client named on it rather than its id.
+  await expect(detail.locator('[data-invoice-detail-client]')).toHaveText(
+    'Browser Acceptance Client',
+  )
 
   const createdRow = detail.locator('[data-invoice-line-id]', { hasText: 'Consulting' })
   await expect(createdRow).toHaveCount(1)

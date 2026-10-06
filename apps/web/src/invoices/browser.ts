@@ -116,7 +116,8 @@ const invoiceDueLabel = (invoice: Readonly<Invoice>): CellContent => {
 
 // The API returns client_id, not the client. "Client #12" is an internal
 // identifier on a page a client can be sent, so the shell hands over the names
-// it has already loaded and this falls back only when it has none.
+// it has already loaded for the list, the detail page reads the one it shows,
+// and this falls back only when it has none.
 const clientNames = new Map<number, string>()
 
 export const setInvoiceClientNames = (
@@ -1195,6 +1196,21 @@ export const createInvoicePaymentController = (
         listPayments(invoiceId, session.signal),
       ])
       if (current() !== session || requested !== requestGeneration) return false
+      // The one client this page shows, named before the page paints. The
+      // page used to race the shell's list of every client for it, and a
+      // fresh load -- the editor's Save lands on one -- painted first and
+      // never again, so it said "Client #5". A name is a nicety: one that
+      // cannot be read leaves the id. Once named, a refresh finds it here.
+      const getDirectoryClient = api.getDirectoryClient
+      if (getDirectoryClient !== undefined && !clientNames.has(loadedInvoice.client_id)) {
+        const named = await getDirectoryClient(loadedInvoice.client_id, session.signal).catch(
+          () => null,
+        )
+        if (current() !== session || requested !== requestGeneration) return false
+        if (typeof named?.name === 'string' && named.name.trim() !== '') {
+          clientNames.set(loadedInvoice.client_id, named.name.trim())
+        }
+      }
       invoice = loadedInvoice
       // Opened by id, the page lands on the number: the address somebody
       // copies from here is the one every link in the app draws.

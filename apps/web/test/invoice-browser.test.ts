@@ -11,7 +11,7 @@ import {
   type Whoami,
 } from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
-import { createInvoicePaymentController } from '../src/invoices/browser.js'
+import { createInvoicePaymentController, setInvoiceClientNames } from '../src/invoices/browser.js'
 import {
   invoiceQuickBooksLine,
   invoiceRemindersLine,
@@ -862,6 +862,69 @@ describe('invoice payment controller', () => {
     expect(document.querySelector<HTMLButtonElement>('[data-invoice-detail-retry]')?.hidden).toBe(
       false,
     )
+  })
+
+  it('[browser] names the client on a page opened directly, and reads the name once', async () => {
+    // Saving in the editor lands here on a fresh page, where nobody has loaded
+    // the client's name yet. The page painted "Client #1" -- an internal id on
+    // a document a client is sent -- so it reads the one name it shows.
+    setInvoiceClientNames([])
+    renderDetail('/invoices/SAVED')
+    const getDirectoryClient = vi.fn(async (id: number) => ({
+      id,
+      name: '  Kestrel Environmental ',
+      created_at: timestamp,
+      updated_at: timestamp,
+    }))
+    const getInvoice = vi.fn(async () => invoice('SAVED'))
+    await createInvoicePaymentController({
+      findInvoiceByNumber: vi.fn(async () => invoice('SAVED')),
+      getInvoice,
+      getDirectoryClient,
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+      recordInvoicePayment: vi.fn(async () =>
+        invoice('SAVED', { state: 'paid', due_amount_cents: 0, paid_date: '2026-08-28' }),
+      ),
+    }).activate(identity(1), new AbortController().signal, () => false)
+
+    expect(getDirectoryClient).toHaveBeenCalledWith(1, expect.any(AbortSignal))
+    expect(document.querySelector('[data-invoice-detail-client]')?.textContent).toBe(
+      'Kestrel Environmental',
+    )
+
+    // A refresh shows the same client, and does not ask for it again.
+    document.querySelector<HTMLButtonElement>('[data-invoice-payment-settle]')!.click()
+    await vi.waitFor(() => expect(getInvoice).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-detail-status]')?.textContent).toBe(
+        'Invoice marked paid.',
+      ),
+    )
+    expect(document.querySelector('[data-invoice-detail-client]')?.textContent).toBe(
+      'Kestrel Environmental',
+    )
+    expect(getDirectoryClient).toHaveBeenCalledTimes(1)
+    setInvoiceClientNames([])
+  })
+
+  it('[browser] still shows the invoice when its client cannot be read', async () => {
+    // A token without clients:read, or a request that failed: the name is a
+    // nicety, and the invoice is the page.
+    setInvoiceClientNames([])
+    renderDetail()
+    await createInvoicePaymentController({
+      getInvoice: vi.fn(async () => invoice('UNNAMED')),
+      getDirectoryClient: vi.fn(async () => {
+        throw new EzactoApiError(403, { error: { code: 'forbidden', message: 'No.' } }, null)
+      }),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+    }).activate(identity(1), new AbortController().signal, () => false)
+
+    expect(document.querySelector<HTMLElement>('[data-invoice-document]')?.hidden).toBe(false)
+    expect(document.querySelector('[data-invoice-detail-number]')?.textContent).toBe('UNNAMED')
+    expect(document.querySelector('[data-invoice-detail-client]')?.textContent).toBe('Client #1')
   })
 
   it('[e2e:invoice-state] issues write off from the overflow and gates every other verb', async () => {

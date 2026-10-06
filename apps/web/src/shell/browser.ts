@@ -3425,9 +3425,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     invoiceClientNamesLoaded = true
   }
 
-  // The invoice list and the invoice page both show a client, and either can be
-  // the first thing a session opens. Load the names once, for whichever gets
-  // there first.
+  // The invoice list shows a client on every row, so it loads every client's
+  // name, once. The invoice page shows one client and reads that one itself.
   const ensureInvoiceClientNames = async (operation: AuthOperation): Promise<void> => {
     // listClients is filtered to is_active; an invoice outlives its client, and
     // the historical ones the list mostly shows are exactly those whose client
@@ -3712,8 +3711,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     } else if (invoiceListPage) {
       await Promise.all([loadInvoiceList(authenticated), loadWeek(authenticated)])
     } else if (invoiceDetailPage) {
+      // The page names its one client itself. Racing the list of every client
+      // for that name is what painted "Client #5" on a fresh load.
       await Promise.all([
-        ensureInvoiceClientNames(authenticated),
         invoicePayments.activate(
           identity,
           authenticated.signal,

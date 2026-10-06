@@ -769,6 +769,38 @@ describe('invoice browse browser behavior', () => {
     expect(documentShell.textContent).not.toMatch(/Download PDF|Send reminder/u)
   })
 
+  it('[browser] names the client on an invoice opened directly, before the client list arrives', async () => {
+    // Saving in the editor lands here on a fresh page load. The page painted
+    // as soon as the invoice arrived, the names of every client came later,
+    // and nothing painted again -- so the client read "Client #11", an
+    // internal id on a document a client is sent.
+    renderBrowserShell({ view: 'invoice-detail' })
+    let releaseDirectory = (): void => undefined
+    const directoryHeld = new Promise<void>((resolve) => {
+      releaseDirectory = resolve
+    })
+    const api: ShellApi = {
+      ...browserApi(),
+      listDirectoryClients: vi.fn(async () => {
+        await directoryHeld
+        return { data: [resource(11, 'Northwind Freight')], page: { next_cursor: null } }
+      }),
+      getDirectoryClient: vi.fn(async (id: number) => resource(id, 'Northwind Freight')),
+      getInvoice: vi.fn(async () => invoice(7)),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+    }
+
+    const mounted = mountShell(api)
+    const documentShell = document.querySelector<HTMLElement>('[data-invoice-document]')!
+    await vi.waitFor(() => expect(documentShell.hidden).toBe(false))
+    const client = document.querySelector('[data-invoice-detail-client]')!
+    expect(client.textContent).toBe('Northwind Freight')
+    releaseDirectory()
+    await mounted
+    expect(client.textContent).toBe('Northwind Freight')
+  })
+
   it('[e2e:invoice-cycle] sends a draft through the composer and shows its scheduled reminder', async () => {
     renderBrowserShell({ view: 'invoice-detail' })
     const base = browserApi()
