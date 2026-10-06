@@ -651,6 +651,87 @@ describe("Worker D1 runtime composition", () => {
     ).toEqual({ timeEntries: 2, expenses: 1, createdEvents: 1, updatedEvents: 0 });
   });
 
+  it("[api] raises and replays a flat fee covering tracked time through the deployed Worker binding", async () => {
+    // A month of its own, so nothing the other generations claim moves: 1h,
+    // 1h and 0.5h in July. A 1.5h limit covers the first; the second would
+    // cross it, so it and the last are billed after the fee.
+    await run(
+      `INSERT INTO time_entries (
+        id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+        spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+        billable_rate_cents, cost_rate_cents, budgeted, created_at, updated_at
+      ) VALUES
+        (9050, 2, 1, 1, 1, 1, '2026-07-06', 3600, 3600, 3600, 1, 10000, 5000, 1, ?, ?),
+        (9051, 2, 1, 1, 1, 1, '2026-07-13', 3600, 3600, 3600, 1, 10000, 5000, 1, ?, ?),
+        (9052, 2, 1, 1, 1, 1, '2026-07-20', 1800, 1800, 1800, 1, 10000, 5000, 1, ?, ?)`,
+      timestamp,
+      timestamp,
+      timestamp,
+      timestamp,
+      timestamp,
+      timestamp,
+    );
+    const client = new EzactoClient({
+      baseUrl: "https://worker.test",
+      token: moneyBearer,
+      fetch: workerFetch,
+    });
+    const generation = {
+      "Idempotency-Key": "runtime-banded-draft",
+      body: {
+        kind: "banded" as const,
+        client_id: 1,
+        from: "2026-07-01",
+        to: "2026-07-31",
+        project_ids: [1],
+        line_items: [
+          { kind: "Service", description: "July band", quantity: 1, unit_price_cents: 50_000 },
+        ],
+        claim_mode: "ceiling" as const,
+        claim_ceiling_seconds: 5_400,
+        overage_summary_type: "project" as const,
+      },
+    };
+
+    const created = await client.generateInvoice(generation);
+    expect(await client.generateInvoice(generation)).toEqual(created);
+    expect(created.band).toEqual({
+      claimed_entry_count: 1,
+      claimed_seconds: 3_600,
+      billed_entry_count: 2,
+      billed_seconds: 5_400,
+    });
+    expect(created.data).toMatchObject({
+      client_id: 1,
+      state: "draft",
+      period_start: "2026-07-01",
+      period_end: "2026-07-31",
+      amount_cents: 65_000,
+      line_items: [
+        expect.objectContaining({ description: "July band", amount_cents: 50_000 }),
+        expect.objectContaining({
+          description: "[RUN] Runtime Project (2026-07-01 - 2026-07-31)",
+          quantity: 1.5,
+          amount_cents: 15_000,
+        }),
+      ],
+    });
+    expect(created.data).not.toHaveProperty("band");
+    expect(
+      await database
+        .prepare(
+          `SELECT
+             (SELECT count(*) FROM time_entries WHERE invoice_id = ?) AS timeEntries,
+             (SELECT count(*) FROM time_entries
+               WHERE id IN (9050, 9051, 9052) AND invoice_id IS NULL) AS uninvoiced,
+             (SELECT count(*) FROM event_outbox
+               WHERE aggregate_id = ? AND event_type = 'invoice.created') AS createdEvents`,
+        )
+        .bind(created.data.id, created.data.id)
+        .first(),
+    ).toEqual({ timeEntries: 3, uninvoiced: 0, createdEvents: 1 });
+  });
+
   it("[api] creates and replays a blank free-form draft through the deployed Worker binding", async () => {
     const client = new EzactoClient({
       baseUrl: "https://worker.test",
