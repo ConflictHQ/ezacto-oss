@@ -94,6 +94,21 @@ not interchangeable.
 Configure the endpoint **after** it is deployed. Intuit begins delivering as soon
 as it is saved, and deliveries to a URL that 404s are retried and then dropped.
 
+### What a payment coming back does
+
+A payment made in QuickBooks against a mirrored invoice is recorded on that
+invoice. Two kinds are not:
+
+- **One ezacto put there.** A payment recorded here — Mark paid, or another
+  provider's — is copied into QuickBooks, and QuickBooks announces it like any
+  other payment. It is recognised by the link the mirror saved, or by the
+  `ez-<payment id>` reference stamped on it, and is not recorded a second time.
+- **One larger than what the invoice still owes.** It is left unrecorded rather
+  than overpaying the invoice; usually it is the same money already marked paid
+  by hand. It is logged as `[payments] provider payment not recorded`, and the
+  reason stays on the delivery in `quickbooks_webhook_deliveries.skipped_reason`
+  for a person to settle.
+
 ## 5. Keys
 
 **Keys and credentials**, per environment. The client ID and secret are revealed

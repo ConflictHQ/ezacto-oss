@@ -304,23 +304,36 @@ const seed = async (database: TestDatabase): Promise<void> => {
 };
 
 /**
+ * Three invoices placed far apart in the newest-first list the page seed
+ * makes: level with draft 50, level with draft 150, and older than every
+ * draft. A page-local filter would find them on three different pages.
+ */
+const spreadThroughTheBook = [
+  [300, "2026-06-12"],
+  [400, "2026-03-04"],
+  [500, "2026-01-01"],
+] as const;
+
+/**
  * Paid invoices, born paid. A state change is a lifecycle mutation and its
  * trigger requires a pending command, so a test that wants a paid invoice
  * inserts one rather than promoting a draft -- and the shape trigger wants
- * exactly one of paid_at / paid_date on it.
+ * exactly one of paid_at / paid_date on it. Dated by the caller, because the
+ * list is read newest first and the date is what places a row in it.
  */
 const seedPaidInvoices = async (
   database: TestDatabase,
-  ids: readonly number[],
+  invoices: readonly (readonly [id: number, issueDate: string])[],
 ): Promise<void> => {
-  for (const id of ids) {
+  for (const [id, issueDate] of invoices) {
     await database.run(
       `INSERT INTO invoices (
          id, client_id, number, currency, issue_date, due_date, state,
          amount_cents, due_amount_cents, paid_at, created_at, updated_at
-       ) VALUES (?, 1, ?, 'USD', '2026-08-01', '2026-08-31', 'paid', 0, 0, ?, ?, ?)`,
+       ) VALUES (?, 1, ?, 'USD', ?, '2026-08-31', 'paid', 0, 0, ?, ?, ?)`,
       id,
       `INV-S${id}`,
+      issueDate,
       seedTime,
       seedTime,
       seedTime,
@@ -329,33 +342,39 @@ const seedPaidInvoices = async (
 };
 
 /**
- * Draft invoices for a nominated client, at ids the caller chooses so they can
- * be spread through another client's book. Draft rather than paid for the same
- * reason seedPaidInvoices exists: a state change is a lifecycle mutation and
- * wants a pending command, so a test inserts the state it needs.
+ * Draft invoices for a nominated client, at ids and dates the caller chooses
+ * so they can be spread through another client's book. Draft rather than paid
+ * for the same reason seedPaidInvoices exists: a state change is a lifecycle
+ * mutation and wants a pending command, so a test inserts the state it needs.
  */
 const seedClientInvoices = async (
   database: TestDatabase,
   clientId: number,
   currency: string,
-  ids: readonly number[],
+  invoices: readonly (readonly [id: number, issueDate: string])[],
 ): Promise<void> => {
-  for (const id of ids) {
+  for (const [id, issueDate] of invoices) {
     await database.run(
       `INSERT INTO invoices (
          id, client_id, number, currency, issue_date, due_date, state,
          amount_cents, due_amount_cents, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, '2026-08-01', '2026-08-31', 'draft', 0, 0, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, '2026-08-31', 'draft', 0, 0, ?, ?)`,
       id,
       clientId,
       `INV-C${clientId}-${id}`,
       currency,
+      issueDate,
       seedTime,
       seedTime,
     );
   }
 };
 
+/**
+ * 202 drafts, 4 to 205, draft N issued N days before 2026-08-01. The list is
+ * read newest first, so they come in id order after the three seeded invoices,
+ * which are all issued on 2026-08-01.
+ */
 const seedInvoicePage = async (database: TestDatabase): Promise<void> => {
   await database.run(
     `WITH RECURSIVE invoice_ids(id) AS (
@@ -367,7 +386,8 @@ const seedInvoicePage = async (database: TestDatabase): Promise<void> => {
        id, client_id, number, currency, issue_date, due_date, state,
        amount_cents, due_amount_cents, created_at, updated_at
      )
-     SELECT id, 1, printf('INV-%03d', id), 'USD', '2026-08-01', '2026-08-31', 'draft',
+     SELECT id, 1, printf('INV-%03d', id), 'USD',
+       date('2026-08-01', printf('-%d days', id)), '2026-08-31', 'draft',
        CASE WHEN id = 4 THEN 600 ELSE 0 END,
        CASE WHEN id = 4 THEN 600 ELSE 0 END,
        ?, ?
@@ -1150,10 +1170,13 @@ for (const [runtime, factory] of factories) {
 
     it("[db] returns a self-consistent invoice page header/line snapshot", async () => {
       const test = await setup(undefined, "invoice");
+      const createdThrough = await test.service.invoiceListSnapshot();
       expect(
         await test.service.listInvoices({
-          afterId: null,
-          throughId: 1,
+          // Invoice 1 is INV-DRAFT, which follows INV-PAYMENT among the three
+          // seeded on one day, so the page that holds it alone starts there.
+          after: { issueDate: "2026-08-01", number: "INV-PAYMENT", id: 3 },
+          createdThrough: createdThrough!,
           take: 1,
         }),
       ).toMatchObject([
@@ -1180,7 +1203,7 @@ for (const [runtime, factory] of factories) {
       await seedInvoicePage(test.database);
       // Three paid invoices spread far apart through the 202 drafts, so a
       // page-local filter would find them on three different pages.
-      await seedPaidInvoices(test.database, [300, 400, 500]);
+      await seedPaidInvoices(test.database, spreadThroughTheBook);
 
       const paid = await test.request("/api/v1/invoices?state=paid&per_page=2");
       expect(paid.status).toBe(200);
@@ -1208,7 +1231,7 @@ for (const [runtime, factory] of factories) {
     it("[api] reads a comma-separated state set and rejects an unknown one", async () => {
       const test = await setup();
       await seedInvoicePage(test.database);
-      await seedPaidInvoices(test.database, [300, 400, 500]);
+      await seedPaidInvoices(test.database, spreadThroughTheBook);
 
       const outstanding = await test.request(
         "/api/v1/invoices?state=draft,open&per_page=200",
@@ -1245,7 +1268,7 @@ for (const [runtime, factory] of factories) {
       // Three invoices for the other client, spread far apart through the 202
       // that belong to the first, so a page-local filter would find them on
       // three different pages.
-      await seedClientInvoices(test.database, 2, "EUR", [300, 400, 500]);
+      await seedClientInvoices(test.database, 2, "EUR", spreadThroughTheBook);
 
       const first = await test.request("/api/v1/invoices?client_id=2&per_page=2");
       expect(first.status).toBe(200);
@@ -1271,7 +1294,7 @@ for (const [runtime, factory] of factories) {
     it("[api] reads a comma-separated client set and rejects a non-id", async () => {
       const test = await setup();
       await seedInvoicePage(test.database);
-      await seedClientInvoices(test.database, 2, "EUR", [300, 400, 500]);
+      await seedClientInvoices(test.database, 2, "EUR", spreadThroughTheBook);
 
       // One client is exactly its own rows and nobody else's -- the failure
       // this filter exists to prevent is another client's book on the screen.
@@ -1279,13 +1302,14 @@ for (const [runtime, factory] of factories) {
       const otherBody = (await other.json()) as { data: { id: number }[] };
       expect(otherBody.data.map((row) => row.id)).toEqual([300, 400, 500]);
 
-      // A set is the union, which is what a subtree rollup asks for: the tail
-      // of the same traversal carries the other client's rows.
+      // A set is the union, which is what a subtree rollup asks for: the other
+      // client's rows arrive in their places in the one newest-first
+      // traversal, two of them on the first page and the oldest after it.
       const both = await test.request(
         "/api/v1/invoices?client_id=1,2&state=paid,draft&per_page=200",
       );
       const bothBody = (await both.json()) as {
-        data: { client_id: number }[];
+        data: { id: number; client_id: number }[];
         page: { next_cursor: string | null };
       };
       expect(bothBody.data).toHaveLength(200);
@@ -1296,12 +1320,18 @@ for (const [runtime, factory] of factories) {
       const remainderBody = (await remainder.json()) as {
         data: { id: number; client_id: number }[];
       };
-      expect(
-        remainderBody.data.filter((row) => row.client_id === 2).map((row) => row.id),
-      ).toEqual([300, 400, 500]);
-      expect(remainderBody.data.every((row) => row.client_id === 1 || row.client_id === 2)).toBe(
-        true,
+      const traversal = [...bothBody.data, ...remainderBody.data];
+      expect(traversal.filter((row) => row.client_id === 2).map((row) => row.id)).toEqual([
+        300, 400, 500,
+      ]);
+      expect(remainderBody.data.filter((row) => row.client_id === 2).map((row) => row.id)).toEqual(
+        [500],
       );
+      expect(traversal.every((row) => row.client_id === 1 || row.client_id === 2)).toBe(true);
+      // Every matching row once: 204 of client 1's (invoice 2 is open) and
+      // the other client's three.
+      expect(new Set(traversal.map((row) => row.id)).size).toBe(traversal.length);
+      expect(traversal).toHaveLength(207);
 
       // Silently dropping an unparseable id would widen the answer back to
       // every client, which on a money endpoint is somebody else's book.
@@ -1342,9 +1372,14 @@ for (const [runtime, factory] of factories) {
         links: { next: string | null };
         page: { per_page: number; next_cursor: string | null };
       };
-      expect(firstPage.data.map(({ id }) => id)).toEqual(
-        Array.from({ length: 200 }, (_, index) => index + 1),
-      );
+      // Newest first: the three seeded on 2026-08-01, by number, highest
+      // first; then the drafts, each a day older than the one before.
+      expect(firstPage.data.map(({ id }) => id)).toEqual([
+        2,
+        3,
+        1,
+        ...Array.from({ length: 197 }, (_, index) => index + 4),
+      ]);
       expect(firstPage.data.find(({ id }) => id === 4)?.line_items).toEqual([
         expect.objectContaining({ id: 4001 }),
         expect.objectContaining({ id: 4002 }),
@@ -1362,11 +1397,13 @@ for (const [runtime, factory] of factories) {
           : { preparedStatements: 3, batchSizes: [], transactions: 1 },
       );
 
+      // Created after the first page was read, and dated so it sorts into
+      // the rest of the list: the snapshot bound is what keeps it out.
       await test.database.run(
         `INSERT INTO invoices (
            id, client_id, number, currency, issue_date, due_date, state,
            amount_cents, due_amount_cents, created_at, updated_at
-         ) VALUES (206, 1, 'INV-206', 'USD', '2026-08-01', '2026-08-31', 'draft',
+         ) VALUES (206, 1, 'INV-206', 'USD', '2025-12-31', '2026-08-31', 'draft',
            0, 0, ?, ?)`,
         secondTime,
         secondTime,
@@ -2766,6 +2803,104 @@ for (const [runtime, factory] of factories) {
           "SELECT id FROM invoice_payments WHERE invoice_id = 3",
         ),
       ).toHaveLength(0);
+    }, slowRuntimeTimeout);
+
+    // A payment may not take the balance below zero: typed for more than is
+    // owed, or Mark paid pressed on an invoice something else already settled.
+    // A 422 on the amount, so the form can say it beside the field, and
+    // nothing written.
+    it("[api] refuses a payment that would overpay the invoice", async () => {
+      const test = await setup();
+      const fieldError = async (response: Response) =>
+        ((await response.json()) as {
+          error: { code: string; fields: { field: string; code: string; message: string }[] };
+        }).error;
+      expect(
+        (
+          await test.request(
+            "/api/v1/invoices/3/line-items",
+            jsonRequest(
+              "POST",
+              { expected_version: 0, position: 0, kind: "Service", quantity: 1, unit_price_cents: 200 },
+              "overpay-fixture-line",
+            ),
+          )
+        ).status,
+      ).toBe(201);
+      expect(
+        (
+          await test.request(
+            "/api/v1/invoices/3/transitions",
+            jsonRequest("POST", { command: "send", expected_version: 1 }, "overpay-fixture-send"),
+          )
+        ).status,
+      ).toBe(201);
+      const payment = (amount: number, version: number, key: string) =>
+        test.request(
+          "/api/v1/invoices/3/payments",
+          jsonRequest(
+            "POST",
+            { expected_version: version, currency: "USD", amount_cents: amount, paid_date: "2026-08-28" },
+            key,
+          ),
+        );
+
+      const tooMuch = await payment(201, 2, "overpay-too-much");
+      expect(tooMuch.status).toBe(422);
+      expect(await fieldError(tooMuch)).toMatchObject({
+        code: "validation_failed",
+        fields: [
+          {
+            field: "amount_cents",
+            code: "exceeds_balance",
+            message: "amount_cents must not exceed 200, the amount this invoice still owes.",
+          },
+        ],
+      });
+      expect(
+        await test.database.rows("SELECT id FROM invoice_payments WHERE invoice_id = 3"),
+      ).toHaveLength(0);
+
+      expect((await payment(200, 2, "overpay-exact")).status).toBe(201);
+      const settled = await payment(1, 3, "overpay-after-settled");
+      expect(settled.status).toBe(422);
+      expect((await fieldError(settled)).fields).toEqual([
+        {
+          field: "amount_cents",
+          code: "exceeds_balance",
+          message: "This invoice has nothing left to pay, so the payment would overpay it.",
+        },
+      ]);
+
+      const [recorded] = await test.database.rows<{ id: number; updated_at: string }>(
+        "SELECT id, updated_at FROM invoice_payments WHERE invoice_id = 3",
+      );
+      const raised = await test.request(
+        `/api/v1/invoices/3/payments/${recorded!.id}`,
+        jsonRequest(
+          "PATCH",
+          {
+            expected_version: 3,
+            expected_updated_at: recorded!.updated_at,
+            amount_cents: 250,
+            paid_date: "2026-08-28",
+          },
+          "overpay-raise",
+        ),
+      );
+      expect(raised.status).toBe(422);
+      expect((await fieldError(raised)).fields[0]).toMatchObject({
+        field: "amount_cents",
+        code: "exceeds_balance",
+      });
+      expect(
+        await test.database.rows(
+          "SELECT amount_cents FROM invoice_payments WHERE invoice_id = 3",
+        ),
+      ).toEqual([{ amount_cents: 200 }]);
+      expect(
+        await test.database.rows("SELECT due_amount_cents, state FROM invoices WHERE id = 3"),
+      ).toEqual([{ due_amount_cents: 0, state: "paid" }]);
     }, slowRuntimeTimeout);
 
     // client_id is nullable on retainers and the Harvest cutover produces rows

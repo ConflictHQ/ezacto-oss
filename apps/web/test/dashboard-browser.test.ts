@@ -112,8 +112,8 @@ const invoice = (overrides: Partial<Invoice>): Invoice =>
   }) as Invoice
 
 /**
- * An invoice book served the way the real endpoint serves one: ascending by id,
- * a page at a time, oldest first.
+ * An invoice book served the way the real endpoint serves one: a page at a
+ * time, newest first.
  */
 const pagedInvoices = (pages: readonly (readonly Invoice[])[]) =>
   vi.fn(async (cursor?: string) => {
@@ -512,10 +512,11 @@ describe('home dashboard', () => {
 
 describe('what the owed card is allowed to claim', () => {
   it('[browser] never presents the start of the book as what is owed now', async () => {
-    // /api/v1/invoices pages ascending by id, so a walk that stops short has
-    // read the OLDEST invoices. On a book longer than the walk those are the
-    // settled ones, and the open, overdue invoice at the far end is unread.
-    // The card must not answer with that slice under any present-tense label.
+    // /api/v1/invoices pages newest first, so a walk that stops short has read
+    // the most recent invoices. On a book longer than the walk those can all
+    // be settled while the open invoice overdue since 2020, at the far end, is
+    // unread. The card must not answer with that slice under any present-tense
+    // label.
     const pages: Invoice[][] = Array.from({ length: 10 }, (_unused, index) => [
       invoice({ id: index + 1, state: 'paid', due_amount_cents: 0 }),
     ])

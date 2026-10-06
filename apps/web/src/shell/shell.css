@@ -4139,6 +4139,52 @@ dialog h2,
   color: var(--ez-muted);
 }
 
+/* Settings › Invoices is a document form, not a row of switches: company
+   information, then default values, each field full width with its hint
+   beneath it, so the wrapping row above does not apply. */
+.settings-form.invoice-defaults-form {
+  display: grid;
+  gap: 14px;
+  align-items: stretch;
+  max-width: 720px;
+}
+.invoice-defaults-form h3 {
+  margin: 12px 0 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--ez-border);
+  font-size: 16px;
+}
+.invoice-defaults-form h3:first-child {
+  margin-top: 0;
+}
+.invoice-defaults-form label {
+  gap: 6px;
+  font-size: 13px;
+}
+.invoice-defaults-form input,
+.invoice-defaults-form textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font: inherit;
+}
+.invoice-defaults-form textarea {
+  resize: vertical;
+  line-height: 1.45;
+}
+.invoice-defaults-form .hint {
+  margin: -6px 0 0;
+  font-size: 13px;
+}
+.invoice-defaults-form > button {
+  justify-self: start;
+  min-height: 44px;
+  margin-top: 6px;
+}
 /* A checkbox row in the invoice settings form: the box beside its words, not
    above them, however the form lays out its other fields. Specific enough to
    hold against the form's own label and input rules. */

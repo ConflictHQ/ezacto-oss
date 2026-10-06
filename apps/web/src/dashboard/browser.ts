@@ -338,11 +338,12 @@ export const createDashboardController = (api: DashboardApi): DashboardControlle
       cursor = page.page.next_cursor ?? undefined
       pages += 1
     } while (cursor !== undefined && pages < invoicePageLimit)
-    // The endpoint pages ascending by id, and offers no other order, so a walk
-    // that stops short has read the OLDEST invoices -- the settled end of the
-    // book. That slice is not a receivables figure and no caption can make it
-    // one: an account past the ceiling would be told nothing is owed while its
-    // whole book is outstanding. So the card gives no number and says why.
+    // The endpoint pages newest first, so a walk that stops short has read the
+    // most recent invoices and not the old ones -- which is where an invoice
+    // overdue for months sits. That slice is not a receivables figure and no
+    // caption can make it one: an account past the ceiling would be told
+    // nothing is owed while its oldest debts go unread. So the card gives no
+    // number and says why.
     if (cursor !== undefined) {
       clearCard('owed')
       setDetail(

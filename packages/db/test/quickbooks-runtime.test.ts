@@ -9,7 +9,7 @@ import {
   type QuickBooksSourceInvoice,
 } from "@ezacto/integrations";
 import { createContainerDatabase } from "../src/adapters.js";
-import { recordInvoicePayment } from "../src/invoice-state.js";
+import { executeInvoiceLifecycleCommand, recordInvoicePayment } from "../src/invoice-state.js";
 import { migrateContainer } from "../src/migrate.js";
 import { createQuickBooksMirrorSource } from "../src/quickbooks-source.js";
 import { createQuickBooksStore } from "../src/quickbooks.js";
@@ -73,6 +73,7 @@ const source = (overrides: Partial<QuickBooksMirrorSource> = {}): QuickBooksMirr
       quickBooksPaymentId: input.quickBooksPaymentId,
       realmId: input.realmId,
     });
+    return "recorded" as const;
   }),
   ...overrides,
 });
@@ -120,6 +121,17 @@ const customerResponse = (body: Record<string, unknown>): unknown => ({
   },
 });
 
+/** The fixture's own send of invoice 42; setup, not an event a test delivers. */
+const fixtureSendCommand = "fixture-send-1316";
+
+/** Invoice 42's version now, which every command on it is held to. */
+const invoiceVersion = (invoiceId = 42): number =>
+  (
+    sqlite!.prepare("SELECT version FROM invoices WHERE id = ?").get(invoiceId) as {
+      version: number;
+    }
+  ).version;
+
 const runtime = async (
   fetchImpl: (request: Request) => Promise<Response>,
   mirrorSource = source(),
@@ -138,8 +150,25 @@ const runtime = async (
     INSERT INTO invoices
       (id, client_id, number, currency, issue_date, due_date, state, created_at, updated_at)
       VALUES (41, 2, '1315', 'USD', '2026-09-11', '2026-10-11', 'draft', '${t(0)}', '${t(0)}'),
-             (42, 2, '1316', 'USD', '2026-09-11', '2026-10-11', 'open', '${t(0)}', '${t(0)}');
+             (42, 2, '1316', 'USD', '2026-09-11', '2026-10-11', 'draft', '${t(0)}', '${t(0)}');
+    INSERT INTO invoice_line_items
+      (invoice_id, position, kind, description, quantity, unit_price_cents, amount_cents,
+       created_at, updated_at)
+      VALUES (42, 0, 'Service', 'Advisory', 10, 25000, 250000, '${t(0)}', '${t(0)}');
   `);
+  // Invoice 42 is sent for real, so it owes what Mark paid settles: a payment
+  // may not overpay, and an open invoice with no lines owes nothing.
+  await executeInvoiceLifecycleCommand(createContainerDatabase(sqlite), {
+    invoiceId: 42,
+    commandId: fixtureSendCommand,
+    command: "send",
+    actor: { type: "user", id: 1 },
+    authorize: async () => true,
+    expectedVersion: 0,
+    occurredAt: t(0),
+    messageId: 4201,
+    eventId: "fixture-send-1316-event",
+  });
   const store = createQuickBooksStore(createContainerDatabase(sqlite));
   const built = createQuickBooksRuntime({
     config: {
@@ -568,7 +597,7 @@ describe("payments going out (issue 799)", () => {
       commandId: `record-${String(paymentId)}`,
       actor: { type: "user", id: 1 },
       authorize: async () => true,
-      expectedVersion: 0,
+      expectedVersion: invoiceVersion(),
       occurredAt: t(2),
       eventIds: [`evt-${String(paymentId)}-a`, `evt-${String(paymentId)}-b`],
       payment: {
@@ -589,7 +618,8 @@ describe("payments going out (issue 799)", () => {
     sqlite!
       .prepare(
         `SELECT aggregate_type, aggregate_id, event_type, payload_json
-         FROM event_outbox WHERE aggregate_id = 42 ORDER BY aggregate_sequence`,
+         FROM event_outbox WHERE aggregate_id = 42 AND command_id <> '${fixtureSendCommand}'
+         ORDER BY aggregate_sequence`,
       )
       .all() as { aggregate_type: string; aggregate_id: number; event_type: string; payload_json: string }[];
 
@@ -724,7 +754,7 @@ describe("sync from the invoice page (issue 819)", () => {
       commandId: `record-${String(paymentId)}`,
       actor: { type: "user", id: 1 },
       authorize: async () => true,
-      expectedVersion: 0,
+      expectedVersion: invoiceVersion(),
       occurredAt: t(2),
       eventIds: [`evt-${String(paymentId)}-a`, `evt-${String(paymentId)}-b`],
       payment: {
@@ -1182,5 +1212,297 @@ describe("sync from the invoice page (issue 819)", () => {
     const built = await runtime(intuit([]), source({ readInvoice: vi.fn(async () => null) }));
     expect(await built.sync(404)).toBeNull();
     expect(await built.syncState(404)).toBeNull();
+  });
+});
+
+/**
+ * Mark paid on a mirrored invoice copies the receipt into QuickBooks;
+ * QuickBooks then announces the payment it made like any other; and the
+ * webhook recorded it a second time, as a QuickBooks receipt, leaving the
+ * invoice overpaid by the whole amount.
+ *
+ * Everything here is real but Intuit -- the source, the store, the command
+ * path and the outbox events, against one migrated database. The webhook tests
+ * above stub `recordPayment`, which is exactly where the second receipt was
+ * written.
+ */
+describe("our own receipts coming back from QuickBooks", () => {
+  const connected = async (store: ReturnType<typeof createQuickBooksStore>): Promise<void> => {
+    await store.saveConnection({
+      realmId: "realm-a",
+      accessToken: "access-1",
+      refreshToken: "refresh-1",
+      accessTokenExpiresAt: t(59),
+      refreshTokenExpiresAt: t(59),
+      scope: "com.intuit.quickbooks.accounting",
+      connectedByUserId: 1,
+      companyName: "Sandbox Company",
+      now: t(1),
+    });
+  };
+
+  /** The real source for every read and write, bound to the fixture database. */
+  const everythingReal = (): QuickBooksMirrorSource => ({
+    readInvoice: (invoiceId) => realSource().readInvoice(invoiceId),
+    readPayments: (invoiceId) => realSource().readPayments(invoiceId),
+    readClients: (clientId) => realSource().readClients(clientId),
+    ezactoInvoiceFor: (realmId, id) => realSource().ezactoInvoiceFor(realmId, id),
+    invoiceByNumber: (number) => realSource().invoiceByNumber(number),
+    recordPayment: (input) => realSource().recordPayment(input),
+  });
+
+  /** A receipt recorded here by hand, as Mark paid or Record payment does. */
+  const recordHere = async (paymentId: number, amountCents: number): Promise<void> => {
+    await recordInvoicePayment(createContainerDatabase(sqlite!), {
+      invoiceId: 42,
+      commandId: `record-${String(paymentId)}`,
+      actor: { type: "user", id: 1 },
+      authorize: async () => true,
+      expectedVersion: invoiceVersion(),
+      occurredAt: t(2),
+      eventIds: [`evt-${String(paymentId)}-a`, `evt-${String(paymentId)}-b`],
+      payment: {
+        type: "manual",
+        id: paymentId,
+        currency: "USD",
+        amountCents,
+        paidAt: null,
+        paidDate: "2026-09-20",
+        notes: null,
+        recordedByUserId: 1,
+      },
+    });
+  };
+
+  /** The outbox handing the payment command's events to the mirror, as it does in production. */
+  const deliverOutbox = async (built: QuickBooksRuntime): Promise<void> => {
+    const subscriber = createQuickBooksMirrorSubscriber(built);
+    const events = sqlite!
+      .prepare(
+        `SELECT aggregate_type, aggregate_id, event_type, payload_json
+         FROM event_outbox WHERE aggregate_id = 42 AND command_id <> ?
+         ORDER BY aggregate_sequence`,
+      )
+      .all(fixtureSendCommand) as {
+      aggregate_type: string;
+      aggregate_id: number;
+      event_type: string;
+      payload_json: string;
+    }[];
+    for (const event of events) {
+      await subscriber.deliver({
+        aggregateType: event.aggregate_type,
+        aggregateId: event.aggregate_id,
+        eventType: event.event_type,
+        payload: JSON.parse(event.payload_json) as Record<string, unknown>,
+      });
+    }
+  };
+
+  /**
+   * Intuit: the customers and invoice the mirror creates, the payment it files,
+   * and a payment read back by id the way the webhook reads one.
+   */
+  const intuitWith = (readBack: Record<string, unknown>) =>
+    intuit([
+      { match: /\/payment\/qb-pay-9\?/u, method: "GET", body: { Payment: readBack } },
+      {
+        match: /\/payment\?/u,
+        method: "POST",
+        body: (sent: Record<string, unknown>) => ({
+          Payment: {
+            Id: "qb-pay-9",
+            SyncToken: "0",
+            TotalAmt: sent["TotalAmt"],
+            PaymentRefNum: sent["PaymentRefNum"],
+          },
+        }),
+      },
+      { match: /\/query\?/u, body: { QueryResponse: {} } },
+      { match: /\/customer\?/u, body: customerResponse },
+      {
+        match: /\/invoice\?/u,
+        body: { Invoice: { Id: "qb-inv-8", SyncToken: "0", CustomerRef: { value: "qb-2" } } },
+      },
+      {
+        match: /\/invoice\/qb-inv-8\?/u,
+        method: "GET",
+        body: { Invoice: { Id: "qb-inv-8", SyncToken: "1", CustomerRef: { value: "qb-2" } } },
+      },
+    ]);
+
+  /** QuickBooks payment qb-pay-9 as Intuit reports it: against invoice 42's mirror. */
+  const quickBooksPayment = (dollars: number, refNumber?: string): Record<string, unknown> => ({
+    Id: "qb-pay-9",
+    SyncToken: "0",
+    TotalAmt: dollars,
+    TxnDate: "2026-09-20",
+    CustomerRef: { value: "qb-2" },
+    ...(refNumber === undefined ? {} : { PaymentRefNum: refNumber }),
+    Line: [{ Amount: dollars, LinkedTxn: [{ TxnId: "qb-inv-8", TxnType: "Invoice" }] }],
+  });
+
+  const announce = async (
+    built: QuickBooksRuntime,
+    operation: "Create" | "Update" = "Create",
+    lastUpdated = "2026-09-11T12:05:00",
+  ): Promise<void> => {
+    const payload = JSON.stringify({
+      eventNotifications: [
+        {
+          realmId: "realm-a",
+          dataChangeEvent: {
+            entities: [{ name: "Payment", id: "qb-pay-9", operation, lastUpdated }],
+          },
+        },
+      ],
+    });
+    expect(
+      (await built.service.receiveWebhook({ payload, signature: await sign(payload) })).accepted,
+    ).toBe(true);
+  };
+
+  const receipts = () =>
+    sqlite!
+      .prepare(
+        `SELECT id, provider, provider_transaction_id, amount_cents
+         FROM invoice_payments WHERE invoice_id = 42 ORDER BY created_at, id`,
+      )
+      .all();
+
+  const owed = (): { due_amount_cents: number; state: string } =>
+    sqlite!.prepare("SELECT due_amount_cents, state FROM invoices WHERE id = 42").get() as {
+      due_amount_cents: number;
+      state: string;
+    };
+
+  const skippedReasons = () =>
+    (
+      sqlite!
+        .prepare(
+          `SELECT skipped_reason FROM quickbooks_webhook_deliveries
+           WHERE entity_id = 'qb-pay-9' ORDER BY last_updated`,
+        )
+        .all() as { skipped_reason: string | null }[]
+    ).map((row) => row.skipped_reason);
+
+  it("[money] a receipt the mirror filed comes back from QuickBooks and is not recorded again", async () => {
+    // Part of the balance, so the overpayment guard cannot be what stops it:
+    // recorded twice, this would still fit under what the invoice owes. And
+    // read back with the reference a bookkeeper typed over ours, so the link
+    // the mirror saved is the only thing that knows the payment.
+    const built = await runtime(intuitWith(quickBooksPayment(1_000, "1042")), everythingReal());
+    await connected(built.store);
+    expect(await built.mirror(42)).toMatchObject({ kind: "created", quickBooksId: "qb-inv-8" });
+    await recordHere(9, 100_000);
+    await deliverOutbox(built);
+    expect(await built.store.readPaymentLink({ realmId: "realm-a", paymentId: 9 })).toMatchObject({
+      quickBooksId: "qb-pay-9",
+    });
+
+    await announce(built);
+    // And again when QuickBooks next touches the payment: a new delivery, the
+    // same answer.
+    await announce(built, "Update", "2026-09-11T12:09:00");
+
+    expect(receipts()).toEqual([
+      { id: 9, provider: "manual", provider_transaction_id: null, amount_cents: 100_000 },
+    ]);
+    expect(owed()).toEqual({ due_amount_cents: 150_000, state: "open" });
+    expect(skippedReasons()).toEqual([
+      "the payment was mirrored from ezacto (payment 9)",
+      "the payment was mirrored from ezacto (payment 9)",
+    ]);
+  });
+
+  it("[money] the echo is known by its reference before the mirror has saved the link", async () => {
+    // The mirror saves the link once QuickBooks answers the create; a delivery
+    // that overtakes that write still carries the reference we stamped.
+    const built = await runtime(intuitWith(quickBooksPayment(1_000, "ez-9")), everythingReal());
+    await connected(built.store);
+    await built.mirror(42);
+    await recordHere(9, 100_000);
+
+    await announce(built);
+
+    expect(receipts()).toEqual([
+      { id: 9, provider: "manual", provider_transaction_id: null, amount_cents: 100_000 },
+    ]);
+    expect(skippedReasons()).toEqual(["the payment was mirrored from ezacto (payment 9)"]);
+    // The link stays the mirror's to write.
+    expect(await built.store.readPaymentLink({ realmId: "realm-a", paymentId: 9 })).toBeNull();
+  });
+
+  it("[money] a payment somebody made in QuickBooks is still recorded", async () => {
+    // A bookkeeper's own reference is not a claim that we made the payment,
+    // and neither is one in our format that names no receipt on the invoice.
+    for (const refNumber of [undefined, "1042", "ez-77"]) {
+      const built = await runtime(intuitWith(quickBooksPayment(1_000, refNumber)), everythingReal());
+      await connected(built.store);
+      await built.mirror(42);
+
+      await announce(built);
+
+      expect(receipts()).toEqual([
+        { id: expect.any(Number), provider: "quickbooks", provider_transaction_id: "qb-pay-9", amount_cents: 100_000 },
+      ]);
+      expect(owed()).toEqual({ due_amount_cents: 150_000, state: "open" });
+      expect(skippedReasons()).toEqual([null]);
+    }
+  });
+
+  it("[money] a QuickBooks payment larger than what is owed is left for review, not overpaid", async () => {
+    // Paid in full by hand, never mirrored, and the same money entered in
+    // QuickBooks by somebody else: no link and no reference of ours, so only
+    // the balance can tell.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const built = await runtime(intuitWith(quickBooksPayment(2_500, "1042")), everythingReal());
+      await connected(built.store);
+      await built.mirror(42);
+      await recordHere(9, 250_000);
+
+      await announce(built);
+
+      expect(receipts()).toEqual([
+        { id: 9, provider: "manual", provider_transaction_id: null, amount_cents: 250_000 },
+      ]);
+      expect(owed()).toEqual({ due_amount_cents: 0, state: "paid" });
+      expect(skippedReasons()).toEqual([
+        "invoice 42: more than the invoice still owes, so not recorded; needs review",
+      ]);
+      expect(warn).toHaveBeenCalledWith(
+        "[payments] provider payment not recorded: more than the invoice still owes",
+        {
+          provider: "quickbooks",
+          providerTransactionId: "qb-pay-9",
+          invoiceId: 42,
+          amountCents: 250_000,
+          dueAmountCents: 0,
+          paidOn: "2026-09-20",
+        },
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("[money] Mark paid after QuickBooks has settled the invoice is refused, not doubled", async () => {
+    // The other order: the payment arrives from QuickBooks first, then
+    // somebody presses Mark paid on a page that still showed a balance.
+    const built = await runtime(intuitWith(quickBooksPayment(2_500)), everythingReal());
+    await connected(built.store);
+    await built.mirror(42);
+    await announce(built);
+    expect(owed()).toEqual({ due_amount_cents: 0, state: "paid" });
+
+    await expect(recordHere(9, 250_000)).rejects.toMatchObject({
+      code: "payment_exceeds_balance",
+      maximumCents: 0,
+    });
+    expect(receipts()).toEqual([
+      { id: expect.any(Number), provider: "quickbooks", provider_transaction_id: "qb-pay-9", amount_cents: 250_000 },
+    ]);
+    expect(owed()).toEqual({ due_amount_cents: 0, state: "paid" });
   });
 });

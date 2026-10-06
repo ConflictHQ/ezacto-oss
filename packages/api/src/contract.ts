@@ -21,6 +21,8 @@ export interface ApiContractOperation {
   path: string;
   operationId: string;
   summary: string;
+  /** Longer prose for the operation, where the summary cannot carry a rule a caller relies on. */
+  description?: string;
   tag: string;
   responseStatus: number;
   additionalResponseStatuses?: readonly number[];
@@ -699,6 +701,10 @@ const moneyOperations: ApiContractOperation[] = [
     path: "/api/v1/invoices",
     operationId: "listInvoices",
     summary: "List invoices",
+    description:
+      "Newest first: by issue_date, latest first; then by number, highest first -- compared as a number when it is made of digits alone (leading zeros ignored) and as text, by Unicode code point, otherwise, with all-digit numbers ahead of the rest on a day that has both; then by id, highest first, so no two invoices tie. " +
+      "The first page fixes the traversal to the invoices that existed when it was read: an invoice created after it does not appear on later pages of the same traversal, and is listed by a new one. " +
+      "Editing an invoice's issue_date or number moves it in the order, so a traversal already under way may miss it or list it twice.",
     tag: "invoices",
     responseStatus: 200,
     responseSchema: "InvoicePage",
@@ -8560,6 +8566,9 @@ export const generateOpenApiDocument = (): Record<string, unknown> => {
     const entry: Record<string, unknown> = {
       operationId: operation.operationId,
       summary: operation.summary,
+      ...(operation.description === undefined
+        ? {}
+        : { description: operation.description }),
       tags: [operation.tag],
       security: operation.public
         ? []

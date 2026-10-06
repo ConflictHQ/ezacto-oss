@@ -50,7 +50,15 @@ Lists accept `per_page` (`1..200`, default `50`) and an opaque `cursor`. A page 
 
 The first request captures the collection's maximum SQLite row id. Every later page
 uses the cursor's same high-water id and an exclusive last-seen id, so native
-concurrent inserts cannot move or extend the traversal. Cursors are versioned,
+concurrent inserts cannot move or extend the traversal.
+
+`GET /api/v1/invoices` is the exception: it is ordered newest first (issue date,
+then number, then id, all descending; the operation's description states the
+rule), because invoice ids say nothing about age — the Harvest import numbered
+newest first and a native invoice may carry a hash-derived id. Its cursor holds
+the last invoice's place in that order, and the first request captures the
+latest `created_at` instead of a high-water id, so invoices created during the
+traversal stay out of it. Cursors are versioned,
 HMAC-authenticated with a server-owned key of at least 32 bytes, and bound to the
 endpoint, non-pagination filters, and page size. Re-encoding or replaying a cursor in
 another collection scope is rejected. Clients follow `links.next`; they do not

@@ -162,10 +162,11 @@ export const createQuickBooksMirrorSource = (
    * Issue 595. This wrote `invoice_payments` directly and was refused by the
    * ledger trigger, so QuickBooks payments have never reached an invoice. It
    * now goes through the command path, which is the only thing entitled to
-   * write a receipt.
+   * write a receipt -- and says what came of it, so the webhook delivery can
+   * keep the reason a payment was not recorded.
    */
-  recordPayment: async (input) => {
-    await recordCheckoutPayment(database, {
+  recordPayment: (input) =>
+    recordCheckoutPayment(database, {
       invoiceId: input.invoiceId,
       provider: "quickbooks",
       // The realm is the account: it is the company the money was taken into.
@@ -175,6 +176,5 @@ export const createQuickBooksMirrorSource = (
       amountCents: input.amountCents,
       paidOn: input.paidOn,
       now: now().toISOString(),
-    });
-  },
+    }),
 });

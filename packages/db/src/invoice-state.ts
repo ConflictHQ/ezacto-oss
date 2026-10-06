@@ -55,6 +55,7 @@ export type InvoiceCommandOperationErrorCode =
   | 'command_incomplete'
   | 'trigger_row_conflict'
   | 'command_storage_conflict'
+  | 'payment_exceeds_balance'
 
 export class InvoiceCommandOperationError extends Error {
   readonly code: InvoiceCommandOperationErrorCode
@@ -82,6 +83,37 @@ export class InvoiceVersionConflictError extends InvoiceCommandOperationError {
     this.invoiceId = invoiceId
     this.expectedVersion = expectedVersion
     this.actualVersion = actualVersion
+  }
+}
+
+/**
+ * A payment that would take an invoice's balance below zero, or further below.
+ *
+ * The lifecycle itself admits an overpaid invoice -- a Harvest import can carry
+ * one, and a paid invoice is any with nothing left due -- but nothing recorded
+ * here may make one. The QuickBooks webhook recorded a payment the operator had
+ * already marked paid, which left the invoice overpaid by its whole amount; a
+ * person typing an amount larger than what is owed is the same mistake made by
+ * hand. Refused at the command, after the version check, so it is decided
+ * against exactly the balance the write would land on.
+ */
+export class InvoicePaymentExceedsBalanceError extends InvoiceCommandOperationError {
+  readonly invoiceId: number
+  readonly amountCents: number
+  /** The most this payment can be without overpaying the invoice. */
+  readonly maximumCents: number
+
+  constructor(invoiceId: number, amountCents: number, maximumCents: number) {
+    super(
+      'payment_exceeds_balance',
+      maximumCents <= 0
+        ? `invoice ${invoiceId} has nothing left due, so a payment of ${amountCents} would overpay it`
+        : `a payment of ${amountCents} is more than the ${maximumCents} invoice ${invoiceId} still owes`,
+    )
+    this.name = 'InvoicePaymentExceedsBalanceError'
+    this.invoiceId = invoiceId
+    this.amountCents = amountCents
+    this.maximumCents = maximumCents
   }
 }
 
@@ -2014,6 +2046,17 @@ export const recordInvoicePayment = async (
     throw new InvoiceVersionConflictError(input.invoiceId, input.expectedVersion, before.version)
   }
   if (payment.currency !== before.currency) invalidInput('payment currency must match invoice')
+  // Typed in by a person or reported by a provider: either can be the same
+  // money twice, and neither may overpay. A confirmed bank deposit is the money
+  // that actually arrived, applied whole by a person matching it, so whether it
+  // belongs on this invoice is theirs to decide.
+  if (input.payment.type !== 'bank_deposit' && payment.amountCents > before.dueAmountCents) {
+    throw new InvoicePaymentExceedsBalanceError(
+      input.invoiceId,
+      payment.amountCents,
+      before.dueAmountCents,
+    )
+  }
 
   const reduction = reduceInvoicePaymentMutation(before, {
     kind: 'record',
@@ -2150,6 +2193,16 @@ const mutateExistingInvoicePayment = async (
       updatedAt: input.occurredAt,
     }
     afterDueAmountCents = before.dueAmountCents + payment.amountCents - update.amountCents
+    // Raising a payment past what the invoice owes is the same overpayment as
+    // recording one. Lowering it, or changing only its date or note, is never
+    // refused, even on an invoice imported payments have already overpaid.
+    if (update.amountCents > payment.amountCents && afterDueAmountCents < 0) {
+      throw new InvoicePaymentExceedsBalanceError(
+        input.invoiceId,
+        update.amountCents,
+        before.dueAmountCents + payment.amountCents,
+      )
+    }
     paymentTimestamp = { paidAt: update.paidAt, paidDate: update.paidDate }
     triggerMutation = {
       text: `UPDATE invoice_payments

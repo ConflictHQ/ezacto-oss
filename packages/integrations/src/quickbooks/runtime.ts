@@ -21,6 +21,7 @@ import {
   mirrorInvoice,
   mirrorPayment,
   parseWebhookNotification,
+  receiptIdFromRefNumber,
   refreshAccessToken,
   revokeConnection,
   verifyWebhookSignature,
@@ -186,6 +187,11 @@ export interface QuickBooksConnectionStore {
     syncToken: string;
     now: string;
   }): Promise<void>;
+  /** The receipt of ours a QuickBooks payment was made from, where the mirror made it. */
+  readPaymentLinkByQuickBooksId(input: {
+    realmId: string;
+    quickBooksId: string;
+  }): Promise<{ paymentId: number } | null>;
   /** The latest attempt per invoice, overwritten every time (issue 819). */
   recordMirrorOutcome(input: {
     invoiceId: number;
@@ -272,8 +278,34 @@ export interface QuickBooksMirrorSource {
     realmId: string;
     /** QuickBooks' own id for the payment; the receipt's provider reference. */
     quickBooksPaymentId: string;
-  }): Promise<void>;
+  }): Promise<QuickBooksPaymentRecording>;
 }
+
+/**
+ * What recording a payment that came back from QuickBooks came to. Anything
+ * but `recorded` wrote nothing, and the webhook delivery keeps the reason.
+ * `exceeds_balance` is a payment larger than what the invoice still owes:
+ * left unrecorded rather than overpaying the invoice, for a person to look at.
+ */
+export type QuickBooksPaymentRecording =
+  | "recorded"
+  | "already_recorded"
+  | "invoice_not_payable"
+  | "exceeds_balance";
+
+/** Why a line of an inbound payment was not recorded, for the delivery's record. */
+const notRecorded: Record<Exclude<QuickBooksPaymentRecording, "recorded">, string> = {
+  already_recorded: "already recorded",
+  invoice_not_payable: "the invoice cannot take a payment",
+  exceeds_balance: "more than the invoice still owes, so not recorded; needs review",
+};
+
+/** The delivery's reason for a payment the mirror made from one of our receipts. */
+const mirroredFromHere = (paymentId: number): string =>
+  `the payment was mirrored from ezacto (payment ${String(paymentId)})`;
+
+/** `skipped_reason` holds 255 characters; a reason is cut, not refused. */
+const maximumSkippedReasonLength = 255;
 
 export interface QuickBooksRuntimeOptions {
   readonly config: QuickBooksConfig;
@@ -688,6 +720,20 @@ export const createQuickBooksRuntime = (
     };
   };
 
+  /** Whether a receipt of ours, not one QuickBooks recorded, is on an invoice those lines settle. */
+  const isReceiptOn = async (
+    receiptId: number,
+    lines: readonly { readonly ezactoInvoiceId: number }[],
+  ): Promise<boolean> => {
+    for (const invoiceId of new Set(lines.map((line) => line.ezactoInvoiceId))) {
+      const receipts = await source.readPayments(invoiceId);
+      if (receipts.some((receipt) => receipt.id === receiptId && receipt.provider !== "quickbooks")) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   const service: QuickBooksService = {
     clientId: () => clientId,
     callbackUrl,
@@ -844,6 +890,21 @@ export const createQuickBooksRuntime = (
           await complete("the payment no longer exists");
           continue;
         }
+        // One of our own receipts coming back. A payment recorded here --
+        // Mark paid, or a provider's -- is copied into QuickBooks by
+        // `mirrorPayment`, and QuickBooks then announces the payment it made
+        // like any other. Recorded again, it settled the invoice a second time
+        // and left it overpaid by the whole amount. `mirrorPayment` already
+        // refuses the other direction; this is its counterpart. The link is
+        // the mirror's record of what it made.
+        const mirrored = await store.readPaymentLinkByQuickBooksId({
+          realmId: change.realmId,
+          quickBooksId: payment.Id,
+        });
+        if (mirrored !== null) {
+          await complete(mirroredFromHere(mirrored.paymentId));
+          continue;
+        }
         const resolved = new Map<string, number | null>();
         for (const line of payment.Line ?? []) {
           for (const linked of line.LinkedTxn ?? []) {
@@ -856,16 +917,35 @@ export const createQuickBooksRuntime = (
           }
         }
         const ours = inboundPayments(payment, (id) => resolved.get(id) ?? null);
+        // The same receipt with its link not yet written: the mirror saves the
+        // link once QuickBooks has answered the create, and a delivery can
+        // overtake that write. The reference is on the payment from the
+        // start, and names a receipt on the invoice the payment settles.
+        const referenced = receiptIdFromRefNumber(payment.PaymentRefNum);
+        if (referenced !== null && (await isReceiptOn(referenced, ours))) {
+          await complete(mirroredFromHere(referenced));
+          continue;
+        }
+        const refusals: string[] = [];
         for (const row of ours) {
-          await source.recordPayment({
+          const recording = await source.recordPayment({
             invoiceId: row.ezactoInvoiceId,
             amountCents: row.amountCents,
             paidOn: row.paidOn,
             realmId: change.realmId,
             quickBooksPaymentId: row.quickBooksPaymentId,
           });
+          if (recording !== "recorded") {
+            refusals.push(`invoice ${String(row.ezactoInvoiceId)}: ${notRecorded[recording]}`);
+          }
         }
-        await complete(ours.length === 0 ? "no line settles an invoice we mirrored" : undefined);
+        await complete(
+          ours.length === 0
+            ? "no line settles an invoice we mirrored"
+            : refusals.length === 0
+              ? undefined
+              : refusals.join("; ").slice(0, maximumSkippedReasonLength),
+        );
       }
       return { accepted: true };
     },
