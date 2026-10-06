@@ -415,7 +415,10 @@ export class SesMailer implements HttpEmailProvider {
     if (message.attachments !== undefined && message.attachments.length > 0) {
       throw new RangeError("SES cannot send attachments");
     }
-    if (message.to.length > 50) {
+    // SES counts the recipients of one message across To and Cc together, not
+    // To alone.
+    const cc = message.cc ?? [];
+    if (message.to.length + cc.length > 50) {
       throw new RangeError("SES message cannot exceed 50 recipients");
     }
     const idempotencyKey = bounded(
@@ -427,7 +430,10 @@ export class SesMailer implements HttpEmailProvider {
       throw new RangeError("SES idempotency key is invalid");
     }
 
-    for (const recipient of message.to) {
+    // A Cc address is delivered to like a To address, so a suppressed one
+    // refuses the message the same way. Checking only To would let a message
+    // go out and be recorded as sent while one of its recipients never got it.
+    for (const recipient of [...message.to, ...cc]) {
       const suppression = await this.getSuppressedDestination(
         recipient.email,
         options.signal,
@@ -456,7 +462,10 @@ export class SesMailer implements HttpEmailProvider {
     }
     const payload: Record<string, unknown> = {
       FromEmailAddress: recipientAddress(message.from),
-      Destination: { ToAddresses: message.to.map(recipientAddress) },
+      Destination: {
+        ToAddresses: message.to.map(recipientAddress),
+        ...(cc.length === 0 ? {} : { CcAddresses: cc.map(recipientAddress) }),
+      },
       Content: {
         Simple: {
           Subject: {

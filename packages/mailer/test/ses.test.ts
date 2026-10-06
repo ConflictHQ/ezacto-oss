@@ -241,3 +241,105 @@ describe("SES HTTP provider", () => {
     ).toThrow("SES configuration set is invalid");
   });
 });
+
+describe("SES cc", () => {
+  const copied = [
+    { email: "controller@example.test", name: "Vale, Rowan" },
+    { email: "founder@example.test" },
+  ];
+  const suppression = "/v2/email/suppression/addresses/";
+  const options = () => ({
+    signal: new AbortController().signal,
+    idempotencyKey: "ezacto-email-9",
+  });
+
+  it("[unit] checks every copied address for suppression, then sends Destination.CcAddresses", async () => {
+    const requests: Request[] = [];
+    const provider = new SesMailer(config, {
+      fetch: async (request) => {
+        requests.push(request.clone());
+        return request.method === "GET"
+          ? response({}, 404, "suppression-request")
+          : response({ MessageId: "ses-message-9" }, 200, "send-request");
+      },
+    });
+
+    await expect(
+      provider.send({ ...message, cc: copied }, options()),
+    ).resolves.toMatchObject({ messageId: "ses-message-9" });
+    expect(
+      requests.map((request) => [request.method, new URL(request.url).pathname]),
+    ).toEqual([
+      ["GET", `${suppression}owner%40example.test`],
+      ["GET", `${suppression}controller%40example.test`],
+      ["GET", `${suppression}founder%40example.test`],
+      ["POST", "/v2/email/outbound-emails"],
+    ]);
+    const payload = JSON.parse(await requests[3]!.text()) as {
+      Destination: unknown;
+    };
+    expect(payload.Destination).toEqual({
+      ToAddresses: ["Avery <owner@example.test>"],
+      CcAddresses: [
+        '"Vale, Rowan" <controller@example.test>',
+        "founder@example.test",
+      ],
+    });
+  });
+
+  it("[unit] refuses terminally when a copied address is suppressed, before sending", async () => {
+    const requests: Request[] = [];
+    const provider = new SesMailer(config, {
+      fetch: async (request) => {
+        requests.push(request.clone());
+        return new URL(request.url).pathname ===
+          `${suppression}controller%40example.test`
+          ? response(
+              {
+                SuppressedDestination: {
+                  EmailAddress: "controller@example.test",
+                  Reason: "COMPLAINT",
+                  LastUpdateTime: "2026-09-30T12:00:00Z",
+                },
+              },
+              200,
+              "suppression-request",
+            )
+          : response({}, 404, "suppression-request");
+      },
+    });
+
+    await expect(
+      provider.send({ ...message, cc: copied }, options()),
+    ).rejects.toMatchObject({
+      name: "EmailProviderTerminalError",
+      reason: "recipient_suppressed:COMPLAINT",
+    });
+    expect(requests.map((request) => request.method)).toEqual(["GET", "GET"]);
+  });
+
+  it("[unit] counts cc against the 50-recipient cap before any request", async () => {
+    const requests: Request[] = [];
+    const provider = new SesMailer(config, {
+      fetch: async (request) => {
+        requests.push(request);
+        return request.method === "GET"
+          ? response({}, 404)
+          : response({ MessageId: "ses-message-10" });
+      },
+    });
+    const copies = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        email: `copy-${String(index)}@example.test`,
+      }));
+
+    await expect(
+      provider.send({ ...message, cc: copies(50) }, options()),
+    ).rejects.toThrow("SES message cannot exceed 50 recipients");
+    expect(requests).toHaveLength(0);
+
+    await provider.send({ ...message, cc: copies(49) }, options());
+    // Fifty suppression checks, one for each recipient, then the send.
+    expect(requests).toHaveLength(51);
+  });
+});

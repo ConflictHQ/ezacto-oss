@@ -87,6 +87,12 @@ export interface EmailMessage {
   from: EmailSender
   replyTo?: readonly EmailRecipient[]
   to: readonly EmailRecipient[]
+  /**
+   * Copied on the same message rather than sent a message of their own.
+   * Everyone on it sees the Cc line, which is the point: an invoice goes to
+   * the person who pays it, and the people copied can see that it did.
+   */
+  cc?: readonly EmailRecipient[]
   template: string
   subject: string
   text: string
@@ -105,6 +111,8 @@ export interface EmailLogRecord {
   from: EmailSender | null
   replyTo: EmailRecipient[]
   to: EmailRecipient[]
+  /** The Cc header; empty for a message that copied nobody. */
+  cc: EmailRecipient[]
   template: string
   subject: string
   provider: string | null
@@ -199,7 +207,14 @@ export interface EmailProviderReceipt {
 }
 
 export interface QueuedMailer {
-  enqueue(message: EmailMessage): Promise<EmailLogRecord>
+  /**
+   * Logs and queues a message. Files ride as references, never bytes, for the
+   * same reason they do on `enqueueExisting`.
+   */
+  enqueue(
+    message: EmailMessage,
+    attachments?: readonly EmailAttachmentRef[],
+  ): Promise<EmailLogRecord>
   /** Queue an already-persisted log row. Retries reuse its deterministic id. */
   enqueueExisting?(
     deliveryId: number,
@@ -257,6 +272,43 @@ const mailbox = (
     : { email, name: headerText(value.name, `${label} name`, 200) }
 }
 
+/**
+ * Cc recipients are validated as To recipients are, and counted with them
+ * against the same limit, because they are delivered to the same way.
+ *
+ * An address listed twice, or already in To, is refused rather than quietly
+ * collapsed. SMTP collapses repeats into one envelope recipient, so the server
+ * would accept fewer addresses than the message names and a delivered message
+ * would be recorded as a partial one. Refusing also tells the caller its list
+ * was wrong, which collapsing would hide.
+ *
+ * `to` is the already-normalized list, so the comparison is case-insensitive.
+ */
+const copyCc = (
+  cc: readonly EmailRecipient[],
+  to: readonly EmailRecipient[],
+): EmailRecipient[] => {
+  if (!Array.isArray(cc) || cc.length < 1) {
+    throw new RangeError('cc must be a list of at least 1 recipient when present')
+  }
+  if (to.length + cc.length > 100) {
+    throw new RangeError('to and cc must together contain at most 100 recipients')
+  }
+  const addressed = new Set(to.map((recipient) => recipient.email))
+  const copied = new Set<string>()
+  return cc.map((value) => {
+    const recipient = mailbox(value, 'cc')
+    if (addressed.has(recipient.email)) {
+      throw new RangeError('cc must not repeat a recipient already in to')
+    }
+    if (copied.has(recipient.email)) {
+      throw new RangeError('cc must not list a recipient more than once')
+    }
+    copied.add(recipient.email)
+    return recipient
+  })
+}
+
 const copyMessage = (message: EmailMessage): EmailMessage => {
   if (!Array.isArray(message.to) || message.to.length < 1 || message.to.length > 100) {
     throw new RangeError('to must contain between 1 and 100 recipients')
@@ -270,6 +322,7 @@ const copyMessage = (message: EmailMessage): EmailMessage => {
   if (replyTo !== undefined && (replyTo.length < 1 || replyTo.length > 10)) {
     throw new RangeError('replyTo must contain between 1 and 10 recipients')
   }
+  const cc = message.cc === undefined ? undefined : copyCc(message.cc, recipients)
   const related = message.related
   if (
     related !== undefined &&
@@ -281,6 +334,7 @@ const copyMessage = (message: EmailMessage): EmailMessage => {
     from,
     ...(replyTo === undefined ? {} : { replyTo }),
     to: recipients,
+    ...(cc === undefined ? {} : { cc }),
     template: headerText(message.template, 'template', 128),
     subject: headerText(message.subject, 'subject', 998),
     text: text(message.text, 'text', 1_000_000),
@@ -297,7 +351,7 @@ export const createQueuedMailer = (
   log: EmailLogStore,
   queue: EmailQueue,
 ): QueuedMailer => ({
-  async enqueue(message) {
+  async enqueue(message, attachments) {
     const safeMessage = copyMessage(message)
     const delivery = await log.createQueued(safeMessage)
     try {
@@ -305,6 +359,9 @@ export const createQueuedMailer = (
         schemaVersion: 1,
         deliveryId: delivery.id,
         message: safeMessage,
+        ...(attachments === undefined || attachments.length === 0
+          ? {}
+          : { attachments: attachments.map((reference) => ({ ...reference })) }),
       })
     } catch {
       await log.markQueueFailed(delivery.id)
@@ -353,6 +410,8 @@ export interface SenderBoundQueuedMailer {
     message: Omit<EmailMessage, 'from' | 'replyTo'> & {
       senderIdentityId?: number
     },
+    /** Files to attach, by reference. Bytes never ride the queue. */
+    attachments?: readonly EmailAttachmentRef[],
   ): Promise<EmailLogRecord>
   enqueuePersisted?(
     deliveryId: number,
@@ -402,7 +461,7 @@ export const createDeploymentSenderQueuedMailer = (
         )
       }
     },
-    enqueue(message) {
+    enqueue(message, attachments) {
       if (message.senderIdentityId !== undefined) {
         throw new SenderIdentityUnavailableError(
           'sender_identity_missing',
@@ -412,12 +471,13 @@ export const createDeploymentSenderQueuedMailer = (
       return queued.enqueue({
         from: sender,
         to: message.to,
+        ...(message.cc === undefined ? {} : { cc: message.cc }),
         template: message.template,
         subject: message.subject,
         text: message.text,
         ...(message.html === undefined ? {} : { html: message.html }),
         ...(message.related === undefined ? {} : { related: message.related }),
-      })
+      }, ...(attachments === undefined ? [] : [attachments]))
     },
     enqueuePersisted() {
       throw new SenderIdentityUnavailableError('sender_identity_missing', null)
@@ -482,7 +542,7 @@ export const createSenderBoundQueuedMailer = (
     async assertAvailable(senderIdentityId) {
       await resolveAvailable(senderIdentityId)
     },
-    async enqueue(message) {
+    async enqueue(message, attachments) {
       const identity = await resolveAvailable(message.senderIdentityId)
       return queued.enqueue({
         from: { email: identity.email, name: identity.displayName },
@@ -490,12 +550,13 @@ export const createSenderBoundQueuedMailer = (
           ? {}
           : { replyTo: [{ email: identity.replyToEmail }] }),
         to: message.to,
+        ...(message.cc === undefined ? {} : { cc: message.cc }),
         template: message.template,
         subject: message.subject,
         text: message.text,
         ...(message.html === undefined ? {} : { html: message.html }),
         ...(message.related === undefined ? {} : { related: message.related }),
-      })
+      }, ...(attachments === undefined ? [] : [attachments]))
     },
     async enqueuePersisted(deliveryId, binding, message, attachments) {
       const identity = await resolveAvailable(binding.senderIdentityId)
