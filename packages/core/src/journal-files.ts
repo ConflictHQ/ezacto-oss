@@ -4,6 +4,7 @@ import {
   type JournalDetail,
   type JournalDocumentInput,
   type JournalEntry,
+  type JournalReportInput,
 } from "./journal-document.js";
 import { renderJournalWorkbook } from "./journal-xlsx.js";
 
@@ -94,7 +95,7 @@ export const journalFilename = (
 
 export const renderJournalFile = (
   format: JournalFormat,
-  input: JournalDocumentInput,
+  input: JournalDocumentInput | JournalReportInput,
 ): Uint8Array => {
   switch (format) {
     case "pdf":

@@ -1,8 +1,11 @@
 import {
+  journalDecimalHours,
   journalHasRoles,
   journalProjectLabel,
+  journalTimeframe,
   summariseJournal,
   type JournalDocumentInput,
+  type JournalReportInput,
 } from "./journal-document.js";
 import { zipStore } from "./zip.js";
 
@@ -30,7 +33,11 @@ const XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 /** The most characters Excel holds in one cell. The PDF and CSV carry the rest. */
 const CELL_LIMIT = 32_767;
 
-/** Rows above the table: title, invoice, client, period, and a blank. */
+/**
+ * Rows above an invoice's table: title, invoice, client, period, and a blank.
+ * A report exported on its own sets its recap there instead, so its header row
+ * sits wherever that block ends.
+ */
 const HEADER_ROW = 6;
 
 /** Indexes into `cellXfs` below. */
@@ -132,6 +139,8 @@ const dateSerial = (value: string): number | null => {
 interface Sheet {
   readonly name: string;
   readonly widths: readonly number[];
+  /** The table's own header, one-based: the panes freeze beneath it. */
+  readonly headerRow: number;
   readonly rows: readonly (readonly (Cell | null)[])[];
 }
 
@@ -143,23 +152,43 @@ const hoursOf = (seconds: number): number => seconds / 3600;
 /** Sums in order, as the SUM in the cell beside it will. */
 const sumOf = (values: readonly number[]): number => values.reduce((sum, value) => sum + value, 0);
 
-const sheetFor = (input: JournalDocumentInput): Sheet => {
-  const detailed = input.detail === "detailed";
-  const title: (Cell | null)[][] = [
-    [{ kind: "text", value: detailed ? "Work detail" : "Work summary", style: STYLE.title }],
-    [text("Invoice", STYLE.bold), text(input.invoiceNumber, 0)],
-    [text("Client", STYLE.bold), text(input.clientName, 0)],
-    input.periodStart !== null && input.periodEnd !== null
-      ? [text("Period", STYLE.bold), text(`${input.periodStart} to ${input.periodEnd}`, 0)]
-      : [],
+/**
+ * The report's recap as the PDF sets it -- timeframe, total, then what the
+ * report was asked for -- one label and value a row, above the table.
+ */
+const reportTitle = (input: JournalReportInput, name: string): (Cell | null)[][] => {
+  const total = input.entries.reduce((sum, entry) => sum + entry.seconds, 0);
+  return [
+    [{ kind: "text", value: name, style: STYLE.title }],
+    [text("Timeframe", STYLE.bold), text(journalTimeframe(input.periodStart, input.periodEnd), 0)],
+    [text("Total", STYLE.bold), text(`${journalDecimalHours(total)} ${input.recap.hoursLabel}`, 0)],
+    ...input.recap.scope.map(([label, value]) => [text(label, STYLE.bold), text(value, 0)]),
     [],
   ];
-  const firstData = HEADER_ROW + 1;
+};
+
+const sheetFor = (input: JournalDocumentInput | JournalReportInput): Sheet => {
+  const detailed = input.detail === "detailed";
+  const reportName = detailed ? "Detailed time report" : "Summary time report";
+  const title: (Cell | null)[][] =
+    "recap" in input
+      ? reportTitle(input, reportName)
+      : [
+          [{ kind: "text", value: detailed ? "Work detail" : "Work summary", style: STYLE.title }],
+          [text("Invoice", STYLE.bold), text(input.invoiceNumber, 0)],
+          [text("Client", STYLE.bold), text(input.clientName, 0)],
+          input.periodStart !== null && input.periodEnd !== null
+            ? [text("Period", STYLE.bold), text(`${input.periodStart} to ${input.periodEnd}`, 0)]
+            : [],
+          [],
+        ];
+  const headerRow = "recap" in input ? title.length + 1 : HEADER_ROW;
+  const firstData = headerRow + 1;
 
   if (detailed) {
     const roles = journalHasRoles(input.entries);
     const values = input.entries.map((entry) => hoursOf(entry.seconds));
-    const lastData = HEADER_ROW + input.entries.length;
+    const lastData = headerRow + input.entries.length;
     const headers = ["Date", "Client", "Project", "Task", ...(roles ? ["Role"] : []), "Person", "Notes"];
     const hoursColumn = columnName(headers.length);
     const rows: (Cell | null)[][] = [
@@ -192,15 +221,16 @@ const sheetFor = (input: JournalDocumentInput): Sheet => {
       ],
     ];
     return {
-      name: "Work detail",
+      name: "recap" in input ? reportName : "Work detail",
       widths: [12, 22, 28, 18, ...(roles ? [16] : []), 20, 60, 10],
+      headerRow,
       rows,
     };
   }
 
   const groups = summariseJournal(input.entries);
   const values = groups.map((group) => hoursOf(group.seconds));
-  const lastData = HEADER_ROW + groups.length;
+  const lastData = headerRow + groups.length;
   const rows: (Cell | null)[][] = [
     ...title,
     [text("Project", STYLE.bold), text("Entries", STYLE.figureHeading), text("Hours", STYLE.figureHeading)],
@@ -231,7 +261,7 @@ const sheetFor = (input: JournalDocumentInput): Sheet => {
           },
         ],
   ];
-  return { name: "Work summary", widths: [40, 10, 10], rows };
+  return { name: "recap" in input ? reportName : "Work summary", widths: [40, 10, 10], headerRow, rows };
 };
 
 const worksheetXml = (sheet: Sheet, strings: Map<string, number>, uses: { count: number }): string => {
@@ -274,13 +304,13 @@ const worksheetXml = (sheet: Sheet, strings: Map<string, number>, uses: { count:
     .join("");
   // Frozen under the table's header row, so the column names and the title
   // block above them stay in view however long the list runs.
-  const firstBody = `A${String(HEADER_ROW + 1)}`;
+  const firstBody = `A${String(sheet.headerRow + 1)}`;
   return (
     XML_DECLARATION +
     `<worksheet xmlns="${MAIN}" xmlns:r="${RELATIONSHIPS}">` +
     `<dimension ref="A1:${lastColumn}${String(sheet.rows.length)}"/>` +
     `<sheetViews><sheetView workbookViewId="0">` +
-    `<pane ySplit="${String(HEADER_ROW)}" topLeftCell="${firstBody}" activePane="bottomLeft" state="frozen"/>` +
+    `<pane ySplit="${String(sheet.headerRow)}" topLeftCell="${firstBody}" activePane="bottomLeft" state="frozen"/>` +
     `<selection pane="bottomLeft" activeCell="${firstBody}" sqref="${firstBody}"/>` +
     `</sheetView></sheetViews>` +
     `<sheetFormatPr defaultRowHeight="15"/>` +
@@ -368,7 +398,7 @@ const workbookXml = (sheetName: string): string =>
   `<sheets><sheet name="${escapeAttribute(sheetName)}" sheetId="1" r:id="rId1"/></sheets>` +
   `</workbook>`;
 
-export const renderJournalWorkbook = (input: JournalDocumentInput): Uint8Array => {
+export const renderJournalWorkbook = (input: JournalDocumentInput | JournalReportInput): Uint8Array => {
   const sheet = sheetFor(input);
   const strings = new Map<string, number>();
   const uses = { count: 0 };
