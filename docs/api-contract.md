@@ -77,6 +77,22 @@ without invoice authority receive the generic `locked` / `This record is locked.
 reason on reads and rejected mutations. Other operational lock reasons remain
 visible. Browser displays and exports must not infer "not invoiced" from omission.
 
+Time entries belong to one person, and administrators alone may act on anyone's
+(issue 917). `GET /api/v1/time-entries` and `GET /api/v1/time-entry-options`
+answer for the acting user unless `user_id` names somebody else, which is 403
+`row_forbidden` for every other profile, executive managers included. An
+administrator may also read, update, stop and delete any entry by id, and create
+stopped time for anyone by sending `user_id`; everyone else gets 404 for another
+person's entry. An entry's owner never changes, and starting or restarting a
+timer for somebody else is refused with `timer_owned`. Timesheet locks, approved
+weeks and invoice claims refuse an administrator exactly as they refuse the
+owner. Each change made on somebody else's behalf writes a
+`time_entry.created_on_behalf`, `updated_on_behalf`, `stopped_on_behalf` or
+`deleted_on_behalf` event to the outbox in the same transaction as the change.
+The event names the administrator as `actor` and the owner as
+`time_entry.user_id`, and carries before and after snapshots without rates. The
+activity log records it like any other event.
+
 General-resource commercial fields are classified in `@ezacto/core`:
 client payment terms/tax/discount defaults, project billing method/bill-by/currency,
 and contact invoice-recipient routing. Finance, executive, administrator, and
