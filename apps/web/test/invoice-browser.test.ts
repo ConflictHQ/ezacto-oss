@@ -11,7 +11,7 @@ import {
   type Whoami,
 } from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
-import { createInvoicePaymentController } from '../src/invoices/browser.js'
+import { createInvoicePaymentController, setInvoiceClientNames } from '../src/invoices/browser.js'
 import {
   invoiceQuickBooksLine,
   invoiceRemindersLine,
@@ -120,8 +120,13 @@ const deferred = <Value>() => {
   return { promise, resolve: (value: Value) => resolve?.(value) }
 }
 
-const renderDetail = (): void => {
-  window.history.replaceState(null, '', '/invoices/7')
+/**
+ * The detail page, by default at the record id: the fixtures here vary the
+ * number from test to test and read the invoice by id, so the id address is
+ * the one that needs no lookup. The number addresses have tests of their own.
+ */
+const renderDetail = (path = '/invoices/by-id/7'): void => {
+  window.history.replaceState(null, '', path)
   document.open()
   document.write(
     renderAppShell({
@@ -236,6 +241,11 @@ describe('invoice payment controller', () => {
         selectedSession === 1
           ? invoice('FIRST')
           : invoice('SECOND', { notes: 'Only second user can see this', due_date: '2099-08-31' }),
+      ),
+      // The first session moved the address onto the invoice's number, so the
+      // second reads the page from there.
+      findInvoiceByNumber: vi.fn(async (number: string) =>
+        number === 'FIRST' ? invoice('FIRST') : null,
       ),
       listInvoiceMessages: vi.fn(async () => []),
       listInvoicePayments: vi.fn(async () => []),
@@ -664,13 +674,13 @@ describe('invoice payment controller', () => {
     const edit = document.querySelector<HTMLAnchorElement>('[data-invoice-edit]')!
     expect(edit.tagName).toBe('A')
     expect(edit.hidden).toBe(false)
-    expect(edit.getAttribute('href')).toBe('/invoices/7/edit')
+    expect(edit.getAttribute('href')).toBe('/invoices/LINKS/edit')
     expect(edit.hasAttribute('aria-disabled')).toBe(false)
     const add = document.querySelector<HTMLAnchorElement>('[data-invoice-line-add]')!
     expect(add.hidden).toBe(false)
-    expect(add.getAttribute('href')).toBe('/invoices/7/edit#new-line')
+    expect(add.getAttribute('href')).toBe('/invoices/LINKS/edit#new-line')
     const lineEdit = document.querySelector<HTMLAnchorElement>('[data-invoice-line-edit="21"]')!
-    expect(lineEdit.getAttribute('href')).toBe('/invoices/7/edit#line-21')
+    expect(lineEdit.getAttribute('href')).toBe('/invoices/LINKS/edit#line-21')
     // Removing a line happens on the edit page too, where it can be undone
     // until the page saves; there is no second, immediate delete here.
     expect(document.querySelector('[data-invoice-line-delete]')).toBeNull()
@@ -724,9 +734,13 @@ describe('invoice payment controller', () => {
   })
 
   it('[browser] says what the edit page saved once the document is up, and only once', async () => {
-    renderDetail()
-    leavePageNotice('/invoices/7', 'Invoice saved.')
+    // The editor goes back to the invoice's number, and leaves the notice there.
+    renderDetail('/invoices/SAVED')
+    leavePageNotice('/invoices/SAVED', 'Invoice saved.')
     const api: Partial<InvoicePaymentApi> = {
+      findInvoiceByNumber: vi.fn(async (number: string) =>
+        number === 'SAVED' ? invoice('SAVED') : null,
+      ),
       getInvoice: vi.fn(async () => invoice('SAVED')),
       listInvoiceMessages: vi.fn(async () => []),
       listInvoicePayments: vi.fn(async () => []),
@@ -740,13 +754,177 @@ describe('invoice payment controller', () => {
     )
     expect(status()).toBe('Invoice saved.')
 
-    renderDetail()
+    renderDetail('/invoices/SAVED')
     await createInvoicePaymentController(api).activate(
       identity(1),
       new AbortController().signal,
       () => false,
     )
     expect(status()).toBe('')
+  })
+
+  it('[browser] opens the invoice its number names, leading zero and all, and looks it up once', async () => {
+    renderDetail('/invoices/0089')
+    const findInvoiceByNumber = vi.fn(async (number: string) =>
+      number === '0089' ? invoice('0089') : null,
+    )
+    const getInvoice = vi.fn(async () => invoice('0089'))
+    const listInvoiceMessages = vi.fn(async () => [])
+    const listInvoicePayments = vi.fn(async () => [])
+    await createInvoicePaymentController({
+      findInvoiceByNumber,
+      getInvoice,
+      listInvoiceMessages,
+      listInvoicePayments,
+      recordInvoicePayment: vi.fn(async () =>
+        invoice('0089', { state: 'paid', due_amount_cents: 0, paid_date: '2026-08-28' }),
+      ),
+    }).activate(identity(1), new AbortController().signal, () => false)
+
+    // Asked as the text in the address -- "0089", not 89 -- and from there
+    // the page reads the record by its id, as it always has.
+    expect(findInvoiceByNumber).toHaveBeenCalledWith('0089', expect.any(AbortSignal))
+    expect(getInvoice).toHaveBeenCalledWith(7, expect.any(AbortSignal))
+    expect(listInvoiceMessages).toHaveBeenCalledWith(7, expect.any(AbortSignal))
+    expect(listInvoicePayments).toHaveBeenCalledWith(7, expect.any(AbortSignal))
+    expect(document.querySelector('[data-invoice-detail-number]')?.textContent).toBe('0089')
+    expect(globalThis.location.pathname).toBe('/invoices/0089')
+
+    // The refresh after a payment reads the invoice the page already is,
+    // rather than looking its number up again.
+    document.querySelector<HTMLButtonElement>('[data-invoice-payment-settle]')!.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-detail-status]')?.textContent).toBe(
+        'Invoice marked paid.',
+      ),
+    )
+    expect(getInvoice).toHaveBeenCalledTimes(2)
+    expect(findInvoiceByNumber).toHaveBeenCalledTimes(1)
+  })
+
+  it('[browser] opened by id, lands on the number with its query and hash', async () => {
+    renderDetail('/invoices/by-id/7?from=report#payments')
+    const entries = globalThis.history.length
+    const findInvoiceByNumber = vi.fn(async () => null)
+    const getInvoice = vi.fn(async () => invoice('4021'))
+    await createInvoicePaymentController({
+      findInvoiceByNumber,
+      getInvoice,
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+    }).activate(identity(1), new AbortController().signal, () => false)
+
+    expect(getInvoice).toHaveBeenCalledWith(7, expect.any(AbortSignal))
+    expect(findInvoiceByNumber).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-invoice-detail-number]')?.textContent).toBe('4021')
+    expect(globalThis.location.pathname).toBe('/invoices/4021')
+    expect(globalThis.location.search).toBe('?from=report')
+    expect(globalThis.location.hash).toBe('#payments')
+    // Replaced rather than pushed: going back leaves the invoice, it does not
+    // revisit the id.
+    expect(globalThis.history.length).toBe(entries)
+  })
+
+  it('[browser] stays on the id when the number cannot be its address', async () => {
+    // A space is not a path segment, and "new" is the New invoice dialog.
+    for (const number of ['INV 7', 'new']) {
+      renderDetail()
+      await createInvoicePaymentController({
+        getInvoice: vi.fn(async () => invoice(number)),
+        listInvoiceMessages: vi.fn(async () => []),
+        listInvoicePayments: vi.fn(async () => []),
+      }).activate(identity(1), new AbortController().signal, () => false)
+      expect(document.querySelector('[data-invoice-detail-number]')?.textContent).toBe(number)
+      expect(globalThis.location.pathname).toBe('/invoices/by-id/7')
+    }
+  })
+
+  it('[browser] says so when no invoice has the number in the address, and reads nothing else', async () => {
+    renderDetail('/invoices/89')
+    const findInvoiceByNumber = vi.fn(async (number: string) =>
+      number === '089' ? invoice('089') : null,
+    )
+    const getInvoice = vi.fn(async () => invoice('089'))
+    await createInvoicePaymentController({
+      findInvoiceByNumber,
+      getInvoice,
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+    }).activate(identity(1), new AbortController().signal, () => false)
+
+    // "89" is not "089": no invoice has that number, so nothing is read.
+    expect(findInvoiceByNumber).toHaveBeenCalledWith('89', expect.any(AbortSignal))
+    expect(getInvoice).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-invoice-detail-status]')?.textContent).toBe(
+      'The requested invoice does not exist.',
+    )
+    expect(document.querySelector<HTMLElement>('[data-invoice-document]')?.hidden).toBe(true)
+    expect(document.querySelector<HTMLButtonElement>('[data-invoice-detail-retry]')?.hidden).toBe(
+      false,
+    )
+  })
+
+  it('[browser] names the client on a page opened directly, and reads the name once', async () => {
+    // Saving in the editor lands here on a fresh page, where nobody has loaded
+    // the client's name yet. The page painted "Client #1" -- an internal id on
+    // a document a client is sent -- so it reads the one name it shows.
+    setInvoiceClientNames([])
+    renderDetail('/invoices/SAVED')
+    const getDirectoryClient = vi.fn(async (id: number) => ({
+      id,
+      name: '  Kestrel Environmental ',
+      created_at: timestamp,
+      updated_at: timestamp,
+    }))
+    const getInvoice = vi.fn(async () => invoice('SAVED'))
+    await createInvoicePaymentController({
+      findInvoiceByNumber: vi.fn(async () => invoice('SAVED')),
+      getInvoice,
+      getDirectoryClient,
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+      recordInvoicePayment: vi.fn(async () =>
+        invoice('SAVED', { state: 'paid', due_amount_cents: 0, paid_date: '2026-08-28' }),
+      ),
+    }).activate(identity(1), new AbortController().signal, () => false)
+
+    expect(getDirectoryClient).toHaveBeenCalledWith(1, expect.any(AbortSignal))
+    expect(document.querySelector('[data-invoice-detail-client]')?.textContent).toBe(
+      'Kestrel Environmental',
+    )
+
+    // A refresh shows the same client, and does not ask for it again.
+    document.querySelector<HTMLButtonElement>('[data-invoice-payment-settle]')!.click()
+    await vi.waitFor(() => expect(getInvoice).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-detail-status]')?.textContent).toBe(
+        'Invoice marked paid.',
+      ),
+    )
+    expect(document.querySelector('[data-invoice-detail-client]')?.textContent).toBe(
+      'Kestrel Environmental',
+    )
+    expect(getDirectoryClient).toHaveBeenCalledTimes(1)
+    setInvoiceClientNames([])
+  })
+
+  it('[browser] still shows the invoice when its client cannot be read', async () => {
+    // A token without clients:read, or a request that failed: the name is a
+    // nicety, and the invoice is the page.
+    setInvoiceClientNames([])
+    renderDetail()
+    await createInvoicePaymentController({
+      getInvoice: vi.fn(async () => invoice('UNNAMED')),
+      getDirectoryClient: vi.fn(async () => {
+        throw new EzactoApiError(403, { error: { code: 'forbidden', message: 'No.' } }, null)
+      }),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+    }).activate(identity(1), new AbortController().signal, () => false)
+
+    expect(document.querySelector<HTMLElement>('[data-invoice-document]')?.hidden).toBe(false)
+    expect(document.querySelector('[data-invoice-detail-number]')?.textContent).toBe('UNNAMED')
+    expect(document.querySelector('[data-invoice-detail-client]')?.textContent).toBe('Client #1')
   })
 
   it('[e2e:invoice-state] issues write off from the overflow and gates every other verb', async () => {

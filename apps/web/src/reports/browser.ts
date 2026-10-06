@@ -825,7 +825,9 @@ const renderInvoiced = (report: Readonly<InvoicedReport>): DocumentFragment => {
     line.append(textElement('td', row.issue_date), textElement('td', row.due_date))
     const invoice = element('th')
     invoice.scope = 'row'
-    invoice.append(linkElement(invoicePagePath(row.invoice_id), row.number))
+    invoice.append(
+      linkElement(invoicePagePath({ id: row.invoice_id, number: row.number }), row.number),
+    )
     line.append(invoice)
     const client = element('td')
     client.append(linkElement(`/clients/${row.client_id}`, row.client_name))
@@ -876,7 +878,12 @@ const renderPaymentsReceived = (
     line.append(textElement('td', row.payment_date))
     const invoice = element('th')
     invoice.scope = 'row'
-    invoice.append(linkElement(invoicePagePath(row.invoice_id), row.invoice_number))
+    invoice.append(
+      linkElement(
+        invoicePagePath({ id: row.invoice_id, number: row.invoice_number }),
+        row.invoice_number,
+      ),
+    )
     const client = element('td')
     client.append(linkElement(`/clients/${row.client_id}`, row.client_name))
     line.append(invoice, client, textElement('td', row.provider))
@@ -1597,7 +1604,10 @@ const detailedTimeCells = (
       // acts on, where a dash reads as a value that failed to load.
       claim.append(textElement('span', 'Not claimed', 'report-muted'))
     } else {
-      claim.append(linkElement(invoicePagePath(row.invoice_id), `#${row.invoice_id}`))
+      // The row carries the id and not the number, so the link goes by id.
+      claim.append(
+        linkElement(invoicePagePath({ id: row.invoice_id, number: null }), `#${row.invoice_id}`),
+      )
     }
     cells.push(claim)
   }

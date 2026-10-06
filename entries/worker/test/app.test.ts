@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { invoiceNumberIsAddressable } from '@ezacto/web'
 import {
   createApp,
   type AppEnv,
@@ -48,6 +49,8 @@ describe('worker entry', () => {
       '/invoices',
       '/invoices/1',
       '/invoices/1/edit',
+      '/invoices/by-id/1',
+      '/invoices/by-id/1/edit',
       '/invoices/new',
       '/invoices/recurring',
       '/invoices/recurring/new',
@@ -151,12 +154,96 @@ describe('worker entry', () => {
     expect(detailHtml).toContain('data-ez-theme="precision"')
   })
 
-  it.each(['/invoices/0', '/invoices/nope', '/invoices/9007199254740992'])(
-    '[security] rejects invalid invoice detail path %s',
-    async (path) => {
-      expect((await app.request(path, {}, env)).status).toBe(404)
-    },
-  )
+  it.each([
+    // An id is a positive safe integer, written plainly.
+    '/invoices/by-id/0',
+    '/invoices/by-id/042',
+    '/invoices/by-id/nope',
+    '/invoices/by-id/9007199254740992',
+    '/invoices/by-id',
+    '/invoices/by-id/42/more',
+    // A number is a path segment no browser rewrites, of at most 64 characters.
+    '/invoices/-1',
+    '/invoices/.hidden',
+    '/invoices/INV%207',
+    '/invoices/INV%2F7',
+    '/invoices/%C3%847',
+    `/invoices/${'9'.repeat(65)}`,
+  ])('[security] rejects invalid invoice detail path %s', async (path) => {
+    expect((await app.request(path, {}, env)).status).toBe(404)
+  })
+
+  it.each([
+    ['/invoices/4021', 'invoice-detail'],
+    ['/invoices/089', 'invoice-detail'],
+    ['/invoices/0', 'invoice-detail'],
+    ['/invoices/INV-2026.07_b', 'invoice-detail'],
+    [`/invoices/${'9'.repeat(64)}`, 'invoice-detail'],
+    ['/invoices/4021/edit', 'invoice-edit'],
+    ['/invoices/089/edit', 'invoice-edit'],
+    ['/invoices/by-id/42', 'invoice-detail'],
+    ['/invoices/by-id/9007199254740991', 'invoice-detail'],
+    ['/invoices/by-id/42/edit', 'invoice-edit'],
+  ])('[acceptance] serves %s as the %s page', async (path, view) => {
+    // Addressed by the invoice number, as text -- "089" is its own address --
+    // or by the record id under by-id for a number that cannot be a path.
+    const res = await app.request(path, {}, env)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toContain(`data-app-view="${view}"`)
+  })
+
+  it('[acceptance] keeps every page beside the invoices its own, never an invoice number', async () => {
+    // Registered ahead of /invoices/:invoiceNumber, and refused by it besides:
+    // a tab, the New invoice dialog and the old settings path stay what they
+    // are whatever an invoice happens to be numbered.
+    for (const [path, view] of [
+      ['/invoices/new', 'invoice-generation'],
+      ['/invoices/recurring', 'invoice-recurring'],
+      ['/invoices/retainers', 'invoice-retainers'],
+      ['/invoices/estimates', 'invoice-estimates'],
+    ] as const) {
+      const res = await app.request(path, {}, env)
+      expect(res.status, path).toBe(200)
+      expect(await res.text(), path).toContain(`data-app-view="${view}"`)
+    }
+    const configure = await app.request('/invoices/configure', {}, env)
+    expect(configure.status).toBe(301)
+    expect(configure.headers.get('location')).toBe('/settings/templates')
+    for (const path of [
+      '/invoices/new/edit',
+      '/invoices/recurring/edit',
+      '/invoices/retainers/edit',
+      '/invoices/estimates/edit',
+      '/invoices/configure/edit',
+      '/invoices/by-id/edit',
+    ]) {
+      expect((await app.request(path, {}, env)).status, path).toBe(404)
+    }
+  })
+
+  it('[security] reserves every static page under /invoices/ from the invoice numbers', () => {
+    // The route table is the authority on what else lives under /invoices/;
+    // the web app's rule is what decides which numbers are addresses. A
+    // static page added there without being reserved here would be shadowed
+    // for the links and read as an invoice by the page.
+    const statics = new Set(
+      app.routes
+        .filter((route) => route.method === 'GET')
+        .map((route) => /^\/invoices\/([^/:]+)(?:\/|$)/u.exec(route.path)?.[1])
+        .filter((segment): segment is string => segment !== undefined),
+    )
+    expect([...statics].sort()).toEqual([
+      'by-id',
+      'configure',
+      'estimates',
+      'new',
+      'recurring',
+      'retainers',
+    ])
+    for (const segment of statics) {
+      expect(invoiceNumberIsAddressable(segment), segment).toBe(false)
+    }
+  })
 
   it('[acceptance] serves the invoice editor as a page of its own', async () => {
     // The edit dialog was cramped; the editor is a full page now, beside the
@@ -170,9 +257,11 @@ describe('worker entry', () => {
   })
 
   it.each([
-    '/invoices/0/edit',
-    '/invoices/nope/edit',
-    '/invoices/9007199254740992/edit',
+    '/invoices/by-id/0/edit',
+    '/invoices/by-id/nope/edit',
+    '/invoices/by-id/9007199254740992/edit',
+    '/invoices/-1/edit',
+    '/invoices/INV%207/edit',
     '/invoices/recurring/0/edit',
     '/invoices/recurring/nope/edit',
     '/invoices/recurring/9007199254740992/edit',
@@ -183,7 +272,7 @@ describe('worker entry', () => {
   it.each(['/invoices/recurring/new', '/invoices/recurring/7/edit'])(
     '[acceptance] serves the recurring editor at %s under the Recurring tab',
     async (path) => {
-      // Ahead of /invoices/:invoiceId and its own editor in the table, and a
+      // Ahead of /invoices/:invoiceNumber and its own editor in the table, and a
       // step inside the Recurring tab rather than a destination of its own.
       const res = await app.request(path, {}, env)
       expect(res.status).toBe(200)
@@ -200,9 +289,9 @@ describe('worker entry', () => {
   ])(
     '[acceptance] serves %s under the Invoices strip',
     async (path, view) => {
-      // These three sit ahead of /invoices/:invoiceId in the route table. If
-      // that order ever slips they stop being tabs and start being invoice
-      // numbers that failed to parse, which is a 404.
+      // These three sit ahead of /invoices/:invoiceNumber in the route table.
+      // If that order ever slips they stop being tabs and fall to the number
+      // route, which refuses a reserved segment with a 404.
       const res = await app.request(path, {}, env)
       expect(res.status).toBe(200)
       const html = await res.text()
@@ -212,11 +301,11 @@ describe('worker entry', () => {
     },
   )
 
-  it('[acceptance] keeps /invoices/configure ahead of the invoice-id route', async () => {
+  it('[acceptance] keeps /invoices/configure ahead of the invoice-number route', async () => {
     // It redirects to Settings now (issue 546), but the ordering concern it was
     // written for is unchanged: this path has to be matched before
-    // /invoices/:invoiceId, or "configure" is read as an invoice number that
-    // failed to parse and the redirect becomes a 404.
+    // /invoices/:invoiceNumber, which refuses "configure" as a reserved
+    // segment, or the redirect becomes a 404.
     const res = await app.request('/invoices/configure', {}, env)
     expect(res.status).toBe(301)
     expect(res.headers.get('location')).toBe('/settings/templates')

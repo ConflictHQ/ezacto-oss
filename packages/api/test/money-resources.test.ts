@@ -1345,6 +1345,94 @@ for (const [runtime, factory] of factories) {
       expect(((await everything.json()) as { data: unknown[] }).data).toHaveLength(200);
     });
 
+    // The web app opens /invoices/<number> by asking for exactly that number.
+    // Numbers are text: a book holds "089" and "89" as two invoices, and the
+    // one a page names is the one it gets.
+    it("[api] narrows to the one invoice with exactly the number asked for", async () => {
+      const test = await setup();
+      await seedInvoicePage(test.database);
+      await test.database.run(
+        `INSERT INTO invoices (
+           id, client_id, number, currency, issue_date, due_date, state,
+           amount_cents, due_amount_cents, created_at, updated_at
+         ) VALUES
+           (900, 1, '089', 'USD', '2026-07-01', '2026-07-31', 'draft', 0, 0, ?, ?),
+           (901, 1, '89', 'USD', '2026-07-02', '2026-07-31', 'draft', 0, 0, ?, ?),
+           (902, 2, '0089', 'EUR', '2026-07-03', '2026-07-31', 'draft', 0, 0, ?, ?)`,
+        seedTime,
+        seedTime,
+        seedTime,
+        seedTime,
+        seedTime,
+        seedTime,
+      );
+      const read = async (query: string) => {
+        const response = await test.request(`/api/v1/invoices?${query}`);
+        return {
+          status: response.status,
+          body: (await response.json()) as {
+            data?: { id: number; number: string }[];
+            page?: { next_cursor: string | null };
+            error?: { code: string; fields: { field: string; code: string }[] };
+          },
+        };
+      };
+      const ids = async (query: string) => {
+        const { status, body } = await read(query);
+        expect(status, query).toBe(200);
+        expect(body.page?.next_cursor, query).toBeNull();
+        return body.data!.map((row) => [row.id, row.number]);
+      };
+      const number = (value: string) => `number=${encodeURIComponent(value)}`;
+
+      for (const [value, id] of [
+        ["089", 900],
+        ["89", 901],
+        ["0089", 902],
+        ["INV-004", 4],
+      ] as const) {
+        expect(await ids(number(value))).toEqual([[id, value]]);
+      }
+      // Not a prefix, a pattern, a case-folded or a trimmed match: a number
+      // nobody has is an empty page.
+      for (const value of ["8", "0890", "inv-004", "INV-00", "INV-00_", "INV-00%", " 089", "089 "]) {
+        expect(await ids(number(value))).toEqual([]);
+      }
+      // Composed with the other narrowings, not instead of them.
+      expect(await ids(`${number("089")}&state=paid`)).toEqual([]);
+      expect(await ids(`${number("089")}&state=draft,open`)).toEqual([[900, "089"]]);
+      expect(await ids(`${number("0089")}&client_id=1`)).toEqual([]);
+      expect(await ids(`${number("0089")}&client_id=1,2`)).toEqual([[902, "0089"]]);
+      // Up to 64 characters, counted as characters rather than UTF-16 units.
+      expect(await ids(number("9".repeat(64)))).toEqual([]);
+      expect(await ids(number("\u{1F600}".repeat(64)))).toEqual([]);
+
+      for (const query of [
+        "number=",
+        number("9".repeat(65)),
+        number("\u{1F600}".repeat(65)),
+        "number=089&number=89",
+      ]) {
+        const { status, body } = await read(query);
+        expect(status, query).toBe(422);
+        expect(body.error, query).toMatchObject({
+          code: "validation_failed",
+          fields: [{ field: "number" }],
+        });
+      }
+
+      // The number is part of what a cursor is signed for: one read from the
+      // whole list does not page a numbered one.
+      const whole = await read("per_page=1");
+      const cursor = whole.body.page!.next_cursor!;
+      expect(cursor).not.toBeNull();
+      const replayed = await read(
+        `per_page=1&${number("089")}&cursor=${encodeURIComponent(cursor)}`,
+      );
+      expect(replayed.status).toBe(422);
+      expect(replayed.body.error).toMatchObject({ fields: [{ field: "cursor" }] });
+    }, slowRuntimeTimeout);
+
     it("[api] hydrates a high-cardinality invoice traversal with fixed query count", async () => {
       const test = await setup();
       await seedInvoicePage(test.database);

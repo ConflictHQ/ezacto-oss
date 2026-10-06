@@ -48,7 +48,10 @@ export interface RecurringWorkspaceApi {
     id: number,
     idempotencyKey: string,
     signal?: AbortSignal,
-  ): Promise<{ invoice: { id: number }; generation: { period: string; next_issue_on: string } }>
+  ): Promise<{
+    invoice: { id: number; number: string }
+    generation: { period: string; next_issue_on: string }
+  }>
   /**
    * Unfiltered, like the retainer screen's: a definition outlives the
    * archiving of the client it bills, and a row reading "Client #14" because a

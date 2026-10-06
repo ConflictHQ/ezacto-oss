@@ -870,7 +870,7 @@ describe('Reports Stage 1 browser controller', () => {
       totals: [{ currency: 'USD', invoice_count: 1, invoiced_cents: 100_000, paid_cents: 25_000, balance_cents: 75_000 }],
       rows: [{
         invoice_id: 301,
-        number: '301',
+        number: '0301',
         state: 'open' as const,
         close_reason: null,
         issue_date: '2026-08-01',
@@ -898,7 +898,8 @@ describe('Reports Stage 1 browser controller', () => {
     expect(results.textContent).toContain('Sent')
     expect(results.textContent).toContain('$1,000.00')
     expect(results.textContent).toContain('$750.00')
-    expect(results.querySelector('a[href="/invoices/301"]')?.textContent).toBe('301')
+    // Addressed by the number it shows, leading zero and all, not by its id.
+    expect(results.querySelector('a[href="/invoices/0301"]')?.textContent).toBe('0301')
     expect(results.querySelector('a[href="/clients/1"]')?.textContent).toBe('Parent')
     expect(document.querySelector<HTMLSelectElement>('[data-report-invoice-status]')?.value).toBe('open')
   })
@@ -912,7 +913,7 @@ describe('Reports Stage 1 browser controller', () => {
         payment_id: 901,
         payment_date: '2026-08-20',
         invoice_id: 301,
-        invoice_number: '301',
+        invoice_number: '0301',
         client_id: 1,
         client_name: 'Parent',
         currency: 'USD',
@@ -934,7 +935,7 @@ describe('Reports Stage 1 browser controller', () => {
     const results = document.querySelector('[data-report-results]')!
     expect(results.textContent).toContain('2026-08-20')
     expect(results.textContent).toContain('$250.00')
-    expect(results.querySelector('a[href="/invoices/301"]')).not.toBeNull()
+    expect(results.querySelector('a[href="/invoices/0301"]')?.textContent).toBe('0301')
   })
 
   it('[browser] ages receivables at the selected period end without mixing currency', async () => {
@@ -2370,7 +2371,8 @@ describe('Reports Stage 1 browser controller', () => {
     )
     expect(bands).toEqual(['Claimed by an invoice', 'Not claimed yet'])
     expect(table.textContent).toContain('wrote the thing')
-    expect(table.querySelector('a[href="/invoices/301"]')).not.toBeNull()
+    // An entry's claim names the invoice by id alone, so the link goes by id.
+    expect(table.querySelector('a[href="/invoices/by-id/301"]')?.textContent).toBe('#301')
     expect(table.textContent).toContain('Not claimed')
     session.abort()
   })

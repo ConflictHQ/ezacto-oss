@@ -1993,16 +1993,20 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
     project_ids: [1],
     expense_summary_type: null,
   })
-  // The draft is the next step: the dialog opens it. The navigation discards
-  // the generation response's body, so the invoice is read back by its id.
+  // The draft is the next step: the dialog opens it, at its number. The
+  // navigation discards the generation response's body, so the invoice is read
+  // back by that number -- the lookup the page itself makes.
   await expect(page).toHaveURL(/\/invoices\/\d+$/u)
-  const generatedId = Number(new URL(page.url()).pathname.split('/').pop())
-  const generatedPayload = (await page.evaluate(
-    async (id) => (await fetch(`/api/v1/invoices/${String(id)}`)).json(),
-    generatedId,
-  )) as { data: { id: number; number: string; due_date: string } }
-  expect(generatedPayload.data.id).toBe(generatedId)
-  const generatedNumber = generatedPayload.data.number
+  const generatedNumber = new URL(page.url()).pathname.split('/').pop()!
+  const generatedPayload = (await page.evaluate(async (number) => {
+    const response = await fetch(`/api/v1/invoices?number=${encodeURIComponent(number)}`)
+    const body = (await response.json()) as { data: unknown[] }
+    // Numbers are unique, so the narrowed list is this invoice alone.
+    if (body.data.length !== 1) throw new Error(`expected one invoice numbered ${number}`)
+    return { data: body.data[0] }
+  }, generatedNumber)) as { data: { id: number; number: string; due_date: string } }
+  expect(generatedPayload.data.number).toBe(generatedNumber)
+  const generatedId = generatedPayload.data.id
   const detail = page.locator('[data-invoice-document]')
   await expect(detail).toBeVisible()
   await expect(detail.locator('[data-invoice-detail-number]')).toHaveText(generatedNumber)
@@ -2302,6 +2306,7 @@ test('[e2e:invoice-lines] adds, edits, and removes exact lines on the edit page 
       data: {
         invoice: {
           id: number
+          number: string
           version: number
           amount_cents: number
           due_amount_cents: number
@@ -2314,7 +2319,10 @@ test('[e2e:invoice-lines] adds, edits, and removes exact lines on the edit page 
   expect(draft.amount_cents).toBe(7_500)
   expect(draft.due_amount_cents).toBe(0)
   expect(draft.state).toBe('paid')
-  await page.goto(`/invoices/${draft.id}`)
+  // Opened by its record id -- a link made before the pages were addressed by
+  // number -- the page lands on the number, the address every link draws.
+  await page.goto(`/invoices/by-id/${draft.id}`)
+  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.number}$`, 'u'))
 
   const detail = page.locator('[data-invoice-document]')
   const editor = page.locator('[data-invoice-edit-form]')
@@ -2325,11 +2333,11 @@ test('[e2e:invoice-lines] adds, edits, and removes exact lines on the edit page 
   const add = detail.getByRole('link', { name: 'Add line', exact: true })
   await expectPhoneControl(add)
   await add.click()
-  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.id}/edit#new-line$`, 'u'))
+  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.number}/edit#new-line$`, 'u'))
   await expect(editor).toBeVisible()
   await expect(rows).toHaveCount(2)
   await editor.getByRole('link', { name: 'Cancel' }).click()
-  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.id}$`, 'u'))
+  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.number}$`, 'u'))
   await expect(detail.locator('[data-invoice-line-id]')).toHaveCount(1)
 
   const commandIds: string[] = []
@@ -2399,8 +2407,12 @@ test('[e2e:invoice-lines] adds, edits, and removes exact lines on the edit page 
   expect(commandIds).toHaveLength(2)
   expect(commandIds[0]).not.toBe('')
   expect(commandIds[0]).toBe(commandIds[1])
-  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.id}$`, 'u'))
+  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.number}$`, 'u'))
   await expect(page.locator('[data-invoice-detail-status]')).toHaveText('Invoice saved.')
+  // A fresh page after the save, and the client named on it rather than its id.
+  await expect(detail.locator('[data-invoice-detail-client]')).toHaveText(
+    'Browser Acceptance Client',
+  )
 
   const createdRow = detail.locator('[data-invoice-line-id]', { hasText: 'Consulting' })
   await expect(createdRow).toHaveCount(1)
@@ -2444,7 +2456,7 @@ test('[e2e:invoice-lines] adds, edits, and removes exact lines on the edit page 
 
   // The per-line Edit opens the page on that line.
   await createdRow.getByRole('link', { name: 'Edit' }).click()
-  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.id}/edit#line-${createdLine.id}$`, 'u'))
+  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.number}/edit#line-${createdLine.id}$`, 'u'))
   const editing = editor.locator(`#invoice-line-${createdLine.id}`)
   await expect(editing.getByLabel('Description')).toBeFocused()
   await editing.getByLabel('Description').fill('Updated fractional adjustment')
@@ -2469,14 +2481,14 @@ test('[e2e:invoice-lines] adds, edits, and removes exact lines on the edit page 
     unit_price_cents: 205,
     taxed: true,
   })
-  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.id}$`, 'u'))
+  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.number}$`, 'u'))
   await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$78.39')
   await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$3.39')
 
   // Removing a line is marked first and can be kept; it goes when the page
   // saves -- in the same save as a change to the document itself.
   await detail.getByRole('link', { name: 'Edit invoice' }).click()
-  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.id}/edit$`, 'u'))
+  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.number}/edit$`, 'u'))
   const removing = editor.locator(`#invoice-line-${createdLine.id}`)
   await removing.getByRole('button', { name: 'Remove line' }).click()
   await expect(removing.getByText('This line is removed when you save.')).toBeVisible()
@@ -2500,7 +2512,7 @@ test('[e2e:invoice-lines] adds, edits, and removes exact lines on the edit page 
   expect(headerResponse.status()).toBe(200)
   expect(headerResponse.request().postDataJSON()).toMatchObject({ purchase_order: 'PO-EDIT-1' })
   expect((await deleted).status()).toBe(200)
-  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.id}$`, 'u'))
+  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.number}$`, 'u'))
   await expect(detail.locator('[data-invoice-line-id]')).toHaveCount(1)
   await expect(detail.locator('[data-invoice-detail-purchase-order]')).toHaveText('PO-EDIT-1')
   await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$75.00')
@@ -2747,12 +2759,12 @@ test('[e2e:invoice-cycle] records a final payment, restores the open balance on 
     })
     if (!sent.ok) throw new Error(`invoice transition failed: ${sent.status}`)
     const sentBody = (await sent.json()) as {
-      data: { invoice: { id: number; version: number; amount_cents: number } }
+      data: { invoice: { id: number; number: string; version: number; amount_cents: number } }
     }
     return sentBody.data.invoice
   })
   expect(openedInvoice.amount_cents).toBe(7_500)
-  await page.goto(`/invoices/${openedInvoice.id}`)
+  await page.goto(`/invoices/${openedInvoice.number}`)
 
   const detail = page.locator('[data-invoice-document]')
   await expect(detail).toBeVisible()
