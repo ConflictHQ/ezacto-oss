@@ -19,9 +19,10 @@
  * resource have been served since the API shipped and no screen called any of
  * them, so the three live definitions on this account were loaded by a script
  * and one of them was corrected in production by hand-written SQL. Everything
- * a definition stores is editable here, including the two keys migrations 0041
- * and 0044 added: a line's `through` date, and the `installments` total that
- * lets it count itself off in its own text.
+ * a definition stores is editable, including the two keys migrations 0041 and
+ * 0044 added: a line's `through` date, and the `installments` total that lets
+ * it count itself off in its own text. The editor itself is a page of its own,
+ * below; this pane links to it.
  */
 
 export const renderRecurringPage = (view?: string): string => `
@@ -35,7 +36,7 @@ export const renderRecurringPage = (view?: string): string => `
       <div class="recurring-toolbar">
         <label class="visually-hidden" for="ez-recurring-search">Search recurring invoices</label>
         <input id="ez-recurring-search" type="search" data-recurring-search placeholder="Search by client or subject" autocomplete="off">
-        <button class="primary-action" type="button" data-recurring-write data-recurring-new hidden>New recurring invoice</button>
+        <a class="primary-action recurring-new-link" href="/invoices/recurring/new" data-recurring-write data-recurring-new hidden>New recurring invoice</a>
       </div>
       <p class="form-result invoice-page-status" data-recurring-list-status role="status" aria-live="polite">Loading recurring invoices…</p>
       <div data-recurring-list></div>
@@ -51,7 +52,7 @@ export const renderRecurringPage = (view?: string): string => `
           <h2 id="recurring-detail-heading" data-recurring-detail-title>Recurring invoice</h2>
         </div>
         <div class="recurring-detail-actions">
-          <button type="button" data-recurring-write data-recurring-edit hidden>Edit definition</button>
+          <a class="recurring-edit-link" href="/invoices/recurring" data-recurring-write data-recurring-edit hidden>Edit definition</a>
           <button type="button" data-recurring-write data-recurring-delete hidden>Delete definition</button>
           <a class="recurring-detail-back" href="/invoices/recurring" data-recurring-back>Back to recurring</a>
         </div>
@@ -104,95 +105,6 @@ export const renderRecurringPage = (view?: string): string => `
         </footer>
       </form>
     </dialog>
-    <dialog class="recurring-editor-dialog" data-recurring-editor aria-labelledby="recurring-editor-title">
-      <form class="recurring-editor-form" data-recurring-editor-form novalidate>
-        <header>
-          <div><p class="eyebrow">Money</p><h2 id="recurring-editor-title" data-recurring-editor-title>New recurring invoice</h2></div>
-          <button type="button" data-recurring-editor-cancel aria-label="Close">×</button>
-        </header>
-        <div class="recurring-editor-grid">
-          <label>Client<select data-recurring-editor-client required></select>
-            <span class="field-hint" data-recurring-client-hint hidden>The client cannot change once this definition has raised an invoice.</span>
-          </label>
-          <label>Months between issues<input data-recurring-editor-every inputmode="numeric" pattern="[0-9]+" min="1" step="1" required></label>
-          <label>Day of month<input data-recurring-editor-day inputmode="numeric" pattern="[0-9]+" min="1" max="31" step="1" required></label>
-          <label>Next issue<input type="date" data-recurring-editor-next required></label>
-          <label>Draws from retainer <span class="hint">Optional. The retainer's id.</span><input data-recurring-editor-retainer inputmode="numeric" pattern="[0-9]*" min="1" step="1" autocomplete="off"></label>
-        </div>
-        <label>Subject<input data-recurring-editor-subject maxlength="2000" autocomplete="off" required></label>
-        <label>Notes<textarea data-recurring-editor-notes rows="3"></textarea></label>
-        <p class="hint">Subject and notes expand <code>%invoice_issue_month_name%</code>, <code>%invoice_issue_year%</code> and <code>%invoice_issue_date%</code> when the invoice is raised.</p>
-        <label>Bills<select data-recurring-editor-type>
-          <option value="fixed_lines">The same lines every period</option>
-          <option value="line_items_import">Whatever is uninvoiced on some projects</option>
-        </select></label>
-        <section class="recurring-editor-lines" data-recurring-editor-fixed aria-labelledby="recurring-editor-lines-heading">
-          <h3 id="recurring-editor-lines-heading">Fixed lines</h3>
-          <p class="hint">A line with a <em>through</em> date stops appearing once that day has passed. Give it an installment total as well and it can count itself off in its own description with <code>%line_installment_number%</code> and <code>%line_installment_total%</code> — "CREDIT 2 of 4".</p>
-          <div data-recurring-editor-line-list></div>
-          <button type="button" data-recurring-editor-add-line>Add a line</button>
-          <label>Covers the time on <span class="hint">Optional. A banded team: the amount stays the same and these projects' hours are claimed by it rather than billed.</span><select multiple size="4" data-recurring-editor-claims></select></label>
-          <p class="hint">Leave this empty for an ordinary fixed invoice, which ignores tracked time entirely. Choosing projects makes the hours stop reading as uninvoiced, so they cannot be billed a second time, and records what the flat rate absorbed.</p>
-          <label>Counts<select data-recurring-editor-claim-scope>
-            <option value="billable">Billable hours only</option>
-            <option value="tracked">Every hour tracked on those projects</option>
-          </select><span class="hint">Under a flat amount the client bought the period. Count every tracked hour if internal work is logged against the client's project, or the band reads as cheaper to deliver than it was.</span></label>
-          <label>Warn above<span class="hint">Optional. Cost as a share of what the band charges, in per cent. Blank uses the organisation default.</span><input data-recurring-editor-cost-alert inputmode="decimal" autocomplete="off" placeholder="80"></label>
-          <p class="hint">A period containing an hour with no cost rate reports no ratio at all rather than a lower one — an unpriced hour is not a free one, and a band that looked healthy because of missing data is the failure this guards against.</p>
-          <label>Claims<select data-recurring-editor-claim-mode>
-            <option value="all">Every uninvoiced hour on those projects</option>
-            <option value="ceiling">Up to a limit, then bill the rest as usual</option>
-          </select></label>
-          <div class="recurring-editor-ceiling" data-recurring-editor-ceiling hidden>
-            <label>Measured in<select data-recurring-editor-ceiling-unit>
-              <option value="time">Hours the band covers</option>
-              <option value="money">Value it covers, at list</option>
-            </select></label>
-            <label>Up to<span class="hint">Hours as <code>400h</code> or <code>1h30m</code>; value in cents.</span><input data-recurring-editor-ceiling-amount inputmode="text" autocomplete="off"></label>
-            <p class="hint">The oldest hours are claimed first, and an entry that would straddle the limit is left out whole rather than split. A value limit stops at work with no billable rate instead of treating it as free, so unpriced hours stay billable where somebody can see them.</p>
-          </div>
-        </section>
-        <section class="recurring-editor-import" data-recurring-editor-import hidden aria-labelledby="recurring-editor-import-heading">
-          <h3 id="recurring-editor-import-heading">Uninvoiced work</h3>
-          <p class="hint">The amount is not known until it runs. Choose the projects it sweeps and how the lines are summarised.</p>
-          <label>Projects<select multiple size="6" data-recurring-editor-projects></select></label>
-          <label class="recurring-editor-check"><input type="checkbox" data-recurring-editor-time-on>Bill uninvoiced hours</label>
-          <label>Summarise hours<select data-recurring-editor-time-summary>
-            <option value="project">By project</option>
-            <option value="task">By task</option>
-            <option value="people">By person</option>
-            <option value="detailed">In detail</option>
-          </select></label>
-          <label class="recurring-editor-check"><input type="checkbox" data-recurring-editor-expenses-on>Bill uninvoiced expenses</label>
-          <label>Summarise expenses<select data-recurring-editor-expenses-summary>
-            <option value="project">By project</option>
-            <option value="category">By category</option>
-            <option value="people">By person</option>
-            <option value="detailed">In detail</option>
-          </select></label>
-        </section>
-        <footer>
-          <button type="button" data-recurring-editor-cancel>Cancel</button>
-          <button class="primary-action" type="submit" data-recurring-editor-submit>Save definition</button>
-        </footer>
-        <p class="form-result" data-recurring-editor-result role="status" aria-live="polite"></p>
-      </form>
-    </dialog>
-    <template data-recurring-line-template>
-      <fieldset class="recurring-editor-line" data-recurring-line>
-        <legend data-recurring-line-position>Line</legend>
-        <label>Kind<input data-recurring-line-field="kind" autocomplete="off"></label>
-        <label>Description<input data-recurring-line-field="description" autocomplete="off"></label>
-        <label>Project<select data-recurring-line-field="projectId"></select></label>
-        <label>Quantity<input data-recurring-line-field="quantity" inputmode="decimal" autocomplete="off"></label>
-        <label>Unit price (cents)<input data-recurring-line-field="unitPriceCents" inputmode="numeric" autocomplete="off"></label>
-        <label>Through <span class="hint">Optional. The last issue this line appears on.</span><input type="date" data-recurring-line-field="through"></label>
-        <label>Installments <span class="hint">Optional. Needs a through date.</span><input data-recurring-line-field="installments" inputmode="numeric" min="1" step="1" autocomplete="off"></label>
-        <label class="recurring-editor-check"><input type="checkbox" data-recurring-line-field="taxed">Tax</label>
-        <label class="recurring-editor-check"><input type="checkbox" data-recurring-line-field="taxed2">Tax 2</label>
-        <button type="button" data-recurring-line-remove>Remove line</button>
-      </fieldset>
-    </template>
     <dialog class="recurring-confirm-dialog" data-recurring-delete-confirm aria-labelledby="recurring-delete-title">
       <form data-recurring-delete-form>
         <header>
@@ -207,4 +119,158 @@ export const renderRecurringPage = (view?: string): string => `
         <p class="form-result" data-recurring-delete-result role="status" aria-live="polite"></p>
       </form>
     </dialog>
+  </main>`
+
+/**
+ * The definition editor, as a page of its own (`/invoices/recurring/new` and
+ * `/invoices/recurring/:id/edit`).
+ *
+ * It was a dialog, and a definition is too much for one: a schedule, two
+ * templates, a choice of amount, a band of covered hours with its ceiling, and
+ * a table of lines whose every row carries nine fields. At dialog width the
+ * table scrolled sideways under its own labels and clipped them at the left.
+ * Here every section runs at page width, the lines are a table that reflows to
+ * cards on a phone, and Save sits in a band at the foot of the window so it is
+ * never below the fold of a long definition.
+ *
+ * The confirmations stay dialogs on the workspace (issuing and deleting are
+ * single questions), and every control keeps the data attribute it had in the
+ * dialog: the controller, the tests and the browser suite address the same
+ * fields they always did.
+ */
+export const renderRecurringEditorPage = (view?: string): string => `
+  <main class="app-content invoice-workspace editor-page page--settings" data-recurring-editor-page${view === 'invoice-recurring-editor' ? '' : ' hidden'}>
+    <header class="context-row editor-page-heading">
+      <div><p class="eyebrow" data-recurring-editor-eyebrow>Recurring invoice</p><h1 id="recurring-editor-title" data-recurring-editor-title>New recurring invoice</h1></div>
+      <a class="editor-back" href="/invoices/recurring" data-recurring-editor-back>Back to recurring</a>
+    </header>
+    <p class="form-result invoice-page-status" data-recurring-editor-status role="status" aria-live="polite">Loading the editor…</p>
+    <button class="invoice-load-more" type="button" data-recurring-editor-retry hidden>Retry loading</button>
+    <form class="editor-form" data-recurring-editor-form aria-labelledby="recurring-editor-title" novalidate hidden>
+      <section class="editor-section" aria-labelledby="recurring-editor-schedule-heading">
+        <h2 id="recurring-editor-schedule-heading">Client and schedule</h2>
+        <div class="editor-grid">
+          <div class="editor-field editor-span-2">
+            <label>Client<select data-recurring-editor-client required aria-describedby="recurring-editor-client-hint"></select></label>
+            <span class="field-hint" id="recurring-editor-client-hint" data-recurring-client-hint hidden>The client cannot change once this definition has raised an invoice.</span>
+          </div>
+          <label>Next issue<input type="date" data-recurring-editor-next required></label>
+          <label>Months between issues<input data-recurring-editor-every inputmode="numeric" pattern="[0-9]+" min="1" step="1" required></label>
+          <label>Day of month<input data-recurring-editor-day inputmode="numeric" pattern="[0-9]+" min="1" max="31" step="1" required></label>
+          <div class="editor-field">
+            <label>Draws from retainer<input data-recurring-editor-retainer inputmode="numeric" pattern="[0-9]*" min="1" step="1" autocomplete="off" aria-describedby="recurring-editor-retainer-hint"></label>
+            <span class="field-hint" id="recurring-editor-retainer-hint">Optional. The retainer's id.</span>
+          </div>
+        </div>
+      </section>
+      <section class="editor-section" aria-labelledby="recurring-editor-wording-heading">
+        <h2 id="recurring-editor-wording-heading">Subject and notes</h2>
+        <label>Subject<input data-recurring-editor-subject maxlength="2000" autocomplete="off" required></label>
+        <label>Notes<textarea data-recurring-editor-notes rows="4"></textarea></label>
+        <p class="hint">Subject and notes expand <code>%invoice_issue_month_name%</code>, <code>%invoice_issue_year%</code> and <code>%invoice_issue_date%</code> when the invoice is raised.</p>
+      </section>
+      <section class="editor-section" aria-labelledby="recurring-editor-amount-heading">
+        <h2 id="recurring-editor-amount-heading">Amount</h2>
+        <fieldset class="editor-choice">
+          <legend>Bills</legend>
+          <label class="editor-choice-card"><input type="radio" name="recurring-amount-type" value="fixed_lines" data-recurring-editor-type checked><span><strong>The same lines every period</strong><small>A fixed amount, which can also cover a band of tracked hours.</small></span></label>
+          <label class="editor-choice-card"><input type="radio" name="recurring-amount-type" value="line_items_import" data-recurring-editor-type><span><strong>Whatever is uninvoiced on some projects</strong><small>Tracked time and expenses, swept when it runs.</small></span></label>
+        </fieldset>
+        <div class="editor-subsection" data-recurring-editor-import hidden>
+          <p class="hint">The amount is not known until it runs. Choose the projects it sweeps and how the lines are summarised.</p>
+          <div class="editor-field">
+            <label>Projects<select multiple size="6" data-recurring-editor-projects aria-describedby="recurring-editor-projects-hint"></select></label>
+            <span class="field-hint" id="recurring-editor-projects-hint">Hold Ctrl, or ⌘ on a Mac, to choose more than one.</span>
+          </div>
+          <div class="editor-grid">
+            <label class="editor-check editor-span-2"><input type="checkbox" data-recurring-editor-time-on>Bill uninvoiced hours</label>
+            <label class="editor-span-2">Summarise hours<select data-recurring-editor-time-summary>
+              <option value="project">By project</option>
+              <option value="task">By task</option>
+              <option value="people">By person</option>
+              <option value="detailed">In detail</option>
+            </select></label>
+            <label class="editor-check editor-span-2"><input type="checkbox" data-recurring-editor-expenses-on>Bill uninvoiced expenses</label>
+            <label class="editor-span-2">Summarise expenses<select data-recurring-editor-expenses-summary>
+              <option value="project">By project</option>
+              <option value="category">By category</option>
+              <option value="people">By person</option>
+              <option value="detailed">In detail</option>
+            </select></label>
+          </div>
+        </div>
+      </section>
+      <section class="editor-section" data-recurring-editor-band aria-labelledby="recurring-editor-band-heading">
+        <h2 id="recurring-editor-band-heading">Covers the time on</h2>
+        <p class="hint">Optional. A banded team: the amount stays the same and these projects' hours are claimed by it rather than billed. Leave it empty for an ordinary fixed invoice, which ignores tracked time entirely. Choosing projects makes the hours stop reading as uninvoiced, so they cannot be billed a second time, and records what the flat rate absorbed.</p>
+        <div class="editor-field">
+          <label>Projects covered<select multiple size="4" data-recurring-editor-claims aria-describedby="recurring-editor-claims-hint"></select></label>
+          <span class="field-hint" id="recurring-editor-claims-hint">Hold Ctrl, or ⌘ on a Mac, to choose more than one.</span>
+        </div>
+        <div class="editor-grid">
+          <div class="editor-field editor-span-2">
+            <label>Counts<select data-recurring-editor-claim-scope aria-describedby="recurring-editor-claim-scope-hint">
+              <option value="billable">Billable hours only</option>
+              <option value="tracked">Every hour tracked on those projects</option>
+            </select></label>
+            <span class="field-hint" id="recurring-editor-claim-scope-hint">Under a flat amount the client bought the period. Count every tracked hour if internal work is logged against the client's project, or the band reads as cheaper to deliver than it was.</span>
+          </div>
+          <div class="editor-field editor-span-2">
+            <label>Warn above<input data-recurring-editor-cost-alert inputmode="decimal" autocomplete="off" placeholder="80" aria-describedby="recurring-editor-cost-alert-hint"></label>
+            <span class="field-hint" id="recurring-editor-cost-alert-hint">Optional. Cost as a share of what the band charges, in per cent. Blank uses the organisation default. A period containing an hour with no cost rate reports no ratio at all rather than a lower one.</span>
+          </div>
+          <label class="editor-span-2">Claims<select data-recurring-editor-claim-mode>
+            <option value="all">Every uninvoiced hour on those projects</option>
+            <option value="ceiling">Up to a limit, then bill the rest as usual</option>
+          </select></label>
+        </div>
+        <div class="editor-grid editor-subsection" data-recurring-editor-ceiling hidden>
+          <label class="editor-span-2">Measured in<select data-recurring-editor-ceiling-unit>
+            <option value="time">Hours the band covers</option>
+            <option value="money">Value it covers, at list</option>
+          </select></label>
+          <div class="editor-field editor-span-2">
+            <label>Up to<input data-recurring-editor-ceiling-amount inputmode="text" autocomplete="off" aria-describedby="recurring-editor-ceiling-hint"></label>
+            <span class="field-hint" id="recurring-editor-ceiling-hint">Hours as <code>400h</code> or <code>1h30m</code>; value in cents.</span>
+          </div>
+          <p class="hint editor-span-all">The oldest hours are claimed first, and an entry that would straddle the limit is left out whole rather than split. A value limit stops at work with no billable rate instead of treating it as free, so unpriced hours stay billable where somebody can see them.</p>
+        </div>
+      </section>
+      <section class="editor-section" data-recurring-editor-fixed aria-labelledby="recurring-editor-lines-heading">
+        <h2 id="recurring-editor-lines-heading">Lines</h2>
+        <p class="hint">Unit prices are in cents: <code>450000</code> is 4,500.00. A line with a <em>through</em> date stops appearing once that day has passed. Give it an installment total as well and it can count itself off in its own description with <code>%line_installment_number%</code> and <code>%line_installment_total%</code> — "CREDIT 2 of 4".</p>
+        <div class="line-editor recurring-line-editor">
+          <div class="line-editor-head" aria-hidden="true"><span>#</span><span>Kind</span><span>Description</span><span>Quantity</span><span>Unit price (cents)</span><span class="line-editor-numeric">Amount</span><span></span></div>
+          <div class="line-editor-rows" data-recurring-editor-line-list></div>
+        </div>
+        <div class="line-editor-foot">
+          <button type="button" class="editor-secondary" data-recurring-editor-add-line>Add a line</button>
+          <p class="line-editor-total">Each issue bills <strong data-recurring-editor-total>—</strong></p>
+        </div>
+      </section>
+      <footer class="editor-actions">
+        <p class="form-result" data-recurring-editor-result role="status" aria-live="polite"></p>
+        <a class="editor-secondary" href="/invoices/recurring" data-recurring-editor-cancel>Cancel</a>
+        <button class="primary-action" type="submit" data-recurring-editor-submit>Save definition</button>
+      </footer>
+    </form>
+    <template data-recurring-line-template>
+      <fieldset class="line-editor-row" data-recurring-line>
+        <legend data-recurring-line-position>Line</legend>
+        <span class="line-editor-number" data-recurring-line-number aria-hidden="true"></span>
+        <label class="line-editor-kind"><span class="line-editor-label">Kind</span><input data-recurring-line-field="kind" autocomplete="off"></label>
+        <label class="line-editor-description"><span class="line-editor-label">Description</span><textarea data-recurring-line-field="description" rows="2"></textarea></label>
+        <label class="line-editor-quantity"><span class="line-editor-label">Quantity</span><input data-recurring-line-field="quantity" inputmode="decimal" autocomplete="off"></label>
+        <label class="line-editor-price"><span class="line-editor-label">Unit price (cents)</span><input data-recurring-line-field="unitPriceCents" inputmode="numeric" autocomplete="off"></label>
+        <p class="line-editor-amount"><span class="line-editor-label">Amount</span><strong data-recurring-line-amount>—</strong></p>
+        <button type="button" class="line-editor-remove" data-recurring-line-remove><span aria-hidden="true">×</span><span class="line-editor-remove-text">Remove line</span></button>
+        <div class="line-editor-meta recurring-line-meta">
+          <label class="line-editor-project">Project<select data-recurring-line-field="projectId"></select></label>
+          <label>Through<input type="date" data-recurring-line-field="through"></label>
+          <label>Installments<input data-recurring-line-field="installments" inputmode="numeric" min="1" step="1" autocomplete="off"></label>
+          <label class="editor-check"><input type="checkbox" data-recurring-line-field="taxed">Tax</label>
+          <label class="editor-check"><input type="checkbox" data-recurring-line-field="taxed2">Tax 2</label>
+        </div>
+      </fieldset>
+    </template>
   </main>`

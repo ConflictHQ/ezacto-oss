@@ -61,7 +61,10 @@ import { createTeamDirectoryController } from '../team/browser.js'
 import { teamCapabilities } from '../team/model.js'
 import { createExpenseCategoryDirectoryController } from '../expense-categories/browser.js'
 import { createEmailConfigurationController } from '../email-config/browser.js'
-import { createRecurringWorkspaceController } from '../recurring/browser.js'
+import {
+  createRecurringEditorController,
+  createRecurringWorkspaceController,
+} from '../recurring/browser.js'
 import { createEstimateWorkspaceController } from '../estimates/browser.js'
 import { createRetainerWorkspaceController } from '../retainers/browser.js'
 import { createModuleSettingsController } from '../module-settings/browser.js'
@@ -71,7 +74,8 @@ import {
   renderInvoiceListItems,
   setInvoiceClientNames,
 } from '../invoices/browser.js'
-import { invoiceIdentityCanRead, invoiceStatesFor } from '../invoices/model.js'
+import { createInvoiceEditorController } from '../invoices/editor.js'
+import { invoiceIdentityCanRead, invoicePagePath, invoiceStatesFor } from '../invoices/model.js'
 import {
   buildWeekGrid,
   formatCellHours,
@@ -1193,8 +1197,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const invoiceListPage =
     document.documentElement.dataset.appView === 'invoice-list' || invoiceGenerationPage
   const invoiceDetailPage = document.documentElement.dataset.appView === 'invoice-detail'
+  const invoiceEditPage = document.documentElement.dataset.appView === 'invoice-edit'
   const invoiceRecurringPage =
     document.documentElement.dataset.appView === 'invoice-recurring'
+  const invoiceRecurringEditorPage =
+    document.documentElement.dataset.appView === 'invoice-recurring-editor'
   const invoiceRetainersPage =
     document.documentElement.dataset.appView === 'invoice-retainers'
   const invoiceEstimatesPage =
@@ -1230,8 +1237,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         ? ' — Invoices'
         : invoiceDetailPage
           ? ' — Invoice detail'
+          : invoiceEditPage
+          ? ' — Edit invoice'
           : invoiceRecurringPage
             ? ' — Recurring invoices'
+            : invoiceRecurringEditorPage
+            ? ' — Recurring invoice'
             : invoiceRetainersPage
               ? ' — Retainers'
               : invoiceEstimatesPage
@@ -1398,10 +1409,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const expenseCategories = createExpenseCategoryDirectoryController(api)
   const emailConfiguration = createEmailConfigurationController(api)
   const recurringWorkspace = createRecurringWorkspaceController(api)
+  const recurringEditor = createRecurringEditorController(api)
   const estimateWorkspace = createEstimateWorkspaceController(api)
   const retainerWorkspace = createRetainerWorkspaceController(api)
   const moduleSettings = createModuleSettingsController(api)
   const invoicePayments = createInvoicePaymentController(api)
+  const invoiceEditor = createInvoiceEditorController(api)
   const invoiceList = required<HTMLElement>('[data-invoice-list]')
   const invoiceListStatus = required<HTMLElement>('[data-invoice-list-status]')
   const invoiceLoadMore = required<HTMLButtonElement>('[data-invoice-load-more]')
@@ -3708,6 +3721,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         ),
         loadWeek(authenticated),
       ])
+    } else if (invoiceEditPage) {
+      await Promise.all([
+        invoiceEditor.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
     } else if (clientListPage || clientDetailPage) {
       await Promise.all([
         clientDirectory.activate(
@@ -3807,6 +3829,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     } else if (invoiceRecurringPage) {
       await Promise.all([
         recurringWorkspace.activate(
+          identity,
+          authenticated.signal,
+          (error) => handleSessionFailure(error, authenticated),
+        ),
+        loadWeek(authenticated),
+      ])
+    } else if (invoiceRecurringEditorPage) {
+      await Promise.all([
+        recurringEditor.activate(
           identity,
           authenticated.signal,
           (error) => handleSessionFailure(error, authenticated),
@@ -5617,7 +5648,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         }
         // The draft is the next step, as it was in Harvest: open it.
         invoiceResult.textContent = `Draft invoice ${invoice.number} created. Opening it…`
-        globalThis.location.assign(`/invoices/${invoice.id}`)
+        globalThis.location.assign(invoicePagePath(invoice.id))
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return

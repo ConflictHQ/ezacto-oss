@@ -11,14 +11,19 @@ export const renderInvoicePaymentSection = (): string => `
         <ul data-invoice-detail-payments></ul>
       </section>`
 
+/**
+ * The line items' heading on the detail page. Lines are changed on the edit
+ * page, with the rest of the document, so Add line is a way there that opens
+ * on a fresh line -- the dialog it used to open was a second editor over the
+ * same rows with different save semantics.
+ */
 export const renderInvoiceLineEditor = (): string => `
       <section class="invoice-line-editor" aria-labelledby="invoice-line-heading">
         <header class="invoice-line-heading">
           <div><h3 id="invoice-line-heading">Line items</h3><p>Free-form work, products, credits, and adjustments on this invoice.</p></div>
-          <button type="button" data-invoice-line-add data-auth-action disabled>Add line</button>
+          <a class="invoice-line-add" data-invoice-line-add aria-disabled="true" hidden>Add line</a>
         </header>
         <p class="hint" data-invoice-line-readonly hidden>You have read-only invoice access. Line changes require the invoices:write scope.</p>
-        <p class="form-result" data-invoice-line-status role="status" aria-live="polite"></p>
       </section>`
 
 export const renderInvoicePaymentDialogs = (): string => `
@@ -49,86 +54,6 @@ export const renderInvoicePaymentDialogs = (): string => `
       <p>This removes <strong data-invoice-payment-delete-summary></strong> and recalculates the invoice balance and state.</p>
       <p class="form-result" data-invoice-payment-delete-result role="status" aria-live="polite"></p>
       <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-payment-delete-submit>Delete payment</button></div>
-    </form>
-  </dialog>`
-
-export const renderInvoiceLineDialogs = (): string => `
-  <dialog class="invoice-line-dialog" data-invoice-line-dialog aria-labelledby="invoice-line-dialog-title">
-    <form data-invoice-line-form novalidate>
-      <header><div><p class="eyebrow">Invoice line</p><h2 id="invoice-line-dialog-title" data-invoice-line-dialog-title>Add line item</h2></div><button type="button" data-dialog-close aria-label="Close invoice line dialog">×</button></header>
-      <label for="ez-invoice-line-kind">Item type
-        <input id="ez-invoice-line-kind" name="kind" data-invoice-line-kind maxlength="255" autocomplete="off" required>
-      </label>
-      <label for="ez-invoice-line-description">Description
-        <textarea id="ez-invoice-line-description" name="description" data-invoice-line-description rows="4" maxlength="100000"></textarea>
-      </label>
-      <div class="invoice-line-number-fields">
-        <label for="ez-invoice-line-quantity">Quantity
-          <input id="ez-invoice-line-quantity" name="quantity" data-invoice-line-quantity inputmode="decimal" autocomplete="off" maxlength="1000" required>
-        </label>
-        <label for="ez-invoice-line-rate"><span data-invoice-line-rate-label>Rate</span>
-          <input id="ez-invoice-line-rate" name="rate" data-invoice-line-rate inputmode="decimal" autocomplete="off" required>
-        </label>
-      </div>
-      <fieldset class="invoice-line-tax-fields">
-        <legend>Taxes</legend>
-        <label><input name="taxed" data-invoice-line-taxed type="checkbox"> Apply tax 1</label>
-        <label><input name="taxed2" data-invoice-line-taxed2 type="checkbox"> Apply tax 2</label>
-      </fieldset>
-      <p class="invoice-line-preview">Line amount <strong data-invoice-line-preview>—</strong></p>
-      <p class="hint">The amount is calculated in exact cents and the invoice total, balance, and payment state are reconciled together.</p>
-      <p class="form-result" data-invoice-line-result role="status" aria-live="polite"></p>
-      <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-line-submit>Add line</button></div>
-    </form>
-  </dialog>
-  <dialog class="invoice-line-dialog" data-invoice-line-delete-dialog aria-labelledby="invoice-line-delete-title">
-    <form data-invoice-line-delete-form>
-      <header><div><p class="eyebrow">Invoice line</p><h2 id="invoice-line-delete-title">Delete line item?</h2></div><button type="button" data-dialog-close aria-label="Close delete line dialog">×</button></header>
-      <p>This removes <strong data-invoice-line-delete-summary></strong> and recalculates the invoice total, balance, and payment state.</p>
-      <p class="form-result" data-invoice-line-delete-result role="status" aria-live="polite"></p>
-      <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-line-delete-submit>Delete line</button></div>
-    </form>
-  </dialog>`
-
-export const renderInvoiceEditDialog = (): string => `
-  <dialog class="invoice-line-dialog" data-invoice-edit-dialog aria-labelledby="invoice-edit-dialog-title">
-    <form data-invoice-edit-form novalidate>
-      <header><div><p class="eyebrow">Invoice</p><h2 id="invoice-edit-dialog-title">Edit invoice</h2></div><button type="button" data-dialog-close aria-label="Close invoice edit dialog">×</button></header>
-      <label for="ez-invoice-edit-subject">Subject
-        <input id="ez-invoice-edit-subject" name="subject" data-invoice-edit-subject maxlength="100000" autocomplete="off">
-      </label>
-      <label for="ez-invoice-edit-purchase-order">Purchase order
-        <input id="ez-invoice-edit-purchase-order" name="purchase_order" data-invoice-edit-purchase-order maxlength="100000" autocomplete="off">
-      </label>
-      <label for="ez-invoice-edit-notes">Notes
-        <textarea id="ez-invoice-edit-notes" name="notes" data-invoice-edit-notes rows="4" maxlength="100000"></textarea>
-      </label>
-      <p class="hint">Notes appear on the invoice the client receives.</p>
-      <div class="invoice-line-number-fields">
-        <label for="ez-invoice-edit-issue-date">Issue date
-          <input id="ez-invoice-edit-issue-date" name="issue_date" data-invoice-edit-issue-date type="date" required>
-        </label>
-        <label for="ez-invoice-edit-due-date">Due date
-          <input id="ez-invoice-edit-due-date" name="due_date" data-invoice-edit-due-date type="date" required>
-        </label>
-      </div>
-      <label for="ez-invoice-edit-payment-terms">Payment terms
-        <select id="ez-invoice-edit-payment-terms" name="payment_terms" data-invoice-edit-payment-terms><option value="upon_receipt">Upon receipt</option><option value="net_15">Net 15</option><option value="net_30">Net 30</option><option value="net_45">Net 45</option><option value="net_60">Net 60</option><option value="custom">Custom</option></select>
-      </label>
-      <div class="invoice-edit-rate-fields">
-        <label for="ez-invoice-edit-tax">Tax 1 rate (%)
-          <input id="ez-invoice-edit-tax" name="tax_rate" data-invoice-edit-tax inputmode="decimal" autocomplete="off">
-        </label>
-        <label for="ez-invoice-edit-tax2">Tax 2 rate (%)
-          <input id="ez-invoice-edit-tax2" name="tax2_rate" data-invoice-edit-tax2 inputmode="decimal" autocomplete="off">
-        </label>
-        <label for="ez-invoice-edit-discount">Discount rate (%)
-          <input id="ez-invoice-edit-discount" name="discount_rate" data-invoice-edit-discount inputmode="decimal" autocomplete="off">
-        </label>
-      </div>
-      <p class="hint">Leave a rate blank for none. Rates apply to the lines already marked taxed and are saved as a separate command from the document fields.</p>
-      <p class="form-result" data-invoice-edit-result role="status" aria-live="polite"></p>
-      <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-edit-submit>Save invoice</button></div>
     </form>
   </dialog>`
 
@@ -210,3 +135,106 @@ export const renderInvoiceComposerDialog = (): string => `
       <div class="invoice-payment-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button class="primary-action" type="submit" data-invoice-composer-submit>Send invoice</button></div>
     </form>
   </dialog>`
+
+/**
+ * The invoice editor, as a page of its own (`/invoices/:id/edit`).
+ *
+ * Modelled on Harvest's Edit invoice: the document's fields at the top, every
+ * line editable in place below them, the notes under the lines, and one Save
+ * for all of it. The API takes one edit per command, so Save sends the
+ * document, the rates and each changed line as a sequence of versioned
+ * commands, each under its own held key -- the same commands, keys and version
+ * checks the dialogs this replaces used, run in one pass.
+ *
+ * The field attributes are the edit dialog's, so the page answers to the names
+ * it always did.
+ */
+export const renderInvoiceEditPage = (view?: string): string => `
+  <main class="app-content invoice-workspace editor-page page--settings" data-invoice-edit-page${view === 'invoice-edit' ? '' : ' hidden'}>
+    <header class="context-row editor-page-heading">
+      <div><p class="eyebrow" data-invoice-edit-eyebrow>Invoice</p><h1 id="invoice-edit-title" data-invoice-edit-title>Edit invoice</h1></div>
+      <a class="editor-back" href="/invoices" data-invoice-edit-back>Back to the invoice</a>
+    </header>
+    <p class="form-result invoice-page-status" data-invoice-edit-status role="status" aria-live="polite">Loading invoice…</p>
+    <button class="invoice-load-more" type="button" data-invoice-edit-retry hidden>Retry invoice</button>
+    <form class="editor-form" data-invoice-edit-form aria-labelledby="invoice-edit-title" novalidate hidden>
+      <section class="editor-section" aria-labelledby="invoice-edit-document-heading">
+        <h2 id="invoice-edit-document-heading">Invoice details</h2>
+        <div class="editor-grid">
+          <p class="editor-fact editor-span-2"><span>Invoice for</span><strong data-invoice-edit-client>—</strong></p>
+          <label class="editor-span-2" for="ez-invoice-edit-purchase-order">Purchase order
+            <input id="ez-invoice-edit-purchase-order" name="purchase_order" data-invoice-edit-purchase-order maxlength="100000" autocomplete="off">
+          </label>
+          <label for="ez-invoice-edit-issue-date">Issue date
+            <input id="ez-invoice-edit-issue-date" name="issue_date" data-invoice-edit-issue-date type="date" required>
+          </label>
+          <label for="ez-invoice-edit-due-date">Due date
+            <input id="ez-invoice-edit-due-date" name="due_date" data-invoice-edit-due-date type="date" required>
+          </label>
+          <label class="editor-span-2" for="ez-invoice-edit-payment-terms">Payment terms
+            <select id="ez-invoice-edit-payment-terms" name="payment_terms" data-invoice-edit-payment-terms><option value="upon_receipt">Upon receipt</option><option value="net_15">Net 15</option><option value="net_30">Net 30</option><option value="net_45">Net 45</option><option value="net_60">Net 60</option><option value="custom">Custom</option></select>
+          </label>
+          <label class="editor-span-all" for="ez-invoice-edit-subject">Subject
+            <input id="ez-invoice-edit-subject" name="subject" data-invoice-edit-subject maxlength="100000" autocomplete="off">
+          </label>
+        </div>
+      </section>
+      <section class="editor-section" aria-labelledby="invoice-edit-lines-heading">
+        <h2 id="invoice-edit-lines-heading">Line items</h2>
+        <p class="hint">Amounts are worked out in exact cents, and the total, balance and payment state are reconciled when you save. A linked project has to be one of this client's.</p>
+        <div class="line-editor invoice-line-editor-table">
+          <div class="line-editor-head" aria-hidden="true"><span>#</span><span>Item type</span><span>Description</span><span>Quantity</span><span data-invoice-edit-rate-heading>Unit price</span><span class="line-editor-numeric">Amount</span><span></span></div>
+          <div class="line-editor-rows" data-invoice-edit-line-list></div>
+        </div>
+        <div class="line-editor-foot">
+          <button type="button" class="editor-secondary" data-invoice-edit-add-line>Add a line</button>
+          <p class="line-editor-total">Lines total <strong data-invoice-edit-subtotal>—</strong></p>
+        </div>
+      </section>
+      <section class="editor-section" aria-labelledby="invoice-edit-rates-heading">
+        <h2 id="invoice-edit-rates-heading">Tax and discount</h2>
+        <div class="editor-grid">
+          <label for="ez-invoice-edit-tax">Tax 1 rate (%)
+            <input id="ez-invoice-edit-tax" name="tax_rate" data-invoice-edit-tax inputmode="decimal" autocomplete="off">
+          </label>
+          <label for="ez-invoice-edit-tax2">Tax 2 rate (%)
+            <input id="ez-invoice-edit-tax2" name="tax2_rate" data-invoice-edit-tax2 inputmode="decimal" autocomplete="off">
+          </label>
+          <label for="ez-invoice-edit-discount">Discount rate (%)
+            <input id="ez-invoice-edit-discount" name="discount_rate" data-invoice-edit-discount inputmode="decimal" autocomplete="off">
+          </label>
+        </div>
+        <p class="hint">Leave a rate blank for none. The tax rates apply to the lines marked Tax 1 and Tax 2.</p>
+      </section>
+      <section class="editor-section" aria-labelledby="invoice-edit-notes-heading">
+        <h2 id="invoice-edit-notes-heading">Notes</h2>
+        <label for="ez-invoice-edit-notes"><span class="visually-hidden">Notes</span>
+          <textarea id="ez-invoice-edit-notes" name="notes" data-invoice-edit-notes rows="6" maxlength="100000" aria-describedby="invoice-edit-notes-hint"></textarea>
+        </label>
+        <p class="hint" id="invoice-edit-notes-hint">Shown on the invoice the client receives. Formatting: <code>*bold*</code> and <code>_italic_</code>.</p>
+      </section>
+      <footer class="editor-actions">
+        <p class="form-result" data-invoice-edit-result role="status" aria-live="polite"></p>
+        <a class="editor-secondary" href="/invoices" data-invoice-edit-cancel>Cancel</a>
+        <button class="primary-action" type="submit" data-invoice-edit-submit>Save invoice</button>
+      </footer>
+    </form>
+    <template data-invoice-edit-line-template>
+      <fieldset class="line-editor-row" data-invoice-edit-line>
+        <legend data-invoice-edit-line-position>Line</legend>
+        <span class="line-editor-number" data-invoice-edit-line-number aria-hidden="true"></span>
+        <label class="line-editor-kind"><span class="line-editor-label">Item type</span><input data-invoice-edit-line-field="kind" maxlength="255" autocomplete="off"></label>
+        <label class="line-editor-description"><span class="line-editor-label">Description</span><textarea data-invoice-edit-line-field="description" rows="2" maxlength="100000"></textarea></label>
+        <label class="line-editor-quantity"><span class="line-editor-label">Quantity</span><input data-invoice-edit-line-field="quantity" inputmode="decimal" autocomplete="off"></label>
+        <label class="line-editor-price"><span class="line-editor-label" data-invoice-edit-line-rate-label>Unit price</span><input data-invoice-edit-line-field="rate" inputmode="decimal" autocomplete="off"></label>
+        <p class="line-editor-amount"><span class="line-editor-label">Amount</span><strong data-invoice-edit-line-amount>—</strong></p>
+        <button type="button" class="line-editor-remove" data-invoice-edit-line-remove><span aria-hidden="true">×</span><span class="line-editor-remove-text">Remove line</span></button>
+        <div class="line-editor-meta invoice-line-meta">
+          <label class="line-editor-project">Linked project<select data-invoice-edit-line-field="projectId"></select></label>
+          <label class="editor-check"><input type="checkbox" data-invoice-edit-line-field="taxed">Tax 1</label>
+          <label class="editor-check"><input type="checkbox" data-invoice-edit-line-field="taxed2">Tax 2</label>
+        </div>
+        <p class="line-editor-removed" data-invoice-edit-line-removed hidden><span>This line is removed when you save.</span><button type="button" class="editor-secondary" data-invoice-edit-line-restore>Keep this line</button></p>
+      </fieldset>
+    </template>
+  </main>`

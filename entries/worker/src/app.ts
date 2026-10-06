@@ -1168,6 +1168,64 @@ export const createApp = (
         ),
       )
 
+      // The recurring editor is a page of its own (a definition's line table
+      // scrolled sideways inside a dialog), one view for both a new definition
+      // and an existing one. Under the same strip, with Recurring current: it
+      // is a step inside that tab, not a destination of its own.
+      app.get('/invoices/recurring/new', async (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            ...(await shellChrome(context.env)),
+            activeSection: 'Invoices',
+            view: 'invoice-recurring-editor',
+            tabs: invoiceTabs('invoice-recurring'),
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/invoices/recurring/:definitionId/edit', async (context) => {
+        const rawDefinitionId = context.req.param('definitionId')
+        const definitionId = Number(rawDefinitionId)
+        if (
+          !/^[1-9][0-9]*$/u.test(rawDefinitionId) ||
+          !Number.isSafeInteger(definitionId)
+        ) {
+          return context.notFound()
+        }
+        return context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            ...(await shellChrome(context.env)),
+            activeSection: 'Invoices',
+            view: 'invoice-recurring-editor',
+            tabs: invoiceTabs('invoice-recurring'),
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        )
+      })
+
       app.get('/invoices/retainers', async (context) =>
         context.html(
           renderAppShell({
@@ -1663,6 +1721,39 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Invoices',
             view: 'invoice-detail',
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        )
+      })
+
+      // The invoice editor: the document fields and every line on one page,
+      // saved together, the way Harvest's Edit invoice worked. Addressed by the
+      // invoice id like the detail page beside it.
+      app.get('/invoices/:invoiceId/edit', async (context) => {
+        const rawInvoiceId = context.req.param('invoiceId')
+        const invoiceId = Number(rawInvoiceId)
+        if (
+          !/^[1-9][0-9]*$/u.test(rawInvoiceId) ||
+          !Number.isSafeInteger(invoiceId)
+        ) {
+          return context.notFound()
+        }
+        return context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            ...(await shellChrome(context.env)),
+            activeSection: 'Invoices',
+            view: 'invoice-edit',
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),

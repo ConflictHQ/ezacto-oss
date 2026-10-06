@@ -15,7 +15,7 @@ import {
 // `/api/v1/retainers` asks for `invoices:write` -- so the screen asks the same
 // question of the identity that the invoice screen does rather than inventing a
 // second answer to it.
-import { invoiceIdentityCanWrite } from '../invoices/model.js'
+import { invoiceIdentityCanWrite, invoicePagePath } from '../invoices/model.js'
 import {
   retainerAmount,
   retainerAmountFromForm,
@@ -558,7 +558,7 @@ export const createRetainerWorkspaceController = (
             render: (movement) => {
               if (movement.entry.invoice_id === null) return '—'
               const link = document.createElement('a')
-              link.href = `/invoices/${String(movement.entry.invoice_id)}`
+              link.href = invoicePagePath(movement.entry.invoice_id)
               link.textContent = `#${String(movement.entry.invoice_id)}`
               return link
             },

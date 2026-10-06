@@ -1,4 +1,10 @@
-import type { Invoice, InvoiceMessage, InvoicePayment, Whoami } from '@conflict-hq/ezacto-client'
+import type {
+  Invoice,
+  InvoiceLine,
+  InvoiceMessage,
+  InvoicePayment,
+  Whoami,
+} from '@conflict-hq/ezacto-client'
 import { describe, expect, it } from 'vitest'
 import {
   interpolateInvoiceTemplate,
@@ -6,6 +12,11 @@ import {
   invoiceCanMarkSent,
   invoiceCanEditLines,
   invoiceCanRecordPayment,
+  invoiceDraft,
+  invoiceDraftRebase,
+  invoiceEditFocusFromHash,
+  invoiceEditHref,
+  invoiceEditPlan,
   invoiceIdFromPathname,
   invoiceIdentityCanRead,
   invoiceIdentityCanWrite,
@@ -24,6 +35,7 @@ import {
   invoicePaymentLocalInstant,
   invoicePaymentProviderLabel,
   invoicePaymentTiming,
+  invoicePagePath,
   invoicePeriod,
   invoiceProfileHasAccess,
   invoiceRecipients,
@@ -105,6 +117,28 @@ describe('invoice workspace model', () => {
     expect(invoiceIdFromPathname('/invoices/-1')).toBeNull()
     expect(invoiceIdFromPathname('/invoices/12/edit')).toBeNull()
     expect(invoiceIdFromPathname('/invoices/9007199254740992')).toBeNull()
+  })
+
+  it('[unit] builds and reads every invoice page address in one place', () => {
+    // The move from record ids to invoice numbers in these addresses is meant
+    // to be a change here and in the worker's routes, so every page reads its
+    // own address back through the same pair of functions that builds it.
+    expect(invoicePagePath(42)).toBe('/invoices/42')
+    expect(invoicePagePath(42, 'edit')).toBe('/invoices/42/edit')
+    expect(invoiceIdFromPathname(invoicePagePath(42))).toBe(42)
+    expect(invoiceIdFromPathname(invoicePagePath(42, 'edit'), 'edit')).toBe(42)
+    expect(invoiceIdFromPathname('/invoices/42/edit/', 'edit')).toBe(42)
+    expect(invoiceIdFromPathname('/invoices/42', 'edit')).toBeNull()
+    expect(invoiceIdFromPathname('/invoices/0/edit', 'edit')).toBeNull()
+    expect(invoiceIdFromPathname('/invoices/9007199254740992/edit', 'edit')).toBeNull()
+    // The edit page opens on a line, or on a fresh one, by its hash.
+    expect(invoiceEditHref(42)).toBe('/invoices/42/edit')
+    expect(invoiceEditHref(42, { line: 7 })).toBe('/invoices/42/edit#line-7')
+    expect(invoiceEditHref(42, 'new-line')).toBe('/invoices/42/edit#new-line')
+    expect(invoiceEditFocusFromHash('#line-7')).toEqual({ line: 7 })
+    expect(invoiceEditFocusFromHash('#new-line')).toBe('new-line')
+    expect(invoiceEditFocusFromHash('#line-0')).toBeNull()
+    expect(invoiceEditFocusFromHash('')).toBeNull()
   })
 
   it('[unit] colours the status pill draft, sent, late and paid', () => {
@@ -555,5 +589,174 @@ describe('invoice workspace model', () => {
     ])
     // A resumed send round-trips: what the box shows is what was confirmed.
     expect(invoiceRecipients(recipients.map(invoiceRecipientLine).join('\n'))).toEqual(recipients)
+  })
+})
+
+describe('invoice edit plan', () => {
+  const at = '2026-08-28T12:00:00.000Z'
+  const editLine = (overrides: Partial<InvoiceLine> = {}): InvoiceLine =>
+    ({
+      id: 21,
+      invoice_id: 7,
+      position: 0,
+      kind: 'Service',
+      description: 'Platform support',
+      quantity: 2,
+      unit_price_cents: 1_500,
+      amount_cents: 3_000,
+      taxed: false,
+      taxed2: false,
+      project_id: 1,
+      created_at: at,
+      updated_at: at,
+      ...overrides,
+    }) as InvoiceLine
+  const editable = (overrides: Partial<Invoice> = {}): Invoice =>
+    invoice({
+      id: 7,
+      version: 4,
+      subject: 'August services',
+      purchase_order: null,
+      notes: 'Thank you.\n',
+      issue_date: '2026-08-01',
+      due_date: '2026-08-31',
+      payment_terms: 'net_30',
+      tax_rate_ppm: 82_500,
+      tax2_rate_ppm: null,
+      discount_rate_ppm: null,
+      line_items: [
+        editLine(),
+        editLine({ id: 22, position: 3, kind: 'Product', description: null, quantity: 1 }),
+      ],
+      ...overrides,
+    })
+
+  it('[unit] sends nothing for a page nobody touched, or touched and put back', () => {
+    const base = editable()
+    expect(invoiceEditPlan(base, invoiceDraft(base))).toEqual([])
+    // Typed and restored, or changed only in the whitespace the save trims:
+    // still nothing, because a write that changes nothing moves the version.
+    const draft = invoiceDraft(base)
+    expect(
+      invoiceEditPlan(base, {
+        ...draft,
+        subject: ' August services ',
+        notes: 'Thank you.',
+        tax: '8.250',
+        lines: draft.lines.map((row) => ({ ...row, rate: row.rate.replace('.00', '') })),
+      }),
+    ).toEqual([])
+  })
+
+  it('[unit] orders the commands: document, rates, then removed, changed and new lines', () => {
+    const base = editable()
+    const draft = invoiceDraft(base)
+    const plan = invoiceEditPlan(base, {
+      ...draft,
+      subject: 'Revised',
+      discount: '5',
+      lines: [
+        { ...draft.lines[0]!, quantity: '3' },
+        { ...draft.lines[1]!, removed: true },
+        {
+          ...draft.lines[0]!,
+          key: 'new-1',
+          lineId: null,
+          kind: 'Consulting',
+          description: '  Tenth of an hour  ',
+          quantity: '0.1',
+          rate: '1.05',
+          projectId: '',
+        },
+        {
+          ...draft.lines[0]!,
+          key: 'new-2',
+          lineId: null,
+          projectId: '9',
+        },
+      ],
+    })
+    expect(plan.map((step) => step.kind)).toEqual([
+      'header',
+      'rates',
+      'line-delete',
+      'line-update',
+      'line-create',
+      'line-create',
+    ])
+    expect(plan[0]).toMatchObject({
+      edit: { subject: 'Revised', purchase_order: null, notes: 'Thank you.', payment_terms: 'net_30' },
+    })
+    expect(plan[1]).toMatchObject({
+      edit: { tax_rate_ppm: 82_500, tax2_rate_ppm: null, discount_rate_ppm: 50_000 },
+    })
+    // New lines go after the last position the invoice holds, in page order.
+    expect(plan[4]).toMatchObject({
+      key: 'new-1',
+      position: 4,
+      edit: { kind: 'Consulting', description: 'Tenth of an hour', unit_price_cents: 105, project_id: null },
+    })
+    expect(plan[5]).toMatchObject({ key: 'new-2', position: 5, edit: { project_id: 9 } })
+  })
+
+  it('[unit] names the row a bad value is on, and the field the dates break', () => {
+    const base = editable()
+    const draft = invoiceDraft(base)
+    expect(() =>
+      invoiceEditPlan(base, {
+        ...draft,
+        lines: [draft.lines[0]!, { ...draft.lines[1]!, rate: '1.005' }],
+      }),
+    ).toThrow('Line 2: Rate must be a decimal amount with no more than two decimal places.')
+    expect(() => invoiceEditPlan(base, { ...draft, dueDate: '2026-07-01' })).toThrow(
+      'Due date cannot precede the issue date.',
+    )
+    expect(() => invoiceEditPlan(base, { ...draft, tax: '101' })).toThrow('Tax 1 cannot exceed 100%.')
+    // A row nobody touched is not checked: it is not being sent.
+    const odd = editable({ line_items: [editLine({ quantity: 1e-7 })] })
+    expect(invoiceEditPlan(odd, invoiceDraft(odd))).toEqual([])
+  })
+
+  it('[unit] carries edits onto an invoice that moved, without sending back what was not edited', () => {
+    const before = editable()
+    const mine = invoiceDraft(before)
+    const draft = {
+      ...mine,
+      subject: 'Mine',
+      lines: [
+        { ...mine.lines[0]!, description: 'My correction' },
+        { ...mine.lines[1]!, quantity: '5' },
+        { ...mine.lines[0]!, key: 'new-1', lineId: null, kind: 'Extra' },
+      ],
+    }
+    const after = editable({
+      version: 5,
+      purchase_order: 'PO-2',
+      line_items: [
+        editLine({ quantity: 3, updated_at: '2026-08-29T00:00:00.000Z' }),
+        editLine({ id: 30, position: 4, kind: 'Added elsewhere' }),
+      ],
+    })
+    const rebased = invoiceDraftRebase(draft, before, after)
+    // Typed here: kept. Not typed here: the newer value.
+    expect(rebased.subject).toBe('Mine')
+    expect(rebased.purchaseOrder).toBe('PO-2')
+    expect(rebased.lines.map((row) => [row.key, row.lineId, row.description, row.quantity])).toEqual([
+      ['line-21', 21, 'My correction', '3'],
+      ['line-30', 30, 'Platform support', '2'],
+      // Line 22 went elsewhere after it was edited here: kept, as a new line to
+      // review, rather than vanishing with the edit.
+      ['line-22', null, '', '5'],
+      ['new-1', null, 'Platform support', '2'],
+    ])
+    // And what goes out next is the edits, at the new version's values.
+    const plan = invoiceEditPlan(after, rebased)
+    expect(plan.map((step) => step.kind)).toEqual([
+      'header',
+      'line-update',
+      'line-create',
+      'line-create',
+    ])
+    expect(plan[0]).toMatchObject({ edit: { subject: 'Mine', purchase_order: 'PO-2' } })
   })
 })

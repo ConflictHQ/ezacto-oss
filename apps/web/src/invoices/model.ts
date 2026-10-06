@@ -1,5 +1,7 @@
+import { EzactoApiError } from '@conflict-hq/ezacto-client'
 import type {
   Attachment,
+  GeneralResource,
   Invoice,
   InvoiceEditInput,
   InvoiceEmailDeliveryInput,
@@ -17,6 +19,53 @@ import type {
   VersionedRowDeleteInput,
   Whoami,
 } from '@conflict-hq/ezacto-client'
+
+/**
+ * The sentence to show for a failed invoice request: the first field the API
+ * named, else its message, else the error's own. Shared by the detail page and
+ * the editor so a refusal reads the same on both.
+ */
+export const invoiceApiMessage = (error: unknown): string => {
+  if (error instanceof EzactoApiError && typeof error.body === 'object' && error.body !== null) {
+    const detail = Reflect.get(error.body, 'error')
+    if (typeof detail === 'object' && detail !== null) {
+      const fields = Reflect.get(detail, 'fields')
+      if (Array.isArray(fields)) {
+        const first = fields.find(
+          (field) =>
+            typeof field === 'object' &&
+            field !== null &&
+            typeof Reflect.get(field, 'message') === 'string',
+        )
+        if (first !== undefined) return String(Reflect.get(first, 'message'))
+      }
+      const message = Reflect.get(detail, 'message')
+      if (typeof message === 'string' && message.trim() !== '') return message
+    }
+  }
+  return error instanceof Error ? error.message : 'The request could not be completed.'
+}
+
+export const invoiceApiErrorCode = (error: unknown): string | null => {
+  if (!(error instanceof EzactoApiError) || typeof error.body !== 'object' || error.body === null) {
+    return null
+  }
+  const detail = Reflect.get(error.body, 'error')
+  if (typeof detail !== 'object' || detail === null) return null
+  const code = Reflect.get(detail, 'code')
+  return typeof code === 'string' ? code : null
+}
+
+/**
+ * The refusals that mean the invoice moved since the page read it: a stale
+ * version, a line changed underneath, or a held key reused for a different
+ * request. Each is answered by reading the invoice again, not by retrying.
+ */
+export const invoiceConflictCodes: ReadonlySet<string> = new Set([
+  'invoice_version_conflict',
+  'trigger_row_conflict',
+  'command_id_reused',
+])
 
 /** Where one invoice stands with QuickBooks, as the API reports it (issue 819). */
 export type InvoiceQuickBooksState = InvoiceQuickBooksEnvelope['data']
@@ -150,6 +199,33 @@ export interface InvoicePaymentApi {
 }
 
 /**
+ * What the edit page reads and writes. The writes are the detail page's own --
+ * the same commands under the same keys -- and the two reads are for the
+ * read-only client and the projects a line can be linked to.
+ */
+export interface InvoiceEditorApi
+  extends Pick<
+    InvoicePaymentApi,
+    'getInvoice' | 'updateInvoice' | 'createInvoiceLine' | 'updateInvoiceLine' | 'deleteInvoiceLine'
+  > {
+  /** The client the invoice is for, by name. A name is a nicety; the page edits without one. */
+  getDirectoryClient?(id: number, signal?: AbortSignal): Promise<GeneralResource>
+  /**
+   * The client's projects, archived ones included: a line keeps the link it
+   * has, and the database refuses a link to another client's project, so these
+   * are the only ones worth offering.
+   */
+  listInvoiceClientProjects?(
+    clientId: number,
+    cursor?: string,
+    signal?: AbortSignal,
+  ): Promise<{
+    readonly data: readonly GeneralResource[]
+    readonly page: { readonly next_cursor: string | null }
+  }>
+}
+
+/**
  * The Reminders fact, in one line. Off for this invoice says so; on names the
  * next date, or that there is no policy to book from.
  */
@@ -217,11 +293,49 @@ export const invoiceIdentityCanRead = (identity: Readonly<Whoami>): boolean =>
 export const invoiceIdentityCanWrite = (identity: Readonly<Whoami>): boolean =>
   invoiceIdentityHasScope(identity, 'invoices:write')
 
-export const invoiceIdFromPathname = (pathname: string): number | null => {
-  const match = /^\/invoices\/([1-9][0-9]*)\/?$/u.exec(pathname)
+/**
+ * Where an invoice's pages live, and the one place that says so.
+ *
+ * Every link the app draws to an invoice is built here and every invoice page
+ * reads its address back through `invoiceIdFromPathname` below, so moving the
+ * address from the record id to the invoice number is a change to these two
+ * functions and the worker's route table -- not a search through every screen
+ * that happens to link to an invoice.
+ */
+export const invoicePagePath = (invoiceId: number, page: 'detail' | 'edit' = 'detail'): string =>
+  page === 'edit' ? `/invoices/${invoiceId}/edit` : `/invoices/${invoiceId}`
+
+/** The invoice a detail (or edit) page is for; null for any other path. */
+export const invoiceIdFromPathname = (
+  pathname: string,
+  page: 'detail' | 'edit' = 'detail',
+): number | null => {
+  const match = (
+    page === 'edit' ? /^\/invoices\/([1-9][0-9]*)\/edit\/?$/u : /^\/invoices\/([1-9][0-9]*)\/?$/u
+  ).exec(pathname)
   if (match === null) return null
   const id = Number(match[1])
   return Number.isSafeInteger(id) ? id : null
+}
+
+/**
+ * What the edit page opens on, carried in its hash: one line to put the cursor
+ * in, or a fresh line to start. The detail page's per-line Edit and its Add
+ * line both land here, so the editor is the one place a line changes.
+ */
+export type InvoiceEditFocus = { readonly line: number } | 'new-line'
+
+export const invoiceEditHref = (invoiceId: number, focus?: InvoiceEditFocus): string =>
+  `${invoicePagePath(invoiceId, 'edit')}${
+    focus === undefined ? '' : focus === 'new-line' ? '#new-line' : `#line-${focus.line}`
+  }`
+
+export const invoiceEditFocusFromHash = (hash: string): InvoiceEditFocus | null => {
+  if (hash === '#new-line') return 'new-line'
+  const match = /^#line-([1-9][0-9]*)$/u.exec(hash)
+  if (match === null) return null
+  const line = Number(match[1])
+  return Number.isSafeInteger(line) ? { line } : null
 }
 
 export const invoiceStateLabel = (invoice: Readonly<Invoice>): string => {
@@ -466,6 +580,373 @@ export const invoiceRatePpm = (raw: string, label: string): number | null => {
 
 export const invoiceRatePercentForForm = (ppm: number | null): string =>
   ppm === null ? '' : String(ppm / 10_000)
+
+/**
+ * One line as the edit page holds it: every field the string its control hands
+ * over, and where the row came from.
+ */
+export interface InvoiceLineDraft {
+  /** Stable for the life of the page: a line not saved yet has no id to go by. */
+  readonly key: string
+  /** The line on the invoice this row edits; null for one not saved yet. */
+  readonly lineId: number | null
+  readonly kind: string
+  readonly description: string
+  readonly quantity: string
+  readonly rate: string
+  readonly taxed: boolean
+  readonly taxed2: boolean
+  readonly projectId: string
+  /** Marked to go when the page saves, and still on screen until then. */
+  readonly removed: boolean
+}
+
+/** The whole edit page as its controls hold it. */
+export interface InvoiceDraft {
+  readonly subject: string
+  readonly purchaseOrder: string
+  readonly notes: string
+  readonly issueDate: string
+  readonly dueDate: string
+  readonly paymentTerms: string
+  readonly tax: string
+  readonly tax2: string
+  readonly discount: string
+  readonly lines: readonly InvoiceLineDraft[]
+}
+
+const invoiceLinesInOrder = (invoice: Readonly<Invoice>): readonly InvoiceLine[] =>
+  [...invoice.line_items].sort((left, right) => left.position - right.position || left.id - right.id)
+
+export const invoiceLineDraft = (line: Readonly<InvoiceLine>): InvoiceLineDraft => ({
+  key: `line-${line.id}`,
+  lineId: line.id,
+  kind: line.kind,
+  description: line.description ?? '',
+  quantity: invoiceLineQuantityForForm(line),
+  rate: invoiceLineUnitPriceForForm(line.unit_price_cents),
+  taxed: line.taxed,
+  taxed2: line.taxed2,
+  projectId: line.project_id === null ? '' : String(line.project_id),
+  removed: false,
+})
+
+/** A fresh line, seeded the way the Add line dialog seeded one. */
+export const invoiceBlankLineDraft = (key: string): InvoiceLineDraft => ({
+  key,
+  lineId: null,
+  kind: 'Service',
+  description: '',
+  quantity: '1',
+  rate: '0.00',
+  taxed: false,
+  taxed2: false,
+  projectId: '',
+  removed: false,
+})
+
+export const invoiceDraft = (invoice: Readonly<Invoice>): InvoiceDraft => ({
+  subject: invoice.subject ?? '',
+  purchaseOrder: invoice.purchase_order ?? '',
+  notes: invoice.notes ?? '',
+  issueDate: invoice.issue_date,
+  dueDate: invoice.due_date,
+  paymentTerms: invoice.payment_terms,
+  tax: invoiceRatePercentForForm(invoice.tax_rate_ppm),
+  tax2: invoiceRatePercentForForm(invoice.tax2_rate_ppm),
+  discount: invoiceRatePercentForForm(invoice.discount_rate_ppm),
+  lines: invoiceLinesInOrder(invoice).map(invoiceLineDraft),
+})
+
+export type InvoiceHeaderEdit = Required<
+  Pick<InvoiceEditInput, 'subject' | 'purchase_order' | 'notes' | 'issue_date' | 'due_date' | 'payment_terms'>
+>
+export type InvoiceRatesEdit = Required<
+  Pick<InvoiceEditInput, 'tax_rate_ppm' | 'tax2_rate_ppm' | 'discount_rate_ppm'>
+>
+
+/** What one line will say once saved, parsed and checked. */
+export interface InvoiceLineEdit {
+  readonly kind: string
+  readonly description: string | null
+  readonly quantity: number
+  readonly unit_price_cents: number
+  readonly taxed: boolean
+  readonly taxed2: boolean
+  readonly project_id: number | null
+}
+
+/**
+ * One command a save has to send. The API takes one edit per request -- the
+ * document, the rates, or one line -- so a page that changed several things is
+ * several commands, sent in this order on rising versions.
+ */
+export type InvoiceEditStep =
+  | { readonly kind: 'header'; readonly edit: InvoiceHeaderEdit }
+  | { readonly kind: 'rates'; readonly edit: InvoiceRatesEdit }
+  | { readonly kind: 'line-delete'; readonly key: string; readonly line: InvoiceLine }
+  | {
+      readonly kind: 'line-update'
+      readonly key: string
+      readonly line: InvoiceLine
+      readonly edit: InvoiceLineEdit
+    }
+  | {
+      readonly kind: 'line-create'
+      readonly key: string
+      readonly position: number
+      readonly edit: InvoiceLineEdit
+    }
+
+/**
+ * Which held idempotency key a step retries under. One per piece of the page,
+ * not per click: a step that failed is retried under the key it was sent with,
+ * so a request the server committed but whose answer was lost is replayed
+ * rather than applied twice.
+ */
+export const invoiceEditStepKey = (step: InvoiceEditStep): string =>
+  step.kind === 'header' || step.kind === 'rates' ? step.kind : `line:${step.key}`
+
+const invoicePaymentTermValues: readonly Invoice['payment_terms'][] = [
+  'upon_receipt',
+  'net_15',
+  'net_30',
+  'net_45',
+  'net_60',
+  'custom',
+]
+
+const blankToNull = (value: string | null | undefined): string | null => {
+  const trimmed = value?.trim() ?? ''
+  return trimmed === '' ? null : trimmed
+}
+
+const sameLineFields = (left: Readonly<InvoiceLineDraft>, right: Readonly<InvoiceLineDraft>): boolean =>
+  left.kind === right.kind &&
+  left.description === right.description &&
+  left.quantity === right.quantity &&
+  left.rate === right.rate &&
+  left.taxed === right.taxed &&
+  left.taxed2 === right.taxed2 &&
+  left.projectId === right.projectId
+
+/**
+ * A row's fields, parsed with the rules the line dialog applied, or an Error
+ * naming the row. Numbered from 1 because the page numbers them so.
+ */
+const invoiceLineEdit = (row: Readonly<InvoiceLineDraft>, position: number): InvoiceLineEdit => {
+  const named = (message: string): Error => new Error(`Line ${position}: ${message}`)
+  const kind = row.kind.trim()
+  if (kind === '') throw named('Enter an item type.')
+  if (kind.length > 255) throw named('Item type cannot exceed 255 characters.')
+  const description = row.description.trim()
+  if (description.length > 100_000) {
+    throw named('Description cannot exceed 100,000 characters.')
+  }
+  let values: InvoiceLineValues
+  try {
+    values = invoiceLineValues(row.quantity, row.rate)
+  } catch (error) {
+    throw named(error instanceof Error ? error.message : 'Check the quantity and rate.')
+  }
+  let projectId: number | null = null
+  if (row.projectId !== '') {
+    projectId = Number(row.projectId)
+    if (!/^[1-9][0-9]*$/u.test(row.projectId) || !Number.isSafeInteger(projectId)) {
+      throw named('Choose a project from the list.')
+    }
+  }
+  return {
+    kind,
+    description: description === '' ? null : description,
+    quantity: values.quantity,
+    unit_price_cents: values.unitPriceCents,
+    taxed: row.taxed,
+    taxed2: row.taxed2,
+    project_id: projectId,
+  }
+}
+
+const lineEditChanges = (edit: Readonly<InvoiceLineEdit>, line: Readonly<InvoiceLine>): boolean =>
+  edit.kind !== line.kind.trim() ||
+  edit.description !== blankToNull(line.description) ||
+  edit.quantity !== line.quantity ||
+  edit.unit_price_cents !== line.unit_price_cents ||
+  edit.taxed !== line.taxed ||
+  edit.taxed2 !== line.taxed2 ||
+  edit.project_id !== line.project_id
+
+/**
+ * Everything a save has to send to bring `invoice` to what the page shows, in
+ * the order it is sent -- the document, the rates, then removed, changed and
+ * new lines -- or an Error naming the field that stops it.
+ *
+ * Every field is checked before anything is sent, so a bad quantity on the
+ * last line leaves the document and the other lines unsent rather than
+ * half-saved. A part of the page nobody touched is not sent at all, and a part
+ * that was touched and put back is not either: a write that changes nothing
+ * still moves the version, and the next real edit would trip over it.
+ *
+ * The controller sends the first step and plans again against the invoice the
+ * server answered with, so what a retry sends is always what is still left.
+ */
+export const invoiceEditPlan = (
+  invoice: Readonly<Invoice>,
+  draft: Readonly<InvoiceDraft>,
+): readonly InvoiceEditStep[] => {
+  const seed = invoiceDraft(invoice)
+  const steps: InvoiceEditStep[] = []
+  const headerTouched =
+    draft.subject !== seed.subject ||
+    draft.purchaseOrder !== seed.purchaseOrder ||
+    draft.notes !== seed.notes ||
+    draft.issueDate !== seed.issueDate ||
+    draft.dueDate !== seed.dueDate ||
+    draft.paymentTerms !== seed.paymentTerms
+  if (headerTouched) {
+    if (draft.issueDate === '' || draft.dueDate === '') {
+      throw new Error('Enter both an issue date and a due date.')
+    }
+    if (draft.dueDate < draft.issueDate) throw new Error('Due date cannot precede the issue date.')
+    const paymentTerms = invoicePaymentTermValues.find((terms) => terms === draft.paymentTerms)
+    if (paymentTerms === undefined) throw new Error('Choose the payment terms.')
+    // Notes are prose the client reads, so the paragraph breaks someone typed
+    // are kept; only the surrounding whitespace goes, and an all-whitespace
+    // note clears.
+    const edit: InvoiceHeaderEdit = {
+      subject: blankToNull(draft.subject),
+      purchase_order: blankToNull(draft.purchaseOrder),
+      notes: blankToNull(draft.notes),
+      issue_date: draft.issueDate,
+      due_date: draft.dueDate,
+      payment_terms: paymentTerms,
+    }
+    if (
+      edit.subject !== blankToNull(invoice.subject) ||
+      edit.purchase_order !== blankToNull(invoice.purchase_order) ||
+      edit.notes !== blankToNull(invoice.notes) ||
+      edit.issue_date !== invoice.issue_date ||
+      edit.due_date !== invoice.due_date ||
+      edit.payment_terms !== invoice.payment_terms
+    ) {
+      steps.push({ kind: 'header', edit })
+    }
+  }
+  if (draft.tax !== seed.tax || draft.tax2 !== seed.tax2 || draft.discount !== seed.discount) {
+    const edit: InvoiceRatesEdit = {
+      tax_rate_ppm: invoiceRatePpm(draft.tax, 'Tax 1'),
+      tax2_rate_ppm: invoiceRatePpm(draft.tax2, 'Tax 2'),
+      discount_rate_ppm: invoiceRatePpm(draft.discount, 'Discount'),
+    }
+    if (
+      edit.tax_rate_ppm !== invoice.tax_rate_ppm ||
+      edit.tax2_rate_ppm !== invoice.tax2_rate_ppm ||
+      edit.discount_rate_ppm !== invoice.discount_rate_ppm
+    ) {
+      steps.push({ kind: 'rates', edit })
+    }
+  }
+  const lines = new Map(invoice.line_items.map((line) => [line.id, line]))
+  const removals: InvoiceEditStep[] = []
+  const changes: InvoiceEditStep[] = []
+  const additions: InvoiceEditStep[] = []
+  let nextPosition = invoice.line_items.reduce(
+    (next, line) => Math.max(next, line.position + 1),
+    0,
+  )
+  draft.lines.forEach((row, index) => {
+    if (row.lineId !== null) {
+      const line = lines.get(row.lineId)
+      // Gone from the invoice already: nothing left to remove or change.
+      if (line === undefined) return
+      if (row.removed) {
+        removals.push({ kind: 'line-delete', key: row.key, line })
+        return
+      }
+      if (sameLineFields(row, invoiceLineDraft(line))) return
+      const edit = invoiceLineEdit(row, index + 1)
+      if (lineEditChanges(edit, line)) {
+        changes.push({ kind: 'line-update', key: row.key, line, edit })
+      }
+      return
+    }
+    if (row.removed) return
+    const edit = invoiceLineEdit(row, index + 1)
+    if (!Number.isSafeInteger(nextPosition)) throw new Error('No more lines can be added.')
+    additions.push({ kind: 'line-create', key: row.key, position: nextPosition, edit })
+    nextPosition += 1
+  })
+  return [...steps, ...removals, ...changes, ...additions]
+}
+
+/**
+ * The page's edits carried onto an invoice that moved underneath them.
+ *
+ * A version conflict reloads the invoice, and the page has to show the new one
+ * without throwing away what was typed -- and without sending back, on the
+ * retry, the old values of everything that was not. So each field is a
+ * three-way merge: one the reader left as it was takes the new value, one they
+ * changed keeps their change. A line somebody else added appears; one they
+ * removed goes, unless it had been edited here, in which case it stays as a
+ * new line to review rather than vanishing with the edit.
+ */
+export const invoiceDraftRebase = (
+  draft: Readonly<InvoiceDraft>,
+  before: Readonly<Invoice>,
+  after: Readonly<Invoice>,
+): InvoiceDraft => {
+  const was = invoiceDraft(before)
+  const now = invoiceDraft(after)
+  const merged = <Field extends Exclude<keyof InvoiceDraft, 'lines'>>(field: Field): string =>
+    draft[field] === was[field] ? now[field] : draft[field]
+  const previous = new Map(before.line_items.map((line) => [line.id, line]))
+  const remaining = new Set(after.line_items.map((line) => line.id))
+  const lines: InvoiceLineDraft[] = []
+  for (const line of invoiceLinesInOrder(after)) {
+    const fresh = invoiceLineDraft(line)
+    const row = draft.lines.find((candidate) => candidate.lineId === line.id)
+    if (row === undefined) {
+      lines.push(fresh)
+      continue
+    }
+    const prior = previous.get(line.id)
+    const old = prior === undefined ? null : invoiceLineDraft(prior)
+    const keep = <Field extends Exclude<keyof InvoiceLineDraft, 'key' | 'lineId' | 'removed'>>(
+      field: Field,
+    ): InvoiceLineDraft[Field] => (old !== null && row[field] === old[field] ? fresh[field] : row[field])
+    lines.push({
+      key: row.key,
+      lineId: line.id,
+      kind: keep('kind'),
+      description: keep('description'),
+      quantity: keep('quantity'),
+      rate: keep('rate'),
+      taxed: keep('taxed'),
+      taxed2: keep('taxed2'),
+      projectId: keep('projectId'),
+      removed: row.removed,
+    })
+  }
+  for (const row of draft.lines) {
+    if (row.lineId === null || remaining.has(row.lineId) || row.removed) continue
+    const prior = previous.get(row.lineId)
+    if (prior !== undefined && sameLineFields(row, invoiceLineDraft(prior))) continue
+    lines.push({ ...row, lineId: null })
+  }
+  lines.push(...draft.lines.filter((row) => row.lineId === null))
+  return {
+    subject: merged('subject'),
+    purchaseOrder: merged('purchaseOrder'),
+    notes: merged('notes'),
+    issueDate: merged('issueDate'),
+    dueDate: merged('dueDate'),
+    paymentTerms: merged('paymentTerms'),
+    tax: merged('tax'),
+    tax2: merged('tax2'),
+    discount: merged('discount'),
+    lines,
+  }
+}
 
 /**
  * One Send, held as a single value: which invoice it belongs to, what it has

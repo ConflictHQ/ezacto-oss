@@ -3,10 +3,7 @@
 import {
   EzactoApiError,
   type Invoice,
-  type InvoiceEditInput,
   type InvoiceLine,
-  type InvoiceLineInput,
-  type InvoiceLineUpdateInput,
   type InvoicePayment,
   type InvoicePaymentInput,
   type InvoiceQuickBooksEnvelope,
@@ -21,6 +18,7 @@ import {
   type InvoicePaymentApi,
   type InvoiceReminderPreference,
 } from '../src/invoices/model.js'
+import { leavePageNotice } from '../src/page-notice.js'
 import { renderAppShell } from '../src/shell/render.js'
 import { contrastRatio, defaultTheme, themeManifest, webAssets } from '../src/index.js'
 
@@ -352,557 +350,6 @@ describe('invoice payment controller', () => {
     )
   })
 
-  it('[e2e:invoice-lines] retries, adds, edits, and deletes exact free-form lines', async () => {
-    renderDetail()
-    let currentInvoice = invoice('LINES', {
-      version: 1,
-      amount_cents: 0,
-      due_amount_cents: 0,
-      line_items: [],
-    })
-    let createAttempts = 0
-    const createInvoiceLine = vi.fn(
-      async (_invoiceId: number, _commandId: string, input: InvoiceLineInput) => {
-        createAttempts += 1
-        if (createAttempts === 1) throw new Error('network unavailable')
-        currentInvoice = {
-          ...currentInvoice,
-          version: 2,
-          amount_cents: 11,
-          due_amount_cents: 11,
-          line_items: [
-            line({
-              kind: input.kind,
-              description: input.description ?? null,
-              position: input.position,
-              quantity: input.quantity,
-              unit_price_cents: input.unit_price_cents,
-              amount_cents: 11,
-              taxed: input.taxed ?? false,
-              taxed2: input.taxed2 ?? false,
-              project_id: input.project_id ?? null,
-            }),
-          ],
-        }
-        return currentInvoice
-      },
-    )
-    const updateInvoiceLine = vi.fn(
-      async (
-        _invoiceId: number,
-        _lineId: number,
-        _commandId: string,
-        input: InvoiceLineUpdateInput,
-      ) => {
-        currentInvoice = {
-          ...currentInvoice,
-          version: 3,
-          amount_cents: 308,
-          due_amount_cents: 308,
-          line_items: [
-            line({
-              kind: input.kind,
-              description: input.description ?? null,
-              position: input.position,
-              quantity: input.quantity,
-              unit_price_cents: input.unit_price_cents,
-              amount_cents: 308,
-              taxed: input.taxed ?? false,
-              taxed2: input.taxed2 ?? false,
-              project_id: input.project_id ?? null,
-              updated_at: '2026-08-29T12:00:00.000Z',
-            }),
-          ],
-        }
-        return currentInvoice
-      },
-    )
-    const deleteInvoiceLine = vi.fn(async () => {
-      currentInvoice = {
-        ...currentInvoice,
-        version: 4,
-        amount_cents: 0,
-        due_amount_cents: 0,
-        line_items: [],
-      }
-      return currentInvoice
-    })
-    const api: Partial<InvoicePaymentApi> = {
-      getInvoice: vi.fn(async () => currentInvoice),
-      listInvoiceMessages: vi.fn(async () => []),
-      listInvoicePayments: vi.fn(async () => []),
-      createInvoiceLine,
-      updateInvoiceLine,
-      deleteInvoiceLine,
-    }
-    const controller = createInvoicePaymentController(api)
-    await controller.activate(identity(1), new AbortController().signal, () => false)
-
-    const add = document.querySelector<HTMLButtonElement>('[data-invoice-line-add]')!
-    const editor = document.querySelector<HTMLDialogElement>('[data-invoice-line-dialog]')!
-    add.click()
-    editor.querySelector<HTMLButtonElement>('[data-dialog-close]:not([aria-label])')!.click()
-    expect(createInvoiceLine).not.toHaveBeenCalled()
-    add.click()
-    editor.querySelector<HTMLButtonElement>('[data-dialog-close][aria-label]')!.click()
-    expect(createInvoiceLine).not.toHaveBeenCalled()
-
-    add.click()
-    const kind = document.querySelector<HTMLInputElement>('[data-invoice-line-kind]')!
-    const description = document.querySelector<HTMLTextAreaElement>(
-      '[data-invoice-line-description]',
-    )!
-    const quantity = document.querySelector<HTMLInputElement>('[data-invoice-line-quantity]')!
-    const rate = document.querySelector<HTMLInputElement>('[data-invoice-line-rate]')!
-    kind.value = 'Consulting'
-    description.value = 'Exact tenth-hour adjustment'
-    quantity.value = '0.1'
-    rate.value = '1.05'
-    rate.dispatchEvent(new Event('input', { bubbles: true }))
-    expect(document.querySelector('[data-invoice-line-preview]')?.textContent).toBe('$0.11')
-    submit('[data-invoice-line-form]')
-    await vi.waitFor(() =>
-      expect(document.querySelector('[data-invoice-line-result]')?.textContent).toBe(
-        'network unavailable',
-      ),
-    )
-    submit('[data-invoice-line-form]')
-    await vi.waitFor(() => expect(editor.open).toBe(false))
-    expect(createInvoiceLine).toHaveBeenCalledTimes(2)
-    expect(createInvoiceLine.mock.calls[0]?.[1]).toBe(createInvoiceLine.mock.calls[1]?.[1])
-    expect(createInvoiceLine.mock.calls[1]?.[2]).toEqual({
-      expected_version: 1,
-      position: 0,
-      kind: 'Consulting',
-      description: 'Exact tenth-hour adjustment',
-      quantity: 0.1,
-      unit_price_cents: 105,
-      taxed: false,
-      taxed2: false,
-    })
-    expect(document.querySelector('[data-invoice-detail-total]')?.textContent).toBe('$0.11')
-
-    document.querySelector<HTMLButtonElement>('[data-invoice-line-edit="21"]')!.click()
-    quantity.value = '1.5'
-    rate.value = '2.05'
-    description.value = 'Updated adjustment'
-    description.dispatchEvent(new Event('input', { bubbles: true }))
-    submit('[data-invoice-line-form]')
-    await vi.waitFor(() => expect(editor.open).toBe(false))
-    expect(updateInvoiceLine).toHaveBeenCalledWith(
-      7,
-      21,
-      expect.stringMatching(/^web\.invoice\.line\.update:/u),
-      {
-        expected_version: 2,
-        expected_updated_at: timestamp,
-        position: 0,
-        kind: 'Consulting',
-        description: 'Updated adjustment',
-        quantity: 1.5,
-        unit_price_cents: 205,
-        taxed: false,
-        taxed2: false,
-        project_id: null,
-      },
-      expect.any(AbortSignal),
-    )
-    expect(document.querySelector('[data-invoice-detail-total]')?.textContent).toBe('$3.08')
-
-    const openDelete = (): void =>
-      document.querySelector<HTMLButtonElement>('[data-invoice-line-delete="21"]')!.click()
-    openDelete()
-    const confirmation = document.querySelector<HTMLDialogElement>(
-      '[data-invoice-line-delete-dialog]',
-    )!
-    confirmation.querySelector<HTMLButtonElement>('[data-dialog-close]:not([aria-label])')!.click()
-    expect(deleteInvoiceLine).not.toHaveBeenCalled()
-    openDelete()
-    confirmation.querySelector<HTMLButtonElement>('[data-dialog-close][aria-label]')!.click()
-    expect(deleteInvoiceLine).not.toHaveBeenCalled()
-    openDelete()
-    submit('[data-invoice-line-delete-form]')
-    await vi.waitFor(() => expect(confirmation.open).toBe(false))
-    expect(deleteInvoiceLine).toHaveBeenCalledWith(
-      7,
-      21,
-      expect.stringMatching(/^web\.invoice\.line\.delete:/u),
-      {
-        expected_version: 3,
-        expected_updated_at: '2026-08-29T12:00:00.000Z',
-      },
-      expect.any(AbortSignal),
-    )
-    expect(document.querySelector('[data-invoice-detail-total]')?.textContent).toBe('$0.00')
-    expect(document.querySelector('[data-invoice-detail-lines]')?.textContent).toContain(
-      'no line items',
-    )
-  })
-
-  it('[conflict] refetches a changed line and preserves the pending form values', async () => {
-    renderDetail()
-    let currentInvoice = invoice('LINE-CONFLICT', { line_items: [line()] })
-    let attempts = 0
-    const commandIds: string[] = []
-    const updateInvoiceLine = vi.fn(
-      async (_invoiceId: number, _lineId: number, commandId: string, input: InvoiceLineUpdateInput) => {
-        attempts += 1
-        commandIds.push(commandId)
-        if (attempts === 1) {
-          currentInvoice = {
-            ...currentInvoice,
-            version: 2,
-            line_items: [line({ updated_at: '2026-08-29T12:00:00.000Z' })],
-          }
-          throw new EzactoApiError(
-            409,
-            {
-              error: {
-                code: 'trigger_row_conflict',
-                message: 'server conflict',
-                fields: [],
-              },
-            },
-            null,
-          )
-        }
-        expect(input.expected_version).toBe(2)
-        expect(input.expected_updated_at).toBe('2026-08-29T12:00:00.000Z')
-        expect(input.project_id).toBe(1)
-        currentInvoice = { ...currentInvoice, version: 3 }
-        return currentInvoice
-      },
-    )
-    const controller = createInvoicePaymentController({
-      getInvoice: vi.fn(async () => currentInvoice),
-      listInvoiceMessages: vi.fn(async () => []),
-      listInvoicePayments: vi.fn(async () => []),
-      updateInvoiceLine,
-    })
-    await controller.activate(identity(1), new AbortController().signal, () => false)
-    document.querySelector<HTMLButtonElement>('[data-invoice-line-edit="21"]')!.click()
-    const description = document.querySelector<HTMLTextAreaElement>(
-      '[data-invoice-line-description]',
-    )!
-    description.value = 'Preserve my line correction'
-    description.dispatchEvent(new Event('input', { bubbles: true }))
-    submit('[data-invoice-line-form]')
-    await vi.waitFor(() =>
-      expect(document.querySelector('[data-invoice-line-result]')?.textContent).toContain(
-        'Latest values are loaded',
-      ),
-    )
-    expect(description.value).toBe('Preserve my line correction')
-    submit('[data-invoice-line-form]')
-    await vi.waitFor(() =>
-      expect(document.querySelector<HTMLDialogElement>('[data-invoice-line-dialog]')?.open).toBe(
-        false,
-      ),
-    )
-    expect(commandIds).toHaveLength(2)
-    expect(commandIds[0]).not.toBe(commandIds[1])
-  })
-
-  it('[e2e:invoice-header] edits document facts and rates as two sequenced commands', async () => {
-    renderDetail()
-    let currentInvoice = invoice('HEADER', {
-      subject: 'Original subject',
-      purchase_order: 'PO-1',
-    })
-    const updateInvoice = vi.fn(
-      async (_invoiceId: number, _commandId: string, input: InvoiceEditInput) => {
-        currentInvoice = {
-          ...currentInvoice,
-          version: input.expected_version + 1,
-          ...(input.issue_date === undefined
-            ? {}
-            : {
-                subject: input.subject ?? null,
-                purchase_order: input.purchase_order ?? null,
-                issue_date: input.issue_date,
-                due_date: input.due_date!,
-                payment_terms: input.payment_terms!,
-              }),
-          ...(input.tax_rate_ppm === undefined
-            ? {}
-            : {
-                tax_rate_ppm: input.tax_rate_ppm,
-                tax2_rate_ppm: input.tax2_rate_ppm!,
-                discount_rate_ppm: input.discount_rate_ppm!,
-                tax_amount_cents: 83,
-              }),
-        }
-        return currentInvoice
-      },
-    )
-    const controller = createInvoicePaymentController({
-      getInvoice: vi.fn(async () => currentInvoice),
-      listInvoiceMessages: vi.fn(async () => []),
-      listInvoicePayments: vi.fn(async () => []),
-      updateInvoice,
-    })
-    await controller.activate(identity(1), new AbortController().signal, () => false)
-
-    document.querySelector<HTMLButtonElement>('[data-invoice-edit]')!.click()
-    const subject = document.querySelector<HTMLInputElement>('[data-invoice-edit-subject]')!
-    const purchaseOrder = document.querySelector<HTMLInputElement>(
-      '[data-invoice-edit-purchase-order]',
-    )!
-    const dueDate = document.querySelector<HTMLInputElement>('[data-invoice-edit-due-date]')!
-    const terms = document.querySelector<HTMLSelectElement>('[data-invoice-edit-payment-terms]')!
-    const tax = document.querySelector<HTMLInputElement>('[data-invoice-edit-tax]')!
-    const notes = document.querySelector<HTMLTextAreaElement>('[data-invoice-edit-notes]')!
-    expect(subject.value).toBe('Original subject')
-    expect(purchaseOrder.value).toBe('PO-1')
-    expect(document.querySelector<HTMLInputElement>('[data-invoice-edit-issue-date]')?.value).toBe(
-      '2026-08-01',
-    )
-    expect(dueDate.value).toBe('2026-08-31')
-    expect(terms.value).toBe('net_30')
-    expect(tax.value).toBe('')
-
-    subject.value = 'Revised subject'
-    purchaseOrder.value = 'PO-77'
-    // Notes are prose the client reads, so the line breaks someone typed are
-    // part of what they wrote and have to survive the round trip.
-    notes.value = 'Thanks for your business.\nWire details overleaf.'
-    dueDate.value = '2026-09-15'
-    terms.value = 'net_45'
-    tax.value = '8.25'
-    tax.dispatchEvent(new Event('input', { bubbles: true }))
-    submit('[data-invoice-edit-form]')
-    await vi.waitFor(() =>
-      expect(
-        document.querySelector<HTMLDialogElement>('[data-invoice-edit-dialog]')?.open,
-      ).toBe(false),
-    )
-
-    expect(updateInvoice).toHaveBeenCalledTimes(2)
-    expect(updateInvoice).toHaveBeenNthCalledWith(
-      1,
-      7,
-      expect.stringMatching(/^web\.invoice\.header:/u),
-      {
-        expected_version: 1,
-        subject: 'Revised subject',
-        purchase_order: 'PO-77',
-        notes: 'Thanks for your business.\nWire details overleaf.',
-        issue_date: '2026-08-01',
-        due_date: '2026-09-15',
-        payment_terms: 'net_45',
-      },
-      expect.any(AbortSignal),
-    )
-    expect(updateInvoice).toHaveBeenNthCalledWith(
-      2,
-      7,
-      expect.stringMatching(/^web\.invoice\.financials:/u),
-      {
-        expected_version: 2,
-        tax_rate_ppm: 82_500,
-        tax2_rate_ppm: null,
-        discount_rate_ppm: null,
-      },
-      expect.any(AbortSignal),
-    )
-    expect(document.querySelector('[data-invoice-detail-purchase-order]')?.textContent).toBe(
-      'PO-77',
-    )
-    expect(document.querySelector('[data-invoice-detail-due-date]')?.textContent).toBe(
-      'Sep 15, 2026',
-    )
-    expect(document.querySelector('[data-invoice-detail-subject]')?.textContent).toBe(
-      'Revised subject',
-    )
-    expect(document.querySelector('[data-invoice-detail-tax]')?.textContent).toBe('$0.83')
-
-    document.querySelector<HTMLButtonElement>('[data-invoice-edit]')!.click()
-    expect(tax.value).toBe('8.25')
-    submit('[data-invoice-edit-form]')
-    expect(updateInvoice).toHaveBeenCalledTimes(2)
-    expect(document.querySelector('[data-invoice-edit-result]')?.textContent).toBe(
-      'Nothing changed.',
-    )
-  })
-
-  it('[e2e:invoice-header] clears a note to null and treats an unchanged one as no edit', async () => {
-    // The detail page showed notes and the editor had no field for them, so a
-    // note that arrived with the migration could be read and never corrected.
-    renderDetail()
-    let currentInvoice = invoice('NOTES', { notes: 'Pay within 30 days.' })
-    const updateInvoice = vi.fn(
-      async (_invoiceId: number, _commandId: string, input: InvoiceEditInput) => {
-        currentInvoice = {
-          ...currentInvoice,
-          version: input.expected_version + 1,
-          ...(input.issue_date === undefined ? {} : { notes: input.notes ?? null }),
-        }
-        return currentInvoice
-      },
-    )
-    const controller = createInvoicePaymentController({
-      getInvoice: vi.fn(async () => currentInvoice),
-      listInvoiceMessages: vi.fn(async () => []),
-      listInvoicePayments: vi.fn(async () => []),
-      updateInvoice,
-    })
-    await controller.activate(identity(1), new AbortController().signal, () => false)
-
-    document.querySelector<HTMLButtonElement>('[data-invoice-edit]')!.click()
-    const notes = document.querySelector<HTMLTextAreaElement>('[data-invoice-edit-notes]')!
-    expect(notes.value).toBe('Pay within 30 days.')
-
-    // Reopening without touching anything must not invent a command. A header
-    // write bumps the version, so a spurious one would make the next real edit
-    // fail its expected_version check.
-    submit('[data-invoice-edit-form]')
-    expect(updateInvoice).not.toHaveBeenCalled()
-    expect(document.querySelector('[data-invoice-edit-result]')?.textContent).toBe(
-      'Nothing changed.',
-    )
-
-    // An emptied field is a removed note, not the empty string -- the column is
-    // nullable and "" would render as a blank Notes section on the invoice.
-    notes.value = '   '
-    submit('[data-invoice-edit-form]')
-    await vi.waitFor(() => expect(updateInvoice).toHaveBeenCalledTimes(1))
-    expect(updateInvoice.mock.calls[0]?.[2]).toMatchObject({ notes: null })
-  })
-
-  it('[reliability] keeps a committed header edit and retries only the failed rate command', async () => {
-    renderDetail()
-    let currentInvoice = invoice('PARTIAL')
-    const calls: InvoiceEditInput[] = []
-    let rateAttempts = 0
-    const updateInvoice = vi.fn(
-      async (_invoiceId: number, _commandId: string, input: InvoiceEditInput) => {
-        calls.push(input)
-        if (input.tax_rate_ppm !== undefined) {
-          rateAttempts += 1
-          if (rateAttempts === 1) throw new Error('rate service unavailable')
-          currentInvoice = {
-            ...currentInvoice,
-            version: input.expected_version + 1,
-            discount_rate_ppm: input.discount_rate_ppm!,
-          }
-          return currentInvoice
-        }
-        currentInvoice = {
-          ...currentInvoice,
-          version: input.expected_version + 1,
-          purchase_order: input.purchase_order ?? null,
-        }
-        return currentInvoice
-      },
-    )
-    const controller = createInvoicePaymentController({
-      getInvoice: vi.fn(async () => currentInvoice),
-      listInvoiceMessages: vi.fn(async () => []),
-      listInvoicePayments: vi.fn(async () => []),
-      updateInvoice,
-    })
-    await controller.activate(identity(1), new AbortController().signal, () => false)
-
-    document.querySelector<HTMLButtonElement>('[data-invoice-edit]')!.click()
-    document.querySelector<HTMLInputElement>('[data-invoice-edit-purchase-order]')!.value = 'PO-9'
-    document.querySelector<HTMLInputElement>('[data-invoice-edit-discount]')!.value = '5'
-    submit('[data-invoice-edit-form]')
-    await vi.waitFor(() =>
-      expect(document.querySelector('[data-invoice-edit-result]')?.textContent).toBe(
-        'rate service unavailable',
-      ),
-    )
-    expect(calls).toHaveLength(2)
-
-    submit('[data-invoice-edit-form]')
-    await vi.waitFor(() =>
-      expect(
-        document.querySelector<HTMLDialogElement>('[data-invoice-edit-dialog]')?.open,
-      ).toBe(false),
-    )
-    expect(calls).toHaveLength(3)
-    expect(calls[2]).toEqual({
-      expected_version: 2,
-      tax_rate_ppm: null,
-      tax2_rate_ppm: null,
-      discount_rate_ppm: 50_000,
-    })
-    expect(updateInvoice.mock.calls[1]?.[1]).toBe(updateInvoice.mock.calls[2]?.[1])
-    expect(document.querySelector('[data-invoice-detail-purchase-order]')?.textContent).toBe(
-      'PO-9',
-    )
-  })
-
-  it('[conflict] keeps a header edit when the invoice moved on and retries at the new version', async () => {
-    renderDetail()
-    let currentInvoice = invoice('HEADER-CONFLICT', { subject: 'Original subject' })
-    const commandIds: string[] = []
-    let attempts = 0
-    const updateInvoice = vi.fn(
-      async (_invoiceId: number, commandId: string, input: InvoiceEditInput) => {
-        attempts += 1
-        commandIds.push(commandId)
-        if (attempts === 1) {
-          // Somebody else wrote the invoice between the render and the save.
-          currentInvoice = { ...currentInvoice, version: 2, due_amount_cents: 400 }
-          throw new EzactoApiError(
-            409,
-            {
-              error: {
-                code: 'invoice_version_conflict',
-                message: 'server conflict',
-                fields: [],
-              },
-            },
-            null,
-          )
-        }
-        expect(input.expected_version).toBe(2)
-        currentInvoice = { ...currentInvoice, version: 3, subject: input.subject ?? null }
-        return currentInvoice
-      },
-    )
-    const controller = createInvoicePaymentController({
-      getInvoice: vi.fn(async () => currentInvoice),
-      listInvoiceMessages: vi.fn(async () => []),
-      listInvoicePayments: vi.fn(async () => []),
-      updateInvoice,
-    })
-    await controller.activate(identity(1), new AbortController().signal, () => false)
-
-    document.querySelector<HTMLButtonElement>('[data-invoice-edit]')!.click()
-    const subject = document.querySelector<HTMLInputElement>('[data-invoice-edit-subject]')!
-    subject.value = 'Revised subject'
-    subject.dispatchEvent(new Event('input', { bubbles: true }))
-    submit('[data-invoice-edit-form]')
-    await vi.waitFor(() =>
-      expect(document.querySelector('[data-invoice-edit-result]')?.textContent).toContain(
-        'Latest values are loaded',
-      ),
-    )
-    // A stale version is the one failure that must not cost the operator the
-    // edit: the dialog stays open, still carrying what they typed, over a
-    // document that now shows the concurrent write.
-    expect(
-      document.querySelector<HTMLDialogElement>('[data-invoice-edit-dialog]')?.open,
-    ).toBe(true)
-    expect(subject.value).toBe('Revised subject')
-    expect(subject.disabled).toBe(false)
-    expect(document.querySelector('[data-invoice-detail-due]')?.textContent).toBe('$4.00')
-
-    submit('[data-invoice-edit-form]')
-    await vi.waitFor(() =>
-      expect(
-        document.querySelector<HTMLDialogElement>('[data-invoice-edit-dialog]')?.open,
-      ).toBe(false),
-    )
-    expect(commandIds).toHaveLength(2)
-    expect(commandIds[0]).not.toBe(commandIds[1])
-    expect(document.querySelector('[data-invoice-detail-subject]')?.textContent).toBe(
-      'Revised subject',
-    )
-  })
-
   it.each(['record', 'update', 'delete'] as const)(
     '[reliability] treats a successful %s as complete when its detail refresh fails',
     async (operation) => {
@@ -1009,56 +456,6 @@ describe('invoice payment controller', () => {
       )
     },
   )
-
-  it('[reliability] never repeats a committed line write when detail refresh fails', async () => {
-    renderDetail()
-    let committed = false
-    let loads = 0
-    const initial = invoice('INITIAL', { amount_cents: 0, due_amount_cents: 0, line_items: [] })
-    const refreshed = invoice('REFRESHED', {
-      version: 2,
-      amount_cents: 100,
-      due_amount_cents: 100,
-      line_items: [line({ amount_cents: 100, unit_price_cents: 100 })],
-    })
-    const getInvoice = vi.fn(async () => {
-      loads += 1
-      if (loads === 2) throw new Error('refresh unavailable')
-      return committed ? refreshed : initial
-    })
-    const createInvoiceLine = vi.fn(async () => {
-      committed = true
-      return refreshed
-    })
-    const controller = createInvoicePaymentController({
-      getInvoice,
-      listInvoiceMessages: vi.fn(async () => []),
-      listInvoicePayments: vi.fn(async () => []),
-      createInvoiceLine,
-    })
-    await controller.activate(identity(1), new AbortController().signal, () => false)
-    document.querySelector<HTMLButtonElement>('[data-invoice-line-add]')!.click()
-    document.querySelector<HTMLInputElement>('[data-invoice-line-rate]')!.value = '1.00'
-    submit('[data-invoice-line-form]')
-    await vi.waitFor(() =>
-      expect(document.querySelector('[data-invoice-line-status]')?.textContent).toContain(
-        'will not be submitted again',
-      ),
-    )
-    expect(createInvoiceLine).toHaveBeenCalledTimes(1)
-    expect(document.querySelector<HTMLButtonElement>('[data-invoice-line-add]')?.disabled).toBe(
-      true,
-    )
-    submit('[data-invoice-line-form]')
-    await Promise.resolve()
-    expect(createInvoiceLine).toHaveBeenCalledTimes(1)
-
-    document.querySelector<HTMLButtonElement>('[data-invoice-detail-retry]')!.click()
-    await vi.waitFor(() =>
-      expect(document.querySelector('[data-invoice-detail-number]')?.textContent).toBe('REFRESHED'),
-    )
-    expect(createInvoiceLine).toHaveBeenCalledTimes(1)
-  })
 
   it('[security] clears the invoice immediately when a mutation loses its session', async () => {
     renderDetail()
@@ -1245,9 +642,110 @@ describe('invoice payment controller', () => {
     // The e2e suite measures Mark paid with expectPhoneControl at 390px, which
     // demands 44px. Under the Payments heading it had that; the header row was
     // 40px, and nothing at the 720px breakpoint raised it.
+    // Edit invoice is a link now, and keeps the header's floor with the rest.
     expect(webAssets.stylesheet).toMatch(
-      /\.invoice-document-actions button \{\s*min-height: 44px;/u,
+      /\.invoice-document-actions button,\n\.invoice-document-actions \.invoice-edit-link \{\s*min-height: 44px;/u,
     )
+  })
+
+  it('[browser] sends every change to the invoice through its edit page', async () => {
+    // The edit dialog and the line dialogs were two editors over the same rows
+    // with different save semantics. The edit page is the one now, and every
+    // way in from here leads to it -- opened on the line, or on a fresh one.
+    renderDetail()
+    const controller = createInvoicePaymentController({
+      getInvoice: vi.fn(async () => invoice('LINKS', { line_items: [line()] })),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+    })
+    await controller.activate(identity(1), new AbortController().signal, () => false)
+
+    const edit = document.querySelector<HTMLAnchorElement>('[data-invoice-edit]')!
+    expect(edit.tagName).toBe('A')
+    expect(edit.hidden).toBe(false)
+    expect(edit.getAttribute('href')).toBe('/invoices/7/edit')
+    expect(edit.hasAttribute('aria-disabled')).toBe(false)
+    const add = document.querySelector<HTMLAnchorElement>('[data-invoice-line-add]')!
+    expect(add.hidden).toBe(false)
+    expect(add.getAttribute('href')).toBe('/invoices/7/edit#new-line')
+    const lineEdit = document.querySelector<HTMLAnchorElement>('[data-invoice-line-edit="21"]')!
+    expect(lineEdit.getAttribute('href')).toBe('/invoices/7/edit#line-21')
+    // Removing a line happens on the edit page too, where it can be undone
+    // until the page saves; there is no second, immediate delete here.
+    expect(document.querySelector('[data-invoice-line-delete]')).toBeNull()
+    expect(document.querySelector('[data-invoice-line-dialog]')).toBeNull()
+    expect(document.querySelector('[data-invoice-edit-dialog]')).toBeNull()
+  })
+
+  it('[browser] offers no way into the editor for a closed invoice, and says why', async () => {
+    renderDetail()
+    const controller = createInvoicePaymentController({
+      getInvoice: vi.fn(async () =>
+        invoice('CLOSED', { state: 'closed', close_reason: 'cancelled', line_items: [line()] }),
+      ),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+    })
+    await controller.activate(identity(1), new AbortController().signal, () => false)
+
+    const edit = document.querySelector<HTMLAnchorElement>('[data-invoice-edit]')!
+    expect(edit.hidden).toBe(false)
+    // An anchor with no href goes nowhere and takes no focus: the disabled
+    // state a link has, with the reason where the old button kept it.
+    expect(edit.hasAttribute('href')).toBe(false)
+    expect(edit.getAttribute('aria-disabled')).toBe('true')
+    expect(edit.title).toBe('A closed invoice can no longer be edited.')
+    const add = document.querySelector<HTMLAnchorElement>('[data-invoice-line-add]')!
+    expect(add.hasAttribute('href')).toBe(false)
+    expect(add.title).toBe('Line items cannot be changed on a closed invoice.')
+    expect(document.querySelector('[data-invoice-line-edit]')).toBeNull()
+  })
+
+  it('[security] shows a read-scoped token no way into the editor', async () => {
+    renderDetail()
+    const controller = createInvoicePaymentController({
+      getInvoice: vi.fn(async () => invoice('READ', { line_items: [line()] })),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+    })
+    await controller.activate(
+      {
+        ...identity(1),
+        authentication: { kind: 'token', token_id: 3, scopes: ['invoices:read'] },
+      },
+      new AbortController().signal,
+      () => false,
+    )
+    expect(document.querySelector<HTMLElement>('[data-invoice-edit]')?.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-invoice-line-add]')?.hidden).toBe(true)
+    expect(document.querySelector('[data-invoice-line-edit]')).toBeNull()
+    expect(document.querySelector<HTMLElement>('[data-invoice-line-readonly]')?.hidden).toBe(false)
+  })
+
+  it('[browser] says what the edit page saved once the document is up, and only once', async () => {
+    renderDetail()
+    leavePageNotice('/invoices/7', 'Invoice saved.')
+    const api: Partial<InvoicePaymentApi> = {
+      getInvoice: vi.fn(async () => invoice('SAVED')),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+    }
+    const status = (): string =>
+      document.querySelector('[data-invoice-detail-status]')?.textContent ?? ''
+    await createInvoicePaymentController(api).activate(
+      identity(1),
+      new AbortController().signal,
+      () => false,
+    )
+    expect(status()).toBe('Invoice saved.')
+
+    renderDetail()
+    await createInvoicePaymentController(api).activate(
+      identity(1),
+      new AbortController().signal,
+      () => false,
+    )
+    expect(status()).toBe('')
   })
 
   it('[e2e:invoice-state] issues write off from the overflow and gates every other verb', async () => {
@@ -1349,6 +847,8 @@ describe('invoice payment controller', () => {
     for (const selector of [
       '[data-invoice-print]',
       '[data-invoice-send]',
+      // A link now, and still the application rather than the bill.
+      '[data-invoice-edit]',
       '.invoice-line-editor',
       '.invoice-line-actions',
       '.invoice-attachment-section',
