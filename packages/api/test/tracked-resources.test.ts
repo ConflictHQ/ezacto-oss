@@ -1564,7 +1564,10 @@ for (const [runtime, factory] of factories) {
       )
       expect(unassigned.status).toBe(403)
       expect(await unassigned.json()).toMatchObject({
-        error: { code: 'project_assignment_required' },
+        error: {
+          code: 'project_assignment_required',
+          message: 'The person this belongs to is not assigned to the active project and task.',
+        },
       })
 
       const corrected = await test.request(

@@ -75,7 +75,10 @@ export class TrackedResourceAssignmentError extends Error {
   readonly code = "project_assignment_required" as const;
 
   constructor() {
-    super("The acting user is not assigned to the active project and task.");
+    // The person the time or expense belongs to, who is not always the one
+    // asking: an administrator logs a teammate's time against the teammate's
+    // assignments (#917).
+    super("The person this belongs to is not assigned to the active project and task.");
     this.name = "TrackedResourceAssignmentError";
   }
 }
