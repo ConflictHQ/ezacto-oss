@@ -493,12 +493,21 @@ export const createContainerRuntime = async (
             number: string
             currency: string
             due: number
-          }>(sql`SELECT id, number, currency, due_amount_cents AS due
+            card: number
+          }>(sql`SELECT id, number, currency, due_amount_cents AS due,
+                   EXISTS (SELECT 1 FROM json_each(payment_options)
+                           WHERE value = 'stripe_checkout') AS card
                  FROM invoices WHERE id = ${invoiceId}`)
           const row = rows[0]
           return row === undefined
             ? null
-            : { id: row.id, number: row.number, currency: row.currency, dueAmountCents: row.due }
+            : {
+                id: row.id,
+                number: row.number,
+                currency: row.currency,
+                dueAmountCents: row.due,
+                acceptsCard: row.card === 1,
+              }
         },
         readLink: (invoiceId: number) =>
           stripeLinks.read(invoiceId).then((link) =>

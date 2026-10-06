@@ -11,7 +11,13 @@ const now = () => new Date(nowSeconds * 1000)
 
 const config: StripeConfig = { apiKey: 'sk_test_example', webhookSecret: secret }
 
-const invoice = { id: 1315, number: '1315', currency: 'USD', dueAmountCents: 250_000 }
+const invoice = {
+  id: 1315,
+  number: '1315',
+  currency: 'USD',
+  dueAmountCents: 250_000,
+  acceptsCard: true,
+}
 
 const source = (overrides: Partial<StripeSource> = {}): StripeSource => ({
   readInvoice: vi.fn(async () => invoice),
@@ -134,6 +140,24 @@ describe('minting the link an invoice is paid at', () => {
     expect(await harness.runtime.paymentLink(1315)).toEqual({
       kind: 'linked',
       url: 'https://buy.stripe.com/test_old',
+    })
+    expect(harness.server.calls).toEqual([])
+  })
+
+  it('[money] gives a wire-only invoice no card link, not even one minted earlier', async () => {
+    // Payment options without stripe_checkout mean the client pays by wire.
+    const harness = runtime({
+      source: source({
+        readInvoice: vi.fn(async () => ({ ...invoice, acceptsCard: false })),
+        readLink: vi.fn(async () => ({
+          paymentLinkId: 'plink_old',
+          url: 'https://buy.stripe.com/test_old',
+        })),
+      }),
+    })
+    expect(await harness.runtime.paymentLink(1315)).toEqual({
+      kind: 'refused',
+      reason: 'this invoice does not offer card payment',
     })
     expect(harness.server.calls).toEqual([])
   })
