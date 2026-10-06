@@ -2260,8 +2260,16 @@ test('[e2e:invoice-banded] raises a flat fee covering tracked time, up to a limi
   })
 
   // The draft opens: the fee, then the hour past the limit at its rate.
-  await expect(page).toHaveURL(/\/invoices\/\d+$/u)
-  const invoiceId = Number(new URL(page.url()).pathname.split('/').pop())
+  // The draft opens at its number; its id comes from the number lookup.
+  await expect(page).toHaveURL(/\/invoices\/[^/]+$/u)
+  const bandNumber = decodeURIComponent(new URL(page.url()).pathname.split('/').pop()!)
+  const invoiceId = (
+    (await page.evaluate(
+      async (number) =>
+        (await fetch(`/api/v1/invoices?number=${encodeURIComponent(number)}`)).json(),
+      bandNumber,
+    )) as { data: Array<{ id: number }> }
+  ).data[0]!.id
   const overage =
     '[BAND] Browser Band Project - 2026-07-20 - Browser Acceptance Task / Browser Owner: Browser band fixture overage'
   const read = (await page.evaluate(

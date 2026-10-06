@@ -483,7 +483,7 @@ describe('invoice generation browser behavior', () => {
         claim_ceiling_seconds: 360_000,
         overage_summary_type: 'people',
       })
-      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/21'))
+      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/INV-21'))
       expect(setInvoiceJournal.mock.calls[0]!.slice(0, 2)).toEqual([
         21,
         { level: 'detailed', formats: ['pdf'] },
