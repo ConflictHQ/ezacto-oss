@@ -792,10 +792,11 @@ const moneyOperations: ApiContractOperation[] = [
     method: "post",
     path: "/api/v1/invoice-generations",
     operationId: "generateInvoice",
-    summary: "Create one draft invoice from tracked work, or a blank free-form draft",
+    summary:
+      "Create one draft invoice from tracked work, a flat fee covering tracked work, or a blank free-form draft",
     tag: "invoices",
     responseStatus: 201,
-    responseSchema: "InvoiceEnvelope",
+    responseSchema: "InvoiceGenerationEnvelope",
     requestSchema: "InvoiceGenerationInput",
     requestRequired: true,
     parameters: [idempotency],
@@ -5584,7 +5585,97 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         },
         additionalProperties: false,
       },
+      {
+        // A flat fee covering tracked time. The draft takes every uninvoiced
+        // billable hour on the projects in the period; the fee covers all of
+        // them, or the oldest whole entries up to a ceiling in seconds or in
+        // cents of billable value, and the rest are billed after the fee at
+        // each person's rate, grouped by `overage_summary_type`. Expenses are
+        // left alone.
+        type: "object",
+        required: [
+          "kind",
+          "client_id",
+          "to",
+          "project_ids",
+          "line_items",
+          "claim_mode",
+        ],
+        properties: {
+          kind: { const: "banded" },
+          client_id: integerSchema,
+          from: nullable(dateSchema),
+          to: dateSchema,
+          project_ids: {
+            type: "array",
+            minItems: 1,
+            maxItems: 10_000,
+            uniqueItems: true,
+            items: integerSchema,
+          },
+          // The fee, written as free-form lines are.
+          line_items: {
+            type: "array",
+            minItems: 1,
+            maxItems: 100,
+            items: {
+              type: "object",
+              required: ["kind", "quantity", "unit_price_cents"],
+              properties: {
+                kind: { type: "string", minLength: 1, maxLength: 255 },
+                description: nullable(stringSchema),
+                quantity: { type: "number" },
+                unit_price_cents: {
+                  type: "integer",
+                  minimum: -9_000_000_000_000,
+                  maximum: 9_000_000_000_000,
+                },
+                project_id: nullable(integerSchema),
+              },
+              additionalProperties: false,
+            },
+          },
+          claim_mode: { type: "string", enum: ["all", "ceiling"] },
+          // Exactly one on a ceiling; neither on `all`.
+          claim_ceiling_seconds: nullable(integerSchema),
+          claim_ceiling_cents: nullable(integerSchema),
+          // Required on a ceiling; refused on `all`.
+          overage_summary_type: nullable({
+            type: "string",
+            enum: ["project", "task", "people", "detailed"],
+          }),
+        },
+        additionalProperties: false,
+      },
     ],
+  },
+  InvoiceBandClaim: {
+    type: "object",
+    required: [
+      "claimed_entry_count",
+      "claimed_seconds",
+      "billed_entry_count",
+      "billed_seconds",
+    ],
+    properties: {
+      claimed_entry_count: { type: "integer", minimum: 0 },
+      claimed_seconds: signedIntegerSchema,
+      billed_entry_count: { type: "integer", minimum: 0 },
+      billed_seconds: signedIntegerSchema,
+    },
+    additionalProperties: false,
+  },
+  InvoiceGenerationEnvelope: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: reference("Invoice"),
+      // Only on a banded draft: what its fee covered and what it billed past
+      // the ceiling. Zero covered hours is an answer, not a refusal.
+      band: reference("InvoiceBandClaim"),
+      links: reference("Links"),
+    },
+    additionalProperties: false,
   },
   InvoiceCommandSnapshot: {
     type: "object",
