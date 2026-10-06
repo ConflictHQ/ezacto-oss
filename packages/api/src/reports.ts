@@ -1,4 +1,15 @@
-import { canViewMoneyField } from "@ezacto/core";
+import {
+  canViewMoneyField,
+  DETAILED_TIME_PDF_ROW_LIMIT,
+  detailedTimeDocument,
+  detailedTimeFilename,
+  journalFormatContentType,
+  journalFormats,
+  renderJournalFile,
+  type DetailedTimeExportScope,
+  type JournalEntry,
+  type JournalFormat,
+} from "@ezacto/core";
 import type { Context, Hono } from "hono";
 import { requireApiScope } from "./auth.js";
 import type { ApiContext, UserPrincipal } from "./context.js";
@@ -472,6 +483,22 @@ export type DetailedTimeReportResult =
   | { kind: "report"; report: DetailedTimeReportRecord }
   | { kind: "too_many_entries"; limit: number };
 
+/**
+ * What a report's filter ids stand for, and the organization's own name: what
+ * the detailed time report says it covers once it is a file. `null` where no id
+ * was given or the id names nothing.
+ */
+export interface ReportFilterNamesRecord {
+  organizationName: string;
+  clientName: string | null;
+  projectName: string | null;
+  taskName: string | null;
+  userName: string | null;
+  roleName: string | null;
+  tagName: string | null;
+  managerName: string | null;
+}
+
 export interface TimeReportAmountRecord {
   currency: string;
   billableCents: number;
@@ -739,6 +766,15 @@ export interface ReportReader {
     audience?: "internal" | "client";
     activeProjectsOnly?: boolean;
   }): Promise<DetailedTimeReportResult>;
+  filterNames(ids: {
+    clientId?: number;
+    projectId?: number;
+    taskId?: number;
+    userId?: number;
+    roleId?: number;
+    tagId?: number;
+    managerId?: number;
+  }): Promise<ReportFilterNamesRecord>;
   uninvoiced(filter: {
     from: string;
     to: string;
@@ -812,6 +848,10 @@ const detailedTimeKeys = new Set([
   "tag_id",
   "invoice_state",
 ]);
+// The report's own filters, every one, and the file it is wanted as. Built from
+// the report's set rather than listed again, so a filter added to the report is
+// a filter of its export the same day.
+const detailedTimeExportKeys = new Set([...detailedTimeKeys, "format"]);
 const detailedTimeGrains: readonly DetailedTimeGrain[] = ["day", "entry"];
 const detailedTimeInvoiceStates: readonly DetailedTimeInvoiceState[] = [
   "all",
@@ -857,6 +897,202 @@ const rangeFrom = (
     });
   }
   return { range: { from: from!, to: to! }, params, errors };
+};
+
+type DetailedTimeFilter = Parameters<ReportReader["detailedTime"]>[0];
+
+interface DetailedTimeQuery {
+  readonly params: ReadonlyMap<string, string>;
+  /** Asserted by the caller, once it has read any parameter of its own. */
+  readonly errors: FieldError[];
+  /** Whether this is the My hours drilldown: the principal's own entries only. */
+  readonly self: boolean;
+  readonly filter: DetailedTimeFilter;
+}
+
+/**
+ * The detailed time report's query, read one way for the report and for its
+ * export, so a filter means the same thing in both and an export can never be
+ * asked for something the report would refuse.
+ */
+const detailedTimeQuery = (
+  url: URL,
+  principal: Readonly<UserPrincipal>,
+  allowed: ReadonlySet<string>,
+): DetailedTimeQuery => {
+  const parsed = rangeFrom(url, allowed);
+  const self = queryBoolean(parsed.params, "self", parsed.errors);
+  const clientId = queryPositiveInteger(
+    parsed.params,
+    "client_id",
+    parsed.errors,
+  );
+  const projectId = queryPositiveInteger(
+    parsed.params,
+    "project_id",
+    parsed.errors,
+  );
+  const taskId = queryPositiveInteger(parsed.params, "task_id", parsed.errors);
+  const userId = queryPositiveInteger(parsed.params, "user_id", parsed.errors);
+  const roleId = queryPositiveInteger(parsed.params, "role_id", parsed.errors);
+  const tagId = queryPositiveInteger(parsed.params, "tag_id", parsed.errors);
+  const hours = queryEnum(
+    parsed.params,
+    "hours",
+    detailedTimeHours,
+    parsed.errors,
+  );
+  const grain = queryEnum(
+    parsed.params,
+    "grain",
+    detailedTimeGrains,
+    parsed.errors,
+  );
+  // Who reads the notes (D20). A reader that shows this report to a client
+  // -- the client portal -- asks for `client` and is handed only the notes
+  // a client may read; the staff report is unchanged without it.
+  const audience = queryEnum(
+    parsed.params,
+    "audience",
+    ["internal", "client"] as const,
+    parsed.errors,
+  );
+  const invoiceState = queryEnum(
+    parsed.params,
+    "invoice_state",
+    detailedTimeInvoiceStates,
+    parsed.errors,
+  );
+  const activeProjectsOnly = queryBoolean(
+    parsed.params,
+    "active_projects_only",
+    parsed.errors,
+  );
+  const includeFixedFee = queryBoolean(parsed.params, "include_fixed_fee", parsed.errors);
+  const directClientOnly = queryBoolean(parsed.params, "direct_client_only", parsed.errors);
+  const contractorsOnly = queryBoolean(parsed.params, "contractors_only", parsed.errors);
+  const projectStatus = queryEnum(parsed.params, "project_status", ["all", "active", "archived"] as const, parsed.errors);
+  const billingMethod = queryEnum(parsed.params, "billing_method", ["non_billable", "time_materials", "fixed_fee"] as const, parsed.errors);
+  const managerId = queryPositiveInteger(parsed.params, "manager_id", parsed.errors);
+  const currency = parsed.params.get("currency")?.toUpperCase();
+  if (currency !== undefined && !/^[A-Z]{3}$/u.test(currency)) {
+    parsed.errors.push({ field: "currency", code: "invalid", message: "currency must be a three-letter currency code" });
+  }
+  if (self === true && userId !== undefined && userId !== principal.userId) {
+    throw new ApiError({ status: 403, code: "profile_forbidden", message: "My hours can only show your own time entries." });
+  }
+  return {
+    params: parsed.params,
+    errors: parsed.errors,
+    self: self === true,
+    filter: {
+      ...(includeFixedFee === undefined ? {} : { includeFixedFee }),
+      ...(directClientOnly === undefined ? {} : { directClientOnly }),
+      ...(contractorsOnly === undefined ? {} : { contractorsOnly }),
+      ...(projectStatus === undefined ? {} : { projectStatus }),
+      ...(billingMethod === undefined ? {} : { billingMethod }),
+      ...(managerId === undefined ? {} : { managerId }),
+      ...(currency === undefined ? {} : { currency }),
+      ...parsed.range,
+      ...(clientId === undefined ? {} : { clientId }),
+      ...(projectId === undefined ? {} : { projectId }),
+      ...(taskId === undefined ? {} : { taskId }),
+      ...(self === true ? { userId: principal.userId } : userId === undefined ? {} : { userId }),
+      ...(roleId === undefined ? {} : { roleId }),
+      ...(tagId === undefined ? {} : { tagId }),
+      ...(hours === undefined ? {} : { hours }),
+      ...(grain === undefined ? {} : { grain }),
+      ...(audience === undefined ? {} : { audience }),
+      ...(invoiceState === undefined ? {} : { invoiceState }),
+      ...(activeProjectsOnly === undefined ? {} : { activeProjectsOnly }),
+    },
+  };
+};
+
+const detailedTimeTooWide = (limit: number): ApiError =>
+  new ApiError({
+    status: 422,
+    code: "validation_failed",
+    message: "The request contains invalid fields.",
+    fields: [
+      {
+        field: "to",
+        code: "range_too_wide",
+        message: `from and to cover more than ${limit} time entries; narrow the period or the client and project filters`,
+      },
+    ],
+  });
+
+/**
+ * What an export says it covers, by name. A filter whose name cannot be stated
+ * is still stated, by its id, rather than dropped: a recap that left it out
+ * would claim the total covers more than it does.
+ *
+ * Somebody reading only their own time (`self`, which a member reaches with
+ * time_entries:read and nothing else) is named nothing the rows have not
+ * already shown them. Looked up, any id in the account would print its
+ * client's, project's, role's or teammate's name into the file, which is more
+ * than the report itself would ever tell them.
+ */
+const detailedTimeExportScope = async (
+  reports: ReportReader,
+  query: DetailedTimeQuery,
+  report: Readonly<DetailedTimeReportRecord>,
+  principal: Readonly<UserPrincipal>,
+): Promise<{ readonly organizationName: string; readonly scope: DetailedTimeExportScope }> => {
+  const filter = query.filter;
+  const ids = {
+    ...(filter.clientId === undefined ? {} : { clientId: filter.clientId }),
+    ...(filter.projectId === undefined ? {} : { projectId: filter.projectId }),
+    ...(filter.taskId === undefined ? {} : { taskId: filter.taskId }),
+    ...(filter.userId === undefined ? {} : { userId: filter.userId }),
+    ...(filter.roleId === undefined ? {} : { roleId: filter.roleId }),
+    ...(filter.tagId === undefined ? {} : { tagId: filter.tagId }),
+    ...(filter.managerId === undefined ? {} : { managerId: filter.managerId }),
+  };
+  const fromRows = <Key extends "clientId" | "projectId" | "taskId">(
+    key: Key,
+    name: (row: DetailedTimeRowRecord) => string,
+  ): string | null => {
+    const id = filter[key];
+    const row = id === undefined ? undefined : report.rows.find((candidate) => candidate[key] === id);
+    return row === undefined ? null : name(row);
+  };
+  const names = query.self
+    ? {
+        ...(await reports.filterNames({ userId: principal.userId })),
+        clientName: fromRows("clientId", (row) => row.clientName),
+        projectName: fromRows("projectId", (row) => row.projectName),
+        taskName: fromRows("taskId", (row) => row.taskName),
+        roleName: null,
+        tagName: null,
+        managerName: null,
+      }
+    : await reports.filterNames(ids);
+  const named = (id: number | undefined, name: string | null, kind: string): string | null =>
+    id === undefined ? null : (name ?? `${kind} #${String(id)}`);
+  return {
+    organizationName: names.organizationName,
+    scope: {
+      from: report.from,
+      to: report.to,
+      hours: report.hours,
+      invoiceState: report.invoiceState,
+      client: named(filter.clientId, names.clientName, "Client"),
+      project: named(filter.projectId, names.projectName, "Project"),
+      task: named(filter.taskId, names.taskName, "Task"),
+      person: named(filter.userId, names.userName, "Person"),
+      role: named(filter.roleId, names.roleName, "Role"),
+      tag: named(filter.tagId, names.tagName, "Tag"),
+      manager: named(filter.managerId, names.managerName, "Person"),
+      contractorsOnly: filter.contractorsOnly === true,
+      fixedFeeExcluded: filter.includeFixedFee === false,
+      currency: filter.currency ?? null,
+      projectStatus: filter.projectStatus ?? "all",
+      activeProjectsOnly: report.activeProjectsOnly,
+      billingMethod: filter.billingMethod ?? null,
+    },
+  };
 };
 
 const serializeInvoiced = (
@@ -2011,106 +2247,13 @@ export const installReportRoutes = <Bindings extends object>(
     // My hours drilldowns use the same authority as the summary. The server,
     // never a person id in a link, decides whose entries this mode can read.
     requireApiScope(context, url.searchParams.get("self") === "true" ? "time_entries:read" : "reports:read");
-    const parsed = rangeFrom(url, detailedTimeKeys);
-    const self = queryBoolean(parsed.params, "self", parsed.errors);
-    const clientId = queryPositiveInteger(
-      parsed.params,
-      "client_id",
-      parsed.errors,
-    );
-    const projectId = queryPositiveInteger(
-      parsed.params,
-      "project_id",
-      parsed.errors,
-    );
-    const taskId = queryPositiveInteger(parsed.params, "task_id", parsed.errors);
-    const userId = queryPositiveInteger(parsed.params, "user_id", parsed.errors);
-    const roleId = queryPositiveInteger(parsed.params, "role_id", parsed.errors);
-    const tagId = queryPositiveInteger(parsed.params, "tag_id", parsed.errors);
-    const hours = queryEnum(
-      parsed.params,
-      "hours",
-      detailedTimeHours,
-      parsed.errors,
-    );
-    const grain = queryEnum(
-      parsed.params,
-      "grain",
-      detailedTimeGrains,
-      parsed.errors,
-    );
-    // Who reads the notes (D20). A reader that shows this report to a client
-    // -- the client portal -- asks for `client` and is handed only the notes
-    // a client may read; the staff report is unchanged without it.
-    const audience = queryEnum(
-      parsed.params,
-      "audience",
-      ["internal", "client"] as const,
-      parsed.errors,
-    );
-    const invoiceState = queryEnum(
-      parsed.params,
-      "invoice_state",
-      detailedTimeInvoiceStates,
-      parsed.errors,
-    );
-    const activeProjectsOnly = queryBoolean(
-      parsed.params,
-      "active_projects_only",
-      parsed.errors,
-    );
-    const includeFixedFee = queryBoolean(parsed.params, "include_fixed_fee", parsed.errors);
-    const directClientOnly = queryBoolean(parsed.params, "direct_client_only", parsed.errors);
-    const contractorsOnly = queryBoolean(parsed.params, "contractors_only", parsed.errors);
-    const projectStatus = queryEnum(parsed.params, "project_status", ["all", "active", "archived"] as const, parsed.errors);
-    const billingMethod = queryEnum(parsed.params, "billing_method", ["non_billable", "time_materials", "fixed_fee"] as const, parsed.errors);
-    const managerId = queryPositiveInteger(parsed.params, "manager_id", parsed.errors);
-    const currency = parsed.params.get("currency")?.toUpperCase();
-    if (currency !== undefined && !/^[A-Z]{3}$/u.test(currency)) {
-      parsed.errors.push({ field: "currency", code: "invalid", message: "currency must be a three-letter currency code" });
-    }
-    if (self === true && userId !== undefined && userId !== context.get("principal").userId) {
-      throw new ApiError({ status: 403, code: "profile_forbidden", message: "My hours can only show your own time entries." });
-    }
-    assertFields(parsed.errors);
-    const result = await reports.detailedTime({
-      ...(includeFixedFee === undefined ? {} : { includeFixedFee }),
-      ...(directClientOnly === undefined ? {} : { directClientOnly }),
-      ...(contractorsOnly === undefined ? {} : { contractorsOnly }),
-      ...(projectStatus === undefined ? {} : { projectStatus }),
-      ...(billingMethod === undefined ? {} : { billingMethod }),
-      ...(managerId === undefined ? {} : { managerId }),
-      ...(currency === undefined ? {} : { currency }),
-      ...parsed.range,
-      ...(clientId === undefined ? {} : { clientId }),
-      ...(projectId === undefined ? {} : { projectId }),
-      ...(taskId === undefined ? {} : { taskId }),
-      ...(self === true ? { userId: context.get("principal").userId } : userId === undefined ? {} : { userId }),
-      ...(roleId === undefined ? {} : { roleId }),
-      ...(tagId === undefined ? {} : { tagId }),
-      ...(hours === undefined ? {} : { hours }),
-      ...(grain === undefined ? {} : { grain }),
-      ...(audience === undefined ? {} : { audience }),
-      ...(invoiceState === undefined ? {} : { invoiceState }),
-      ...(activeProjectsOnly === undefined ? {} : { activeProjectsOnly }),
-    });
+    const query = detailedTimeQuery(url, context.get("principal"), detailedTimeKeys);
+    assertFields(query.errors);
+    const result = await reports.detailedTime(query.filter);
     // 422 on the range rather than a partial body: the response has no field
     // that could say "these rows are some of the rows", and a caller that got
     // 200 would total the page it was handed and publish the answer.
-    if (result.kind === "too_many_entries") {
-      throw new ApiError({
-        status: 422,
-        code: "validation_failed",
-        message: "The request contains invalid fields.",
-        fields: [
-          {
-            field: "to",
-            code: "range_too_wide",
-            message: `from and to cover more than ${result.limit} time entries; narrow the period or the client and project filters`,
-          },
-        ],
-      });
-    }
+    if (result.kind === "too_many_entries") throw detailedTimeTooWide(result.limit);
     return context.json(
       {
         data: serializeDetailedTime(result.report, context.get("principal")),
@@ -2122,6 +2265,83 @@ export const installReportRoutes = <Bindings extends object>(
       200,
       { "cache-control": "no-store" },
     );
+  });
+
+  /**
+   * The same report as a file: the PDF Harvest's "Detailed time report" was,
+   * the one a client is sent each month, or the CSV or Excel workbook beside it.
+   *
+   * Exactly the report's filters, read by the report's own parser, under the
+   * report's own authority -- `self` included, so a person can export their own
+   * hours -- plus `format`. The one default that differs is `audience`: absent,
+   * it is `client`, because a file is what leaves the building, and the note a
+   * client may not read (D20) is withheld unless somebody asks for the internal
+   * one by name. Hours only, never an amount, so no money authority is needed
+   * beyond the report's.
+   */
+  api.get("/reports/detailed-time/export", async (context) => {
+    const url = new URL(context.req.url);
+    requireApiScope(context, url.searchParams.get("self") === "true" ? "time_entries:read" : "reports:read");
+    const principal = context.get("principal");
+    const query = detailedTimeQuery(url, principal, detailedTimeExportKeys);
+    const format = queryEnum(query.params, "format", journalFormats, query.errors);
+    if (!query.params.has("format")) {
+      query.errors.push({ field: "format", code: "required", message: "format is required" });
+    }
+    assertFields(query.errors);
+    const chosen = format as JournalFormat;
+    const filter = { ...query.filter, audience: query.filter.audience ?? "client" };
+    const result = await reports.detailedTime(filter);
+    if (result.kind === "too_many_entries") throw detailedTimeTooWide(result.limit);
+    const report = result.report;
+    // A PDF that long is no client's document, and laying it out could take
+    // the isolate past its memory; the CSV and the workbook serve it whole.
+    if (chosen === "pdf" && report.rows.length > DETAILED_TIME_PDF_ROW_LIMIT) {
+      throw new ApiError({
+        status: 422,
+        code: "validation_failed",
+        message: "The request contains invalid fields.",
+        fields: [
+          {
+            field: "format",
+            code: "too_many_rows",
+            message: `A PDF holds at most ${DETAILED_TIME_PDF_ROW_LIMIT} rows and this report has ${report.rows.length}; narrow the period or the filters, or export it as CSV or Excel`,
+          },
+        ],
+      });
+    }
+    const scope = await detailedTimeExportScope(reports, query, report, principal);
+    const entries = report.rows.map(
+      (row): JournalEntry => ({
+        spentDate: row.spentDate,
+        personName: row.userName,
+        clientName: row.clientName,
+        projectName: row.projectName,
+        projectCode: row.projectCode,
+        taskName: row.taskName,
+        roles: row.roles,
+        notes: row.notes,
+        // Tracked hours, as the report's Hours column and its total read.
+        seconds: row.seconds,
+        billable: row.billableSeconds !== 0,
+      }),
+    );
+    const bytes = renderJournalFile(
+      chosen,
+      detailedTimeDocument({ companyName: scope.organizationName, scope: scope.scope, entries }),
+    );
+    return new Response(bytes as BodyInit, {
+      status: 200,
+      headers: {
+        "content-type": journalFormatContentType[chosen],
+        "content-length": String(bytes.byteLength),
+        // Letters, digits and dashes only (`detailedTimeFilename`), so the
+        // name needs no encoding to sit in the header.
+        "content-disposition": `attachment; filename="${detailedTimeFilename(scope.scope, chosen)}"`,
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+      },
+    });
   });
 
   api.post("/reports/detailed-time/actions", async (context) => {

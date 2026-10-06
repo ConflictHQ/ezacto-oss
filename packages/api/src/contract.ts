@@ -1,6 +1,6 @@
 import { paymentRunOperations, paymentRunSchemas } from './payment-run-contract.js'
 import { staffPaymentOperations, staffPaymentSchemas } from './staff-payment-contract.js';
-import { commercialTermFields, maximumBulkApprovalSelections } from "@ezacto/core";
+import { commercialTermFields, DETAILED_TIME_PDF_ROW_LIMIT, maximumBulkApprovalSelections } from "@ezacto/core";
 import {
   attachmentContractOperations,
   attachmentContractSchemas,
@@ -1848,6 +1848,56 @@ const userEmailOperations: ApiContractOperation[] = [
   },
 ];
 
+const detailedTimeParameters: readonly ApiContractParameter[] = [
+  query("self", booleanSchema),
+  query("include_fixed_fee", booleanSchema),
+  query("direct_client_only", booleanSchema),
+  query("contractors_only", booleanSchema),
+  query("currency", { type: "string", pattern: "^[A-Za-z]{3}$" }),
+  query("project_status", { type: "string", enum: ["all", "active", "archived"] }),
+  query("billing_method", { type: "string", enum: ["non_billable", "time_materials", "fixed_fee"] }),
+  query("manager_id", integerSchema),
+  ...requiredReportRange,
+  query("client_id", integerSchema),
+  query("project_id", integerSchema),
+  query("task_id", integerSchema),
+  query("user_id", integerSchema),
+  query("role_id", integerSchema),
+  query("tag_id", integerSchema),
+  // The Show control. Not a pair of booleans: billable-and-uninvoiced is
+  // one of the answers, and two flags would also spell the ones that
+  // select nothing.
+  //
+  // `claimed` and `unclaimed` are the band question (#708) and are
+  // deliberately not about billable: a fixed amount buys the period, so an
+  // hour nobody ticked billable was absorbed by it all the same, and asking
+  // "what has this band not taken yet" through `uninvoiced` hides it.
+  query("hours", {
+    type: "string",
+    enum: [
+      "all",
+      "billable",
+      "non_billable",
+      "uninvoiced",
+      "claimed",
+      "unclaimed",
+    ],
+  }),
+  // `entry` is one row per time entry with its id and notes; `day` (the
+  // default) is the folded grain the report screen draws.
+  query("grain", { type: "string", enum: ["day", "entry"] }),
+  // Who reads the notes (D20). `client` withholds a note its entry, or the
+  // organization's default, keeps internal -- for a reader such as the
+  // client portal that shows them to a client. Absent is `internal` on the
+  // report and `client` on its export, which is the file that gets sent.
+  query("audience", { type: "string", enum: ["internal", "client"] }),
+  query("invoice_state", {
+    type: "string",
+    enum: ["all", "invoiced", "uninvoiced"],
+  }),
+  query("active_projects_only", booleanSchema),
+];
+
 const reportOperations: ApiContractOperation[] = [
   {
     method: "get", path: "/api/v1/report-definitions/registry",
@@ -2103,53 +2153,31 @@ const reportOperations: ApiContractOperation[] = [
     tag: "reports",
     responseStatus: 200,
     responseSchema: "DetailedTimeReportEnvelope",
+    parameters: [...detailedTimeParameters],
+  },
+  // The report as a file (the PDF Harvest's "Detailed time report" was, or
+  // the CSV or Excel beside it): the report's own filters, parser and
+  // authority, plus `format`. Absent `audience` is `client` here, not
+  // `internal`: a file is what is sent, and an internal note leaves only when
+  // somebody asks for it by name.
+  {
+    method: "get",
+    path: "/api/v1/reports/detailed-time/export",
+    operationId: "downloadDetailedTimeReport",
+    summary: "Download the detailed time report as a PDF, CSV or Excel workbook",
+    description:
+      `Takes every filter of getDetailedTimeReport, with the same defaults but one: an absent audience is client, so only the notes a client may read are in the file unless audience=internal is asked for. Hours only. The file is named detailed-time-<from>-to-<to>[-<client>].<format>. A PDF is refused above ${DETAILED_TIME_PDF_ROW_LIMIT} rows (422, field format); CSV and Excel take the report's whole range.`,
+    tag: "reports",
+    responseStatus: 200,
+    binaryResponse: true,
     parameters: [
-      query("self", booleanSchema),
-      query("include_fixed_fee", booleanSchema),
-      query("direct_client_only", booleanSchema),
-      query("contractors_only", booleanSchema),
-      query("currency", { type: "string", pattern: "^[A-Za-z]{3}$" }),
-      query("project_status", { type: "string", enum: ["all", "active", "archived"] }),
-      query("billing_method", { type: "string", enum: ["non_billable", "time_materials", "fixed_fee"] }),
-      query("manager_id", integerSchema),
-      ...requiredReportRange,
-      query("client_id", integerSchema),
-      query("project_id", integerSchema),
-      query("task_id", integerSchema),
-      query("user_id", integerSchema),
-      query("role_id", integerSchema),
-      query("tag_id", integerSchema),
-      // The Show control. Not a pair of booleans: billable-and-uninvoiced is
-      // one of the answers, and two flags would also spell the ones that
-      // select nothing.
-      //
-      // `claimed` and `unclaimed` are the band question (#708) and are
-      // deliberately not about billable: a fixed amount buys the period, so an
-      // hour nobody ticked billable was absorbed by it all the same, and asking
-      // "what has this band not taken yet" through `uninvoiced` hides it.
-      query("hours", {
-        type: "string",
-        enum: [
-          "all",
-          "billable",
-          "non_billable",
-          "uninvoiced",
-          "claimed",
-          "unclaimed",
-        ],
-      }),
-      // `entry` is one row per time entry with its id and notes; `day` (the
-      // default) is the folded grain the report screen draws.
-      query("grain", { type: "string", enum: ["day", "entry"] }),
-      // Who reads the notes (D20). `client` withholds a note its entry, or the
-      // organization's default, keeps internal -- for a reader such as the
-      // client portal that shows them to a client. Absent is `internal`.
-      query("audience", { type: "string", enum: ["internal", "client"] }),
-      query("invoice_state", {
-        type: "string",
-        enum: ["all", "invoiced", "uninvoiced"],
-      }),
-      query("active_projects_only", booleanSchema),
+      ...detailedTimeParameters,
+      {
+        name: "format",
+        location: "query",
+        schema: { type: "string", enum: ["pdf", "csv", "xlsx"] },
+        required: true,
+      },
     ],
   },
   {

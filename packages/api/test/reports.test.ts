@@ -1,4 +1,4 @@
-import { uninvoicedGenerationPreview } from "@ezacto/core";
+import { DETAILED_TIME_PDF_ROW_LIMIT, uninvoicedGenerationPreview } from "@ezacto/core";
 import BetterSqlite3 from "better-sqlite3";
 import { Miniflare } from "miniflare";
 import { afterEach, describe, expect, it } from "vitest";
@@ -3047,3 +3047,341 @@ describe("time report money redaction", () => {
     }
   });
 });
+
+/**
+ * The detailed time report as a file: the PDF Harvest's "Detailed time report"
+ * was, the one a client is sent every month, and the CSV and Excel workbook
+ * beside it. Run against the real repository, because the recap names its
+ * filters from the database and the notes are withheld by the report's own
+ * query -- neither is anything a stand-in would get wrong in the same way.
+ */
+const pdfStrings = (bytes: Uint8Array): string[] => {
+  const raw = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
+  return [...raw.matchAll(/\(((?:\\.|[^\\)])*)\) Tj/gu)].map((match) =>
+    match[1]!.replace(/\\(.)/gu, "$1"),
+  );
+};
+
+const csvLines = async (response: Response): Promise<string[]> =>
+  new TextDecoder("utf-8", { ignoreBOM: true })
+    .decode(await response.arrayBuffer())
+    .replace(/^\uFEFF/u, "")
+    .trimEnd()
+    .split("\r\n");
+
+for (const [runtime, factory] of factories) {
+  describe(`detailed time export (${runtime})`, () => {
+    let harness: Harness | undefined;
+    afterEach(async () => harness?.close());
+
+    /** Three notes on one day, one for each answer to "may the client read it" (D20). */
+    const seedNotes = async (reader: Harness): Promise<void> => {
+      await reader.run(
+        `INSERT INTO time_entries
+          (id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+           spent_date, seconds, seconds_without_timer, rounded_seconds, billable, budgeted,
+           billable_rate_cents, cost_rate_cents, notes, client_visible, created_at, updated_at) VALUES
+          (121, 1, 1, 1, 21, 11, '2026-08-20', 1800, 1800, 1800, 1, 1, 10000, 4000,
+           'Shown to the client: https://tickets.example.test/KST-1', 1, ?, ?),
+          (122, 1, 1, 1, 21, 11, '2026-08-21', 900, 900, 900, 1, 1, 10000, 4000,
+           'internal: the margin on this is thin', 0, ?, ?),
+          (123, 1, 1, 1, 21, 11, '2026-08-22', 2700, 2700, 2700, 1, 1, 10000, 4000,
+           'Follows the organization', NULL, ?, ?)`,
+        [now, now, now, now, now, now],
+      );
+    };
+    const base =
+      "/reports/detailed-time/export?from=2026-08-01&to=2026-08-31&client_id=1&direct_client_only=true&grain=entry";
+
+    it("[api] serves the report as a PDF, named for its period and client, never cached", async () => {
+      harness = await factory();
+      await seedNotes(harness);
+      const response = await harness.request(`${base}&format=pdf`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("application/pdf");
+      expect(response.headers.get("content-disposition")).toBe(
+        'attachment; filename="detailed-time-2026-08-01-to-2026-08-31-root.pdf"',
+      );
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      expect(response.headers.get("content-length")).toBe(String(bytes.byteLength));
+      expect(String.fromCharCode(...bytes.slice(0, 5))).toBe("%PDF-");
+
+      const strings = pdfStrings(bytes);
+      // Headed by the client the report is for, recapped from its filters.
+      expect(strings[0]).toBe("Detailed time report");
+      expect(strings).toEqual(
+        expect.arrayContaining([
+          "Root",
+          "Timeframe",
+          "2026-08-01 \u0096 2026-08-31",
+          // 101 and the three noted entries: 3600 + 1800 + 900 + 2700 seconds.
+          "2.50 Hours",
+          "1 Client",
+          "Projects",
+          "All projects",
+          "Team",
+          "Everyone",
+          "Report Owner",
+          "[ROOT] Root project",
+        ]),
+      );
+      expect(strings).not.toContain("Invoice");
+    });
+
+    it("[api] exports the rows the report serves, in its order, as CSV and Excel", async () => {
+      harness = await factory();
+      await seedNotes(harness);
+      const report = (await (
+        await harness.request(base.replace("/export", "").concat("&audience=client"))
+      ).json()) as { data: { rows: Array<{ spent_date: string; seconds: number; notes: string | null }> } };
+      expect(report.data.rows).toHaveLength(4);
+
+      const csv = await harness.request(`${base}&format=csv`);
+      expect(csv.status).toBe(200);
+      expect(csv.headers.get("content-type")).toBe("text/csv; charset=utf-8");
+      expect(csv.headers.get("content-disposition")).toBe(
+        'attachment; filename="detailed-time-2026-08-01-to-2026-08-31-root.csv"',
+      );
+      const lines = await csvLines(csv);
+      expect(lines[0]).toBe("Date,Client,Project,Task,Person,Notes,Hours");
+      expect(lines.slice(1, -1).map((line) => [line.slice(0, 10), line.split(",").at(-1)])).toEqual(
+        report.data.rows.map((row) => [row.spent_date, (row.seconds / 3600).toFixed(2)]),
+      );
+      expect(lines.at(-1)).toBe("Total,,,,,,2.50");
+
+      const xlsx = await harness.request(`${base}&format=xlsx`);
+      expect(xlsx.status).toBe(200);
+      expect(xlsx.headers.get("content-type")).toBe(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      expect(xlsx.headers.get("content-disposition")).toBe(
+        'attachment; filename="detailed-time-2026-08-01-to-2026-08-31-root.xlsx"',
+      );
+      const zip = new Uint8Array(await xlsx.arrayBuffer());
+      expect(String.fromCharCode(...zip.slice(0, 2))).toBe("PK");
+    });
+
+    it("[security] withholds an internal note unless the internal one is asked for by name (D20)", async () => {
+      const reader = await factory();
+      harness = reader;
+      await seedNotes(reader);
+      const notes = async (query: string): Promise<string> =>
+        (await csvLines(await reader.request(`${base}&format=csv${query}`))).join("\n");
+
+      // Absent is the client's file: the one that gets sent.
+      const unasked = await notes("");
+      expect(unasked).toContain("Shown to the client: https://tickets.example.test/KST-1");
+      expect(unasked).toContain("Follows the organization");
+      expect(unasked).not.toContain("margin");
+      expect(await notes("&audience=client")).toBe(unasked);
+      expect(await notes("&audience=internal")).toContain("internal: the margin on this is thin");
+
+      // The organization's default decides an unmarked note, as on the report.
+      await reader.run(`UPDATE organizations SET report_notes_client_visible_default = 0`, []);
+      const strict = await notes("");
+      expect(strict).toContain("Shown to the client");
+      expect(strict).not.toContain("Follows the organization");
+      expect((await reader.request(`${base}&format=pdf&audience=everyone`)).status).toBe(422);
+    });
+
+    it("[security] is refused to every profile the report refuses, and served to the rest", async () => {
+      harness = await factory();
+      const path = `${base}&format=pdf`;
+      for (const profile of ["member", "project_manager", "people_admin"] as const) {
+        expect((await harness.request(path, profile)).status, profile).toBe(403);
+      }
+      for (const profile of ["accounting", "executive_manager", "administrator"] as const) {
+        expect((await harness.request(path, profile)).status, profile).toBe(200);
+      }
+    });
+
+    it("[security] lets a person export their own hours and names nothing else in the account", async () => {
+      const reader = await factory();
+      harness = reader;
+      await reader.run(
+        `INSERT INTO roles (id, name, created_at, updated_at) VALUES (81, 'Confidential role', ?, ?)`,
+        [now, now],
+      );
+      await reader.run(
+        `INSERT INTO project_tags (id, name, created_at, updated_at) VALUES (82, 'Confidential tag', ?, ?)`,
+        [now, now],
+      );
+      const own =
+        "/reports/detailed-time/export?from=2026-08-01&to=2026-08-31&self=true&grain=entry&format=pdf";
+      // A member, user 2, who tracked nothing: every filter is still applied
+      // and stated, by id, and no name is looked up on their behalf.
+      const response = await reader.request(
+        `${own}&client_id=1&project_id=1&role_id=81&tag_id=82&manager_id=1`,
+        "member",
+        [],
+        2,
+      );
+      expect(response.status).toBe(200);
+      const strings = pdfStrings(new Uint8Array(await response.arrayBuffer()));
+      expect(strings).toEqual(
+        expect.arrayContaining(["Client #1", "Project #1", "Role #81", "Tag #82", "Person #1", "Unassigned Viewer"]),
+      );
+      for (const secret of ["Root", "Root project", "Confidential role", "Confidential tag", "Report Owner"]) {
+        expect(strings, secret).not.toContain(secret);
+      }
+      expect(response.headers.get("content-disposition")).toContain("detailed-time-2026-08-01-to-2026-08-31-client-1.pdf");
+
+      // Their own entries are named from the rows they were shown.
+      const mine = await reader.request(`${own}&client_id=1`, "accounting", [], 1);
+      expect(pdfStrings(new Uint8Array(await mine.arrayBuffer()))).toEqual(
+        expect.arrayContaining(["1 Client", "Root", "Report Owner"]),
+      );
+      // And never anybody else's.
+      expect((await reader.request(`${own}&user_id=1`, "member", [], 2)).status).toBe(403);
+    });
+
+    it("[api] names every filter set, and states an id that names nothing rather than dropping it", async () => {
+      const reader = await factory();
+      harness = reader;
+      await reader.run(
+        `INSERT INTO roles (id, name, created_at, updated_at) VALUES (81, 'Reporting specialist', ?, ?)`,
+        [now, now],
+      );
+      await reader.run(
+        `INSERT INTO user_roles (user_id, role_id, created_at, updated_at) VALUES (1, 81, ?, ?)`,
+        [now, now],
+      );
+      await reader.run(
+        `INSERT INTO project_tags (id, name, created_at, updated_at) VALUES (82, 'Retained', ?, ?)`,
+        [now, now],
+      );
+      const named = await reader.request(
+        "/reports/detailed-time/export?from=2026-08-01&to=2026-08-31&project_id=1&task_id=1&user_id=1&role_id=81&tag_id=82&manager_id=1&hours=uninvoiced&include_fixed_fee=false&format=pdf",
+      );
+      expect(named.status).toBe(200);
+      expect(pdfStrings(new Uint8Array(await named.arrayBuffer()))).toEqual(
+        expect.arrayContaining([
+          // No client asked for: the organization heads its own report.
+          "Report org",
+          "Clients",
+          "All clients",
+          "1 Project",
+          "Root project",
+          "1 Task",
+          "Delivery",
+          "Team",
+          "Report Owner",
+          "Role",
+          "Reporting specialist",
+          "Tag",
+          "Retained",
+          "Project manager",
+          "Fixed-fee projects",
+          "Excluded",
+          "0.00 Uninvoiced billable hours",
+        ]),
+      );
+      expect(named.headers.get("content-disposition")).toBe(
+        'attachment; filename="detailed-time-2026-08-01-to-2026-08-31.pdf"',
+      );
+
+      const missing = await reader.request(
+        "/reports/detailed-time/export?from=2026-08-01&to=2026-08-31&client_id=999&format=pdf",
+      );
+      expect(missing.status).toBe(200);
+      expect(pdfStrings(new Uint8Array(await missing.arrayBuffer()))).toEqual(
+        expect.arrayContaining(["Client #999", "1 Client"]),
+      );
+    });
+
+    it("[api] refuses a missing or unknown format, and everything the report refuses", async () => {
+      harness = await factory();
+      const fields = async (path: string): Promise<unknown> => {
+        const response = await harness!.request(path);
+        expect(response.status, path).toBe(422);
+        return ((await response.json()) as { error: { fields: unknown } }).error.fields;
+      };
+      expect(await fields(base)).toEqual([expect.objectContaining({ field: "format", code: "required" })]);
+      expect(await fields(`${base}&format=docx`)).toEqual([
+        expect.objectContaining({ field: "format", code: "unsupported" }),
+      ]);
+      for (const path of [
+        `${base}&format=pdf&format=csv`,
+        `${base}&format=pdf&hours=everything`,
+        `${base}&format=pdf&grain=week`,
+        `${base}&format=pdf&page=2`,
+        "/reports/detailed-time/export?from=2026-08-31&to=2026-08-01&format=pdf",
+      ]) {
+        expect((await harness.request(path)).status, path).toBe(422);
+      }
+      // The report itself takes no format: it has one representation.
+      expect(
+        (await harness.request("/reports/detailed-time?from=2026-08-01&to=2026-08-31&format=pdf")).status,
+      ).toBe(422);
+    });
+
+    if (runtime === "SQLite") {
+      it("[db] refuses a range holding more entries than the report reads, as the report does", async () => {
+        harness = await factory();
+        await harness.run(
+          `INSERT INTO time_entries
+            (id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable, budgeted,
+             billable_rate_cents, cost_rate_cents, created_at, updated_at)
+           SELECT 1000 + value, 1, 1, 1, 21, 11, '2026-08-15', 60, 60, 60, 1, 1,
+             10000, 4000, ?, ?
+           FROM (
+             WITH RECURSIVE seq(value) AS (
+               SELECT 1 UNION ALL SELECT value + 1 FROM seq WHERE value < ?
+             ) SELECT value FROM seq
+           )`,
+          [now, now, DETAILED_TIME_ENTRY_LIMIT + 1],
+        );
+        const response = await harness.request(
+          "/reports/detailed-time/export?from=2026-08-15&to=2026-08-15&format=pdf",
+        );
+        expect(response.status).toBe(422);
+        const body = (await response.json()) as {
+          error: { fields: Array<{ field: string; code: string }> };
+        };
+        expect(body.error.fields).toEqual([
+          expect.objectContaining({ field: "to", code: "range_too_wide" }),
+        ]);
+      });
+
+      it("[api] refuses a PDF longer than a client reads, and serves the same rows as CSV and Excel", async () => {
+        harness = await factory();
+        // One past the PDF's limit, on a day nothing else was tracked.
+        await harness.run(
+          `INSERT INTO time_entries
+            (id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable, budgeted,
+             billable_rate_cents, cost_rate_cents, created_at, updated_at)
+           SELECT 1000 + value, 1, 1, 1, 21, 11, '2026-08-15', 60, 60, 60, 1, 1,
+             10000, 4000, ?, ?
+           FROM (
+             WITH RECURSIVE seq(value) AS (
+               SELECT 1 UNION ALL SELECT value + 1 FROM seq WHERE value < ?
+             ) SELECT value FROM seq
+           )`,
+          [now, now, DETAILED_TIME_PDF_ROW_LIMIT + 1],
+        );
+        const path = "/reports/detailed-time/export?from=2026-08-15&to=2026-08-15&grain=entry";
+        const refused = await harness.request(`${path}&format=pdf`);
+        expect(refused.status).toBe(422);
+        const body = (await refused.json()) as {
+          error: { fields: Array<{ field: string; code: string; message: string }> };
+        };
+        expect(body.error.fields).toEqual([
+          expect.objectContaining({ field: "format", code: "too_many_rows" }),
+        ]);
+        expect(body.error.fields[0]!.message).toContain("export it as CSV or Excel");
+        expect((await harness.request(`${path}&format=csv`)).status).toBe(200);
+        expect((await harness.request(`${path}&format=xlsx`)).status).toBe(200);
+
+        // At the limit itself it is a PDF: the refusal is a ceiling.
+        await harness.run(`DELETE FROM time_entries WHERE id = ?`, [1000 + DETAILED_TIME_PDF_ROW_LIMIT + 1]);
+        const served = await harness.request(`${path}&format=pdf`);
+        expect(served.status).toBe(200);
+        expect(served.headers.get("content-type")).toBe("application/pdf");
+      });
+    }
+  });
+}

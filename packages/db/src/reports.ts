@@ -626,6 +626,33 @@ export type DetailedTimeReportResult =
   | { kind: 'report'; report: DetailedTimeReportRecord }
   | { kind: 'too_many_entries'; limit: number }
 
+/** The ids a report was filtered by, for `filterNames`. */
+export interface ReportFilterIds {
+  clientId?: number
+  projectId?: number
+  taskId?: number
+  userId?: number
+  roleId?: number
+  tagId?: number
+  managerId?: number
+}
+
+/**
+ * What those ids stand for, and the organization's own name: what a report
+ * exported as a file says it covers (the detailed time report's recap). Each
+ * is `null` where no id was given or the id names nothing.
+ */
+export interface ReportFilterNamesRecord {
+  organizationName: string
+  clientName: string | null
+  projectName: string | null
+  taskName: string | null
+  userName: string | null
+  roleName: string | null
+  tagName: string | null
+  managerName: string | null
+}
+
 /**
  * Entries read for one detailed time report. Past what anybody reads on a
  * screen -- roughly a twenty-person year -- and small enough that the worst
@@ -776,6 +803,13 @@ export interface ReportRepository {
   }): Promise<MonthEndManifest>
   profitability(filter: Readonly<ProfitabilityFilter>): Promise<ProfitabilityReportRecord>
   detailedTime(filter: Readonly<DetailedTimeFilter>): Promise<DetailedTimeReportResult>
+  /**
+   * The names behind a report's filter ids. A person reads them rather than the
+   * ids, and not all of them can be read off the rows: a parent client's own
+   * name when the work is its children's, a role or a tag, a filter that
+   * matched nothing.
+   */
+  filterNames(ids: Readonly<ReportFilterIds>): Promise<ReportFilterNamesRecord>
   detailedExpense(
     filter: Readonly<DetailedExpenseFilter>,
   ): Promise<DetailedExpenseReportRecord>
@@ -2861,6 +2895,42 @@ const detailedTimeCurrency = (
 }
 
 /**
+ * One statement for every name, each a scalar subquery that is NULL when its
+ * id is absent or names nothing. A person is named as the report names them,
+ * first and last name trimmed, so a recap and a band of rows agree.
+ */
+const reportFilterNames = async (
+  database: Database,
+  ids: Readonly<ReportFilterIds>,
+): Promise<ReportFilterNamesRecord> => {
+  for (const [field, value] of Object.entries(ids)) {
+    if (value !== undefined) assertId(value, field)
+  }
+  const id = (value: number | undefined): number | null => value ?? null
+  const person = (value: number | undefined) =>
+    sql`(SELECT trim(person.first_name || ' ' || person.last_name)
+         FROM users person WHERE person.id = ${id(value)})`
+  const rows = await database.all<
+    Omit<ReportFilterNamesRecord, 'organizationName'> & { organizationName: string | null }
+  >(sql`
+    SELECT
+      (SELECT name FROM organizations ORDER BY id LIMIT 1) AS "organizationName",
+      (SELECT name FROM clients WHERE id = ${id(ids.clientId)}) AS "clientName",
+      (SELECT name FROM projects WHERE id = ${id(ids.projectId)}) AS "projectName",
+      (SELECT name FROM tasks WHERE id = ${id(ids.taskId)}) AS "taskName",
+      ${person(ids.userId)} AS "userName",
+      (SELECT name FROM roles WHERE id = ${id(ids.roleId)}) AS "roleName",
+      (SELECT name FROM project_tags WHERE id = ${id(ids.tagId)}) AS "tagName",
+      ${person(ids.managerId)} AS "managerName"
+  `)
+  const names = rows[0]
+  if (names === undefined || names.organizationName === null) {
+    throw new Error('organization must exist before reports are read')
+  }
+  return { ...names, organizationName: names.organizationName }
+}
+
+/**
  * Every tracked hour in a period, at the grain the report's table draws.
  *
  * Two queries, whatever the row count: the entries, then the role membership
@@ -3791,6 +3861,7 @@ export const createReportRepository = (database: Database): ReportRepository => 
     monthEndManifest: (input) => monthEndManifest(database, input),
     profitability: (range) => profitabilityReport(database, range),
     detailedTime: (filter) => detailedTimeReport(database, filter),
+    filterNames: (ids) => reportFilterNames(database, ids),
     detailedExpense: (filter) => detailedExpenseReport(database, filter),
     timeReport: (range) => timeReport(database, range),
     memberHours: (filter) => memberHoursReport(database, filter),

@@ -168,6 +168,17 @@ const reportReader: ReportReader = {
     },
   }),
   // Not exercised here; present because ReportReader requires it.
+  filterNames: async () => ({
+    organizationName: 'Fixture organization',
+    clientName: null,
+    projectName: null,
+    taskName: null,
+    userName: null,
+    roleName: null,
+    tagName: null,
+    managerName: null,
+  }),
+  // Not exercised here; present because ReportReader requires it.
   contractorCost: async (range) => ({ from: range.from, to: range.to, rows: [] }),
   // Not exercised here; present because ReportReader requires it.
   detailedExpense: async (filter) => ({
