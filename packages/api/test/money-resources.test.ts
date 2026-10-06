@@ -576,6 +576,13 @@ const withReadInterleaving = (
   return { ...orm, $client: proxiedClient } as MoneyResourceDatabase;
 };
 
+const generatedBand = {
+  claimed_entry_count: 3,
+  claimed_seconds: 360_000,
+  billed_entry_count: 1,
+  billed_seconds: 9_900,
+};
+
 interface DeliveryTemplate {
   subjectTemplate?: string;
   textTemplate?: string;
@@ -627,7 +634,11 @@ const harness = async (
                   const invoice = await service.getInvoice(1);
                   if (invoice === null)
                     throw new Error("fixture invoice missing");
-                  return invoice;
+                  // A band answers with what its fee covered beside the
+                  // invoice, which the route has to lift out of the invoice.
+                  return input.request.kind === "banded"
+                    ? { ...invoice, band: generatedBand }
+                    : invoice;
                 },
               },
             }),
@@ -2265,6 +2276,215 @@ for (const [runtime, factory] of factories) {
         const response = await test.request(
           "/api/v1/invoice-generations",
           jsonRequest("POST", body, `refused-generation-${index}`),
+        );
+        expect(response.status).toBe(422);
+        const error = (
+          (await response.json()) as { error: { fields: Array<{ field: string }> } }
+        ).error;
+        expect(error.fields.map(({ field }) => field)).toEqual(fields);
+      }
+      expect(captured).toEqual([]);
+    });
+
+    it("[api] passes a banded request to the engine as its own shape and answers with the band beside the invoice", async () => {
+      const captured: InvoiceGenerationCommand[] = [];
+      const test = await setup((command) => captured.push(command));
+      const ceiling = {
+        kind: "banded",
+        client_id: 1,
+        to: "2026-08-31",
+        project_ids: [9, 3],
+        line_items: [
+          {
+            kind: "Service",
+            description: "Monthly retainer",
+            quantity: 1,
+            unit_price_cents: 1_500_000,
+          },
+          {
+            kind: "Product",
+            description: null,
+            quantity: 2.5,
+            unit_price_cents: 10_000,
+            project_id: 3,
+          },
+        ],
+        claim_mode: "ceiling",
+        claim_ceiling_seconds: 360_000,
+        overage_summary_type: "people",
+      };
+      const generated = await test.request(
+        "/api/v1/invoice-generations",
+        jsonRequest("POST", ceiling, "generate-band-ceiling"),
+      );
+      expect(generated.status).toBe(201);
+      const payload = (await generated.json()) as {
+        data: Record<string, unknown>;
+        band: unknown;
+        links: unknown;
+      };
+      // The band is the command's answer and the invoice stays an invoice.
+      expect(payload.band).toEqual(generatedBand);
+      expect(payload.data).toMatchObject({ id: 1 });
+      expect(payload.data).not.toHaveProperty("band");
+      expect(payload.links).toEqual({ self: "/api/v1/invoices/1" });
+
+      const all = await test.request(
+        "/api/v1/invoice-generations",
+        jsonRequest(
+          "POST",
+          {
+            kind: "banded",
+            client_id: 1,
+            from: "2026-08-01",
+            to: "2026-08-31",
+            project_ids: [1],
+            line_items: [{ kind: "Service", quantity: 1, unit_price_cents: 150_000 }],
+            claim_mode: "all",
+            claim_ceiling_seconds: null,
+            claim_ceiling_cents: null,
+            overage_summary_type: null,
+          },
+          "generate-band-all",
+        ),
+      );
+      expect(all.status).toBe(201);
+
+      // Strict: absent and null arrive as the same request, so they
+      // fingerprint the same way.
+      expect(captured.map(({ request }) => request)).toStrictEqual([
+        {
+          kind: "banded",
+          clientId: 1,
+          from: null,
+          to: "2026-08-31",
+          projectIds: [9, 3],
+          lineItems: [
+            {
+              kind: "Service",
+              description: "Monthly retainer",
+              quantity: 1,
+              unitPriceCents: 1_500_000,
+              projectId: null,
+            },
+            {
+              kind: "Product",
+              description: null,
+              quantity: 2.5,
+              unitPriceCents: 10_000,
+              projectId: 3,
+            },
+          ],
+          claimMode: "ceiling",
+          claimCeilingSeconds: 360_000,
+          claimCeilingCents: null,
+          overageSummaryType: "people",
+        },
+        {
+          kind: "banded",
+          clientId: 1,
+          from: "2026-08-01",
+          to: "2026-08-31",
+          projectIds: [1],
+          lineItems: [
+            {
+              kind: "Service",
+              description: null,
+              quantity: 1,
+              unitPriceCents: 150_000,
+              projectId: null,
+            },
+          ],
+          claimMode: "all",
+          claimCeilingSeconds: null,
+          claimCeilingCents: null,
+          overageSummaryType: null,
+        },
+      ]);
+
+      // Only a band answers with one.
+      const tracked = await test.request(
+        "/api/v1/invoice-generations",
+        jsonRequest(
+          "POST",
+          {
+            client_id: 1,
+            to: "2026-08-31",
+            project_ids: [1],
+            time_summary_type: "task",
+            expense_summary_type: null,
+          },
+          "generate-tracked-no-band",
+        ),
+      );
+      expect(Object.keys((await tracked.json()) as object)).toEqual(["data", "links"]);
+    });
+
+    it("[api] refuses a band whose terms do not hold together before the engine sees it", async () => {
+      const captured: InvoiceGenerationCommand[] = [];
+      const test = await setup((command) => captured.push(command));
+      const band = {
+        kind: "banded",
+        client_id: 1,
+        to: "2026-08-31",
+        project_ids: [1],
+        line_items: [{ kind: "Service", quantity: 1, unit_price_cents: 150_000 }],
+        claim_mode: "all",
+      };
+      const cases: Array<[Record<string, unknown>, string[]]> = [
+        [
+          { ...band, claim_mode: "ceiling", overage_summary_type: "people" },
+          ["claim_ceiling"],
+        ],
+        [
+          {
+            ...band,
+            claim_mode: "ceiling",
+            claim_ceiling_seconds: 3_600,
+            claim_ceiling_cents: 100,
+            overage_summary_type: "people",
+          },
+          ["claim_ceiling"],
+        ],
+        [
+          { ...band, claim_mode: "ceiling", claim_ceiling_seconds: 3_600 },
+          ["overage_summary_type"],
+        ],
+        [
+          {
+            ...band,
+            claim_mode: "ceiling",
+            claim_ceiling_seconds: 0,
+            overage_summary_type: "people",
+          },
+          ["claim_ceiling_seconds", "claim_ceiling"],
+        ],
+        [{ ...band, claim_ceiling_cents: 100 }, ["claim_ceiling_cents"]],
+        [{ ...band, overage_summary_type: "task" }, ["overage_summary_type"]],
+        [{ ...band, claim_mode: "sometimes" }, ["claim_mode"]],
+        [{ ...band, claim_mode: undefined }, ["claim_mode"]],
+        [{ ...band, line_items: [] }, ["line_items"]],
+        [
+          { ...band, line_items: [{ kind: " ", quantity: 1, unit_price_cents: 1 }] },
+          ["line_items[0].kind"],
+        ],
+        [
+          {
+            ...band,
+            line_items: [
+              { kind: "Service", quantity: 1, unit_price_cents: 1 },
+              { kind: "Service", quantity: "1", unit_price_cents: 1, rate: 1 },
+            ],
+          },
+          ["line_items[1].rate", "line_items[1].quantity"],
+        ],
+        [{ ...band, time_summary_type: "task" }, ["time_summary_type"]],
+        [{ ...band, from: "2026-09-01" }, ["to"]],
+      ];
+      for (const [index, [body, fields]] of cases.entries()) {
+        const response = await test.request(
+          "/api/v1/invoice-generations",
+          jsonRequest("POST", body, `refused-band-${index}`),
         );
         expect(response.status).toBe(422);
         const error = (
