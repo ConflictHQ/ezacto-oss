@@ -19,8 +19,14 @@ report grouping and jump to the corresponding section. Synthetic profitability
 fee rows have no tracked entries and keep their zero hours as text.
 
 The detail view names additional filters and offers **Clear additional filters**.
-When stored rounded durations differ from tracked durations, the detail table,
-summary and CSV expose rounded hours separately so totals can be reconciled.
+When stored rounded durations differ from tracked durations, the detail table
+and summary expose rounded hours separately so totals can be reconciled.
+
+**Export** downloads the report on screen as a PDF (Harvest's "Detailed time
+report" layout), an Excel workbook or a CSV. Each file is rendered by the server
+from the request that drew the table and carries tracked hours only, never an
+amount. **Notes for** starts at *Client-ready*, which keeps only the notes a
+client may read; *Internal* keeps every note.
 
 ## API
 
@@ -35,3 +41,10 @@ summary and CSV expose rounded hours separately so totals can be reconciled.
 
 All predicates intersect existing date, project, task, role, tag and invoice filters.
 Existing money-field redaction and the complete-result size limit still apply.
+
+`GET /api/v1/reports/detailed-time/export?format=pdf|xlsx|csv` takes every
+parameter above, under the same authority, and returns the file as an
+attachment named `detailed-time-<from>-to-<to>[-<client>].<format>`. Its one
+different default is `audience`: absent, it is `client`, so an internal note
+leaves only when `audience=internal` asks for it. A PDF is refused above 5,000
+rows; CSV and Excel take the report's whole range.

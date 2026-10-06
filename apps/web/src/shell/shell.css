@@ -1059,6 +1059,65 @@
   background: var(--ez-ground);
   color: var(--ez-ink);
 }
+/* Export opens a panel under its toggle: whose notes, then the three files.
+   It floats over the table rather than pushing it down, as the invoice page's
+   Export hours menu does, and on a phone it takes a row of its own instead. */
+.report-export {
+  position: relative;
+}
+.report-export-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  gap: 2px;
+  min-width: 260px;
+  padding: 6px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--ez-ink) 14%, transparent);
+}
+.report-export-notes {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 4px;
+  padding: 4px 6px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--ez-border);
+}
+.report-export-notes legend {
+  padding: 4px 0 2px;
+  color: var(--ez-muted);
+  font: 600 11px/1.2 var(--ez-font-mono), monospace;
+  text-transform: uppercase;
+}
+.report-export-notes label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  color: var(--ez-ink);
+  font-size: 14px;
+  cursor: pointer;
+}
+.report-export-notes input {
+  margin: 0;
+}
+/* The actions row's own buttons are outlined blocks. A file in the list is not
+   a control of that weight, so it drops the outline and reads as a list. */
+.report-detailed-actions .report-export-item {
+  min-height: 40px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+.report-detailed-actions .report-export-item:hover,
+.report-detailed-actions .report-export-item:focus-visible {
+  background: var(--ez-surface);
+}
 .report-detailed-table th,
 .report-detailed-table td {
   text-align: left;
@@ -3099,6 +3158,21 @@
     width: 100%;
   }
   .invoice-overflow-menu {
+    position: static;
+    min-width: 0;
+    margin-top: 8px;
+  }
+  /* Anchored to its toggle, an open panel could run off either edge of a
+     phone's screen. Here it takes a line of its own under the toggle instead,
+     and the row wraps only while it is open, so a closed one lays out as
+     before. */
+  .report-detailed-actions:has(.report-export-menu:not([hidden])) {
+    flex-wrap: wrap;
+  }
+  .report-export:has(.report-export-menu:not([hidden])) {
+    width: 100%;
+  }
+  .report-export-menu {
     position: static;
     min-width: 0;
     margin-top: 8px;

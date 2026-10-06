@@ -47,7 +47,6 @@ import {
   decimalHours,
   detailedExpenseCsv,
   detailedExpenseOptionsFromUrl,
-  detailedTimeCsv,
   detailedTimeOptionsFromUrl,
   detailedTimeProjectLabel,
   formatReportCents,
@@ -62,10 +61,13 @@ import {
   reportResourceLabel,
   timeReportOptionsFromUrl,
   validateReportFilters,
+  type DetailedTimeExportFormat,
   type DetailedTimeGrain,
   type DetailedTimeGrouping,
   type DetailedTimeHours,
+  type DetailedTimeNotesAudience,
   type DetailedTimeOptions,
+  type DetailedTimeRequest,
   type DetailedTimeScope,
   type DetailedExpenseOptions,
   type ReportFilters,
@@ -1477,12 +1479,95 @@ const renderContractorCost = (
 
 interface DetailedTimeHandlers {
   readonly onOptions: (next: DetailedTimeOptions) => void
-  readonly onExport: () => void
+  /** Absent where the build cannot fetch the file, and the menu is then not drawn. */
+  readonly onExport?: (format: DetailedTimeExportFormat, audience: DetailedTimeNotesAudience) => void
   readonly onPrint: () => void
   readonly onAction?: (
     action: 'mark_invoiced' | 'mark_uninvoiced' | 'move',
     entryIds: readonly number[],
   ) => void
+}
+
+const detailedExportFormats: readonly (readonly [DetailedTimeExportFormat, string])[] = [
+  ['pdf', 'PDF'],
+  ['xlsx', 'Excel'],
+  ['csv', 'CSV'],
+]
+
+const detailedExportAudiences: readonly (readonly [DetailedTimeNotesAudience, string])[] = [
+  ['client', 'Client-ready: only client-visible notes'],
+  ['internal', 'Internal: all notes'],
+]
+
+/**
+ * Export, as Harvest offers it: PDF, Excel or CSV, each rendered by the server
+ * from the request the table was drawn from. "Notes for" decides whose notes
+ * the file carries, and starts at client-ready every time the report is drawn:
+ * the file is usually the one that is sent, so keeping an internal note in it
+ * is a choice made for one export, never one left standing (D20).
+ *
+ * A disclosure rather than an ARIA menu, because it holds a choice as well as
+ * verbs: the toggle says whether it is open, and the panel is a fieldset and
+ * three buttons a screen reader reads as what they are.
+ */
+const detailedExportMenu = (
+  onExport: (format: DetailedTimeExportFormat, audience: DetailedTimeNotesAudience) => void,
+): { readonly root: HTMLDivElement; readonly toggle: HTMLButtonElement } => {
+  const root = element('div', 'report-export')
+  root.dataset['detailedExport'] = ''
+  const toggle = textElement('button', 'Export')
+  toggle.type = 'button'
+  toggle.dataset['detailedExportToggle'] = ''
+  toggle.setAttribute('aria-expanded', 'false')
+  toggle.setAttribute('aria-controls', 'ez-detailed-export-menu')
+  const panel = element('div', 'report-export-menu')
+  panel.id = 'ez-detailed-export-menu'
+  panel.dataset['detailedExportMenu'] = ''
+  panel.hidden = true
+  const close = (): void => {
+    panel.hidden = true
+    toggle.setAttribute('aria-expanded', 'false')
+  }
+  const notes = element('fieldset', 'report-export-notes')
+  notes.append(textElement('legend', 'Notes for'))
+  const choices = detailedExportAudiences.map(([audience, label]) => {
+    const choice = element('label')
+    const input = element('input')
+    input.type = 'radio'
+    input.name = 'ez-detailed-export-notes'
+    input.value = audience
+    input.checked = audience === 'client'
+    input.dataset['detailedExportNotes'] = audience
+    choice.append(input, document.createTextNode(label))
+    notes.append(choice)
+    return input
+  })
+  panel.append(notes)
+  for (const [format, label] of detailedExportFormats) {
+    const item = textElement('button', label, 'report-export-item')
+    item.type = 'button'
+    item.dataset['detailedExportFormat'] = format
+    item.addEventListener('click', () => {
+      // Read off the inputs rather than a `:checked` query, which some DOMs
+      // answer from the attribute and not the state a click left behind.
+      const audience = choices.find((input) => input.checked)?.value === 'internal' ? 'internal' : 'client'
+      close()
+      onExport(format, audience)
+    })
+    panel.append(item)
+  }
+  toggle.addEventListener('click', () => {
+    const opening = panel.hidden
+    panel.hidden = !opening
+    toggle.setAttribute('aria-expanded', opening ? 'true' : 'false')
+  })
+  root.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || panel.hidden) return
+    close()
+    toggle.focus()
+  })
+  root.append(toggle, panel)
+  return { root, toggle }
 }
 
 const selectControl = (
@@ -1752,15 +1837,13 @@ const renderDetailedTime = (
   activeLabel.htmlFor = 'ez-detailed-active'
   activeField.append(activeInput, activeLabel)
   const actions = element('div', 'report-detailed-actions')
-  const exportButton = textElement('button', 'Export')
-  exportButton.type = 'button'
-  exportButton.dataset['detailedExport'] = ''
-  exportButton.addEventListener('click', handlers.onExport)
+  const exportMenu = handlers.onExport === undefined ? null : detailedExportMenu(handlers.onExport)
   const printButton = textElement('button', 'Print')
   printButton.type = 'button'
   printButton.dataset['detailedPrint'] = ''
   printButton.addEventListener('click', handlers.onPrint)
-  actions.append(exportButton, printButton)
+  if (exportMenu !== null) actions.append(exportMenu.root)
+  actions.append(printButton)
   if (Object.keys(options.scope ?? {}).some((key) => key !== 'self')) {
     const clear = textElement('button', 'Clear additional filters')
     clear.type = 'button'
@@ -1791,7 +1874,7 @@ const renderDetailedTime = (
   fragment.append(controls)
 
   if (report.rows.length === 0) {
-    exportButton.disabled = true
+    if (exportMenu !== null) exportMenu.toggle.disabled = true
     fragment.append(
       textElement('p', 'No time was tracked under these filters.', 'report-empty'),
     )
@@ -2446,10 +2529,16 @@ export const createReportsController = (
   let catalogFilter: 'active' | 'all' = 'active'
   /**
    * The last detailed report, kept so a change of grouping re-folds what is
-   * already here. Cleared whenever a request goes out, so Export can never hand
-   * out rows from a report the screen has stopped showing.
+   * already here. Cleared whenever a request goes out.
    */
   let detailedReport: DetailedTimeReport | null = null
+  /**
+   * The request that drew `detailedReport`, set and cleared with it: Export
+   * asks the server for exactly this report again, so the file a client is sent
+   * is the table on screen, filters and all, and never the controls' state
+   * from a click that has not loaded yet.
+   */
+  let detailedRequest: DetailedTimeRequest | null = null
   let detailedOptions: DetailedTimeOptions = {
     hours: 'all',
     grouping: 'date',
@@ -2666,6 +2755,7 @@ export const createReportsController = (
     retryAction = null
     retry.hidden = true
     detailedReport = null
+    detailedRequest = null
     results.replaceChildren()
   }
 
@@ -2834,23 +2924,53 @@ export const createReportsController = (
   }
 
   /**
-   * The export writes what the table holds, in the order the table holds it.
-   * It never asks the API again: a second request could be answered with rows
-   * the screen was not shown, and the money columns are decided by whether the
-   * fetched rows carry the field rather than by anything read here.
+   * The file is the server's, rendered from the request that drew the table:
+   * Harvest's PDF, or the Excel and CSV beside it. Nothing on screen is re-read
+   * to build it, so a file cannot carry rows the table has stopped showing, and
+   * which notes it holds is the server's rule, not this page's (D20). Hours
+   * only, so a profile that cannot see amounts loses nothing by exporting.
    */
-  const exportDetailedTime = (): void => {
-    if (detailedReport === null) return
-    const blob = new Blob([detailedTimeCsv(detailedReport, detailedOptions.grouping)], {
-      type: 'text/csv;charset=utf-8',
-    })
-    const href = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = href
-    link.download = `detailed-time-${detailedReport.from}-to-${detailedReport.to}.csv`
-    link.click()
-    URL.revokeObjectURL(href)
+  const exportDetailedTime = (
+    format: DetailedTimeExportFormat,
+    audience: DetailedTimeNotesAudience,
+  ): void => {
+    const active = currentSession()
+    const download = api.downloadDetailedTimeReport
+    const request = detailedRequest
+    if (active === null || download === undefined || request === null) return
+    status.textContent = 'Preparing the export…'
+    void download(request, format, audience, active.signal)
+      .then(({ blob, filename }) => {
+        if (currentSession() !== active) return
+        const href = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = href
+        link.download = filename
+        link.click()
+        // On the next task: the click starts the download without having read
+        // the blob, and revoking at once can cancel it.
+        setTimeout(() => URL.revokeObjectURL(href), 0)
+        status.textContent = `Downloaded ${filename}.`
+      })
+      .catch((error: unknown) => {
+        if (currentSession() !== active) return
+        if (active.onSessionFailure(error)) return
+        if (active.signal.aborted) return
+        status.textContent = messageFor(error)
+      })
   }
+
+  // The export panel closes when a click lands anywhere outside it, as a
+  // popup does. One listener for the page, because the panel is redrawn with
+  // the report and a listener per drawing would outlive the panel it closes.
+  document.addEventListener('click', (event) => {
+    const panel = results.querySelector<HTMLElement>('[data-detailed-export-menu]')
+    if (panel === null || panel.hidden) return
+    const root = panel.closest('[data-detailed-export]')
+    if (event.target instanceof Node && root?.contains(event.target)) return
+    panel.hidden = true
+    root?.querySelector('[data-detailed-export-toggle]')?.setAttribute('aria-expanded', 'false')
+  })
 
   const exportContractorCost = (report: Readonly<ContractorCostReport>): void => {
     const blob = new Blob([contractorCostCsv(report)], { type: 'text/csv;charset=utf-8' })
@@ -2916,7 +3036,7 @@ export const createReportsController = (
             }
             void loadReport({ ...filters, kind: 'detailed-time' }, true)
           },
-          onExport: exportDetailedTime,
+          ...(api.downloadDetailedTimeReport === undefined ? {} : { onExport: exportDetailedTime }),
           onPrint: () => globalThis.print(),
           ...(active !== null && api.executeDetailedTimeAction !== undefined &&
             ['administrator', 'accounting', 'executive_manager'].includes(active.identity.profile)
@@ -3162,6 +3282,7 @@ export const createReportsController = (
     retry.hidden = true
     retryAction = null
     detailedReport = null
+    detailedRequest = null
     // The cached fold belongs to the range that produced it; keeping it across
     // a reload would let a sub-tab click redraw last month under this month's
     // heading.
@@ -3169,6 +3290,24 @@ export const createReportsController = (
     lastProfitabilityReport = null
     results.replaceChildren()
     status.textContent = 'Loading report…'
+    const detailedTimeRequest: DetailedTimeRequest | null =
+      filters.kind === 'detailed-time'
+        ? {
+            from: filters.from,
+            to: filters.to,
+            ...(filters.clientId === null ? {} : { client_id: filters.clientId }),
+            ...(filters.projectId === null ? {} : { project_id: filters.projectId }),
+            ...detailedOptions.scope,
+            hours: detailedOptions.hours,
+            grain: detailedOptions.grain,
+            ...(detailedOptions.taskId === null ? {} : { task_id: detailedOptions.taskId }),
+            ...(detailedOptions.userId === null ? {} : { user_id: detailedOptions.userId }),
+            ...(detailedOptions.roleId === null ? {} : { role_id: detailedOptions.roleId }),
+            ...(detailedOptions.tagId === null ? {} : { tag_id: detailedOptions.tagId }),
+            invoice_state: detailedOptions.invoiceState,
+            active_projects_only: detailedOptions.activeProjectsOnly,
+          }
+        : null
     try {
       const range = { from: filters.from, to: filters.to }
       const report =
@@ -3213,24 +3352,8 @@ export const createReportsController = (
             },
             active.signal,
           )
-        : filters.kind === 'detailed-time'
-          ? await api.getDetailedTimeReport(
-              {
-                ...range,
-                ...(filters.clientId === null ? {} : { client_id: filters.clientId }),
-                ...(filters.projectId === null ? {} : { project_id: filters.projectId }),
-                ...detailedOptions.scope,
-                hours: detailedOptions.hours,
-                grain: detailedOptions.grain,
-                ...(detailedOptions.taskId === null ? {} : { task_id: detailedOptions.taskId }),
-                ...(detailedOptions.userId === null ? {} : { user_id: detailedOptions.userId }),
-                ...(detailedOptions.roleId === null ? {} : { role_id: detailedOptions.roleId }),
-                ...(detailedOptions.tagId === null ? {} : { tag_id: detailedOptions.tagId }),
-                invoice_state: detailedOptions.invoiceState,
-                active_projects_only: detailedOptions.activeProjectsOnly,
-              },
-              active.signal,
-            )
+        : filters.kind === 'detailed-time' && detailedTimeRequest !== null
+          ? await api.getDetailedTimeReport(detailedTimeRequest, active.signal)
         : filters.kind === 'activity-log'
           ? await api.getActivityLog({ from: filters.from, to: filters.to }, active.signal)
         : filters.kind === 'detailed-expense'
@@ -3285,6 +3408,7 @@ export const createReportsController = (
               : await api.getProjectBudgetReport(filters.projectId!, range, active.signal)
       if (currentSession() !== active) return
       if (queuedLocationFilters !== null) return
+      detailedRequest = detailedTimeRequest
       renderReport(filters, report)
       status.textContent = 'Report loaded.'
     } catch (error) {
@@ -3526,6 +3650,7 @@ export const createReportsController = (
       clients = []
       projects = []
       detailedReport = null
+      detailedRequest = null
       lastTimeReport = null
       lastProfitabilityReport = null
       timeOptions = { includeFixedFee: false }
@@ -3582,6 +3707,7 @@ export const createReportsController = (
           clients = []
           projects = []
           detailedReport = null
+          detailedRequest = null
           lastTimeReport = null
           lastProfitabilityReport = null
           pending = false

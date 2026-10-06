@@ -1,4 +1,4 @@
-import type { ContractorCostReport, DetailedTimeReport, DetailedTimeRow, EzactoClient, Whoami } from '@conflict-hq/ezacto-client'
+import type { ContractorCostReport, DetailedTimeRow, EzactoClient, Whoami } from '@conflict-hq/ezacto-client'
 import { describe, expect, it, vi } from 'vitest'
 import {
   billablePercent,
@@ -7,7 +7,7 @@ import {
   contractorCostCsv,
   createShellApi,
   detailedExpenseCsv,
-  detailedTimeCsv,
+  detailedTimeExportPath,
   detailedTimeOptionsFromUrl,
   formatReportCents,
   formatReportHours,
@@ -49,31 +49,6 @@ const secondPerson: Partial<DetailedTimeRow> = {
   seconds: 1_800,
 }
 const nextDay: Partial<DetailedTimeRow> = { spent_date: '2026-08-11', seconds: 900 }
-
-const detailedReport = (fields: Partial<DetailedTimeReport> = {}): DetailedTimeReport => ({
-  from: '2026-08-01',
-  to: '2026-08-31',
-  client_id: null,
-  project_id: null,
-  task_id: null,
-  user_id: null,
-  role_id: null,
-  tag_id: null,
-  invoice_state: 'all',
-  hours: 'all',
-  grain: 'day',
-  active_projects_only: false,
-  seconds: 0,
-  rounded_seconds: 0,
-  billable_seconds: 0,
-  uninvoiced_billable_seconds: 0,
-  claimed_seconds: 0,
-  unclaimed_seconds: 0,
-  time_entry_count: 0,
-  currencies: [],
-  rows: [],
-  ...fields,
-})
 
 describe('Reports Stage 1 model', () => {
   it('[unit] keeps report selection and relevant filters in canonical URL state', () => {
@@ -341,82 +316,53 @@ describe('Reports Stage 1 model', () => {
     })
   })
 
-  it('[unit] does not force a negative number to text in the export', () => {
-    // The formula guard exists because a cell opening with `=`, `+`, `-` or `@`
-    // is executed by Excel and Sheets. Applied to a numeric cell it prefixes an
-    // apostrophe, which forces text -- so a correction row drops out of a SUM of
-    // the Hours column and a period that nets negative gets a text Total. Those
-    // rows are real: 0002_projects_time carries the correction that overstated a
-    // contractor's month.
-    const correction = detailedRow()
-    correction.rounded_seconds = -1_800
-    correction.billable_amount_cents = -6_000
-    const csv = detailedTimeCsv(
-      detailedReport({ rows: [correction], seconds: -1_800 }),
-      'date',
+  it('[unit] asks the export for the report on screen, every filter of it, and the file', () => {
+    // The file is the server's, so the one thing this side owns is the
+    // question: the request that drew the table, serialized as the generated
+    // client serializes the report's own query, then the file and whose notes.
+    const path = detailedTimeExportPath(
+      {
+        from: '2026-09-01',
+        to: '2026-09-30',
+        client_id: 5,
+        include_fixed_fee: false,
+        direct_client_only: true,
+        hours: 'all',
+        grain: 'entry',
+        invoice_state: 'all',
+        active_projects_only: false,
+      },
+      'pdf',
+      'client',
     )
-
-    expect(csv).toContain('"-0.50"')
-    expect(csv).toContain('"-60.00"')
-    expect(csv).not.toContain("'-0.50")
-    expect(csv).not.toContain("'-60.00")
-    // The total beneath the column is a number too, or the column does not add
-    // up to it -- which is the defect this report exists to avoid.
-    expect(csv.trimEnd().split('\r\n').at(-1)).toContain('"-0.50"')
-
-    // The guard still fires where it should: a project genuinely named with a
-    // leading `=` is a formula waiting to run.
-    const hostile = detailedRow()
-    hostile.project_name = '=cmd|calc'
-    hostile.project_code = ''
-    const guarded = detailedTimeCsv(
-      detailedReport({ rows: [hostile], seconds: 3_600 }),
-      'date',
-    )
-    expect(guarded).toContain(String.raw`"'=cmd|calc"`)
+    const url = new URL(path, 'https://example.test')
+    expect(url.pathname).toBe('/api/v1/reports/detailed-time/export')
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      from: '2026-09-01',
+      to: '2026-09-30',
+      client_id: '5',
+      include_fixed_fee: 'false',
+      direct_client_only: 'true',
+      hours: 'all',
+      grain: 'entry',
+      invoice_state: 'all',
+      active_projects_only: 'false',
+      format: 'pdf',
+      audience: 'client',
+    })
   })
 
-  it('[security] exports only the columns the response carried', () => {
-    const withMoney = detailedTimeCsv(
-      detailedReport({ rows: [detailedRow()], seconds: 3_600 }),
-      'date',
-    )
-    expect(withMoney.split('\r\n')[0]).toBe(
-      '"Date","Client","Project","Task","Roles","Person","Hours","Currency","Billable amount"',
-    )
-    expect(withMoney).toContain('"100.00"')
-
-    // The same rows as a member's session would receive them: the API omits
-    // the field entirely, so the export has no column to fill and no second
-    // request that could fetch one.
-    const withoutRate = detailedRow()
-    delete withoutRate.billable_amount_cents
-    const redacted = detailedTimeCsv(
-      detailedReport({ rows: [withoutRate], seconds: 3_600 }),
-      'date',
-    )
-    expect(redacted.split('\r\n')[0]).toBe(
-      '"Date","Client","Project","Task","Roles","Person","Hours"',
-    )
-    expect(redacted).not.toContain('100.00')
-    expect(redacted).toContain('"1.00"')
-    expect(redacted.trimEnd().split('\r\n').at(-1)).toBe(
-      '"Total","","","","","","1.00"',
-    )
-  })
-
-  it('[security] disarms a spreadsheet formula hidden in an exported name', () => {
-    const csv = detailedTimeCsv(
-      detailedReport({
-        rows: [detailedRow({ client_name: '=1+1', task_name: '@SUM(A1)' })],
-        seconds: 3_600,
-      }),
-      'date',
-    )
-    // Quoting alone does not stop a spreadsheet evaluating the cell; the
-    // apostrophe does, and stays visible rather than silently rewriting it.
-    expect(csv).toContain('"\'=1+1"')
-    expect(csv).toContain('"\'@SUM(A1)"')
+  it('[security] names the notes it wants in every export, and sends no filter the report lacked', () => {
+    const query = (audience: 'client' | 'internal'): URLSearchParams =>
+      new URL(
+        detailedTimeExportPath({ from: '2026-09-01', to: '2026-09-30', self: true }, 'csv', audience),
+        'https://example.test',
+      ).searchParams
+    // Stated either way, so the server's own default is never what decides
+    // whether an internal note leaves the building.
+    expect(query('client').get('audience')).toBe('client')
+    expect(query('internal').get('audience')).toBe('internal')
+    expect([...query('client').keys()]).toEqual(['from', 'to', 'self', 'format', 'audience'])
   })
 
   it('[unit #723] exports the exact contractor payout fields and disarms formulas', () => {

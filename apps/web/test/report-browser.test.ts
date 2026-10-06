@@ -1,15 +1,17 @@
 /** @vitest-environment happy-dom */
 
-import type {
-  DetailedTimeReport,
-  DetailedTimeRow,
-  GeneralResource,
-  TimeReport,
-  Whoami,
+import {
+  EzactoApiError,
+  type DetailedTimeReport,
+  type DetailedTimeRow,
+  type GeneralResource,
+  type TimeReport,
+  type Whoami,
 } from '@conflict-hq/ezacto-client'
 import { REPORT_CAPABILITIES } from '@ezacto/core'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { createReportsController } from '../src/reports/browser.js'
+import { createSameOriginShellApi } from '../src/shell/model.js'
 import type { ReportWorkspaceApi } from '../src/reports/model.js'
 import { renderAppShell, reportKindTabs } from '../src/index.js'
 
@@ -2377,57 +2379,181 @@ describe('Reports Stage 1 browser controller', () => {
     session.abort()
   })
 
-  it('[security] exports the rows on screen and nothing the API withheld', async () => {
-    writeDocument('/reports?report=detailed-time&from=2026-08-01&to=2026-08-31')
-    // A member-shaped response: no `billable_amount_cents` on any row, so the
-    // export has no money column to fill and no request that could fetch one.
-    const withheld = detailedFixture().rows.map((row) => {
-      const copy = { ...row }
-      delete copy.billable_amount_cents
-      return copy
-    })
-    const getDetailedTimeReport = vi.fn(async () => ({
+  /**
+   * The detailed report's Export: the server renders the file from the request
+   * that drew the table, so what this side owns is asking for that request,
+   * the file chosen, and whose notes it carries -- and saying what happened.
+   */
+  const exportHarness = async (
+    overrides: Partial<ReportWorkspaceApi> = {},
+    path = '/reports?report=detailed-time&from=2026-09-01&to=2026-09-30&grain=entry&include_fixed_fee=false&client_id=2&hours=all&direct_client_only=true',
+  ) => {
+    writeDocument(path)
+    const getDetailedTimeReport = vi.fn<ReportWorkspaceApi['getDetailedTimeReport']>(async () => ({
       ...detailedFixture(),
-      currencies: [{ currency: 'USD', entries_without_billable_rate: 0 }],
-      rows: withheld,
+      from: '2026-09-01',
+      to: '2026-09-30',
+      client_id: 2,
+      grain: 'entry' as const,
     }))
-    const session = new AbortController()
-    await createReportsController(baseApi({ getDetailedTimeReport })).activate(
-      identity('accounting'),
-      session.signal,
-      () => false,
+    const downloadDetailedTimeReport = vi.fn<NonNullable<ReportWorkspaceApi['downloadDetailedTimeReport']>>(
+      async (_request, format) => ({
+        blob: new Blob(['%PDF-1.4'], { type: 'application/pdf' }),
+        filename: `detailed-time-2026-09-01-to-2026-09-30-studio.${format}`,
+      }),
     )
+    const session = new AbortController()
+    onTestFinished(() => session.abort())
+    await createReportsController(
+      baseApi({ getDetailedTimeReport, downloadDetailedTimeReport, ...overrides }),
+    ).activate(identity('accounting'), session.signal, () => false)
+    const toggle = document.querySelector<HTMLButtonElement>('[data-detailed-export-toggle]')!
+    const panel = document.querySelector<HTMLElement>('[data-detailed-export-menu]')!
+    const format = (value: string): HTMLButtonElement =>
+      panel.querySelector<HTMLButtonElement>(`[data-detailed-export-format="${value}"]`)!
+    const notes = (value: string): HTMLInputElement =>
+      panel.querySelector<HTMLInputElement>(`[data-detailed-export-notes="${value}"]`)!
+    const status = (): string | null | undefined =>
+      document.querySelector('[data-report-status]')?.textContent
+    return { getDetailedTimeReport, downloadDetailedTimeReport, session, toggle, panel, format, notes, status }
+  }
 
-    const blobs: Blob[] = []
+  it('[browser] offers PDF, Excel and CSV under Export, with notes client-ready until somebody says otherwise', async () => {
+    const { toggle, panel, notes } = await exportHarness()
+    expect(toggle.textContent).toBe('Export')
+    expect(toggle.disabled).toBe(false)
+    expect(panel.hidden).toBe(true)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.getAttribute('aria-controls')).toBe(panel.id)
+
+    toggle.click()
+    expect(panel.hidden).toBe(false)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect([...panel.querySelectorAll('[data-detailed-export-format]')].map((item) => item.textContent)).toEqual([
+      'PDF',
+      'Excel',
+      'CSV',
+    ])
+    expect(panel.querySelector('legend')?.textContent).toBe('Notes for')
+    expect(notes('client').checked).toBe(true)
+    expect(notes('internal').checked).toBe(false)
+    expect(notes('client').closest('label')?.textContent).toBe('Client-ready: only client-visible notes')
+    expect(notes('internal').closest('label')?.textContent).toBe('Internal: all notes')
+
+    // A click anywhere else closes it, as a popup does; Escape does too.
+    document.body.click()
+    expect(panel.hidden).toBe(true)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    toggle.click()
+    panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(panel.hidden).toBe(true)
+  })
+
+  it('[security] exports the request that drew the table, notes for the client unless internal is chosen', async () => {
+    const harness = await exportHarness()
+    const created: Blob[] = []
     const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockImplementation((blob) => {
-      blobs.push(blob as Blob)
-      return 'blob:report'
+      created.push(blob as Blob)
+      return 'blob:detailed-time'
     })
     const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
-    const click = vi
-      .spyOn(HTMLAnchorElement.prototype, 'click')
-      .mockImplementation(() => {})
+    const downloads: string[] = []
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      downloads.push(this.download)
+    })
+    onTestFinished(() => {
+      createObjectURL.mockRestore()
+      revokeObjectURL.mockRestore()
+      click.mockRestore()
+    })
 
-    document.querySelector<HTMLButtonElement>('[data-detailed-export]')!.click()
+    harness.toggle.click()
+    harness.format('pdf').click()
+    expect(harness.panel.hidden).toBe(true)
+    await vi.waitFor(() => expect(downloads).toEqual(['detailed-time-2026-09-01-to-2026-09-30-studio.pdf']))
+    const [request, format, audience, signal] = harness.downloadDetailedTimeReport.mock.calls[0]!
+    // Exactly the report's own request -- the drill-down's fixed-fee and
+    // direct-client filters included -- rather than one rebuilt from controls.
+    expect(request).toBe(harness.getDetailedTimeReport.mock.calls[0]![0])
+    expect(request).toMatchObject({
+      from: '2026-09-01',
+      to: '2026-09-30',
+      client_id: 2,
+      include_fixed_fee: false,
+      direct_client_only: true,
+      grain: 'entry',
+      hours: 'all',
+    })
+    expect([format, audience]).toEqual(['pdf', 'client'])
+    expect(signal).toBeInstanceOf(AbortSignal)
+    expect(created).toHaveLength(1)
+    await vi.waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:detailed-time'))
+    expect(harness.status()).toBe('Downloaded detailed-time-2026-09-01-to-2026-09-30-studio.pdf.')
 
-    expect(click).toHaveBeenCalledTimes(1)
-    expect(blobs).toHaveLength(1)
-    const csv = await blobs[0]!.text()
-    expect(csv.split('\r\n')[0]).toBe(
-      '"Date","Client","Project","Task","Roles","Person","Hours"',
+    // Internal is a choice made for an export, by name.
+    harness.toggle.click()
+    harness.notes('internal').click()
+    harness.format('csv').click()
+    await vi.waitFor(() => expect(harness.downloadDetailedTimeReport).toHaveBeenCalledTimes(2))
+    expect(harness.downloadDetailedTimeReport.mock.calls[1]!.slice(1, 3)).toEqual(['csv', 'internal'])
+    harness.toggle.click()
+    harness.format('xlsx').click()
+    await vi.waitFor(() => expect(harness.downloadDetailedTimeReport).toHaveBeenCalledTimes(3))
+    expect(harness.downloadDetailedTimeReport.mock.calls[2]!.slice(1, 3)).toEqual(['xlsx', 'internal'])
+    // The report itself was asked for once. The file is a second request for
+    // the same report, never a reason to redraw it.
+    expect(harness.getDetailedTimeReport).toHaveBeenCalledTimes(1)
+  })
+
+  it('[browser] says why an export failed in the report status line, and downloads nothing', async () => {
+    const download = vi.fn<NonNullable<ReportWorkspaceApi['downloadDetailedTimeReport']>>(async () => {
+      throw new EzactoApiError(
+        422,
+        {
+          error: {
+            code: 'validation_failed',
+            message: 'The request contains invalid fields.',
+            fields: [
+              {
+                field: 'to',
+                code: 'range_too_wide',
+                message: 'from and to cover more than 20000 time entries; narrow the period or the client and project filters',
+              },
+            ],
+          },
+        },
+        null,
+      )
+    })
+    const harness = await exportHarness({ downloadDetailedTimeReport: download })
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    onTestFinished(() => click.mockRestore())
+    harness.toggle.click()
+    harness.format('pdf').click()
+    expect(harness.status()).toBe('Preparing the export…')
+    await vi.waitFor(() =>
+      expect(harness.status()).toBe(
+        'from and to cover more than 20000 time entries; narrow the period or the client and project filters',
+      ),
     )
-    expect(csv).toContain('"[WEB] Launch"')
-    expect(csv).not.toContain('Billable amount')
-    // Three rows on screen, plus the header and the total, and nothing else.
-    expect(csv.trimEnd().split('\r\n')).toHaveLength(5)
-    // The API was asked once, for the report itself. Export never asks again.
-    expect(getDetailedTimeReport).toHaveBeenCalledTimes(1)
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:report')
+    expect(click).not.toHaveBeenCalled()
+  })
 
-    createObjectURL.mockRestore()
-    revokeObjectURL.mockRestore()
-    click.mockRestore()
+  it('[browser] offers no export a build cannot fetch, and none of a report with no rows', async () => {
+    writeDocument('/reports?report=detailed-time&from=2026-08-01&to=2026-08-31')
+    const session = new AbortController()
+    await createReportsController(
+      baseApi({ getDetailedTimeReport: vi.fn(async () => detailedFixture()) }),
+    ).activate(identity('accounting'), session.signal, () => false)
+    expect(document.querySelector('[data-detailed-export]')).toBeNull()
+    // Print stays: it needs nothing from the server.
+    expect(document.querySelector('[data-detailed-print]')).not.toBeNull()
     session.abort()
+
+    const empty = await exportHarness({
+      getDetailedTimeReport: vi.fn(async () => detailedTimeReport({ from: '2026-09-01', to: '2026-09-30' })),
+    })
+    expect(empty.toggle.disabled).toBe(true)
   })
 
   it('[browser #519] draws the activity log newest first over the range alone', async () => {
@@ -3005,5 +3131,65 @@ describe('Reports Stage 1 browser controller', () => {
     expect(document.querySelector<HTMLSelectElement>('[data-builder-fields]')?.options[0]?.textContent).toBe('Client')
     expect(document.querySelector<HTMLSelectElement>('[data-builder-metrics]')?.options[0]?.textContent).toBe('Hours')
     session.abort()
+  })
+})
+
+/**
+ * The binding the page really uses: a file, so fetched here rather than
+ * through the generated client, whose binary call returns the bytes without
+ * the header that names them.
+ */
+describe('the detailed time download', () => {
+  const request = {
+    from: '2026-09-01',
+    to: '2026-09-30',
+    client_id: 5,
+    include_fixed_fee: false,
+    grain: 'entry',
+  } as const
+
+  it('[unit] fetches the export with the session cookie and keeps the name the server gives it', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('%PDF-1.4', {
+        status: 200,
+        headers: {
+          'content-type': 'application/pdf',
+          'content-disposition': 'attachment; filename="detailed-time-2026-09-01-to-2026-09-30-kestrel-holdings.pdf"',
+        },
+      }),
+    )
+    onTestFinished(() => fetch.mockRestore())
+    const signal = new AbortController().signal
+    const file = await createSameOriginShellApi().downloadDetailedTimeReport!(request, 'pdf', 'client', signal)
+    expect(file.filename).toBe('detailed-time-2026-09-01-to-2026-09-30-kestrel-holdings.pdf')
+    expect(await file.blob.text()).toBe('%PDF-1.4')
+    const [address, init] = fetch.mock.calls[0]!
+    expect(address).toBe(
+      '/api/v1/reports/detailed-time/export?from=2026-09-01&to=2026-09-30&client_id=5&include_fixed_fee=false&grain=entry&format=pdf&audience=client',
+    )
+    expect(init).toMatchObject({ credentials: 'same-origin', signal })
+  })
+
+  it('[unit] turns a refusal into the API error the status line reads', async () => {
+    const refusal = {
+      error: {
+        code: 'validation_failed',
+        message: 'The request contains invalid fields.',
+        fields: [{ field: 'format', code: 'too_many_rows', message: 'A PDF holds at most 5000 rows' }],
+      },
+    }
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(refusal), {
+        status: 422,
+        headers: { 'content-type': 'application/json', 'x-request-id': 'req-export' },
+      }),
+    )
+    onTestFinished(() => fetch.mockRestore())
+    const failure = await createSameOriginShellApi()
+      .downloadDetailedTimeReport!(request, 'pdf', 'internal')
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(EzactoApiError)
+    expect(failure).toMatchObject({ status: 422, body: refusal })
+    expect(String(fetch.mock.calls[0]![0])).toContain('audience=internal')
   })
 })

@@ -73,6 +73,56 @@ export interface DetailedTimeScope {
   readonly manager_id?: number
 }
 
+/**
+ * What the detailed time report is asked for: one request, read by the report
+ * and by its export alike.
+ */
+export type DetailedTimeRequest = DetailedTimeScope & {
+  readonly from: string
+  readonly to: string
+  readonly client_id?: number
+  readonly project_id?: number
+  readonly task_id?: number
+  readonly user_id?: number
+  readonly role_id?: number
+  readonly tag_id?: number
+  readonly invoice_state?: DetailedTimeReport['invoice_state']
+  readonly hours?: DetailedTimeHours
+  readonly active_projects_only?: boolean
+  readonly grain?: DetailedTimeGrain
+}
+
+/** The files the detailed time report exports as: Harvest's three. */
+export type DetailedTimeExportFormat = 'pdf' | 'xlsx' | 'csv'
+
+/**
+ * Whose notes an exported file carries (D20). `client`, the default, is the
+ * file that gets sent: only the notes a client may read. `internal` keeps every
+ * note, for a file that stays in the building.
+ */
+export type DetailedTimeNotesAudience = 'client' | 'internal'
+
+/**
+ * The export's address: the report's own request, every field of it, then the
+ * file and whose notes it carries. Built from the request that drew the table
+ * rather than from the controls above it, so the file cannot describe a report
+ * the screen is not showing. Serialized as the generated client serializes the
+ * report's own query, so the two requests ask the same question.
+ */
+export const detailedTimeExportPath = (
+  request: Readonly<DetailedTimeRequest>,
+  format: DetailedTimeExportFormat,
+  audience: DetailedTimeNotesAudience,
+): string => {
+  const query = new URLSearchParams()
+  for (const [name, value] of Object.entries(request)) {
+    if (value !== undefined) query.set(name, String(value))
+  }
+  query.set('format', format)
+  query.set('audience', audience)
+  return `/api/v1/reports/detailed-time/export?${query.toString()}`
+}
+
 export interface DetailedTimeOptions {
   readonly scope?: DetailedTimeScope
   readonly hours: DetailedTimeHours
@@ -272,22 +322,21 @@ export interface ReportWorkspaceApi {
     signal?: AbortSignal,
   ): Promise<DetailedExpenseReport>
   getDetailedTimeReport(
-    filter: DetailedTimeScope & {
-      readonly from: string
-      readonly to: string
-      readonly client_id?: number
-      readonly project_id?: number
-      readonly task_id?: number
-      readonly user_id?: number
-      readonly role_id?: number
-      readonly tag_id?: number
-      readonly invoice_state?: DetailedTimeReport['invoice_state']
-      readonly hours?: DetailedTimeHours
-      readonly active_projects_only?: boolean
-      readonly grain?: DetailedTimeGrain
-    },
+    filter: DetailedTimeRequest,
     signal?: AbortSignal,
   ): Promise<DetailedTimeReport>
+  /**
+   * The same report as a file -- PDF, Excel or CSV -- rendered by the server
+   * from the request the table was drawn from, so the file a client is sent and
+   * the table somebody checked before sending it are one report. A file, not
+   * JSON, so the shell fetches it itself rather than through the client.
+   */
+  downloadDetailedTimeReport?(
+    request: DetailedTimeRequest,
+    format: DetailedTimeExportFormat,
+    audience: DetailedTimeNotesAudience,
+    signal?: AbortSignal,
+  ): Promise<{ readonly blob: Blob; readonly filename: string }>
   getActivityLog?(
     range: { readonly from: string; readonly to: string },
     signal?: AbortSignal,
@@ -867,52 +916,6 @@ export const detailedExpenseCsv = (report: Readonly<DetailedExpenseReport>): str
       ].map(csvCell).join(','),
     )
   }
-  return `${lines.join('\r\n')}\r\n`
-}
-
-/**
- * The export is built from the rows already on screen -- never from a second
- * request -- so a reader who was served no `billable_amount_cents` cannot get
- * one by pressing Export. The money columns appear only when the fetched rows
- * carry the field, which is the same test the table renders by.
- */
-export const detailedTimeCsv = (
-  report: Readonly<DetailedTimeReport>,
-  grouping: DetailedTimeGrouping,
-): string => {
-  const money = report.rows.some((row) => row.billable_amount_cents !== undefined)
-  const rounded = report.rows.some((row) => row.seconds !== row.rounded_seconds)
-  const header = ['Date', 'Client', 'Project', 'Task', 'Roles', 'Person', 'Hours']
-  if (rounded) header.push('Rounded hours')
-  if (money) header.push('Currency', 'Billable amount')
-  const lines = [header.map(csvCell).join(',')]
-  for (const band of groupDetailedTimeRows(report.rows, grouping)) {
-    for (const row of band.rows) {
-      const cells = [
-        row.spent_date,
-        row.client_name,
-        detailedTimeProjectLabel(row),
-        row.task_name,
-        row.roles.join('; '),
-        row.user_name,
-        decimalHours(row.seconds),
-      ]
-      if (rounded) cells.push(decimalHours(row.rounded_seconds))
-      if (money) {
-        cells.push(
-          row.currency,
-          row.billable_amount_cents === null || row.billable_amount_cents === undefined
-            ? ''
-            : (row.billable_amount_cents / 100).toFixed(2),
-        )
-      }
-      lines.push(cells.map(csvCell).join(','))
-    }
-  }
-  const totals = ['Total', '', '', '', '', '', decimalHours(report.seconds)]
-  if (rounded) totals.push(decimalHours(report.rounded_seconds))
-  if (money) totals.push('', '')
-  lines.push(totals.map(csvCell).join(','))
   return `${lines.join('\r\n')}\r\n`
 }
 
