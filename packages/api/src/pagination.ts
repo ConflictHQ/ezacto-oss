@@ -4,13 +4,30 @@ import { serializeMany, type Serializer } from './serializer.js'
 const defaultPageSize = 50
 const maximumPageSize = 200
 const cursorVersion = 1
+const keysetCursorVersion = 2
+const maximumCursorLength = 512
+// A keyset cursor carries the last row's sort key, which for the invoice list
+// includes its number: 255 characters as the API writes one, more where an
+// import carried more, in any script. Sized for a 1,024-character number made
+// entirely of characters JSON escapes to six bytes, then base64'd.
+const maximumKeysetCursorLength = 12_288
 const cursorPartPattern = /^[A-Za-z0-9_-]+$/
+const canonicalInstantPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 const minimumSigningKeyBytes = 32
 
 interface CursorPayload {
   v: typeof cursorVersion
   a: number
   t: number
+  s: number
+}
+
+interface KeysetCursorPayload {
+  v: typeof keysetCursorVersion
+  /** The last row's position, as the order encodes it. */
+  p: unknown
+  /** The snapshot instant the traversal is bounded by. */
+  t: string
   s: number
 }
 
@@ -113,6 +130,135 @@ export const cursorPage = async <Row extends { id: number }, Output, Viewer>({
   }
 }
 
+/**
+ * The keyset chassis: the same signed, scope-bound, take+1 cursor as
+ * `cursorPage`, for a collection read in an order other than its ids.
+ *
+ * An id cursor can say "after id 40, up to id 90" because ids are both the
+ * order and the insertion sequence. Where the order is something else -- the
+ * invoice list, newest first -- the cursor carries the last row's position in
+ * that order instead, and the traversal is bounded by creation time rather
+ * than by a high-water id: rows created after the first page are left out, so
+ * nothing added while somebody pages extends or shifts what they read.
+ */
+export interface KeysetWindow<Position> {
+  /** Position of the last row of the previous page; null on the first page. */
+  after: Position | null
+  /** Latest creation instant at the start of the traversal; later rows are excluded. */
+  createdThrough: string
+  /** Fetch exactly this many rows so the chassis can detect a next page. */
+  take: number
+}
+
+export interface KeysetSource<Row extends { id: number; created_at: string }, Position> {
+  /**
+   * Latest creation instant at the start of a traversal, as a UTC timestamp
+   * with milliseconds, or null for an empty collection.
+   */
+  snapshot(): Promise<string | null>
+  /** Rows strictly after `after` in the order, created no later than `createdThrough`. */
+  list(window: KeysetWindow<Position>): Promise<readonly Row[]>
+}
+
+export interface KeysetOrder<Row, Position> {
+  /** Where a row sits. The next page resumes strictly after the last one. */
+  positionOf(row: Readonly<Row>): Position
+  /** Negative when `left` is listed first. Zero only for the same row. */
+  compare(left: Position, right: Position): number
+  /** The position as a cursor carries it: plain JSON. */
+  encode(position: Position): unknown
+  /** A position read back from a cursor, or null where it is not one. */
+  decode(value: unknown): Position | null
+}
+
+interface KeysetCursorPageOptions<
+  Row extends { id: number; created_at: string },
+  Position,
+  Output,
+  Viewer,
+> {
+  requestUrl: URL
+  source: KeysetSource<Row, Position>
+  order: KeysetOrder<Row, Position>
+  viewer: Readonly<Viewer>
+  serializer: Serializer<Row, Output, Viewer>
+  /** Server-owned HMAC key. At least 32 bytes and stable across a traversal. */
+  cursorSigningKey: Uint8Array
+}
+
+export const keysetCursorPage = async <
+  Row extends { id: number; created_at: string },
+  Position,
+  Output,
+  Viewer,
+>({
+  requestUrl,
+  source,
+  order,
+  viewer,
+  serializer,
+  cursorSigningKey,
+}: KeysetCursorPageOptions<Row, Position, Output, Viewer>): Promise<
+  CursorPageEnvelope<Output>
+> => {
+  assertSigningKey(cursorSigningKey)
+  const perPageValues = requestUrl.searchParams.getAll('per_page')
+  const cursorValues = requestUrl.searchParams.getAll('cursor')
+  if (perPageValues.length > 1) throw invalidField('per_page', 'duplicate', 'per_page may appear once')
+  if (cursorValues.length > 1) throw invalidField('cursor', 'duplicate', 'cursor may appear once')
+
+  const requestedPageSize = parsePageSize(perPageValues[0])
+  const scope = cursorScope(requestUrl)
+  const cursor =
+    cursorValues[0] === undefined
+      ? null
+      : await decodeKeysetCursor(cursorValues[0], cursorSigningKey, scope, order)
+  if (cursor !== null && requestedPageSize !== null && requestedPageSize !== cursor.size) {
+    throw invalidField(
+      'per_page',
+      'cursor_mismatch',
+      'per_page must match the page size encoded by cursor',
+    )
+  }
+  const pageSize = cursor?.size ?? requestedPageSize ?? defaultPageSize
+  const after = cursor?.after ?? null
+  const createdThrough = cursor?.createdThrough ?? (await source.snapshot())
+  const self = relativeLink(requestUrl)
+
+  if (createdThrough === null) {
+    return emptyPage(self, pageSize)
+  }
+  if (!isCanonicalInstant(createdThrough)) {
+    throw new Error('keyset source snapshot must be a UTC timestamp with milliseconds')
+  }
+
+  const rows = await source.list({ after, createdThrough, take: pageSize + 1 })
+  validateKeysetRows(rows, after, createdThrough, pageSize + 1, order)
+  const visible = rows.slice(0, pageSize)
+  const hasNext = rows.length > pageSize
+  const nextCursor = hasNext
+    ? await encodeCursor(
+        {
+          v: keysetCursorVersion,
+          p: order.encode(order.positionOf(visible.at(-1)!)),
+          t: createdThrough,
+          s: pageSize,
+        },
+        cursorSigningKey,
+        scope,
+      )
+    : null
+
+  return {
+    data: serializeMany(visible, viewer, serializer),
+    links: {
+      self,
+      next: nextCursor === null ? null : nextLink(requestUrl, nextCursor, pageSize),
+    },
+    page: { per_page: pageSize, next_cursor: nextCursor },
+  }
+}
+
 const parsePageSize = (raw: string | undefined): number | null => {
   if (raw === undefined) return null
   if (!/^[1-9][0-9]*$/.test(raw)) {
@@ -133,7 +279,7 @@ const invalidField = (field: string, code: string, message: string) =>
   validationError([{ field, code, message }])
 
 const encodeCursor = async (
-  payload: CursorPayload,
+  payload: CursorPayload | KeysetCursorPayload,
   signingKey: Uint8Array,
   scope: string,
 ): Promise<string> => {
@@ -142,25 +288,42 @@ const encodeCursor = async (
   return `${encodedPayload}.${encodeBase64Url(signature)}`
 }
 
+/**
+ * The payload of a cursor this server signed for this scope, parsed but not
+ * yet validated. Throws on anything else; the callers turn that into the one
+ * 422 a malformed, forged or replayed cursor gets.
+ */
+const readSignedPayload = async (
+  raw: string,
+  signingKey: Uint8Array,
+  scope: string,
+  maximumLength: number,
+): Promise<{ encodedPayload: string; parsed: unknown }> => {
+  if (raw.length === 0 || raw.length > maximumLength) throw new Error()
+  const parts = raw.split('.')
+  if (parts.length !== 2) throw new Error()
+  const encodedPayload = parts[0]!
+  const encodedSignature = parts[1]!
+  if (!cursorPartPattern.test(encodedPayload) || !cursorPartPattern.test(encodedSignature)) {
+    throw new Error()
+  }
+  const signature = decodeBase64Url(encodedSignature)
+  if (!(await verify(encodedPayload, signature, signingKey, scope))) throw new Error()
+  const parsed: unknown = JSON.parse(
+    new TextDecoder('utf-8', { fatal: true }).decode(decodeBase64Url(encodedPayload)),
+  )
+  return { encodedPayload, parsed }
+}
+
 const decodeCursor = async (
   raw: string,
   signingKey: Uint8Array,
   scope: string,
 ): Promise<CursorPayload> => {
   try {
-    if (raw.length === 0 || raw.length > 512) throw new Error()
-    const parts = raw.split('.')
-    if (parts.length !== 2) throw new Error()
-    const encodedPayload = parts[0]!
-    const encodedSignature = parts[1]!
-    if (!cursorPartPattern.test(encodedPayload) || !cursorPartPattern.test(encodedSignature)) {
-      throw new Error()
-    }
-    const signature = decodeBase64Url(encodedSignature)
-    if (!(await verify(encodedPayload, signature, signingKey, scope))) throw new Error()
-    const parsed = JSON.parse(
-      new TextDecoder('utf-8', { fatal: true }).decode(decodeBase64Url(encodedPayload)),
-    ) as Partial<CursorPayload>
+    const signed = await readSignedPayload(raw, signingKey, scope, maximumCursorLength)
+    const encodedPayload = signed.encodedPayload
+    const parsed = signed.parsed as Partial<CursorPayload>
     if (
       parsed.v !== cursorVersion ||
       !Number.isSafeInteger(parsed.a) ||
@@ -182,6 +345,49 @@ const decodeCursor = async (
     throw invalidField('cursor', 'invalid', 'cursor is malformed or unsupported')
   }
 }
+
+const decodeKeysetCursor = async <Row, Position>(
+  raw: string,
+  signingKey: Uint8Array,
+  scope: string,
+  order: KeysetOrder<Row, Position>,
+): Promise<{ after: Position; createdThrough: string; size: number }> => {
+  try {
+    const signed = await readSignedPayload(raw, signingKey, scope, maximumKeysetCursorLength)
+    const parsed = signed.parsed as Partial<KeysetCursorPayload> | null
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      parsed.v !== keysetCursorVersion ||
+      typeof parsed.t !== 'string' ||
+      !isCanonicalInstant(parsed.t) ||
+      !Number.isSafeInteger(parsed.s) ||
+      parsed.s! < 1 ||
+      parsed.s! > maximumPageSize
+    ) {
+      throw new Error()
+    }
+    const after = order.decode(parsed.p)
+    if (after === null) throw new Error()
+    // Re-encoded from what was read, so a payload that verifies but is not
+    // the one this server writes -- extra fields, another spelling of the
+    // same position -- is refused rather than half-understood.
+    const payload: KeysetCursorPayload = {
+      v: keysetCursorVersion,
+      p: order.encode(after),
+      t: parsed.t,
+      s: parsed.s!,
+    }
+    const canonicalPayload = encodeBase64Url(new TextEncoder().encode(JSON.stringify(payload)))
+    if (canonicalPayload !== signed.encodedPayload) throw new Error()
+    return { after, createdThrough: parsed.t, size: parsed.s! }
+  } catch {
+    throw invalidField('cursor', 'invalid', 'cursor is malformed or unsupported')
+  }
+}
+
+const isCanonicalInstant = (value: string): boolean =>
+  canonicalInstantPattern.test(value) && new Date(Date.parse(value)).toISOString() === value
 
 const assertSigningKey = (key: Uint8Array): void => {
   if (!(key instanceof Uint8Array) || key.byteLength < minimumSigningKeyBytes) {
@@ -268,6 +474,31 @@ const validateRows = <Row extends { id: number }>(
       throw new Error('cursor source returned rows outside the requested stable window')
     }
     previous = row.id
+  }
+}
+
+const validateKeysetRows = <Row extends { id: number; created_at: string }, Position>(
+  rows: readonly Row[],
+  after: Position | null,
+  createdThrough: string,
+  maximumRows: number,
+  order: KeysetOrder<Row, Position>,
+): void => {
+  if (rows.length > maximumRows) throw new Error('cursor source returned more rows than requested')
+  const bound = Date.parse(createdThrough)
+  let previous = after
+  for (const row of rows) {
+    assertSafeInteger(row.id, 'source row id')
+    const position = order.positionOf(row)
+    const created = Date.parse(row.created_at)
+    if (
+      (previous !== null && order.compare(previous, position) >= 0) ||
+      !Number.isFinite(created) ||
+      created > bound
+    ) {
+      throw new Error('cursor source returned rows outside the requested stable window')
+    }
+    previous = position
   }
 }
 

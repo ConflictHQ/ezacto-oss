@@ -150,6 +150,16 @@ export interface QuickBooksStore {
     now: string
   }): Promise<void>
   /**
+   * The other way round: which receipt of ours a QuickBooks payment was made
+   * from. The webhook asks, because QuickBooks announces the payments the
+   * mirror creates like any other, and one of ours must not come back as a
+   * second receipt. `quickbooks_payment_links_remote` keeps it to one.
+   */
+  readPaymentLinkByQuickBooksId(input: {
+    realmId: string
+    quickBooksId: string
+  }): Promise<{ paymentId: number } | null>
+  /**
    * The result of the latest mirror attempt for an invoice, whichever way it
    * went, overwritten on every attempt (issue 819). This is what lets the
    * invoice page say "not synced, because ..." without a sync ever being
@@ -317,6 +327,14 @@ export const createQuickBooksStore = (database: Database): QuickBooksStore => ({
          sync_token = excluded.sync_token,
          mirrored_at = excluded.mirrored_at,
          updated_at = excluded.updated_at`)
+  },
+
+  readPaymentLinkByQuickBooksId: async (input) => {
+    const rows = await database.all<{ payment_id: number }>(sql`SELECT payment_id
+       FROM quickbooks_payment_links
+       WHERE realm_id = ${input.realmId} AND quickbooks_id = ${input.quickBooksId}`)
+    const row = rows[0]
+    return row === undefined ? null : { paymentId: row.payment_id }
   },
 
   recordMirrorOutcome: async (input) => {

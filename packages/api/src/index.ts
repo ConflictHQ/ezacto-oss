@@ -189,9 +189,13 @@ export {
 } from './errors.js'
 export {
   cursorPage,
+  keysetCursorPage,
   type CursorPageEnvelope,
   type CursorSource,
   type CursorWindow,
+  type KeysetOrder,
+  type KeysetSource,
+  type KeysetWindow,
 } from './pagination.js'
 export {
   installEmailLogRoutes,

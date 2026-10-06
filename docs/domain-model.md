@@ -372,6 +372,13 @@ is immutable while any payment or suggested/confirmed bank deposit refers to it.
 `harvest_id IS NOT NULL` distinguishes immutable imported manual payments from
 correctable native `manual/manual` rows.
 
+A payment recorded here may not take `due` below zero. One typed in for more than
+is still owed — or Mark paid on an invoice already settled — is refused (422 on
+`amount_cents`), and so is raising a payment past the balance; a provider's report
+of one is left unrecorded and logged for a person to settle. Imported payments are
+not refused, nor is a confirmed bank deposit, which is money that has already
+arrived; an overpaid invoice (`due < 0`) stays a valid state.
+
 `payment_provider_account` is credential-free provider/account identity. Credentials
 arrive with later integrations. `bank_deposit` references a reconciliation-shaped
 account and stores stable per-account provider transaction id, posted timestamp,

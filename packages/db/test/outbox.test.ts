@@ -3,6 +3,7 @@ import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import {
+  executeInvoiceEdit,
   executeInvoiceLifecycleCommand,
   recordInvoicePayment,
   type InvoiceStateDatabase,
@@ -111,6 +112,17 @@ const installFixture = async (database: TestDatabase): Promise<void> => {
     sentAt,
     sentAt,
   )
+  // Invoice 1 owes exactly what payInvoice pays, because a payment may not
+  // overpay. Invoice 2 is inserted open, and an open invoice takes a line only
+  // through a command, so the test that pays it adds one first.
+  await database.run(
+    `INSERT INTO invoice_line_items (
+      invoice_id, position, kind, description, quantity, unit_price_cents, amount_cents,
+      created_at, updated_at
+    ) VALUES (1, 0, 'Service', 'Outbox work', 1, 100, 100, ?, ?)`,
+    sentAt,
+    sentAt,
+  )
 }
 
 const sendInvoice = async (database: TestDatabase): Promise<void> => {
@@ -211,14 +223,42 @@ for (const [runtime, factory] of factories) {
       await installFixture(database)
       await sendInvoice(database)
       await payInvoice(database, 1, 1, 'ordered')
-      // Invoice 2 models an imported already-open invoice. Its native payment has
-      // no preceding native invoice.sent event, and the drainer must not synthesize one.
-      await payInvoice(database, 2, 0, 'imported-open')
+      // Invoice 2 models an imported already-open invoice. Its native history
+      // has no invoice.sent event -- it starts with the edit that gives it
+      // something to owe, then its payment -- and the drainer must not
+      // synthesize one.
+      await executeInvoiceEdit(database.orm, {
+        invoiceId: 2,
+        commandId: 'imported-open-line',
+        actor: { type: 'user', id: 1 },
+        authorize,
+        expectedVersion: 0,
+        occurredAt: paidAt,
+        eventIds: ['imported-open-line-updated'],
+        edit: {
+          type: 'line_insert',
+          lineId: 201,
+          position: 0,
+          kind: 'Service',
+          description: 'Outbox work',
+          quantity: 1,
+          unitPriceCents: 100,
+          amountCents: 100,
+        },
+      })
+      await payInvoice(database, 2, 1, 'imported-open')
 
       const delivered: string[] = []
+      const byInvoice = new Map<number, string[]>()
       const subscriber: OutboxSubscriber = {
         id: 'capture',
-        deliver: async (event) => void delivered.push(event.eventType),
+        deliver: async (event) => {
+          delivered.push(event.eventType)
+          byInvoice.set(event.aggregateId, [
+            ...(byInvoice.get(event.aggregateId) ?? []),
+            event.eventType,
+          ])
+        },
       }
       const service = database.outbox({
         subscribers: [subscriber],
@@ -228,20 +268,17 @@ for (const [runtime, factory] of factories) {
           return () => `ordered-attempt-${++id}`
         })(),
       })
-      await expect(service.drain(10)).resolves.toMatchObject({ delivered: 5 })
+      await expect(service.drain(10)).resolves.toMatchObject({ delivered: 6 })
 
       const sentIndex = delivered.indexOf('invoice.sent')
       const orderedPaidIndex = delivered.indexOf('invoice.paid')
       expect(sentIndex).toBeGreaterThanOrEqual(0)
       expect(orderedPaidIndex).toBeGreaterThan(sentIndex)
       expect(delivered.filter((type) => type === 'invoice.sent')).toHaveLength(1)
-      expect(delivered).toEqual([
-        'invoice.sent',
-        'payment.recorded',
-        'invoice.paid',
-        'payment.recorded',
-        'invoice.paid',
-      ])
+      // Each invoice's own history, in its own order; the second never gains
+      // an invoice.sent it did not have.
+      expect(byInvoice.get(1)).toEqual(['invoice.sent', 'payment.recorded', 'invoice.paid'])
+      expect(byInvoice.get(2)).toEqual(['invoice.updated', 'payment.recorded', 'invoice.paid'])
     })
 
     it('[unit] retries on the deterministic schedule, surfaces failure, and permits retry', async () => {

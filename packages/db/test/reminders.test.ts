@@ -122,6 +122,15 @@ const installFixture = async (
     sentAt,
     sentAt,
   )
+  // Owing exactly what payInvoice pays, because a payment may not overpay.
+  await database.run(
+    `INSERT INTO invoice_line_items (
+      invoice_id, position, kind, description, quantity, unit_price_cents, amount_cents,
+      created_at, updated_at
+    ) VALUES (1, 0, 'Service', 'Reminder work', 1, 100, 100, ?, ?)`,
+    sentAt,
+    sentAt,
+  )
 }
 
 const sendInvoice = async (database: TestDatabase): Promise<void> => {
