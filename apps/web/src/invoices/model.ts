@@ -17,11 +17,16 @@ import type {
   InvoiceReminderPreferenceEnvelope,
   InvoiceDocumentPreferenceEnvelope,
   InvoiceDocumentPreferenceInput,
+  InvoiceEmailDefaultsEnvelope,
+  InvoiceEmailPreviewEnvelope,
+  InvoiceEmailPreviewInput,
+  ClientInvoiceSendingInput,
   InvoiceRecipient,
   InvoiceTransitionInput,
   VersionedRowDeleteInput,
   Whoami,
 } from '@conflict-hq/ezacto-client'
+import { inspectEmailTemplateVariables } from '@ezacto/core'
 import { parseDurationSeconds } from '../shell/model.js'
 
 /**
@@ -76,6 +81,13 @@ export type InvoiceQuickBooksState = InvoiceQuickBooksEnvelope['data']
 export type InvoiceReminderPreference = InvoiceReminderPreferenceEnvelope['data']
 /** Which documents go with an invoice's email, its own choice and what it resolves to. */
 export type InvoiceDocumentPreference = InvoiceDocumentPreferenceEnvelope['data']
+/** What the Send dialog opens on: the client's lists, the copies, the template's words. */
+export type InvoiceEmailDefaults = InvoiceEmailDefaultsEnvelope['data']
+/** The email a send would make, and the link to its stamped document. */
+export interface InvoiceEmailPreview {
+  readonly email: InvoiceEmailPreviewEnvelope['data']
+  readonly documentHref: string
+}
 
 export type InvoiceState = Invoice['state']
 
@@ -225,6 +237,32 @@ export interface InvoicePaymentApi {
     input: InvoiceDocumentPreferenceInput,
     signal?: AbortSignal,
   ): Promise<InvoiceDocumentPreference>
+  /**
+   * What the Send dialog opens on -- the client's To and Cc or its contacts'
+   * routing, the organization's copies, the template's subject and message --
+   * and the client's rules it can save back. Optional: without them the
+   * dialog opens on plain defaults.
+   */
+  getInvoiceEmailDefaults?(id: number, signal?: AbortSignal): Promise<InvoiceEmailDefaults>
+  setClientInvoiceSending?(
+    clientId: number,
+    input: ClientInvoiceSendingInput,
+    signal?: AbortSignal,
+  ): Promise<void>
+  /** Whether the person sending is copied on the invoice emails they send. */
+  setInvoiceCopyToSelf?(copy: boolean, signal?: AbortSignal): Promise<void>
+  /** The email a send would make, composed by the server's own code; sends nothing. */
+  previewInvoiceEmail?(
+    id: number,
+    input: InvoiceEmailPreviewInput,
+    signal?: AbortSignal,
+  ): Promise<InvoiceEmailPreview>
+  /** That email, stamped PREVIEW, to the person asking and nobody else. */
+  sendInvoiceEmailPreview?(
+    id: number,
+    input: InvoiceEmailPreviewInput,
+    signal?: AbortSignal,
+  ): Promise<{ readonly to: readonly InvoiceRecipient[] }>
 }
 
 export type InvoiceJournalFormat = 'pdf' | 'csv' | 'xlsx'
@@ -236,6 +274,8 @@ export const invoiceJournalFormats: readonly InvoiceJournalFormat[] = ['pdf', 'c
 export interface InvoiceAttachmentChoice {
   readonly pdf: boolean
   readonly files: boolean
+  /** The invoice's PDF files bound into the back of its document. */
+  readonly append: boolean
   readonly journal: 'detailed' | 'summary' | false
   readonly journalFormats: readonly InvoiceJournalFormat[]
 }
@@ -259,6 +299,7 @@ export const invoiceAttachmentsEffective = (
 ): InvoiceAttachmentChoice => ({
   pdf: preference.effective,
   files: preference.effective_files,
+  append: preference.effective_append_pdfs,
   journal: journalLevel(preference.effective_journal),
   journalFormats: preference.effective_journal_formats,
 })
@@ -267,10 +308,11 @@ export const invoiceAttachmentsEffective = (
  * The invoice's own preference, written only where the dialog was changed from
  * what the invoice would have done anyway -- or null when nothing was.
  *
- * A choice that lands back on the organization's default is written as null,
- * which hands the invoice back to the organization rather than pinning it to a
- * value that happens to match today: a default changed next month should still
- * reach it. Files are only ever written where the invoice has some to offer.
+ * A choice that lands back on what the invoice would follow -- its client's
+ * standing rule, else the organization's default -- is written as null, which
+ * hands the invoice back rather than pinning it to a value that happens to
+ * match today: a rule changed next month should still reach it. Files are only
+ * ever written where the invoice has some to offer.
  */
 export const invoiceAttachmentChanges = (
   preference: Readonly<InvoiceDocumentPreference>,
@@ -281,19 +323,29 @@ export const invoiceAttachmentChanges = (
     throw new Error('Choose at least one file for the hours report.')
   }
   const effective = invoiceAttachmentsEffective(preference)
+  // What the invoice follows when it says nothing: its client, else the organization.
+  const followed = {
+    pdf: preference.client_attach_pdf ?? preference.organization_attach_pdf,
+    files: preference.client_attach_files ?? preference.organization_attach_files,
+    append: preference.client_append_pdfs ?? preference.organization_append_pdfs,
+    journal: journalLevel(preference.client_attach_journal ?? preference.organization_attach_journal),
+    journalFormats: preference.client_journal_formats ?? preference.organization_journal_formats,
+  }
   const input: InvoiceDocumentPreferenceInput = {}
   if (chosen.pdf !== effective.pdf) {
-    input.attach_pdf = chosen.pdf === preference.organization_attach_pdf ? null : chosen.pdf
+    input.attach_pdf = chosen.pdf === followed.pdf ? null : chosen.pdf
   }
   if (filesOffered && chosen.files !== effective.files) {
-    input.attach_files = chosen.files === preference.organization_attach_files ? null : chosen.files
+    input.attach_files = chosen.files === followed.files ? null : chosen.files
+  }
+  if (filesOffered && chosen.append !== effective.append) {
+    input.append_pdfs = chosen.append === followed.append ? null : chosen.append
   }
   if (chosen.journal !== effective.journal) {
-    input.attach_journal =
-      chosen.journal === journalLevel(preference.organization_attach_journal) ? null : chosen.journal
+    input.attach_journal = chosen.journal === followed.journal ? null : chosen.journal
   }
   if (chosen.journal !== false && !sameFormats(chosen.journalFormats, effective.journalFormats)) {
-    input.journal_formats = sameFormats(chosen.journalFormats, preference.organization_journal_formats)
+    input.journal_formats = sameFormats(chosen.journalFormats, followed.journalFormats)
       ? null
       : [...chosen.journalFormats]
   }
@@ -1161,8 +1213,17 @@ export interface InvoiceSendAttempt {
 export interface InvoiceSendDelivery {
   /** Kept across retries so a retry is a retry, not a second email. */
   readonly commandId: string
-  /** The recipients confirmed with the send this delivery belongs to. */
+  /** The recipients confirmed with the send this delivery belongs to: the To header. */
   readonly recipients: readonly InvoiceRecipient[]
+  /**
+   * The rest of the email the send confirmed -- the Cc header, the subject and
+   * message as typed, and whether the sender is copied. A retry repeats all of
+   * it, or the ledger would rightly refuse it as a different command.
+   */
+  readonly cc: readonly InvoiceRecipient[]
+  readonly subject: string
+  readonly message: string
+  readonly sendMeACopy: boolean
 }
 
 export const invoiceSendAttemptFor = (
@@ -1268,13 +1329,46 @@ export const invoiceRecipients = (raw: string): InvoiceRecipient[] => {
   })
 }
 
-export const invoiceTemplateVariableNames = [
-  '%invoice_id%',
-  '%invoice_number%',
-  '%invoice_amount%',
-  '%invoice_due_date%',
-  '%invoice_line_items%',
-] as const
+/**
+ * The Cc box: the same lines as To, and empty is an answer -- nobody copied.
+ * An address already in To is left out rather than refused: it would be one
+ * header too many on the same email, and the To line already reaches it.
+ */
+export const invoiceCopies = (
+  raw: string,
+  to: readonly InvoiceRecipient[],
+): InvoiceRecipient[] => {
+  if (raw.trim() === '') return []
+  const addressed = new Set(to.map(({ email }) => email.toLocaleLowerCase('en-US')))
+  const parsed = invoiceRecipients(raw).filter(
+    ({ email }) => !addressed.has(email.toLocaleLowerCase('en-US')),
+  )
+  if (parsed.length > 99) throw new Error('No more than 99 addresses can be copied on one email.')
+  return parsed
+}
+
+/**
+ * Why a subject or message cannot go, or null when it can: a variable the
+ * invoice email does not have is refused here, before anything is recorded --
+ * the same check the server makes, made first, because a send that is recorded
+ * and then refused leaves an email owed that nothing typed can change.
+ */
+export const invoiceTemplateProblem = (template: string, field: 'Subject' | 'Message'): string | null => {
+  const [first] = inspectEmailTemplateVariables('invoice', template)
+  return first === undefined
+    ? null
+    : `${field}: %${first.variable}% ${
+        first.code === 'unknown_variable' ? 'is not a variable an invoice email has' : 'is not available to an invoice email'
+      }.`
+}
+
+/** Harvest's wording for terms, as the invoice prints it beside the due date. */
+const termsLabel = (terms: Invoice['payment_terms']): string =>
+  terms === 'upon_receipt'
+    ? 'upon receipt'
+    : terms === 'custom'
+      ? ''
+      : `Net ${terms.slice(4)}`
 
 const invoiceMoney = (cents: number, currency: string): string =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(cents / 100)
@@ -1321,20 +1415,50 @@ export const invoiceLineItemsText = (invoice: Readonly<Invoice>): string => {
   ].join('\n')
 }
 
+/**
+ * The variables an invoice's record of a send fills in the browser, with the
+ * same values the server fills the email with. The pay link is the server's to
+ * mint, so the record reads it empty; everything else matches.
+ */
 export const interpolateInvoiceTemplate = (
   template: string,
   invoice: Readonly<Invoice>,
+  names: Readonly<{ clientName: string; companyName: string }> = { clientName: '', companyName: '' },
 ): string => {
-  const variables: Record<(typeof invoiceTemplateVariableNames)[number], string> = {
-    '%invoice_id%': String(invoice.id),
-    '%invoice_number%': invoice.number,
-    '%invoice_amount%': invoiceMoney(invoice.amount_cents, invoice.currency),
-    '%invoice_due_date%': invoice.due_date,
-    '%invoice_line_items%': invoiceLineItemsText(invoice),
+  // Worked out only for the tokens the text names: the lines and the dates
+  // cost something to render, and a token whose value cannot be worked out is
+  // left as typed rather than filled with a guess.
+  const issue = (): Date | null => {
+    const date = new Date(`${invoice.issue_date}T00:00:00.000Z`)
+    return Number.isFinite(date.valueOf()) ? date : null
   }
-  return template.replace(
-    /%(?:invoice_id|invoice_number|invoice_amount|invoice_due_date|invoice_line_items)%/gu,
-    (variable) => variables[variable as keyof typeof variables],
+  const variables: Readonly<Record<string, () => string | null>> = {
+    invoice_id: () => String(invoice.id),
+    invoice_number: () => invoice.number,
+    invoice_amount: () => invoiceMoney(invoice.amount_cents, invoice.currency),
+    invoice_due_date: () => invoice.due_date,
+    invoice_line_items: () => invoiceLineItemsText(invoice),
+    invoice_issue_date: () => invoice.issue_date,
+    invoice_issue_month_name: () => {
+      const date = issue()
+      return date === null
+        ? null
+        : new Intl.DateTimeFormat('en-US', { month: 'long', timeZone: 'UTC' }).format(date)
+    },
+    invoice_issue_year: () => {
+      const date = issue()
+      return date === null ? null : String(date.getUTCFullYear())
+    },
+    invoice_subject: () => invoice.subject ?? '',
+    invoice_currency: () => invoice.currency,
+    invoice_purchase_order: () => invoice.purchase_order?.trim() ?? '',
+    invoice_payment_terms: () => termsLabel(invoice.payment_terms),
+    invoice_payment_url: () => '',
+    client_name: () => names.clientName,
+    company_name: () => names.companyName,
+  }
+  return template.replace(/%([A-Za-z][A-Za-z0-9_]*)%/gu, (token, name: string) =>
+    Object.hasOwn(variables, name) ? (variables[name]!() ?? token) : token,
   )
 }
 

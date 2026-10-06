@@ -67,6 +67,21 @@ logical attachment cannot be removed until the policy is changed or cleared.
 `generated_report` and every other policy variant are deliberately rejected until
 the later F2 + F6 story owns generation semantics.
 
+## Standing recurring files
+
+Since migration 0099, a file attached to a recurring definition goes with the
+invoices it issues. `recurring_invoice_attachments.through` is the last issue
+date the file goes with, inclusive; null is every invoice. `removed_at` stops the
+file going at all. It is a timestamp, not a delete, so the definition keeps the
+record that it carried the file.
+
+The recurring engine copies the standing files in the same batch that issues
+the invoice. Each one becomes a new invoice-owned `attachments` row naming the
+same `file_objects` row. The bytes are not copied, and the invoice keeps its file
+if the definition later drops it. Row ids derive from the generation command, so
+a retried issue writes the same rows. The static `attachment_policy` above plays
+no part in this.
+
 ## Harvest receipt mapping
 
 The extractor's Harvest `receipt` vocabulary maps as follows:

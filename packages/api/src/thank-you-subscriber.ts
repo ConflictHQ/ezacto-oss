@@ -47,6 +47,8 @@ export interface ThankYouMessage {
   readonly fromEmail: string;
   readonly replyToEmail: string | null;
   readonly to: readonly { readonly name: string; readonly email: string }[];
+  /** Whoever the invoice copied is copied on its thank-you. */
+  readonly cc: readonly { readonly name: string; readonly email: string }[];
   readonly templateVersion: number;
   readonly subject: string;
   readonly textBody: string;
@@ -97,6 +99,15 @@ export const createInvoiceThankYouSubscriber = (
         to: message.to.map((person) =>
           person.name === "" ? { email: person.email } : { email: person.email, name: person.name },
         ),
+        ...(message.cc.length === 0
+          ? {}
+          : {
+              cc: message.cc.map((person) =>
+                person.name === ""
+                  ? { email: person.email }
+                  : { email: person.email, name: person.name },
+              ),
+            }),
         template: `thank_you:${String(message.templateVersion)}`,
         subject: message.subject,
         text: message.textBody,

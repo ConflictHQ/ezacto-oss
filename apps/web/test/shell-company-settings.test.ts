@@ -1,6 +1,8 @@
 /** @vitest-environment happy-dom */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { EzactoClient } from '@conflict-hq/ezacto-client'
+import { createShellApi } from '../src/shell/model.js'
 import {
   EzactoApiError,
   authenticationError,
@@ -240,6 +242,7 @@ describe('company settings', () => {
       async (input: Record<string, unknown>) => ({
         attach_pdf: false,
         attach_files: true,
+        append_pdfs: false,
         attach_journal: false as const,
         journal_formats: ['pdf' as const],
         ...input,
@@ -252,6 +255,7 @@ describe('company settings', () => {
       getOrganizationInvoiceDocuments: vi.fn(async () => ({
         attach_pdf: false,
         attach_files: true,
+        append_pdfs: false,
         attach_journal: false as const,
         journal_formats: ['pdf' as const],
       })),
@@ -321,6 +325,7 @@ describe('company settings', () => {
       getOrganizationInvoiceDocuments: vi.fn(async () => ({
         attach_pdf: false,
         attach_files: false,
+        append_pdfs: false,
         attach_journal: false as const,
         journal_formats: ['pdf' as const],
       })),
@@ -372,6 +377,181 @@ describe('company settings', () => {
     )
     expect(api.setOrganizationInvoiceDocuments).not.toHaveBeenCalled()
     globalThis.location.hash = ''
+  })
+
+  const sendingDocuments = {
+    attach_pdf: true,
+    attach_files: true,
+    append_pdfs: false,
+    attach_journal: false as const,
+    journal_formats: ['pdf' as const],
+  }
+
+  it('[browser] saves the PDFs bound behind the invoice and the addresses copied on every invoice email', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    globalThis.location.hash = '#invoices'
+    const defaults = { company_name: 'Northwind Studio', company_address: '1 Example Way', notes: null, subject: null }
+    const setOrganizationInvoiceDocuments = vi.fn(async (input: Record<string, unknown>) => ({
+      ...sendingDocuments,
+      ...input,
+    }))
+    // Stored as the mailer takes them: lower-cased.
+    const setOrganizationInvoiceSending = vi.fn(
+      async (input: { always_cc: { name: string; email: string }[] }) => ({
+        always_cc: input.always_cc.map(({ name, email }) => ({ name, email: email.toLowerCase() })),
+      }),
+    )
+    const api: ShellApi = {
+      ...companyApi(),
+      getInvoiceDefaults: vi.fn(async () => defaults),
+      updateInvoiceDefaults: vi.fn(async () => defaults),
+      getOrganizationInvoiceDocuments: vi.fn(async () => sendingDocuments),
+      setOrganizationInvoiceDocuments,
+      getOrganizationInvoiceSending: vi.fn(async () => ({
+        always_cc: [{ name: 'Finance', email: 'finance@example.com' }],
+      })),
+      setOrganizationInvoiceSending,
+    }
+    await mountShell(api)
+
+    const form = document.querySelector<HTMLFormElement>('[data-invoice-defaults-form]')!
+    await vi.waitFor(() => expect(form.hidden).toBe(false))
+    const result = () => document.querySelector('[data-invoice-defaults-result]')?.textContent
+    const append = form.querySelector<HTMLInputElement>('[data-invoice-defaults-append-pdfs]')!
+    expect(append.closest('label')?.hidden).toBe(false)
+    expect(append.closest('label')?.textContent).toBe(
+      'Append attached PDFs to the back of the invoice PDF by default',
+    )
+    expect(append.checked).toBe(false)
+    const alwaysCc = form.querySelector<HTMLTextAreaElement>('[data-invoice-defaults-always-cc-list]')!
+    expect(alwaysCc.closest('label')?.hidden).toBe(false)
+    expect(alwaysCc.closest('label')?.textContent).toContain(
+      'Always copy these addresses on invoice emails',
+    )
+    expect(alwaysCc.value).toBe('Finance <finance@example.com>')
+
+    // An address the route would refuse is named before anything is written.
+    alwaysCc.value = 'Finance <finance@example.com>\nnot-an-address'
+    form.requestSubmit()
+    expect(result()).toBe(
+      'Always copy: “not-an-address” is not an email address. Write email@example.com or Name <email@example.com>.',
+    )
+    expect(api.updateInvoiceDefaults).not.toHaveBeenCalled()
+
+    append.click()
+    alwaysCc.value = 'Finance <finance@example.com>\nBooks <Books@Example.com>'
+    form.requestSubmit()
+    await vi.waitFor(() => expect(result()).toBe('Saved.'))
+    expect(setOrganizationInvoiceDocuments).toHaveBeenCalledWith(
+      { append_pdfs: true },
+      expect.any(AbortSignal),
+    )
+    expect(setOrganizationInvoiceSending).toHaveBeenCalledWith(
+      {
+        always_cc: [
+          { name: 'Finance', email: 'finance@example.com' },
+          { name: 'Books', email: 'Books@Example.com' },
+        ],
+      },
+      expect.any(AbortSignal),
+    )
+    // The list is shown as it was stored.
+    expect(alwaysCc.value).toBe('Finance <finance@example.com>\nBooks <books@example.com>')
+
+    // Saving again with nothing changed under Sending writes only the rest.
+    form.requestSubmit()
+    await vi.waitFor(() => expect(api.updateInvoiceDefaults).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(result()).toBe('Saved.'))
+    expect(setOrganizationInvoiceDocuments).toHaveBeenCalledTimes(1)
+    expect(setOrganizationInvoiceSending).toHaveBeenCalledTimes(1)
+    globalThis.location.hash = ''
+  })
+
+  it('[browser] says the addresses to always copy were the part a failed save did not keep', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    globalThis.location.hash = '#invoices'
+    const defaults = { company_name: 'Northwind Studio', company_address: null, notes: null, subject: null }
+    const api: ShellApi = {
+      ...companyApi(),
+      getInvoiceDefaults: vi.fn(async () => defaults),
+      updateInvoiceDefaults: vi.fn(async () => defaults),
+      getOrganizationInvoiceDocuments: vi.fn(async () => sendingDocuments),
+      setOrganizationInvoiceDocuments: vi.fn(async () => sendingDocuments),
+      getOrganizationInvoiceSending: vi.fn(async () => ({ always_cc: [] })),
+      setOrganizationInvoiceSending: vi.fn(async () => {
+        throw new Error('Storage unavailable.')
+      }),
+    }
+    await mountShell(api)
+    const form = document.querySelector<HTMLFormElement>('[data-invoice-defaults-form]')!
+    await vi.waitFor(() => expect(form.hidden).toBe(false))
+    form.querySelector<HTMLTextAreaElement>('[data-invoice-defaults-always-cc-list]')!.value =
+      'finance@example.com'
+    form.requestSubmit()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-defaults-result]')?.textContent).toBe(
+        'Everything else was saved, but the addresses to always copy were not: Storage unavailable.',
+      ),
+    )
+    globalThis.location.hash = ''
+  })
+
+  it('[browser] keeps the attachment defaults when the addresses to always copy cannot be read', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    globalThis.location.hash = '#invoices'
+    const defaults = { company_name: 'Northwind Studio', company_address: '1 Example Way', notes: null, subject: null }
+    const api: ShellApi = {
+      ...companyApi(),
+      getInvoiceDefaults: vi.fn(async () => defaults),
+      updateInvoiceDefaults: vi.fn(async () => defaults),
+      getOrganizationInvoiceDocuments: vi.fn(async () => sendingDocuments),
+      setOrganizationInvoiceDocuments: vi.fn(async () => sendingDocuments),
+      getOrganizationInvoiceSending: vi.fn(async () => {
+        throw new Error('Storage unavailable.')
+      }),
+      setOrganizationInvoiceSending: vi.fn(),
+    }
+    await mountShell(api)
+    const form = document.querySelector<HTMLFormElement>('[data-invoice-defaults-form]')!
+    await vi.waitFor(() => expect(form.hidden).toBe(false))
+    expect(document.querySelector('[data-settings-invoices-status]')?.textContent).toBe(
+      'The addresses to always copy could not be loaded: Storage unavailable.',
+    )
+    expect(
+      [...form.querySelectorAll<HTMLElement>('[data-invoice-defaults-always-cc]')].every(
+        (part) => part.hidden,
+      ),
+    ).toBe(true)
+    // The attachment half read, so its heading and boxes stay.
+    expect(form.querySelector<HTMLElement>('h3[data-invoice-defaults-sending]')!.hidden).toBe(false)
+    expect(
+      form.querySelector<HTMLInputElement>('[data-invoice-defaults-append-pdfs]')!.closest('label')!
+        .hidden,
+    ).toBe(false)
+    form.requestSubmit()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-defaults-result]')?.textContent).toBe('Saved.'),
+    )
+    expect(api.setOrganizationInvoiceSending).not.toHaveBeenCalled()
+    globalThis.location.hash = ''
+  })
+
+  it('[unit] binds the addresses to always copy to the settings operations', async () => {
+    const stored = { always_cc: [{ name: 'Finance', email: 'finance@example.com' }] }
+    const generated = {
+      getOrganizationInvoiceSending: vi.fn(async () => ({ data: stored })),
+      setOrganizationInvoiceSending: vi.fn(async () => ({ data: stored })),
+    }
+    const api = createShellApi(generated as unknown as EzactoClient)
+    const signal = new AbortController().signal
+
+    expect(await api.getOrganizationInvoiceSending!(signal)).toEqual(stored)
+    expect(await api.setOrganizationInvoiceSending!(stored, signal)).toEqual(stored)
+    expect(generated.getOrganizationInvoiceSending).toHaveBeenCalledWith({ signal })
+    expect(generated.setOrganizationInvoiceSending).toHaveBeenCalledWith({ body: stored, signal })
   })
 
   it('[browser #801] shows the payment reminder default, saves a change, and switches it off', async () => {

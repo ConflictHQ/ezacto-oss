@@ -133,6 +133,26 @@ export const emailTemplateVariables = [
     compatibility: "native",
   },
   {
+    // The two facts Harvest's invoice email printed in its summary that the
+    // vocabulary could not say: the client's purchase order, which an
+    // accounts-payable department matches the invoice against, and the terms
+    // beside the due date. Invoice emails only -- a reminder or a thank-you
+    // that wants them is a later question, and a template must not be able
+    // to name a variable its kind is never given.
+    name: "invoice_purchase_order",
+    token: "%invoice_purchase_order%",
+    description: "Invoice purchase order number, empty when there is none",
+    kinds: ["invoice"],
+    compatibility: "native",
+  },
+  {
+    name: "invoice_payment_terms",
+    token: "%invoice_payment_terms%",
+    description: "Invoice payment terms, e.g. Net 30; empty for custom terms",
+    kinds: ["invoice"],
+    compatibility: "native",
+  },
+  {
     /**
      * A block, not a scalar: it carries its own plain-text and HTML renderings
      * so the lines survive an HTML template as a table instead of arriving as

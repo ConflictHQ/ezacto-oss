@@ -29,8 +29,11 @@ import {
  */
 
 export type AttachDecision =
-  | { readonly attach: true; readonly because: 'invoice' | 'organization' }
-  | { readonly attach: false; readonly because: 'invoice' | 'organization' | 'unknown_invoice' }
+  | { readonly attach: true; readonly because: 'invoice' | 'client' | 'organization' }
+  | {
+      readonly attach: false
+      readonly because: 'invoice' | 'client' | 'organization' | 'unknown_invoice'
+    }
 
 export const resolveAttachPolicy = async (
   database: InvoiceStateDatabase,
@@ -38,11 +41,32 @@ export const resolveAttachPolicy = async (
 ): Promise<AttachDecision> => {
   const both = await readInvoiceExtras(database, invoiceId)
   if (both === null) return { attach: false, because: 'unknown_invoice' }
-  const resolved = resolveInvoiceExtra(both.organization, both.invoice, 'document')
-  const because = resolved.invoice === null ? 'organization' : 'invoice'
+  const resolved = resolveInvoiceExtra(both.organization, both.invoice, 'document', both.client)
+  const because =
+    resolved.invoice !== null ? 'invoice' : resolved.client !== null ? 'client' : 'organization'
   return isExtraEnabled(resolved.effective)
     ? { attach: true, because }
     : { attach: false, because }
+}
+
+/** One boolean kind's three answers, for a screen that shows what and why. */
+export interface LayeredPreference<Value> {
+  readonly invoice: Value | null
+  readonly client: Value | null
+  readonly organization: Value
+}
+
+const layeredBoolean = (
+  both: Awaited<ReturnType<typeof readInvoiceExtras>>,
+  kind: 'document' | 'files' | 'append',
+): LayeredPreference<boolean> | null => {
+  if (both === null) return null
+  const resolved = resolveInvoiceExtra(both.organization, both.invoice, kind, both.client)
+  return {
+    invoice: resolved.invoice === null ? null : isExtraEnabled(resolved.invoice),
+    client: resolved.client === null ? null : isExtraEnabled(resolved.client),
+    organization: isExtraEnabled(resolved.organization),
+  }
 }
 /**
  * Both answers at once, for a screen that has to show what will happen and why.
@@ -53,15 +77,8 @@ export const resolveAttachPolicy = async (
 export const readAttachPreference = async (
   database: InvoiceStateDatabase,
   invoiceId: number,
-): Promise<{ invoice: boolean | null; organization: boolean } | null> => {
-  const both = await readInvoiceExtras(database, invoiceId)
-  if (both === null) return null
-  const resolved = resolveInvoiceExtra(both.organization, both.invoice, 'document')
-  return {
-    invoice: resolved.invoice === null ? null : isExtraEnabled(resolved.invoice),
-    organization: isExtraEnabled(resolved.organization),
-  }
-}
+): Promise<LayeredPreference<boolean> | null> =>
+  layeredBoolean(await readInvoiceExtras(database, invoiceId), 'document')
 export const readOrganizationAttachPolicy = async (
   database: InvoiceStateDatabase,
 ): Promise<boolean> =>
@@ -93,20 +110,15 @@ export const resolveFilesPolicy = async (
   // would attach every staged file to every invoice, silently.
   const both = await readInvoiceExtras(database, invoiceId)
   if (both === null) return false
-  return isExtraEnabled(resolveInvoiceExtra(both.organization, both.invoice, 'files').effective)
+  return isExtraEnabled(
+    resolveInvoiceExtra(both.organization, both.invoice, 'files', both.client).effective,
+  )
 }
 export const readFilesPreference = async (
   database: InvoiceStateDatabase,
   invoiceId: number,
-): Promise<{ invoice: boolean | null; organization: boolean } | null> => {
-  const both = await readInvoiceExtras(database, invoiceId)
-  if (both === null) return null
-  const resolved = resolveInvoiceExtra(both.organization, both.invoice, 'files')
-  return {
-    invoice: resolved.invoice === null ? null : isExtraEnabled(resolved.invoice),
-    organization: isExtraEnabled(resolved.organization),
-  }
-}
+): Promise<LayeredPreference<boolean> | null> =>
+  layeredBoolean(await readInvoiceExtras(database, invoiceId), 'files')
 export const readOrganizationFilesPolicy = async (
   database: InvoiceStateDatabase,
 ): Promise<boolean> =>
@@ -122,7 +134,48 @@ export const setOrganizationFilesPolicy = async (
   enabled: boolean,
 ): Promise<void> => setOrganizationInvoiceExtra(database, 'files', enabled)
 
+/**
+ * Whether the invoice's PDF files are bound into the back of the invoice
+ * document rather than sent beside it (migration 0099).
+ *
+ * Accounts payable departments ask for exactly this -- "invoice on the first
+ * page, any other supporting documentation should follow" -- so one PDF
+ * reaches their system with the purchase order behind the invoice. The same
+ * precedence as every other extra: the invoice, then its client, then the
+ * organization.
+ */
+export const resolveAppendPolicy = async (
+  database: InvoiceStateDatabase,
+  invoiceId: number,
+): Promise<boolean> => {
+  const both = await readInvoiceExtras(database, invoiceId)
+  if (both === null) return false
+  return isExtraEnabled(
+    resolveInvoiceExtra(both.organization, both.invoice, 'append', both.client).effective,
+  )
+}
+export const readAppendPreference = async (
+  database: InvoiceStateDatabase,
+  invoiceId: number,
+): Promise<LayeredPreference<boolean> | null> =>
+  layeredBoolean(await readInvoiceExtras(database, invoiceId), 'append')
+export const readOrganizationAppendPolicy = async (
+  database: InvoiceStateDatabase,
+): Promise<boolean> =>
+  isExtraEnabled(
+    resolveInvoiceExtra(await readOrganizationInvoiceExtras(database), {}, 'append').organization,
+  )
+export const setInvoiceAppendPolicy = async (
+  database: InvoiceStateDatabase,
+  input: Readonly<{ invoiceId: number; enabled: boolean | null }>,
+): Promise<boolean> => setInvoiceExtra(database, input.invoiceId, 'append', input.enabled)
+export const setOrganizationAppendPolicy = async (
+  database: InvoiceStateDatabase,
+  enabled: boolean,
+): Promise<void> => setOrganizationInvoiceExtra(database, 'append', enabled)
+
 export interface StagedAttachment {
+  readonly attachmentId: number
   readonly key: string
   readonly filename: string
   readonly contentType: string
@@ -140,7 +193,8 @@ export const readStagedAttachments = async (
   invoiceId: number,
 ): Promise<readonly StagedAttachment[]> =>
   database.all<StagedAttachment>(
-    sql`SELECT object.file_key AS key, attachment.name AS filename,
+    sql`SELECT attachment.id AS attachmentId, object.file_key AS key,
+               attachment.name AS filename,
                object.content_type AS contentType, object.byte_size AS byteSize
         FROM invoice_attachments link
         JOIN attachments attachment ON attachment.id = link.attachment_id
@@ -157,6 +211,12 @@ export interface AttachedDocument {
   readonly contentType: string
   readonly byteSize: number
   readonly invoiceVersion: number
+  /**
+   * The invoice's files bound into the back of this document, in the order
+   * they were bound. A retried delivery reads it to attach the identical
+   * document and to leave these files out of the attachments beside it.
+   */
+  readonly appendedAttachmentIds: readonly number[]
 }
 
 /**
@@ -174,10 +234,11 @@ export const recordAttachedDocument = async (
   await database.run(
     sql`INSERT INTO invoice_message_documents
           (invoice_message_id, invoice_id, object_key, filename, content_type,
-           byte_size, invoice_version, created_at)
+           byte_size, invoice_version, appended_attachment_ids, created_at)
         VALUES (${input.invoiceMessageId}, ${input.invoiceId}, ${input.objectKey},
                 ${input.filename}, ${input.contentType}, ${input.byteSize},
-                ${input.invoiceVersion}, ${input.now})`,
+                ${input.invoiceVersion}, ${JSON.stringify(input.appendedAttachmentIds)},
+                ${input.now})`,
   )
 }
 
@@ -193,13 +254,39 @@ export const readAttachedDocument = async (
     contentType: string
     byteSize: number
     invoiceVersion: number
+    appended: string
   }>(
     sql`SELECT invoice_message_id AS invoiceMessageId, invoice_id AS invoiceId,
                object_key AS objectKey, filename, content_type AS contentType,
-               byte_size AS byteSize, invoice_version AS invoiceVersion
+               byte_size AS byteSize, invoice_version AS invoiceVersion,
+               appended_attachment_ids AS appended
         FROM invoice_message_documents WHERE invoice_message_id = ${invoiceMessageId}`,
   )
-  return rows[0] ?? null
+  const row = rows[0]
+  if (row === undefined) return null
+  const { appended, ...document } = row
+  const ids = JSON.parse(appended) as unknown
+  return {
+    ...document,
+    appendedAttachmentIds: Array.isArray(ids)
+      ? ids.filter((id): id is number => Number.isSafeInteger(id))
+      : [],
+  }
+}
+
+/**
+ * Whether a message said its invoice PDF goes with it -- the decision its
+ * body was written to, so the email and its attachments cannot disagree about
+ * whether a document is attached. `false` for no such message.
+ */
+export const readMessageAttachesPdf = async (
+  database: InvoiceStateDatabase,
+  invoiceMessageId: number,
+): Promise<boolean> => {
+  const rows = await database.all<{ attachPdf: number }>(
+    sql`SELECT attach_pdf AS attachPdf FROM invoice_messages WHERE id = ${invoiceMessageId}`,
+  )
+  return rows[0]?.attachPdf === 1
 }
 
 /**
@@ -212,9 +299,23 @@ export const readAttachedDocument = async (
 export const invoiceDocumentKey = (invoiceId: number, invoiceMessageId: number): string =>
   `invoice-documents/${String(invoiceId)}/${String(invoiceMessageId)}.pdf`
 
-/** What the recipient sees the file called. */
-export const invoiceDocumentFilename = (invoiceNumber: string): string =>
-  `invoice-${invoiceNumber.replace(/[^A-Za-z0-9._-]/gu, '-')}.pdf`
+/**
+ * What the recipient sees the file called: `INVOICE_4021_EXAMPLE_LLC.pdf`,
+ * Harvest's own name for it. A client's accounts payable files invoices from
+ * many vendors by that name, so the company is in it, upper-cased, accents
+ * dropped and every run of anything but letters and digits made one `_`. A
+ * company name with nothing left after that leaves the name at the number.
+ */
+export const invoiceDocumentFilename = (invoiceNumber: string, companyName: string): string => {
+  const number = invoiceNumber.replace(/[^A-Za-z0-9._-]/gu, '-')
+  const company = companyName
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/gu, '_')
+    .replace(/^_+|_+$/gu, '')
+  return company === '' ? `INVOICE_${number}.pdf` : `INVOICE_${number}_${company}.pdf`
+}
 
 /**
  * The work behind an invoice, for the journal that can go with it (issue 647).
@@ -343,7 +444,12 @@ export const resolveJournalPolicy = async (
 ): Promise<JournalLevel | null> => {
   const both = await readInvoiceExtras(database, invoiceId)
   if (both === null) return null
-  const effective = resolveInvoiceExtra(both.organization, both.invoice, 'journal').effective
+  const effective = resolveInvoiceExtra(
+    both.organization,
+    both.invoice,
+    'journal',
+    both.client,
+  ).effective
   return effective === 'detailed' || effective === 'summary' ? effective : null
 }
 
@@ -362,14 +468,15 @@ export const setOrganizationJournalPolicy = async (
 export const readJournalPreference = async (
   database: InvoiceStateDatabase,
   invoiceId: number,
-): Promise<{ invoice: JournalLevel | false | null; organization: JournalLevel | false } | null> => {
+): Promise<LayeredPreference<JournalLevel | false> | null> => {
   const both = await readInvoiceExtras(database, invoiceId)
   if (both === null) return null
-  const resolved = resolveInvoiceExtra(both.organization, both.invoice, 'journal')
+  const resolved = resolveInvoiceExtra(both.organization, both.invoice, 'journal', both.client)
   const level = (value: InvoiceExtraValue | null): JournalLevel | false | null =>
     value === 'detailed' || value === 'summary' ? value : value === null ? null : false
   return {
     invoice: level(resolved.invoice),
+    client: level(resolved.client),
     organization: level(resolved.organization) === null ? false : (level(resolved.organization) as JournalLevel | false),
   }
 }
@@ -399,14 +506,12 @@ const formatsOf = (value: InvoiceExtraValue | undefined): readonly JournalFormat
 export const readJournalFormatsPreference = async (
   database: InvoiceStateDatabase,
   invoiceId: number,
-): Promise<{
-  invoice: readonly JournalFormat[] | null
-  organization: readonly JournalFormat[]
-} | null> => {
+): Promise<LayeredPreference<readonly JournalFormat[]> | null> => {
   const both = await readInvoiceExtras(database, invoiceId)
   if (both === null) return null
   return {
     invoice: formatsOf(both.invoice.journal_formats),
+    client: formatsOf(both.client.journal_formats),
     organization: formatsOf(both.organization.journal_formats) ?? defaultJournalFormats,
   }
 }
@@ -417,7 +522,7 @@ export const resolveJournalFormats = async (
   invoiceId: number,
 ): Promise<readonly JournalFormat[] | null> => {
   const both = await readJournalFormatsPreference(database, invoiceId)
-  return both === null ? null : (both.invoice ?? both.organization)
+  return both === null ? null : (both.invoice ?? both.client ?? both.organization)
 }
 
 export const readOrganizationJournalFormats = async (

@@ -53,6 +53,18 @@ import {
   createStripeLinkStore,
   readAttachPreference,
   readFilesPreference,
+  readAppendPreference,
+  readOrganizationAppendPolicy,
+  setInvoiceAppendPolicy,
+  setOrganizationAppendPolicy,
+  countInvoicePreviewsSince,
+  readClientInvoiceSending,
+  readInvoiceEmailDefaults,
+  readInvoiceSenderCopy,
+  readOrganizationAlwaysCc,
+  saveClientInvoiceSending,
+  setInvoiceSenderCopy,
+  setOrganizationAlwaysCc,
   readOrganizationFilesPolicy,
   setInvoiceFilesPolicy,
   setOrganizationFilesPolicy,
@@ -863,6 +875,16 @@ export const createRuntimeServices = async (
             to: message.to.map((person) =>
               person.name === "" ? { email: person.email } : { email: person.email, name: person.name },
             ),
+            // Whoever the invoice copied is copied on its reminders.
+            ...(message.cc.length === 0
+              ? {}
+              : {
+                  cc: message.cc.map((person) =>
+                    person.name === ""
+                      ? { email: person.email }
+                      : { email: person.email, name: person.name },
+                  ),
+                }),
             template: `reminder:${String(message.templateVersion)}`,
             subject: message.subject,
             text: message.textBody,
@@ -936,6 +958,11 @@ export const createRuntimeServices = async (
       readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
       updateTimezone: async (userId, timezone, occurredAt) => {
         await updateUserTimezone(drizzle, userId, timezone, occurredAt);
+      },
+      // Whether this person is copied on the invoice emails they send.
+      readInvoiceCopy: async (userId) => (await readInvoiceSenderCopy(drizzle, userId))?.copy ?? null,
+      updateInvoiceCopy: async (userId, copy, occurredAt) => {
+        await setInvoiceSenderCopy(drizzle, userId, copy, occurredAt);
       },
     },
     isExpensesModuleEnabled: async () => {
@@ -1063,26 +1090,34 @@ export const createRuntimeServices = async (
     // could set it, which is a decision made on the operator's behalf that they
     // could not revisit (issue 626).
     invoiceDocumentPreference: {
-      readInvoicePreference: (invoiceId: number, kind: 'document' | 'files') =>
+      readInvoicePreference: (invoiceId: number, kind: 'document' | 'files' | 'append') =>
         kind === 'document'
           ? readAttachPreference(drizzle, invoiceId)
-          : readFilesPreference(drizzle, invoiceId),
+          : kind === 'append'
+            ? readAppendPreference(drizzle, invoiceId)
+            : readFilesPreference(drizzle, invoiceId),
       setInvoicePreference: (
         invoiceId: number,
-        kind: 'document' | 'files',
+        kind: 'document' | 'files' | 'append',
         enabled: boolean | null,
       ) =>
         kind === 'document'
           ? setInvoiceAttachPolicy(drizzle, { invoiceId, enabled })
-          : setInvoiceFilesPolicy(drizzle, { invoiceId, enabled }),
-      readOrganizationPreference: (kind: 'document' | 'files') =>
+          : kind === 'append'
+            ? setInvoiceAppendPolicy(drizzle, { invoiceId, enabled })
+            : setInvoiceFilesPolicy(drizzle, { invoiceId, enabled }),
+      readOrganizationPreference: (kind: 'document' | 'files' | 'append') =>
         kind === 'document'
           ? readOrganizationAttachPolicy(drizzle)
-          : readOrganizationFilesPolicy(drizzle),
-      setOrganizationPreference: (kind: 'document' | 'files', enabled: boolean) =>
+          : kind === 'append'
+            ? readOrganizationAppendPolicy(drizzle)
+            : readOrganizationFilesPolicy(drizzle),
+      setOrganizationPreference: (kind: 'document' | 'files' | 'append', enabled: boolean) =>
         kind === 'document'
           ? setOrganizationAttachPolicy(drizzle, enabled)
-          : setOrganizationFilesPolicy(drizzle, enabled),
+          : kind === 'append'
+            ? setOrganizationAppendPolicy(drizzle, enabled)
+            : setOrganizationFilesPolicy(drizzle, enabled),
       // The work journal, whose answer is a level rather than a flag (647).
       readInvoiceJournal: (invoiceId: number) => readJournalPreference(drizzle, invoiceId),
       setInvoiceJournal: (invoiceId: number, level: 'detailed' | 'summary' | false | null) =>
@@ -1101,6 +1136,29 @@ export const createRuntimeServices = async (
       setOrganizationJournalFormats: (formats: readonly ('pdf' | 'csv' | 'xlsx')[]) =>
         setOrganizationJournalFormats(drizzle, formats),
     },
+    // Who an invoice email reaches and what it carries, as standing rules: the
+    // client's lists or its contacts' routing, the organization's copies, and
+    // the template the Send dialog opens on.
+    invoiceSending: {
+      emailDefaults: (invoiceId: number, userId: number) =>
+        readInvoiceEmailDefaults(drizzle, emailConfiguration, invoiceId, userId),
+      readClientSending: (clientId: number) => readClientInvoiceSending(drizzle, clientId),
+      saveClientSending: (
+        clientId: number,
+        change: Parameters<typeof saveClientInvoiceSending>[2],
+        updatedAt: string,
+      ) => saveClientInvoiceSending(drizzle, clientId, change, updatedAt),
+      readAlwaysCc: () => readOrganizationAlwaysCc(drizzle),
+      saveAlwaysCc: (addresses: Parameters<typeof setOrganizationAlwaysCc>[1]) =>
+        setOrganizationAlwaysCc(drizzle, addresses),
+    },
+    invoiceEmailSending: {
+      alwaysCc: () => readOrganizationAlwaysCc(drizzle),
+      senderCopy: (userId: number) => readInvoiceSenderCopy(drizzle, userId),
+      previewsSince: (invoiceId: number, since: string) =>
+        countInvoicePreviewsSince(drizzle, invoiceId, since),
+    },
+    ...(invoiceDocuments === undefined ? {} : { invoiceDocuments }),
     // The same journal as a download (647), from the same store the email
     // reads, so the file an operator checks is the file a client is sent.
     invoiceHoursReport: {

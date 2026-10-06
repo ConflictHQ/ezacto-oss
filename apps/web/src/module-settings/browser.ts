@@ -1,10 +1,12 @@
 import {
   EzactoApiError,
+  type InvoiceRecipient,
   type SenderIdentity,
   type SsoDomain,
   type Whoami,
 } from '@conflict-hq/ezacto-client'
 import { renderDataTable } from '../components/data-table.js'
+import { invoiceAddressLines } from '../invoice-addresses.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
 import {
@@ -27,12 +29,14 @@ import {
   ssoLastCheckedLabel,
   ssoVerificationMessage,
   timeTrackingFacts,
+  invoiceAlwaysCcChange,
   invoiceSendingChanges,
   invoiceSendingChoice,
   type CompanySettingsApi,
   type InvoiceDefaultsSetting,
   type InvoiceDocumentsSetting,
   type InvoiceSendingChoice,
+  type OrganizationInvoiceSendingSetting,
   type InstanceThemeView,
   type BackupRun,
 } from './model.js'
@@ -409,6 +413,14 @@ export const createModuleSettingsController = (
     '[data-invoice-defaults-journal-formats]',
   )
   const sendingFiles = required<HTMLInputElement>('[data-invoice-defaults-attach-files]')
+  const sendingAppend = required<HTMLInputElement>('[data-invoice-defaults-append-pdfs]')
+  const sendingHeading = required<HTMLElement>('h3[data-invoice-defaults-sending]')
+  // The company's own mailboxes, copied on every invoice email: the same
+  // heading, its own endpoint, so it is shown and hidden on its own read.
+  const alwaysCcParts = [
+    ...document.querySelectorAll<HTMLElement>('[data-invoice-defaults-always-cc]'),
+  ]
+  const alwaysCcList = required<HTMLTextAreaElement>('[data-invoice-defaults-always-cc-list]')
   const remindersStatus = required<HTMLElement>('[data-settings-reminders-status]')
   const remindersForm = required<HTMLFormElement>('[data-reminder-settings-form]')
   const remindersEnabled = required<HTMLInputElement>('[data-reminder-settings-enabled]')
@@ -504,10 +516,25 @@ export const createModuleSettingsController = (
   // The Sending defaults as stored, so a save writes only what changed; null
   // where this build or this read has none to offer.
   let sending: InvoiceDocumentsSetting | null = null
+  // The always-copied addresses as stored, held the same way and for the same
+  // reason.
+  let alwaysCc: readonly InvoiceRecipient[] | null = null
 
   const sendingFormatBoxes = (): HTMLInputElement[] => [
     ...sendingJournalFormats.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
   ]
+
+  // The heading stands over either half, so it goes only when both have.
+  const syncSendingHeading = (): void => {
+    sendingHeading.hidden = sending === null && alwaysCc === null
+  }
+
+  const showAlwaysCc = (setting: OrganizationInvoiceSendingSetting | null): void => {
+    alwaysCc = setting === null ? null : setting.always_cc
+    for (const part of alwaysCcParts) part.hidden = setting === null
+    alwaysCcList.value = setting === null ? '' : invoiceAddressLines(setting.always_cc)
+    syncSendingHeading()
+  }
 
   // The report's detail and files only matter while it is attached.
   const syncSendingJournal = (): void => {
@@ -524,6 +551,7 @@ export const createModuleSettingsController = (
       const choice = invoiceSendingChoice(setting)
       sendingPdf.checked = choice.attachPdf
       sendingFiles.checked = choice.attachFiles
+      sendingAppend.checked = choice.appendPdfs
       sendingJournal.checked = choice.journal !== false
       sendingJournalLevel.value = choice.journal === false ? 'detailed' : choice.journal
       for (const box of sendingFormatBoxes()) {
@@ -531,11 +559,13 @@ export const createModuleSettingsController = (
       }
     }
     syncSendingJournal()
+    syncSendingHeading()
   }
 
   const chosenSending = (): InvoiceSendingChoice => ({
     attachPdf: sendingPdf.checked,
     attachFiles: sendingFiles.checked,
+    appendPdfs: sendingAppend.checked,
     journal: sendingJournal.checked
       ? sendingJournalLevel.value === 'summary'
         ? 'summary'
@@ -562,8 +592,10 @@ export const createModuleSettingsController = (
       return
     }
     let sendingChange: ReturnType<typeof invoiceSendingChanges>
+    let alwaysCcChange: ReturnType<typeof invoiceAlwaysCcChange>
     try {
       sendingChange = sending === null ? null : invoiceSendingChanges(sending, chosenSending())
+      alwaysCcChange = alwaysCc === null ? null : invoiceAlwaysCcChange(alwaysCc, alwaysCcList.value)
     } catch (error) {
       invoiceDefaultsResult.textContent =
         error instanceof Error ? error.message : 'Check the sending defaults.'
@@ -574,6 +606,7 @@ export const createModuleSettingsController = (
     // Blank is no default; the server stores it as one.
     const text = (value: string): string | null => (value.trim() === '' ? null : value)
     let defaultsSaved = false
+    let attachmentsSaved = false
     try {
       const saved = await api.updateInvoiceDefaults(
         {
@@ -593,6 +626,16 @@ export const createModuleSettingsController = (
         const stored = await api.setOrganizationInvoiceDocuments(sendingChange, active.signal)
         active.present(() => showSending(stored))
       }
+      attachmentsSaved = true
+      // The always-copied addresses are a third endpoint, written last and
+      // only where they changed, for the same reason the attachments are.
+      if (alwaysCcChange !== null && api.setOrganizationInvoiceSending !== undefined) {
+        const stored = await api.setOrganizationInvoiceSending(
+          { always_cc: alwaysCcChange },
+          active.signal,
+        )
+        active.present(() => showAlwaysCc(stored))
+      }
       active.present(() => {
         invoiceDefaultsResult.textContent = 'Saved.'
       })
@@ -603,9 +646,11 @@ export const createModuleSettingsController = (
           'Only administrators and accounting can change invoice settings.',
           'Invoice settings could not be saved.',
         )
-        invoiceDefaultsResult.textContent = defaultsSaved
-          ? `The company information and default values were saved, but the sending defaults were not: ${reason}`
-          : reason
+        invoiceDefaultsResult.textContent = !defaultsSaved
+          ? reason
+          : !attachmentsSaved
+            ? `The company information and default values were saved, but the sending defaults were not: ${reason}`
+            : `Everything else was saved, but the addresses to always copy were not: ${reason}`
       })
     } finally {
       if (currentSession() === active) invoiceDefaultsSubmit.disabled = false
@@ -1064,7 +1109,7 @@ export const createModuleSettingsController = (
       // Sending is read beside the defaults and is the lesser half: a build
       // without its routes, or a read of it that fails, leaves the rest of the
       // form working and says so, rather than taking the section down.
-      const [defaults, documents] = await Promise.all([
+      const [defaults, documents, copies] = await Promise.all([
         api.getInvoiceDefaults(active.signal),
         api.getOrganizationInvoiceDocuments === undefined ||
         api.setOrganizationInvoiceDocuments === undefined
@@ -1074,14 +1119,33 @@ export const createModuleSettingsController = (
               (error: unknown): InvoiceDocumentsSetting | Error =>
                 error instanceof Error ? error : new Error('The sending defaults could not be loaded.'),
             ),
+        api.getOrganizationInvoiceSending === undefined ||
+        api.setOrganizationInvoiceSending === undefined
+          ? Promise.resolve(null)
+          : api.getOrganizationInvoiceSending(active.signal).then(
+              (setting): OrganizationInvoiceSendingSetting | Error => setting,
+              (error: unknown): OrganizationInvoiceSendingSetting | Error =>
+                error instanceof Error
+                  ? error
+                  : new Error('The addresses to always copy could not be loaded.'),
+            ),
       ])
       active.present(() => {
         showInvoiceDefaults(defaults)
         showSending(documents instanceof Error ? null : documents)
+        showAlwaysCc(copies instanceof Error ? null : copies)
         invoiceDefaultsForm.hidden = false
+        const unread = [
+          ...(documents instanceof Error
+            ? [`The sending defaults could not be loaded: ${documents.message}`]
+            : []),
+          ...(copies instanceof Error
+            ? [`The addresses to always copy could not be loaded: ${copies.message}`]
+            : []),
+        ]
         invoicesStatus.textContent =
-          documents instanceof Error
-            ? `The sending defaults could not be loaded: ${documents.message}`
+          unread.length > 0
+            ? unread.join(' ')
             : defaults.company_address === null
               ? 'No company address yet: invoices print the name alone until one is saved.'
               : ''

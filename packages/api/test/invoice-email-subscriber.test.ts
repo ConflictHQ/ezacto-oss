@@ -15,8 +15,8 @@ describe('invoice email outbox subscriber', () => {
               fromName: 'Billing',
               fromEmail: 'billing@example.com',
               replyToEmail: null,
-              recipientName: 'Client',
-              recipientEmail: 'client@example.net',
+              to: [{ name: 'Client', email: 'client@example.net' }],
+              cc: [],
               templateVersion: 3,
               subject: 'Invoice INV-1',
               textBody: 'Amount $12.34',
@@ -50,6 +50,50 @@ describe('invoice email outbox subscriber', () => {
       // an attachment would be a change worth failing on.
       undefined,
     )
+    // Nobody was copied, so the message carries no Cc header at all.
+    expect((enqueuePersisted.mock.calls as unknown as unknown[][])[0]?.[2]).not.toHaveProperty('cc')
+  })
+
+  it('[unit] sends one email To accounts payable and Cc everyone copied', async () => {
+    const enqueuePersisted = vi.fn(async () => undefined)
+    const subscriber = createInvoiceEmailOutboxSubscriber(
+      {
+        listInvoiceDeliveryJobs: vi.fn(async () => [
+          {
+            deliveryId: 701,
+            senderIdentityId: 91,
+            senderIdentityVersion: 2,
+            senderEvidenceVersion: 4,
+            fromName: 'Billing',
+            fromEmail: 'billing@example.com',
+            replyToEmail: null,
+            to: [{ name: 'Accounts Payable', email: 'ap@northwind.example' }],
+            cc: [
+              { name: 'Pat Example', email: 'pat@northwind.example' },
+              { name: '', email: 'finance@example.com' },
+            ],
+            templateVersion: 3,
+            subject: 'Invoice #4021 from Example Studio LLC',
+            textBody: 'Amount Due: $12,500.00 USD',
+            htmlBody: null,
+            invoiceMessageId: 100,
+          },
+        ]),
+      },
+      { assertAvailable: vi.fn(), enqueue: vi.fn(), enqueuePersisted },
+    )
+    await subscriber.deliver({ id: 'e1', eventType: 'invoice.sent', aggregateId: 1 })
+    expect(enqueuePersisted).toHaveBeenCalledTimes(1)
+    expect(enqueuePersisted).toHaveBeenCalledWith(
+      701,
+      expect.anything(),
+      expect.objectContaining({
+        to: [{ email: 'ap@northwind.example', name: 'Accounts Payable' }],
+        // A copy with no name is addressed by address alone.
+        cc: [{ email: 'pat@northwind.example', name: 'Pat Example' }, { email: 'finance@example.com' }],
+      }),
+      undefined,
+    )
   })
 })
 
@@ -62,8 +106,8 @@ describe('the document that goes with an invoice message', () => {
     fromName: 'Billing',
     fromEmail: 'billing@example.com',
     replyToEmail: null,
-    recipientName: 'Client',
-    recipientEmail,
+    to: [{ name: 'Client', email: recipientEmail }],
+    cc: [],
     templateVersion: 3,
     subject: 'Invoice INV-1',
     textBody: 'Amount $12.34',
@@ -92,9 +136,10 @@ describe('the document that goes with an invoice message', () => {
     return { subscriber, enqueuePersisted }
   }
 
-  it('[unit] prepares it once for a message with several recipients', async () => {
-    // Each recipient is its own delivery and its own queue job. Rendering per
-    // recipient would put several identical objects in the bucket for one send.
+  it('[unit] prepares it once for a message with several emails', async () => {
+    // A message sent before copies existed wrote one email per recipient, and
+    // every one of them carries the message's single document. Rendering per
+    // email would put several identical objects in the bucket for one send.
     const prepare = vi.fn(async () => [reference])
     const { subscriber, enqueuePersisted } = harness(prepare)
     await subscriber.deliver({ id: 'e1', eventType: 'invoice.sent', aggregateId: 1 })

@@ -3,8 +3,16 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
+import { Miniflare } from 'miniflare'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { runLoad } from '../src/load.js'
+import {
+  createContainerDatabase,
+  createD1Database,
+  createRecurringInvoiceEngine,
+  migrateD1,
+} from '@ezacto/db'
+import { completeHarvestRecurringInvoice, type ImportDatabase } from '@ezacto/db/importer'
+import { loadNextChunk, runLoad } from '../src/load.js'
 import { readManifest, writeManifest } from '../src/manifest.js'
 import { acquireSnapshotLock, releaseSnapshotLock } from '../src/snapshot-lock.js'
 import {
@@ -66,6 +74,101 @@ const overrideLinkedInvoiceCurrency = async (
   invoice.currency = sourceCurrency
   await writeFile(path, `${invoices.map((row) => JSON.stringify(row)).join('\n')}\n`)
   await refreshSnapshotEvidence(snapshotDir)
+}
+
+const overrideInvoiceNotes = async (
+  snapshotDir: string,
+  notes: ReadonlyMap<number, string>,
+): Promise<void> => {
+  const path = join(snapshotDir, 'raw', 'invoices.jsonl')
+  const invoices = (await readFile(path, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+  for (const [invoiceId, value] of notes) {
+    const invoice = invoices.find((row) => row.id === invoiceId)
+    if (invoice === undefined) throw new Error(`missing fixture invoice ${invoiceId}`)
+    invoice.notes = value
+  }
+  await writeFile(path, `${invoices.map((row) => JSON.stringify(row)).join('\n')}\n`)
+  await refreshSnapshotEvidence(snapshotDir)
+}
+
+// Remittance instructions in the shape Harvest keeps them: paragraphs split by
+// blank lines. A cutover once stored only the first paragraph of every
+// recurring definition's notes, so each hop below is held to the exact bytes,
+// and the CRLF copy is the same text as a note typed into a web form arrives.
+const remittanceNotes = [
+  'Beneficiary: Example Studio LLC',
+  '100 Example Street, Example City, EX 00000',
+  '',
+  'Bank: Example Federal Bank',
+  'Account: 000123456789',
+  'Routing: 000000000',
+  '',
+  'Wire: SWIFT EXAMPLEXX, reference the invoice number',
+].join('\n')
+const remittanceNotesCrlf = remittanceNotes.replaceAll('\n', '\r\n')
+
+/** Recurring Harvest id to its notes: one LF definition and one CRLF. */
+const notesByRecurring = new Map([
+  [99_001, remittanceNotes],
+  [99_002, remittanceNotesCrlf],
+])
+
+/** A row read as `notes, hex(notes) AS notesHex` that holds `value` byte for byte. */
+const exactNotes = (value: string): { notes: string; notesHex: string } => ({
+  notes: value,
+  notesHex: Buffer.from(value, 'utf8').toString('hex').toUpperCase(),
+})
+
+/**
+ * Two recurring sources whose Harvest invoices carry those notes. The second
+ * source invoice is a clone of the first, so both ids are known in advance.
+ */
+const buildNotesSnapshot = async (root: string): Promise<string> => {
+  const snapshotDir = join(root, 'snapshot')
+  await buildSanitizedLoadSnapshot(snapshotDir)
+  await addSecondRecurringSource(snapshotDir)
+  await overrideInvoiceNotes(
+    snapshotDir,
+    new Map([
+      [12_000_001, remittanceNotes],
+      [12_000_002, remittanceNotesCrlf],
+    ]),
+  )
+  return snapshotDir
+}
+
+const sourceInvoiceNotesSql = `SELECT notes, hex(notes) AS notesHex FROM invoices
+  WHERE harvest_id IN (12000001, 12000002) ORDER BY harvest_id`
+const issuedInvoiceNotesSql = 'SELECT notes, hex(notes) AS notesHex FROM invoices WHERE id = ?'
+
+/** Each definition's template beside the receipt its completion wrote. */
+const definitionNotesSql = `SELECT definition.id, definition.harvest_id AS harvestId,
+    definition.notes_template AS notes, hex(definition.notes_template) AS notesHex,
+    completion.input_json AS inputJson
+  FROM recurring_invoices definition
+  JOIN _ezacto_worksheet_completions completion
+    ON completion.kind = 'recurring_invoice_definition'
+    AND completion.resource_id = definition.id
+  ORDER BY definition.harvest_id`
+
+interface DefinitionNotes {
+  id: number
+  harvestId: number
+  notes: string
+  notesHex: string
+  inputJson: string
+}
+
+const expectDefinitionNotes = (definitions: readonly DefinitionNotes[]): void => {
+  expect(definitions.map((row) => row.harvestId)).toEqual([...notesByRecurring.keys()])
+  for (const { harvestId, notes, notesHex, inputJson } of definitions) {
+    const expected = notesByRecurring.get(harvestId)!
+    expect({ notes, notesHex }).toEqual(exactNotes(expected))
+    expect((JSON.parse(inputJson) as { notes_template: string }).notes_template).toBe(expected)
+  }
 }
 
 const completeRetainer = (worksheet: RetainerWorksheet): RetainerWorksheet => ({
@@ -385,6 +488,162 @@ describe('migration worksheets', () => {
       sqlite.close()
     }
   })
+
+  it('[integration] keeps multi-paragraph notes byte for byte from Harvest to the invoice a definition issues', async () => {
+    // Every in-repo hop of the cutover: the snapshot reader and loader, the
+    // worksheet file, its duplicate-key scan and secret check, the canonical
+    // receipt, the import triggers, and the engine copying the template into
+    // an invoice. LF and CRLF ride in the same worksheet, as they did in
+    // Harvest.
+    const notesDir = join(dir, 'notes')
+    const notesSnapshot = await buildNotesSnapshot(notesDir)
+    const notesDatabase = join(notesDir, 'ezacto.sqlite')
+    await runLoad({ snapshotDir: notesSnapshot, databasePath: notesDatabase })
+
+    let sqlite = new BetterSqlite3(notesDatabase, { readonly: true })
+    try {
+      expect(sqlite.prepare(sourceInvoiceNotesSql).all()).toEqual(
+        [remittanceNotes, remittanceNotesCrlf].map(exactNotes),
+      )
+    } finally {
+      sqlite.close()
+    }
+
+    const generated = await generateRecurringInvoiceWorksheet({
+      snapshotDir: notesSnapshot,
+      databasePath: notesDatabase,
+    })
+    const base = completeRecurring(generated)
+    const worksheet: RecurringInvoiceWorksheet = {
+      ...base,
+      rows: base.rows.map((row) => ({
+        ...row,
+        notes_template: notesByRecurring.get(row.harvest_recurring_invoice_id)!,
+      })),
+    }
+    expect(worksheet.rows.map((row) => row.harvest_recurring_invoice_id)).toEqual([
+      ...notesByRecurring.keys(),
+    ])
+    const inputPath = join(notesDir, 'recurring.json')
+    await writeFile(inputPath, jsonBytes(worksheet))
+    const options = { snapshotDir: notesSnapshot, databasePath: notesDatabase, inputPath }
+
+    await expect(applyRecurringInvoiceWorksheet(options)).resolves.toMatchObject({
+      total: 2,
+      completed: 2,
+      replayed: 0,
+      pending: 0,
+    })
+    // A replay compares the canonical receipt byte for byte, so this also
+    // proves the receipt reproduces from the same file.
+    await expect(applyRecurringInvoiceWorksheet(options)).resolves.toMatchObject({
+      total: 2,
+      completed: 0,
+      replayed: 2,
+      pending: 0,
+    })
+
+    sqlite = new BetterSqlite3(notesDatabase)
+    try {
+      const definitions = sqlite.prepare(definitionNotesSql).all() as DefinitionNotes[]
+      expectDefinitionNotes(definitions)
+
+      const engine = createRecurringInvoiceEngine(createContainerDatabase(sqlite))
+      for (const definition of definitions) {
+        const issued = await engine.generate(definition.id, '2026-09-15', { type: 'system' })
+        expect(sqlite.prepare(issuedInvoiceNotesSql).get(issued.invoiceId)).toEqual(
+          exactNotes(notesByRecurring.get(definition.harvestId)!),
+        )
+      }
+    } finally {
+      sqlite.close()
+    }
+  }, 45_000)
+
+  it('[integration] keeps multi-paragraph notes byte for byte through the D1 batch paths', async () => {
+    // Hosted D1 is where the engine issues these invoices, and the worksheet
+    // import has a D1 batch branch of its own. Same notes, same exact bytes.
+    const notesSnapshot = await buildNotesSnapshot(join(dir, 'notes-d1'))
+    const miniflare = new Miniflare({
+      modules: true,
+      script: 'export default { fetch() { return new Response("ok") } }',
+      d1Databases: ['DB'],
+    })
+    try {
+      const d1 = await miniflare.getD1Database('DB')
+      await migrateD1(d1)
+      const database = createD1Database(d1)
+      const { snapshot_sha256: snapshotSha256 } = JSON.parse(
+        await readFile(join(notesSnapshot, 'checksums.json'), 'utf8'),
+      ) as { snapshot_sha256: string }
+      let loaded = false
+      while (!loaded) {
+        loaded = (
+          await loadNextChunk({
+            database,
+            snapshotDir: notesSnapshot,
+            immutableSnapshotSha256: snapshotSha256,
+          })
+        ).complete
+      }
+      expect((await d1.prepare(sourceInvoiceNotesSql).all()).results).toEqual(
+        [remittanceNotes, remittanceNotesCrlf].map(exactNotes),
+      )
+      const project = await d1
+        .prepare('SELECT id FROM projects WHERE harvest_id = 14308069')
+        .first<{ id: number }>()
+      if (project === null) throw new Error('fixture project did not load')
+
+      const line = {
+        kind: 'Service',
+        description: 'Monthly migration support',
+        quantity: 1,
+        unit_price_cents: 25_000,
+        taxed: false,
+        taxed2: false,
+      }
+      for (const [harvestId, notes] of notesByRecurring) {
+        await expect(
+          completeHarvestRecurringInvoice(database as ImportDatabase, {
+            harvestRecurringInvoiceId: harvestId,
+            snapshotSha256,
+            contextSha256: 'c'.repeat(64),
+            subjectTemplate: `Recurring services ${harvestId}`,
+            notesTemplate: notes,
+            everyNMonths: 1,
+            dayOfMonth: 15,
+            nextIssueOn: '2026-09-15',
+            sourceAmountConfig: {
+              schema_version: 1,
+              type: 'fixed_lines',
+              line_items: [{ ...line, harvest_project_id: 14_308_069 }],
+            },
+            resolvedAmountConfig: {
+              schema_version: 1,
+              type: 'fixed_lines',
+              line_items: [{ ...line, project_id: project.id }],
+            },
+            sourceCanDrawFromHarvestRetainerId: null,
+            resolvedCanDrawFromRetainerId: null,
+            completedAt: '2026-09-01T12:00:00.000Z',
+          }),
+        ).resolves.toMatchObject({ replayed: false })
+      }
+
+      const definitions = (await d1.prepare(definitionNotesSql).all<DefinitionNotes>()).results
+      expectDefinitionNotes(definitions)
+
+      const engine = createRecurringInvoiceEngine(database)
+      for (const definition of definitions) {
+        const issued = await engine.generate(definition.id, '2026-09-15', { type: 'system' })
+        expect(await d1.prepare(issuedInvoiceNotesSql).bind(issued.invoiceId).first()).toEqual(
+          exactNotes(notesByRecurring.get(definition.harvestId)!),
+        )
+      }
+    } finally {
+      await miniflare.dispose()
+    }
+  }, 60_000)
 
   it('[unit] tells an operator how to re-encode a Harvest credit line', async () => {
     // The apply is all-or-nothing, so a message naming only the violated bound

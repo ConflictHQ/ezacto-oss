@@ -2,6 +2,7 @@ import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
+import { createAttachmentStore, type AttachmentDatabase } from '../src/attachments.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import {
   createRecurringInvoiceDefinition,
@@ -835,6 +836,136 @@ for (const [runtime, factory] of factories) {
         `SELECT recurring_invoice_id FROM invoices ORDER BY id`,
       )
       expect(issued.map((invoice) => invoice.recurring_invoice_id)).toEqual([behind.id])
+    })
+
+    it("[money] issues on the client's payment terms, dated the way invoice generation dates them", async () => {
+      // A draft raised under net 30 that came out custom and due the day it was
+      // issued is a client told to pay today what they agreed to pay in a month.
+      database = await factory()
+      await seedDatabase(database)
+      await database.run(`UPDATE clients SET payment_terms = 'net_30' WHERE id = 1`)
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ nextIssueOn: '2026-10-01', dayOfMonth: 1 }),
+      )
+      const issued = await createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-10-01T10:00:00.000Z',
+      }).generate(definition.id, '2026-10-01', principal)
+      expect(
+        await database.rows(
+          `SELECT payment_terms, issue_date, due_date FROM invoices WHERE id = ?`,
+          issued.invoiceId,
+        ),
+      ).toEqual([{ payment_terms: 'net_30', issue_date: '2026-10-01', due_date: '2026-10-31' }])
+
+      // Terms are read when the invoice is issued: a client moved to net 15
+      // before the next issue gets net 15 on it.
+      await database.run(`UPDATE clients SET payment_terms = 'net_15' WHERE id = 1`)
+      const next = await createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-11-01T10:00:00.000Z',
+      }).generate(definition.id, '2026-11-01', principal)
+      expect(
+        await database.rows(`SELECT payment_terms, due_date FROM invoices WHERE id = ?`, next.invoiceId),
+      ).toEqual([{ payment_terms: 'net_15', due_date: '2026-11-16' }])
+    })
+
+    it('[money] carries the purchase order and the notes, every paragraph of them, onto each issue', async () => {
+      database = await factory()
+      await seedDatabase(database)
+      const notes =
+        'Beneficiary: Example Studio LLC\n100 Example Street, Example City, EX 00000\n\n' +
+        'Bank: Example Federal Bank\r\nAccount: 000123456789\r\n\r\nWire: SWIFT EXAMPLEXX'
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ nextIssueOn: '2026-10-01', dayOfMonth: 1, notesTemplate: notes }),
+      )
+      await database.run(
+        `UPDATE recurring_invoices SET purchase_order = 'PO-778812' WHERE id = ?`,
+        definition.id,
+      )
+      const issued = await createRecurringInvoiceEngine(database.orm, {
+        clock: () => '2026-10-01T10:00:00.000Z',
+      }).generate(definition.id, '2026-10-01', principal)
+      expect(
+        await database.rows(`SELECT purchase_order, notes FROM invoices WHERE id = ?`, issued.invoiceId),
+      ).toEqual([{ purchase_order: 'PO-778812', notes }])
+    })
+
+    it('[money] attaches the standing files through their last day, sharing the stored file', async () => {
+      // A yearly purchase order: the letter goes with every invoice of the
+      // fiscal year it covers -- on its last day included -- and with none
+      // after it.
+      database = await factory()
+      await seedDatabase(database)
+      const definition = await createRecurringInvoiceDefinition(
+        database.orm as unknown as RecurringInvoiceDatabase,
+        createInput({ nextIssueOn: '2027-02-28', dayOfMonth: 31, notesTemplate: '' }),
+      )
+      const store = createAttachmentStore(database.orm as unknown as AttachmentDatabase)
+      const file = (name: string, hash: string) => ({
+        recurringInvoiceId: definition.id,
+        contentHash: hash.repeat(64),
+        fileKey: `sha256/${hash.repeat(2)}/${hash.repeat(64)}`,
+        byteSize: 512_000,
+        contentType: 'application/pdf',
+        name,
+        uploadedByUserId: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      const letter = await store.createRecurringInvoiceAttachment(file('PO-778812 letter.pdf', 'a'))
+      const terms = await store.createRecurringInvoiceAttachment(file('Standing terms.pdf', 'b'))
+      const dropped = await store.createRecurringInvoiceAttachment(file('Old letter.pdf', 'c'))
+      expect(
+        await store.setRecurringInvoiceAttachmentThrough(definition.id, letter.id, '2027-03-31', timestamp),
+      ).toMatchObject({ id: letter.id, through: '2027-03-31' })
+      expect(await store.removeRecurringInvoiceAttachment(definition.id, dropped.id, timestamp)).toBe(true)
+      // A removed file is the definition's no longer.
+      expect((await store.listRecurringInvoiceAttachments(definition.id)).map(({ id }) => id)).toEqual([
+        letter.id,
+        terms.id,
+      ])
+
+      const engine = (day: string) =>
+        createRecurringInvoiceEngine(database!.orm, { clock: () => `${day}T10:00:00.000Z` })
+      const attached = async (invoiceId: number) =>
+        database!.rows<{ name: string; file_object_id: number }>(
+          `SELECT attachment.name, attachment.file_object_id
+           FROM invoice_attachments link JOIN attachments attachment ON attachment.id = link.attachment_id
+           WHERE link.invoice_id = ? ORDER BY attachment.created_at, attachment.id`,
+          invoiceId,
+        )
+      const fileObject = async (attachmentId: number) =>
+        (
+          await database!.rows<{ file_object_id: number }>(
+            `SELECT file_object_id FROM attachments WHERE id = ?`,
+            attachmentId,
+          )
+        )[0]!.file_object_id
+
+      // Before the through date.
+      const february = await engine('2027-02-28').generate(definition.id, '2027-02-28', principal)
+      expect(await attached(february.invoiceId)).toEqual([
+        { name: 'PO-778812 letter.pdf', file_object_id: await fileObject(letter.id) },
+        { name: 'Standing terms.pdf', file_object_id: await fileObject(terms.id) },
+      ])
+      // On it: the through date is the last day the file goes, not the first it is off.
+      const march = await engine('2027-03-31').generate(definition.id, '2027-03-31', principal)
+      expect((await attached(march.invoiceId)).map(({ name }) => name)).toEqual([
+        'PO-778812 letter.pdf',
+        'Standing terms.pdf',
+      ])
+      // After it: last year's letter stays behind; the open-ended file still goes.
+      const april = await engine('2027-04-30').generate(definition.id, '2027-04-30', principal)
+      expect((await attached(april.invoiceId)).map(({ name }) => name)).toEqual(['Standing terms.pdf'])
+
+      // Referenced, not duplicated: one stored file however many invoices carry it.
+      expect(
+        await database.rows(`SELECT count(*) AS count FROM file_objects`),
+      ).toEqual([{ count: 3 }])
+      // And an issue replayed writes the same rows, not a second set.
+      await engine('2027-04-30').generate(definition.id, '2027-04-30', principal)
+      expect((await attached(april.invoiceId)).map(({ name }) => name)).toEqual(['Standing terms.pdf'])
     })
 
   describe('a banded engagement, where the flat rate consumes the work', () => {

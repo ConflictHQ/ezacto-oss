@@ -239,7 +239,10 @@ export class MailgunMailer implements HttpEmailProvider {
     if (!Array.isArray(message.to) || message.to.length < 1) {
       throw new RangeError("Mailgun message requires at least one recipient");
     }
-    if (message.to.length > 1_000) {
+    // The cap is on everyone the message is delivered to, and a Cc recipient
+    // is delivered to like any other.
+    const cc = message.cc ?? [];
+    if (message.to.length + cc.length > 1_000) {
       throw new RangeError("Mailgun message cannot exceed 1000 recipients");
     }
     const idempotencyKey = bounded(
@@ -255,6 +258,9 @@ export class MailgunMailer implements HttpEmailProvider {
     params.set("from", recipientAddress(message.from));
     for (const recipient of message.to) {
       params.append("to", recipientAddress(recipient));
+    }
+    for (const recipient of cc) {
+      params.append("cc", recipientAddress(recipient));
     }
     if (message.replyTo !== undefined) {
       for (const recipient of message.replyTo) {

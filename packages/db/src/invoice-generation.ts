@@ -1,5 +1,6 @@
 import {
   calculateInvoiceLineAmountCents,
+  invoiceDueDate,
   reportNoteIsClientVisible,
   trackedAmountCents,
   uninvoicedGenerationPreview,
@@ -1071,22 +1072,6 @@ const numberedLines = (commandId: string, draft: readonly DraftLine[]): Promise<
     })),
   )
 
-const dueDate = (issueDate: string, terms: ClientDefaults['paymentTerms']): string => {
-  const days =
-    terms === 'net_15'
-      ? 15
-      : terms === 'net_30'
-        ? 30
-        : terms === 'net_45'
-          ? 45
-          : terms === 'net_60'
-            ? 60
-            : 0
-  const value = new Date(`${issueDate}T00:00:00.000Z`)
-  value.setUTCDate(value.getUTCDate() + days)
-  return value.toISOString().slice(0, 10)
-}
-
 const readClient = async (
   database: InvoiceGenerationDatabase,
   clientId: number,
@@ -1535,7 +1520,7 @@ const createStatements = (input: {
         input.client.defaultNotes,
         input.currency,
         issueDate,
-        dueDate(issueDate, input.client.paymentTerms),
+        invoiceDueDate(issueDate, input.client.paymentTerms),
         input.client.paymentTerms,
         input.header.periodStart,
         input.header.periodEnd,

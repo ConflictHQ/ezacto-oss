@@ -13,6 +13,11 @@ export type Attachment = {
   "uploaded_by_user_id": number | null;
   "created_at": string;
   "updated_at": string;
+  "through"?: string | null;
+};
+
+export type RecurringAttachmentThroughInput = {
+  "through": string | null;
 };
 
 export type AttachmentEnvelope = {
@@ -362,6 +367,7 @@ export type EmailLog = {
   "from": EmailRecipient | null;
   "reply_to": Array<EmailRecipient>;
   "to": Array<EmailRecipient>;
+  "cc": Array<EmailRecipient>;
   "template": string;
   "subject": string;
   "provider": string | null;
@@ -1200,10 +1206,12 @@ export type TimeEntryNoteSettingsEnvelope = {
 export type Profile = {
   "user_id": number;
   "timezone": string;
+  "invoice_copy_to_self"?: boolean;
 };
 
 export type ProfilePatch = {
   "timezone"?: string;
+  "invoice_copy_to_self"?: boolean;
 };
 
 export type ProfileEnvelope = {
@@ -1785,6 +1793,7 @@ export type InvoiceMessage = {
   "sent_from": string | null;
   "sent_from_email": string | null;
   "recipients": Array<InvoiceRecipient>;
+  "cc": Array<InvoiceRecipient>;
   "subject": string | null;
   "body": string | null;
   "attach_pdf": boolean;
@@ -1833,9 +1842,130 @@ export type InvoiceTransitionInput = {
 export type InvoiceEmailDeliveryInput = {
   "expected_version": number;
   "recipients": Array<InvoiceRecipient>;
+  "cc"?: Array<InvoiceRecipient>;
+  "subject"?: string;
+  "message"?: string;
+  "send_me_a_copy"?: boolean;
   "sender_identity_id"?: number;
   "template_version"?: number;
   "confirmed": true;
+};
+
+export type InvoiceEmailPreviewInput = {
+  "expected_version"?: number;
+  "recipients": Array<InvoiceRecipient>;
+  "cc"?: Array<InvoiceRecipient>;
+  "subject"?: string;
+  "message"?: string;
+  "send_me_a_copy"?: boolean;
+  "sender_identity_id"?: number;
+  "template_version"?: number;
+  "attach_pdf"?: boolean;
+  "attach_files"?: boolean;
+  "append_pdfs"?: boolean;
+  "attach_journal"?: "detailed" | "summary" | false;
+  "journal_formats"?: JournalFormats;
+};
+
+export type InvoiceEmailPreviewAttachment = {
+  "kind": "invoice" | "journal" | "file";
+  "filename": string;
+  "content_type": string;
+  "byte_size": number;
+  "appended": Array<string>;
+  "not_appended": "encrypted" | "unreadable" | "empty" | "too_large" | null;
+};
+
+export type InvoiceEmailPreviewEnvelope = {
+  "data": {
+  "invoice_id": number;
+  "from": InvoiceRecipient;
+  "reply_to": string | null;
+  "to": Array<InvoiceRecipient>;
+  "cc": Array<InvoiceRecipient>;
+  "send_me_a_copy": boolean;
+  "subject": string;
+  "text": string;
+  "html": string | null;
+  "attachments": Array<InvoiceEmailPreviewAttachment>;
+};
+  "links": {
+  "document": string;
+};
+};
+
+export type InvoiceEmailPreviewSentEnvelope = {
+  "data": {
+  "invoice_id": number;
+  "delivery_id": number;
+  "to": Array<InvoiceRecipient>;
+  "subject": string;
+};
+};
+
+export type InvoiceEmailDefaultsEnvelope = {
+  "data": {
+  "invoice_id": number;
+  "client_id": number;
+  "company_name": string;
+  "client_name": string;
+  "template_version": number;
+  "subject": string;
+  "message": string;
+  "to": Array<InvoiceRecipient>;
+  "cc": Array<InvoiceRecipient>;
+  "recipients_source": "client" | "contacts";
+  "always_cc": Array<InvoiceRecipient>;
+  "sender": {
+  "name": string;
+  "email": string | null;
+};
+  "send_me_a_copy": boolean;
+};
+};
+
+export type InvoiceRecipientLists = {
+  "to": Array<InvoiceRecipient>;
+  "cc": Array<InvoiceRecipient>;
+};
+
+export type ClientInvoiceSendingEnvelope = {
+  "data": {
+  "client_id": number;
+  "recipients": InvoiceRecipientLists | null;
+  "contacts": InvoiceRecipientLists;
+  "attach_pdf": boolean | null;
+  "append_pdfs": boolean | null;
+  "attach_files": boolean | null;
+  "attach_journal": "detailed" | "summary" | boolean | null;
+  "journal_formats": JournalFormats | null;
+  "organization": {
+  "attach_pdf": boolean;
+  "append_pdfs": boolean;
+  "attach_files": boolean;
+  "attach_journal": "detailed" | "summary" | boolean;
+  "journal_formats": JournalFormats;
+};
+};
+};
+
+export type ClientInvoiceSendingInput = {
+  "recipients"?: InvoiceRecipientLists | null;
+  "attach_pdf"?: boolean | null;
+  "append_pdfs"?: boolean | null;
+  "attach_files"?: boolean | null;
+  "attach_journal"?: "detailed" | "summary" | false | null;
+  "journal_formats"?: JournalFormats | null;
+};
+
+export type OrganizationInvoiceSendingEnvelope = {
+  "data": {
+  "always_cc": Array<InvoiceRecipient>;
+};
+};
+
+export type OrganizationInvoiceSendingInput = {
+  "always_cc": Array<InvoiceRecipient>;
 };
 
 export type InvoicePayment = {
@@ -2112,6 +2242,7 @@ export type RecurringInvoice = {
   "claim_ceiling_cents": number | null;
   "claim_scope": "billable" | "tracked";
   "cost_alert_basis_points": number | null;
+  "purchase_order": string | null;
   "created_at": string;
   "updated_at": string;
 };
@@ -2188,6 +2319,7 @@ export type RecurringInvoiceInput = {
   "claim_ceiling_cents"?: number | null;
   "claim_scope"?: "billable" | "tracked";
   "cost_alert_basis_points"?: number | null;
+  "purchase_order"?: string | null;
 };
 
 export type MyHoursProject = {
@@ -3161,6 +3293,7 @@ export type JournalFormats = Array<"pdf" | "csv" | "xlsx">;
 export type InvoiceDocumentPreferenceInput = {
   "attach_pdf"?: boolean | null;
   "attach_files"?: boolean | null;
+  "append_pdfs"?: boolean | null;
   "attach_journal"?: "detailed" | "summary" | false | null;
   "journal_formats"?: JournalFormats | null;
 };
@@ -3168,6 +3301,7 @@ export type InvoiceDocumentPreferenceInput = {
 export type OrganizationInvoiceDocumentsInput = {
   "attach_pdf"?: boolean;
   "attach_files"?: boolean;
+  "append_pdfs"?: boolean;
   "attach_journal"?: "detailed" | "summary" | false;
   "journal_formats"?: JournalFormats;
 };
@@ -3195,15 +3329,23 @@ export type InvoiceDocumentPreferenceEnvelope = {
   "data": {
   "invoice_id": number;
   "attach_pdf": boolean;
+  "client_attach_pdf": boolean | null;
   "organization_attach_pdf": boolean;
   "effective": boolean;
   "attach_files": boolean;
+  "client_attach_files": boolean | null;
   "organization_attach_files": boolean;
   "effective_files": boolean;
+  "append_pdfs": boolean | null;
+  "client_append_pdfs": boolean | null;
+  "organization_append_pdfs": boolean;
+  "effective_append_pdfs": boolean;
   "attach_journal": "detailed" | "summary" | boolean;
+  "client_attach_journal": "detailed" | "summary" | boolean | null;
   "organization_attach_journal": "detailed" | "summary" | boolean;
   "effective_journal": "detailed" | "summary" | boolean;
   "journal_formats": JournalFormats | null;
+  "client_journal_formats": JournalFormats | null;
   "organization_journal_formats": JournalFormats;
   "effective_journal_formats": JournalFormats;
 };
@@ -3213,6 +3355,7 @@ export type OrganizationInvoiceDocumentsEnvelope = {
   "data": {
   "attach_pdf": boolean;
   "attach_files": boolean;
+  "append_pdfs": boolean;
   "attach_journal": "detailed" | "summary" | boolean;
   "journal_formats": JournalFormats;
 };
@@ -4666,6 +4809,37 @@ export class EzactoClient {
     });
   }
 
+  async previewInvoiceEmail(args: { "id": number; body: InvoiceEmailPreviewInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceEmailPreviewEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoiceEmailPreviewEnvelope>("POST", "/api/v1/invoices/:id/deliveries/preview".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async downloadInvoiceEmailPreviewDocument(args: { "id": number; query?: { "append_pdfs"?: "true" | "false" }; signal?: AbortSignal; headers?: HeadersInit }): Promise<ArrayBuffer> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ArrayBuffer>("GET", "/api/v1/invoices/:id/deliveries/preview/document".replace(":id", encodeURIComponent(String(args["id"]))), {
+      query: args.query,
+      signal: args.signal,
+      binary: true,
+      headers,
+    });
+  }
+
+  async sendInvoiceEmailPreview(args: { "id": number; body: InvoiceEmailPreviewInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceEmailPreviewSentEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoiceEmailPreviewSentEnvelope>("POST", "/api/v1/invoices/:id/deliveries/preview/send".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
   async listInvoicePayments(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoicePaymentListEnvelope> {
     const headers = new Headers(args.headers);
 
@@ -5031,6 +5205,25 @@ export class EzactoClient {
     return this.request<ArrayBuffer>("GET", "/api/v1/projects/:projectId/attachments/:attachmentId/content".replace(":projectId", encodeURIComponent(String(args["projectId"]))).replace(":attachmentId", encodeURIComponent(String(args["attachmentId"]))), {
       signal: args.signal,
       binary: true,
+      headers,
+    });
+  }
+
+  async setRecurringInvoiceAttachmentThrough(args: { "recurringInvoiceId": number; "attachmentId": number; body: RecurringAttachmentThroughInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<AttachmentEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AttachmentEnvelope>("PATCH", "/api/v1/recurring-invoices/:recurringInvoiceId/attachments/:attachmentId".replace(":recurringInvoiceId", encodeURIComponent(String(args["recurringInvoiceId"]))).replace(":attachmentId", encodeURIComponent(String(args["attachmentId"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async removeRecurringInvoiceAttachment(args: { "recurringInvoiceId": number; "attachmentId": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/recurring-invoices/:recurringInvoiceId/attachments/:attachmentId".replace(":recurringInvoiceId", encodeURIComponent(String(args["recurringInvoiceId"]))).replace(":attachmentId", encodeURIComponent(String(args["attachmentId"]))), {
+      signal: args.signal,
       headers,
     });
   }
@@ -5753,6 +5946,53 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<InvoiceDocumentPreferenceEnvelope>("POST", "/api/v1/invoices/:id/document-preference".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getInvoiceEmailDefaults(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceEmailDefaultsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoiceEmailDefaultsEnvelope>("GET", "/api/v1/invoices/:id/email-defaults".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getClientInvoiceSending(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<ClientInvoiceSendingEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ClientInvoiceSendingEnvelope>("GET", "/api/v1/clients/:id/invoice-sending".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setClientInvoiceSending(args: { "id": number; body: ClientInvoiceSendingInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<ClientInvoiceSendingEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ClientInvoiceSendingEnvelope>("POST", "/api/v1/clients/:id/invoice-sending".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getOrganizationInvoiceSending(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<OrganizationInvoiceSendingEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OrganizationInvoiceSendingEnvelope>("GET", "/api/v1/settings/invoice-sending", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setOrganizationInvoiceSending(args: { body: OrganizationInvoiceSendingInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<OrganizationInvoiceSendingEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OrganizationInvoiceSendingEnvelope>("POST", "/api/v1/settings/invoice-sending", {
       body: args.body,
       signal: args.signal,
       headers,

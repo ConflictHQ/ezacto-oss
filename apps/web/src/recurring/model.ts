@@ -20,6 +20,7 @@
  */
 
 import type {
+  Attachment,
   GeneralResource,
   RecurringAmountConfig,
   RecurringFixedLine,
@@ -84,6 +85,36 @@ export interface RecurringWorkspaceApi {
     signal?: AbortSignal,
   ): Promise<RecurringInvoice>
   deleteRecurringInvoice(id: number, signal?: AbortSignal): Promise<void>
+  /**
+   * The files a definition attaches to every invoice it issues -- a yearly
+   * purchase order, a signed order form -- each until its own `through` date.
+   * Optional, like every attachment surface: a deployment with no attachment
+   * storage does not serve them, and the section is not offered.
+   */
+  listRecurringInvoiceAttachments?(
+    definitionId: number,
+    signal?: AbortSignal,
+  ): Promise<readonly Attachment[]>
+  /** One multipart file; the key is held across a retry so a retry is not a second file. */
+  uploadRecurringInvoiceAttachment?(
+    definitionId: number,
+    commandId: string,
+    body: FormData,
+    signal?: AbortSignal,
+  ): Promise<Attachment>
+  /** The last issue date the file goes with, inclusive; null for every invoice. */
+  setRecurringInvoiceAttachmentThrough?(
+    definitionId: number,
+    attachmentId: number,
+    through: string | null,
+    signal?: AbortSignal,
+  ): Promise<Attachment>
+  /** Stops the file going with future invoices; the ones it reached keep their copy. */
+  removeRecurringInvoiceAttachment?(
+    definitionId: number,
+    attachmentId: number,
+    signal?: AbortSignal,
+  ): Promise<void>
 }
 
 export type RecurringDueState = 'overdue' | 'due' | 'scheduled'
@@ -400,6 +431,12 @@ export interface RecurringDefinitionFormValues {
   readonly clientId: string
   readonly subjectTemplate: string
   readonly notesTemplate: string
+  /**
+   * Copied onto every invoice the definition issues. A client's accounts
+   * payable matches an invoice to the purchase order it names, so this is the
+   * field that changes when the client issues the next one.
+   */
+  readonly purchaseOrder: string
   readonly everyNMonths: string
   readonly dayOfMonth: string
   readonly nextIssueOn: string
@@ -459,6 +496,9 @@ export interface RecurringDefinitionFormValues {
 export const recurringIdentityCanWrite = invoiceIdentityCanWrite
 
 const centsLimit = 9_000_000_000_000
+
+/** The API's bound on a definition's purchase order. */
+const purchaseOrderLimit = 1_000
 
 /**
  * A real day on the calendar, not merely ten characters shaped like one.
@@ -628,6 +668,12 @@ export const recurringDefinitionInput = (
 ): RecurringInvoiceInput => {
   const subjectTemplate = values.subjectTemplate.trim()
   if (subjectTemplate === '') throw new Error('Enter a subject for the invoices this raises.')
+  // Trimmed, and blank is none -- the API's own reading, so "none" has one
+  // spelling whichever side decides it.
+  const purchaseOrder = values.purchaseOrder.trim()
+  if (purchaseOrder.length > purchaseOrderLimit) {
+    throw new Error(`Purchase order must be ${purchaseOrderLimit.toLocaleString('en-US')} characters or fewer.`)
+  }
   const dayOfMonth = wholeNumber(values.dayOfMonth, 'Day of month')
   if (dayOfMonth < 1 || dayOfMonth > 31) {
     throw new Error('Day of month must be from 1 through 31.')
@@ -654,6 +700,10 @@ export const recurringDefinitionInput = (
     client_id: wholeNumberAbove(values.clientId, 'Client'),
     subject_template: subjectTemplate,
     notes_template: values.notesTemplate,
+    // Always sent. PATCH would leave an absent one as it was, which is right
+    // for a caller that never showed the field and wrong for this one, where a
+    // cleared box means the purchase order has run out.
+    purchase_order: purchaseOrder === '' ? null : purchaseOrder,
     every_n_months: wholeNumberAbove(values.everyNMonths, 'Months between issues'),
     day_of_month: dayOfMonth,
     next_issue_on: nextIssueOn,
@@ -809,6 +859,7 @@ export const recurringBlankFormValues = (): RecurringDefinitionFormValues => ({
   clientId: '',
   subjectTemplate: '',
   notesTemplate: '',
+  purchaseOrder: '',
   everyNMonths: '1',
   dayOfMonth: '1',
   nextIssueOn: '',
@@ -845,6 +896,8 @@ export const recurringFormValuesFromDefinition = (
     clientId: String(definition.client_id),
     subjectTemplate: definition.subject_template,
     notesTemplate: definition.notes_template,
+    // `?? ''` covers a server that predates the column as well as none set.
+    purchaseOrder: definition.purchase_order ?? '',
     everyNMonths: String(definition.every_n_months),
     dayOfMonth: String(definition.day_of_month),
     nextIssueOn: definition.next_issue_on.slice(0, 10),
@@ -910,4 +963,37 @@ export const recurringFormValuesFromDefinition = (
     importExpenses: expenses !== undefined,
     expenseSummary: expenses?.summary_type ?? blank.expenseSummary,
   }
+}
+
+const throughDateFormat = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  timeZone: 'UTC',
+})
+
+/**
+ * Which invoices a standing file goes with, in the date format the invoice
+ * pages use. The date is the last issue date the file is attached on --
+ * inclusive, the rule a line's `through` follows -- so an invoice issued after
+ * it goes without, and a file with none goes with every invoice.
+ */
+export const recurringAttachmentThroughLabel = (through: string | null | undefined): string => {
+  if (through === null || through === undefined) return 'Every invoice'
+  return isCalendarDate(through)
+    ? `Attached through ${throughDateFormat.format(new Date(`${through}T00:00:00.000Z`))}`
+    : `Attached through ${through}`
+}
+
+/**
+ * The date a file's box holds, as the request writes it. Refused here when it
+ * is not a day on the calendar, the way a line's through date is, so the
+ * sentence names the file rather than arriving as the route's refusal.
+ */
+export const recurringAttachmentThroughInput = (raw: string, fileName: string): string => {
+  const value = raw.trim()
+  if (!isCalendarDate(value)) {
+    throw new Error(`Choose the last invoice date “${fileName}” goes with, or attach it to every invoice.`)
+  }
+  return value
 }

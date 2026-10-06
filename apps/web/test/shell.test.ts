@@ -854,9 +854,13 @@ describe('S-1 through S-5 application shell', () => {
     expect(detail).toContain('data-invoice-composer-deliver-toggle')
     expect(detail).toContain('Also deliver by email')
     expect(detail).toContain('data-invoice-composer-confirm')
-    // What the client actually receives: the lines, and the attachments the
-    // dialog itself offers -- the PDF, the hours report and the invoice's files.
-    expect(detail).toContain("It lists this invoice's line items, with the attachments chosen below.")
+    // What the client actually receives: one email, To and Cc, and the
+    // attachments the dialog itself offers -- the PDF, the hours report and the
+    // invoice's files.
+    expect(detail).toContain(
+      'One email from the verified organization sender, To and Cc as listed, with the subject and message above and the attachments chosen below.',
+    )
+    expect(detail).toContain('data-invoice-composer-cc')
     expect(detail).toContain('Attach a PDF of this invoice')
     expect(detail).toContain('Attach the hours report')
     expect(detail).toContain('Attach files added to this invoice')

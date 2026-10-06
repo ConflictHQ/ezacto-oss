@@ -117,10 +117,11 @@ describe("email template variables", () => {
 
   it("[unit] exposes a closed reference vocabulary with honest compatibility labels", () => {
     // 16 since `%invoice_payment_url%` joined for #102; 18 since the reminder
-    // gained the amount owed and the days past due (#801). The count is pinned
-    // on purpose: the vocabulary is closed, and a variable appearing without
-    // somebody deciding to add it is what this catches.
-    expect(emailTemplateVariables).toHaveLength(18);
+    // gained the amount owed and the days past due (#801); 20 since the invoice
+    // email's summary needed the purchase order and the payment terms. The
+    // count is pinned on purpose: the vocabulary is closed, and a variable
+    // appearing without somebody deciding to add it is what this catches.
+    expect(emailTemplateVariables).toHaveLength(20);
     expect(
       emailTemplateVariables
         .filter(({ compatibility }) => compatibility === "harvest")

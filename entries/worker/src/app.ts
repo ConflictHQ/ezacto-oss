@@ -6,6 +6,9 @@ import { captureException } from "@sentry/cloudflare";
 import type { BillRuntime, QuickBooksService, WiseRuntime } from "@ezacto/integrations";
 import type {
   InvoiceDocumentPreferenceService,
+  InvoiceDocumentPort,
+  InvoiceSendingPort,
+  InvoiceSendingService,
   InvoiceHoursReportService,
   ThankYouPreferenceService,
   ReminderSettingsService,
@@ -57,6 +60,7 @@ import {
   installBillRoutes,
   installPayoutAccountRoutes,
   installInvoiceDocumentPreferenceRoutes,
+  installInvoiceSendingRoutes,
   installInvoiceHoursReportRoutes,
   installThankYouPreferenceRoutes,
   installReminderSettingsRoutes,
@@ -376,6 +380,12 @@ export interface RuntimeServices {
   stripe?: StripeService
   invoiceTimeClaims?: InvoiceTimeClaimService
   invoiceDocumentPreference?: InvoiceDocumentPreferenceService
+  /** The client's sending profile, the organization's copies, the dialog's defaults. */
+  invoiceSending?: InvoiceSendingService
+  /** Who an invoice email copies besides the people the sender typed. */
+  invoiceEmailSending?: InvoiceSendingPort
+  /** The invoice document composer, where the deployment keeps files. */
+  invoiceDocuments?: InvoiceDocumentPort
   /** The work journal as a file on demand (issue 647); both entries compose it. */
   invoiceHoursReport?: InvoiceHoursReportService
   thankYouPreference?: ThankYouPreferenceService
@@ -590,6 +600,12 @@ export const createApp = (
                     invoiceDelivery: {
                       configuration: services.emailConfiguration,
                       mailer: services.organizationMailer,
+                      ...(services.invoiceDocuments === undefined
+                        ? {}
+                        : { documents: services.invoiceDocuments }),
+                      ...(services.invoiceEmailSending === undefined
+                        ? {}
+                        : { sending: services.invoiceEmailSending }),
                     },
                   }),
               // The pay link the invoice email carries. Resolved here rather
@@ -630,6 +646,12 @@ export const createApp = (
             }
             if (services.invoiceTimeClaims !== undefined) {
               installInvoiceTimeClaimRoutes(api, services.invoiceTimeClaims)
+            }
+            if (services.invoiceSending !== undefined) {
+              installInvoiceSendingRoutes(api, {
+                service: services.invoiceSending,
+                clock: () => systemClock.now().instant,
+              })
             }
             if (services.invoiceDocumentPreference !== undefined) {
               installInvoiceDocumentPreferenceRoutes(

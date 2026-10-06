@@ -54,6 +54,39 @@ export const renderClientDirectoryPages = (view?: string): string => `
         </label>
         <p class="form-result" data-client-delivery-result role="status" aria-live="polite"></p>
       </section>
+      <section class="client-sending" data-client-sending aria-labelledby="client-sending-heading" hidden>
+        <header><div><p class="eyebrow">Money</p><h2 id="client-sending-heading">Invoice sending</h2></div></header>
+        <p class="hint">Every invoice for this client opens the Send dialog with these, recurring invoices included, and the Send dialog can still change them per invoice.</p>
+        <p class="form-result" data-client-sending-status role="status" aria-live="polite">Loading invoice sending…</p>
+        <button type="button" data-client-sending-retry hidden>Retry loading invoice sending</button>
+        <form class="client-sending-form" data-client-sending-form novalidate hidden>
+          <fieldset>
+            <legend>Who it goes to</legend>
+            <label class="settings-toggle"><input type="radio" name="recipients_source" value="contacts" data-client-sending-source>Follow the contacts’ invoice routing</label>
+            <label class="settings-toggle"><input type="radio" name="recipients_source" value="client" data-client-sending-source>Use these addresses</label>
+          </fieldset>
+          <p class="hint" data-client-sending-source-hint></p>
+          <label for="ez-client-sending-to">To<textarea id="ez-client-sending-to" name="to" rows="3" autocomplete="off" spellcheck="false" aria-describedby="client-sending-format" data-client-sending-to></textarea></label>
+          <label for="ez-client-sending-cc">Cc<textarea id="ez-client-sending-cc" name="cc" rows="3" autocomplete="off" spellcheck="false" aria-describedby="client-sending-format" data-client-sending-cc></textarea></label>
+          <p class="hint" id="client-sending-format">One address per line: email@example.com or Name &lt;email@example.com&gt;.</p>
+          <fieldset>
+            <legend>What it carries</legend>
+            <label for="ez-client-sending-pdf">Attach the invoice PDF<select id="ez-client-sending-pdf" name="attach_pdf" data-client-sending-rule="attach_pdf"><option value="">Organization default</option><option value="true">Yes</option><option value="false">No</option></select></label>
+            <label for="ez-client-sending-append">Append attached PDFs to the back of the invoice PDF<select id="ez-client-sending-append" name="append_pdfs" data-client-sending-rule="append_pdfs"><option value="">Organization default</option><option value="true">Yes</option><option value="false">No</option></select></label>
+            <label for="ez-client-sending-files">Attach other files<select id="ez-client-sending-files" name="attach_files" data-client-sending-rule="attach_files"><option value="">Organization default</option><option value="true">Yes</option><option value="false">No</option></select></label>
+            <label for="ez-client-sending-journal">Hours report<select id="ez-client-sending-journal" name="attach_journal" data-client-sending-journal><option value="">Organization default</option><option value="false">Off</option><option value="detailed">Every entry</option><option value="summary">Summary</option></select></label>
+            <label for="ez-client-sending-formats" data-client-sending-formats-row>Hours report files<select id="ez-client-sending-formats" name="journal_formats_source" data-client-sending-formats-source><option value="">Organization default</option><option value="client">Choose for this client</option></select></label>
+            <fieldset class="client-sending-formats" data-client-sending-formats hidden>
+              <legend class="visually-hidden">Hours report files for this client</legend>
+              <label class="settings-toggle"><input type="checkbox" name="journal_format" value="pdf">PDF</label>
+              <label class="settings-toggle"><input type="checkbox" name="journal_format" value="csv">CSV</label>
+              <label class="settings-toggle"><input type="checkbox" name="journal_format" value="xlsx">Excel</label>
+            </fieldset>
+          </fieldset>
+          <p class="form-result" data-client-sending-result role="status" aria-live="polite"></p>
+          <button class="primary-action" type="submit" data-client-sending-submit>Save invoice sending</button>
+        </form>
+      </section>
       <section class="client-360" data-client-360 aria-labelledby="client-360-heading" hidden>
         <header><div><p class="eyebrow">Money</p><h2 id="client-360-heading">This client and everyone under it</h2></div><a data-client-360-report href="/reports?report=client-rollup">Open the rollup report</a></header>
         <p class="hint" data-client-360-scope>—</p>

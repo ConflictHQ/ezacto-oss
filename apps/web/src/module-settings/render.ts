@@ -95,7 +95,12 @@ export const renderModuleSettingsPage = (view?: string): string => `
           <label class="invoice-defaults-check"><input type="checkbox" name="journal_format" value="xlsx">Excel</label>
         </fieldset>
         <label class="invoice-defaults-check" data-invoice-defaults-sending hidden><input type="checkbox" name="attach_files" data-invoice-defaults-attach-files>Attach invoice files by default</label>
-        <p class="hint" data-invoice-defaults-sending hidden>What an invoice's email carries unless the invoice says otherwise. Each invoice can still change these when it is sent.</p>
+        <label class="invoice-defaults-check" data-invoice-defaults-sending hidden><input type="checkbox" name="append_pdfs" data-invoice-defaults-append-pdfs>Append attached PDFs to the back of the invoice PDF by default</label>
+        <p class="hint" data-invoice-defaults-sending hidden>What an invoice's email carries unless its client or the invoice says otherwise. Each invoice can still change these when it is sent.</p>
+        <label data-invoice-defaults-always-cc hidden>Always copy these addresses on invoice emails
+          <textarea name="always_cc" data-invoice-defaults-always-cc-list rows="3" autocomplete="off" spellcheck="false" aria-describedby="settings-invoice-always-cc-hint"></textarea>
+        </label>
+        <p class="hint" id="settings-invoice-always-cc-hint" data-invoice-defaults-always-cc hidden>One per line, as <code>email@example.com</code> or <code>Name &lt;email@example.com&gt;</code> &mdash; your own finance mailbox, say. Every invoice email copies them, whoever it goes to; up to 20.</p>
         <button class="primary-action" type="submit" data-invoice-defaults-submit>Save invoice settings</button>
       </form>
       <p class="form-result" data-invoice-defaults-result role="status" aria-live="polite"></p>

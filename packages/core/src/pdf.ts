@@ -8,8 +8,8 @@
  * typesetting to draw a few pages of text is a poor trade.
  *
  * What this does instead is emit the PDF by hand, which is tractable because an
- * invoice needs very little of the format: text, rules, filled bands and one
- * picture. Two choices keep it small.
+ * invoice needs very little of the format: text, rules, filled bands, one
+ * picture and, on a preview, a watermark. Two choices keep it small.
  *
  * The first is fonts. The standard fourteen are guaranteed present in every
  * conforming reader, so nothing is embedded and there is no font program to
@@ -81,6 +81,24 @@ export type PdfOperation =
       readonly width: number;
       readonly height: number;
       readonly image: PdfImage;
+    }
+  | {
+      /**
+       * Text across the middle of the page, turned and see-through, over
+       * whatever is drawn before it: what marks a copy that is not the one
+       * sent. The middle of its capitals is the middle of the page, whatever
+       * the page's size.
+       */
+      readonly kind: "watermark";
+      readonly text: string;
+      readonly font: PdfFont;
+      readonly size: number;
+      /** Degrees anticlockwise from level: 45 runs it up from the lower left. */
+      readonly angle: number;
+      /** How much of the fill shows, 0 to 1: low, so what is under it still reads. */
+      readonly opacity: number;
+      /** Red, green and blue, each 0 to 1. */
+      readonly rgb: readonly [number, number, number];
     };
 
 export interface PdfPage {
@@ -235,6 +253,14 @@ export const textWidth = (text: string, font: PdfFont, size: number): number => 
   return (thousandths * size) / 1000;
 };
 
+/**
+ * How far a capital stands above the baseline in `font` at `size` points, from
+ * the same AFM files: 718 thousandths of an em in every Helvetica, 562 in
+ * Courier. It is what centres a line of capitals on a point, not its baseline.
+ */
+export const capHeight = (font: PdfFont, size: number): number =>
+  ((isMonospaced(font) ? 562 : 718) * size) / 1000;
+
 /** PDF string literals escape the delimiters and the escape character itself. */
 const pdfString = (text: string): string => {
   let out = "(";
@@ -258,7 +284,29 @@ const grey = (value: number | undefined): number => {
   return level;
 };
 
-const contentStream = (page: PdfPage, images: ReadonlyMap<PdfImage, number>): string => {
+const channel = (value: number): number => {
+  if (!(value >= 0 && value <= 1)) throw new RangeError("a PDF colour channel must be between 0 and 1");
+  return value;
+};
+
+/** Checked and written as it appears in the page's graphics state. */
+const opacity = (value: number): string => {
+  if (!(value >= 0 && value <= 1)) throw new RangeError("a PDF opacity must be between 0 and 1");
+  return number(value);
+};
+
+/**
+ * The page's drawing. `opacities` are the fill opacities it draws at, in the
+ * order the page names them as graphics states; the page's size is for what is
+ * centred on it.
+ */
+const contentStream = (
+  page: PdfPage,
+  images: ReadonlyMap<PdfImage, number>,
+  opacities: readonly string[],
+  pageWidth: number,
+  pageHeight: number,
+): string => {
   const parts: string[] = [];
   for (const operation of page.operations) {
     if (operation.kind === "rect") {
@@ -284,6 +332,31 @@ const contentStream = (page: PdfPage, images: ReadonlyMap<PdfImage, number>): st
         "q",
         `${number(operation.width)} 0 0 ${number(operation.height)} ${number(operation.x)} ${number(operation.y)} cm`,
         `/Im${String(images.get(operation.image)!)} Do`,
+        "Q",
+      );
+      continue;
+    }
+    if (operation.kind === "watermark") {
+      if (operation.size <= 0) throw new RangeError("a PDF font size must be positive");
+      const turn = (operation.angle * Math.PI) / 180;
+      const cos = Math.cos(turn);
+      const sin = Math.sin(turn);
+      // Back from the middle of the page along the baseline by half the text's
+      // width, and down from it by half a capital's height, so the middle of
+      // what is drawn is the middle of the page at any angle. Saved and
+      // restored around it, so its opacity and colour end with it.
+      const along = textWidth(operation.text, operation.font, operation.size) / 2;
+      const up = capHeight(operation.font, operation.size) / 2;
+      parts.push(
+        "q",
+        `/GS${String(opacities.indexOf(opacity(operation.opacity)))} gs`,
+        "BT",
+        `${operation.rgb.map((value) => number(channel(value))).join(" ")} rg`,
+        `/${fontResource(operation.font)} ${number(operation.size)} Tf`,
+        `${number(cos)} ${number(sin)} ${number(-sin)} ${number(cos)} ` +
+          `${number(pageWidth / 2 - along * cos + up * sin)} ${number(pageHeight / 2 - along * sin - up * cos)} Tm`,
+        `${pdfString(operation.text)} Tj`,
+        "ET",
         "Q",
       );
       continue;
@@ -405,15 +478,25 @@ export const renderPdf = (document: PdfDocument): Uint8Array => {
     images.length === 0
       ? ""
       : ` /XObject << ${images.map((_, index) => `/Im${String(index)} ${String(imageIds[index]!)} 0 R`).join(" ")} >>`;
-  const resources =
+  const resources = (states: string): string =>
     "<< /Font << " +
     fonts.map((font, index) => `/${fontResource(font)} ${String(firstFontId + index)} 0 R`).join(" ") +
-    ` >>${xobjects} >>`;
+    ` >>${xobjects}${states} >>`;
   document.pages.forEach((page, index) => {
+    // Each opacity the page draws at is a graphics state it names, and only a
+    // page that draws something see-through carries any: every other page is
+    // written exactly as it was before there were watermarks.
+    const opacities = [
+      ...new Set(page.operations.flatMap((operation) => (operation.kind === "watermark" ? [opacity(operation.opacity)] : []))),
+    ];
+    const states =
+      opacities.length === 0
+        ? ""
+        : ` /ExtGState << ${opacities.map((alpha, at) => `/GS${String(at)} << /Type /ExtGState /ca ${alpha} >>`).join(" ")} >>`;
     objects[pageId(index)] =
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${number(width)} ${number(height)}] ` +
-      `/Resources ${resources} /Contents ${String(streamId(index))} 0 R >>`;
-    const stream = latin1(contentStream(page, imageIndex));
+      `/Resources ${resources(states)} /Contents ${String(streamId(index))} 0 R >>`;
+    const stream = latin1(contentStream(page, imageIndex, opacities, width, height));
     objects[streamId(index)] = { dictionary: `<< /Length ${String(stream.byteLength)} >>`, stream };
   });
 

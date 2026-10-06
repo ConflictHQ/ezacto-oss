@@ -1,12 +1,17 @@
 import {
   calculateInvoiceLineAmountCents,
   compareInvoiceListPositions,
-  interpolateEmailTemplate,
-  invoiceLineItemsBlock,
-  type EmailTemplateBlockValue,
+  composeInvoiceEmail,
+  EmailTemplateVariableError,
+  invoiceEmailCopies,
+  invoiceEmailPreview,
+  parseJournalFormats,
   type InvoiceActorType,
+  type InvoiceAddress,
   type InvoiceLifecycleCommand,
   type InvoiceListPosition,
+  type InvoicePaymentTerms,
+  type JournalFormat,
 } from "@ezacto/core";
 import {
   SenderIdentityUnavailableError,
@@ -71,8 +76,16 @@ export interface InvoiceDeliveryContext {
   organizationName: string;
   clientName: string;
   lineItems: readonly InvoiceDeliveryLine[];
+  purchaseOrder: string | null;
+  notes: string | null;
+  paymentTerms: InvoicePaymentTerms;
+  dueAmountCents: number;
 }
 
+/**
+ * One email to queue. Every recipient of a message is a header of it -- To or
+ * Cc -- so a message is exactly one job however many people it went to.
+ */
 export interface InvoiceDeliveryJob {
   deliveryId: number;
   senderIdentityId: number;
@@ -81,8 +94,8 @@ export interface InvoiceDeliveryJob {
   fromName: string;
   fromEmail: string;
   replyToEmail: string | null;
-  recipientName: string;
-  recipientEmail: string;
+  to: readonly { name: string; email: string }[];
+  cc: readonly { name: string; email: string }[];
   templateVersion: number;
   subject: string;
   textBody: string;
@@ -264,6 +277,11 @@ interface RecurringInput {
    * enough to cry wolf.
    */
   costAlertBasisPoints: number | null;
+  /**
+   * The client's purchase order, copied onto each invoice the definition
+   * issues. Absent leaves the stored one as it is; null clears it.
+   */
+  purchaseOrder?: string | null;
   occurredAt: string;
 }
 
@@ -286,6 +304,8 @@ interface LifecycleMessage {
   sentFrom: string | null;
   sentFromEmail: string | null;
   recipients: readonly Readonly<{ name: string; email: string }>[];
+  /** Who the email was copied to. Absent is nobody. */
+  cc?: readonly Readonly<{ name: string; email: string }>[];
   subject: string | null;
   body: string | null;
   attachPdf: boolean;
@@ -517,7 +537,13 @@ interface MoneyResourceService {
         subject: string;
         textBody: string;
         htmlBody: string | null;
-        recipients: readonly { deliveryId: number; name: string; email: string }[];
+        /** The one email this send is; every recipient is a header of it. */
+        deliveryId: number;
+        recipients: readonly {
+          name: string;
+          email: string;
+          role: "to" | "cc";
+        }[];
       };
     },
   ): Promise<InvoiceCommandResult>;
@@ -741,6 +767,14 @@ export interface MoneyResourceRouteOptions {
       "getTemplate" | "getSenderIdentity" | "listSenderIdentities"
     >;
     mailer: SenderBoundQueuedMailer;
+    /**
+     * The entry's document composer: whether the invoice PDF goes with an
+     * email, and the preview of what would. Absent where the deployment keeps
+     * no files, in which case nothing is attached and nothing is promised.
+     */
+    documents?: InvoiceDocumentPort;
+    /** Who an invoice email copies besides the people the sender typed. */
+    sending?: InvoiceSendingPort;
   };
   /**
    * Where this invoice can be paid online, resolved just before the email body
@@ -795,13 +829,85 @@ export interface InvoiceDocumentPort {
     readonly invoiceId: number;
     readonly invoiceMessageId: number;
   }): Promise<readonly EmailAttachmentRef[]>;
+  /**
+   * Whether the invoice PDF goes with an email sent now. Asked when the body is
+   * composed, because the body says so: the sentence that promises a document
+   * is only written where one goes.
+   */
+  attachesPdf(invoiceId: number): Promise<boolean>;
+  /**
+   * What an email sent now would carry, with the Send dialog's choices laid
+   * over the invoice's own, rendered by the same code a real send uses and
+   * stored nowhere. The invoice document is measured as it would go -- with
+   * the files bound into its back where that is the rule.
+   */
+  preview(input: {
+    readonly invoiceId: number;
+    readonly choices: InvoiceAttachmentChoices;
+  }): Promise<readonly InvoiceAttachmentPreview[]>;
+  /**
+   * The invoice document exactly as an email sent now would carry it, stamped
+   * PREVIEW on every page. `null` for no such invoice.
+   */
+  previewDocument(input: {
+    readonly invoiceId: number;
+    readonly choices: InvoiceAttachmentChoices;
+  }): Promise<{ readonly filename: string; readonly bytes: Uint8Array } | null>;
+  /**
+   * Stores what a preview email carries -- the stamped document and the files
+   * beside it -- under keys of its own, so nothing a real send keeps is
+   * touched, and names them for the queue.
+   */
+  stagePreview(input: {
+    readonly invoiceId: number;
+    readonly previewId: string;
+    readonly choices: InvoiceAttachmentChoices;
+  }): Promise<readonly EmailAttachmentRef[]>;
+}
+
+/**
+ * The Send dialog's attachment choices, laid over what the invoice would do
+ * anyway. Absent is "as the invoice, its client and the organization say".
+ */
+export interface InvoiceAttachmentChoices {
+  readonly document?: boolean;
+  readonly files?: boolean;
+  readonly append?: boolean;
+  readonly journal?: "detailed" | "summary" | false;
+  readonly journalFormats?: readonly JournalFormat[];
+}
+
+/** One file an email would carry, as the preview lists it. */
+export interface InvoiceAttachmentPreview {
+  readonly kind: "invoice" | "journal" | "file";
+  readonly filename: string;
+  readonly contentType: string;
+  readonly byteSize: number;
+  /** The invoice document's own: the files bound into its back, in order. */
+  readonly appended: readonly string[];
+  /** A file meant for the back of the document that goes beside it instead, and why. */
+  readonly notAppended: "encrypted" | "unreadable" | "empty" | "too_large" | null;
+}
+
+/** Who an invoice email copies besides the people the sender typed. */
+export interface InvoiceSendingPort {
+  /** The organization's own mailboxes, copied on every invoice email. */
+  alwaysCc(): Promise<readonly InvoiceAddress[]>;
+  /** Whether this person is copied on what they send, and where. */
+  senderCopy(userId: number): Promise<{
+    readonly copy: boolean;
+    readonly name: string;
+    readonly email: string | null;
+  } | null>;
+  /** Preview emails this invoice has sent since the instant given. */
+  previewsSince(invoiceId: number, since: string): Promise<number>;
 }
 
 /** Subscriber registration used by both runtimes; provider I/O remains in the queue consumer. */
 export const createInvoiceEmailOutboxSubscriber = (
   service: Pick<MoneyResourceService, "listInvoiceDeliveryJobs">,
   mailer?: SenderBoundQueuedMailer,
-  documents?: InvoiceDocumentPort,
+  documents?: Pick<InvoiceDocumentPort, "prepare">,
 ): {
   readonly id: "invoice_email";
   deliver(event: Readonly<InvoiceOutboxEvent>): Promise<void>;
@@ -813,10 +919,9 @@ export const createInvoiceEmailOutboxSubscriber = (
     if (jobs.length > 0 && mailer?.enqueuePersisted === undefined) {
       throw new Error("invoice email durable enqueue is unavailable");
     }
-    // One document per message, prepared once however many recipients the
-    // message has. Each recipient is its own delivery and its own queue job,
-    // and rendering per recipient would put several identical objects in the
-    // bucket for one send.
+    // One document per message, prepared once. A message is one email now, but
+    // one sent before copies existed wrote an email per recipient, and those
+    // still share the message's single document.
     const seen = new Map<number, readonly EmailAttachmentRef[]>();
     for (const job of jobs) {
       if (documents !== undefined && !seen.has(job.invoiceMessageId)) {
@@ -829,6 +934,10 @@ export const createInvoiceEmailOutboxSubscriber = (
         );
       }
       const attachments = seen.get(job.invoiceMessageId) ?? [];
+      const mailbox = (person: { name: string; email: string }) =>
+        person.name === ""
+          ? { email: person.email }
+          : { email: person.email, name: person.name };
       await mailer!.enqueuePersisted!(
         job.deliveryId,
         {
@@ -841,11 +950,8 @@ export const createInvoiceEmailOutboxSubscriber = (
             : { replyTo: [{ email: job.replyToEmail }] }),
         },
         {
-          to: [
-            job.recipientName === ""
-              ? { email: job.recipientEmail }
-              : { email: job.recipientEmail, name: job.recipientName },
-          ],
+          to: job.to.map(mailbox),
+          ...(job.cc.length === 0 ? {} : { cc: job.cc.map(mailbox) }),
           template: `invoice:${job.templateVersion}`,
           subject: job.subject,
           text: job.textBody,
@@ -2548,54 +2654,386 @@ const installLifecycle = <Bindings extends object>(
   );
 };
 
-const lineItemsToken = "%invoice_line_items%";
+/**
+ * Cc addresses as the Send dialog gives them: optional, the same shape and the
+ * same normalization as the To list, never an address that is already To.
+ */
+const parseCopies = (
+  body: JsonObject,
+  to: readonly { name: string; email: string }[],
+  errors: FieldError[],
+): Array<{ name: string; email: string }> => {
+  if (!Object.hasOwn(body, "cc")) return [];
+  const raw = body.cc;
+  if (!Array.isArray(raw) || raw.length > 99) {
+    errors.push({
+      field: "cc",
+      code: "invalid_array",
+      message: "cc must be an array of at most 99 recipients",
+    });
+    return [];
+  }
+  const addressed = new Set(to.map(({ email }) => email));
+  const seen = new Set<string>();
+  return raw.flatMap((entry, index) => {
+    if (
+      !isJsonObject(entry) ||
+      Object.keys(entry).some((field) => field !== "name" && field !== "email") ||
+      typeof entry.name !== "string" ||
+      typeof entry.email !== "string"
+    ) {
+      errors.push({
+        field: `cc[${index}]`,
+        code: "invalid_recipient",
+        message: "each cc recipient requires exact name and email strings",
+      });
+      return [];
+    }
+    const name = entry.name.normalize("NFC").trim();
+    const email = entry.email.normalize("NFC").trim().toLowerCase();
+    if (name.length > 200 || email.length > 254 || !deliveryEmailPattern.test(email)) {
+      errors.push({
+        field: `cc[${index}]`,
+        code: "invalid_email",
+        message: "cc recipient must contain a valid bounded email address",
+      });
+      return [];
+    }
+    if (addressed.has(email) || seen.has(email)) {
+      errors.push({
+        field: `cc[${index}]`,
+        code: "duplicate",
+        message: addressed.has(email)
+          ? "a cc recipient is already a To recipient"
+          : "cc email addresses must be unique",
+      });
+      return [];
+    }
+    seen.add(email);
+    return [{ name, email }];
+  });
+};
 
 /**
- * Where the lines go in the message the client receives.
- *
- * A template that names the variable places them itself. A template that does
- * not -- which is every template written before the variable existed, including
- * the one seeded in migration 0030 -- gets them after the body instead of not
- * at all: an invoice email that states an amount owed and nothing about what it
- * is for is the defect being closed here, and the persisted template versions
- * are immutable, so waiting for an operator to edit theirs would leave every
- * existing organization sending exactly what it sends today.
+ * A subject or message the Send dialog typed, as a template. Absent takes the
+ * organization's invoice template; present must be text.
  */
-const withLineItems = (
-  body: string,
-  template: string,
-  block: string,
-  separator: string,
-): string =>
-  template.includes(lineItemsToken) ? body : `${body}${separator}${block}`;
+const templateText = (
+  body: JsonObject,
+  field: "subject" | "message",
+  maximum: number,
+  errors: FieldError[],
+): string | undefined => {
+  if (!Object.hasOwn(body, field)) return undefined;
+  const value = body[field];
+  if (typeof value !== "string" || value.length > maximum) {
+    errors.push({
+      field,
+      code: "invalid_string",
+      message: `${field} must be a string of at most ${maximum} characters`,
+    });
+    return undefined;
+  }
+  return value;
+};
+
+const booleanField = (
+  body: JsonObject,
+  field: string,
+  errors: FieldError[],
+): boolean | undefined => {
+  if (!Object.hasOwn(body, field)) return undefined;
+  if (typeof body[field] !== "boolean") {
+    errors.push({ field, code: "invalid_boolean", message: `${field} must be true or false` });
+    return undefined;
+  }
+  return body[field] as boolean;
+};
+
+/**
+ * The Send dialog's attachment choices, for a preview. Each is optional and
+ * laid over what the invoice would do anyway, so a preview shows the choices
+ * on screen before anything is saved.
+ */
+const parseAttachmentChoices = (
+  body: JsonObject,
+  errors: FieldError[],
+): InvoiceAttachmentChoices => {
+  const document = booleanField(body, "attach_pdf", errors);
+  const files = booleanField(body, "attach_files", errors);
+  const append = booleanField(body, "append_pdfs", errors);
+  let journal: InvoiceAttachmentChoices["journal"];
+  if (Object.hasOwn(body, "attach_journal")) {
+    const value = body.attach_journal;
+    if (value === "detailed" || value === "summary" || value === false) journal = value;
+    else
+      errors.push({
+        field: "attach_journal",
+        code: "invalid",
+        message: 'attach_journal must be "detailed", "summary", or false',
+      });
+  }
+  let journalFormats: readonly JournalFormat[] | undefined;
+  if (Object.hasOwn(body, "journal_formats")) {
+    const parsed = parseJournalFormats(body.journal_formats);
+    if (parsed === null)
+      errors.push({
+        field: "journal_formats",
+        code: "invalid",
+        message: 'journal_formats must be a non-empty list of distinct "pdf", "csv" and "xlsx"',
+      });
+    else journalFormats = parsed;
+  }
+  return {
+    ...(document === undefined ? {} : { document }),
+    ...(files === undefined ? {} : { files }),
+    ...(append === undefined ? {} : { append }),
+    ...(journal === undefined ? {} : { journal }),
+    ...(journalFormats === undefined ? {} : { journalFormats }),
+  };
+};
+
+const deliveryFields = [
+  "expected_version",
+  "recipients",
+  "cc",
+  "subject",
+  "message",
+  "send_me_a_copy",
+  "sender_identity_id",
+  "template_version",
+] as const;
+
+const previewChoiceFields = [
+  "attach_pdf",
+  "attach_files",
+  "append_pdfs",
+  "attach_journal",
+  "journal_formats",
+] as const;
+
+interface DeliveryRequest {
+  readonly version: number | undefined;
+  readonly to: readonly { name: string; email: string }[];
+  readonly cc: readonly { name: string; email: string }[];
+  readonly subject: string | undefined;
+  readonly message: string | undefined;
+  readonly sendMeACopy: boolean;
+  readonly senderIdentityId: number | undefined;
+  readonly templateVersion: number | undefined;
+}
+
+const parseDeliveryRequest = (
+  body: JsonObject,
+  errors: FieldError[],
+  /** A preview changes nothing, so it names no version to change. */
+  purpose: "send" | "preview" = "send",
+): DeliveryRequest => {
+  const to = parseDeliveryRecipients(body, errors);
+  return {
+    version:
+      purpose === "send" || Object.hasOwn(body, "expected_version")
+        ? expectedVersion(body, errors)
+        : undefined,
+    to,
+    cc: parseCopies(body, to, errors),
+    subject: templateText(body, "subject", 998, errors),
+    message: templateText(body, "message", 100_000, errors),
+    sendMeACopy: booleanField(body, "send_me_a_copy", errors) ?? false,
+    senderIdentityId:
+      integerValue(body, "sender_identity_id", errors, { minimum: 1 }) ?? undefined,
+    templateVersion:
+      integerValue(body, "template_version", errors, { minimum: 1 }) ?? undefined,
+  };
+};
+
+/**
+ * The email one Send dialog submission produces, composed once for the send
+ * and for its preview, so the preview cannot drift from what goes.
+ */
+interface ComposedDelivery {
+  readonly invoice: InvoiceDeliveryContext;
+  readonly template: { readonly version: number };
+  readonly sender: {
+    readonly id: number;
+    readonly version: number;
+    readonly evidenceVersion: number;
+    readonly displayName: string;
+    readonly email: string;
+    readonly replyToEmail: string | null;
+  };
+  readonly author: { readonly name: string; readonly email: string | null };
+  readonly to: readonly { name: string; email: string }[];
+  readonly cc: readonly { name: string; email: string }[];
+  /** Whether the sender's own address is among the copies. */
+  readonly senderCopied: boolean;
+  readonly subject: string;
+  readonly text: string;
+  readonly pdfAttached: boolean;
+}
+
+const composeDelivery = async (
+  options: ResolvedMoneyResourceRouteOptions,
+  principal: UserPrincipal,
+  invoiceId: number,
+  request: DeliveryRequest,
+  pdfAttached: (invoiceId: number) => Promise<boolean>,
+): Promise<ComposedDelivery> => {
+  if (options.invoiceDelivery === undefined) {
+    throw new ApiError({
+      status: 503,
+      code: "email_delivery_unavailable",
+      message: "Invoice email delivery is not configured.",
+    });
+  }
+  const delivery = options.invoiceDelivery;
+  const configuration = delivery.configuration;
+  const [invoice, template, author, senderList, alwaysCc, copy] = await Promise.all([
+    options.service.getInvoiceDeliveryContext(invoiceId),
+    configuration.getTemplate("invoice", request.templateVersion),
+    options.service.senderSnapshot(principal.userId),
+    request.senderIdentityId === undefined
+      ? configuration.listSenderIdentities()
+      : Promise.resolve([]),
+    delivery.sending?.alwaysCc() ?? Promise.resolve([]),
+    request.sendMeACopy
+      ? (delivery.sending?.senderCopy(principal.userId) ?? Promise.resolve(null))
+      : Promise.resolve(null),
+  ]);
+  if (invoice === null) throw notFound("invoice");
+  if (template === null) throw notFound("invoice email template version");
+  if (author === null) {
+    throw new ApiError({
+      status: 403,
+      code: "principal_unavailable",
+      message: "The acting user is no longer available.",
+    });
+  }
+  const sender =
+    request.senderIdentityId === undefined
+      ? (senderList.find((candidate) => candidate.isDefault && candidate.archivedAt === null) ??
+        null)
+      : await configuration.getSenderIdentity(request.senderIdentityId);
+  if (sender === null || sender.evidence === null) {
+    throw new ApiError({
+      status: 409,
+      code: "sender_identity_missing",
+      message: "Configure and verify an organization sender before sending.",
+    });
+  }
+  try {
+    await delivery.mailer.assertAvailable(sender.id);
+  } catch (error) {
+    if (error instanceof SenderIdentityUnavailableError) {
+      throw new ApiError({ status: 409, code: error.code, message: error.message });
+    }
+    throw error;
+  }
+  // Copied on the actual email -- the same message the client reads -- rather
+  // than sent a second one: the sender sees exactly what went.
+  const self =
+    request.sendMeACopy && copy !== null && copy.email !== null
+      ? { name: copy.name, email: copy.email }
+      : null;
+  if (request.sendMeACopy && self === null) {
+    throw validationError([
+      {
+        field: "send_me_a_copy",
+        code: "no_address",
+        message: "You have no email address to be copied at.",
+      },
+    ]);
+  }
+  const cc = invoiceEmailCopies({ to: request.to, cc: request.cc, alwaysCc, sender: self });
+  if (request.to.length + cc.length > 100) {
+    throw validationError([
+      {
+        field: "cc",
+        code: "too_many_recipients",
+        message: "An invoice email can go to at most 100 addresses.",
+      },
+    ]);
+  }
+
+  // Minted before the body is composed, because the body is persisted at
+  // send time and the link has to be inside it. A deployment without a pay
+  // provider, or an invoice with nothing owed, gets no link rather than a
+  // failed send -- collecting online is an option, not a precondition.
+  const paymentUrl =
+    options.invoicePaymentUrl === undefined
+      ? null
+      : await options.invoicePaymentUrl(invoiceId).catch(() => null);
+  const attached = await pdfAttached(invoiceId);
+  let composed: { subject: string; text: string };
+  try {
+    composed = composeInvoiceEmail({
+      invoice,
+      subjectTemplate: request.subject ?? template.subjectTemplate,
+      messageTemplate: request.message ?? template.textTemplate,
+      paymentUrl,
+      pdfAttached: attached,
+    });
+  } catch (error) {
+    if (error instanceof EmailTemplateVariableError) {
+      const inSubject = (request.subject ?? template.subjectTemplate).includes(`%${error.variable}%`);
+      throw validationError([
+        { field: inSubject ? "subject" : "message", code: error.code, message: error.message },
+      ]);
+    }
+    throw error;
+  }
+  // A header is one line. A subject that came out blank, or carries a line
+  // break a variable brought in, would be refused by the mailer after the
+  // invoice was marked sent; it is refused here, before anything is.
+  if (composed.subject === "" || composed.subject.length > 998 || /[\r\n]/u.test(composed.subject)) {
+    throw validationError([
+      {
+        field: "subject",
+        code: "invalid_subject",
+        message: "The subject must come out as one line of 1 to 998 characters.",
+      },
+    ]);
+  }
+  return {
+    invoice,
+    template: { version: template.version },
+    sender: {
+      id: sender.id,
+      version: sender.version,
+      evidenceVersion: sender.evidence.version,
+      displayName: sender.displayName,
+      email: sender.email,
+      replyToEmail: sender.replyToEmail,
+    },
+    author,
+    to: request.to,
+    cc,
+    senderCopied: self !== null && cc.some(({ email }) => email === self.email),
+    subject: composed.subject,
+    text: composed.text,
+    pdfAttached: attached,
+  };
+};
+
+const addressData = (people: readonly { name: string; email: string }[]) =>
+  people.map(({ name, email }) => ({ name, email }));
+
+/** How many preview emails one invoice may send in an hour. */
+const previewEmailsPerHour = 5;
 
 const installInvoiceDelivery = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   options: ResolvedMoneyResourceRouteOptions,
 ): void => {
+  const documents = () => options.invoiceDelivery?.documents;
+
   api.post("/invoices/:id/deliveries", async (context) => {
     const principal = requireWrite(context);
     const invoiceId = resourceId(context.req.param("id")!, "invoice");
     const commandId = idempotencyKey(context);
     const body = await readObjectBody(context);
-    const errors = unknownFieldErrors(
-      body,
-      new Set([
-        "expected_version",
-        "recipients",
-        "sender_identity_id",
-        "template_version",
-        "confirmed",
-      ]),
-    );
-    const version = expectedVersion(body, errors);
-    const recipients = parseDeliveryRecipients(body, errors);
-    const senderIdentityId = integerValue(body, "sender_identity_id", errors, {
-      minimum: 1,
-    });
-    const templateVersion = integerValue(body, "template_version", errors, {
-      minimum: 1,
-    });
+    const errors = unknownFieldErrors(body, new Set([...deliveryFields, "confirmed"]));
+    const request = parseDeliveryRequest(body, errors);
     if (body.confirmed !== true) {
       errors.push({
         field: "confirmed",
@@ -2604,175 +3042,228 @@ const installInvoiceDelivery = <Bindings extends object>(
       });
     }
     assertFields(errors);
-    if (options.invoiceDelivery === undefined) {
-      throw new ApiError({
-        status: 503,
-        code: "email_delivery_unavailable",
-        message: "Invoice email delivery is not configured.",
-      });
-    }
-
-    const configuration = options.invoiceDelivery.configuration;
-    const [invoice, template, senderSnapshot, senderList] = await Promise.all([
-      options.service.getInvoiceDeliveryContext(invoiceId),
-      configuration.getTemplate("invoice", templateVersion ?? undefined),
-      options.service.senderSnapshot(principal.userId),
-      typeof senderIdentityId !== "number"
-        ? configuration.listSenderIdentities()
-        : Promise.resolve([]),
-    ]);
-    if (invoice === null) throw notFound("invoice");
-    if (template === null) throw notFound("invoice email template version");
-    if (senderSnapshot === null) {
-      throw new ApiError({
-        status: 403,
-        code: "principal_unavailable",
-        message: "The acting user is no longer available.",
-      });
-    }
-    const sender =
-      typeof senderIdentityId !== "number"
-        ? senderList.find((candidate) => candidate.isDefault && candidate.archivedAt === null) ?? null
-        : await configuration.getSenderIdentity(senderIdentityId);
-    if (sender === null || sender.evidence === null) {
-      throw new ApiError({
-        status: 409,
-        code: "sender_identity_missing",
-        message: "Configure and verify an organization sender before sending.",
-      });
-    }
-    try {
-      await options.invoiceDelivery.mailer.assertAvailable(sender.id);
-    } catch (error) {
-      if (error instanceof SenderIdentityUnavailableError) {
-        throw new ApiError({
-          status: 409,
-          code: error.code,
-          message: error.message,
-        });
-      }
-      throw error;
-    }
-
-    const issue = new Date(`${invoice.issueDate}T00:00:00.000Z`);
-    const lineItems: EmailTemplateBlockValue = invoiceLineItemsBlock(
-      invoice.lineItems,
-      {
-        currency: invoice.currency,
-        totalCents: invoice.amountCents,
-        discountCents: invoice.discountAmountCents,
-        taxCents: invoice.taxAmountCents + invoice.tax2AmountCents,
-      },
+    const composed = await composeDelivery(
+      options,
+      principal,
+      invoiceId,
+      request,
+      (id) => documents()?.attachesPdf(id) ?? Promise.resolve(false),
     );
-
-    // Minted before the body is composed, because the body is persisted at
-    // send time and the link has to be inside it. A deployment without Stripe,
-    // or an invoice with nothing owed, gets an empty string rather than a
-    // failed send -- collecting online is an option, not a precondition.
-    const paymentUrl = options.invoicePaymentUrl === undefined
-      ? ''
-      : ((await options.invoicePaymentUrl(invoiceId).catch(() => null)) ?? '')
-    const values = {
-      company_name: invoice.organizationName,
-      invoice_id: String(invoice.invoiceId),
-      invoice_issue_month_name: new Intl.DateTimeFormat("en-US", {
-        month: "long",
-        timeZone: "UTC",
-      }).format(issue),
-      invoice_issue_year: String(issue.getUTCFullYear()),
-      invoice_number: invoice.number,
-      invoice_subject: invoice.subject ?? "",
-      invoice_amount: new Intl.NumberFormat("en-US", {
-        style: "currency",
-        currency: invoice.currency,
-      }).format(invoice.amountCents / 100),
-      invoice_currency: invoice.currency,
-      invoice_issue_date: invoice.issueDate,
-      invoice_due_date: invoice.dueDate,
-      client_name: invoice.clientName,
-      // Always supplied, empty when there is no link. The interpolator throws
-      // on a variable it was promised and not given, so a deployment without
-      // Stripe must still hand it something -- and a template that references
-      // it then renders an empty line rather than failing the send.
-      invoice_payment_url: paymentUrl,
-      invoice_line_items: lineItems,
-    } as const;
-    const interpolation = { unknownVariable: template.unknownVariablePolicy } as const;
-    const subject = interpolateEmailTemplate(
-      "invoice",
-      template.subjectTemplate,
-      values,
-      interpolation,
-    );
-    const textBody = withLineItems(
-      interpolateEmailTemplate(
-        "invoice",
-        template.textTemplate,
-        values,
-        interpolation,
-      ),
-      template.textTemplate,
-      lineItems.text,
-      "\n\n",
-    );
-    const htmlBody =
-      template.htmlTemplate === null
-        ? null
-        : withLineItems(
-            interpolateEmailTemplate("invoice", template.htmlTemplate, values, {
-              ...interpolation,
-              output: "html",
-            }),
-            template.htmlTemplate,
-            lineItems.html,
-            "\n",
-          );
     const eventId = (await eventIds(invoiceId, commandId))[0];
-    const deliveryRecipients = await Promise.all(
-      recipients.map(async (recipient, index) => ({
-        ...recipient,
-        deliveryId: await stableId(`invoice-email-${index}`, invoiceId, commandId),
-      })),
-    );
     try {
       const result = await options.service.executeLifecycle({
         ...commonCommand(principal, invoiceId, commandId, options.clock()),
         command: "send",
-        expectedVersion: version!,
+        expectedVersion: request.version!,
         messageId: await stableId("invoice-message", invoiceId, commandId),
         eventId,
         message: {
-          sentBy: senderSnapshot.name,
-          sentByEmail: senderSnapshot.email,
-          sentFrom: sender.displayName,
-          sentFromEmail: sender.email,
-          recipients,
-          subject,
-          body: textBody,
-          attachPdf: false,
-          sendMeACopy: false,
+          sentBy: composed.author.name,
+          sentByEmail: composed.author.email,
+          sentFrom: composed.sender.displayName,
+          sentFromEmail: composed.sender.email,
+          recipients: request.to,
+          ...(composed.cc.length === 0 ? {} : { cc: composed.cc }),
+          subject: composed.subject,
+          body: composed.text,
+          attachPdf: composed.pdfAttached,
+          sendMeACopy: composed.senderCopied,
           thankYou: false,
           reminder: false,
           sendReminderOn: null,
         },
         delivery: {
-          templateVersion: template.version,
-          senderIdentityId: sender.id,
-          senderIdentityVersion: sender.version,
-          senderEvidenceVersion: sender.evidence.version,
-          fromName: sender.displayName,
-          fromEmail: sender.email,
-          replyToEmail: sender.replyToEmail,
-          subject,
-          textBody,
-          htmlBody,
-          recipients: deliveryRecipients,
+          templateVersion: composed.template.version,
+          senderIdentityId: composed.sender.id,
+          senderIdentityVersion: composed.sender.version,
+          senderEvidenceVersion: composed.sender.evidenceVersion,
+          fromName: composed.sender.displayName,
+          fromEmail: composed.sender.email,
+          replyToEmail: composed.sender.replyToEmail,
+          subject: composed.subject,
+          textBody: composed.text,
+          // One plain-text part, as Harvest's invoice email was: nothing can
+          // render differently in a client that prefers HTML.
+          htmlBody: null,
+          // The derivation the first recipient's delivery always had, so a
+          // send keeps the identity it would have had before copies existed.
+          deliveryId: await stableId("invoice-email-0", invoiceId, commandId),
+          recipients: [
+            ...request.to.map((person) => ({ ...person, role: "to" as const })),
+            ...composed.cc.map((person) => ({ ...person, role: "cc" as const })),
+          ],
         },
       });
       return context.json(await invoiceEnvelope(options.service, invoiceId, result), 202);
     } catch (error) {
       return translateMoneyError(error);
     }
+  });
+
+  /**
+   * What the Send dialog would send, without sending it: the same request, the
+   * same composition, and the attachments the entry would build -- with no
+   * message, no delivery, no event and nothing stored.
+   */
+  api.post("/invoices/:id/deliveries/preview", async (context) => {
+    const principal = requireWrite(context);
+    const invoiceId = resourceId(context.req.param("id")!, "invoice");
+    const body = await readObjectBody(context);
+    const errors = unknownFieldErrors(body, new Set([...deliveryFields, ...previewChoiceFields]));
+    const request = parseDeliveryRequest(body, errors, "preview");
+    const choices = parseAttachmentChoices(body, errors);
+    assertFields(errors);
+    const port = documents();
+    const attachments =
+      port === undefined ? [] : await port.preview({ invoiceId, choices });
+    const composed = await composeDelivery(options, principal, invoiceId, request, async () =>
+      attachments.some(({ kind }) => kind === "invoice"),
+    );
+    return context.json(
+      {
+        data: {
+          invoice_id: invoiceId,
+          from: { name: composed.sender.displayName, email: composed.sender.email },
+          reply_to: composed.sender.replyToEmail,
+          to: addressData(composed.to),
+          cc: addressData(composed.cc),
+          send_me_a_copy: composed.senderCopied,
+          subject: composed.subject,
+          text: composed.text,
+          html: null,
+          attachments: attachments.map((attachment) => ({
+            kind: attachment.kind,
+            filename: attachment.filename,
+            content_type: attachment.contentType,
+            byte_size: attachment.byteSize,
+            appended: [...attachment.appended],
+            not_appended: attachment.notAppended,
+          })),
+        },
+        links: {
+          document: `/api/v1/invoices/${invoiceId}/deliveries/preview/document${
+            choices.append === undefined ? "" : `?append_pdfs=${String(choices.append)}`
+          }`,
+        },
+      },
+      200,
+    );
+  });
+
+  /**
+   * The invoice document a send would carry, stamped PREVIEW on every page, for
+   * the dialog's download link. Rendered on request and stored nowhere.
+   */
+  api.get("/invoices/:id/deliveries/preview/document", async (context) => {
+    requireWrite(context);
+    const invoiceId = resourceId(context.req.param("id")!, "invoice");
+    const appendQuery = context.req.query("append_pdfs");
+    if (appendQuery !== undefined && appendQuery !== "true" && appendQuery !== "false") {
+      throw validationError([
+        { field: "append_pdfs", code: "invalid_boolean", message: "append_pdfs must be true or false" },
+      ]);
+    }
+    const port = documents();
+    if (port === undefined) {
+      throw new ApiError({
+        status: 503,
+        code: "invoice_documents_unavailable",
+        message: "Invoice documents are not available in this deployment.",
+      });
+    }
+    const document = await port.previewDocument({
+      invoiceId,
+      choices: appendQuery === undefined ? {} : { append: appendQuery === "true" },
+    });
+    if (document === null) throw notFound("invoice");
+    return new Response(document.bytes as BodyInit, {
+      status: 200,
+      headers: {
+        "content-type": "application/pdf",
+        "content-length": String(document.bytes.byteLength),
+        "content-disposition": `attachment; filename="${document.filename.replace(/[^\x20-\x7e]|["\\]/gu, "_")}"`,
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+      },
+    });
+  });
+
+  /**
+   * The same email, stamped PREVIEW, to the person asking and nobody else --
+   * through the real mailer, so the attachments arrive as a client would get
+   * them. Not a send: no message, no delivery, no event, no reminder. Logged
+   * by the mailer as the preview it is, and limited per invoice per hour.
+   */
+  api.post("/invoices/:id/deliveries/preview/send", async (context) => {
+    const principal = requireWrite(context);
+    const invoiceId = resourceId(context.req.param("id")!, "invoice");
+    const body = await readObjectBody(context);
+    const errors = unknownFieldErrors(body, new Set([...deliveryFields, ...previewChoiceFields]));
+    const request = parseDeliveryRequest(body, errors, "preview");
+    const choices = parseAttachmentChoices(body, errors);
+    assertFields(errors);
+    const sending = options.invoiceDelivery?.sending;
+    if (options.invoiceDelivery === undefined || sending === undefined) {
+      throw new ApiError({
+        status: 503,
+        code: "email_delivery_unavailable",
+        message: "Invoice email delivery is not configured.",
+      });
+    }
+    const self = await sending.senderCopy(principal.userId);
+    if (self === null || self.email === null) {
+      throw new ApiError({
+        status: 409,
+        code: "no_address",
+        message: "You have no email address to send a preview to.",
+      });
+    }
+    const now = options.clock();
+    const since = new Date(Date.parse(now) - 3_600_000).toISOString();
+    if ((await sending.previewsSince(invoiceId, since)) >= previewEmailsPerHour) {
+      throw new ApiError({
+        status: 429,
+        code: "preview_rate_limited",
+        message: `An invoice can send ${previewEmailsPerHour} previews an hour. Try again later.`,
+      });
+    }
+    const port = documents();
+    const manifest = port === undefined ? [] : await port.preview({ invoiceId, choices });
+    const composed = await composeDelivery(options, principal, invoiceId, request, async () =>
+      manifest.some(({ kind }) => kind === "invoice"),
+    );
+    const stamped = invoiceEmailPreview({
+      subject: composed.subject,
+      text: composed.text,
+      to: composed.to,
+      cc: composed.cc,
+    });
+    const previewId = `${invoiceId}-${now.replace(/[^0-9]/gu, "")}-${crypto.randomUUID()}`;
+    const attachments =
+      port === undefined ? [] : await port.stagePreview({ invoiceId, previewId, choices });
+    const log = await options.invoiceDelivery.mailer.enqueue(
+      {
+        senderIdentityId: composed.sender.id,
+        to: [self.name === "" ? { email: self.email } : { email: self.email, name: self.name }],
+        template: `invoice_preview:${composed.template.version}`,
+        subject: stamped.subject,
+        text: stamped.text,
+        html: stamped.html,
+        related: { type: "invoice_preview", id: invoiceId },
+      },
+      ...(attachments.length === 0 ? [] : [attachments]),
+    );
+    return context.json(
+      {
+        data: {
+          invoice_id: invoiceId,
+          delivery_id: log.id,
+          to: [{ name: self.name, email: self.email }],
+          subject: stamped.subject,
+        },
+      },
+      202,
+    );
   });
 };
 
@@ -3511,9 +4002,21 @@ const parseRecurring = (
     "claim_ceiling_cents",
     "claim_scope",
     "cost_alert_basis_points",
+    "purchase_order",
   ]);
   const errors = unknownFieldErrors(body, allowed);
   const amountConfig = body.amount_config;
+  // Trimmed, and blank is none: a purchase order of spaces is a field
+  // somebody cleared, and "none" has one spelling.
+  const rawPurchaseOrder = Object.hasOwn(body, "purchase_order")
+    ? stringValue(body, "purchase_order", errors, { nullable: true, max: 1_000 })
+    : undefined;
+  const purchaseOrder =
+    rawPurchaseOrder === undefined
+      ? undefined
+      : rawPurchaseOrder === null || rawPurchaseOrder.trim() === ""
+        ? null
+        : rawPurchaseOrder.trim();
   if (!isJsonObject(amountConfig))
     errors.push({
       field: "amount_config",
@@ -3567,6 +4070,7 @@ const parseRecurring = (
     claimCeilingCents: value.claimCeilingCents,
     claimScope: value.claimScope,
     costAlertBasisPoints: value.costAlertBasisPoints,
+    ...(purchaseOrder === undefined ? {} : { purchaseOrder }),
     occurredAt: value.occurredAt,
   };
 };

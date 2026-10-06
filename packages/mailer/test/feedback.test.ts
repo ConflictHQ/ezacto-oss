@@ -11,6 +11,7 @@ const record = (overrides: Partial<EmailLogRecord> = {}): EmailLogRecord => ({
   from: { email: 'billing@example.test', name: 'Ezacto' },
   replyTo: [],
   to: [{ email: 'owner@example.test', name: 'Avery' }],
+  cc: [],
   template: 'invoice_sent',
   subject: 'Invoice #1042',
   provider: 'ses',

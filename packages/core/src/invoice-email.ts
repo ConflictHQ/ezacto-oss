@@ -1,7 +1,12 @@
 import {
   type EmailTemplateBlockValue,
+  type EmailTemplateVariableValues,
   escapeEmailHtml,
+  interpolateEmailTemplate,
 } from "./email-templates.js";
+import { invoiceDocumentMoney, type InvoicePaymentTerms } from "./invoice-document.js";
+import { invoicePaymentTermsLabel } from "./payment-terms.js";
+import { markupLines } from "./pdf-text.js";
 
 export interface InvoiceEmailLine {
   readonly kind: string;
@@ -209,4 +214,220 @@ export const invoiceLineItemsBlock = (
   ].join("");
 
   return { text, html };
+};
+
+/**
+ * Everything the invoice email is composed from, read as one snapshot of the
+ * invoice. The money is the header's own: `amountCents` is the total and
+ * `dueAmountCents` what is still owed, which is the figure the email leads
+ * with.
+ */
+export interface InvoiceEmailInvoice {
+  readonly invoiceId: number;
+  readonly number: string;
+  readonly subject: string | null;
+  readonly currency: string;
+  readonly amountCents: number;
+  readonly dueAmountCents: number;
+  readonly discountAmountCents: number;
+  readonly taxAmountCents: number;
+  readonly tax2AmountCents: number;
+  readonly issueDate: string;
+  readonly dueDate: string;
+  readonly paymentTerms: InvoicePaymentTerms;
+  readonly purchaseOrder: string | null;
+  readonly notes: string | null;
+  readonly organizationName: string;
+  readonly clientName: string;
+  readonly lineItems: readonly InvoiceEmailLine[];
+}
+
+const presentText = (value: string | null): string | null =>
+  value === null || value.trim() === "" ? null : value.trim();
+
+/**
+ * The variables an invoice email's subject and message can name, for one
+ * invoice. Every one is supplied, empty where the invoice has no value: the
+ * interpolator refuses a variable it was promised and not given, and a message
+ * that mentions the purchase order of an invoice without one should read an
+ * empty word, not fail the send.
+ */
+export const invoiceEmailValues = (
+  invoice: InvoiceEmailInvoice,
+  paymentUrl: string | null,
+): EmailTemplateVariableValues => {
+  const issue = new Date(`${invoice.issueDate}T00:00:00.000Z`);
+  return {
+    company_name: invoice.organizationName,
+    invoice_id: String(invoice.invoiceId),
+    invoice_issue_month_name: new Intl.DateTimeFormat("en-US", {
+      month: "long",
+      timeZone: "UTC",
+    }).format(issue),
+    invoice_issue_year: String(issue.getUTCFullYear()),
+    invoice_number: invoice.number,
+    invoice_subject: invoice.subject ?? "",
+    invoice_amount: money(invoice.amountCents, invoice.currency),
+    invoice_currency: invoice.currency,
+    invoice_issue_date: invoice.issueDate,
+    invoice_due_date: invoice.dueDate,
+    client_name: invoice.clientName,
+    invoice_purchase_order: presentText(invoice.purchaseOrder) ?? "",
+    invoice_payment_terms: invoicePaymentTermsLabel(invoice.paymentTerms) ?? "",
+    invoice_payment_url: paymentUrl ?? "",
+    invoice_line_items: invoiceLineItemsBlock(invoice.lineItems, {
+      currency: invoice.currency,
+      totalCents: invoice.amountCents,
+      discountCents: invoice.discountAmountCents,
+      taxCents: invoice.taxAmountCents + invoice.tax2AmountCents,
+    }),
+  };
+};
+
+/** Harvest's rule, exactly as its invoice email drew it. */
+const rule = "-".repeat(45);
+
+/**
+ * Notes are written in Harvest's markup -- `*bold*` and `_italic_` -- for the
+ * PDF, which can set both. A plain-text email cannot, so the marks are taken
+ * off by the same parser the PDF uses: a span the document sets in bold reads
+ * as its words here, and a stray `*` the document prints is printed here too.
+ */
+export const invoiceNotesPlainText = (notes: string): string =>
+  markupLines(notes)
+    .map((runs) => runs.map((run) => run.text).join(""))
+    .join("\n")
+    .trim();
+
+/**
+ * The body of the invoice email, as Harvest wrote it (the Send dialog's message
+ * first, then its invoice summary).
+ *
+ * Generated rather than templated. The block below the message is the same
+ * facts the invoice document prints, in Harvest's order and Harvest's words,
+ * and a template an operator has to maintain to say them is a template that
+ * drifts from the document it is sent with. What a person writes is the
+ * message above it, typed when the invoice goes.
+ *
+ * Plain text only, as Harvest's was: one part means nothing can render
+ * differently in a client that prefers HTML.
+ */
+export const invoiceEmailBody = (
+  input: Readonly<{
+    /** The personal message, already interpolated. Blank leaves it out. */
+    message: string;
+    invoice: InvoiceEmailInvoice;
+    /** Where the client views and pays this invoice, if anywhere. */
+    viewUrl: string | null;
+    /** Whether the invoice PDF goes with this email. */
+    pdfAttached: boolean;
+  }>,
+): string => {
+  const { invoice } = input;
+  const message = input.message.replace(/\s+$/u, "");
+  const terms = invoicePaymentTermsLabel(invoice.paymentTerms);
+  const purchaseOrder = presentText(invoice.purchaseOrder);
+  const notes = presentText(invoice.notes);
+  const viewUrl = presentText(input.viewUrl);
+  const sections: string[][] = [
+    ...(message.trim() === "" ? [] : [[message]]),
+    [
+      `Amount Due: ${invoiceDocumentMoney(invoice.dueAmountCents, invoice.currency)}`,
+      // Only where there is somewhere to go. A "View invoice" with nothing
+      // under it is a link the client reads as broken.
+      ...(viewUrl === null ? [] : ["View invoice", viewUrl]),
+    ],
+    [
+      rule,
+      "Invoice Summary",
+      rule,
+      `Invoice ID: ${invoice.number}`,
+      `Issue date: ${invoice.issueDate}`,
+      `Client: ${oneLine(invoice.clientName)}`,
+      ...(purchaseOrder === null ? [] : [`P.O. Number: ${oneLine(purchaseOrder)}`]),
+      `Amount: ${invoiceDocumentMoney(invoice.amountCents, invoice.currency)}`,
+      `Due: ${invoice.dueDate}${terms === null ? "" : ` (${terms})`}`,
+    ],
+    // The bank and wire details live in the notes, and Harvest sent them under
+    // their own heading. An invoice with no notes has no heading to print.
+    ...(notes === null
+      ? []
+      : [[rule, "Payment Information", rule, invoiceNotesPlainText(notes)]]),
+    // Said only when it is true: the sentence is a promise about the
+    // attachments, and a client told a document is attached looks for it.
+    ...(input.pdfAttached ? [["The detailed invoice is attached as a PDF."]] : []),
+    ["Thank you!"],
+  ];
+  return sections.map((lines) => lines.join("\n")).join("\n\n");
+};
+
+/**
+ * The subject and body of one invoice email, from what the Send dialog says.
+ *
+ * Both are interpolated with the invoice's variables, and an unknown variable
+ * is refused rather than sent: a token the client reads as `%invoice_numbr%`
+ * is a typo nobody sees until it has gone.
+ */
+export const composeInvoiceEmail = (
+  input: Readonly<{
+    invoice: InvoiceEmailInvoice;
+    subjectTemplate: string;
+    messageTemplate: string;
+    paymentUrl: string | null;
+    pdfAttached: boolean;
+  }>,
+): { readonly subject: string; readonly text: string } => {
+  const values = invoiceEmailValues(input.invoice, input.paymentUrl);
+  const subject = interpolateEmailTemplate("invoice", input.subjectTemplate, values).trim();
+  const message = interpolateEmailTemplate("invoice", input.messageTemplate, values);
+  return {
+    subject,
+    text: invoiceEmailBody({
+      message,
+      invoice: input.invoice,
+      viewUrl: input.paymentUrl,
+      pdfAttached: input.pdfAttached,
+    }),
+  };
+};
+
+const addressList = (people: readonly { readonly name: string; readonly email: string }[]): string =>
+  people.length === 0
+    ? "nobody"
+    : people
+        .map((person) => (person.name.trim() === "" ? person.email : `${oneLine(person.name)} <${person.email}>`))
+        .join(", ");
+
+/**
+ * The invoice email, stamped as a preview for the person about to send it.
+ *
+ * The same subject and body the client would get -- composed by the same code
+ * -- with a stamp no one can mistake: "[PREVIEW]" ahead of the subject, a
+ * banner above the body saying it was not sent to the client and naming who it
+ * would go to, in both parts. The HTML part exists only to carry the banner at
+ * a size a skimming eye stops on; under it is the plain-text body the client
+ * would read, unchanged.
+ */
+export const invoiceEmailPreview = (
+  input: Readonly<{
+    subject: string;
+    text: string;
+    to: readonly { readonly name: string; readonly email: string }[];
+    cc: readonly { readonly name: string; readonly email: string }[];
+  }>,
+): { readonly subject: string; readonly text: string; readonly html: string } => {
+  const audience = `This email would go to: To ${addressList(input.to)}; Cc ${addressList(input.cc)}`;
+  const banner = "==== PREVIEW ====";
+  return {
+    subject: `[PREVIEW] ${input.subject}`,
+    text: [banner, "Not sent to the client.", audience, banner, "", input.text].join("\n"),
+    html: [
+      '<div style="margin:0 0 24px;padding:20px 24px;border:4px solid #B42318;background:#FEF3F2;color:#B42318;font-family:Arial,Helvetica,sans-serif">',
+      '<div style="font-size:44px;line-height:1.1;font-weight:800;letter-spacing:6px">PREVIEW</div>',
+      '<div style="margin-top:8px;font-size:16px;font-weight:700">Not sent to the client.</div>',
+      `<div style="margin-top:4px;font-size:14px">${escapeEmailHtml(audience)}</div>`,
+      "</div>",
+      `<pre style="white-space:pre-wrap;font-family:inherit;font-size:14px;margin:0">${escapeEmailHtml(input.text)}</pre>`,
+    ].join(""),
+  };
 };

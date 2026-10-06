@@ -22,6 +22,7 @@ interface EmailLogRow {
   fromJson: string | null
   replyToJson: string | null
   toJson: string
+  ccJson: string | null
   template: string
   subject: string
   provider: string | null
@@ -50,7 +51,7 @@ const assertCanonicalTimestamp = (value: string): void => {
 }
 
 const columns = `id, from_json AS fromJson, reply_to_json AS replyToJson,
-  to_json AS toJson, template, subject, provider,
+  to_json AS toJson, cc_json AS ccJson, template, subject, provider,
   provider_message_id AS providerMessageId,
   provider_request_id AS providerRequestId, provider_latency_ms AS providerLatencyMs,
   status, related_type AS relatedType,
@@ -61,18 +62,20 @@ const columns = `id, from_json AS fromJson, reply_to_json AS replyToJson,
 const rowRecord = (row: EmailLogRow | null): EmailLogRecord => {
   if (row === null) throw new Error('email delivery state transition did not match a queued log')
   let recipients: unknown
+  let copied: unknown
   let from: unknown
   let replyTo: unknown
   try {
     recipients = JSON.parse(row.toJson)
+    copied = row.ccJson === null ? [] : JSON.parse(row.ccJson)
     from = row.fromJson === null ? null : JSON.parse(row.fromJson)
     replyTo = row.replyToJson === null ? [] : JSON.parse(row.replyToJson)
   } catch {
     throw new Error('email log contains malformed recipients')
   }
-  if (
-    !Array.isArray(recipients) ||
-    !recipients.every(
+  const recipientList = (value: unknown): value is EmailRecipient[] =>
+    Array.isArray(value) &&
+    value.every(
       (recipient) =>
         typeof recipient === 'object' &&
         recipient !== null &&
@@ -80,7 +83,7 @@ const rowRecord = (row: EmailLogRow | null): EmailLogRecord => {
         ((recipient as { name?: unknown }).name === undefined ||
           typeof (recipient as { name?: unknown }).name === 'string'),
     )
-  ) {
+  if (!recipientList(recipients) || !recipientList(copied)) {
     throw new Error('email log contains malformed recipients')
   }
   const mailbox = (value: unknown): value is EmailSender =>
@@ -96,7 +99,8 @@ const rowRecord = (row: EmailLogRow | null): EmailLogRecord => {
     id: row.id,
     from,
     replyTo: replyTo as EmailRecipient[],
-    to: recipients as EmailRecipient[],
+    to: recipients,
+    cc: copied,
     template: row.template,
     subject: row.subject,
     provider: row.provider,
@@ -130,14 +134,17 @@ const createStore = (
       return rowRecord(
         await database.first<EmailLogRow>(
           `INSERT INTO email_log (
-             from_json, reply_to_json, to_json, template, subject,
+             from_json, reply_to_json, to_json, cc_json, template, subject,
              related_type, related_id, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING ${columns}`,
           [
             JSON.stringify(message.from),
             message.replyTo === undefined ? null : JSON.stringify(message.replyTo),
             JSON.stringify(message.to),
+            message.cc === undefined || message.cc.length === 0
+              ? null
+              : JSON.stringify(message.cc),
             message.template,
             message.subject,
             message.related?.type ?? null,
