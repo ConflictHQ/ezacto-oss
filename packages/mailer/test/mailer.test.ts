@@ -6,6 +6,7 @@ import {
   EmailProviderTerminalError,
   EmailQueueUnavailableError,
   InProcessEmailQueue,
+  createDeploymentSenderQueuedMailer,
   createQueuedMailer,
   createSenderBoundQueuedMailer,
   processQueuedEmail,
@@ -31,6 +32,7 @@ const record = (overrides: Partial<EmailLogRecord> = {}): EmailLogRecord => ({
   from: { email: 'billing@example.test', name: 'Ezacto' },
   replyTo: [],
   to: [{ email: 'owner@example.test', name: 'Avery' }],
+  cc: [],
   template: 'verify_email',
   subject: 'Verify your ezacto email',
   provider: null,
@@ -852,3 +854,240 @@ describe('attachments through the queue', () => {
     expect(sent[0]?.attachments).toBeUndefined();
   });
 });
+
+/**
+ * One invoice email can go to the person who pays it with others copied on the
+ * same message. Cc is checked where To is, and it has to survive every place
+ * that rebuilds a message on the way to a provider: a rebuild that forgot it
+ * would still deliver the invoice to accounts payable and quietly drop everyone
+ * who was copied.
+ */
+describe('cc', () => {
+  const copied = [
+    { email: '  Controller@Example.test ', name: ' Vale, Rowan ' },
+    { email: 'FOUNDER@example.test' },
+  ]
+  const normalizedCopies = [
+    { email: 'controller@example.test', name: 'Vale, Rowan' },
+    { email: 'founder@example.test' },
+  ]
+  const identity: ResolvedSenderIdentity = {
+    id: 44,
+    version: 3,
+    email: 'billing@example.test',
+    displayName: 'Billing',
+    replyToEmail: null,
+    provider: 'ses',
+    providerIdentity: 'example.test',
+    isDefault: true,
+    archivedAt: null,
+    evidence: {
+      version: 5,
+      source: 'provider_api',
+      identityKind: 'domain',
+      verificationStatus: 'verified',
+      dkimStatus: 'verified',
+      mailFromDomain: null,
+      mailFromStatus: 'not_configured',
+      observedAt: '2026-09-02T12:00:00.000Z',
+    },
+  }
+  const queue = () => {
+    const jobs: QueuedEmailJob[] = []
+    return { jobs, send: vi.fn(async (sent: QueuedEmailJob) => void jobs.push(sent)) }
+  }
+
+  it('[unit] normalizes cc as it does to and carries it onto the queued job', async () => {
+    const log = store()
+    const queued = queue()
+    await createQueuedMailer(log, queued).enqueue({ ...message, cc: copied })
+    const expected = {
+      ...message,
+      to: [{ email: 'owner@example.test', name: 'Avery' }],
+      cc: normalizedCopies,
+    }
+    expect(log.createQueued).toHaveBeenCalledWith(expected)
+    expect(queued.jobs).toEqual([{ schemaVersion: 1, deliveryId: 7, message: expected }])
+  })
+
+  it('[unit] leaves cc off the copy when the message has none', async () => {
+    const queued = queue()
+    await createQueuedMailer(store(), queued).enqueue(message)
+    expect('cc' in queued.jobs[0]!.message).toBe(false)
+  })
+
+  it('[unit] accepts exactly 100 recipients across to and cc', async () => {
+    const queued = queue()
+    const cc = Array.from({ length: 99 }, (_, index) => ({
+      email: `copy-${String(index)}@example.test`,
+    }))
+    await createQueuedMailer(store(), queued).enqueue({ ...message, cc })
+    expect(queued.jobs[0]!.message.cc).toEqual(cc)
+  })
+
+  it.each([
+    [
+      'a cc that is not a list',
+      'controller@example.test',
+      'cc must be a list of at least 1 recipient when present',
+    ],
+    ['an empty cc', [], 'cc must be a list of at least 1 recipient when present'],
+    [
+      'a cc address listed twice, in any case',
+      [{ email: 'controller@example.test' }, { email: 'Controller@EXAMPLE.test' }],
+      'cc must not list a recipient more than once',
+    ],
+    [
+      'a cc address already in to, in any case',
+      [{ email: 'OWNER@example.test' }],
+      'cc must not repeat a recipient already in to',
+    ],
+    [
+      'more than 100 recipients across to and cc',
+      Array.from({ length: 100 }, (_, index) => ({
+        email: `copy-${String(index)}@example.test`,
+      })),
+      'to and cc must together contain at most 100 recipients',
+    ],
+    ['a malformed cc address', [{ email: 'controller.example.test' }], 'cc email is invalid'],
+    [
+      'a header break in a cc name',
+      [{ email: 'controller@example.test', name: 'Rowan\r\nBcc: someone@example.test' }],
+      'cc name must not contain control characters',
+    ],
+  ])('[security] refuses %s before the durable log is written', async (_case, cc, refusal) => {
+    const log = store()
+    const queued = queue()
+    const failure: unknown = await createQueuedMailer(log, queued)
+      .enqueue({ ...message, cc } as never)
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(RangeError)
+    expect((failure as RangeError).message).toBe(refusal)
+    expect(log.createQueued).not.toHaveBeenCalled()
+    expect(queued.send).not.toHaveBeenCalled()
+  })
+
+  it('[unit] carries cc through the sender-bound and deployment-sender rebuilds', async () => {
+    const organization = { enqueue: vi.fn(async () => record()) }
+    await createSenderBoundQueuedMailer(
+      { resolveSenderIdentity: vi.fn(async () => identity) },
+      organization,
+    ).enqueue({
+      to: message.to,
+      cc: copied,
+      template: message.template,
+      subject: message.subject,
+      text: message.text,
+    })
+    expect(organization.enqueue).toHaveBeenCalledWith({
+      from: { email: 'billing@example.test', name: 'Billing' },
+      to: message.to,
+      cc: copied,
+      template: message.template,
+      subject: message.subject,
+      text: message.text,
+    })
+
+    const deployment = { enqueue: vi.fn(async () => record()) }
+    await createDeploymentSenderQueuedMailer('Ezacto <notify@example.test>', deployment).enqueue({
+      to: message.to,
+      cc: copied,
+      template: message.template,
+      subject: message.subject,
+      text: message.text,
+    })
+    expect(deployment.enqueue).toHaveBeenCalledWith({
+      from: { email: 'notify@example.test', name: 'Ezacto' },
+      to: message.to,
+      cc: copied,
+      template: message.template,
+      subject: message.subject,
+      text: message.text,
+    })
+  })
+
+  it('[unit] enqueuePersisted carries cc onto the queued job beside its attachments', async () => {
+    const log = store()
+    const queued = queue()
+    const mailer = createSenderBoundQueuedMailer(
+      { resolveSenderIdentity: vi.fn(async () => identity) },
+      createQueuedMailer(log, queued),
+      'ses',
+    )
+    const document = {
+      key: 'invoices/1315/invoice-1315.pdf',
+      filename: 'invoice-1315.pdf',
+      contentType: 'application/pdf',
+    }
+    await mailer.enqueuePersisted!(
+      701,
+      {
+        senderIdentityId: 44,
+        senderIdentityVersion: 3,
+        senderEvidenceVersion: 5,
+        from: { email: 'billing@example.test', name: 'Billing' },
+      },
+      {
+        to: [{ email: 'payables@example.test', name: 'Accounts Payable' }],
+        cc: copied,
+        template: 'invoice:1',
+        subject: 'Invoice INV-1315',
+        text: 'Invoice total $12.34',
+        related: { type: 'invoice_message', id: 100 },
+      },
+      [document],
+    )
+    expect(log.createQueued).not.toHaveBeenCalled()
+    expect(queued.jobs).toEqual([
+      {
+        schemaVersion: 1,
+        deliveryId: 701,
+        message: {
+          from: { email: 'billing@example.test', name: 'Billing' },
+          to: [{ email: 'payables@example.test', name: 'Accounts Payable' }],
+          cc: normalizedCopies,
+          template: 'invoice:1',
+          subject: 'Invoice INV-1315',
+          text: 'Invoice total $12.34',
+          related: { type: 'invoice_message', id: 100 },
+        },
+        attachments: [document],
+      },
+    ])
+  })
+
+  it('[unit] hands cc from the queued job to the provider', async () => {
+    const sent: EmailMessage[] = []
+    const provider: HttpEmailProvider = {
+      name: 'test-http',
+      send: vi.fn(async (delivered: EmailMessage) => {
+        sent.push(delivered)
+        return { messageId: 'provider-7' }
+      }),
+    }
+    await expect(
+      processQueuedEmail({ ...job, message: { ...message, cc: copied } }, 1, store(), provider),
+    ).resolves.toEqual({ action: 'ack' })
+    expect(sent.map((delivered) => delivered.cc)).toEqual([normalizedCopies])
+  })
+
+  it('[security] refuses a queued job whose cc repeats a to address before any attempt', async () => {
+    // A job is checked on the way off the queue as well as on the way on, so
+    // one that names the payer twice never reaches a provider.
+    const log = store()
+    const provider: HttpEmailProvider = {
+      name: 'test-http',
+      send: vi.fn(async () => ({ messageId: 'must-not-send' })),
+    }
+    await expect(
+      processQueuedEmail(
+        { ...job, message: { ...message, cc: [{ email: 'owner@EXAMPLE.test' }] } },
+        1,
+        log,
+        provider,
+      ),
+    ).rejects.toThrow('cc must not repeat a recipient already in to')
+    expect(log.claimAttempt).not.toHaveBeenCalled()
+    expect(provider.send).not.toHaveBeenCalled()
+  })
+})

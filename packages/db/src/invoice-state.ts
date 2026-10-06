@@ -177,6 +177,8 @@ export interface ExecuteInvoiceLifecycleCommand {
     sentFrom: string | null
     sentFromEmail: string | null
     recipients: readonly Readonly<{ name: string; email: string }>[]
+    /** Who the email was copied to. Absent is nobody. */
+    cc?: readonly Readonly<{ name: string; email: string }>[]
     subject: string | null
     body: string | null
     attachPdf: boolean
@@ -197,10 +199,16 @@ export interface ExecuteInvoiceLifecycleCommand {
     subject: string
     textBody: string
     htmlBody: string | null
+    /**
+     * The one email this send is. Every recipient is a header of it -- To or
+     * Cc -- so a client's accounts payable and the people copied on it read the
+     * same message and can answer all of it.
+     */
+    deliveryId: number
     recipients: readonly Readonly<{
-      deliveryId: number
       name: string
       email: string
+      role: 'to' | 'cc'
     }>[]
   }>
   authorize: InvoiceCommandAuthorization
@@ -584,7 +592,11 @@ const validateInput = (input: ExecuteInvoiceLifecycleCommand): number | null => 
     if (!Array.isArray(input.message.recipients) || input.message.recipients.length > 1_000) {
       invalidInput('message.recipients must be a bounded array')
     }
-    for (const recipient of input.message.recipients) {
+    const cc = input.message.cc ?? []
+    if (!Array.isArray(cc) || cc.length > 1_000) {
+      invalidInput('message.cc must be a bounded array')
+    }
+    for (const recipient of [...input.message.recipients, ...cc]) {
       if (
         typeof recipient !== 'object' ||
         recipient === null ||
@@ -622,11 +634,12 @@ const validateInput = (input: ExecuteInvoiceLifecycleCommand): number | null => 
     const delivery = input.delivery
     if (
       input.command !== 'send' || input.actor.type !== 'user' || input.actor.id === null ||
-      input.message === undefined || input.message.attachPdf
+      input.message === undefined
     ) {
-      invalidInput('delivery requires a send message without a claimed PDF attachment')
+      invalidInput('delivery requires a user send message')
     }
     for (const [field, value] of [
+      ['deliveryId', delivery.deliveryId],
       ['templateVersion', delivery.templateVersion],
       ['senderIdentityId', delivery.senderIdentityId],
       ['senderEvidenceVersion', delivery.senderEvidenceVersion],
@@ -644,17 +657,18 @@ const validateInput = (input: ExecuteInvoiceLifecycleCommand): number | null => 
       (delivery.replyToEmail !== null &&
         (delivery.replyToEmail.length < 3 || delivery.replyToEmail.length > 254))
     ) invalidInput('delivery contains invalid bounded message fields')
+    // One email carries every recipient, so the bound is the provider's for a
+    // single message, and an address sits in one header at most.
     if (
       !Array.isArray(delivery.recipients) || delivery.recipients.length < 1 ||
-      delivery.recipients.length > 1_000 ||
-      new Set(delivery.recipients.map(({ deliveryId }) => deliveryId)).size !==
-        delivery.recipients.length ||
+      delivery.recipients.length > 100 ||
+      !delivery.recipients.some(({ role }) => role === 'to') ||
       new Set(delivery.recipients.map(({ email }) => email)).size !==
         delivery.recipients.length
-    ) invalidInput('delivery recipients must be a non-empty unique bounded array')
+    ) invalidInput('delivery recipients must be a unique bounded array with a To recipient')
     delivery.recipients.forEach((recipient) => {
-      assertPositiveSafeInteger(recipient.deliveryId, 'delivery recipient id')
       if (
+        (recipient.role !== 'to' && recipient.role !== 'cc') ||
         recipient.name.length > 200 || recipient.email.length < 3 ||
         recipient.email.length > 254 || recipient.email !== recipient.email.trim().toLowerCase()
       ) invalidInput('delivery recipient is invalid')
@@ -1417,10 +1431,10 @@ const mutationStatements = (
     {
       text: `INSERT INTO invoice_messages (
           id, invoice_id, sent_by, sent_by_email, sent_from, sent_from_email,
-          recipients, subject, body, attach_pdf, send_me_a_copy, thank_you,
+          recipients, cc_recipients, subject, body, attach_pdf, send_me_a_copy, thank_you,
           reminder, send_reminder_on, event_type, created_at, updated_at
         )
-        SELECT ?, invoice.id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        SELECT ?, invoice.id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         FROM invoices invoice
         WHERE invoice.id = ?
           AND (? <> 'invoice.view' OR invoice.state IN ('open','paid','closed'))
@@ -1436,6 +1450,7 @@ const mutationStatements = (
         message.sentFrom,
         message.sentFromEmail,
         JSON.stringify(message.recipients),
+        JSON.stringify(message.cc ?? []),
         message.subject,
         message.body,
         message.attachPdf ? 1 : 0,
@@ -1588,51 +1603,50 @@ const mutationStatements = (
         delivery.senderIdentityVersion,
       ],
     })
+    const mailbox = (person: { name: string; email: string }) =>
+      person.name === '' ? { email: person.email } : { email: person.email, name: person.name }
+    const to = delivery.recipients.filter(({ role }) => role === 'to').map(mailbox)
+    const cc = delivery.recipients.filter(({ role }) => role === 'cc').map(mailbox)
+    statements.push({
+      text: `INSERT INTO email_log (
+          id, from_json, reply_to_json, to_json, cc_json, template, subject,
+          related_type, related_id, created_at, updated_at
+        )
+        SELECT ?, ?, ?, ?, ?, ?, ?, 'invoice_message', ?, ?, ?
+        WHERE EXISTS (
+          SELECT 1 FROM invoice_email_intents WHERE invoice_message_id = ?
+        )`,
+      params: [
+        delivery.deliveryId,
+        JSON.stringify({ email: delivery.fromEmail, name: delivery.fromName }),
+        delivery.replyToEmail === null
+          ? null
+          : JSON.stringify([{ email: delivery.replyToEmail }]),
+        JSON.stringify(to),
+        cc.length === 0 ? null : JSON.stringify(cc),
+        `invoice:${delivery.templateVersion}`,
+        delivery.subject,
+        input.messageId,
+        input.occurredAt,
+        input.occurredAt,
+        input.messageId,
+      ],
+    })
     delivery.recipients.forEach((recipient, recipientIndex) => {
-      const toJson = JSON.stringify([
-        recipient.name === ''
-          ? { email: recipient.email }
-          : { email: recipient.email, name: recipient.name },
-      ])
-      statements.push(
-        {
-          text: `INSERT INTO email_log (
-              id, from_json, reply_to_json, to_json, template, subject,
-              related_type, related_id, created_at, updated_at
-            )
-            SELECT ?, ?, ?, ?, ?, ?, 'invoice_message', ?, ?, ?
-            WHERE EXISTS (
-              SELECT 1 FROM invoice_email_intents WHERE invoice_message_id = ?
-            )`,
-          params: [
-            recipient.deliveryId,
-            JSON.stringify({ email: delivery.fromEmail, name: delivery.fromName }),
-            delivery.replyToEmail === null
-              ? null
-              : JSON.stringify([{ email: delivery.replyToEmail }]),
-            toJson,
-            `invoice:${delivery.templateVersion}`,
-            delivery.subject,
-            input.messageId,
-            input.occurredAt,
-            input.occurredAt,
-            input.messageId,
-          ],
-        },
-        {
-          text: `INSERT INTO invoice_email_recipients (
-              invoice_message_id, recipient_index, delivery_id, name, email, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?)`,
-          params: [
-            input.messageId,
-            recipientIndex,
-            recipient.deliveryId,
-            recipient.name,
-            recipient.email,
-            input.occurredAt,
-          ],
-        },
-      )
+      statements.push({
+        text: `INSERT INTO invoice_email_recipients (
+            invoice_message_id, recipient_index, delivery_id, role, name, email, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          input.messageId,
+          recipientIndex,
+          delivery.deliveryId,
+          recipient.role,
+          recipient.name,
+          recipient.email,
+          input.occurredAt,
+        ],
+      })
     })
   }
   statements.push(completionStatement(input, events.length))
@@ -1672,6 +1686,11 @@ export const executeInvoiceLifecycleCommand = async (
             // valid retry after the acting user's name or email changes; the
             // first successful command still persists the complete snapshot.
             recipients: input.message.recipients,
+            // Only when somebody was copied, so a command that copies nobody
+            // fingerprints exactly as it did before copies existed.
+            ...(input.message.cc === undefined || input.message.cc.length === 0
+              ? {}
+              : { cc: input.message.cc }),
             subject: input.message.subject,
             body: input.message.body,
             attach_pdf: input.message.attachPdf,
@@ -1690,7 +1709,16 @@ export const executeInvoiceLifecycleCommand = async (
             sender_identity_id: input.delivery.senderIdentityId,
             sender_identity_version: input.delivery.senderIdentityVersion,
             sender_evidence_version: input.delivery.senderEvidenceVersion,
-            recipients: input.delivery.recipients.map(({ name, email }) => ({ name, email })),
+            recipients: input.delivery.recipients
+              .filter(({ role }) => role === 'to')
+              .map(({ name, email }) => ({ name, email })),
+            ...(input.delivery.recipients.some(({ role }) => role === 'cc')
+              ? {
+                  cc: input.delivery.recipients
+                    .filter(({ role }) => role === 'cc')
+                    .map(({ name, email }) => ({ name, email })),
+                }
+              : {}),
           },
         }),
   })

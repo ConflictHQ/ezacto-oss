@@ -31,8 +31,38 @@ const definitions = [
   { collection: "projects", singular: "Project", parent: "projectId" },
 ] as const;
 
-export const attachmentContractOperations: readonly ApiContractOperation[] =
-  definitions.flatMap(({ collection, singular, parent }) => {
+const recurringFile = "/api/v1/recurring-invoices/:recurringInvoiceId/attachments/:attachmentId";
+
+/**
+ * A recurring definition's files go with every invoice it issues, until their
+ * `through` day; these say until when, and stop one going at all.
+ */
+const recurringStandingOperations: readonly ApiContractOperation[] = [
+  {
+    method: "patch",
+    path: recurringFile,
+    operationId: "setRecurringInvoiceAttachmentThrough",
+    summary: "Set the last issue date a recurring definition's file goes with",
+    tag: "attachments",
+    responseStatus: 200,
+    responseSchema: "AttachmentEnvelope",
+    requestSchema: "RecurringAttachmentThroughInput",
+    requestRequired: true,
+    parameters: [ownerPath("recurringInvoiceId"), ownerPath("attachmentId")],
+  },
+  {
+    method: "delete",
+    path: recurringFile,
+    operationId: "removeRecurringInvoiceAttachment",
+    summary: "Stop a file going with the invoices a recurring definition issues",
+    tag: "attachments",
+    responseStatus: 204,
+    parameters: [ownerPath("recurringInvoiceId"), ownerPath("attachmentId")],
+  },
+];
+
+export const attachmentContractOperations: readonly ApiContractOperation[] = [
+  ...definitions.flatMap(({ collection, singular, parent }) => {
     const route = `/api/v1/${collection}/:${parent}/attachments`;
     const parentParameter = ownerPath(parent);
     return [
@@ -80,7 +110,9 @@ export const attachmentContractOperations: readonly ApiContractOperation[] =
         parameters: [parentParameter, ownerPath("attachmentId")],
       },
     ] satisfies ApiContractOperation[];
-  });
+  }),
+  ...recurringStandingOperations,
+];
 
 const stringSchema = { type: "string" } as const;
 const timestampSchema = { type: "string", format: "date-time" } as const;
@@ -114,7 +146,16 @@ export const attachmentContractSchemas = {
       uploaded_by_user_id: { anyOf: [positiveInteger, { type: "null" }] },
       created_at: timestampSchema,
       updated_at: timestampSchema,
+      // A recurring definition's file only: the last issue date it goes with,
+      // or null for every invoice the definition issues.
+      through: { anyOf: [{ type: "string", format: "date" }, { type: "null" }] },
     },
+    additionalProperties: false,
+  },
+  RecurringAttachmentThroughInput: {
+    type: "object",
+    required: ["through"],
+    properties: { through: { anyOf: [{ type: "string", format: "date" }, { type: "null" }] } },
     additionalProperties: false,
   },
   AttachmentEnvelope: {

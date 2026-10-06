@@ -13,13 +13,18 @@ type Capture = {
   server: Server
   url: string
   messages: string[]
+  /** Every RCPT TO the client sent, accepted or not: the envelope it asked for. */
+  recipients: string[]
 }
 
 const captures: Capture[] = []
 const temporaryDirectories: string[] = []
 
-const smtpCapture = async (rejectRecipient = false): Promise<Capture> => {
+const smtpCapture = async (
+  rejectRecipient: (address: string) => boolean = () => false,
+): Promise<Capture> => {
   const messages: string[] = []
+  const recipients: string[] = []
   const server = createServer((socket: Socket) => {
     socket.setEncoding('utf8')
     socket.write('220 capture.test ESMTP ready\r\n')
@@ -48,8 +53,10 @@ const smtpCapture = async (rejectRecipient = false): Promise<Capture> => {
         } else if (/^MAIL FROM:/iu.test(line)) {
           socket.write('250 sender accepted\r\n')
         } else if (/^RCPT TO:/iu.test(line)) {
+          const address = /<([^>]*)>/u.exec(line)?.[1] ?? ''
+          recipients.push(address)
           socket.write(
-            rejectRecipient
+            rejectRecipient(address)
               ? '550 recipient rejected\r\n'
               : '250 recipient accepted\r\n',
           )
@@ -73,6 +80,7 @@ const smtpCapture = async (rejectRecipient = false): Promise<Capture> => {
     server,
     url: `smtp://127.0.0.1:${address.port}`,
     messages,
+    recipients,
   }
   captures.push(capture)
   return capture
@@ -107,7 +115,7 @@ describe('SMTP mailer', () => {
     const address = http.address()
     if (address === null || typeof address === 'string') throw new Error('HTTP canary did not bind')
     const url = `http://127.0.0.1:${address.port}/canary`
-    captures.push({ server: http, url, messages: [] })
+    captures.push({ server: http, url, messages: [], recipients: [] })
     const read = vi.spyOn(fs, 'createReadStream')
     let legacyError: Error | null | undefined
     // Production does not currently install compile plugins. Exercise the
@@ -178,7 +186,7 @@ describe('SMTP mailer', () => {
   })
 
   it('[unit] reports permanent SMTP rejection instead of silent success', async () => {
-    const capture = await smtpCapture(true)
+    const capture = await smtpCapture(() => true)
     const mailer = new SmtpMailer({
       url: capture.url,
       from: 'billing@example.test',
@@ -211,5 +219,90 @@ describe('SMTP mailer', () => {
     ['smtp://smtp.example.test', 'bad\r\nBcc: victim@example.test'],
   ])('[security] rejects unsafe SMTP configuration', (url, from) => {
     expect(() => new SmtpMailer({ url, from })).toThrow()
+  })
+})
+
+describe('SMTP cc', () => {
+  const invoice = {
+    from: { email: 'billing@example.test' },
+    to: [{ email: 'payables@example.test' }],
+    cc: [
+      { email: 'controller@example.test', name: 'Vale, Rowan' },
+      { email: 'founder@example.test' },
+    ],
+    template: 'invoice:1',
+    subject: 'Invoice 1315',
+    text: 'Invoice total $12.34',
+  }
+  const options = () => ({
+    signal: new AbortController().signal,
+    idempotencyKey: 'ezacto-email-9',
+  })
+
+  it('[unit] delivers cc on the real SMTP path: header, envelope, and acceptance count', async () => {
+    const capture = await smtpCapture()
+    const mailer = new SmtpMailer({ url: capture.url, from: 'billing@example.test' })
+
+    // A server that accepted all three is a whole delivery. Counted against To
+    // alone, the same acceptance would have read as a partial one.
+    await expect(mailer.send(invoice, options())).resolves.toMatchObject({
+      messageId: '<ezacto-email-9@ezacto.invalid>',
+    })
+    expect(capture.recipients).toEqual([
+      'payables@example.test',
+      'controller@example.test',
+      'founder@example.test',
+    ])
+    expect(capture.messages).toHaveLength(1)
+    expect(capture.messages[0]).toContain(
+      'Cc: "Vale, Rowan" <controller@example.test>, founder@example.test\r\n',
+    )
+  })
+
+  it('[security] a refused Cc is a partial delivery, and terminal', async () => {
+    const capture = await smtpCapture((address) => address === 'controller@example.test')
+    const mailer = new SmtpMailer({ url: capture.url, from: 'billing@example.test' })
+
+    await expect(mailer.send(invoice, options())).rejects.toMatchObject({
+      name: 'EmailProviderTerminalError',
+      reason: 'smtp_rejected:PARTIAL',
+    })
+    // The message still went to everyone the server accepted, which is why
+    // this is not retried: a retry would send accounts payable a second copy.
+    expect(capture.messages).toHaveLength(1)
+  })
+
+  it('[unit] hands cc to nodemailer and needs every copied address among the accepted', async () => {
+    // Accepted for the To and silent about both copies: nothing was reported
+    // rejected or pending, so only the count shows that two recipients never
+    // got the message. Counted against To alone, this read as a success.
+    const sendMail = vi.fn(async () => ({
+      accepted: ['payables@example.test'],
+      rejected: [],
+      pending: [],
+      messageId: '<ezacto-email-9@ezacto.invalid>',
+    }))
+    const createTransport = (() => ({
+      sendMail,
+      close: () => undefined,
+    })) as unknown as typeof nodemailer.createTransport
+    const mailer = new SmtpMailer(
+      { url: 'smtp://smtp.example.test', from: 'billing@example.test' },
+      { createTransport },
+    )
+
+    await expect(mailer.send(invoice, options())).rejects.toMatchObject({
+      name: 'EmailProviderTerminalError',
+      reason: 'smtp_rejected:PARTIAL',
+    })
+    expect(sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: ['payables@example.test'],
+        cc: [
+          { address: 'controller@example.test', name: 'Vale, Rowan' },
+          'founder@example.test',
+        ],
+      }),
+    )
   })
 })

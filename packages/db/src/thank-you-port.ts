@@ -1,6 +1,7 @@
 import { composeThankYou, type ThankYouInvoice } from '@ezacto/core'
 import { sql } from 'drizzle-orm'
 import {
+  followUpHeaders,
   readThankYouRecipients,
   recordThankYouDelivery,
   resolveThankYouPolicy,
@@ -27,6 +28,7 @@ export interface ThankYouPortMessage {
   readonly fromEmail: string
   readonly replyToEmail: string | null
   readonly to: readonly { readonly name: string; readonly email: string }[]
+  readonly cc: readonly { readonly name: string; readonly email: string }[]
   readonly templateVersion: number
   readonly subject: string
   readonly textBody: string
@@ -148,6 +150,6 @@ export const createThankYouPort = (
     })
     if (outcome !== 'recorded') return null
 
-    return { deliveryId, to: recipients, ...composed }
+    return { deliveryId, ...followUpHeaders(recipients), ...composed }
   },
 })

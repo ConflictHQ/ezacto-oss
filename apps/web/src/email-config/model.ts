@@ -95,7 +95,8 @@ const kindLabels: Record<EmailTemplateKind, string> = {
  * editing it at all.
  */
 const kindPurposes: Record<EmailTemplateKind, string> = {
-  invoice: 'Sent to a client when an invoice goes out.',
+  invoice:
+    "The subject and message the Send dialog starts with when an invoice goes out. The invoice's summary is added below the message for you.",
   reminder: 'Sent to a client while an invoice is still outstanding.',
   thank_you: 'Sent to a client once an invoice is paid.',
   auth_email_verification: 'Sent to a person confirming their own address. Not client-facing.',

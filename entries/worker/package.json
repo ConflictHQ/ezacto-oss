@@ -22,7 +22,8 @@
     "@ezacto/integrations": "0.0.0",
     "@ezacto/mailer": "0.0.0",
     "@ezacto/web": "0.0.0",
-    "@sentry/cloudflare": "^10.74.0"
+    "@sentry/cloudflare": "^10.74.0",
+    "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260826.1",

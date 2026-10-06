@@ -312,3 +312,88 @@ describe("attachments", () => {
     ).rejects.toThrow(/cannot exceed 10 attachments/u);
   });
 });
+
+describe("cc", () => {
+  const copied = [
+    { email: "controller@example.test", name: "Vale, Rowan" },
+    { email: "founder@example.test" },
+    { email: "audit@example.test", name: "Audit Desk" },
+  ];
+  // The comma is the case that matters: unquoted, it would split one copied
+  // person into two recipients (#738).
+  const formatted = [
+    '"Vale, Rowan" <controller@example.test>',
+    "founder@example.test",
+    "Audit Desk <audit@example.test>",
+  ];
+  const capture = () => {
+    const requests: Request[] = [];
+    const provider = new MailgunMailer(config, {
+      monotonicNow: () => 0,
+      fetch: async (request) => {
+        requests.push(request.clone());
+        return response({ id: "<cc-id@mail.example.test>" });
+      },
+    });
+    return { provider, requests };
+  };
+  const options = () => ({
+    signal: new AbortController().signal,
+    idempotencyKey: "ezacto-email-9",
+  });
+  const copies = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      email: `copy-${String(index)}@example.test`,
+    }));
+
+  it("[unit] posts one cc field per copied recipient, in order, formatted like to", async () => {
+    const { provider, requests } = capture();
+    await provider.send({ ...message, cc: copied }, options());
+
+    const body = new URLSearchParams(await requests[0]!.text());
+    expect(body.getAll("to")).toEqual(["Avery <owner@example.test>"]);
+    expect(body.getAll("cc")).toEqual(formatted);
+  });
+
+  it("[unit] keeps the cc fields on the multipart body when a file is attached", async () => {
+    const { provider, requests } = capture();
+    await provider.send(
+      {
+        ...message,
+        cc: copied,
+        attachments: [
+          {
+            filename: "invoice-1315.pdf",
+            contentType: "application/pdf",
+            content: new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+          },
+        ],
+      },
+      options(),
+    );
+
+    const form = await requests[0]!.formData();
+    expect(form.get("attachment")).toBeInstanceOf(File);
+    expect(form.getAll("cc")).toEqual(formatted);
+  });
+
+  it("[unit] sends no cc field when nobody is copied", async () => {
+    const { provider, requests } = capture();
+    await provider.send(message, options());
+
+    expect(new URLSearchParams(await requests[0]!.text()).has("cc")).toBe(false);
+  });
+
+  it("[unit] counts cc against the 1000-recipient cap before any request", async () => {
+    const { provider, requests } = capture();
+    await expect(
+      provider.send({ ...message, cc: copies(1_000) }, options()),
+    ).rejects.toThrow("Mailgun message cannot exceed 1000 recipients");
+    expect(requests).toHaveLength(0);
+
+    await provider.send({ ...message, cc: copies(999) }, options());
+    expect(
+      new URLSearchParams(await requests[0]!.text()).getAll("cc"),
+    ).toHaveLength(999);
+  });
+});

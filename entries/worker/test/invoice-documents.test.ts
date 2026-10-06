@@ -3,7 +3,10 @@ import { crc32, deflateSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createContainerDatabase } from '@ezacto/db'
 import { migrateContainer } from '@ezacto/db'
+import { PDFDocument, PageSizes, StandardFonts } from 'pdf-lib'
+import { renderInvoiceDocument } from '@ezacto/core'
 import {
+  setOrganizationAppendPolicy,
   setOrganizationAttachPolicy,
   setInvoiceAttachPolicy,
   setOrganizationFilesPolicy,
@@ -37,7 +40,7 @@ const context: InvoiceDocumentContext = {
   tax2AmountCents: 0,
   issueDate: '2026-09-12',
   dueDate: '2026-10-12',
-  organizationName: 'CONFLICT',
+  organizationName: 'Halcyon Studio',
   clientName: 'Kestrel Environmental',
   lineItems: [
     { kind: 'Service', description: 'Advisory', quantity: 1, unitPriceCents: 319_495, amountCents: 319_495 },
@@ -87,7 +90,7 @@ const harness = async (
   }
   database.exec(`
     INSERT INTO organizations (name, modules, created_at, updated_at)
-      VALUES ('CONFLICT', '{}', '${at}', '${at}');
+      VALUES ('Halcyon Studio', '{}', '${at}', '${at}');
     INSERT INTO clients (id, name, currency, created_at, updated_at)
       VALUES (1, 'Kestrel Environmental', 'USD', '${at}', '${at}');
     INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date, state, version, created_at, updated_at)
@@ -116,6 +119,17 @@ afterEach(() => {
   sqlite = null
 })
 
+/**
+ * The document goes: the organization says so, and the message was composed
+ * saying so. The body is written when the send is accepted and the document
+ * prepared when the email is queued, so the port follows the message's own
+ * record of the decision rather than asking the preference a second time.
+ */
+const documentGoes = async (orm: ReturnType<typeof createContainerDatabase>): Promise<void> => {
+  await setOrganizationAttachPolicy(orm as never, true)
+  sqlite!.exec(`UPDATE invoice_messages SET attach_pdf = 1 WHERE id = 100`)
+}
+
 describe('preparing the document an invoice carries', () => {
   it('[unit] attaches nothing while the preference is off, and writes no object', async () => {
     const { port, objects } = await harness()
@@ -125,13 +139,13 @@ describe('preparing the document an invoice carries', () => {
 
   it('[money] renders, stores and records once the preference says so', async () => {
     const { orm, port, objects } = await harness()
-    await setOrganizationAttachPolicy(orm as never, true)
+    await documentGoes(orm)
     const reference = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
 
     expect(reference).toEqual([
       {
         key: 'invoice-documents/1/100.pdf',
-        filename: 'invoice-1315.pdf',
+        filename: 'INVOICE_1315_HALCYON_STUDIO.pdf',
         contentType: 'application/pdf',
       },
     ])
@@ -145,7 +159,7 @@ describe('preparing the document an invoice carries', () => {
     expect(recorded).toEqual([
       {
         object_key: 'invoice-documents/1/100.pdf',
-        filename: 'invoice-1315.pdf',
+        filename: 'INVOICE_1315_HALCYON_STUDIO.pdf',
         byte_size: stored.byteLength,
         invoice_version: 7,
       },
@@ -156,7 +170,7 @@ describe('preparing the document an invoice carries', () => {
     // A retried outbox delivery must attach the file that went the first time.
     // The record is keyed on the message precisely so this has an answer.
     const { orm, port, objects } = await harness()
-    await setOrganizationAttachPolicy(orm as never, true)
+    await documentGoes(orm)
     const first = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
     const second = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
     expect(second).toEqual(first)
@@ -170,6 +184,19 @@ describe('preparing the document an invoice carries', () => {
     const { orm, port, objects } = await harness()
     await setOrganizationAttachPolicy(orm as never, true)
     await setInvoiceAttachPolicy(orm as never, { invoiceId: 1, enabled: false })
+    // What the send is told, so its body promises no document...
+    expect(await port.attachesPdf(1)).toBe(false)
+    // ...and what the delivery then carries.
+    expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toEqual([])
+    expect(objects.put).not.toHaveBeenCalled()
+  })
+
+  it('[money] carries the document only where the message said it would', async () => {
+    // The body was written promising no PDF; a preference turned on between
+    // the send and the queue must not attach one the text never mentions.
+    const { orm, port, objects } = await harness()
+    await setOrganizationAttachPolicy(orm as never, true)
+    expect(await port.attachesPdf(1)).toBe(true)
     expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toEqual([])
     expect(objects.put).not.toHaveBeenCalled()
   })
@@ -181,7 +208,7 @@ describe('preparing the document an invoice carries', () => {
         throw new Error('stripe is unreachable')
       },
     })
-    await setOrganizationAttachPolicy(orm as never, true)
+    await documentGoes(orm)
     expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toHaveLength(1)
     expect(objects.put).toHaveBeenCalledTimes(1)
   })
@@ -190,7 +217,7 @@ describe('preparing the document an invoice carries', () => {
     const { orm, port, objects } = await harness({
       paymentUrl: async () => 'https://buy.stripe.com/test_abc',
     })
-    await setOrganizationAttachPolicy(orm as never, true)
+    await documentGoes(orm)
     await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
     const stored = objects.written.get('invoice-documents/1/100.pdf')!
     const text = Array.from(stored, (b) => String.fromCharCode(b)).join('')
@@ -251,7 +278,7 @@ describe('the files an operator staged against the invoice', () => {
     const { orm, port } = await harness()
     stage('purchase-order.pdf', 'files/po-1')
     expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toEqual([])
-    await setOrganizationAttachPolicy(orm as never, true)
+    await documentGoes(orm)
     const withDocument = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
     expect(withDocument).toHaveLength(1)
   })
@@ -262,12 +289,12 @@ describe('the files an operator staged against the invoice', () => {
     const { orm, port } = await harness()
     stage('purchase-order.pdf', 'files/po-1')
     stage('order-form.pdf', 'files/of-1')
-    await setOrganizationAttachPolicy(orm as never, true)
+    await documentGoes(orm)
     await setOrganizationFilesPolicy(orm as never, true)
 
     const refs = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
     expect(refs.map((r) => r.filename)).toEqual([
-      'invoice-1315.pdf',
+      'INVOICE_1315_HALCYON_STUDIO.pdf',
       'purchase-order.pdf',
       'order-form.pdf',
     ])
@@ -346,9 +373,9 @@ describe('the work behind the invoice', () => {
     const { orm, port } = await harness()
     seedWork()
     claim(3600, 'Reviewed the forecast model')
-    await setOrganizationAttachPolicy(orm as never, true)
+    await documentGoes(orm)
     const refs = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
-    expect(refs.map((r) => r.filename)).toEqual(['invoice-1315.pdf'])
+    expect(refs.map((r) => r.filename)).toEqual(['INVOICE_1315_HALCYON_STUDIO.pdf'])
   })
 
   it('[money] attaches it after the invoice and names the level', async () => {
@@ -357,11 +384,11 @@ describe('the work behind the invoice', () => {
     const { orm, port } = await harness()
     seedWork()
     claim(3600, 'Reviewed the forecast model')
-    await setOrganizationAttachPolicy(orm as never, true)
+    await documentGoes(orm)
     await setOrganizationJournalPolicy(orm as never, 'detailed')
     const refs = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
     expect(refs.map((r) => r.filename)).toEqual([
-      'invoice-1315.pdf',
+      'INVOICE_1315_HALCYON_STUDIO.pdf',
       'work-detailed-1315.pdf',
     ])
   })
@@ -451,12 +478,12 @@ describe('the files the work goes as', () => {
     const { orm, port, objects } = await harness()
     seedWork()
     claim('Reviewed the forecast model')
-    await setOrganizationAttachPolicy(orm as never, true)
+    await documentGoes(orm)
     await setOrganizationJournalPolicy(orm as never, 'detailed')
     await setOrganizationJournalFormats(orm as never, ['xlsx', 'csv', 'pdf'])
     const refs = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
     expect(refs).toEqual([
-      { key: 'invoice-documents/1/100.pdf', filename: 'invoice-1315.pdf', contentType: 'application/pdf' },
+      { key: 'invoice-documents/1/100.pdf', filename: 'INVOICE_1315_HALCYON_STUDIO.pdf', contentType: 'application/pdf' },
       {
         key: 'invoice-documents/1/100-journal.pdf',
         filename: 'work-detailed-1315.pdf',
@@ -554,6 +581,138 @@ describe('the files the work goes as', () => {
   })
 })
 
+describe('the files bound into the back of the invoice', () => {
+  // A client's accounts payable wants one PDF: the invoice first, then the
+  // purchase order behind it. These put real files in the store, because the
+  // binding reads them.
+  let nextId = 900
+  const put = async (
+    objects: ReturnType<typeof objectStore>,
+    name: string,
+    bytes: Uint8Array,
+    contentType: string,
+  ): Promise<number> => {
+    const id = (nextId += 1)
+    const key = `files/${String(id)}`
+    await objects.put(key, bytes.slice().buffer as ArrayBuffer, contentType)
+    sqlite!.exec(`
+      BEGIN;
+      INSERT INTO file_objects (content_hash, file_key, byte_size, content_type, created_at, updated_at)
+        VALUES ('${String(id).padStart(64, '0')}', '${key}', ${String(bytes.byteLength)}, '${contentType}', '${at}', '${at}');
+      INSERT INTO attachments (id, file_object_id, name, invoice_attachment_link_id, created_at, updated_at)
+        VALUES (${String(id)}, (SELECT id FROM file_objects WHERE file_key = '${key}'), '${name}', ${String(id)}, '${at}', '${at}');
+      INSERT INTO invoice_attachments (attachment_id, invoice_id) VALUES (${String(id)}, 1);
+      COMMIT;
+    `)
+    objects.put.mockClear()
+    return id
+  }
+  const letter = async (text: string, pages = 1): Promise<Uint8Array> => {
+    const document = await PDFDocument.create()
+    const font = await document.embedFont(StandardFonts.Helvetica)
+    for (let page = 0; page < pages; page += 1) {
+      document.addPage(PageSizes.A4).drawText(`${text}, page ${String(page + 1)}`, { font, size: 12, x: 72, y: 760 })
+    }
+    return document.save()
+  }
+  const pageCount = async (bytes: Uint8Array): Promise<number> =>
+    (await PDFDocument.load(bytes)).getPageCount()
+  const invoicePages = renderInvoiceDocument({
+    number: context.number,
+    companyName: context.organizationName,
+    clientName: context.clientName,
+    issueDate: context.issueDate,
+    dueDate: context.dueDate,
+    currency: context.currency,
+    subject: context.subject,
+    lines: context.lineItems,
+    subtotalCents: context.amountCents,
+    discountCents: 0,
+    taxCents: 0,
+    totalCents: context.amountCents,
+  })
+
+  it('[money] binds the purchase order behind the invoice and does not send it twice', async () => {
+    const { orm, port, objects } = await harness()
+    await documentGoes(orm)
+    await setOrganizationAppendPolicy(orm as never, true)
+    await setOrganizationFilesPolicy(orm as never, true)
+    const po = await put(objects, 'PO-778812 letter.pdf', await letter('Purchase order PO-778812', 2), 'application/pdf')
+    await put(objects, 'Timesheet.csv', new TextEncoder().encode('date,hours\n'), 'text/csv')
+
+    const refs = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    // The invoice -- with the letter inside it -- then the file that is not a PDF.
+    expect(refs.map((r) => r.filename)).toEqual(['INVOICE_1315_HALCYON_STUDIO.pdf', 'Timesheet.csv'])
+    const stored = objects.written.get('invoice-documents/1/100.pdf')!
+    expect(await pageCount(stored)).toBe((await pageCount(invoicePages)) + 2)
+    expect(
+      sqlite!.prepare(`SELECT appended_attachment_ids AS ids FROM invoice_message_documents`).get(),
+    ).toEqual({ ids: JSON.stringify([po]) })
+
+    // A retried delivery carries the identical document, and still not the
+    // letter beside it.
+    objects.put.mockClear()
+    expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toEqual(refs)
+    expect(objects.put).not.toHaveBeenCalledWith('invoice-documents/1/100.pdf', expect.anything(), expect.anything())
+  })
+
+  it('[money] sends a file that will not bind beside the invoice, even where other files stay home', async () => {
+    const { orm, port, objects } = await harness()
+    await documentGoes(orm)
+    await setOrganizationAppendPolicy(orm as never, true)
+    // Files are not sent on their own here; the rule asked for this one to go
+    // behind the invoice, so when it cannot, it goes beside it instead.
+    await put(objects, 'Damaged.pdf', new TextEncoder().encode('%PDF-1.7 not really'), 'application/pdf')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const refs = await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    expect(refs.map((r) => r.filename)).toEqual(['INVOICE_1315_HALCYON_STUDIO.pdf', 'Damaged.pdf'])
+    expect(await pageCount(objects.written.get('invoice-documents/1/100.pdf')!)).toBe(
+      await pageCount(invoicePages),
+    )
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Damaged.pdf could not be bound'))
+    warn.mockRestore()
+  })
+
+  it('[money] previews the document a send would carry, stamped, and keeps nothing', async () => {
+    const { orm, port, objects } = await harness()
+    await setOrganizationAttachPolicy(orm as never, true)
+    await put(objects, 'PO-778812 letter.pdf', await letter('Purchase order PO-778812'), 'application/pdf')
+
+    // The dialog's choice -- bind it in -- laid over an organization that
+    // would not, without saving anything.
+    expect(await port.preview({ invoiceId: 1, choices: { append: true } })).toEqual([
+      expect.objectContaining({
+        kind: 'invoice',
+        filename: 'INVOICE_1315_HALCYON_STUDIO.pdf',
+        appended: ['PO-778812 letter.pdf'],
+      }),
+    ])
+    const previewed = await port.previewDocument({ invoiceId: 1, choices: { append: true } })
+    expect(previewed!.filename).toBe('INVOICE_1315_HALCYON_STUDIO.pdf')
+    expect(await pageCount(previewed!.bytes)).toBe((await pageCount(invoicePages)) + 1)
+    const text = Array.from(previewed!.bytes, (byte) => String.fromCharCode(byte)).join('')
+    expect(text).toContain('(PREVIEW) Tj')
+    expect(objects.put).not.toHaveBeenCalled()
+    expect(sqlite!.prepare(`SELECT count(*) AS n FROM invoice_message_documents`).get()).toEqual({ n: 0 })
+
+    // The email preview stores its stamped document under keys of its own.
+    const staged = await port.stagePreview({ invoiceId: 1, previewId: 'p1', choices: { append: true } })
+    expect(staged).toEqual([
+      { key: 'invoice-previews/1/p1.pdf', filename: 'INVOICE_1315_HALCYON_STUDIO.pdf', contentType: 'application/pdf' },
+    ])
+    expect(sqlite!.prepare(`SELECT count(*) AS n FROM invoice_message_documents`).get()).toEqual({ n: 0 })
+
+    // And the real send carries no stamp.
+    sqlite!.exec(`UPDATE invoice_messages SET attach_pdf = 1 WHERE id = 100`)
+    await setOrganizationAppendPolicy(orm as never, true)
+    await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    const sent = Array.from(objects.written.get('invoice-documents/1/100.pdf')!, (byte) =>
+      String.fromCharCode(byte),
+    ).join('')
+    expect(sent).not.toContain('PREVIEW')
+  })
+})
+
 describe('the document laid out as Harvest\'s', () => {
   /** A 1x1 RGB PNG, built here: the real wordmark is the operator's to upload. */
   const tinyPng = (): Uint8Array => {
@@ -577,12 +736,12 @@ describe('the document laid out as Harvest\'s', () => {
       documentContext: async () => ({ ...context, logo: { fileKey: key, contentType: 'image/png' } }),
     })
     await objects.put(key, tinyPng().buffer as ArrayBuffer, 'image/png')
-    await setOrganizationAttachPolicy(orm as never, true)
+    await documentGoes(orm)
     await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
     const rendered = pdfText(objects.written.get('invoice-documents/1/100.pdf')!)
     expect(rendered).toContain('/Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB')
     // The name stays in the From block; it is not also set where the logo went.
-    expect(rendered).not.toContain('39 738.5 Td\n(CONFLICT) Tj')
+    expect(rendered).not.toContain('39 738.5 Td\n(Halcyon Studio) Tj')
   })
 
   it('[unit] sets the company name instead when the mark cannot be fetched or decoded', async () => {
@@ -593,11 +752,11 @@ describe('the document laid out as Harvest\'s', () => {
         documentContext: async () => ({ ...context, logo: { fileKey: key, contentType: 'image/png' } }),
       })
       if (stored !== null) await objects.put(key, stored.buffer as ArrayBuffer, 'image/png')
-      await setOrganizationAttachPolicy(orm as never, true)
+      await documentGoes(orm)
       expect(await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })).toHaveLength(1)
       const rendered = pdfText(objects.written.get('invoice-documents/1/100.pdf')!)
       expect(rendered).not.toContain('/Subtype /Image')
-      expect(rendered).toContain('39 738.5 Td\n(CONFLICT) Tj')
+      expect(rendered).toContain('39 738.5 Td\n(Halcyon Studio) Tj')
       sqlite?.close()
       sqlite = null
     }
@@ -616,10 +775,10 @@ describe('the document laid out as Harvest\'s', () => {
         paidAmountCents: 160_000,
         organizationAddress: '100 Example Ave, STE 200\nSpringfield, IL, 62701',
         clientAddress: '13031 W. Jefferson Blvd.\nLA, CA 90094',
-        notes: 'Beneficiary:\n*CONFLICT LLC*',
+        notes: 'Beneficiary:\n*Halcyon Studio LLC*',
       }),
     })
-    await setOrganizationAttachPolicy(orm as never, true)
+    await documentGoes(orm)
     await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
     const rendered = pdfText(objects.written.get('invoice-documents/1/100.pdf')!)
     for (const shown of [

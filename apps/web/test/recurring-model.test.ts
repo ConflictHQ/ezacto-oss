@@ -1,7 +1,15 @@
-import { describe, expect, it } from 'vitest'
-import type { GeneralResource, RecurringInvoice, Whoami } from '@conflict-hq/ezacto-client'
+import { describe, expect, it, vi } from 'vitest'
+import type {
+  EzactoClient,
+  GeneralResource,
+  RecurringInvoice,
+  Whoami,
+} from '@conflict-hq/ezacto-client'
+import { createShellApi } from '../src/shell/model.js'
 import {
   recurringAmountLabel,
+  recurringAttachmentThroughInput,
+  recurringAttachmentThroughLabel,
   recurringBasisLabel,
   recurringBlankFormValues,
   recurringBlankLine,
@@ -70,6 +78,7 @@ const definition = (overrides: Partial<RecurringInvoice> = {}): RecurringInvoice
   claim_ceiling_cents: null,
   claim_scope: 'billable',
   cost_alert_basis_points: null,
+  purchase_order: null,
   created_at: timestamp,
   updated_at: timestamp,
   ...overrides,
@@ -305,6 +314,7 @@ describe('recurring definition editor input', () => {
       client_id: 4,
       subject_template: 'Managed services',
       notes_template: 'Thank you.',
+      purchase_order: null,
       every_n_months: 1,
       day_of_month: 1,
       next_issue_on: '2026-10-01',
@@ -777,5 +787,106 @@ describe('recurring editor addresses and previews', () => {
     expect(recurringLineAmountCents({ quantity: '', unitPriceCents: '100' })).toBeNull()
     expect(recurringLineAmountCents({ quantity: '1', unitPriceCents: '1.50' })).toBeNull()
     expect(recurringLineAmountCents({ quantity: '1', unitPriceCents: '' })).toBeNull()
+  })
+})
+
+describe('a definition’s purchase order and standing files', () => {
+  it('[unit] sends the purchase order trimmed, and blank as none', () => {
+    expect(recurringDefinitionInput(form({ purchaseOrder: '  PO-2027-114  ' })).purchase_order).toBe(
+      'PO-2027-114',
+    )
+    // Sent as null rather than left out: PATCH keeps an absent one, and a
+    // cleared box means the purchase order has run out.
+    const cleared = recurringDefinitionInput(form({ purchaseOrder: '   ' }))
+    expect(cleared).toHaveProperty('purchase_order', null)
+    expect(() => recurringDefinitionInput(form({ purchaseOrder: 'P'.repeat(1_001) }))).toThrow(
+      'Purchase order must be 1,000 characters or fewer.',
+    )
+  })
+
+  it('[unit] reads the purchase order back, so a correction elsewhere does not clear it', () => {
+    const values = recurringFormValuesFromDefinition(definition({ purchase_order: 'PO-2027-114' }))
+    expect(values.purchaseOrder).toBe('PO-2027-114')
+    expect(recurringDefinitionInput({ ...values, dayOfMonth: '15' }).purchase_order).toBe('PO-2027-114')
+    expect(recurringFormValuesFromDefinition(definition()).purchaseOrder).toBe('')
+    expect(recurringBlankFormValues().purchaseOrder).toBe('')
+  })
+
+  it('[unit] says which invoices a file goes with, dated the way the invoice pages date', () => {
+    expect(recurringAttachmentThroughLabel('2027-03-31')).toBe('Attached through Mar 31, 2027')
+    expect(recurringAttachmentThroughLabel(null)).toBe('Every invoice')
+    expect(recurringAttachmentThroughLabel(undefined)).toBe('Every invoice')
+    // A value that is not a day is shown as it came rather than as "every invoice".
+    expect(recurringAttachmentThroughLabel('2027-02-31')).toBe('Attached through 2027-02-31')
+  })
+
+  it('[unit] refuses a through date the calendar does not have, naming the file', () => {
+    expect(recurringAttachmentThroughInput(' 2027-03-31 ', 'po-2027.pdf')).toBe('2027-03-31')
+    for (const raw of ['', '2027-02-31', '31/03/2027']) {
+      expect(() => recurringAttachmentThroughInput(raw, 'po-2027.pdf')).toThrow(
+        'Choose the last invoice date “po-2027.pdf” goes with, or attach it to every invoice.',
+      )
+    }
+  })
+})
+
+describe('a definition’s standing files, bound to the generated client', () => {
+  it('[unit] maps list, upload, through and remove onto the attachment operations', async () => {
+    const file = {
+      id: 41,
+      name: 'po-fy2027.pdf',
+      content_hash: 'a'.repeat(64),
+      byte_size: 12,
+      content_type: 'application/pdf',
+      uploaded_by_user_id: 1,
+      created_at: timestamp,
+      updated_at: timestamp,
+      through: '2027-03-31',
+    }
+    const generated = {
+      listRecurringInvoiceAttachments: vi.fn(async () => ({ data: [file], links: {} })),
+      createRecurringInvoiceAttachment: vi.fn(async () => ({ data: file, links: {} })),
+      setRecurringInvoiceAttachmentThrough: vi.fn(async () => ({ data: file, links: {} })),
+      removeRecurringInvoiceAttachment: vi.fn(async () => undefined),
+    }
+    const api = createShellApi(generated as unknown as EzactoClient)
+    const signal = new AbortController().signal
+    const body = new FormData()
+
+    expect(await api.listRecurringInvoiceAttachments!(3, signal)).toEqual([file])
+    expect(await api.uploadRecurringInvoiceAttachment!(3, 'web.recurring-attachment:k1', body, signal)).toEqual(file)
+    expect(await api.setRecurringInvoiceAttachmentThrough!(3, 41, '2027-03-31', signal)).toEqual(file)
+    await api.setRecurringInvoiceAttachmentThrough!(3, 41, null, signal)
+    await api.removeRecurringInvoiceAttachment!(3, 41, signal)
+
+    expect(generated.listRecurringInvoiceAttachments).toHaveBeenCalledWith({
+      recurringInvoiceId: 3,
+      signal,
+    })
+    expect(generated.createRecurringInvoiceAttachment).toHaveBeenCalledWith({
+      recurringInvoiceId: 3,
+      'Idempotency-Key': 'web.recurring-attachment:k1',
+      body,
+      signal,
+    })
+    expect(generated.setRecurringInvoiceAttachmentThrough).toHaveBeenNthCalledWith(1, {
+      recurringInvoiceId: 3,
+      attachmentId: 41,
+      body: { through: '2027-03-31' },
+      signal,
+    })
+    // Clearing is a null through, not an absent one: the route refuses a body
+    // without the key.
+    expect(generated.setRecurringInvoiceAttachmentThrough).toHaveBeenNthCalledWith(2, {
+      recurringInvoiceId: 3,
+      attachmentId: 41,
+      body: { through: null },
+      signal,
+    })
+    expect(generated.removeRecurringInvoiceAttachment).toHaveBeenCalledWith({
+      recurringInvoiceId: 3,
+      attachmentId: 41,
+      signal,
+    })
   })
 })

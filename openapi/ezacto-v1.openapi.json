@@ -10651,6 +10651,7 @@
       "post": {
         "operationId": "deliverInvoiceEmail",
         "summary": "Confirm and durably enqueue invoice email delivery",
+        "description": "One email: To the recipients, Cc the copies, the organization's always-Cc addresses and, when send_me_a_copy is true, the person sending. The subject and message are templates; the body is the message followed by the invoice summary.",
         "tags": [
           "invoice-messages"
         ],
@@ -10728,6 +10729,254 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/InvoiceEmailDeliveryInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/invoices/{id}/deliveries/preview": {
+      "post": {
+        "operationId": "previewInvoiceEmail",
+        "summary": "Compose the invoice email a delivery would send, without sending or recording anything",
+        "tags": [
+          "invoice-messages"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceEmailPreviewEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoices/:id/deliveries/preview",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceEmailPreviewInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/invoices/{id}/deliveries/preview/document": {
+      "get": {
+        "operationId": "downloadInvoiceEmailPreviewDocument",
+        "summary": "Download the invoice PDF a delivery would carry, stamped PREVIEW on every page",
+        "tags": [
+          "invoice-messages"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attachment content",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoices/:id/deliveries/preview/document",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "append_pdfs",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/invoices/{id}/deliveries/preview/send": {
+      "post": {
+        "operationId": "sendInvoiceEmailPreview",
+        "summary": "Send the invoice email, stamped PREVIEW, to the signed-in user only",
+        "description": "Not a delivery: no invoice message, no delivery record, no event. Limited to a few per invoice per hour.",
+        "tags": [
+          "invoice-messages"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceEmailPreviewSentEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceEmailPreviewSentEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoices/:id/deliveries/preview/send",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceEmailPreviewInput"
               }
             }
           }
@@ -12648,6 +12897,161 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/recurring-invoices/:recurringInvoiceId/attachments/:attachmentId",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "recurringInvoiceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "attachmentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "setRecurringInvoiceAttachmentThrough",
+        "summary": "Set the last issue date a recurring definition's file goes with",
+        "tags": [
+          "attachments"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/recurring-invoices/:recurringInvoiceId/attachments/:attachmentId",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "recurringInvoiceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "attachmentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecurringAttachmentThroughInput"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "removeRecurringInvoiceAttachment",
+        "summary": "Stop a file going with the invoices a recurring definition issues",
+        "tags": [
+          "attachments"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
           },
           "400": {
             "$ref": "#/components/responses/MalformedRequest"
@@ -19501,6 +19905,330 @@
         }
       }
     },
+    "/api/v1/invoices/{id}/email-defaults": {
+      "get": {
+        "operationId": "getInvoiceEmailDefaults",
+        "summary": "What the Send dialog opens on for this invoice: subject, message, To, Cc and copies",
+        "tags": [
+          "money"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceEmailDefaultsEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoices/:id/email-defaults",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/clients/{id}/invoice-sending": {
+      "get": {
+        "operationId": "getClientInvoiceSending",
+        "summary": "Who this client's invoices go to and what they carry",
+        "tags": [
+          "money"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientInvoiceSendingEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/clients/:id/invoice-sending",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "setClientInvoiceSending",
+        "summary": "Save who this client's invoices go to and what they carry",
+        "tags": [
+          "money"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientInvoiceSendingEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/clients/:id/invoice-sending",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientInvoiceSendingInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/invoice-sending": {
+      "get": {
+        "operationId": "getOrganizationInvoiceSending",
+        "summary": "The addresses copied on every invoice email",
+        "tags": [
+          "money"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationInvoiceSendingEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/settings/invoice-sending",
+        "x-ezacto-generate-client": true
+      },
+      "post": {
+        "operationId": "setOrganizationInvoiceSending",
+        "summary": "Set the addresses copied on every invoice email",
+        "tags": [
+          "money"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationInvoiceSendingEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/settings/invoice-sending",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationInvoiceSendingInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/settings/invoice-documents": {
       "get": {
         "operationId": "getOrganizationInvoiceDocuments",
@@ -22177,6 +22905,37 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "through": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "RecurringAttachmentThroughInput": {
+        "type": "object",
+        "required": [
+          "through"
+        ],
+        "properties": {
+          "through": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -23808,6 +24567,7 @@
           "from",
           "reply_to",
           "to",
+          "cc",
           "template",
           "subject",
           "provider",
@@ -23845,6 +24605,12 @@
             }
           },
           "to": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EmailRecipient"
+            }
+          },
+          "cc": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/EmailRecipient"
@@ -27869,6 +28635,9 @@
           "timezone": {
             "type": "string",
             "minLength": 1
+          },
+          "invoice_copy_to_self": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -27880,6 +28649,9 @@
           "timezone": {
             "type": "string",
             "minLength": 1
+          },
+          "invoice_copy_to_self": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -31127,6 +31899,7 @@
           "sent_from",
           "sent_from_email",
           "recipients",
+          "cc",
           "subject",
           "body",
           "attach_pdf",
@@ -31190,6 +31963,12 @@
             ]
           },
           "recipients": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvoiceRecipient"
+            }
+          },
+          "cc": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/InvoiceRecipient"
@@ -31468,6 +32247,24 @@
               "$ref": "#/components/schemas/InvoiceRecipient"
             }
           },
+          "cc": {
+            "type": "array",
+            "maxItems": 99,
+            "items": {
+              "$ref": "#/components/schemas/InvoiceRecipient"
+            }
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 998
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 100000
+          },
+          "send_me_a_copy": {
+            "type": "boolean"
+          },
           "sender_identity_id": {
             "type": "integer",
             "minimum": 1
@@ -31481,6 +32278,661 @@
             "enum": [
               true
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceEmailPreviewInput": {
+        "type": "object",
+        "required": [
+          "recipients"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recipients": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1000,
+            "items": {
+              "$ref": "#/components/schemas/InvoiceRecipient"
+            }
+          },
+          "cc": {
+            "type": "array",
+            "maxItems": 99,
+            "items": {
+              "$ref": "#/components/schemas/InvoiceRecipient"
+            }
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 998
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 100000
+          },
+          "send_me_a_copy": {
+            "type": "boolean"
+          },
+          "sender_identity_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "template_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "attach_pdf": {
+            "type": "boolean"
+          },
+          "attach_files": {
+            "type": "boolean"
+          },
+          "append_pdfs": {
+            "type": "boolean"
+          },
+          "attach_journal": {
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "detailed",
+                  "summary"
+                ]
+              },
+              {
+                "type": "boolean",
+                "enum": [
+                  false
+                ]
+              }
+            ]
+          },
+          "journal_formats": {
+            "$ref": "#/components/schemas/JournalFormats"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceEmailPreviewAttachment": {
+        "type": "object",
+        "required": [
+          "kind",
+          "filename",
+          "content_type",
+          "byte_size",
+          "appended",
+          "not_appended"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "invoice",
+              "journal",
+              "file"
+            ]
+          },
+          "filename": {
+            "type": "string"
+          },
+          "content_type": {
+            "type": "string"
+          },
+          "byte_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "appended": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "not_appended": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "encrypted",
+                  "unreadable",
+                  "empty",
+                  "too_large"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceEmailPreviewEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "invoice_id",
+              "from",
+              "reply_to",
+              "to",
+              "cc",
+              "send_me_a_copy",
+              "subject",
+              "text",
+              "html",
+              "attachments"
+            ],
+            "properties": {
+              "invoice_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "from": {
+                "$ref": "#/components/schemas/InvoiceRecipient"
+              },
+              "reply_to": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "to": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/InvoiceRecipient"
+                }
+              },
+              "cc": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/InvoiceRecipient"
+                }
+              },
+              "send_me_a_copy": {
+                "type": "boolean"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "html": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "attachments": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/InvoiceEmailPreviewAttachment"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "links": {
+            "type": "object",
+            "required": [
+              "document"
+            ],
+            "properties": {
+              "document": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceEmailPreviewSentEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "invoice_id",
+              "delivery_id",
+              "to",
+              "subject"
+            ],
+            "properties": {
+              "invoice_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "delivery_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "to": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/InvoiceRecipient"
+                }
+              },
+              "subject": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceEmailDefaultsEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "invoice_id",
+              "client_id",
+              "company_name",
+              "client_name",
+              "template_version",
+              "subject",
+              "message",
+              "to",
+              "cc",
+              "recipients_source",
+              "always_cc",
+              "sender",
+              "send_me_a_copy"
+            ],
+            "properties": {
+              "invoice_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "client_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "company_name": {
+                "type": "string"
+              },
+              "client_name": {
+                "type": "string"
+              },
+              "template_version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "subject": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "to": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/InvoiceRecipient"
+                }
+              },
+              "cc": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/InvoiceRecipient"
+                }
+              },
+              "recipients_source": {
+                "type": "string",
+                "enum": [
+                  "client",
+                  "contacts"
+                ]
+              },
+              "always_cc": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/InvoiceRecipient"
+                }
+              },
+              "sender": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "email"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "send_me_a_copy": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceRecipientLists": {
+        "type": "object",
+        "required": [
+          "to",
+          "cc"
+        ],
+        "properties": {
+          "to": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "$ref": "#/components/schemas/InvoiceRecipient"
+            }
+          },
+          "cc": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "$ref": "#/components/schemas/InvoiceRecipient"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientInvoiceSendingEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "client_id",
+              "recipients",
+              "contacts",
+              "attach_pdf",
+              "append_pdfs",
+              "attach_files",
+              "attach_journal",
+              "journal_formats",
+              "organization"
+            ],
+            "properties": {
+              "client_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "recipients": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/InvoiceRecipientLists"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "contacts": {
+                "$ref": "#/components/schemas/InvoiceRecipientLists"
+              },
+              "attach_pdf": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "append_pdfs": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "attach_files": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "attach_journal": {
+                "anyOf": [
+                  {
+                    "oneOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "detailed",
+                          "summary"
+                        ]
+                      },
+                      {
+                        "type": "boolean"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "journal_formats": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/JournalFormats"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "organization": {
+                "type": "object",
+                "required": [
+                  "attach_pdf",
+                  "append_pdfs",
+                  "attach_files",
+                  "attach_journal",
+                  "journal_formats"
+                ],
+                "properties": {
+                  "attach_pdf": {
+                    "type": "boolean"
+                  },
+                  "append_pdfs": {
+                    "type": "boolean"
+                  },
+                  "attach_files": {
+                    "type": "boolean"
+                  },
+                  "attach_journal": {
+                    "oneOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "detailed",
+                          "summary"
+                        ]
+                      },
+                      {
+                        "type": "boolean"
+                      }
+                    ]
+                  },
+                  "journal_formats": {
+                    "$ref": "#/components/schemas/JournalFormats"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientInvoiceSendingInput": {
+        "type": "object",
+        "minProperties": 1,
+        "properties": {
+          "recipients": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InvoiceRecipientLists"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attach_pdf": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "append_pdfs": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attach_files": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attach_journal": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "detailed",
+                      "summary"
+                    ]
+                  },
+                  {
+                    "type": "boolean",
+                    "enum": [
+                      false
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "journal_formats": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JournalFormats"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "OrganizationInvoiceSendingEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "always_cc"
+            ],
+            "properties": {
+              "always_cc": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/InvoiceRecipient"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "OrganizationInvoiceSendingInput": {
+        "type": "object",
+        "required": [
+          "always_cc"
+        ],
+        "properties": {
+          "always_cc": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/InvoiceRecipient"
+            }
           }
         },
         "additionalProperties": false
@@ -33156,6 +34608,7 @@
           "claim_ceiling_cents",
           "claim_scope",
           "cost_alert_basis_points",
+          "purchase_order",
           "created_at",
           "updated_at"
         ],
@@ -33257,6 +34710,17 @@
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 20000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "purchase_order": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
               },
               {
                 "type": "null"
@@ -33603,6 +35067,17 @@
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 20000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "purchase_order": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
               },
               {
                 "type": "null"
@@ -38016,6 +39491,16 @@
               }
             ]
           },
+          "append_pdfs": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "attach_journal": {
             "anyOf": [
               {
@@ -38061,6 +39546,9 @@
             "type": "boolean"
           },
           "attach_files": {
+            "type": "boolean"
+          },
+          "append_pdfs": {
             "type": "boolean"
           },
           "attach_journal": {
@@ -38203,15 +39691,23 @@
             "required": [
               "invoice_id",
               "attach_pdf",
+              "client_attach_pdf",
               "organization_attach_pdf",
               "effective",
               "attach_files",
+              "client_attach_files",
               "organization_attach_files",
               "effective_files",
+              "append_pdfs",
+              "client_append_pdfs",
+              "organization_append_pdfs",
+              "effective_append_pdfs",
               "attach_journal",
+              "client_attach_journal",
               "organization_attach_journal",
               "effective_journal",
               "journal_formats",
+              "client_journal_formats",
               "organization_journal_formats",
               "effective_journal_formats"
             ],
@@ -38224,6 +39720,16 @@
                 "type": "boolean",
                 "nullable": true
               },
+              "client_attach_pdf": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "organization_attach_pdf": {
                 "type": "boolean"
               },
@@ -38234,10 +39740,46 @@
                 "type": "boolean",
                 "nullable": true
               },
+              "client_attach_files": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "organization_attach_files": {
                 "type": "boolean"
               },
               "effective_files": {
+                "type": "boolean"
+              },
+              "append_pdfs": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "client_append_pdfs": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "organization_append_pdfs": {
+                "type": "boolean"
+              },
+              "effective_append_pdfs": {
                 "type": "boolean"
               },
               "attach_journal": {
@@ -38254,6 +39796,27 @@
                   }
                 ],
                 "nullable": true
+              },
+              "client_attach_journal": {
+                "anyOf": [
+                  {
+                    "oneOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "detailed",
+                          "summary"
+                        ]
+                      },
+                      {
+                        "type": "boolean"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "organization_attach_journal": {
                 "oneOf": [
@@ -38293,6 +39856,16 @@
                   }
                 ]
               },
+              "client_journal_formats": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/JournalFormats"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "organization_journal_formats": {
                 "$ref": "#/components/schemas/JournalFormats"
               },
@@ -38316,6 +39889,7 @@
             "required": [
               "attach_pdf",
               "attach_files",
+              "append_pdfs",
               "attach_journal",
               "journal_formats"
             ],
@@ -38324,6 +39898,9 @@
                 "type": "boolean"
               },
               "attach_files": {
+                "type": "boolean"
+              },
+              "append_pdfs": {
                 "type": "boolean"
               },
               "attach_journal": {

@@ -41,7 +41,7 @@ import type {
   OutboxStatus,
 } from '../deliveries/browser.js'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
-import type { ClientDirectoryApi } from '../clients/model.js'
+import type { ClientDirectoryApi, ClientInvoiceSending } from '../clients/model.js'
 import { personLabel, type ProjectDirectoryApi } from '../projects/model.js'
 import { detailedTimeExportPath, type ReportWorkspaceApi } from '../reports/model.js'
 import type { ExpenseWorkflowApi } from '../expenses/model.js'
@@ -1050,6 +1050,26 @@ export const startTimer = async (
 const withSignal = (signal?: AbortSignal): { signal?: AbortSignal } =>
   signal === undefined ? {} : { signal }
 
+/**
+ * An hours-report level as the client page reads it. The contract types a
+ * level as "detailed", "summary" or any boolean, which is wider than what the
+ * route sends: false is the only boolean, and it means no hours report.
+ */
+const journalLevel = (value: 'detailed' | 'summary' | boolean): 'detailed' | 'summary' | false =>
+  value === 'detailed' || value === 'summary' ? value : false
+
+const clientInvoiceSending = (
+  data: Awaited<ReturnType<EzactoClient['getClientInvoiceSending']>>['data'],
+): ClientInvoiceSending => ({
+  ...data,
+  // Null is the client following the organization, and stays null.
+  attach_journal: data.attach_journal === null ? null : journalLevel(data.attach_journal),
+  organization: {
+    ...data.organization,
+    attach_journal: journalLevel(data.organization.attach_journal),
+  },
+})
+
 export const createShellApi = (client: EzactoClient): ShellApi => ({
   getPaymentRunReport: async (from,to,signal) => (await client.getPaymentRunReport({query:{from,to},...withSignal(signal)})).data,
   previewPaymentRun: async (body,signal) => (await client.previewPaymentRun({body,...withSignal(signal)})).data,
@@ -1292,6 +1312,12 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  // The write is the Send dialog's `setClientInvoiceSending`, bound with the
+  // invoice operations; the client page shares it and reads back with this.
+  getClientInvoiceSending: async (clientId, signal) =>
+    clientInvoiceSending(
+      (await client.getClientInvoiceSending({ id: clientId, ...withSignal(signal) })).data,
+    ),
   getInstanceTheme: async (signal) =>
     (await client.getInstanceTheme(withSignal(signal))).data,
   setInstanceTheme: async (palette, signal) =>
@@ -1855,6 +1881,37 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.updateRecurringInvoice({ id, body, ...withSignal(signal) })).data,
   deleteRecurringInvoice: (id, signal) =>
     client.deleteRecurringInvoice({ id, ...withSignal(signal) }),
+  listRecurringInvoiceAttachments: async (definitionId, signal) =>
+    (
+      await client.listRecurringInvoiceAttachments({
+        recurringInvoiceId: definitionId,
+        ...withSignal(signal),
+      })
+    ).data,
+  uploadRecurringInvoiceAttachment: async (definitionId, commandId, body, signal) =>
+    (
+      await client.createRecurringInvoiceAttachment({
+        recurringInvoiceId: definitionId,
+        'Idempotency-Key': commandId,
+        body,
+        ...withSignal(signal),
+      })
+    ).data,
+  setRecurringInvoiceAttachmentThrough: async (definitionId, attachmentId, through, signal) =>
+    (
+      await client.setRecurringInvoiceAttachmentThrough({
+        recurringInvoiceId: definitionId,
+        attachmentId,
+        body: { through },
+        ...withSignal(signal),
+      })
+    ).data,
+  removeRecurringInvoiceAttachment: (definitionId, attachmentId, signal) =>
+    client.removeRecurringInvoiceAttachment({
+      recurringInvoiceId: definitionId,
+      attachmentId,
+      ...withSignal(signal),
+    }),
   // Unfiltered for the same reason the retainer lists below are: a recurring
   // definition outlives the archiving of the client it bills.
   listRecurringClients: (cursor, signal) =>
@@ -1981,12 +2038,31 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.setInvoiceReminderPreference({ id, body: { reminders }, ...withSignal(signal) })).data,
   getInvoiceDocumentPreference: async (id, signal) =>
     (await client.getInvoiceDocumentPreference({ id, ...withSignal(signal) })).data,
+  // What the Send dialog opens on, and the client rules it can save back.
+  getInvoiceEmailDefaults: async (id, signal) =>
+    (await client.getInvoiceEmailDefaults({ id, ...withSignal(signal) })).data,
+  setClientInvoiceSending: async (clientId, input, signal) => {
+    await client.setClientInvoiceSending({ id: clientId, body: input, ...withSignal(signal) })
+  },
+  setInvoiceCopyToSelf: async (copy, signal) => {
+    await client.updateProfile({ body: { invoice_copy_to_self: copy }, ...withSignal(signal) })
+  },
+  previewInvoiceEmail: async (id, input, signal) => {
+    const preview = await client.previewInvoiceEmail({ id, body: input, ...withSignal(signal) })
+    return { email: preview.data, documentHref: preview.links.document }
+  },
+  sendInvoiceEmailPreview: async (id, input, signal) =>
+    (await client.sendInvoiceEmailPreview({ id, body: input, ...withSignal(signal) })).data,
   setInvoiceDocumentPreference: async (id, input, signal) =>
     (await client.setInvoiceDocumentPreference({ id, body: input, ...withSignal(signal) })).data,
   getOrganizationInvoiceDocuments: async (signal) =>
     (await client.getOrganizationInvoiceDocuments({ ...withSignal(signal) })).data,
   setOrganizationInvoiceDocuments: async (input, signal) =>
     (await client.setOrganizationInvoiceDocuments({ body: input, ...withSignal(signal) })).data,
+  getOrganizationInvoiceSending: async (signal) =>
+    (await client.getOrganizationInvoiceSending({ ...withSignal(signal) })).data,
+  setOrganizationInvoiceSending: async (input, signal) =>
+    (await client.setOrganizationInvoiceSending({ body: input, ...withSignal(signal) })).data,
   uploadInvoiceAttachment: async (id, commandId, body, signal) =>
     (
       await client.createInvoiceAttachment({

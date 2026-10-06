@@ -101,25 +101,32 @@ export const renderInvoiceComposerDialog = (): string => `
       <p class="hint" data-invoice-composer-owed hidden>The sent status is already recorded for this invoice and only the email is left, so nothing here can record a second sent message. Submit to retry that email, or untick <strong>Also deliver by email</strong> to finish without it.</p>
       <div class="invoice-composer-layout">
         <section class="invoice-composer-fields">
-          <label for="ez-invoice-recipients">Recipients
-            <textarea id="ez-invoice-recipients" name="recipients" data-invoice-composer-recipients rows="3" maxlength="321000" autocomplete="off" required aria-describedby="invoice-recipient-hint"></textarea>
+          <label for="ez-invoice-recipients">To
+            <textarea id="ez-invoice-recipients" name="recipients" data-invoice-composer-recipients rows="2" maxlength="321000" autocomplete="off" required aria-describedby="invoice-recipient-hint"></textarea>
           </label>
-          <p class="hint" id="invoice-recipient-hint">One per line: email@example.com or Name &lt;email@example.com&gt;.</p>
+          <label for="ez-invoice-cc">Cc
+            <textarea id="ez-invoice-cc" name="cc" data-invoice-composer-cc rows="3" maxlength="321000" autocomplete="off" aria-describedby="invoice-recipient-hint"></textarea>
+          </label>
+          <p class="hint" id="invoice-recipient-hint">One per line: email@example.com or Name &lt;email@example.com&gt;. <span data-invoice-composer-recipients-source></span></p>
+          <p class="hint" data-invoice-composer-always-cc hidden></p>
+          <label class="invoice-composer-check" data-invoice-composer-copy-label hidden><input name="sendMeACopy" data-invoice-composer-copy type="checkbox"> Always send me a copy of invoice emails <span data-invoice-composer-copy-address></span></label>
           <label for="ez-invoice-message-subject">Subject
-            <input id="ez-invoice-message-subject" name="subject" data-invoice-composer-subject maxlength="100000" required>
+            <input id="ez-invoice-message-subject" name="subject" data-invoice-composer-subject maxlength="998" required>
           </label>
           <label for="ez-invoice-message-body">Message
-            <textarea id="ez-invoice-message-body" name="body" data-invoice-composer-body rows="8" maxlength="100000" required></textarea>
+            <textarea id="ez-invoice-message-body" name="body" data-invoice-composer-body rows="7" maxlength="100000" required aria-describedby="invoice-message-hint"></textarea>
           </label>
+          <p class="hint" id="invoice-message-hint">Your note, at the top of the email. Below it the email carries the invoice's summary as Harvest sent it: the amount due, a link to pay where there is one, the invoice number and dates, the purchase order, and the payment details from the invoice's notes.</p>
           <label class="invoice-composer-check"><input name="scheduleReminder" data-invoice-composer-reminder-toggle type="checkbox"> Record a planned reminder date</label>
           <label for="ez-invoice-reminder-date" data-invoice-composer-reminder-date-label hidden>Planned reminder date
             <input id="ez-invoice-reminder-date" name="reminderDate" data-invoice-composer-reminder-date type="date">
           </label>
           <label class="invoice-composer-check"><input name="deliver" data-invoice-composer-deliver-toggle type="checkbox" aria-describedby="invoice-deliver-hint"> Also deliver by email</label>
-          <p class="hint" id="invoice-deliver-hint">The email goes out from the verified organization sender on the configured invoice template, not the subject and message above. It lists this invoice's line items, with the attachments chosen below.</p>
+          <p class="hint" id="invoice-deliver-hint">One email from the verified organization sender, To and Cc as listed, with the subject and message above and the attachments chosen below.</p>
           <fieldset class="invoice-composer-attachments" data-invoice-composer-attachments>
             <legend>Attach to the email</legend>
             <label class="invoice-composer-check"><input name="attachPdf" data-invoice-composer-attach-pdf type="checkbox"> Attach a PDF of this invoice</label>
+            <label class="invoice-composer-check" data-invoice-composer-append-label hidden><input name="appendPdfs" data-invoice-composer-append type="checkbox"> Append attached PDFs to the back of the invoice PDF</label>
             <div class="invoice-composer-journal">
               <label class="invoice-composer-check"><input name="attachJournal" data-invoice-composer-attach-journal type="checkbox"> Attach the hours report</label>
               <label class="visually-hidden" for="ez-invoice-composer-journal-level">Hours report detail</label>
@@ -137,16 +144,39 @@ export const renderInvoiceComposerDialog = (): string => `
             <label class="invoice-composer-check" data-invoice-composer-attach-files-label hidden><input name="attachFiles" data-invoice-composer-attach-files type="checkbox"> Attach files added to this invoice</label>
             <p class="hint" data-invoice-composer-attachments-status role="status" aria-live="polite">Attachments go with the email, so they are chosen once it is to be delivered.</p>
           </fieldset>
+          <label class="invoice-composer-check" data-invoice-composer-save-default-label hidden><input name="saveDefault" data-invoice-composer-save-default type="checkbox"> Save these recipients and attachments as this client's default</label>
+          <div class="invoice-composer-preview-actions" data-invoice-composer-preview-actions hidden>
+            <button type="button" data-invoice-composer-preview>Preview</button>
+            <button type="button" data-invoice-composer-preview-send>Send a preview to me</button>
+          </div>
+          <p class="form-result" data-invoice-composer-preview-result role="status" aria-live="polite"></p>
+          <section class="invoice-composer-preview" data-invoice-composer-preview-panel aria-labelledby="invoice-preview-title" hidden>
+            <h3 id="invoice-preview-title">Preview — nothing has been sent</h3>
+            <dl class="invoice-composer-preview-headers">
+              <div><dt>From</dt><dd data-invoice-preview-from></dd></div>
+              <div><dt>To</dt><dd data-invoice-preview-to></dd></div>
+              <div><dt>Cc</dt><dd data-invoice-preview-cc></dd></div>
+              <div><dt>Subject</dt><dd data-invoice-preview-subject></dd></div>
+            </dl>
+            <pre class="invoice-composer-preview-body" data-invoice-preview-text></pre>
+            <h4>Attachments</h4>
+            <ul data-invoice-preview-attachments></ul>
+            <a data-invoice-preview-document hidden>Download the invoice PDF as it would be attached</a>
+          </section>
           <label class="invoice-composer-check" data-invoice-composer-confirm-label hidden><input name="confirmed" data-invoice-composer-confirm type="checkbox"> I confirm these recipients and want to send this invoice.</label>
         </section>
         <aside class="invoice-variable-reference" aria-labelledby="invoice-variable-title">
           <h3 id="invoice-variable-title">Template variables</h3>
-          <p>Use these anywhere in the subject or message. They are replaced before the record is saved.</p>
+          <p>Use these anywhere in the subject or message. They are filled in for this invoice when it is sent.</p>
           <dl>
-            <div><dt><code>%invoice_id%</code></dt><dd>Invoice record ID</dd></div>
-            <div><dt><code>%invoice_number%</code></dt><dd>Display number</dd></div>
+            <div><dt><code>%invoice_number%</code></dt><dd>Invoice number</dd></div>
+            <div><dt><code>%company_name%</code></dt><dd>Your company's name</dd></div>
+            <div><dt><code>%client_name%</code></dt><dd>The client's name</dd></div>
             <div><dt><code>%invoice_amount%</code></dt><dd>Formatted total</dd></div>
             <div><dt><code>%invoice_due_date%</code></dt><dd>Due date</dd></div>
+            <div><dt><code>%invoice_payment_terms%</code></dt><dd>Payment terms, e.g. Net 30</dd></div>
+            <div><dt><code>%invoice_purchase_order%</code></dt><dd>Purchase order number</dd></div>
+            <div><dt><code>%invoice_issue_month_name%</code></dt><dd>Month of the issue date</dd></div>
             <div><dt><code>%invoice_line_items%</code></dt><dd>The lines, quantity, rate, and amount</dd></div>
           </dl>
         </aside>

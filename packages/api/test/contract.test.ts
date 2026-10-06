@@ -3,6 +3,7 @@ import { installStaffPaymentRoutes } from '../src/staff-payments.js';
 import type { GeneralResourceRepository, TeamRepository } from "@ezacto/core";
 import { describe, expect, it } from "vitest";
 import {
+  installInvoiceSendingRoutes,
   installBackupStatusRoutes,
   installQuickBooksRoutes,
   installWiseRoutes,
@@ -277,6 +278,15 @@ const documentedApp = () =>
         setOrganizationJournalFormats: async () => undefined,
       } as never);
       installInvoiceHoursReportRoutes(api, { readHoursReport: async () => null });
+      installInvoiceSendingRoutes(api, {
+        service: {
+          emailDefaults: async () => null,
+          readClientSending: async () => null,
+          saveClientSending: async () => null,
+          readAlwaysCc: async () => [],
+          saveAlwaysCc: async (addresses) => addresses,
+        },
+      });
       installRecurringRepairRoutes(
         api,
         { listIncomplete: async () => [], complete: async () => ({ outcome: 'completed' }) } as never,

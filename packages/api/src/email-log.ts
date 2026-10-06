@@ -28,6 +28,7 @@ const emailLogData = (record: EmailLogRecord) => ({
   from: record.from === null ? null : { ...record.from },
   reply_to: record.replyTo.map((recipient) => ({ ...recipient })),
   to: record.to.map((recipient) => ({ ...recipient })),
+  cc: record.cc.map((recipient) => ({ ...recipient })),
   template: record.template,
   subject: record.subject,
   provider: record.provider,

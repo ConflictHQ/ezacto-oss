@@ -599,6 +599,10 @@ describe('invoice workspace model', () => {
     const delivery = {
       commandId: 'web.invoice.delivery:1',
       recipients: [{ name: 'Accounts Payable', email: 'ap@example.test' }],
+      cc: [],
+      subject: 'Invoice #%invoice_number% from %company_name%',
+      message: 'Hello,',
+      sendMeACopy: false,
     }
     const attempting: InvoiceSendAttempt = {
       invoiceId: 7,
@@ -633,6 +637,10 @@ describe('invoice workspace model', () => {
     const delivery = {
       commandId: 'web.invoice.delivery:1',
       recipients: [{ name: 'Accounts Payable', email: 'ap@example.test' }],
+      cc: [],
+      subject: 'Invoice #%invoice_number% from %company_name%',
+      message: 'Hello,',
+      sendMeACopy: false,
     }
     const attempting: InvoiceSendAttempt = {
       invoiceId: 7,
@@ -863,15 +871,23 @@ describe('invoice email attachments', () => {
   ): InvoiceDocumentPreferenceEnvelope['data'] => ({
     invoice_id: 7,
     attach_pdf: false,
+    client_attach_pdf: null,
     organization_attach_pdf: false,
     effective: false,
     attach_files: false,
+    client_attach_files: null,
     organization_attach_files: false,
     effective_files: false,
+    append_pdfs: null,
+    client_append_pdfs: null,
+    organization_append_pdfs: false,
+    effective_append_pdfs: false,
     attach_journal: false,
+    client_attach_journal: null,
     organization_attach_journal: false,
     effective_journal: false,
     journal_formats: null,
+    client_journal_formats: null,
     organization_journal_formats: ['pdf'],
     effective_journal_formats: ['pdf'],
     ...overrides,
@@ -882,7 +898,7 @@ describe('invoice email attachments', () => {
       invoiceAttachmentsEffective(
         preference({ effective: true, effective_journal: 'summary', effective_journal_formats: ['csv'] }),
       ),
-    ).toEqual({ pdf: true, files: false, journal: 'summary', journalFormats: ['csv'] })
+    ).toEqual({ pdf: true, files: false, append: false, journal: 'summary', journalFormats: ['csv'] })
     // `true` is not a level: the worker attaches nothing for it, so neither does the box.
     expect(invoiceAttachmentsEffective(preference({ effective_journal: true })).journal).toBe(false)
   })
@@ -894,12 +910,13 @@ describe('invoice email attachments', () => {
     expect(
       invoiceAttachmentChanges(
         base,
-        { pdf: true, files: true, journal: 'detailed', journalFormats: ['pdf', 'xlsx'] },
+        { pdf: true, files: true, append: true, journal: 'detailed', journalFormats: ['pdf', 'xlsx'] },
         true,
       ),
     ).toEqual({
       attach_pdf: true,
       attach_files: true,
+      append_pdfs: true,
       attach_journal: 'detailed',
       journal_formats: ['pdf', 'xlsx'],
     })
@@ -922,11 +939,33 @@ describe('invoice email attachments', () => {
     ).toBeNull()
   })
 
+  it("[unit] hands a choice back to the client's rule, not past it, when it matches", () => {
+    // The client binds its purchase order into every invoice; this invoice
+    // said no, and ticking the box again follows the client once more.
+    const clientRule = preference({
+      append_pdfs: false,
+      client_append_pdfs: true,
+      effective_append_pdfs: false,
+    })
+    expect(
+      invoiceAttachmentChanges(
+        clientRule,
+        { ...invoiceAttachmentsEffective(clientRule), append: true },
+        true,
+      ),
+    ).toEqual({ append_pdfs: null })
+    // And a client that sends no PDF is overridden by an invoice that does.
+    const noPdf = preference({ client_attach_pdf: false, organization_attach_pdf: true })
+    expect(
+      invoiceAttachmentChanges(noPdf, { ...invoiceAttachmentsEffective(noPdf), pdf: true }, true),
+    ).toEqual({ attach_pdf: true })
+  })
+
   it('[unit] refuses an hours report with no files to send it as', () => {
     expect(() =>
       invoiceAttachmentChanges(
         preference(),
-        { pdf: false, files: false, journal: 'summary', journalFormats: [] },
+        { pdf: false, files: false, append: false, journal: 'summary', journalFormats: [] },
         true,
       ),
     ).toThrow('Choose at least one file for the hours report.')

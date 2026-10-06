@@ -26,7 +26,17 @@ import { ApiError, validationError } from './errors.js'
  * wanting the other, so they are read and written separately rather than folded
  * into a single flag that would make the choice for somebody.
  */
-export type AttachmentKind = 'document' | 'files'
+export type AttachmentKind = 'document' | 'files' | 'append'
+
+/**
+ * One kind's answers at each level. `null` at the invoice follows its client,
+ * and `null` at the client follows the organization.
+ */
+export interface LayeredAnswer<Value> {
+  invoice: Value | null
+  client: Value | null
+  organization: Value
+}
 
 /**
  * The work journal's answer, which is not a boolean (issue 647).
@@ -51,7 +61,7 @@ export interface InvoiceDocumentPreferenceService {
   readInvoicePreference(
     invoiceId: number,
     kind: AttachmentKind,
-  ): Promise<{ invoice: boolean | null; organization: boolean } | null>
+  ): Promise<LayeredAnswer<boolean> | null>
   setInvoicePreference(
     invoiceId: number,
     kind: AttachmentKind,
@@ -59,15 +69,11 @@ export interface InvoiceDocumentPreferenceService {
   ): Promise<boolean>
   readOrganizationPreference(kind: AttachmentKind): Promise<boolean>
   setOrganizationPreference(kind: AttachmentKind, enabled: boolean): Promise<void>
-  readInvoiceJournal(
-    invoiceId: number,
-  ): Promise<{ invoice: JournalPreference | null; organization: JournalPreference } | null>
+  readInvoiceJournal(invoiceId: number): Promise<LayeredAnswer<JournalPreference> | null>
   setInvoiceJournal(invoiceId: number, level: JournalPreference | null): Promise<boolean>
   readOrganizationJournal(): Promise<JournalPreference>
   setOrganizationJournal(level: JournalPreference): Promise<void>
-  readInvoiceJournalFormats(
-    invoiceId: number,
-  ): Promise<{ invoice: JournalFormats | null; organization: JournalFormats } | null>
+  readInvoiceJournalFormats(invoiceId: number): Promise<LayeredAnswer<JournalFormats> | null>
   setInvoiceJournalFormats(invoiceId: number, formats: JournalFormats | null): Promise<boolean>
   readOrganizationJournalFormats(): Promise<JournalFormats>
   setOrganizationJournalFormats(formats: JournalFormats): Promise<void>
@@ -125,7 +131,53 @@ const journalFormatsOf = (
   ])
 }
 
-const preferenceFields = ['attach_pdf', 'attach_files', 'attach_journal', 'journal_formats'] as const
+const preferenceFields = [
+  'attach_pdf',
+  'attach_files',
+  'append_pdfs',
+  'attach_journal',
+  'journal_formats',
+] as const
+
+/** What will happen, at the first level that answered. */
+const effectiveOf = <Value>(answer: LayeredAnswer<Value>): Value =>
+  answer.invoice ?? answer.client ?? answer.organization
+
+/**
+ * The invoice's whole answer -- each kind at each level and what will happen
+ * -- so a screen does not work out the precedence a second time and reach a
+ * different answer.
+ */
+const preferenceData = (
+  invoiceId: number,
+  document: LayeredAnswer<boolean>,
+  files: LayeredAnswer<boolean>,
+  append: LayeredAnswer<boolean>,
+  journal: LayeredAnswer<JournalPreference>,
+  formats: LayeredAnswer<JournalFormats>,
+) => ({
+  invoice_id: invoiceId,
+  attach_pdf: document.invoice,
+  client_attach_pdf: document.client,
+  organization_attach_pdf: document.organization,
+  effective: effectiveOf(document),
+  attach_files: files.invoice,
+  client_attach_files: files.client,
+  organization_attach_files: files.organization,
+  effective_files: effectiveOf(files),
+  append_pdfs: append.invoice,
+  client_append_pdfs: append.client,
+  organization_append_pdfs: append.organization,
+  effective_append_pdfs: effectiveOf(append),
+  attach_journal: journal.invoice,
+  client_attach_journal: journal.client,
+  organization_attach_journal: journal.organization,
+  effective_journal: effectiveOf(journal),
+  journal_formats: formats.invoice,
+  client_journal_formats: formats.client,
+  organization_journal_formats: formats.organization,
+  effective_journal_formats: effectiveOf(formats),
+})
 
 const assertMoneyWriter = <Bindings extends object>(
   context: Context<ApiContext<Bindings>>,
@@ -194,13 +246,20 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
   api.get('/invoices/:id/document-preference', async (context) => {
     assertMoneyWriter(context)
     const invoiceId = invoiceIdOf(context)
-    const [document, files, journal, formats] = await Promise.all([
+    const [document, files, append, journal, formats] = await Promise.all([
       service.readInvoicePreference(invoiceId, 'document'),
       service.readInvoicePreference(invoiceId, 'files'),
+      service.readInvoicePreference(invoiceId, 'append'),
       service.readInvoiceJournal(invoiceId),
       service.readInvoiceJournalFormats(invoiceId),
     ])
-    if (document === null || files === null || journal === null || formats === null) {
+    if (
+      document === null ||
+      files === null ||
+      append === null ||
+      journal === null ||
+      formats === null
+    ) {
       throw new ApiError({
         status: 404,
         code: 'not_found',
@@ -208,25 +267,7 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
       })
     }
     return context.json(
-      {
-        data: {
-          invoice_id: invoiceId,
-          attach_pdf: document.invoice,
-          organization_attach_pdf: document.organization,
-          // What will actually happen, so a screen does not work out the
-          // precedence a second time and reach a different answer.
-          effective: document.invoice ?? document.organization,
-          attach_files: files.invoice,
-          organization_attach_files: files.organization,
-          effective_files: files.invoice ?? files.organization,
-          attach_journal: journal.invoice,
-          organization_attach_journal: journal.organization,
-          effective_journal: journal.invoice ?? journal.organization,
-          journal_formats: formats.invoice,
-          organization_journal_formats: formats.organization,
-          effective_journal_formats: formats.invoice ?? formats.organization,
-        },
-      },
+      { data: preferenceData(invoiceId, document, files, append, journal, formats) },
       200,
       { 'cache-control': 'no-store' },
     )
@@ -244,7 +285,7 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
           field: 'attach_pdf',
           code: 'required',
           message:
-            'Provide attach_pdf, attach_files, attach_journal, journal_formats, or any combination.',
+            'Provide attach_pdf, attach_files, append_pdfs, attach_journal, journal_formats, or any combination.',
         },
       ])
     }
@@ -254,6 +295,7 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
     const formats = 'journal_formats' in body ? journalFormatsOf(body, true) : undefined
     const attachPdf = 'attach_pdf' in body ? flagOf(body, 'attach_pdf', true) : undefined
     const attachFiles = 'attach_files' in body ? flagOf(body, 'attach_files', true) : undefined
+    const appendPdfs = 'append_pdfs' in body ? flagOf(body, 'append_pdfs', true) : undefined
     const notFound = () =>
       new ApiError({
         status: 404,
@@ -278,30 +320,30 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
     ) {
       throw notFound()
     }
-    const [document, files, journalAnswer, formatsAnswer] = await Promise.all([
+    if (
+      appendPdfs !== undefined &&
+      !(await service.setInvoicePreference(invoiceId, 'append', appendPdfs))
+    ) {
+      throw notFound()
+    }
+    const [document, files, append, journalAnswer, formatsAnswer] = await Promise.all([
       service.readInvoicePreference(invoiceId, 'document'),
       service.readInvoicePreference(invoiceId, 'files'),
+      service.readInvoicePreference(invoiceId, 'append'),
       service.readInvoiceJournal(invoiceId),
       service.readInvoiceJournalFormats(invoiceId),
     ])
+    if (
+      document === null ||
+      files === null ||
+      append === null ||
+      journalAnswer === null ||
+      formatsAnswer === null
+    ) {
+      throw notFound()
+    }
     return context.json(
-      {
-        data: {
-          invoice_id: invoiceId,
-          attach_pdf: document?.invoice ?? null,
-          organization_attach_pdf: document?.organization ?? false,
-          effective: document?.invoice ?? document?.organization ?? false,
-          attach_files: files?.invoice ?? null,
-          organization_attach_files: files?.organization ?? false,
-          effective_files: files?.invoice ?? files?.organization ?? false,
-          attach_journal: journalAnswer?.invoice ?? null,
-          organization_attach_journal: journalAnswer?.organization ?? false,
-          effective_journal: journalAnswer?.invoice ?? journalAnswer?.organization ?? false,
-          journal_formats: formatsAnswer?.invoice ?? null,
-          organization_journal_formats: formatsAnswer?.organization ?? ['pdf'],
-          effective_journal_formats: formatsAnswer?.invoice ?? formatsAnswer?.organization ?? ['pdf'],
-        },
-      },
+      { data: preferenceData(invoiceId, document, files, append, journalAnswer, formatsAnswer) },
       200,
       { 'cache-control': 'no-store' },
     )
@@ -309,9 +351,10 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
 
   api.get('/settings/invoice-documents', async (context) => {
     assertMoneyWriter(context)
-    const [attachPdf, attachFiles, attachJournal, journalFormats] = await Promise.all([
+    const [attachPdf, attachFiles, appendPdfs, attachJournal, journalFormats] = await Promise.all([
       service.readOrganizationPreference('document'),
       service.readOrganizationPreference('files'),
+      service.readOrganizationPreference('append'),
       service.readOrganizationJournal(),
       service.readOrganizationJournalFormats(),
     ])
@@ -320,6 +363,7 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
         data: {
           attach_pdf: attachPdf,
           attach_files: attachFiles,
+          append_pdfs: appendPdfs,
           attach_journal: attachJournal,
           journal_formats: journalFormats,
         },
@@ -338,7 +382,7 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
           field: 'attach_pdf',
           code: 'required',
           message:
-            'Provide attach_pdf, attach_files, attach_journal, journal_formats, or any combination.',
+            'Provide attach_pdf, attach_files, append_pdfs, attach_journal, journal_formats, or any combination.',
         },
       ])
     }
@@ -346,21 +390,26 @@ export const installInvoiceDocumentPreferenceRoutes = <Bindings extends object>(
     const formats = 'journal_formats' in body ? journalFormatsOf(body, false)! : undefined
     const attachPdf = 'attach_pdf' in body ? flagOf(body, 'attach_pdf', false)! : undefined
     const attachFiles = 'attach_files' in body ? flagOf(body, 'attach_files', false)! : undefined
+    const appendPdfs = 'append_pdfs' in body ? flagOf(body, 'append_pdfs', false)! : undefined
     if (journal !== undefined) await service.setOrganizationJournal(journal)
     if (formats !== undefined) await service.setOrganizationJournalFormats(formats)
     if (attachPdf !== undefined) await service.setOrganizationPreference('document', attachPdf)
     if (attachFiles !== undefined) await service.setOrganizationPreference('files', attachFiles)
-    const [currentPdf, currentFiles, currentJournal, currentFormats] = await Promise.all([
-      service.readOrganizationPreference('document'),
-      service.readOrganizationPreference('files'),
-      service.readOrganizationJournal(),
-      service.readOrganizationJournalFormats(),
-    ])
+    if (appendPdfs !== undefined) await service.setOrganizationPreference('append', appendPdfs)
+    const [currentPdf, currentFiles, currentAppend, currentJournal, currentFormats] =
+      await Promise.all([
+        service.readOrganizationPreference('document'),
+        service.readOrganizationPreference('files'),
+        service.readOrganizationPreference('append'),
+        service.readOrganizationJournal(),
+        service.readOrganizationJournalFormats(),
+      ])
     return context.json(
       {
         data: {
           attach_pdf: currentPdf,
           attach_files: currentFiles,
+          append_pdfs: currentAppend,
           attach_journal: currentJournal,
           journal_formats: currentFormats,
         },

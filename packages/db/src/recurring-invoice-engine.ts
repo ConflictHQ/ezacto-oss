@@ -1,4 +1,4 @@
-import { calculateInvoiceLineAmountCents } from '@ezacto/core'
+import { calculateInvoiceLineAmountCents, invoiceDueDate } from '@ezacto/core'
 import type BetterSqlite3 from 'better-sqlite3'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
@@ -111,6 +111,20 @@ interface StoredDefinition {
    */
   claimScope: string | null
   canDrawFromRetainerId: number | null
+  /** Copied onto every invoice the definition issues (migration 0099). */
+  purchaseOrder: string | null
+}
+
+/**
+ * A file attached to the definition, still standing on the issue date: every
+ * invoice the definition issues carries it until its `through` day, the same
+ * rule a line follows.
+ */
+interface StandingAttachment {
+  attachmentId: number
+  fileObjectId: number
+  name: string
+  uploadedByUserId: number | null
 }
 
 interface ClientDefaults {
@@ -292,22 +306,6 @@ const templateTokens = (
     )
 }
 
-const dueDate = (issueDate: string, terms: ClientDefaults['paymentTerms']): string => {
-  const days =
-    terms === 'net_15'
-      ? 15
-      : terms === 'net_30'
-        ? 30
-        : terms === 'net_45'
-          ? 45
-          : terms === 'net_60'
-            ? 60
-            : 0
-  const value = new Date(`${issueDate}T00:00:00.000Z`)
-  value.setUTCDate(value.getUTCDate() + days)
-  return value.toISOString().slice(0, 10)
-}
-
 const checkedSum = (values: readonly number[]): number => {
   const sum = values.reduce((total, value) => total + BigInt(value), 0n)
   if (sum < 0n || sum > BigInt(centsLimit)) {
@@ -377,7 +375,8 @@ export const createRecurringInvoiceEngine = (
           claims_project_ids AS "claimsProjectIds",
           claim_mode AS "claimMode", claim_ceiling_seconds AS "claimCeilingSeconds",
           claim_ceiling_cents AS "claimCeilingCents", claim_scope AS "claimScope",
-          can_draw_from_retainer_id AS "canDrawFromRetainerId"
+          can_draw_from_retainer_id AS "canDrawFromRetainerId",
+          purchase_order AS "purchaseOrder"
         FROM recurring_invoices WHERE id = ?`,
       params: [definitionId],
     })
@@ -549,6 +548,20 @@ export const createRecurringInvoiceEngine = (
     })
     const totalAmountCents = checkedSum(lines.map((l) => l.amountCents))
 
+    // The definition's files that still stand on this issue date. Compared as
+    // strings for the reason the lines are: both are calendar days, and a Date
+    // would bring a timezone the agreement does not have.
+    const standing = await all<StandingAttachment>(database, {
+      text: `SELECT attachment.id AS "attachmentId", attachment.file_object_id AS "fileObjectId",
+          attachment.name, attachment.uploaded_by_user_id AS "uploadedByUserId"
+        FROM recurring_invoice_attachments link
+        JOIN attachments attachment ON attachment.id = link.attachment_id
+        WHERE link.recurring_invoice_id = ? AND link.removed_at IS NULL
+          AND (link.through IS NULL OR link.through >= ?)
+        ORDER BY attachment.created_at, attachment.id`,
+      params: [definitionId, issueDate],
+    })
+
     const occurredAt = (options.clock ?? (() => new Date().toISOString()))()
     assertTimestamp(occurredAt)
 
@@ -635,10 +648,10 @@ export const createRecurringInvoiceEngine = (
 
     statements.push({
       text: `INSERT INTO invoices (
-          id, client_id, created_by_user_id, number, subject, notes, currency,
+          id, client_id, created_by_user_id, number, subject, purchase_order, notes, currency,
           issue_date, due_date, payment_terms, recurring_invoice_id, retainer_id,
           project_id, created_at, updated_at
-        ) SELECT ?, ?, ?, CAST(sequence.next_number AS TEXT), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ) SELECT ?, ?, ?, CAST(sequence.next_number AS TEXT), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         FROM invoice_number_sequence sequence
         WHERE sequence.singleton = 1
           ${actorGuard}
@@ -654,10 +667,12 @@ export const createRecurringInvoiceEngine = (
         definition.clientId,
         actorId,
         subject,
+        definition.purchaseOrder,
         notes,
         client.currency,
         issueDate,
-        dueDate(issueDate, client.paymentTerms),
+        // The client's terms, dated by the one rule invoice generation uses.
+        invoiceDueDate(issueDate, client.paymentTerms),
         client.paymentTerms,
         definitionId,
         // A drawdown's invoice must link the retainer it draws from; the ledger
@@ -703,6 +718,49 @@ export const createRecurringInvoiceEngine = (
           commandId,
         ],
       })
+    }
+
+    // The definition's standing files, attached to this invoice in the same
+    // batch that issues it. Each is a new attachment of the invoice's own that
+    // names the same stored file: the bytes are content-addressed and are not
+    // copied, and the invoice keeps its copy if the definition later drops the
+    // file. Ids come from the command, so a retried issue writes the same rows,
+    // and they rise in the definition's order, which is the order the invoice
+    // lists them in -- the order a purchase order is bound into the back of the
+    // invoice document in.
+    const firstAttachmentId = await stableId('recurring-generation-attachments', commandId)
+    for (const [position, file] of standing.entries()) {
+      const attachmentId = firstAttachmentId + position
+      const pending = `EXISTS (
+            SELECT 1 FROM invoice_command_ledger command
+            WHERE command.invoice_id = ? AND command.command_id = ?
+              AND command.command_kind = 'recurring.generate' AND command.completed = 0
+          )`
+      statements.push(
+        {
+          text: `INSERT INTO attachments (
+              id, file_object_id, name, uploaded_by_user_id, invoice_attachment_link_id,
+              created_at, updated_at
+            ) SELECT ?, ?, ?, ?, ?, ?, ?
+            WHERE ${pending}`,
+          params: [
+            attachmentId,
+            file.fileObjectId,
+            file.name,
+            file.uploadedByUserId,
+            attachmentId,
+            occurredAt,
+            occurredAt,
+            invoiceId,
+            commandId,
+          ],
+        },
+        {
+          text: `INSERT INTO invoice_attachments (attachment_id, invoice_id)
+            SELECT ?, ? WHERE ${pending}`,
+          params: [attachmentId, invoiceId, invoiceId, commandId],
+        },
+      )
     }
 
     // A banded engagement: the flat amount consumes the work rather than pricing

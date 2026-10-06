@@ -52,6 +52,11 @@ export interface AttachmentRecord {
   uploadedByUserId: number | null
   createdAt: string
   updatedAt: string
+  /**
+   * A recurring definition's file only (migration 0099): the last issue date
+   * it goes with, or null for every invoice the definition issues.
+   */
+  through?: string | null
 }
 
 export interface StaticRecurringAttachmentPolicyV1 {
@@ -87,6 +92,26 @@ export interface AttachmentStore {
     policy: StaticRecurringAttachmentPolicyV1 | null,
     updatedAt: string,
   ): Promise<void>
+  /**
+   * Sets the last issue date a definition's file goes with, or clears it with
+   * null so it goes with every invoice. The record, or null for no such file.
+   */
+  setRecurringInvoiceAttachmentThrough(
+    recurringInvoiceId: number,
+    attachmentId: number,
+    through: string | null,
+    updatedAt: string,
+  ): Promise<AttachmentRecord | null>
+  /**
+   * Stops a definition's file going with the invoices it issues. A timestamp,
+   * not a delete: the invoices it went with keep their own copies, and the
+   * definition keeps the record that it carried it. `false` for no such file.
+   */
+  removeRecurringInvoiceAttachment(
+    recurringInvoiceId: number,
+    attachmentId: number,
+    removedAt: string,
+  ): Promise<boolean>
 }
 
 interface Operation {
@@ -105,6 +130,7 @@ interface StoredAttachmentRow {
   uploaded_by_user_id: number | null
   created_at: string
   updated_at: string
+  through?: string | null
 }
 
 interface OwnerDefinition {
@@ -291,7 +317,30 @@ const attachment = (row: StoredAttachmentRow): AttachmentRecord => ({
   uploadedByUserId: row.uploaded_by_user_id,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
+  ...(row.through === undefined ? {} : { through: row.through }),
 })
+
+/**
+ * A recurring definition's files carry when they stop, and a removed one is
+ * no longer the definition's to show or to attach.
+ */
+const ownershipColumns = (owner: OwnerDefinition): string =>
+  owner.table === 'recurring_invoice_attachments' ? ', ownership.through AS through' : ''
+const ownershipFilter = (owner: OwnerDefinition): string =>
+  owner.table === 'recurring_invoice_attachments' ? 'AND ownership.removed_at IS NULL' : ''
+
+const calendarDatePattern = /^\d{4}-\d{2}-\d{2}$/u
+
+const assertCalendarDate = (value: string, field: string): void => {
+  const epoch = Date.parse(`${value}T00:00:00.000Z`)
+  if (
+    !calendarDatePattern.test(value) ||
+    !Number.isFinite(epoch) ||
+    new Date(epoch).toISOString().slice(0, 10) !== value
+  ) {
+    throw new RangeError(`${field} must be a calendar date`)
+  }
+}
 
 const createOperations = (
   owner: OwnerDefinition,
@@ -479,9 +528,10 @@ export const createAttachmentStore = (database: AttachmentDatabase): AttachmentS
     assertPositiveSafeInteger(parentId, owner.parentInputKey)
     if (attachmentId !== undefined) assertPositiveSafeInteger(attachmentId, 'attachmentId')
     const stored = await rows<StoredAttachmentRow>(
-      `${attachmentSelect}
+      `${attachmentSelect.replace('attachment.updated_at', `attachment.updated_at${ownershipColumns(owner)}`)}
        JOIN ${owner.table} ownership ON ownership.attachment_id = attachment.id
        WHERE ownership.${owner.parentColumn} = ?
+         ${ownershipFilter(owner)}
          ${attachmentId === undefined ? '' : 'AND attachment.id = ?'}
        ORDER BY attachment.created_at, attachment.id`,
       attachmentId === undefined ? [parentId] : [parentId, attachmentId],
@@ -575,7 +625,7 @@ export const createAttachmentStore = (database: AttachmentDatabase): AttachmentS
       }
       const [created] = containerRows<StoredAttachmentRow>(
         client,
-        `${attachmentSelect}
+        `${attachmentSelect.replace('attachment.updated_at', `attachment.updated_at${ownershipColumns(owner)}`)}
          JOIN ${owner.table} ownership ON ownership.attachment_id = attachment.id
          WHERE ownership.${owner.parentColumn} = ? AND attachment.id = ?`,
         [parentId, next.id],
@@ -621,7 +671,56 @@ export const createAttachmentStore = (database: AttachmentDatabase): AttachmentS
     if (changes !== 1) throw new Error(`recurring invoice ${recurringInvoiceId} does not exist`)
   }
 
+  const change = async (query: string, bindings: readonly unknown[]): Promise<number> =>
+    isD1Client(client)
+      ? (
+          await client
+            .prepare(query)
+            .bind(...bindings)
+            .run()
+        ).meta.changes
+      : client.prepare(query).run(...bindings).changes
+
+  const setRecurringInvoiceAttachmentThrough = async (
+    recurringInvoiceId: number,
+    attachmentId: number,
+    through: string | null,
+    updatedAt: string,
+  ): Promise<AttachmentRecord | null> => {
+    assertPositiveSafeInteger(recurringInvoiceId, 'recurringInvoiceId')
+    assertPositiveSafeInteger(attachmentId, 'attachmentId')
+    if (through !== null) assertCalendarDate(through, 'through')
+    assertCanonicalTimestamp(updatedAt, 'updatedAt')
+    const changed = await change(
+      `UPDATE recurring_invoice_attachments SET through = ?
+       WHERE attachment_id = ? AND recurring_invoice_id = ? AND removed_at IS NULL`,
+      [through, attachmentId, recurringInvoiceId],
+    )
+    if (changed !== 1) return null
+    await change(`UPDATE attachments SET updated_at = ? WHERE id = ?`, [updatedAt, attachmentId])
+    return get(owners.recurringInvoice, recurringInvoiceId, attachmentId)
+  }
+
+  const removeRecurringInvoiceAttachment = async (
+    recurringInvoiceId: number,
+    attachmentId: number,
+    removedAt: string,
+  ): Promise<boolean> => {
+    assertPositiveSafeInteger(recurringInvoiceId, 'recurringInvoiceId')
+    assertPositiveSafeInteger(attachmentId, 'attachmentId')
+    assertCanonicalTimestamp(removedAt, 'removedAt')
+    return (
+      (await change(
+        `UPDATE recurring_invoice_attachments SET removed_at = ?
+         WHERE attachment_id = ? AND recurring_invoice_id = ? AND removed_at IS NULL`,
+        [removedAt, attachmentId, recurringInvoiceId],
+      )) === 1
+    )
+  }
+
   return {
+    setRecurringInvoiceAttachmentThrough,
+    removeRecurringInvoiceAttachment,
     createInvoiceAttachment: (input) => create(owners.invoice, input),
     createRecurringInvoiceAttachment: (input) => create(owners.recurringInvoice, input),
     createEstimateAttachment: (input) => create(owners.estimate, input),

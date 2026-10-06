@@ -12,6 +12,7 @@ const record = (attemptCount: number, status: EmailDeliveryStatus): EmailLogReco
   from: { email: 'billing@example.test', name: 'Billing' },
   replyTo: [],
   to: [{ email: 'owner@example.test' }],
+  cc: [],
   template: 'verify_email',
   subject: 'Verify',
   provider: 'smtp',

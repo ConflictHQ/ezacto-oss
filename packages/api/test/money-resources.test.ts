@@ -17,6 +17,8 @@ import type { ApiAuthentication, ApiTokenService } from "../src/auth.js";
 import type { UserProfile } from "../src/context.js";
 import {
   installMoneyResourceRoutes,
+  type InvoiceDocumentPort,
+  type InvoiceSendingPort,
   type InvoiceGenerationCommand,
 } from "../src/money-resources.js";
 
@@ -589,6 +591,11 @@ interface DeliveryTemplate {
   htmlTemplate?: string | null;
 }
 
+interface DeliveryPorts {
+  documents?: InvoiceDocumentPort;
+  sending?: InvoiceSendingPort;
+}
+
 const harness = async (
   factory: () => Promise<TestDatabase>,
   onGenerate?: (input: InvoiceGenerationCommand) => void,
@@ -596,6 +603,7 @@ const harness = async (
   deliveryMailer?: SenderBoundQueuedMailer,
   deliveryTemplate?: DeliveryTemplate,
   invoicePaymentUrl?: (invoiceId: number) => Promise<string | null>,
+  deliveryPorts?: DeliveryPorts,
 ): Promise<Harness> => {
   const database = await factory();
   await seed(database);
@@ -663,6 +671,12 @@ const harness = async (
                   getSenderIdentity: async () => senderIdentity,
                   listSenderIdentities: async () => [senderIdentity],
                 },
+                ...(deliveryPorts?.documents === undefined
+                  ? {}
+                  : { documents: deliveryPorts.documents }),
+                ...(deliveryPorts?.sending === undefined
+                  ? {}
+                  : { sending: deliveryPorts.sending }),
               },
             }),
       }),
@@ -750,6 +764,7 @@ for (const [runtime, factory] of factories) {
       deliveryMailer?: SenderBoundQueuedMailer,
       deliveryTemplate?: DeliveryTemplate,
       invoicePaymentUrl?: (invoiceId: number) => Promise<string | null>,
+      deliveryPorts?: DeliveryPorts,
     ): Promise<Harness> => {
       active = await harness(
         factory,
@@ -758,6 +773,7 @@ for (const [runtime, factory] of factories) {
         deliveryMailer,
         deliveryTemplate,
         invoicePaymentUrl,
+        deliveryPorts,
       );
       return active;
     };
@@ -962,11 +978,12 @@ for (const [runtime, factory] of factories) {
         ),
       );
 
-    // The defect this closes: a client received an amount owed and nothing
-    // saying what it was for. The template seeded in migration 0030 never
-    // mentioned the lines and cannot be rewritten in place, so a body that does
-    // not place them itself still has to carry them.
-    it("[api] carries the lines behind the amount into a template that never asked for them", async () => {
+    const rule = "---------------------------------------------";
+
+    // The email Harvest sent every month: what the sender wrote, then the
+    // invoice's summary in Harvest's own words, generated rather than templated
+    // so it cannot drift from the document it is sent with.
+    it("[money] writes the message, then Harvest's invoice summary, as one plain-text body", async () => {
       const mailer = {
         assertAvailable: vi.fn(async () => undefined),
         enqueue: vi.fn(),
@@ -977,34 +994,46 @@ for (const [runtime, factory] of factories) {
 
       expect((await deliver(test, "invoice-delivery-lines")).status).toBe(202);
       expect(
-        await test.database.rows<{ textBody: string; htmlBody: string | null }>(
-          `SELECT text_body AS "textBody", html_body AS "htmlBody"
+        await test.database.rows<{ subject: string; textBody: string; htmlBody: string | null }>(
+          `SELECT subject, text_body AS "textBody", html_body AS "htmlBody"
              FROM invoice_email_intents`,
         ),
       ).toEqual([
         {
+          subject: "Invoice INV-DRAFT",
           textBody: [
             "Hello Sanitized Client, amount $415.00.",
             "",
-            "Line items",
-            "Service: Discovery workshop <b>",
-            "  3 x $125.00 = $375.00",
-            "Expense",
-            "  1 x $40.00 = $40.00",
-            "Total: $415.00",
+            "Amount Due: $415.00 USD",
+            "",
+            rule,
+            "Invoice Summary",
+            rule,
+            "Invoice ID: INV-DRAFT",
+            "Issue date: 2026-08-01",
+            "Client: Sanitized Client",
+            "Amount: $415.00 USD",
+            // Custom terms have no name to print beside the date.
+            "Due: 2026-08-31",
+            "",
+            // No document port, so no PDF -- and no sentence promising one.
+            "Thank you!",
           ].join("\n"),
           htmlBody: null,
         },
       ]);
     }, slowRuntimeTimeout);
 
-    it("[api] lets a template place the lines itself, in either body", async () => {
+    it("[api] lets the message place the lines itself, and sends one plain-text part", async () => {
       const mailer = {
         assertAvailable: vi.fn(async () => undefined),
         enqueue: vi.fn(),
       } satisfies SenderBoundQueuedMailer;
       const test = await setup(undefined, undefined, mailer, {
         textTemplate: "Owed %invoice_amount%:\n%invoice_line_items%\nThank you.",
+        // The organization's HTML template no longer shapes the invoice email:
+        // the email is Harvest's plain text, so nothing can render differently
+        // in a client that prefers HTML.
         htmlTemplate: "<p>%client_name%</p>%invoice_line_items%",
       });
       await seedInvoiceDeliveryConfiguration(test.database);
@@ -1018,8 +1047,8 @@ for (const [runtime, factory] of factories) {
         `SELECT text_body AS "textBody", html_body AS "htmlBody"
            FROM invoice_email_intents`,
       );
-      // Placed where the template says, and not repeated after it.
-      expect(intent!.textBody).toBe(
+      // Placed where the message says, above the summary.
+      expect(intent!.textBody.startsWith(
         [
           "Owed $415.00:",
           "Line items",
@@ -1029,14 +1058,11 @@ for (const [runtime, factory] of factories) {
           "  1 x $40.00 = $40.00",
           "Total: $415.00",
           "Thank you.",
+          "",
+          "Amount Due: $415.00 USD",
         ].join("\n"),
-      );
-      // The HTML body gets a table rather than the plain-text block escaped
-      // into one paragraph, and the description a client typed arrives as text.
-      expect(intent!.htmlBody).toContain("<p>Sanitized Client</p><table");
-      expect(intent!.htmlBody).toContain("Discovery workshop &lt;b&gt;");
-      expect(intent!.htmlBody).not.toContain("Discovery workshop <b>");
-      expect(intent!.htmlBody?.match(/<tr>/gu)).toHaveLength(4);
+      )).toBe(true);
+      expect(intent!.htmlBody).toBeNull();
     }, slowRuntimeTimeout);
 
     // Line amounts are pre-tax and `amount_cents` is not, so a list printed
@@ -1049,7 +1075,9 @@ for (const [runtime, factory] of factories) {
         assertAvailable: vi.fn(async () => undefined),
         enqueue: vi.fn(),
       } satisfies SenderBoundQueuedMailer;
-      const test = await setup(undefined, undefined, mailer);
+      const test = await setup(undefined, undefined, mailer, {
+        textTemplate: "Hello %client_name%, amount %invoice_amount%.\n\n%invoice_line_items%",
+      });
       await seedInvoiceDeliveryConfiguration(test.database);
       const taxedLine = await test.request(
         "/api/v1/invoices/1/line-items",
@@ -1129,29 +1157,355 @@ for (const [runtime, factory] of factories) {
         ),
       );
       expect(sent.status).toBe(202);
+      const [taxed] = await test.database.rows<{ textBody: string }>(
+        `SELECT text_body AS "textBody" FROM invoice_email_intents`,
+      );
+      expect(taxed!.textBody.startsWith(
+        [
+          "Hello Sanitized Client, amount $424.13.",
+          "",
+          "Line items",
+          "Service: Discovery workshop",
+          "  3 x $125.00 = $375.00",
+          "Expense",
+          "  1 x $40.00 = $40.00",
+          // $375.00 + $40.00 = $415.00, less the discount, plus both taxes
+          // ($33.75 and $16.88), is the amount stated at the top.
+          "Subtotal: $415.00",
+          "Discount: -$41.50",
+          "Tax: $50.63",
+          "Total: $424.13",
+          "",
+          "Amount Due: $424.13 USD",
+        ].join("\n"),
+      )).toBe(true);
+      // And the summary below states the same total.
+      expect(taxed!.textBody).toContain("\nAmount: $424.13 USD\n");
+    }, slowRuntimeTimeout);
+
+    // The fake document composer and sending rules the entries supply. The
+    // routes only ever ask these questions; what the answers come from is the
+    // entries' business and has its own tests.
+    const documentPort = (attaches: boolean): InvoiceDocumentPort & {
+      stagePreview: ReturnType<typeof vi.fn>;
+    } => ({
+      prepare: vi.fn(async () => []),
+      attachesPdf: vi.fn(async () => attaches),
+      preview: vi.fn(async () =>
+        attaches
+          ? [
+              {
+                kind: "invoice" as const,
+                filename: "INVOICE_INV-DRAFT_SANITIZED_ORGANIZATION.pdf",
+                contentType: "application/pdf",
+                byteSize: 154_000,
+                appended: ["PO-778812 letter.pdf"],
+                notAppended: null,
+              },
+            ]
+          : [],
+      ),
+      previewDocument: vi.fn(async () => null),
+      stagePreview: vi.fn(async () => [
+        {
+          key: "invoice-previews/1/preview.pdf",
+          filename: "INVOICE_INV-DRAFT_SANITIZED_ORGANIZATION.pdf",
+          contentType: "application/pdf",
+        },
+      ]),
+    });
+    const sendingPort = (previews = 0): InvoiceSendingPort => ({
+      alwaysCc: async () => [{ name: "Finance", email: "finance@example.com" }],
+      senderCopy: async () => ({ copy: true, name: "Original Sender", email: "original@example.test" }),
+      previewsSince: async () => previews,
+    });
+    const dialogBody = {
+      recipients: [{ name: "Accounts Payable", email: "AP@northwind.example" }],
+      cc: [{ name: "Pat Example", email: "pat@northwind.example" }],
+      subject: "Invoice #%invoice_number% from %company_name%",
+      message: "Hello %client_name%,\n\nPlease find this month's invoice below.\n\nAna",
+      send_me_a_copy: true,
+    };
+    const readyToSend = async (test: Harness): Promise<void> => {
+      await seedInvoiceDeliveryConfiguration(test.database);
+      await seedDeliveryLines(test);
+      const header = await test.request(
+        "/api/v1/invoices/1",
+        jsonRequest(
+          "PATCH",
+          { expected_version: 2, purchase_order: "PO-778812", payment_terms: "net_30" },
+          "delivery-header",
+        ),
+      );
+      expect(header.status).toBe(200);
+    };
+    const harvestBody = (pdf: boolean): string =>
+      [
+        "Hello Sanitized Client,",
+        "",
+        "Please find this month's invoice below.",
+        "",
+        "Ana",
+        "",
+        "Amount Due: $415.00 USD",
+        "",
+        rule,
+        "Invoice Summary",
+        rule,
+        "Invoice ID: INV-DRAFT",
+        "Issue date: 2026-08-01",
+        "Client: Sanitized Client",
+        "P.O. Number: PO-778812",
+        "Amount: $415.00 USD",
+        "Due: 2026-08-31 (Net 30)",
+        "",
+        ...(pdf ? ["The detailed invoice is attached as a PDF.", ""] : []),
+        "Thank you!",
+      ].join("\n");
+
+    it("[money] sends one email To accounts payable and Cc the client, the organization and the sender", async () => {
+      const mailer = {
+        assertAvailable: vi.fn(async () => undefined),
+        enqueue: vi.fn(),
+      } satisfies SenderBoundQueuedMailer;
+      const documents = documentPort(true);
+      const test = await setup(undefined, undefined, mailer, undefined, undefined, {
+        documents,
+        sending: sendingPort(),
+      });
+      await readyToSend(test);
+      const response = await test.request(
+        "/api/v1/invoices/1/deliveries",
+        jsonRequest("POST", { ...dialogBody, expected_version: 3, confirmed: true }, "harvest-send"),
+      );
+      expect(response.status).toBe(202);
+      expect(documents.attachesPdf).toHaveBeenCalledWith(1);
+
+      // The words the dialog typed, then Harvest's block, and the PDF sentence
+      // because the document goes with it.
       expect(
-        await test.database.rows<{ textBody: string }>(
-          `SELECT text_body AS "textBody" FROM invoice_email_intents`,
+        await test.database.rows(
+          `SELECT subject, text_body AS "textBody", html_body AS "htmlBody" FROM invoice_email_intents`,
         ),
       ).toEqual([
         {
-          textBody: [
-            "Hello Sanitized Client, amount $424.13.",
-            "",
-            "Line items",
-            "Service: Discovery workshop",
-            "  3 x $125.00 = $375.00",
-            "Expense",
-            "  1 x $40.00 = $40.00",
-            // $375.00 + $40.00 = $415.00, less the discount, plus both taxes
-            // ($33.75 and $16.88), is the amount stated at the top.
-            "Subtotal: $415.00",
-            "Discount: -$41.50",
-            "Tax: $50.63",
-            "Total: $424.13",
-          ].join("\n"),
+          subject: "Invoice #INV-DRAFT from Sanitized Organization",
+          textBody: harvestBody(true),
+          htmlBody: null,
         },
       ]);
+      // One email: To the client's accounts payable, Cc what the sender typed,
+      // the organization's own mailbox and the sender -- in that order, once.
+      const [log] = await test.database.rows<{ id: number; to: string; cc: string }>(
+        `SELECT id, to_json AS "to", cc_json AS "cc" FROM email_log`,
+      );
+      expect(JSON.parse(log!.to)).toEqual([{ email: "ap@northwind.example", name: "Accounts Payable" }]);
+      expect(JSON.parse(log!.cc)).toEqual([
+        { email: "pat@northwind.example", name: "Pat Example" },
+        { email: "finance@example.com", name: "Finance" },
+        { email: "original@example.test", name: "Original Sender" },
+      ]);
+      expect(
+        await test.database.rows(
+          `SELECT role, email, delivery_id = ? AS "sameEmail" FROM invoice_email_recipients
+           ORDER BY recipient_index`,
+          log!.id,
+        ),
+      ).toEqual([
+        { role: "to", email: "ap@northwind.example", sameEmail: 1 },
+        { role: "cc", email: "pat@northwind.example", sameEmail: 1 },
+        { role: "cc", email: "finance@example.com", sameEmail: 1 },
+        { role: "cc", email: "original@example.test", sameEmail: 1 },
+      ]);
+      // And the message records both headers, the copy, and that the PDF went.
+      const sent = (await test.service.listMessages(1))!.at(-1)!;
+      expect(sent).toMatchObject({
+        recipients: [{ name: "Accounts Payable", email: "ap@northwind.example" }],
+        attach_pdf: true,
+        send_me_a_copy: true,
+      });
+      expect(sent.cc.map(({ email }) => email)).toEqual([
+        "pat@northwind.example",
+        "finance@example.com",
+        "original@example.test",
+      ]);
+    }, slowRuntimeTimeout);
+
+    it("[api] refuses a variable that does not exist, before anything is recorded", async () => {
+      const mailer = {
+        assertAvailable: vi.fn(async () => undefined),
+        enqueue: vi.fn(),
+      } satisfies SenderBoundQueuedMailer;
+      const test = await setup(undefined, undefined, mailer);
+      await readyToSend(test);
+      const response = await test.request(
+        "/api/v1/invoices/1/deliveries",
+        jsonRequest(
+          "POST",
+          { ...dialogBody, send_me_a_copy: false, subject: "Invoice %invoice_numbr%", expected_version: 3, confirmed: true },
+          "harvest-typo",
+        ),
+      );
+      expect(response.status).toBe(422);
+      expect(JSON.stringify(await response.json())).toContain('"field":"subject"');
+      expect(await test.database.rows(`SELECT count(*) AS count FROM invoice_email_intents`)).toEqual([
+        { count: 0 },
+      ]);
+      // A Cc that is also To is refused rather than sent twice.
+      const doubled = await test.request(
+        "/api/v1/invoices/1/deliveries",
+        jsonRequest(
+          "POST",
+          {
+            ...dialogBody,
+            send_me_a_copy: false,
+            cc: [{ name: "AP again", email: "ap@northwind.example" }],
+            expected_version: 3,
+            confirmed: true,
+          },
+          "harvest-doubled",
+        ),
+      );
+      expect(doubled.status).toBe(422);
+    }, slowRuntimeTimeout);
+
+    it("[api] previews exactly what the send composes, and records nothing", async () => {
+      const mailer = {
+        assertAvailable: vi.fn(async () => undefined),
+        enqueue: vi.fn(),
+      } satisfies SenderBoundQueuedMailer;
+      const documents = documentPort(true);
+      const test = await setup(undefined, undefined, mailer, undefined, undefined, {
+        documents,
+        sending: sendingPort(),
+      });
+      await readyToSend(test);
+      const counts = async () =>
+        test.database.rows(
+          `SELECT (SELECT count(*) FROM invoice_messages) AS messages,
+                  (SELECT count(*) FROM invoice_email_intents) AS intents,
+                  (SELECT count(*) FROM email_log) AS emails,
+                  (SELECT count(*) FROM event_outbox) AS events,
+                  (SELECT version FROM invoices WHERE id = 1) AS version`,
+        );
+      const before = await counts();
+      const preview = await test.request(
+        "/api/v1/invoices/1/deliveries/preview",
+        jsonRequest("POST", { ...dialogBody, append_pdfs: true }),
+      );
+      expect(preview.status).toBe(200);
+      const previewed = await responseData<{
+        to: unknown;
+        cc: { email: string }[];
+        subject: string;
+        text: string;
+        html: null;
+        attachments: unknown[];
+      }>(preview);
+      expect(await counts()).toEqual(before);
+      expect(documents.preview).toHaveBeenCalledWith({ invoiceId: 1, choices: { append: true } });
+      expect(previewed.to).toEqual([{ name: "Accounts Payable", email: "ap@northwind.example" }]);
+      expect(previewed.cc.map(({ email }) => email)).toEqual([
+        "pat@northwind.example",
+        "finance@example.com",
+        "original@example.test",
+      ]);
+      expect(previewed.attachments).toEqual([
+        {
+          kind: "invoice",
+          filename: "INVOICE_INV-DRAFT_SANITIZED_ORGANIZATION.pdf",
+          content_type: "application/pdf",
+          byte_size: 154_000,
+          appended: ["PO-778812 letter.pdf"],
+          not_appended: null,
+        },
+      ]);
+
+      // The same request sent for real composes the same email, word for word.
+      const sent = await test.request(
+        "/api/v1/invoices/1/deliveries",
+        jsonRequest("POST", { ...dialogBody, expected_version: 3, confirmed: true }, "harvest-after-preview"),
+      );
+      expect(sent.status).toBe(202);
+      const [intent] = await test.database.rows<{ subject: string; text: string }>(
+        `SELECT subject, text_body AS text FROM invoice_email_intents`,
+      );
+      expect(previewed.subject).toBe(intent!.subject);
+      expect(previewed.text).toBe(intent!.text);
+      expect(previewed.text).toBe(harvestBody(true));
+      expect(previewed.html).toBeNull();
+    }, slowRuntimeTimeout);
+
+    it("[security] sends a preview to the person asking and nobody else, stamped, and records no send", async () => {
+      const enqueue = vi.fn(async () => ({ id: 9_001 }) as never);
+      const mailer = {
+        assertAvailable: vi.fn(async () => undefined),
+        enqueue,
+      } satisfies SenderBoundQueuedMailer;
+      const documents = documentPort(true);
+      const test = await setup(undefined, undefined, mailer, undefined, undefined, {
+        documents,
+        sending: sendingPort(),
+      });
+      await readyToSend(test);
+      const response = await test.request(
+        "/api/v1/invoices/1/deliveries/preview/send",
+        jsonRequest("POST", dialogBody),
+      );
+      expect(response.status).toBe(202);
+      expect(enqueue).toHaveBeenCalledTimes(1);
+      const [message, attachments] = enqueue.mock.calls[0] as unknown as [
+        { to: unknown; cc?: unknown; subject: string; text: string; html: string; related: unknown },
+        unknown,
+      ];
+      // To the signed-in user alone: no client address, no copy list.
+      expect(message.to).toEqual([{ email: "original@example.test", name: "Original Sender" }]);
+      expect(message.cc).toBeUndefined();
+      expect(message.subject).toBe("[PREVIEW] Invoice #INV-DRAFT from Sanitized Organization");
+      expect(message.text.split("\n").slice(0, 4)).toEqual([
+        "==== PREVIEW ====",
+        "Not sent to the client.",
+        "This email would go to: To Accounts Payable <ap@northwind.example>; Cc Pat Example <pat@northwind.example>, Finance <finance@example.com>, Original Sender <original@example.test>",
+        "==== PREVIEW ====",
+      ]);
+      expect(message.text.endsWith(harvestBody(true))).toBe(true);
+      expect(message.html).toContain(">PREVIEW</div>");
+      expect(message.related).toEqual({ type: "invoice_preview", id: 1 });
+      expect(attachments).toEqual([
+        {
+          key: "invoice-previews/1/preview.pdf",
+          filename: "INVOICE_INV-DRAFT_SANITIZED_ORGANIZATION.pdf",
+          contentType: "application/pdf",
+        },
+      ]);
+      // Not a send: no message, no delivery, no event, the invoice untouched.
+      expect(
+        await test.database.rows(
+          `SELECT (SELECT count(*) FROM invoice_messages) AS messages,
+                  (SELECT count(*) FROM invoice_email_intents) AS intents,
+                  (SELECT count(*) FROM event_outbox WHERE event_type = 'invoice.sent') AS sent,
+                  (SELECT state FROM invoices WHERE id = 1) AS state`,
+        ),
+      ).toEqual([{ messages: 0, intents: 0, sent: 0, state: "draft" }]);
+    }, slowRuntimeTimeout);
+
+    it("[security] limits preview emails per invoice per hour", async () => {
+      const enqueue = vi.fn(async () => ({ id: 9_001 }) as never);
+      const mailer = {
+        assertAvailable: vi.fn(async () => undefined),
+        enqueue,
+      } satisfies SenderBoundQueuedMailer;
+      const test = await setup(undefined, undefined, mailer, undefined, undefined, {
+        documents: documentPort(false),
+        sending: sendingPort(5),
+      });
+      await readyToSend(test);
+      const response = await test.request(
+        "/api/v1/invoices/1/deliveries/preview/send",
+        jsonRequest("POST", dialogBody),
+      );
+      expect(response.status).toBe(429);
+      expect(enqueue).not.toHaveBeenCalled();
     }, slowRuntimeTimeout);
 
     it("[db] returns a self-consistent invoice header/line snapshot", async () => {

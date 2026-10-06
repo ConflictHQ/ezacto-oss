@@ -10,18 +10,26 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   clientBudgetBurn,
   clientBurnWindow,
+  clientCanSetInvoiceSending,
   clientHierarchy,
   clientIdFromPathname,
+  clientInvoiceSendingInput,
+  clientJournalFormatsLabel,
+  clientJournalLabel,
   clientOpenInvoiceTotals,
   clientProfileCanReadMoney,
   clientProfileCanWrite,
   clientRetainerBalances,
   clientRollupHref,
   clientSearchMatches,
+  clientSendingDefaultLabel,
+  clientSendingRuleOption,
+  clientSendingSourceHint,
   clientSubtreeIds,
   createShellApi,
   relationLabel,
   renderClientDirectoryPages,
+  type ClientInvoiceSendingFormValues,
 } from '../src/index.js'
 
 const timestamp = '2026-09-01T12:00:00.000Z'
@@ -381,4 +389,208 @@ describe('Client 360 figures', () => {
       expect(clientProfileCanReadMoney(profile)).toBe(expected)
     },
   )
+})
+
+describe('a client’s invoice sending, from the form', () => {
+  const organization = {
+    attach_pdf: true,
+    append_pdfs: false,
+    attach_files: true,
+    attach_journal: 'detailed' as const,
+    journal_formats: ['pdf' as const],
+  }
+  const values = (
+    overrides: Partial<ClientInvoiceSendingFormValues> = {},
+  ): ClientInvoiceSendingFormValues => ({
+    source: 'client',
+    to: 'Accounts Payable <ap@example.com>',
+    cc: 'dana@example.test',
+    attachPdf: '',
+    appendPdfs: '',
+    attachFiles: '',
+    attachJournal: '',
+    journalFormats: null,
+    ...overrides,
+  })
+
+  it('[unit] sends both lists, and null for every rule left to the organization', () => {
+    expect(clientInvoiceSendingInput(values(), organization)).toEqual({
+      recipients: {
+        to: [{ name: 'Accounts Payable', email: 'ap@example.com' }],
+        cc: [{ name: '', email: 'dana@example.test' }],
+      },
+      attach_pdf: null,
+      append_pdfs: null,
+      attach_files: null,
+      attach_journal: null,
+      journal_formats: null,
+    })
+  })
+
+  it('[unit] sends null recipients to follow the contacts, whatever the boxes show', () => {
+    // The boxes show the contacts read-only then, and are not this client's to
+    // validate: following them is the whole answer.
+    const input = clientInvoiceSendingInput(
+      values({ source: 'contacts', to: 'not an address', cc: '' }),
+      organization,
+    )
+    expect(input.recipients).toBeNull()
+  })
+
+  it('[unit] sends each rule the client decides for itself', () => {
+    expect(
+      clientInvoiceSendingInput(
+        values({
+          attachPdf: 'false',
+          appendPdfs: 'true',
+          attachFiles: 'false',
+          attachJournal: 'summary',
+          journalFormats: ['xlsx', 'pdf'],
+        }),
+        organization,
+      ),
+    ).toMatchObject({
+      attach_pdf: false,
+      append_pdfs: true,
+      attach_files: false,
+      attach_journal: 'summary',
+      // In the order the contract lists them, not the order they were ticked.
+      journal_formats: ['pdf', 'xlsx'],
+    })
+  })
+
+  it('[unit] leaves the report’s files as stored while the report is off', () => {
+    const off = clientInvoiceSendingInput(
+      values({ attachJournal: 'false', journalFormats: [] }),
+      organization,
+    )
+    expect(off.attach_journal).toBe(false)
+    expect(off).not.toHaveProperty('journal_formats')
+    // Following an organization that sends no report is off as well.
+    expect(
+      clientInvoiceSendingInput(values(), { ...organization, attach_journal: false }),
+    ).not.toHaveProperty('journal_formats')
+    // On, a report with no files to go as is refused before the request.
+    expect(() => clientInvoiceSendingInput(values({ journalFormats: [] }), organization)).toThrow(
+      'Choose at least one file for the hours report.',
+    )
+  })
+
+  it('[unit] needs somebody in To, and leaves out a Cc already in it', () => {
+    expect(() => clientInvoiceSendingInput(values({ to: '  \n' }), organization)).toThrow(
+      'Enter at least one address in To, or follow the contacts’ invoice routing.',
+    )
+    expect(
+      clientInvoiceSendingInput(
+        values({ to: 'ap@example.com', cc: 'AP@example.com\ndana@example.test' }),
+        organization,
+      ).recipients,
+    ).toEqual({
+      to: [{ name: '', email: 'ap@example.com' }],
+      cc: [{ name: '', email: 'dana@example.test' }],
+    })
+    expect(() => clientInvoiceSendingInput(values({ cc: 'Dana <dana>' }), organization)).toThrow(
+      'Cc: “Dana <dana>” is not an email address.',
+    )
+  })
+
+  it('[unit] holds each list to the fifty the route stores', () => {
+    const many = Array.from({ length: 51 }, (_, index) => `person${index}@example.com`).join('\n')
+    expect(() => clientInvoiceSendingInput(values({ to: many }), organization)).toThrow(
+      'To can hold at most 50 addresses.',
+    )
+    expect(() => clientInvoiceSendingInput(values({ cc: many }), organization)).toThrow(
+      'Cc can hold at most 50 addresses.',
+    )
+  })
+
+  it('[unit] says what following the organization means, in the option itself', () => {
+    expect(clientSendingDefaultLabel('Yes')).toBe('Organization default (Yes)')
+    expect(clientJournalLabel('detailed')).toBe('Every entry')
+    expect(clientJournalLabel('summary')).toBe('Summary')
+    expect(clientJournalLabel(false)).toBe('Off')
+    expect(clientJournalFormatsLabel(['xlsx', 'pdf'])).toBe('PDF and Excel')
+    expect(clientJournalFormatsLabel(['csv'])).toBe('CSV')
+    expect(clientSendingRuleOption(null)).toBe('')
+    expect(clientSendingRuleOption(false)).toBe('false')
+    expect(clientSendingRuleOption('summary')).toBe('summary')
+  })
+
+  it('[unit] says where the addresses come from, and when the contacts give none', () => {
+    const routed = {
+      contacts: { to: [{ name: 'Dana Reyes', email: 'dana@example.test' }], cc: [] },
+    }
+    expect(clientSendingSourceHint(routed, 'contacts')).toBe(
+      'From the contacts’ invoice routing: Recipient goes in To, CC in Cc. Edit a contact to change them.',
+    )
+    expect(clientSendingSourceHint({ contacts: { to: [], cc: [] } }, 'contacts')).toBe(
+      'No contact has Recipient or CC as its invoice routing, so the Send dialog opens with no addresses.',
+    )
+    expect(clientSendingSourceHint(routed, 'client')).toBe(
+      'Saved for this client, in place of the contacts’ invoice routing.',
+    )
+  })
+
+  it.each([
+    ['administrator', { kind: 'session' }, true],
+    ['accounting', { kind: 'session' }, true],
+    ['executive_manager', { kind: 'session' }, true],
+    ['project_manager', { kind: 'session' }, false],
+    ['people_admin', { kind: 'session' }, false],
+    ['member', { kind: 'session' }, false],
+    // The route reads the session, so a token is refused even with the scope.
+    ['administrator', { kind: 'token', token_id: 4, scopes: ['invoices:read', 'invoices:write'] }, false],
+  ] satisfies ReadonlyArray<readonly [Whoami['profile'], Whoami['authentication'], boolean]>)(
+    '[security] offers a client’s invoice sending to %s on %o: %s',
+    (profile, authentication, expected) => {
+      expect(
+        clientCanSetInvoiceSending({ user_id: 1, profile, manager_grants: [], authentication }),
+      ).toBe(expected)
+    },
+  )
+
+  it('[unit] reads the rules a client leaves to the organization as null, through the binding', async () => {
+    // The route sends null for a rule the client leaves to the organization,
+    // and the screen has to see null there, not a choice.
+    const getClientInvoiceSending = vi.fn(async () => ({
+      data: {
+        client_id: 7,
+        recipients: null,
+        contacts: { to: [{ name: 'Dana Reyes', email: 'dana@example.test' }], cc: [] },
+        attach_pdf: null,
+        append_pdfs: true,
+        attach_files: null,
+        attach_journal: null,
+        journal_formats: null,
+        organization: {
+          attach_pdf: true,
+          append_pdfs: false,
+          attach_files: false,
+          attach_journal: 'summary',
+          journal_formats: ['pdf'],
+        },
+      },
+    }))
+    const api = createShellApi({ getClientInvoiceSending } as unknown as EzactoClient)
+    const signal = new AbortController().signal
+
+    expect(await api.getClientInvoiceSending!(7, signal)).toEqual({
+      client_id: 7,
+      recipients: null,
+      contacts: { to: [{ name: 'Dana Reyes', email: 'dana@example.test' }], cc: [] },
+      attach_pdf: null,
+      append_pdfs: true,
+      attach_files: null,
+      attach_journal: null,
+      journal_formats: null,
+      organization: {
+        attach_pdf: true,
+        append_pdfs: false,
+        attach_files: false,
+        attach_journal: 'summary',
+        journal_formats: ['pdf'],
+      },
+    })
+    expect(getClientInvoiceSending).toHaveBeenCalledWith({ id: 7, signal })
+  })
 })

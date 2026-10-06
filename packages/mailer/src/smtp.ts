@@ -167,6 +167,7 @@ export class SmtpMailer implements HttpEmailProvider {
       throw new DOMException('SMTP delivery aborted', 'AbortError')
     }
 
+    const cc = message.cc ?? []
     const transport = this.transport()
     const abort = () => transport.close()
     options.signal.addEventListener('abort', abort, { once: true })
@@ -176,6 +177,7 @@ export class SmtpMailer implements HttpEmailProvider {
       info = await transport.sendMail({
         from: recipient(message.from),
         to: message.to.map(recipient),
+        ...(cc.length === 0 ? {} : { cc: cc.map(recipient) }),
         ...(message.replyTo === undefined
           ? {}
           : { replyTo: message.replyTo.map(recipient) }),
@@ -199,9 +201,13 @@ export class SmtpMailer implements HttpEmailProvider {
       transport.close()
     }
 
+    // Each Cc address is an envelope recipient of its own. A server that took
+    // the To and refused a Cc has delivered part of the message, and retrying
+    // would send the To a second copy, so it is the same terminal outcome as a
+    // refused To.
     if (
       !Array.isArray(info.accepted) ||
-      info.accepted.length !== message.to.length ||
+      info.accepted.length !== message.to.length + cc.length ||
       (Array.isArray(info.rejected) && info.rejected.length > 0) ||
       (Array.isArray(info.pending) && info.pending.length > 0)
     ) {

@@ -1235,7 +1235,9 @@ describe('invoice browse browser behavior', () => {
     expect(dialog.open).toBe(true)
     // The dialog says the two things are separate and which order they run in.
     expect(dialog.textContent).toContain('Also deliver by email')
-    expect(dialog.textContent).toContain("It lists this invoice's line items, with the attachments chosen below.")
+    expect(dialog.textContent).toContain(
+      'One email from the verified organization sender, To and Cc as listed, with the subject and message above and the attachments chosen below.',
+    )
     expect(dialog.textContent).toContain('%invoice_number%')
 
     const recipients = document.querySelector<HTMLTextAreaElement>(
@@ -1287,11 +1289,15 @@ describe('invoice browse browser behavior', () => {
     expect(deliverInvoiceEmail).toHaveBeenCalledTimes(2)
     expect(deliverInvoiceEmail.mock.calls[0]?.[1]).toBe(deliverInvoiceEmail.mock.calls[1]?.[1])
     // Both attempts carry the version the transition returned, not the one the
-    // page was showing when the dialog opened.
+    // page was showing when the dialog opened -- and the same email: the
+    // subject and message the dialog opened on, nobody copied.
     for (const call of deliverInvoiceEmail.mock.calls) {
       expect(call[2]).toEqual({
         expected_version: 2,
         recipients: [{ name: 'Accounts Payable', email: 'AP@Example.Test' }],
+        subject: 'Invoice #%invoice_number% from %company_name%',
+        message: 'Hello,\n\nPlease find invoice %invoice_number% below.',
+        send_me_a_copy: false,
         confirmed: true,
       })
     }
@@ -1417,10 +1423,14 @@ describe('invoice browse browser behavior', () => {
     expect(transitionInvoice.mock.calls[0]?.[2]).toMatchObject({ expected_version: 1 })
     expect(deliverInvoiceEmail).toHaveBeenCalledTimes(2)
     expect(deliverInvoiceEmail.mock.calls[0]?.[1]).toBe(deliverInvoiceEmail.mock.calls[1]?.[1])
-    // The retry goes out at the version the reload found, not the stale one.
+    // The retry goes out at the version the reload found, not the stale one,
+    // and is the email the first attempt was.
     expect(deliverInvoiceEmail.mock.calls[1]?.[2]).toEqual({
       expected_version: 2,
       recipients: [{ name: 'Accounts Payable', email: 'AP@Example.Test' }],
+      subject: 'Invoice #%invoice_number% from %company_name%',
+      message: 'Hello,\n\nPlease find invoice %invoice_number% below.',
+      send_me_a_copy: false,
       confirmed: true,
     })
     // Two sent messages in the history is the whole budget: the operator's and

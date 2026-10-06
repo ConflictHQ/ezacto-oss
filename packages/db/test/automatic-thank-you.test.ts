@@ -301,7 +301,7 @@ describe('recording the thank-you that was sent', () => {
     fromName: 'Fixture',
     fromEmail: 'billing@example.test',
     replyToEmail: null,
-    recipients: [{ name: 'Accounts Payable', email: 'ap@example.test' }],
+    recipients: [{ name: 'Accounts Payable', email: 'ap@example.test', role: 'to' as const }],
     subject: 'Thank you for your payment',
     textBody: 'We received your payment. Thank you.',
     htmlBody: null,
@@ -474,10 +474,8 @@ describe('choosing who to thank', () => {
         subject: 'Invoice 1318',
         textBody: 'Attached.',
         htmlBody: null,
-        recipients: people.map((person, index) => ({
-          deliveryId: messageId * 100 + index,
-          ...person,
-        })),
+        deliveryId: messageId * 100,
+        recipients: people.map((person) => ({ ...person, role: 'to' as const })),
       },
     })
 
@@ -488,8 +486,8 @@ describe('choosing who to thank', () => {
       { name: 'R. Adeyemi', email: 'adeyemi@example.test' },
     ])
     expect(await readThankYouRecipients(database, 4)).toEqual([
-      { name: 'Accounts Payable', email: 'ap@example.test' },
-      { name: 'R. Adeyemi', email: 'adeyemi@example.test' },
+      { name: 'Accounts Payable', email: 'ap@example.test', role: 'to' },
+      { name: 'R. Adeyemi', email: 'adeyemi@example.test', role: 'to' },
     ])
   })
 
@@ -500,7 +498,7 @@ describe('choosing who to thank', () => {
     await send(database, 70, 0, [{ name: 'Wrong Address', email: 'typo@example.test' }])
     await send(database, 71, 1, [{ name: 'Accounts Payable', email: 'ap@example.test' }])
     expect(await readThankYouRecipients(database, 4)).toEqual([
-      { name: 'Accounts Payable', email: 'ap@example.test' },
+      { name: 'Accounts Payable', email: 'ap@example.test', role: 'to' },
     ])
   })
 
@@ -543,8 +541,8 @@ describe('one thank-you, however many addresses received the invoice', () => {
         fromEmail: 'billing@example.test',
         replyToEmail: null,
         recipients: [
-          { name: 'Accounts Payable', email: 'ap@example.test' },
-          { name: '', email: 'adeyemi@example.test' },
+          { name: 'Accounts Payable', email: 'ap@example.test', role: 'to' },
+          { name: '', email: 'adeyemi@example.test', role: 'cc' },
         ],
         subject: 'Thank you for your payment',
         textBody: 'We received your payment. Thank you.',
@@ -553,14 +551,15 @@ describe('one thank-you, however many addresses received the invoice', () => {
       }),
     ).toBe('recorded')
     const [row] = sqlite!
-      .prepare(`SELECT to_json AS addressed FROM email_log WHERE id = 9100`)
-      .all() as { addressed: string }[]
-    // A recipient with no name is addressed by address alone rather than by an
-    // empty display name, which providers render as a stray comma.
+      .prepare(`SELECT to_json AS addressed, cc_json AS copied FROM email_log WHERE id = 9100`)
+      .all() as { addressed: string; copied: string }[]
+    // Whoever the invoice copied is copied here too, not promoted to an
+    // addressee. A recipient with no name is addressed by address alone rather
+    // than by an empty display name, which providers render as a stray comma.
     expect(JSON.parse(row!.addressed)).toEqual([
       { email: 'ap@example.test', name: 'Accounts Payable' },
-      { email: 'adeyemi@example.test' },
     ])
+    expect(JSON.parse(row!.copied)).toEqual([{ email: 'adeyemi@example.test' }])
     expect(
       sqlite!.prepare(`SELECT count(*) AS n FROM invoice_auto_email_intents`).all(),
     ).toEqual([{ n: 1 }])

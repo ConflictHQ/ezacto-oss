@@ -406,8 +406,14 @@ for (const [runtime, factory] of factories) {
         'provider_message_id',
         'created_at',
         'updated_at',
+        // Appended by 0099: who the one email was copied to, beside `recipients`.
+        'cc_recipients',
       ])
       expect(messageColumns.find(({ name }) => name === 'recipients')?.dflt_value).toBe("'[]'")
+      expect(messageColumns.find(({ name }) => name === 'cc_recipients')).toMatchObject({
+        notnull: 1,
+        dflt_value: "'[]'",
+      })
       expect(messageColumns.find(({ name }) => name === 'delivery_status')).toMatchObject({
         notnull: 0,
         dflt_value: null,

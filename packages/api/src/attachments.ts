@@ -24,6 +24,11 @@ export interface AttachmentRecord {
   uploadedByUserId: number | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * A recurring definition's file only: the last issue date it goes with, or
+   * null for every invoice the definition issues.
+   */
+  through?: string | null;
 }
 
 export interface AttachmentMetadataInput {
@@ -91,6 +96,17 @@ export interface AttachmentMetadataPort {
     projectId: number,
     attachmentId: number,
   ): Promise<AttachmentRecord | null>;
+  setRecurringInvoiceAttachmentThrough?(
+    recurringInvoiceId: number,
+    attachmentId: number,
+    through: string | null,
+    updatedAt: string,
+  ): Promise<AttachmentRecord | null>;
+  removeRecurringInvoiceAttachment?(
+    recurringInvoiceId: number,
+    attachmentId: number,
+    removedAt: string,
+  ): Promise<boolean>;
 }
 
 export interface AttachmentObject {
@@ -262,7 +278,19 @@ const serialize = (record: AttachmentRecord) => ({
   uploaded_by_user_id: record.uploadedByUserId,
   created_at: record.createdAt,
   updated_at: record.updatedAt,
+  ...(record.through === undefined ? {} : { through: record.through }),
 });
+
+const calendarDate = /^\d{4}-\d{2}-\d{2}$/u;
+
+const isCalendarDate = (value: string): boolean => {
+  const epoch = Date.parse(`${value}T00:00:00.000Z`);
+  return (
+    calendarDate.test(value) &&
+    Number.isFinite(epoch) &&
+    new Date(epoch).toISOString().slice(0, 10) === value
+  );
+};
 
 const attachmentEnvelope = (
   owner: OwnerDefinition,
@@ -625,4 +653,71 @@ export const installAttachmentRoutes = <Bindings extends object>(
       });
     });
   }
+
+  /**
+   * A recurring definition's files go with every invoice it issues; these two
+   * say until when, and stop one going at all. A yearly purchase order covers
+   * its fiscal year, so its letter carries the last issue date it belongs on,
+   * and a file removed from a definition is kept as the record that it went --
+   * every invoice it reached keeps its own copy.
+   */
+  const recurring = owners.find((owner) => owner.owner === "recurringInvoice")!;
+  const recurringFile = `/${recurring.collection}/:${recurring.parameter}/attachments/:attachmentId`;
+  api.patch(recurringFile, async (rawContext) => {
+    const context = rawContext as Context<ApiContext<Bindings>>;
+    requireApiScope(context, `${recurring.scope}:write`);
+    const options = requireOptions(supplied);
+    const parentId = resourceId(context.req.param(recurring.parameter) ?? "", recurring.singular);
+    await requireOwnerAccess(options, recurring, parentId, "write", context.get("principal"));
+    const attachmentId = resourceId(context.req.param("attachmentId") ?? "", "attachment");
+    const body = (await context.req.json().catch(() => null)) as unknown;
+    const fields =
+      typeof body === "object" && body !== null && !Array.isArray(body)
+        ? (body as Record<string, unknown>)
+        : null;
+    const through = fields?.through;
+    if (
+      fields === null ||
+      Object.keys(fields).some((field) => field !== "through") ||
+      !Object.hasOwn(fields, "through") ||
+      (through !== null && (typeof through !== "string" || !isCalendarDate(through)))
+    ) {
+      throw validationError([
+        {
+          field: "through",
+          code: "invalid",
+          message: "through must be a YYYY-MM-DD date, or null for every invoice.",
+        },
+      ]);
+    }
+    if (options.metadata.setRecurringInvoiceAttachmentThrough === undefined) unavailable();
+    const updated = await options.metadata.setRecurringInvoiceAttachmentThrough!(
+      parentId,
+      attachmentId,
+      through as string | null,
+      (options.clock ?? (() => new Date().toISOString()))(),
+    );
+    if (updated === null) {
+      throw new ApiError({ status: 404, code: "not_found", message: "The attachment does not exist." });
+    }
+    return context.json(attachmentEnvelope(recurring, parentId, updated));
+  });
+  api.delete(recurringFile, async (rawContext) => {
+    const context = rawContext as Context<ApiContext<Bindings>>;
+    requireApiScope(context, `${recurring.scope}:write`);
+    const options = requireOptions(supplied);
+    const parentId = resourceId(context.req.param(recurring.parameter) ?? "", recurring.singular);
+    await requireOwnerAccess(options, recurring, parentId, "write", context.get("principal"));
+    const attachmentId = resourceId(context.req.param("attachmentId") ?? "", "attachment");
+    if (options.metadata.removeRecurringInvoiceAttachment === undefined) unavailable();
+    const removed = await options.metadata.removeRecurringInvoiceAttachment!(
+      parentId,
+      attachmentId,
+      (options.clock ?? (() => new Date().toISOString()))(),
+    );
+    if (!removed) {
+      throw new ApiError({ status: 404, code: "not_found", message: "The attachment does not exist." });
+    }
+    return context.body(null, 204);
+  });
 };

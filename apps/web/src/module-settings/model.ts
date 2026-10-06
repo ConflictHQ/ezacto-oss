@@ -3,8 +3,11 @@ import {
   type BackupRun,
   type BackupStatusEnvelope,
   type EmailHealth,
+  type InvoiceRecipient,
   type OrganizationInvoiceDocumentsEnvelope,
   type OrganizationInvoiceDocumentsInput,
+  type OrganizationInvoiceSendingEnvelope,
+  type OrganizationInvoiceSendingInput,
   type SenderIdentity,
   type SsoDomain,
   type SsoDomainCheck,
@@ -12,6 +15,7 @@ import {
   type TimeEntryNoteSettingsPatch,
 } from '@conflict-hq/ezacto-client'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
+import { assertInvoiceAddressCount, parseInvoiceAddressLines } from '../invoice-addresses.js'
 
 /**
  * What the company half of settings reads. Every method here is an endpoint
@@ -100,6 +104,8 @@ type JournalFormat = 'pdf' | 'csv' | 'xlsx'
 export interface InvoiceSendingChoice {
   readonly attachPdf: boolean
   readonly attachFiles: boolean
+  /** The invoice's PDF files bound into the back of the invoice PDF. */
+  readonly appendPdfs: boolean
   readonly journal: 'detailed' | 'summary' | false
   readonly journalFormats: readonly JournalFormat[]
 }
@@ -107,6 +113,9 @@ export interface InvoiceSendingChoice {
 export const invoiceSendingChoice = (setting: Readonly<InvoiceDocumentsSetting>): InvoiceSendingChoice => ({
   attachPdf: setting.attach_pdf,
   attachFiles: setting.attach_files,
+  // `=== true` rather than the value, so a server that predates the setting
+  // reads as off and a save that leaves the box alone writes nothing about it.
+  appendPdfs: setting.append_pdfs === true,
   journal:
     setting.attach_journal === 'detailed' || setting.attach_journal === 'summary'
       ? setting.attach_journal
@@ -132,6 +141,7 @@ export const invoiceSendingChanges = (
   const input: OrganizationInvoiceDocumentsInput = {}
   if (chosen.attachPdf !== stored.attachPdf) input.attach_pdf = chosen.attachPdf
   if (chosen.attachFiles !== stored.attachFiles) input.attach_files = chosen.attachFiles
+  if (chosen.appendPdfs !== stored.appendPdfs) input.append_pdfs = chosen.appendPdfs
   if (chosen.journal !== stored.journal) input.attach_journal = chosen.journal
   if (
     chosen.journal !== false &&
@@ -140,6 +150,34 @@ export const invoiceSendingChanges = (
     input.journal_formats = [...chosen.journalFormats]
   }
   return Object.keys(input).length === 0 ? null : input
+}
+
+/** The addresses copied on every invoice email: the company's own mailboxes. */
+export type OrganizationInvoiceSendingSetting = OrganizationInvoiceSendingEnvelope['data']
+
+/** The route's cap on the always-copied list. */
+const alwaysCcLimit = 20
+
+/**
+ * The always-copied addresses as the request writes them, or null when the box
+ * still says what is stored -- only what changed goes, as with the attachment
+ * defaults beside it. An address is compared the way the mailer compares it,
+ * without regard to case; a renamed one has changed.
+ */
+export const invoiceAlwaysCcChange = (
+  stored: readonly InvoiceRecipient[],
+  raw: string,
+): InvoiceRecipient[] | null => {
+  const chosen = parseInvoiceAddressLines(raw, 'Always copy')
+  assertInvoiceAddressCount(chosen, 'Always copy', alwaysCcLimit)
+  const unchanged =
+    chosen.length === stored.length &&
+    chosen.every(
+      (address, index) =>
+        address.name === stored[index]!.name &&
+        address.email.toLowerCase() === stored[index]!.email.toLowerCase(),
+    )
+  return unchanged ? null : chosen
 }
 
 export interface CompanySettingsApi {
@@ -151,6 +189,12 @@ export interface CompanySettingsApi {
     input: OrganizationInvoiceDocumentsInput,
     signal?: AbortSignal,
   ): Promise<InvoiceDocumentsSetting>
+  /** The addresses copied on every invoice email, under Sending too. Optional the same way. */
+  getOrganizationInvoiceSending?(signal?: AbortSignal): Promise<OrganizationInvoiceSendingSetting>
+  setOrganizationInvoiceSending?(
+    input: OrganizationInvoiceSendingInput,
+    signal?: AbortSignal,
+  ): Promise<OrganizationInvoiceSendingSetting>
   updateInvoiceDefaults?(
     patch: Partial<InvoiceDefaultsSetting>,
     signal?: AbortSignal,

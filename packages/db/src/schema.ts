@@ -120,6 +120,11 @@ export const organizations = sqliteTable(
     // Migration 0097: what every new invoice starts with.
     invoiceDefaultNotes: text('invoice_default_notes'),
     invoiceDefaultSubject: text('invoice_default_subject'),
+    // Migration 0099: addresses copied on every invoice email.
+    invoiceAlwaysCc: text('invoice_always_cc', { mode: 'json' })
+      .$type<Array<{ name: string; email: string }>>()
+      .notNull()
+      .default([]),
     timeRounding: text('time_rounding', {
       enum: ['none', 'nearest_6', 'nearest_15', 'nearest_30', 'up_6', 'up_15', 'up_30'],
     })
@@ -192,6 +197,8 @@ export const users = sqliteTable(
     timeEntryNotesMinimumLength: integer('time_entry_notes_minimum_length'),
     version: integer('version').notNull().default(0),
     teamWriteToken: text('team_write_token'),
+    // Migration 0099: whether this person is copied on the invoice emails they send.
+    invoiceEmailCopy: integer('invoice_email_copy', { mode: 'boolean' }).notNull().default(true),
     ...timestamps,
   },
   (table) => [
@@ -793,6 +800,12 @@ export const clients = sqliteTable(
     reportBrandId: integer('report_brand_id').references(() => reportBrands.id, {
       onDelete: 'restrict',
     }),
+    // Migration 0099: who this client's invoices go to and who is copied. Null
+    // follows the contacts' invoice routing.
+    invoiceRecipients: text('invoice_recipients', { mode: 'json' }).$type<{
+      to: Array<{ name: string; email: string }>
+      cc: Array<{ name: string; email: string }>
+    } | null>(),
     ...timestamps,
   },
   (table) => [
@@ -1031,6 +1044,8 @@ export const recurringInvoices = sqliteTable(
     canDrawFromRetainerId: integer('can_draw_from_retainer_id').references(() => retainers.id, {
       onDelete: 'restrict',
     }),
+    // Migration 0099: copied onto every invoice the definition issues.
+    purchaseOrder: text('purchase_order'),
     ...timestamps,
   },
   (table) => [
@@ -1875,6 +1890,9 @@ export const recurringInvoiceAttachments = sqliteTable(
     recurringInvoiceId: integer('recurring_invoice_id')
       .notNull()
       .references(() => recurringInvoices.id, { onDelete: 'restrict' }),
+    // Migration 0099: the last issue date the file goes with; null is every one.
+    through: text('through'),
+    removedAt: text('removed_at'),
   },
   (table) => [
     index('recurring_invoice_attachments_recurring_invoice_id').on(
@@ -1939,6 +1957,11 @@ export const invoiceMessages = sqliteTable(
       .$type<Array<{ name: string; email: string }>>()
       .notNull()
       .default([]),
+    // Migration 0099: the Cc header of the email the message records.
+    ccRecipients: text('cc_recipients', { mode: 'json' })
+      .$type<Array<{ name: string; email: string }>>()
+      .notNull()
+      .default([]),
     subject: text('subject'),
     body: text('body'),
     attachPdf: integer('attach_pdf', { mode: 'boolean' }).notNull().default(false),
@@ -1985,6 +2008,8 @@ export const emailLog = sqliteTable(
     from: text('from_json', { mode: 'json' }).$type<EmailSender | null>(),
     replyTo: text('reply_to_json', { mode: 'json' }).$type<EmailRecipient[] | null>(),
     to: text('to_json', { mode: 'json' }).$type<EmailRecipient[]>().notNull(),
+    // Migration 0099: null when the message copied nobody.
+    cc: text('cc_json', { mode: 'json' }).$type<EmailRecipient[] | null>(),
     template: text('template').notNull(),
     subject: text('subject').notNull(),
     provider: text('provider'),
@@ -2530,10 +2555,12 @@ export const invoiceEmailRecipients = sqliteTable(
       .notNull()
       .references(() => invoiceEmailIntents.invoiceMessageId, { onDelete: 'restrict' }),
     recipientIndex: integer('recipient_index').notNull(),
+    // Migration 0099: one email per message, so every recipient of a message
+    // names the same delivery.
     deliveryId: integer('delivery_id')
       .notNull()
-      .unique()
       .references(() => emailLog.id, { onDelete: 'restrict' }),
+    role: text('role', { enum: ['to', 'cc'] }).notNull(),
     name: text('name').notNull(),
     email: text('email').notNull(),
     createdAt: text('created_at').notNull(),
@@ -2548,6 +2575,7 @@ export const invoiceEmailRecipients = sqliteTable(
       table.invoiceMessageId,
       table.recipientIndex,
     ),
+    index('invoice_email_recipients_delivery').on(table.deliveryId),
     check(
       'invoice_email_recipients_index_safe',
       sql`${table.recipientIndex} between 0 and 999`,

@@ -129,7 +129,8 @@ const sendTo = (
       senderEvidenceVersion: 1, fromName: 'CONFLICT Billing',
       fromEmail: 'billing@example.test', replyToEmail: null,
       subject: 'Invoice 1315', textBody: 'Attached.', htmlBody: null,
-      recipients: people.map((person, index) => ({ deliveryId: 700 + index, ...person })),
+      deliveryId: 700,
+      recipients: people.map((person) => ({ ...person, role: 'to' as const })),
     },
   })
 
