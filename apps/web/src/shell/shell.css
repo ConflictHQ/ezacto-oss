@@ -2098,9 +2098,14 @@
 }
 .invoice-new-dialog .invoice-fee-line {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  /* The amount column holds a typical fee's width, so lines stay aligned. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(7.5rem, auto) auto;
   align-items: end;
   gap: 8px 10px;
+}
+.invoice-new-dialog .invoice-fee-line + .invoice-fee-line {
+  padding-top: 16px;
+  border-top: 1px solid var(--ez-border);
 }
 .invoice-new-dialog .invoice-fee-description {
   grid-column: 1 / -1;
