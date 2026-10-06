@@ -1,10 +1,12 @@
 import {
   calculateInvoiceLineAmountCents,
+  compareInvoiceListPositions,
   interpolateEmailTemplate,
   invoiceLineItemsBlock,
   type EmailTemplateBlockValue,
   type InvoiceActorType,
   type InvoiceLifecycleCommand,
+  type InvoiceListPosition,
 } from "@ezacto/core";
 import {
   SenderIdentityUnavailableError,
@@ -16,7 +18,13 @@ import type { Context, Hono, MiddlewareHandler } from "hono";
 import { requireApiScope } from "./auth.js";
 import type { ApiContext, UserPrincipal } from "./context.js";
 import { ApiError, validationError, type FieldError } from "./errors.js";
-import { cursorPage, type CursorWindow } from "./pagination.js";
+import {
+  cursorPage,
+  keysetCursorPage,
+  type CursorWindow,
+  type KeysetOrder,
+  type KeysetWindow,
+} from "./pagination.js";
 import {
   assertFields,
   isCanonicalDate,
@@ -36,6 +44,9 @@ interface IdentifiedResource {
 interface InvoiceResource extends IdentifiedResource {
   version: number;
   currency: string;
+  number: string;
+  issue_date: string;
+  created_at: string;
 }
 
 export interface InvoiceDeliveryLine {
@@ -351,7 +362,7 @@ export type InvoiceState = "draft" | "open" | "paid" | "closed";
 
 const invoiceStates: readonly InvoiceState[] = ["draft", "open", "paid", "closed"];
 
-export interface InvoiceCursorWindow extends CursorWindow {
+export interface InvoiceListWindow extends KeysetWindow<InvoiceListPosition> {
   states?: readonly InvoiceState[];
   clientIds?: readonly number[];
 }
@@ -427,9 +438,12 @@ const clientIdFilter = (requestUrl: URL): readonly number[] | undefined => {
 interface MoneyResourceService {
   /** Null for an empty collection -- see CursorSource, which cursorPage reads. */
   highWatermark(
-    kind: "invoices" | "estimates" | "retainers" | "recurring-invoices",
+    kind: "estimates" | "retainers" | "recurring-invoices",
   ): Promise<number | null>;
-  listInvoices(window: InvoiceCursorWindow): Promise<InvoiceResource[]>;
+  /** Null for an empty collection -- see KeysetSource, which keysetCursorPage reads. */
+  invoiceListSnapshot(): Promise<string | null>;
+  /** Newest first: see `compareInvoiceListPositions` in `@ezacto/core`. */
+  listInvoices(window: InvoiceListWindow): Promise<InvoiceResource[]>;
   getInvoice(id: number): Promise<InvoiceResource | null>;
   getInvoiceDeliveryContext(id: number): Promise<InvoiceDeliveryContext | null>;
   listInvoiceDeliveryJobs(eventId: string): Promise<InvoiceDeliveryJob[]>;
@@ -1094,6 +1108,25 @@ const translateMoneyError = (error: unknown): never => {
       message: "This period has already been generated for this definition.",
     });
   }
+  if (code === "payment_exceeds_balance") {
+    // A field error on the amount, so a form can put it beside the input. The
+    // version check ran first, so this is the balance the payment would land
+    // on, not a stale one: re-reading the invoice will not change the answer.
+    const maximumCents =
+      isJsonObject(error) && typeof error.maximumCents === "number"
+        ? error.maximumCents
+        : null;
+    throw validationError([
+      {
+        field: "amount_cents",
+        code: "exceeds_balance",
+        message:
+          maximumCents === null || maximumCents <= 0
+            ? "This invoice has nothing left to pay, so the payment would overpay it."
+            : `amount_cents must not exceed ${maximumCents}, the amount this invoice still owes.`,
+      },
+    ]);
+  }
   if (code === "invalid_command_input") {
     throw validationError([
       {
@@ -1384,6 +1417,39 @@ const parseDeliveryRecipients = (
   });
 };
 
+const canonicalDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The invoice list's order, as the keyset chassis needs it: where a row sits,
+ * how two places compare, and how a place travels in a cursor -- issue date,
+ * number and id, which is the whole sort key and names exactly one row.
+ */
+const invoiceListOrder: KeysetOrder<InvoiceResource, InvoiceListPosition> = {
+  positionOf: (invoice) => ({
+    issueDate: invoice.issue_date,
+    number: invoice.number,
+    id: invoice.id,
+  }),
+  compare: compareInvoiceListPositions,
+  encode: (position) => [position.issueDate, position.number, position.id],
+  decode: (value) => {
+    if (!Array.isArray(value) || value.length !== 3) return null;
+    const [issueDate, number, id] = value as unknown[];
+    if (
+      typeof issueDate !== "string" ||
+      !canonicalDatePattern.test(issueDate) ||
+      typeof number !== "string" ||
+      number.length === 0 ||
+      typeof id !== "number" ||
+      !Number.isSafeInteger(id) ||
+      id < 1
+    ) {
+      return null;
+    }
+    return { issueDate, number, id };
+  },
+};
+
 const installInvoiceReads = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   options: ResolvedMoneyResourceRouteOptions,
@@ -1394,17 +1460,20 @@ const installInvoiceReads = <Bindings extends object>(
     const states = invoiceStateFilter(requestUrl);
     const clientIds = clientIdFilter(requestUrl);
     return context.json(
-      await cursorPage({
+      await keysetCursorPage({
         requestUrl,
         cursorSigningKey: options.cursorSigningKey,
         viewer: principal,
         serializer: (invoice: Readonly<InvoiceResource>) => ({ ...invoice }),
+        // Newest first. By id, ascending, a new invoice sat behind every page
+        // of an imported book, whose ids run newest first.
+        order: invoiceListOrder,
         source: {
-          // The watermark stays the whole collection's. It bounds the
+          // The snapshot stays the whole collection's. It bounds the
           // traversal against later inserts; it is not a count of what
           // matches, and narrowing it to the filtered set would make the
           // cursor mean something different on each page.
-          highWatermark: () => options.service.highWatermark("invoices"),
+          snapshot: () => options.service.invoiceListSnapshot(),
           list: (window) =>
             options.service.listInvoices({
               ...window,

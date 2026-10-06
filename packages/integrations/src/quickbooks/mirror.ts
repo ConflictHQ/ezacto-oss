@@ -260,6 +260,19 @@ export interface MirrorPaymentInput {
  */
 export const paymentRefNumber = (paymentId: number): string => `ez-${String(paymentId)}`
 
+/**
+ * Our receipt id from a QuickBooks payment's reference, where the reference is
+ * one `paymentRefNumber` wrote, and null for anything else. The webhook reads
+ * it to know a payment this instance put into QuickBooks before the link that
+ * records it has been saved.
+ */
+export const receiptIdFromRefNumber = (refNumber: string | undefined): number | null => {
+  const match = /^ez-([1-9][0-9]*)$/u.exec(refNumber ?? '')
+  if (match === null) return null
+  const id = Number(match[1])
+  return Number.isSafeInteger(id) ? id : null
+}
+
 /** Cents to the decimal QuickBooks reads, exactly: 12345 -> 123.45. */
 const decimalAmount = (cents: number): number => Number((cents / 100).toFixed(2))
 

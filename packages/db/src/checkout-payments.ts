@@ -16,7 +16,12 @@
  */
 
 import { sql } from 'drizzle-orm'
-import { recordInvoicePayment, type InvoiceStateDatabase } from './invoice-state.js'
+import {
+  InvoicePaymentExceedsBalanceError,
+  InvoiceVersionConflictError,
+  recordInvoicePayment,
+  type InvoiceStateDatabase,
+} from './invoice-state.js'
 
 /**
  * The same database type the command path takes. Narrower than the one the
@@ -46,6 +51,22 @@ export type CheckoutPaymentOutcome =
   | 'recorded'
   | 'already_recorded'
   | 'invoice_not_payable'
+  /**
+   * More than the invoice still owes, so not recorded: an invoice is never
+   * overpaid by a provider's report. Usually the same money recorded twice --
+   * an operator marked it paid first -- and otherwise a client who paid twice,
+   * which a person has to settle with them. Either way it is left for a
+   * person, and logged so they can find it.
+   */
+  | 'exceeds_balance'
+
+/**
+ * How many times a payment is re-decided when the invoice moves under it. A
+ * version conflict means somebody else wrote between the read and the write --
+ * often an operator recording the very same payment by hand -- and the right
+ * answer depends on what they wrote, so it is read again rather than thrown.
+ */
+const maximumAttempts = 3
 
 const nextPaymentId = async (database: Database): Promise<number> => {
   const rows = await database.all<{ next: number }>(
@@ -57,13 +78,29 @@ const nextPaymentId = async (database: Database): Promise<number> => {
 /**
  * Records the payment, or says why it did not.
  *
- * Answers rather than throws for the two cases a caller cannot do anything
- * about: the payment is already recorded, or the invoice is not in a state that
- * can take one. Both are ordinary during a reconciliation -- it re-reads the
- * same payments on every pass, and an invoice may have been voided since -- and
- * an exception would make the outbox retry a correct answer until it gave up.
+ * Answers rather than throws for the cases a caller cannot do anything about:
+ * the payment is already recorded, the invoice is not in a state that can take
+ * one, or the payment is more than the invoice still owes. All are ordinary
+ * during a reconciliation -- it re-reads the same payments on every pass, an
+ * invoice may have been voided since, and an operator may have recorded the
+ * same money by hand -- and an exception would make the outbox retry a correct
+ * answer until it gave up.
  */
 export const recordCheckoutPayment = async (
+  database: Database,
+  input: Readonly<CheckoutPaymentInput>,
+): Promise<CheckoutPaymentOutcome> => {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await recordCheckoutPaymentOnce(database, input)
+    } catch (cause) {
+      if (cause instanceof InvoiceVersionConflictError && attempt < maximumAttempts) continue
+      throw cause
+    }
+  }
+}
+
+const recordCheckoutPaymentOnce = async (
   database: Database,
   input: Readonly<CheckoutPaymentInput>,
 ): Promise<CheckoutPaymentOutcome> => {
@@ -144,6 +181,32 @@ export const recordCheckoutPayment = async (
       WHERE provider_account_id = ${accountId}
         AND provider_transaction_id = ${input.providerTransactionId}`)
     if (settled.length > 0) return 'already_recorded'
+    // The command refuses a payment larger than the balance it would land on,
+    // decided against the same version it writes at. A provider's report of
+    // one is an answer, not a failure to retry.
+    if (cause instanceof InvoicePaymentExceedsBalanceError) {
+      return unrecordedOverpayment(input, cause.maximumCents)
+    }
     throw cause
   }
+}
+
+/**
+ * The record a refused overpayment leaves: the payment is real money a
+ * provider reports, so declining to apply it must not be silent. Logged with
+ * everything a person needs to find it at the provider and settle it.
+ */
+const unrecordedOverpayment = (
+  input: Readonly<CheckoutPaymentInput>,
+  dueAmountCents: number,
+): 'exceeds_balance' => {
+  console.warn('[payments] provider payment not recorded: more than the invoice still owes', {
+    provider: input.provider,
+    providerTransactionId: input.providerTransactionId,
+    invoiceId: input.invoiceId,
+    amountCents: input.amountCents,
+    dueAmountCents,
+    paidOn: input.paidOn,
+  })
+  return 'exceeds_balance'
 }

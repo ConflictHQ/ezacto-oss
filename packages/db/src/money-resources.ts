@@ -1,6 +1,7 @@
 import type BetterSqlite3 from 'better-sqlite3'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
+import type { InvoiceListPosition } from '@ezacto/core'
 import type * as schema from './schema.js'
 import {
   deleteInvoicePayment,
@@ -38,21 +39,43 @@ export interface MoneyWindow {
   throughId: number
   take: number
   /**
-   * States to keep, or undefined for every state. Applied in SQL rather than
-   * over the returned page: the cursor chassis asks for take+1 rows and reads
-   * "more than I asked for" as "there is a next page", so filtering after the
-   * fact would return short pages that claim to be the end of the collection.
-   * 739 invoices with 9 of them open is exactly the shape that breaks under a
-   * page-local filter.
+   * Client ids to keep, or undefined for every client. Applied in SQL rather
+   * than over the returned page: the cursor chassis asks for take+1 rows and
+   * reads "more than I asked for" as "there is a next page", so filtering
+   * after the fact would return short pages that claim to be the end of the
+   * collection. The caller is a client 360 rolling a subtree up, so its filter
+   * routinely matches a few rows out of a whole book, which is exactly that
+   * shape.
+   */
+  clientIds?: readonly number[]
+}
+
+/**
+ * One page of the invoice list, which is read newest first (see
+ * `compareInvoiceListPositions` in `@ezacto/core`) rather than by id.
+ */
+export interface InvoiceListWindow {
+  /** The last invoice of the previous page; null on the first page. */
+  after: InvoiceListPosition | null
+  /**
+   * The latest creation instant when the traversal began, from
+   * `invoiceListSnapshot`. Invoices created after it are left out, so rows
+   * added while somebody pages do not extend or shift what they are reading.
+   *
+   * The id-ordered collections get the same guarantee from a high-water id.
+   * Invoice ids cannot give it: one raised here may take an id derived from a
+   * hash, far above or below every id already in the table.
+   */
+  createdThrough: string
+  take: number
+  /**
+   * States to keep, or undefined for every state. In SQL, for the reason
+   * `MoneyWindow.clientIds` is: 739 invoices with 9 of them open is exactly the
+   * shape a page-local filter turns into short pages that claim to be the end
+   * of the collection.
    */
   states?: readonly InvoiceState[]
-  /**
-   * Client ids to keep, or undefined for every client. In SQL for exactly the
-   * reason `states` is, and with a sharper edge: the caller is a client 360
-   * rolling a subtree up, so its filter routinely matches a few rows out of a
-   * whole book, which is the shape a page-local filter turns into short pages
-   * that claim to be the end of the collection.
-   */
+  /** Client ids to keep, or undefined for every client; see `MoneyWindow.clientIds`. */
   clientIds?: readonly number[]
 }
 
@@ -595,32 +618,87 @@ const inClause = (
     : ` AND ${column} IN (${values.map(() => '?').join(', ')})`
 
 /**
- * The id window, optionally narrowed to a set of states and a set of clients.
- * The two narrowings are independent and compose, because "the open invoices
- * for this subtree" needs both at once.
+ * An invoice number as the list sorts it, as one text key: `1`, the length of
+ * the number without its leading zeros (ten digits), then those digits, for a
+ * number made of digits alone; `0` then the number itself for anything else.
+ * Compared as bytes, that is `compareInvoiceNumbers` in `@ezacto/core` -- the
+ * all-digit numbers above the rest, the longer one above the shorter, then
+ * digit by digit -- and the list endpoint checks every page against that
+ * comparison, so the two must not drift apart.
  */
-const invoiceWindowFor = (window: Readonly<MoneyWindow>): string =>
-  `id > ? AND id <= ?${inClause('state', window.states)}${inClause(
-    'client_id',
-    window.clientIds,
-  )} ORDER BY id LIMIT ?`
+const invoiceNumberOrderKey = (column: string): string => `(CASE
+    WHEN ${column} <> '' AND ${column} NOT GLOB '*[^0-9]*'
+      THEN '1' || printf('%010d', length(ltrim(${column}, '0'))) || ltrim(${column}, '0')
+    ELSE '0' || ${column}
+  END)`
 
-const invoicePageLinesSelectFor = (window: Readonly<MoneyWindow>): string =>
-  `${invoiceLineSelect}
-  WHERE invoice_id IN (
-    SELECT id FROM invoices WHERE ${invoiceWindowFor(window)}
-  ) ORDER BY invoice_id, position, id`
+/**
+ * The creation instant with its fraction written out, so two instants compare
+ * correctly as text. The column admits zero to three fractional digits, and as
+ * text `...:00Z` sorts after `...:00.500Z` although it is the earlier instant.
+ */
+const createdInstant = `strftime('%Y-%m-%dT%H:%M:%fZ', created_at)`
 
-// The order here is the order the placeholders appear in `invoiceWindowFor`;
+const invoiceListOrder = `issue_date DESC, ${invoiceNumberOrderKey('number')} DESC, id DESC`
+
+/**
+ * The ids on one page of the invoice list, newest first, as a common table
+ * expression both halves of the page read: the snapshot bound, the optional
+ * state and client narrowings (independent, and composed, because "the open
+ * invoices for this subtree" needs both at once), then everything strictly
+ * after the previous page's last invoice.
+ *
+ * "After" is a row-value comparison on the whole sort key. The cursor's own
+ * key is computed from its number by the same expression, inside the query,
+ * so the database never compares against a key worked out anywhere else.
+ */
+const invoicePageFor = (window: Readonly<InvoiceListWindow>): string =>
+  `WITH page AS (
+    SELECT id FROM invoices
+    WHERE ${createdInstant} <= ?${inClause('state', window.states)}${inClause(
+      'client_id',
+      window.clientIds,
+    )}${
+      window.after === null
+        ? ''
+        : `
+      AND (issue_date, ${invoiceNumberOrderKey('number')}, id) < (
+        SELECT resume.issue_date, ${invoiceNumberOrderKey('resume.number')}, resume.id
+        FROM (SELECT ? AS issue_date, ? AS number, ? AS id) AS resume
+      )`
+    }
+    ORDER BY ${invoiceListOrder}
+    LIMIT ?
+  )`
+
+// The order here is the order the placeholders appear in `invoicePageFor`;
 // the two must be read together, or the take binds to a filter slot and the
 // page silently answers a different question.
-const invoiceWindowParams = (window: MoneyWindow): unknown[] => [
-  window.afterId ?? 0,
-  window.throughId,
+const invoicePageParams = (window: Readonly<InvoiceListWindow>): unknown[] => [
+  window.createdThrough,
   ...(window.states ?? []),
   ...(window.clientIds ?? []),
+  ...(window.after === null
+    ? []
+    : [window.after.issueDate, window.after.number, window.after.id]),
   window.take,
 ]
+
+const assertInvoiceListWindow = (window: Readonly<InvoiceListWindow>): void => {
+  if (!Number.isSafeInteger(window.take) || window.take < 1) {
+    throw new RangeError('take must be a positive safe integer')
+  }
+  assertTimestamp(window.createdThrough, 'createdThrough')
+  if (window.after !== null) {
+    assertPositiveId(window.after.id, 'after.id')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(window.after.issueDate)) {
+      throw new RangeError('after.issueDate must be a canonical date')
+    }
+    if (typeof window.after.number !== 'string' || window.after.number === '') {
+      throw new RangeError('after.number must be a nonblank string')
+    }
+  }
+}
 
 const hydrateInvoiceLines = (lines: RawInvoiceLine[]): InvoiceLineResource[] =>
   lines.map((line) => ({ ...line, taxed: Boolean(line.taxed), taxed2: Boolean(line.taxed2) }))
@@ -810,11 +888,16 @@ const readConsistentDeliveryContext = async (
 
 const readConsistentInvoicePage = async (
   database: MoneyResourceDatabase,
-  window: MoneyWindow,
+  window: InvoiceListWindow,
 ): Promise<InvoiceResource[]> => {
-  const params = invoiceWindowParams(window)
-  const headerSelect = `${invoiceSelect} WHERE ${invoiceWindowFor(window)}`
-  const linesSelect = invoicePageLinesSelectFor(window)
+  assertInvoiceListWindow(window)
+  const page = invoicePageFor(window)
+  const params = invoicePageParams(window)
+  const headerSelect = `${page}
+  ${invoiceSelect} WHERE id IN (SELECT id FROM page) ORDER BY ${invoiceListOrder}`
+  const linesSelect = `${page}
+  ${invoiceLineSelect} WHERE invoice_id IN (SELECT id FROM page)
+  ORDER BY invoice_id, position, id`
   const client = database.$client
   if (isD1Client(client)) {
     const [headers, lines] = await client.batch([
@@ -1121,7 +1204,23 @@ export class MoneyResourceRepository {
     return row?.highWaterId ?? null
   }
 
-  async listInvoices(window: MoneyWindow): Promise<InvoiceResource[]> {
+  /**
+   * Where a traversal of the invoice list is bounded: the latest creation
+   * instant in the table, or null for an empty one, which `InvoiceListWindow`
+   * reads as `createdThrough`. The whole table's, not the filtered set's, for
+   * the reason the high-water ids are: it bounds a traversal against later
+   * inserts and is not a count of what matches.
+   */
+  async invoiceListSnapshot(): Promise<string | null> {
+    const row = await first<{ createdThrough: string | null }>(this.database, {
+      text: `SELECT max(${createdInstant}) AS "createdThrough" FROM invoices`,
+      params: [],
+    })
+    return row?.createdThrough ?? null
+  }
+
+  /** One page of the invoice list, newest first; see `InvoiceListWindow`. */
+  async listInvoices(window: InvoiceListWindow): Promise<InvoiceResource[]> {
     return readConsistentInvoicePage(this.database, window)
   }
 

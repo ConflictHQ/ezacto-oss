@@ -7,6 +7,8 @@ import {
   mirrorInvoice,
   mirrorPayment,
   paymentPayload,
+  paymentRefNumber,
+  receiptIdFromRefNumber,
   type MirrorLink,
   type MirrorLinkKind,
   type MirrorPayment,
@@ -444,6 +446,36 @@ describe('reading a payment back', () => {
     // 33.33 * 100 is 3332.9999... in binary floating point. Truncating loses a
     // cent on a real payment.
     expect(inboundPayments(odd, resolve)[0]!.amountCents).toBe(3_333)
+  })
+
+  it('[unit] reads our receipt back out of the reference the mirror stamps', () => {
+    // The webhook uses this to know a payment the mirror made before its link
+    // is saved, so it has to be the exact inverse of the stamp, at every size
+    // a receipt id can be -- payment ids here can be derived from a hash.
+    for (const id of [1, 9, 7_316_402_118_945_027, Number.MAX_SAFE_INTEGER]) {
+      expect(receiptIdFromRefNumber(paymentRefNumber(id))).toBe(id)
+    }
+  })
+
+  it('[unit] reads nothing from a reference somebody else wrote', () => {
+    // A bookkeeper's own reference -- a cheque number, a remittance id -- is
+    // not a claim that we made the payment.
+    for (const reference of [
+      undefined,
+      '',
+      '1042',
+      'ez-',
+      'ez-0',
+      'ez-07',
+      'EZ-7',
+      'ez-7 ',
+      ' ez-7',
+      'ez-7a',
+      'ez--7',
+      'ez-99999999999999999',
+    ]) {
+      expect(receiptIdFromRefNumber(reference)).toBeNull()
+    }
   })
 })
 
