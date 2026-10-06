@@ -314,6 +314,283 @@ describe('invoice generation browser behavior', () => {
     }
   })
 
+  it('[browser] raises a flat fee covering tracked time, up to a limit, and opens the draft', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-14T12:00:00.000Z'))
+    renderBrowserShell({ view: 'invoice-generation' })
+    const assign = vi.fn()
+    vi.stubGlobal('location', Object.assign(new URL(globalThis.location.href), { assign }))
+    const generateInvoice = vi
+      .fn<NonNullable<ShellApi['generateInvoice']>>()
+      .mockResolvedValue(invoice(21))
+    const waiting = (projectId: number, seconds: number, cents: number) => ({
+      client_id: 11,
+      client_name: 'Northwind Freight',
+      project_id: projectId,
+      project_name: `Project ${projectId}`,
+      project_code: '',
+      totals: [{
+        currency: 'USD',
+        rounded_seconds: seconds,
+        time_entry_count: 3,
+        unpriced_time_entry_count: 0,
+        expense_count: 1,
+        time_cents: cents,
+        expense_cents: 500,
+        total_cents: cents + 500,
+      }],
+    })
+    const getUninvoicedReport = vi.fn<NonNullable<ShellApi['getUninvoicedReport']>>(
+      async (filter) => ({
+        from: filter.from,
+        to: filter.to,
+        client_id: 11,
+        project_id: null,
+        totals: [],
+        // 102.75 hours on the retainer, and a second project's time that is
+        // not selected and must not count.
+        projects: [waiting(1, 369_900, 1_541_250), waiting(2, 7_200, 30_000)],
+      }),
+    )
+    const setInvoiceJournal = vi
+      .fn<NonNullable<ShellApi['setInvoiceJournal']>>()
+      .mockResolvedValue(undefined)
+    const api: ShellApi = {
+      ...browserApi(),
+      listClients: async () => ({
+        data: [{ ...resource(11, 'Northwind Freight'), currency: 'USD' }],
+        page: { next_cursor: null },
+      }),
+      listProjects: async () => ({
+        data: [
+          { ...resource(1, 'Retainer'), client_id: 11, billing_currency: null },
+          { ...resource(2, 'Site visit'), client_id: 11, billing_currency: null },
+        ],
+        page: { next_cursor: null },
+      }),
+      getUninvoicedReport,
+      generateInvoice,
+      getOrganizationInvoiceJournal: vi.fn(async () => ({ level: false as const, formats: ['pdf' as const] })),
+      setInvoiceJournal,
+    }
+    try {
+      await mountShell(api)
+      const wizard = document.querySelector<HTMLFormElement>('[data-invoice-generation-form]')!
+      const clientSelect = wizard.querySelector<HTMLSelectElement>('[data-invoice-client]')!
+      await vi.waitFor(() => expect(clientSelect.options.length).toBe(1))
+      clientSelect.value = '11'
+      clientSelect.dispatchEvent(new Event('change', { bubbles: true }))
+      const project = (id: number) =>
+        wizard.querySelector<HTMLInputElement>(`[data-invoice-projects] [value="${id}"]`)!
+      await vi.waitFor(() => expect(project(2)).not.toBeNull())
+      project(2).checked = false
+      project(2).dispatchEvent(new Event('change', { bubbles: true }))
+
+      // The third type keeps the projects and the period, trades the
+      // summaries for the fee and its limit, and keeps the hours report.
+      const banded = wizard.querySelector<HTMLInputElement>('[data-invoice-kind][value="banded"]')!
+      expect(banded.closest('label')!.textContent).toContain('Flat fee covering tracked time')
+      banded.checked = true
+      banded.dispatchEvent(new Event('change', { bubbles: true }))
+      expect(wizard.querySelector<HTMLElement>('[data-invoice-tracked]')!.hidden).toBe(false)
+      expect(wizard.querySelector<HTMLElement>('[data-invoice-tracked-only]')!.hidden).toBe(true)
+      const band = wizard.querySelector<HTMLElement>('[data-invoice-band]')!
+      expect(band.hidden).toBe(false)
+      expect(wizard.querySelector<HTMLElement>('.invoice-new-journal')!.hidden).toBe(false)
+      expect(band.textContent).toContain('Expenses are not part of the fee')
+      const preview = band.querySelector<HTMLElement>('[data-invoice-band-preview]')!
+      await vi.waitFor(() =>
+        expect(preview.textContent).toBe(
+          '102.75 h uninvoiced in the period, all of it covered by the fee.',
+        ),
+      )
+
+      // One fee line to start, and it cannot be removed while it is the only one.
+      const rows = () => [...band.querySelectorAll<HTMLElement>('[data-invoice-fee-line]')]
+      expect(rows()).toHaveLength(1)
+      expect(rows()[0]!.querySelector<HTMLButtonElement>('[data-invoice-fee-remove]')!.hidden).toBe(
+        true,
+      )
+      const type = (row: HTMLElement, field: string, value: string) => {
+        const input = row.querySelector<HTMLInputElement>(`[data-invoice-fee-${field}]`)!
+        input.value = value
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+      type(rows()[0]!, 'description', 'Monthly retainer')
+      // Cents typed where money is asked for read back a hundredfold.
+      type(rows()[0]!, 'unit-price', '1500000')
+      expect(rows()[0]!.querySelector('[data-invoice-fee-amount]')!.textContent).toBe(
+        '$1,500,000.00',
+      )
+      type(rows()[0]!, 'unit-price', '15000.00')
+      expect(rows()[0]!.querySelector('[data-invoice-fee-amount]')!.textContent).toBe('$15,000.00')
+
+      // A second line adds to the fee, and goes again.
+      band.querySelector<HTMLButtonElement>('[data-invoice-fee-add]')!.click()
+      expect(rows()).toHaveLength(2)
+      type(rows()[1]!, 'quantity', '2')
+      type(rows()[1]!, 'unit-price', '250.00')
+      expect(band.querySelector('[data-invoice-fee-total]')!.textContent).toBe('$15,500.00')
+      rows()[1]!.querySelector<HTMLButtonElement>('[data-invoice-fee-remove]')!.click()
+      expect(rows()).toHaveLength(1)
+      expect(band.querySelector('[data-invoice-fee-total]')!.textContent).toBe('$15,000.00')
+
+      // Up to a limit: the hours past it are billed, grouped as chosen.
+      const ceiling = band.querySelector<HTMLElement>('[data-invoice-ceiling]')!
+      expect(ceiling.hidden).toBe(true)
+      const limited = band.querySelector<HTMLInputElement>('[data-invoice-claim-mode][value="ceiling"]')!
+      limited.checked = true
+      limited.dispatchEvent(new Event('change', { bubbles: true }))
+      expect(ceiling.hidden).toBe(false)
+      expect(preview.textContent).toBe(
+        '102.75 h uninvoiced in the period. Enter the limit to see what the fee covers.',
+      )
+      const amount = band.querySelector<HTMLInputElement>('[data-invoice-ceiling-amount]')!
+      amount.value = '100'
+      amount.dispatchEvent(new Event('input', { bubbles: true }))
+      amount.dispatchEvent(new Event('change', { bubbles: true }))
+      expect(band.querySelector('[data-invoice-ceiling-hint]')!.textContent).toBe(
+        "Up to 100.00 h of the period's time.",
+      )
+      expect(preview.textContent).toBe(
+        "102.75 h uninvoiced in the period: up to 100.00 h covered, oldest first, and at least 2.75 h billed at each person's rate. An entry is never split, so the draft has the exact figures.",
+      )
+      const overage = band.querySelector<HTMLSelectElement>('[data-invoice-overage-summary]')!
+      overage.value = 'people'
+      overage.dispatchEvent(new Event('change', { bubbles: true }))
+      // The hours a band covers are on the invoice too, so the hours report
+      // can go with it.
+      const attach = wizard.querySelector<HTMLInputElement>('[data-invoice-attach-journal]')!
+      attach.checked = true
+      attach.dispatchEvent(new Event('change', { bubbles: true }))
+
+      // The report is read for the selection, not again for every keystroke
+      // in the fee.
+      const reads = getUninvoicedReport.mock.calls.length
+      wizard.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      await vi.waitFor(() => expect(generateInvoice).toHaveBeenCalledTimes(1))
+      expect(getUninvoicedReport.mock.calls.length).toBe(reads)
+      expect(generateInvoice.mock.calls[0]![1]).toStrictEqual({
+        kind: 'banded',
+        client_id: 11,
+        to: '2026-09-14',
+        project_ids: [1],
+        line_items: [
+          { kind: 'Service', description: 'Monthly retainer', quantity: 1, unit_price_cents: 1_500_000 },
+        ],
+        claim_mode: 'ceiling',
+        claim_ceiling_seconds: 360_000,
+        overage_summary_type: 'people',
+      })
+      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/21'))
+      expect(setInvoiceJournal.mock.calls[0]!.slice(0, 2)).toEqual([
+        21,
+        { level: 'detailed', formats: ['pdf'] },
+      ])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('[browser] measures a band in value, and refuses a fee or limit that does not parse', async () => {
+    renderBrowserShell({ view: 'invoice-generation' })
+    const generateInvoice = vi
+      .fn<NonNullable<ShellApi['generateInvoice']>>()
+      .mockResolvedValue(invoice(22))
+    const api: ShellApi = {
+      ...browserApi(),
+      listClients: async () => ({
+        data: [{ ...resource(11, 'Northwind Freight'), currency: 'EUR' }],
+        page: { next_cursor: null },
+      }),
+      listProjects: async () => ({
+        data: [{ ...resource(1, 'Retainer'), client_id: 11 }],
+        page: { next_cursor: null },
+      }),
+      getUninvoicedReport: async (filter) => ({
+        from: filter.from,
+        to: filter.to,
+        client_id: 11,
+        project_id: null,
+        totals: [],
+        projects: [{
+          client_id: 11,
+          client_name: 'Northwind Freight',
+          project_id: 1,
+          project_name: 'Retainer',
+          project_code: '',
+          totals: [{
+            currency: 'EUR',
+            rounded_seconds: 36_000,
+            time_entry_count: 4,
+            unpriced_time_entry_count: 1,
+            expense_count: 0,
+            time_cents: 520_000,
+            expense_cents: 0,
+            total_cents: 520_000,
+          }],
+        }],
+      }),
+      generateInvoice,
+    }
+    await mountShell(api)
+    const wizard = document.querySelector<HTMLFormElement>('[data-invoice-generation-form]')!
+    const clientSelect = wizard.querySelector<HTMLSelectElement>('[data-invoice-client]')!
+    await vi.waitFor(() => expect(clientSelect.options.length).toBe(1))
+    clientSelect.value = '11'
+    clientSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    const banded = wizard.querySelector<HTMLInputElement>('[data-invoice-kind][value="banded"]')!
+    banded.checked = true
+    banded.dispatchEvent(new Event('change', { bubbles: true }))
+    const band = wizard.querySelector<HTMLElement>('[data-invoice-band]')!
+    const set = (selector: string, value: string) => {
+      const control = band.querySelector<HTMLInputElement | HTMLSelectElement>(selector)!
+      control.value = value
+      control.dispatchEvent(new Event('input', { bubbles: true }))
+      control.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    const result = document.querySelector<HTMLElement>('[data-invoice-generation-result]')!
+    const submit = () =>
+      wizard.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    // A price with three decimals is not money; nothing is sent.
+    set('[data-invoice-fee-unit-price]', '4500.005')
+    submit()
+    expect(result.textContent).toBe(
+      'Fee line 1: Rate must be a decimal amount with no more than two decimal places.',
+    )
+    set('[data-invoice-fee-unit-price]', '4500')
+    const limited = band.querySelector<HTMLInputElement>('[data-invoice-claim-mode][value="ceiling"]')!
+    limited.checked = true
+    limited.dispatchEvent(new Event('change', { bubbles: true }))
+    set('[data-invoice-ceiling-unit]', 'value')
+    set('[data-invoice-ceiling-amount]', 'forty')
+    submit()
+    expect(result.textContent).toBe('Enter the limit as an amount, like 4500.00.')
+
+    // The limit reads back in the client's money, and so does what is waiting.
+    set('[data-invoice-ceiling-amount]', '5000')
+    expect(band.querySelector('[data-invoice-ceiling-hint]')!.textContent).toBe(
+      'Up to €5,000.00 of work at list.',
+    )
+    await vi.waitFor(() =>
+      expect(band.querySelector('[data-invoice-band-preview]')!.textContent).toBe(
+        "10.00 h uninvoiced in the period, worth €5,200.00 at list: up to €5,000.00 of it covered, oldest first, and at least €200.00 billed at each person's rate. An entry is never split, so the draft has the exact figures. 1 entry has no billable rate, and a value limit stops at the first of them.",
+      ),
+    )
+    submit()
+    await vi.waitFor(() => expect(generateInvoice).toHaveBeenCalledTimes(1))
+    expect(generateInvoice.mock.calls[0]![1]).toMatchObject({
+      kind: 'banded',
+      line_items: [{ kind: 'Service', description: null, quantity: 1, unit_price_cents: 450_000 }],
+      claim_mode: 'ceiling',
+      claim_ceiling_cents: 500_000,
+      overage_summary_type: 'project',
+    })
+    expect(generateInvoice.mock.calls[0]![1]).not.toHaveProperty('claim_ceiling_seconds')
+  })
+
   it('[browser] attaches the hours report when asked, and retries without a second draft', async () => {
     renderBrowserShell({ view: 'invoice-generation' })
     const assign = vi.fn()

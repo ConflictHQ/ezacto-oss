@@ -9,6 +9,9 @@ import type {
 import { describe, expect, it } from 'vitest'
 import {
   interpolateInvoiceTemplate,
+  invoiceBandCeilingSeconds,
+  invoiceBandPreview,
+  invoiceBandTerms,
   invoiceCanIssueTransition,
   invoiceCanMarkSent,
   invoiceCanEditLines,
@@ -837,5 +840,94 @@ describe('invoice email attachments', () => {
         true,
       ),
     ).toThrow('Choose at least one file for the hours report.')
+  })
+})
+
+describe('a flat fee covering tracked time', () => {
+  const fee = { description: ' Monthly retainer ', quantity: '1', unitPrice: '15000.00' }
+  const usd = (cents: number) => `$${(cents / 100).toFixed(2)}`
+
+  it('[unit] reads a limit in hours as plain hours or the duration forms', () => {
+    expect(invoiceBandCeilingSeconds('100')).toBe(360_000)
+    expect(invoiceBandCeilingSeconds(' 99.5 ')).toBe(358_200)
+    expect(invoiceBandCeilingSeconds('99h30m')).toBe(358_200)
+    expect(invoiceBandCeilingSeconds('90m')).toBe(5_400)
+    for (const refused of ['', 'ten', '0', '-5', '1.5x']) {
+      expect(() => invoiceBandCeilingSeconds(refused)).toThrow(
+        'Enter the limit in hours, as 100, 99.5 or 99h30m.',
+      )
+    }
+  })
+
+  it('[unit] turns the fee and its terms into the request a band sends', () => {
+    expect(
+      invoiceBandTerms({
+        lines: [fee, { description: '', quantity: '2.5', unitPrice: '-100' }],
+        claimMode: 'all',
+        ceilingUnit: 'hours',
+        ceiling: '40',
+        overageSummary: 'task',
+      }),
+    ).toStrictEqual({
+      // Everything is covered, so a limit left in the form is not sent.
+      line_items: [
+        { kind: 'Service', description: 'Monthly retainer', quantity: 1, unit_price_cents: 1_500_000 },
+        { kind: 'Service', description: null, quantity: 2.5, unit_price_cents: -10_000 },
+      ],
+      claim_mode: 'all',
+    })
+    expect(
+      invoiceBandTerms({
+        lines: [fee],
+        claimMode: 'ceiling',
+        ceilingUnit: 'value',
+        ceiling: '12500.50',
+        overageSummary: 'detailed',
+      }),
+    ).toStrictEqual({
+      line_items: [
+        { kind: 'Service', description: 'Monthly retainer', quantity: 1, unit_price_cents: 1_500_000 },
+      ],
+      claim_mode: 'ceiling',
+      claim_ceiling_cents: 1_250_050,
+      overage_summary_type: 'detailed',
+    })
+    const ceiling = { claimMode: 'ceiling', ceilingUnit: 'value', overageSummary: 'people' } as const
+    expect(() => invoiceBandTerms({ ...ceiling, lines: [], ceiling: '1' })).toThrow(
+      'Add at least one fee line.',
+    )
+    expect(() =>
+      invoiceBandTerms({ ...ceiling, lines: [fee, { ...fee, quantity: 'two' }], ceiling: '1' }),
+    ).toThrow('Fee line 2: Quantity must be a plain decimal number.')
+    expect(() => invoiceBandTerms({ ...ceiling, lines: [fee], ceiling: '0.00' })).toThrow(
+      'The limit must be more than zero.',
+    )
+    expect(() =>
+      invoiceBandTerms({ ...ceiling, lines: [fee], ceiling: '1', overageSummary: '' }),
+    ).toThrow('Choose how the hours past the limit are grouped.')
+  })
+
+  it('[unit] previews no more than the uninvoiced totals can stand behind', () => {
+    const waiting = { seconds: 369_900, cents: 1_541_250, unpricedEntries: 0 }
+    expect(invoiceBandPreview(waiting, 'all', null, usd)).toBe(
+      '102.75 h uninvoiced in the period, all of it covered by the fee.',
+    )
+    expect(
+      invoiceBandPreview(waiting, 'ceiling', { unit: 'seconds', value: 396_000 }, usd),
+    ).toBe('102.75 h uninvoiced in the period, all of it within the 110.00 h limit.')
+    expect(
+      invoiceBandPreview(waiting, 'ceiling', { unit: 'cents', value: 2_000_000 }, usd),
+    ).toBe(
+      '102.75 h uninvoiced in the period, worth $15412.50 at list, all of it within the $20000.00 limit.',
+    )
+    // Money the viewer may not see is not previewed as if it were zero.
+    expect(
+      invoiceBandPreview({ ...waiting, cents: null }, 'ceiling', { unit: 'cents', value: 100 }, usd),
+    ).toBe(
+      '102.75 h uninvoiced in the period; the fee covers work worth up to $1.00 at list, oldest first.',
+    )
+    expect(
+      invoiceBandPreview({ seconds: 0, cents: 0, unpricedEntries: 0 }, 'ceiling', null, usd),
+    ).toBe('Nothing is uninvoiced on these projects in the period; the fee stands on its own.')
   })
 })

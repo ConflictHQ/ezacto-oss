@@ -72,8 +72,9 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <p class="hint">The logo is the light-background wordmark under Brand.</p>
         <h3>Default values</h3>
         <label>Invoice subject
-          <input name="subject" data-invoice-defaults-subject maxlength="998" autocomplete="off">
+          <input name="subject" data-invoice-defaults-subject maxlength="998" autocomplete="off" aria-describedby="settings-invoice-subject-hint">
         </label>
+        <p class="hint" id="settings-invoice-subject-hint" data-invoice-defaults-subject-hint>Filled in for each new draft: <code>%client%</code> is the client's name, <code>%period_month_name%</code> and <code>%period_year%</code> the month the invoice period starts in (a draft with no period uses its issue date), and <code>%project%</code> the project on an invoice for one project, empty otherwise. Everything else stays as written.</p>
         <label>Invoice notes
           <textarea name="notes" data-invoice-defaults-notes rows="9" maxlength="100000"></textarea>
         </label>

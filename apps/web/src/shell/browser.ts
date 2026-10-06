@@ -34,6 +34,7 @@ import {
 import {
   browserMoneyDisplayStore,
   createMoneyDisplayRuntime,
+  markMoney,
   moneyText,
   type MoneyDisplay,
 } from '../money-display.js'
@@ -75,7 +76,19 @@ import {
   setInvoiceClientNames,
 } from '../invoices/browser.js'
 import { createInvoiceEditorController } from '../invoices/editor.js'
-import { invoiceIdentityCanRead, invoicePagePath, invoiceStatesFor } from '../invoices/model.js'
+import {
+  invoiceBandCeilingSeconds,
+  invoiceBandPreview,
+  invoiceBandTerms,
+  invoiceFeeLineAmountCents,
+  invoiceIdentityCanRead,
+  invoiceLineUnitPriceCents,
+  invoicePagePath,
+  invoiceStatesFor,
+  type InvoiceBandTerms,
+  type InvoiceBandValues,
+  type InvoiceFeeLineValues,
+} from '../invoices/model.js'
 import {
   buildWeekGrid,
   formatCellHours,
@@ -1348,6 +1361,17 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const invoiceForm = required<HTMLFormElement>('[data-invoice-generation-form]')
   const invoiceNewDialog = required<HTMLDialogElement>('[data-invoice-new-dialog]')
   const invoiceTracked = required<HTMLElement>('[data-invoice-tracked]')
+  const invoiceTrackedOnly = required<HTMLElement>('[data-invoice-tracked-only]')
+  const invoiceBand = required<HTMLElement>('[data-invoice-band]')
+  const invoiceFeeLines = required<HTMLElement>('[data-invoice-fee-lines]')
+  const invoiceFeeLineTemplate = required<HTMLTemplateElement>('[data-invoice-fee-line-template]')
+  const invoiceFeeTotal = required<HTMLElement>('[data-invoice-fee-total]')
+  const invoiceCeiling = required<HTMLElement>('[data-invoice-ceiling]')
+  const invoiceCeilingUnit = required<HTMLSelectElement>('[data-invoice-ceiling-unit]')
+  const invoiceCeilingAmount = required<HTMLInputElement>('[data-invoice-ceiling-amount]')
+  const invoiceCeilingHint = required<HTMLElement>('[data-invoice-ceiling-hint]')
+  const invoiceOverageSummary = required<HTMLSelectElement>('[data-invoice-overage-summary]')
+  const invoiceBandPreviewText = required<HTMLElement>('[data-invoice-band-preview]')
   const invoicePeriodMount = required<HTMLElement>('[data-invoice-period]')
   const invoiceAttachJournal = required<HTMLInputElement>('[data-invoice-attach-journal]')
   const invoiceJournalLevel = required<HTMLSelectElement>('[data-invoice-journal-level]')
@@ -1535,6 +1559,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   } | null = null
   let invoiceGenerationPending = false
   let invoiceExpenseCheck = 0
+  /** What the last uninvoiced report said each project has waiting; null when unread. */
+  let invoiceUninvoiced: ReadonlyMap<number, readonly UninvoicedCurrencyTotal[]> | null = null
   // What the organization attaches by default; the dialog writes an invoice's
   // own choice only when it differs, so following the default stays following.
   let invoiceJournalDefault: InvoiceJournalChoice = { level: false, formats: ['pdf'] }
@@ -1763,6 +1789,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     invoiceNewDialog.close()
     invoiceCatalog = null
     invoiceExpenseCheck += 1
+    invoiceUninvoiced = null
+    // The form reset emptied the fee; one line is where a new one starts.
+    for (const row of invoiceFeeRows().slice(1)) row.remove()
+    renumberInvoiceFeeLines()
     setInvoiceExpensesAvailable(true)
     setInvoiceFormPending(false)
     invoiceCommandId = null
@@ -3346,10 +3376,148 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     return choice?.value === 'range' ? invoicePeriod.range() : { from: undefined, to: localDate() }
   }
 
-  const invoiceKind = (): 'tracked' | 'free_form' =>
-    invoiceForm.querySelector<HTMLInputElement>('[data-invoice-kind]:checked')?.value === 'free_form'
-      ? 'free_form'
-      : 'tracked'
+  /**
+   * The checked radio of a group, read from each radio's own state. A cached
+   * `:checked` selector answers with the radio that was checked when the
+   * markup was parsed in some DOM implementations, which is the wrong one the
+   * moment a person picks another.
+   */
+  const checkedValue = (selector: string): string | undefined =>
+    [...invoiceForm.querySelectorAll<HTMLInputElement>(selector)].find((input) => input.checked)
+      ?.value
+
+  const invoiceKind = (): 'tracked' | 'free_form' | 'banded' => {
+    const kind = checkedValue('[data-invoice-kind]')
+    return kind === 'free_form' || kind === 'banded' ? kind : 'tracked'
+  }
+
+  const invoiceSelectedProjectIds = (): number[] =>
+    [...invoiceProjects.querySelectorAll<HTMLInputElement>('input[name="project"]:checked')]
+      .map((input) => Number(input.value))
+      .filter((projectId) => Number.isSafeInteger(projectId) && projectId > 0)
+
+  /**
+   * What a band's figures are written in: the selected projects' billing
+   * currency, which is the client's unless a project bills in its own. Null
+   * when the catalog does not say, and the figures print without a symbol.
+   */
+  const invoiceBandCurrency = (): string | null => {
+    const currency = (value: unknown): string | null =>
+      typeof value === 'string' && /^[A-Za-z]{3}$/u.test(value) ? value.toUpperCase() : null
+    const selected = new Set(invoiceSelectedProjectIds())
+    const project = invoiceCatalog?.projects.find((candidate) => selected.has(candidate.id))
+    const client = invoiceCatalog?.clients.find(
+      (candidate) => candidate.id === Number(invoiceClient.value),
+    )
+    return currency(project?.['billing_currency']) ?? currency(client?.['currency'])
+  }
+
+  const bandMoney = (cents: number): string => {
+    const currency = invoiceBandCurrency()
+    return currency === null ? (cents / 100).toFixed(2) : formatMoney(cents, currency)
+  }
+
+  const invoiceFeeRows = (): HTMLElement[] => [
+    ...invoiceFeeLines.querySelectorAll<HTMLElement>('[data-invoice-fee-line]'),
+  ]
+
+  const invoiceFeeValues = (row: HTMLElement): InvoiceFeeLineValues => ({
+    description: row.querySelector<HTMLInputElement>('[data-invoice-fee-description]')!.value,
+    quantity: row.querySelector<HTMLInputElement>('[data-invoice-fee-quantity]')!.value,
+    unitPrice: row.querySelector<HTMLInputElement>('[data-invoice-fee-unit-price]')!.value,
+  })
+
+  const invoiceBandValues = (): InvoiceBandValues => ({
+    lines: invoiceFeeRows().map(invoiceFeeValues),
+    claimMode: checkedValue('[data-invoice-claim-mode]') === 'ceiling' ? 'ceiling' : 'all',
+    ceilingUnit: invoiceCeilingUnit.value === 'value' ? 'value' : 'hours',
+    ceiling: invoiceCeilingAmount.value,
+    overageSummary: invoiceOverageSummary.value,
+  })
+
+  /** The limit as typed, or null while it does not parse. */
+  const invoiceBandLimit = (
+    values: InvoiceBandValues,
+  ): { readonly unit: 'seconds' | 'cents'; readonly value: number } | null => {
+    try {
+      if (values.ceilingUnit === 'hours') {
+        return { unit: 'seconds', value: invoiceBandCeilingSeconds(values.ceiling) }
+      }
+      const cents = invoiceLineUnitPriceCents(values.ceiling)
+      return cents < 1 ? null : { unit: 'cents', value: cents }
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Each fee line's amount and the fee's total, in money, as they will be
+   * saved -- and the limit read back the same way, so a figure typed as cents
+   * shows as a hundredfold fee or limit before anything is sent.
+   */
+  const paintInvoiceBand = (): void => {
+    const values = invoiceBandValues()
+    let total = 0
+    let complete = true
+    for (const row of invoiceFeeRows()) {
+      const cents = invoiceFeeLineAmountCents(invoiceFeeValues(row))
+      const amount = row.querySelector<HTMLElement>('[data-invoice-fee-amount]')!
+      amount.textContent = cents === null ? '—' : bandMoney(cents)
+      markMoney(amount, cents !== null)
+      if (cents === null) complete = false
+      else total += cents
+    }
+    invoiceFeeTotal.textContent = complete ? bandMoney(total) : '—'
+    markMoney(invoiceFeeTotal, complete)
+    const limit = invoiceBandLimit(values)
+    invoiceCeilingHint.textContent =
+      values.ceilingUnit === 'hours'
+        ? limit === null
+          ? 'Hours, as 100, 99.5 or 99h30m.'
+          : `Up to ${(limit.value / 3_600).toFixed(2)} h of the period's time.`
+        : limit === null
+          ? 'Work at list, as an amount like 4500.00.'
+          : `Up to ${bandMoney(limit.value)} of work at list.`
+    markMoney(invoiceCeilingHint, values.ceilingUnit === 'value' && limit !== null)
+    if (invoiceKind() !== 'banded' || invoiceUninvoiced === null) {
+      invoiceBandPreviewText.textContent = ''
+      return
+    }
+    const totals = invoiceSelectedProjectIds().flatMap(
+      (projectId) => invoiceUninvoiced?.get(projectId) ?? [],
+    )
+    invoiceBandPreviewText.textContent = invoiceBandPreview(
+      {
+        seconds: totals.reduce((sum, row) => sum + row.rounded_seconds, 0),
+        cents: totals.every((row) => row.time_cents !== undefined)
+          ? totals.reduce((sum, row) => sum + (row.time_cents ?? 0), 0)
+          : null,
+        unpricedEntries: totals.reduce((sum, row) => sum + row.unpriced_time_entry_count, 0),
+      },
+      values.claimMode,
+      values.claimMode === 'ceiling' ? limit : null,
+      bandMoney,
+    )
+  }
+
+  const renumberInvoiceFeeLines = (): void => {
+    const rows = invoiceFeeRows()
+    for (const [index, row] of rows.entries()) {
+      row.setAttribute('aria-label', `Fee line ${index + 1}`)
+      const remove = row.querySelector<HTMLButtonElement>('[data-invoice-fee-remove]')!
+      remove.setAttribute('aria-label', `Remove fee line ${index + 1}`)
+      // A band has a fee, so its last line stays.
+      remove.hidden = rows.length === 1
+    }
+  }
+
+  const addInvoiceFeeLine = (): HTMLElement => {
+    const row = invoiceFeeLineTemplate.content.firstElementChild!.cloneNode(true) as HTMLElement
+    invoiceFeeLines.append(row)
+    renumberInvoiceFeeLines()
+    paintInvoiceBand()
+    return row
+  }
 
   /** What each project has waiting, so choosing projects is not choosing blind. */
   const paintInvoiceProjectTotals = (
@@ -3389,7 +3557,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       (from !== undefined && (!isCalendarDay(from) || from > to)) ||
       !isCalendarDay(to)
     ) {
+      invoiceUninvoiced = null
       paintInvoiceProjectTotals(null)
+      paintInvoiceBand()
       setInvoiceExpensesAvailable(true)
       return
     }
@@ -3399,9 +3569,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         operation.signal,
       )
       if (!isSessionCurrent(operation) || check !== invoiceExpenseCheck) return
-      paintInvoiceProjectTotals(
-        new Map(report.projects.map((project) => [project.project_id, project.totals])),
+      invoiceUninvoiced = new Map(
+        report.projects.map((project) => [project.project_id, project.totals]),
       )
+      paintInvoiceProjectTotals(invoiceUninvoiced)
+      paintInvoiceBand()
       const expenses = report.projects
         .filter((project) => projectIds.has(project.project_id))
         .flatMap((project) => project.totals)
@@ -3409,7 +3581,9 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       setInvoiceExpensesAvailable(expenses > 0)
     } catch {
       if (check !== invoiceExpenseCheck) return
+      invoiceUninvoiced = null
       paintInvoiceProjectTotals(null)
+      paintInvoiceBand()
       setInvoiceExpensesAvailable(true)
     }
   }
@@ -3492,14 +3666,23 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     (left.level === false ||
       [...left.formats].sort().join() === [...right.formats].sort().join())
 
-  /** Free form needs only the client; a date range shows the period control. */
+  /**
+   * Free form needs only the client; a band shares the projects and period
+   * with a tracked draft and has its fee and limit where the summaries were. A
+   * date range shows the period control, and a limit what is billed past it.
+   */
   const syncInvoiceDialog = (): void => {
+    const kind = invoiceKind()
     invoiceJournalLevel.hidden = !invoiceAttachJournal.checked
     invoiceJournalFormats.hidden = !invoiceAttachJournal.checked
-    invoiceTracked.hidden = invoiceKind() !== 'tracked'
+    invoiceTracked.hidden = kind === 'free_form'
+    invoiceTrackedOnly.hidden = kind !== 'tracked'
+    invoiceBand.hidden = kind !== 'banded'
+    invoiceCeiling.hidden = invoiceBandValues().claimMode !== 'ceiling'
     invoicePeriodMount.hidden =
       invoiceForm.querySelector<HTMLInputElement>('[data-invoice-period-choice]:checked')
         ?.value !== 'range'
+    paintInvoiceBand()
   }
 
   const openInvoiceDialog = (operation: AuthOperation): void => {
@@ -3509,7 +3692,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     if (!invoiceNewDialog.open) invoiceNewDialog.showModal()
     if (invoiceCatalog === null) {
       if (!invoiceGenerationPending) void loadInvoiceGeneration(operation)
-    } else if (invoiceKind() === 'tracked') {
+    } else if (invoiceKind() !== 'free_form') {
       void checkInvoiceExpenses(operation)
     }
   }
@@ -5488,15 +5671,35 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     }
     invoiceCommandId = null
     const operation = sessionOperation()
+    // The fee and its limit change what is asked, not what is waiting, so the
+    // report already read still answers for them.
     if (
       operation !== null &&
-      invoiceKind() === 'tracked' &&
-      event.target !== invoiceExpenseSummary
+      invoiceKind() !== 'free_form' &&
+      event.target !== invoiceExpenseSummary &&
+      !(event.target instanceof Node && invoiceBand.contains(event.target))
     ) {
       void checkInvoiceExpenses(operation)
     }
     if (!invoiceGenerationPending) invoiceResult.textContent = ''
   })
+  // Amounts read back as they are typed, not only once a field is left.
+  invoiceBand.addEventListener('input', () => paintInvoiceBand())
+  required<HTMLButtonElement>('[data-invoice-fee-add]').addEventListener('click', () => {
+    invoiceCommandId = null
+    addInvoiceFeeLine().querySelector<HTMLInputElement>('[data-invoice-fee-description]')!.focus()
+  })
+  invoiceFeeLines.addEventListener('click', (event) => {
+    const remove =
+      event.target instanceof Element ? event.target.closest('[data-invoice-fee-remove]') : null
+    if (remove === null || invoiceFeeRows().length === 1) return
+    invoiceCommandId = null
+    remove.closest('[data-invoice-fee-line]')!.remove()
+    renumberInvoiceFeeLines()
+    paintInvoiceBand()
+    invoiceFeeRows()[0]!.querySelector<HTMLInputElement>('[data-invoice-fee-description]')!.focus()
+  })
+  addInvoiceFeeLine()
   required<HTMLAnchorElement>('[data-invoice-new]').addEventListener('click', (event) => {
     const operation = sessionOperation()
     if (operation === null) return
@@ -5558,8 +5761,38 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       return
     }
     let input: InvoiceGenerationInput
-    if (invoiceKind() === 'free_form') {
+    const kind = invoiceKind()
+    if (kind === 'free_form') {
       input = { kind: 'free_form', client_id: clientId }
+    } else if (kind === 'banded') {
+      const { from, to } = invoiceRange()
+      const projectIds = data
+        .getAll('project')
+        .map(Number)
+        .filter((projectId) => Number.isSafeInteger(projectId) && projectId > 0)
+      if (
+        (from !== undefined && (!isCalendarDay(from) || from > to)) ||
+        !isCalendarDay(to) ||
+        projectIds.length === 0
+      ) {
+        invoiceResult.textContent = 'Choose a client, date range, and at least one project.'
+        return
+      }
+      let terms: InvoiceBandTerms
+      try {
+        terms = invoiceBandTerms(invoiceBandValues())
+      } catch (error) {
+        invoiceResult.textContent = messageFor(error)
+        return
+      }
+      input = {
+        kind: 'banded',
+        client_id: clientId,
+        ...(from === undefined ? {} : { from }),
+        to,
+        project_ids: projectIds,
+        ...terms,
+      }
     } else {
       const { from, to } = invoiceRange()
       const projectIds = data

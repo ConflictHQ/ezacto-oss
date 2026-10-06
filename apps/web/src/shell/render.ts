@@ -760,7 +760,8 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
   ${renderInvoiceEditPage(view)}
   <!--
     New invoice is one step, as it was in Harvest: who, and whether the draft is
-    filled from tracked work or starts empty. Everything after that is the draft.
+    filled from tracked work, charges a flat fee that covers it, or starts
+    empty. Everything after that is the draft.
     It hangs off the invoice list; /invoices/new is the same list with the dialog
     already open, so a report handoff and the command palette still land here.
   -->
@@ -784,6 +785,10 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
             <input type="radio" name="kind" value="free_form" data-invoice-kind>
             <span><strong>Free form</strong><small>Start empty and add your own lines</small></span>
           </label>
+          <label class="invoice-new-kind-card invoice-new-kind-wide">
+            <input type="radio" name="kind" value="banded" data-invoice-kind>
+            <span><strong>Flat fee covering tracked time</strong><small>A fixed fee that covers the hours; bill any overage</small></span>
+          </label>
         </fieldset>
         <div class="invoice-new-tracked" data-invoice-tracked>
           <fieldset class="invoice-new-section">
@@ -804,27 +809,75 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
             -->
             <div class="invoice-period" data-invoice-period hidden></div>
           </fieldset>
-          <div class="invoice-new-detail">
-            <label for="ez-invoice-time-summary">Group time by
-              <select id="ez-invoice-time-summary" name="timeSummary">
-                <option value="project">Project</option>
-                <option value="task">Task</option>
-                <option value="people">Person</option>
-                <option value="detailed">Detailed (one line per entry)</option>
-                <option value="">Do not include time</option>
-              </select>
-            </label>
-            <label for="ez-invoice-expense-summary">Expenses
-              <select id="ez-invoice-expense-summary" name="expenseSummary" data-invoice-expense-summary aria-describedby="ez-invoice-expense-hint">
-                <option value="project">Group by project</option>
-                <option value="category">Group by category</option>
-                <option value="people">Group by person</option>
-                <option value="detailed">Detailed (one line per expense)</option>
-                <option value="">Do not include expenses</option>
-              </select>
-            </label>
+          <div class="invoice-new-tracked-only" data-invoice-tracked-only>
+            <div class="invoice-new-detail">
+              <label for="ez-invoice-time-summary">Group time by
+                <select id="ez-invoice-time-summary" name="timeSummary">
+                  <option value="project">Project</option>
+                  <option value="task">Task</option>
+                  <option value="people">Person</option>
+                  <option value="detailed">Detailed (one line per entry)</option>
+                  <option value="">Do not include time</option>
+                </select>
+              </label>
+              <label for="ez-invoice-expense-summary">Expenses
+                <select id="ez-invoice-expense-summary" name="expenseSummary" data-invoice-expense-summary aria-describedby="ez-invoice-expense-hint">
+                  <option value="project">Group by project</option>
+                  <option value="category">Group by category</option>
+                  <option value="people">Group by person</option>
+                  <option value="detailed">Detailed (one line per expense)</option>
+                  <option value="">Do not include expenses</option>
+                </select>
+              </label>
+            </div>
+            <p class="field-hint" id="ez-invoice-expense-hint" data-invoice-expense-hint hidden></p>
           </div>
-          <p class="field-hint" id="ez-invoice-expense-hint" data-invoice-expense-hint hidden></p>
+          <!--
+            A band: the fee, then how much of the period's time it covers. The
+            claim itself is the server's (the recurring engine's own rule), so
+            the preview here says only what the uninvoiced report can stand
+            behind and leaves the exact split to the draft.
+          -->
+          <div class="invoice-new-band" data-invoice-band hidden>
+            <fieldset class="invoice-new-section">
+              <legend>Fee</legend>
+              <div class="invoice-fee-lines" data-invoice-fee-lines></div>
+              <div class="invoice-fee-foot">
+                <button type="button" data-invoice-fee-add>Add line</button>
+                <p>Fee <strong class="money" data-invoice-fee-total>—</strong></p>
+              </div>
+            </fieldset>
+            <fieldset class="invoice-new-section">
+              <legend>Covers</legend>
+              <div class="invoice-new-period-choice">
+                <label><input type="radio" name="claimMode" value="all" data-invoice-claim-mode checked> All of the time</label>
+                <label><input type="radio" name="claimMode" value="ceiling" data-invoice-claim-mode> Up to a limit</label>
+              </div>
+              <div class="invoice-new-ceiling" data-invoice-ceiling hidden>
+                <label for="ez-invoice-ceiling-unit">Limit in
+                  <select id="ez-invoice-ceiling-unit" name="ceilingUnit" data-invoice-ceiling-unit>
+                    <option value="hours">Hours</option>
+                    <option value="value">Value</option>
+                  </select>
+                </label>
+                <label for="ez-invoice-ceiling">Up to
+                  <input id="ez-invoice-ceiling" name="ceiling" data-invoice-ceiling-amount inputmode="decimal" autocomplete="off" aria-describedby="ez-invoice-ceiling-hint">
+                </label>
+                <p class="field-hint invoice-new-ceiling-hint" id="ez-invoice-ceiling-hint" data-invoice-ceiling-hint></p>
+                <label class="invoice-new-overage" for="ez-invoice-overage-summary">Bill the hours past the limit, grouped by
+                  <select id="ez-invoice-overage-summary" name="overageSummary" data-invoice-overage-summary>
+                    <option value="project">Project</option>
+                    <option value="task">Task</option>
+                    <option value="people">Person</option>
+                    <option value="detailed">Detailed (one line per entry)</option>
+                  </select>
+                </label>
+                <p class="field-hint invoice-new-overage">The oldest hours are covered first. An entry that would cross the limit is billed whole at its person's rate, never split.</p>
+              </div>
+            </fieldset>
+            <p class="invoice-band-preview" data-invoice-band-preview role="status" aria-live="polite"></p>
+            <p class="field-hint">Expenses are not part of the fee and stay uninvoiced for a later invoice.</p>
+          </div>
           <div class="invoice-new-journal">
             <label class="invoice-new-check"><input type="checkbox" name="attachJournal" data-invoice-attach-journal> Attach an hours report when this invoice is emailed</label>
             <label class="visually-hidden" for="ez-invoice-journal-level">Hours report detail</label>
@@ -842,6 +895,15 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
         </div>
         <p class="form-result" data-invoice-generation-result role="status" aria-live="polite"></p>
       </div>
+      <template data-invoice-fee-line-template>
+        <div class="invoice-fee-line" data-invoice-fee-line role="group">
+          <label class="invoice-fee-description">Description<input name="feeDescription" data-invoice-fee-description autocomplete="off" maxlength="100000"></label>
+          <label>Quantity<input name="feeQuantity" data-invoice-fee-quantity inputmode="decimal" autocomplete="off" value="1"></label>
+          <label>Unit price<input name="feeUnitPrice" data-invoice-fee-unit-price inputmode="decimal" autocomplete="off" placeholder="0.00"></label>
+          <p class="invoice-fee-amount"><span>Amount</span><strong class="money" data-invoice-fee-amount>—</strong></p>
+          <button type="button" class="invoice-fee-remove" data-invoice-fee-remove>Remove</button>
+        </div>
+      </template>
       <footer>
         <button type="button" data-retry-invoice-catalog hidden>Retry loading clients and projects</button>
         <button type="button" data-dialog-close>Cancel</button>
