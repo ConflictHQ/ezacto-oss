@@ -88,7 +88,14 @@ export const renderRecurringPage = (view?: string): string => `
           <dl class="recurring-facts">
             <div><dt>Subject</dt><dd data-recurring-subject>—</dd></div>
             <div><dt>Notes</dt><dd data-recurring-notes>—</dd></div>
+            <div data-recurring-purchase-order-row hidden><dt>Purchase order</dt><dd data-recurring-purchase-order>—</dd></div>
           </dl>
+        </section>
+        <section class="recurring-files" data-recurring-files aria-labelledby="recurring-files-heading" hidden>
+          <h3 id="recurring-files-heading">Attachments</h3>
+          <p class="hint">Attached to every invoice this definition issues, until the date set on each.</p>
+          <p class="form-result" data-recurring-files-status role="status" aria-live="polite"></p>
+          <ul class="recurring-attachment-list" data-recurring-files-list></ul>
         </section>
       </div>
     </section>
@@ -164,10 +171,14 @@ export const renderRecurringEditorPage = (view?: string): string => `
         </div>
       </section>
       <section class="editor-section" aria-labelledby="recurring-editor-wording-heading">
-        <h2 id="recurring-editor-wording-heading">Subject and notes</h2>
+        <h2 id="recurring-editor-wording-heading">On the invoice</h2>
         <label>Subject<input data-recurring-editor-subject maxlength="2000" autocomplete="off" required></label>
         <label>Notes<textarea data-recurring-editor-notes rows="4"></textarea></label>
         <p class="hint">Subject and notes expand <code>%invoice_issue_month_name%</code>, <code>%invoice_issue_year%</code> and <code>%invoice_issue_date%</code> when the invoice is raised.</p>
+        <div class="editor-field">
+          <label>Purchase order<input data-recurring-editor-purchase-order maxlength="1000" autocomplete="off" aria-describedby="recurring-editor-purchase-order-hint"></label>
+          <span class="field-hint" id="recurring-editor-purchase-order-hint">Copied onto every invoice this definition issues. Change it when the client issues the next purchase order.</span>
+        </div>
       </section>
       <section class="editor-section" aria-labelledby="recurring-editor-amount-heading">
         <h2 id="recurring-editor-amount-heading">Amount</h2>
@@ -248,6 +259,17 @@ export const renderRecurringEditorPage = (view?: string): string => `
           <p class="line-editor-total">Each issue bills <strong data-recurring-editor-total>—</strong></p>
         </div>
       </section>
+      <section class="editor-section" data-recurring-editor-attachments aria-labelledby="recurring-editor-attachments-heading" hidden>
+        <h2 id="recurring-editor-attachments-heading">Attachments</h2>
+        <p class="hint">Attached to every invoice this definition issues, until the date you set — a yearly purchase order covers its fiscal year.</p>
+        <p class="hint" data-recurring-attachments-unsaved hidden>Save the definition first to attach files.</p>
+        <div class="recurring-attachment-upload" data-recurring-attachment-upload hidden>
+          <label>File to attach<input type="file" data-recurring-attachment-file></label>
+          <button type="button" class="editor-secondary" data-recurring-attachment-submit>Upload</button>
+        </div>
+        <p class="form-result" data-recurring-attachments-status role="status" aria-live="polite"></p>
+        <ul class="recurring-attachment-list" data-recurring-attachments></ul>
+      </section>
       <footer class="editor-actions">
         <p class="form-result" data-recurring-editor-result role="status" aria-live="polite"></p>
         <a class="editor-secondary" href="/invoices/recurring" data-recurring-editor-cancel>Cancel</a>
@@ -273,4 +295,18 @@ export const renderRecurringEditorPage = (view?: string): string => `
         </div>
       </fieldset>
     </template>
+    <dialog class="recurring-confirm-dialog" data-recurring-attachment-remove-confirm aria-labelledby="recurring-attachment-remove-title">
+      <form data-recurring-attachment-remove-form>
+        <header>
+          <div><p class="eyebrow">Attachments</p><h2 id="recurring-attachment-remove-title">Remove this file?</h2></div>
+          <button type="button" data-recurring-attachment-remove-cancel aria-label="Close">×</button>
+        </header>
+        <p data-recurring-attachment-remove-body>It stops going with the invoices this definition issues. Invoices already issued keep their copy.</p>
+        <footer>
+          <button type="button" data-recurring-attachment-remove-cancel>Cancel</button>
+          <button class="danger-action" type="submit" data-recurring-attachment-remove-submit>Remove file</button>
+        </footer>
+        <p class="form-result" data-recurring-attachment-remove-result role="status" aria-live="polite"></p>
+      </form>
+    </dialog>
   </main>`

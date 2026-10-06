@@ -4,20 +4,26 @@ import { sessionPresenter, type SessionPresenter } from '../session.js'
 import { canManageClientTerms } from '../commercial-terms.js'
 import {
   EzactoApiError,
+  type ClientInvoiceSendingInput,
   type GeneralResource,
   type Invoice,
   type Retainer,
   type Whoami,
 } from '@conflict-hq/ezacto-client'
+import { invoiceAddressLines } from '../invoice-addresses.js'
 import { retainerAmount } from '../retainers/model.js'
 import {
   clientBudgetBurn,
   clientMoney,
   clientBurnWindow,
+  clientCanSetInvoiceSending,
   clientDisplayName,
   clientHierarchy,
   clientIdFromPathname,
+  clientInvoiceSendingInput,
   clientIsActive,
+  clientJournalFormatsLabel,
+  clientJournalLabel,
   clientNumber,
   clientOpenInvoiceTotals,
   clientProfileCanReadMoney,
@@ -26,12 +32,17 @@ import {
   clientRollupHref,
   clientRollupNodeFor,
   clientSearchMatches,
+  clientSendingDefaultLabel,
+  clientSendingRuleOption,
+  clientSendingSourceHint,
   clientSubtreeIds,
   clientText,
   relationLabel,
   type ClientBudgetBurn,
   type ClientDirectoryApi,
   type ClientDirectoryPage,
+  type ClientInvoiceSending,
+  type ClientInvoiceSendingFormValues,
   type ClientRetainerBalance,
 } from './model.js'
 import type { InvoiceObligation } from '../dashboard/model.js'
@@ -185,12 +196,43 @@ export const createClientDirectoryController = (
   const deliveryHint = required<HTMLElement>('[data-client-delivery-hint]')
   const deliveryToggle = required<HTMLInputElement>('[data-client-bill-delivery]')
   const deliveryResult = required<HTMLElement>('[data-client-delivery-result]')
+  const sendingSection = required<HTMLElement>('[data-client-sending]')
+  const sendingStatus = required<HTMLElement>('[data-client-sending-status]')
+  const sendingRetry = required<HTMLButtonElement>('[data-client-sending-retry]')
+  const sendingForm = required<HTMLFormElement>('[data-client-sending-form]')
+  const sendingSources = [
+    ...document.querySelectorAll<HTMLInputElement>('[data-client-sending-source]'),
+  ]
+  const sendingSourceHint = required<HTMLElement>('[data-client-sending-source-hint]')
+  const sendingTo = required<HTMLTextAreaElement>('[data-client-sending-to]')
+  const sendingCc = required<HTMLTextAreaElement>('[data-client-sending-cc]')
+  const sendingRuleFields = ['attach_pdf', 'append_pdfs', 'attach_files'] as const
+  const sendingRules = {
+    attach_pdf: required<HTMLSelectElement>('[data-client-sending-rule="attach_pdf"]'),
+    append_pdfs: required<HTMLSelectElement>('[data-client-sending-rule="append_pdfs"]'),
+    attach_files: required<HTMLSelectElement>('[data-client-sending-rule="attach_files"]'),
+  }
+  const sendingJournal = required<HTMLSelectElement>('[data-client-sending-journal]')
+  const sendingFormatsRow = required<HTMLElement>('[data-client-sending-formats-row]')
+  const sendingFormatsSource = required<HTMLSelectElement>('[data-client-sending-formats-source]')
+  const sendingFormats = required<HTMLFieldSetElement>('[data-client-sending-formats]')
+  const sendingResult = required<HTMLElement>('[data-client-sending-result]')
+  const sendingSubmit = required<HTMLButtonElement>('[data-client-sending-submit]')
 
   // Read once per session rather than per client: whether this deployment can
   // reach BILL is a property of the deployment, and asking again for every
   // client would be a request per navigation that always answers the same.
   let billStatus: { configured: boolean; can_send_from_bill: boolean } | null = null
   let deliveryBusy = false
+  // The client's invoice sending as last read, and the lists typed for this
+  // client while the contacts' routing is on show: switching to the contacts
+  // and back must not throw away what was typed.
+  let sending: ClientInvoiceSending | null = null
+  let sendingDraft: { readonly to: string; readonly cc: string } | null = null
+  let sendingBusy = false
+  // Bumped by every read and by the session ending, so an answer for a page
+  // that has since moved on is dropped rather than painted over it.
+  let sendingGeneration = 0
   const tree = required<HTMLElement>('[data-client-tree]')
   const search = required<HTMLInputElement>('[data-client-search]')
   const archivedFilter = required<HTMLButtonElement>('[data-client-filter="archived"]')
@@ -252,6 +294,8 @@ export const createClientDirectoryController = (
     contactFormSubmit.disabled = false
     required<HTMLButtonElement>('[data-client-archive-confirm]').disabled = false
     required<HTMLButtonElement>('[data-contact-delete-confirm]').disabled = false
+    sendingBusy = false
+    sendingSubmit.disabled = false
   }
 
   const clearPrivatePresentation = (): void => {
@@ -276,6 +320,18 @@ export const createClientDirectoryController = (
     rollupBurnNote.hidden = true
     rollupStatus.textContent = 'Loading the rollup…'
     rollupRetry.hidden = true
+    // Who a client's invoices go to is a list of other people's addresses, so
+    // it leaves with the session like everything else here.
+    sendingGeneration += 1
+    sending = null
+    sendingDraft = null
+    sendingSection.hidden = true
+    sendingForm.hidden = true
+    sendingForm.reset()
+    sendingSourceHint.textContent = ''
+    sendingStatus.textContent = 'Loading invoice sending…'
+    sendingResult.textContent = ''
+    sendingRetry.hidden = true
   }
 
   const currentSession = (): ActiveSession | null =>
@@ -605,6 +661,160 @@ export const createClientDirectoryController = (
     }
   }
 
+  const sendingSource = (): 'contacts' | 'client' =>
+    sendingSources.find((input) => input.checked)?.value === 'client' ? 'client' : 'contacts'
+
+  const sendingFormatBoxes = (): HTMLInputElement[] => [
+    ...sendingFormats.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
+  ]
+
+  /**
+   * The two address boxes for the chosen source. Following the contacts shows
+   * who they give, read-only -- a contact's routing is changed on the contact.
+   * This client's own lists start from what was typed or saved for it, else
+   * from the contacts, which is the list somebody switching over usually means
+   * to amend.
+   */
+  const showSendingLists = (state: ClientInvoiceSending, source: 'contacts' | 'client'): void => {
+    const following = source === 'contacts'
+    const contactLists = {
+      to: invoiceAddressLines(state.contacts.to),
+      cc: invoiceAddressLines(state.contacts.cc),
+    }
+    const shown = following ? contactLists : (sendingDraft ?? contactLists)
+    sendingTo.value = shown.to
+    sendingCc.value = shown.cc
+    sendingTo.readOnly = following
+    sendingCc.readOnly = following
+    sendingSourceHint.textContent = clientSendingSourceHint(state, source)
+  }
+
+  // The report's files only matter while the report goes, and the boxes only
+  // while the files are this client's own choice.
+  const syncSendingJournal = (): void => {
+    if (sending === null) return
+    const level = sendingJournal.value
+    const on = level === '' ? sending.organization.attach_journal !== false : level !== 'false'
+    sendingFormatsRow.hidden = !on
+    sendingFormats.hidden = !on || sendingFormatsSource.value !== 'client'
+  }
+
+  const showSending = (state: ClientInvoiceSending): void => {
+    sending = state
+    sendingDraft =
+      state.recipients === null
+        ? null
+        : {
+            to: invoiceAddressLines(state.recipients.to),
+            cc: invoiceAddressLines(state.recipients.cc),
+          }
+    const source = state.recipients === null ? 'contacts' : 'client'
+    for (const input of sendingSources) input.checked = input.value === source
+    showSendingLists(state, source)
+    // Each "Organization default" says what it is today, so following it is a
+    // choice made knowing the answer rather than a trip to the company settings.
+    for (const field of sendingRuleFields) {
+      const select = sendingRules[field]
+      select.options[0]!.textContent = clientSendingDefaultLabel(
+        state.organization[field] ? 'Yes' : 'No',
+      )
+      select.value = clientSendingRuleOption(state[field])
+    }
+    sendingJournal.options[0]!.textContent = clientSendingDefaultLabel(
+      clientJournalLabel(state.organization.attach_journal),
+    )
+    sendingJournal.value = clientSendingRuleOption(state.attach_journal)
+    sendingFormatsSource.options[0]!.textContent = clientSendingDefaultLabel(
+      clientJournalFormatsLabel(state.organization.journal_formats),
+    )
+    sendingFormatsSource.value = state.journal_formats === null ? '' : 'client'
+    // Ticked as the files that go today, so choosing this client's own starts
+    // from the answer it is replacing.
+    const formats: readonly string[] = state.journal_formats ?? state.organization.journal_formats
+    for (const box of sendingFormatBoxes()) box.checked = formats.includes(box.value)
+    syncSendingJournal()
+  }
+
+  const readSendingForm = (): ClientInvoiceSendingFormValues => ({
+    source: sendingSource(),
+    to: sendingTo.value,
+    cc: sendingCc.value,
+    attachPdf: sendingRules.attach_pdf.value,
+    appendPdfs: sendingRules.append_pdfs.value,
+    attachFiles: sendingRules.attach_files.value,
+    attachJournal: sendingJournal.value,
+    journalFormats:
+      sendingFormatsSource.value === 'client'
+        ? sendingFormatBoxes()
+            .filter((box) => box.checked)
+            .map((box) => box.value)
+        : null,
+  })
+
+  /**
+   * Who this client's invoices go to and what they carry, read beside the
+   * client rather than with it, the way the rollup is: a section that cannot
+   * load says so on its own line and leaves the rest of the page standing.
+   *
+   * Not offered at all where the routes would refuse the read -- a profile
+   * that does not raise invoices, or an API token -- because there is no
+   * read-only version of a section whose read is refused.
+   */
+  const refreshSending = async (active: ActiveSession, clientId: number): Promise<void> => {
+    if (
+      !clientCanSetInvoiceSending(active.identity) ||
+      api.getClientInvoiceSending === undefined ||
+      api.setClientInvoiceSending === undefined
+    ) {
+      sendingSection.hidden = true
+      return
+    }
+    const generation = ++sendingGeneration
+    sending = null
+    sendingSection.hidden = false
+    sendingForm.hidden = true
+    sendingRetry.hidden = true
+    sendingResult.textContent = ''
+    sendingStatus.textContent = 'Loading invoice sending…'
+    try {
+      const state = await api.getClientInvoiceSending(clientId, active.signal)
+      if (currentSession() !== active || generation !== sendingGeneration) return
+      showSending(state)
+      sendingForm.hidden = false
+      sendingStatus.textContent = ''
+    } catch (error) {
+      if (generation !== sendingGeneration) return
+      active.presentFailure(error, () => {
+        sendingStatus.textContent = messageFor(error)
+        sendingRetry.hidden = false
+      })
+    }
+  }
+
+  /**
+   * A contact's invoice routing is what the boxes show while the client
+   * follows its contacts, so a contact saved or deleted below is read back
+   * into them. Only that half: the rules, and anything typed for this
+   * client's own lists, stay as they are on screen.
+   */
+  const refreshSendingContacts = async (active: ActiveSession, clientId: number): Promise<void> => {
+    if (sending === null || api.getClientInvoiceSending === undefined) return
+    const generation = sendingGeneration
+    try {
+      const fresh = await api.getClientInvoiceSending(clientId, active.signal)
+      if (currentSession() !== active || generation !== sendingGeneration || sending === null) {
+        return
+      }
+      sending = { ...sending, contacts: fresh.contacts }
+      if (sendingSource() === 'contacts') showSendingLists(sending, 'contacts')
+    } catch (error) {
+      if (generation !== sendingGeneration) return
+      active.presentFailure(error, () => {
+        sendingStatus.textContent = `The contacts’ invoice routing could not be read again: ${messageFor(error)}`
+      })
+    }
+  }
+
   const renderDetail = (): void => {
     if (currentClient === null) return
     document.title = `${document.documentElement.dataset.brand ?? 'ezacto'} — ${clientDisplayName(currentClient)}`
@@ -915,6 +1125,7 @@ export const createClientDirectoryController = (
       // opposite of what this function's own comment promises, and it is what
       // the client-directory acceptance caught.
       void refreshRollup(active, id)
+      void refreshSending(active, id)
     } catch (error) {
       active.presentFailure(error, () => {
         detailStatus.textContent = messageFor(error)
@@ -1161,6 +1372,7 @@ export const createClientDirectoryController = (
         contactFormDialog.close()
         renderContacts()
         detailStatus.textContent = editingContactId === null ? 'Contact added.' : 'Contact updated.'
+        void refreshSendingContacts(active, currentClient!.id)
       })
       .catch((error: unknown) => {
         active.presentFailure(error, () => {
@@ -1238,6 +1450,7 @@ export const createClientDirectoryController = (
         contactDeleteDialog.close()
         renderContacts()
         detailStatus.textContent = 'Contact deleted.'
+        void refreshSendingContacts(active, currentClient!.id)
       })
       .catch((error: unknown) => {
         active.presentFailure(error, () => {
@@ -1286,6 +1499,85 @@ export const createClientDirectoryController = (
           deliveryToggle.disabled = !canManageClientTerms(active.identity)
         }
       })
+  })
+
+  for (const input of sendingSources) {
+    input.addEventListener('change', () => {
+      if (sending === null || !input.checked) return
+      // Leaving this client's own lists for the contacts keeps what was typed,
+      // so coming back is coming back to it.
+      if (input.value === 'contacts') {
+        sendingDraft = { to: sendingTo.value, cc: sendingCc.value }
+      }
+      showSendingLists(sending, sendingSource())
+      sendingResult.textContent = ''
+      if (input.value === 'client') sendingTo.focus()
+    })
+  }
+  sendingJournal.addEventListener('change', syncSendingJournal)
+  sendingFormatsSource.addEventListener('change', syncSendingJournal)
+  sendingRetry.addEventListener('click', () => {
+    const active = currentSession()
+    const id = clientIdFromPathname(globalThis.location.pathname)
+    if (active !== null && id !== null) void refreshSending(active, id)
+  })
+
+  sendingForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    const client = currentClient
+    const state = sending
+    if (
+      active === null ||
+      client === null ||
+      state === null ||
+      sendingBusy ||
+      !clientCanSetInvoiceSending(active.identity) ||
+      api.getClientInvoiceSending === undefined ||
+      api.setClientInvoiceSending === undefined
+    ) {
+      return
+    }
+    let input: ClientInvoiceSendingInput
+    try {
+      input = clientInvoiceSendingInput(readSendingForm(), state.organization)
+    } catch (error) {
+      // Refused before the request, and named: the route would refuse the same
+      // line, but by its index in a list rather than by what was typed.
+      sendingResult.textContent = messageFor(error)
+      return
+    }
+    const generation = sendingGeneration
+    sendingBusy = true
+    sendingSubmit.disabled = true
+    sendingResult.textContent = 'Saving…'
+    let saved = false
+    void (async () => {
+      try {
+        await api.setClientInvoiceSending!(client.id, input, active.signal)
+        saved = true
+        // Read back rather than kept as typed: what is stored -- lower-cased
+        // and trimmed the way the mailer takes it -- is what every Send dialog
+        // for this client will open on, so that is what the page shows.
+        const stored = await api.getClientInvoiceSending!(client.id, active.signal)
+        if (currentSession() !== active || generation !== sendingGeneration) return
+        showSending(stored)
+        sendingResult.textContent =
+          'Saved. Invoices for this client open the Send dialog with these from now on.'
+      } catch (error) {
+        if (generation !== sendingGeneration) return
+        active.presentFailure(error, () => {
+          sendingResult.textContent = saved
+            ? `Saved, but it could not be read back: ${messageFor(error)}`
+            : messageFor(error)
+        })
+      } finally {
+        if (currentSession() === active) {
+          sendingBusy = false
+          sendingSubmit.disabled = false
+        }
+      }
+    })()
   })
 
   return {

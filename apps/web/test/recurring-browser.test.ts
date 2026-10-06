@@ -1,6 +1,12 @@
 /** @vitest-environment happy-dom */
 
-import { EzactoApiError, type GeneralResource, type RecurringInvoice, type Whoami } from '@conflict-hq/ezacto-client'
+import {
+  EzactoApiError,
+  type Attachment,
+  type GeneralResource,
+  type RecurringInvoice,
+  type Whoami,
+} from '@conflict-hq/ezacto-client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createRecurringEditorController,
@@ -52,6 +58,7 @@ const managed: RecurringInvoice = {
   claim_ceiling_cents: null,
   claim_scope: 'billable',
   cost_alert_basis_points: null,
+  purchase_order: null,
   created_at: timestamp,
   updated_at: timestamp,
 }
@@ -745,6 +752,7 @@ describe('Recurring editor page', () => {
         client_id: 5,
         subject_template: 'Platform',
         notes_template: 'Thanks.',
+        purchase_order: null,
         every_n_months: 3,
         day_of_month: 15,
         next_issue_on: '2026-11-15',
@@ -1147,5 +1155,318 @@ describe('Recurring editor page', () => {
     const phone = css.slice(css.indexOf('@media (max-width: 720px) {\n  .editor-page-heading'))
     expect(phone).toMatch(/\.line-editor-row \{\n {4}grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/u)
     expect(phone).toMatch(/\.editor-span-2,\n {2}\.editor-span-all \{\n {4}grid-column: 1 \/ -1;/u)
+  })
+})
+
+describe('A definition’s purchase order and standing files', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  const standing = (id: number, name: string, through: string | null): Attachment => ({
+    id,
+    name,
+    content_hash: 'a'.repeat(64),
+    byte_size: 48_213,
+    content_type: 'application/pdf',
+    uploaded_by_user_id: 1,
+    created_at: timestamp,
+    updated_at: timestamp,
+    through,
+  })
+
+  const attachmentApi = (
+    overrides: Partial<RecurringWorkspaceApi> = {},
+  ): Partial<RecurringWorkspaceApi> =>
+    baseApi({
+      getRecurringInvoice: vi.fn(async () => credited),
+      listRecurringInvoiceAttachments: vi.fn(async () => []),
+      uploadRecurringInvoiceAttachment: vi.fn(),
+      setRecurringInvoiceAttachmentThrough: vi.fn(),
+      removeRecurringInvoiceAttachment: vi.fn(),
+      ...overrides,
+    })
+
+  const purchaseOrder = () => control<HTMLInputElement>('[data-recurring-editor-purchase-order]')
+  const row = (id: number) =>
+    control<HTMLElement>(`[data-recurring-attachments] [data-recurring-attachment="${id}"]`)
+  const throughLabel = (id: number) =>
+    row(id).querySelector('[data-recurring-attachment-through-label]')?.textContent
+  const status = () => control<HTMLElement>('[data-recurring-attachments-status]').textContent
+
+  it('[browser] sends the purchase order with a new definition, trimmed', async () => {
+    const api = baseApi()
+    await openEditor(api)
+    stubNavigation()
+
+    expect(purchaseOrder().value).toBe('')
+    expect(control<HTMLElement>('#recurring-editor-purchase-order-hint').textContent).toBe(
+      'Copied onto every invoice this definition issues. Change it when the client issues the next purchase order.',
+    )
+    control<HTMLSelectElement>('[data-recurring-editor-client]').value = '5'
+    control<HTMLInputElement>('[data-recurring-editor-subject]').value = 'Platform'
+    lineInput(0, 'unitPriceCents').value = '250000'
+    purchaseOrder().value = '  PO-2027-114 '
+    submitEditor()
+
+    await vi.waitFor(() => expect(api.createRecurringInvoice).toHaveBeenCalled())
+    expect(api.createRecurringInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ purchase_order: 'PO-2027-114' }),
+      expect.any(String),
+      expect.any(AbortSignal),
+    )
+  })
+
+  it('[browser] fills in the purchase order on edit, and sends a cleared one as none', async () => {
+    const api = baseApi({
+      getRecurringInvoice: vi.fn(async () => ({ ...credited, purchase_order: 'PO-2026-088' })),
+    })
+    await openEditor(api, '/invoices/recurring/3/edit')
+    stubNavigation()
+
+    expect(purchaseOrder().value).toBe('PO-2026-088')
+    purchaseOrder().value = ''
+    submitEditor()
+
+    await vi.waitFor(() => expect(api.updateRecurringInvoice).toHaveBeenCalled())
+    expect(api.updateRecurringInvoice).toHaveBeenCalledWith(
+      3,
+      expect.objectContaining({ purchase_order: null, amount_config: credited.amount_config }),
+      expect.any(AbortSignal),
+    )
+  })
+
+  it('[browser] lists the files with the invoices each goes with', async () => {
+    const api = attachmentApi({
+      listRecurringInvoiceAttachments: vi.fn(async () => [
+        standing(41, 'po-fy2027.pdf', '2027-03-31'),
+        standing(42, 'master-services-agreement.pdf', null),
+      ]),
+    })
+    await openEditor(api, '/invoices/recurring/3/edit')
+
+    const section = control<HTMLElement>('[data-recurring-editor-attachments]')
+    expect(section.hidden).toBe(false)
+    expect(section.textContent).toContain(
+      'Attached to every invoice this definition issues, until the date you set — a yearly purchase order covers its fiscal year.',
+    )
+    await vi.waitFor(() => expect(throughLabel(41)).toBe('Attached through Mar 31, 2027'))
+    expect(throughLabel(42)).toBe('Every invoice')
+    expect(api.listRecurringInvoiceAttachments).toHaveBeenCalledWith(3, expect.any(AbortSignal))
+    const link = row(41).querySelector<HTMLAnchorElement>('[data-recurring-attachment-link]')!
+    expect(link.getAttribute('href')).toBe('/api/v1/recurring-invoices/3/attachments/41/content')
+    expect(link.textContent).toBe('po-fy2027.pdf')
+    expect(row(41).querySelector<HTMLInputElement>('[data-recurring-attachment-through]')!.value).toBe(
+      '2027-03-31',
+    )
+    // A file that goes with every invoice has no date to clear.
+    expect(row(42).querySelector('[data-recurring-attachment-clear-through]')).toBeNull()
+    expect(control<HTMLElement>('[data-recurring-attachments-unsaved]').hidden).toBe(true)
+    expect(control<HTMLElement>('[data-recurring-attachment-upload]').hidden).toBe(false)
+  })
+
+  it('[browser] asks for the definition to be saved before it takes files', async () => {
+    const api = attachmentApi()
+    await openEditor(api)
+
+    expect(control<HTMLElement>('[data-recurring-editor-attachments]').hidden).toBe(false)
+    const unsaved = control<HTMLElement>('[data-recurring-attachments-unsaved]')
+    expect(unsaved.hidden).toBe(false)
+    expect(unsaved.textContent).toBe('Save the definition first to attach files.')
+    expect(control<HTMLElement>('[data-recurring-attachment-upload]').hidden).toBe(true)
+    expect(api.listRecurringInvoiceAttachments).not.toHaveBeenCalled()
+  })
+
+  it('[browser] uploads a file under one key, and retries it under the same key', async () => {
+    const uploadRecurringInvoiceAttachment = vi
+      .fn<NonNullable<RecurringWorkspaceApi['uploadRecurringInvoiceAttachment']>>()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(standing(41, 'po-fy2027.pdf', null))
+    const listRecurringInvoiceAttachments = vi
+      .fn<NonNullable<RecurringWorkspaceApi['listRecurringInvoiceAttachments']>>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([standing(41, 'po-fy2027.pdf', null)])
+    await openEditor(
+      attachmentApi({ uploadRecurringInvoiceAttachment, listRecurringInvoiceAttachments }),
+      '/invoices/recurring/3/edit',
+    )
+    await vi.waitFor(() =>
+      expect(control<HTMLElement>('[data-recurring-attachments]').textContent).toBe(
+        'No files are attached to this definition.',
+      ),
+    )
+    const upload = control<HTMLButtonElement>('[data-recurring-attachment-submit]')
+    upload.click()
+    expect(status()).toBe('Choose one file to upload.')
+    expect(uploadRecurringInvoiceAttachment).not.toHaveBeenCalled()
+
+    const file = new File(['%PDF-1.7 purchase order'], 'po-fy2027.pdf', { type: 'application/pdf' })
+    Object.defineProperty(control<HTMLInputElement>('[data-recurring-attachment-file]'), 'files', {
+      configurable: true,
+      value: [file],
+    })
+    upload.click()
+    await vi.waitFor(() => expect(status()).toBe('Failed to fetch'))
+    expect(upload.disabled).toBe(false)
+    upload.click()
+
+    await vi.waitFor(() => expect(uploadRecurringInvoiceAttachment).toHaveBeenCalledTimes(2))
+    const [first, second] = uploadRecurringInvoiceAttachment.mock.calls
+    expect(first![0]).toBe(3)
+    expect(first![1]).toMatch(/^web\.recurring-attachment:/u)
+    // A retry is the same command, not a second copy of the file.
+    expect(second![1]).toBe(first![1])
+    expect((first![2].get('file') as File).name).toBe('po-fy2027.pdf')
+    await vi.waitFor(() =>
+      expect(status()).toBe('“po-fy2027.pdf” is attached to every invoice this definition issues.'),
+    )
+    expect(throughLabel(41)).toBe('Every invoice')
+  })
+
+  it('[browser] sets a file’s last invoice date, and clears it back to every invoice', async () => {
+    const setRecurringInvoiceAttachmentThrough = vi.fn(
+      async (_definition: number, id: number, through: string | null) =>
+        standing(id, 'po-fy2027.pdf', through),
+    )
+    await openEditor(
+      attachmentApi({
+        listRecurringInvoiceAttachments: vi.fn(async () => [standing(41, 'po-fy2027.pdf', null)]),
+        setRecurringInvoiceAttachmentThrough,
+      }),
+      '/invoices/recurring/3/edit',
+    )
+    await vi.waitFor(() => expect(throughLabel(41)).toBe('Every invoice'))
+
+    const date = () => row(41).querySelector<HTMLInputElement>('[data-recurring-attachment-through]')!
+    const save = () => row(41).querySelector<HTMLButtonElement>('[data-recurring-attachment-set-through]')!
+    date().value = ''
+    save().click()
+    expect(status()).toBe(
+      'Choose the last invoice date “po-fy2027.pdf” goes with, or attach it to every invoice.',
+    )
+    expect(setRecurringInvoiceAttachmentThrough).not.toHaveBeenCalled()
+
+    date().value = '2027-03-31'
+    save().click()
+    await vi.waitFor(() => expect(throughLabel(41)).toBe('Attached through Mar 31, 2027'))
+    expect(setRecurringInvoiceAttachmentThrough).toHaveBeenCalledWith(
+      3,
+      41,
+      '2027-03-31',
+      expect.any(AbortSignal),
+    )
+    expect(status()).toBe('“po-fy2027.pdf”: Attached through Mar 31, 2027.')
+
+    row(41).querySelector<HTMLButtonElement>('[data-recurring-attachment-clear-through]')!.click()
+    await vi.waitFor(() => expect(throughLabel(41)).toBe('Every invoice'))
+    expect(setRecurringInvoiceAttachmentThrough).toHaveBeenLastCalledWith(
+      3,
+      41,
+      null,
+      expect.any(AbortSignal),
+    )
+  })
+
+  it('[browser] will not remove a file on one click, then takes it off the definition', async () => {
+    const removeRecurringInvoiceAttachment = vi.fn(async () => undefined)
+    await openEditor(
+      attachmentApi({
+        listRecurringInvoiceAttachments: vi.fn(async () => [
+          standing(41, 'po-fy2026.pdf', '2026-03-31'),
+          standing(42, 'master-services-agreement.pdf', null),
+        ]),
+        removeRecurringInvoiceAttachment,
+      }),
+      '/invoices/recurring/3/edit',
+    )
+    await vi.waitFor(() => expect(throughLabel(41)).toBe('Attached through Mar 31, 2026'))
+    const dialog = control<HTMLDialogElement>('[data-recurring-attachment-remove-confirm]')
+
+    row(41).querySelector<HTMLButtonElement>('[data-recurring-attachment-remove]')!.click()
+    expect(dialog.open).toBe(true)
+    expect(control<HTMLElement>('[data-recurring-attachment-remove-body]').textContent).toBe(
+      '“po-fy2026.pdf” stops going with the invoices this definition issues. Invoices already issued keep their copy.',
+    )
+    expect(removeRecurringInvoiceAttachment).not.toHaveBeenCalled()
+    // Cancelling changes nothing.
+    document.querySelectorAll<HTMLButtonElement>('[data-recurring-attachment-remove-cancel]')[1]!.click()
+    expect(dialog.open).toBe(false)
+    expect(removeRecurringInvoiceAttachment).not.toHaveBeenCalled()
+
+    row(41).querySelector<HTMLButtonElement>('[data-recurring-attachment-remove]')!.click()
+    control<HTMLFormElement>('[data-recurring-attachment-remove-form]').dispatchEvent(
+      new Event('submit', { cancelable: true }),
+    )
+    await vi.waitFor(() =>
+      expect(removeRecurringInvoiceAttachment).toHaveBeenCalledWith(3, 41, expect.any(AbortSignal)),
+    )
+    await vi.waitFor(() => expect(dialog.open).toBe(false))
+    expect(
+      document.querySelector('[data-recurring-attachments] [data-recurring-attachment="41"]'),
+    ).toBeNull()
+    expect(throughLabel(42)).toBe('Every invoice')
+    expect(status()).toBe('“po-fy2026.pdf” no longer goes with these invoices.')
+  })
+
+  it('[browser] shows the purchase order and the files beside the definition’s other terms', async () => {
+    writeDocument()
+    const api = baseApi({
+      getRecurringInvoice: vi.fn(async (id: number) =>
+        id === 1 ? { ...managed, purchase_order: 'PO-2027-114' } : sweep,
+      ),
+      listRecurringInvoiceAttachments: vi.fn(async (id: number) =>
+        id === 1 ? [standing(41, 'po-fy2027.pdf', '2027-03-31')] : [],
+      ),
+    })
+    await activate(api)
+    await openDefinition(api, 1)
+
+    expect(control<HTMLElement>('[data-recurring-purchase-order-row]').hidden).toBe(false)
+    expect(control<HTMLElement>('[data-recurring-purchase-order]').textContent).toBe('PO-2027-114')
+    const files = control<HTMLElement>('[data-recurring-files]')
+    await vi.waitFor(() =>
+      expect(control<HTMLElement>('[data-recurring-files-list]').textContent).toContain(
+        'Attached through Mar 31, 2027',
+      ),
+    )
+    expect(files.hidden).toBe(false)
+    expect(files.textContent).toContain('po-fy2027.pdf')
+    // Read here; the controls are the editor's.
+    expect(files.querySelector('button, input')).toBeNull()
+
+    // A definition with no purchase order and no files says so, rather than
+    // showing an empty row.
+    control<HTMLAnchorElement>('[data-recurring-back]').click()
+    await openDefinition(api, 2)
+    expect(control<HTMLElement>('[data-recurring-purchase-order-row]').hidden).toBe(true)
+    await vi.waitFor(() =>
+      expect(control<HTMLElement>('[data-recurring-files-list]').textContent).toBe(
+        'No files are attached to this definition.',
+      ),
+    )
+  })
+
+  it('[browser] offers no files where the build has no attachment storage', async () => {
+    writeDocument()
+    const api = baseApi()
+    await activate(api)
+    await openDefinition(api, 1)
+    expect(control<HTMLElement>('[data-recurring-files]').hidden).toBe(true)
+
+    await openEditor(baseApi({ getRecurringInvoice: vi.fn(async () => credited) }), '/invoices/recurring/3/edit')
+    expect(control<HTMLElement>('[data-recurring-editor-attachments]').hidden).toBe(true)
+  })
+
+  it('[security] takes the files down with the session', async () => {
+    const session = new AbortController()
+    await openEditor(
+      attachmentApi({
+        listRecurringInvoiceAttachments: vi.fn(async () => [standing(41, 'po-fy2027.pdf', null)]),
+      }),
+      '/invoices/recurring/3/edit',
+      session.signal,
+    )
+    await vi.waitFor(() => expect(throughLabel(41)).toBe('Every invoice'))
+    session.abort()
+    expect(control<HTMLElement>('[data-recurring-attachments]').children).toHaveLength(0)
+    expect(control<HTMLElement>('[data-recurring-editor-attachments]').hidden).toBe(true)
   })
 })

@@ -1847,6 +1847,68 @@
   width: auto;
   min-height: auto;
 }
+/* The preview: the email exactly as it would go, before it goes. The body is
+   the plain text the client reads, so it keeps its line breaks. */
+.invoice-composer-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.invoice-composer-preview-actions button {
+  min-height: 44px;
+}
+.invoice-composer-preview {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.invoice-composer-preview h3,
+.invoice-composer-preview h4,
+.invoice-composer-preview ul {
+  margin: 0;
+}
+.invoice-composer-preview h4 {
+  font-size: 13px;
+  color: var(--ez-muted);
+}
+.invoice-composer-preview-headers {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+.invoice-composer-preview-headers > div {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px;
+}
+.invoice-composer-preview-headers dt {
+  color: var(--ez-muted);
+}
+.invoice-composer-preview-headers dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.invoice-composer-preview-body {
+  max-height: 320px;
+  margin: 0;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 13px;
+}
+.invoice-composer-preview a[data-invoice-preview-document] {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
 .invoice-variable-reference {
   align-self: start;
   padding: 16px;
@@ -4416,6 +4478,103 @@ dialog h2,
   color: var(--ez-muted);
 }
 
+/* Who a client's invoices go to and what they carry. In the column beside the
+   facts, under the BILL switch, as a form of its own: the lists and the rules
+   are one standing decision about this client's invoices, so one Save. */
+.client-sending {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.client-sending h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.client-sending .hint {
+  font-size: 13px;
+  line-height: 1.45;
+}
+[data-client-sending-retry] {
+  justify-self: start;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.client-sending-form {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.client-sending-form fieldset {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.client-sending-form legend {
+  margin-bottom: 4px;
+  padding: 0;
+  font-weight: 600;
+}
+.client-sending-form label:not(.settings-toggle) {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.client-sending-form textarea,
+.client-sending-form select {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font: inherit;
+  font-size: 15px;
+}
+.client-sending-form textarea {
+  line-height: 1.45;
+  resize: vertical;
+}
+/* Following the contacts, the boxes show who that is, and it is changed on the
+   contacts: the second surface says this is read here, not edited. */
+.client-sending-form textarea:read-only {
+  background: var(--ez-surface-2);
+}
+.client-sending-form .settings-toggle {
+  min-height: 44px;
+}
+.client-sending-form .settings-toggle input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--ez-action);
+}
+.client-sending-form .client-sending-formats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 16px;
+}
+.client-sending-form > button {
+  justify-self: start;
+  min-height: 44px;
+}
+
 .settings-toggle {
   display: flex;
   align-items: center;
@@ -6725,6 +6884,69 @@ dialog textarea {
 [data-recurring-delete-result][data-outcome='pending'],
 :is([data-recurring-editor-result], [data-invoice-edit-result])[data-outcome='pending'] {
   color: var(--ez-muted);
+}
+
+/* A definition's standing files. One row on the detail view and in the editor
+   -- the file, its size and which invoices it goes with -- and the editor's
+   controls wrap beneath it rather than beside it, so a phone gets a column and
+   nothing passes the edge. */
+.recurring-files {
+  margin-top: 24px;
+}
+.recurring-files .hint {
+  max-width: 64ch;
+}
+.recurring-attachment-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.recurring-attachment {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 18px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+.recurring-attachment-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  min-width: 0;
+}
+.recurring-attachment-file a {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ez-ink);
+  font-weight: 700;
+  text-underline-offset: 3px;
+}
+.recurring-attachment-file span,
+.recurring-attachment-through {
+  margin: 0;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.recurring-attachment-controls,
+.recurring-attachment-upload {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px 12px;
+  min-width: 0;
+}
+.recurring-attachment-controls label,
+.recurring-attachment-upload label {
+  flex: 1 1 200px;
+}
+.recurring-attachment-empty {
+  color: var(--ez-muted);
+  font-size: 14px;
 }
 
 /*

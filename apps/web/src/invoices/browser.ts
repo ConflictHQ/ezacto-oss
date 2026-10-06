@@ -18,6 +18,8 @@ import { takePageNotice } from '../page-notice.js'
 import {
   interpolateInvoiceTemplate,
   invoiceApiErrorCode,
+  invoiceCopies,
+  invoiceTemplateProblem,
   invoiceApiMessage,
   invoiceAttachmentChanges,
   invoiceAttachmentsEffective,
@@ -56,6 +58,8 @@ import {
   invoiceStatusPill,
   type InvoiceAttachmentChoice,
   type InvoiceDocumentPreference,
+  type InvoiceEmailDefaults,
+  type InvoiceEmailPreview,
   type InvoiceHoursReportFormat,
   type InvoiceJournalFormat,
   type InvoiceOverflowCommand,
@@ -413,9 +417,13 @@ export const renderInvoiceDetail = (
           const date = document.createElement('span')
           date.textContent = dateLabel(message.created_at)
           item.append(event, date)
-          const recipientText = message.recipients
-            .map((recipient) => recipient.name.trim() || recipient.email)
-            .join(', ')
+          const named = (people: readonly { name: string; email: string }[]) =>
+            people.map((recipient) => recipient.name.trim() || recipient.email).join(', ')
+          const copied = message.cc ?? []
+          const recipientText =
+            copied.length === 0
+              ? named(message.recipients)
+              : `To ${named(message.recipients)}; Cc ${named(copied)}`
           const detail = [message.subject?.trim(), recipientText || null]
             .filter((value): value is string => value !== null && value !== undefined && value !== '')
             .join(' · ')
@@ -445,6 +453,14 @@ export const renderInvoiceDetail = (
 
 const apiMessage = invoiceApiMessage
 
+/**
+ * Harvest's subject, which every organization's invoice template starts with:
+ * what the dialog shows until this client's own defaults have been read.
+ */
+const fallbackSubject = 'Invoice #%invoice_number% from %company_name%'
+/** And a short note above the summary the email always carries. */
+const fallbackMessage = 'Hello,\n\nPlease find invoice %invoice_number% below.'
+
 const apiErrorCode = invoiceApiErrorCode
 
 const localDate = (): string => {
@@ -467,8 +483,12 @@ interface ActiveSession {
  * left the building, and the held keys are untouched for the retry.
  */
 class AttachmentChoicesRefused extends Error {
-  constructor(readonly reason: unknown) {
-    super('The attachment choices were not saved.')
+  constructor(
+    readonly reason: unknown,
+    /** What was being saved: the attachment choices, the client's defaults, the copy setting. */
+    readonly what = 'The attachment choices were',
+  ) {
+    super(`${what} not saved.`)
   }
 }
 
@@ -520,6 +540,21 @@ export const createInvoicePaymentController = (
   const composerForm = required<HTMLFormElement>('[data-invoice-composer-form]')
   const composerTitle = required<HTMLElement>('[data-invoice-composer-title]')
   const composerRecipients = required<HTMLTextAreaElement>('[data-invoice-composer-recipients]')
+  const composerCc = required<HTMLTextAreaElement>('[data-invoice-composer-cc]')
+  const composerRecipientsSource = required<HTMLElement>('[data-invoice-composer-recipients-source]')
+  const composerAlwaysCc = required<HTMLElement>('[data-invoice-composer-always-cc]')
+  const composerCopyLabel = required<HTMLElement>('[data-invoice-composer-copy-label]')
+  const composerCopy = required<HTMLInputElement>('[data-invoice-composer-copy]')
+  const composerCopyAddress = required<HTMLElement>('[data-invoice-composer-copy-address]')
+  const composerAppendLabel = required<HTMLElement>('[data-invoice-composer-append-label]')
+  const composerAppend = required<HTMLInputElement>('[data-invoice-composer-append]')
+  const composerSaveDefaultLabel = required<HTMLElement>('[data-invoice-composer-save-default-label]')
+  const composerSaveDefault = required<HTMLInputElement>('[data-invoice-composer-save-default]')
+  const composerPreviewActions = required<HTMLElement>('[data-invoice-composer-preview-actions]')
+  const composerPreview = required<HTMLButtonElement>('[data-invoice-composer-preview]')
+  const composerPreviewSend = required<HTMLButtonElement>('[data-invoice-composer-preview-send]')
+  const composerPreviewResult = required<HTMLElement>('[data-invoice-composer-preview-result]')
+  const composerPreviewPanel = required<HTMLElement>('[data-invoice-composer-preview-panel]')
   const composerSubject = required<HTMLInputElement>('[data-invoice-composer-subject]')
   const composerBody = required<HTMLTextAreaElement>('[data-invoice-composer-body]')
   const composerReminderToggle = required<HTMLInputElement>('[data-invoice-composer-reminder-toggle]')
@@ -608,6 +643,13 @@ export const createInvoicePaymentController = (
   let documentPreference: InvoiceDocumentPreference | null = null
   let documentPreferenceLoading = false
   let documentPreferenceGeneration = 0
+  // What the dialog opened on: the client's To and Cc, the organization's
+  // copies, the template's words and whether the sender is copied. Null until
+  // read, and when it cannot be -- the dialog then opens on plain defaults.
+  let emailDefaults: InvoiceEmailDefaults | null = null
+  let emailDefaultsLoading = false
+  let emailDefaultsGeneration = 0
+  let previewPending = false
 
   const current = (): ActiveSession | null =>
     active !== null &&
@@ -683,9 +725,22 @@ export const createInvoicePaymentController = (
         : 'Send invoice'
     const frozen = composerFrozen()
     composerRecipients.disabled = frozen
+    composerCc.disabled = frozen
+    composerCopy.disabled = frozen
     composerSubject.disabled = frozen
     composerBody.disabled = frozen
     composerReminderToggle.disabled = frozen
+    // Saving the lists as the client's rules goes with an email being sent; it
+    // is a setting, not part of the delivery a retry repeats.
+    composerSaveDefaultLabel.hidden = !delivering || api.setClientInvoiceSending === undefined
+    composerSaveDefault.disabled = mutationPending || refreshRequired
+    // A preview needs nothing but the words on screen, and changes nothing.
+    composerPreviewActions.hidden = !delivering || api.previewInvoiceEmail === undefined
+    composerPreview.disabled = previewPending || mutationPending || refreshRequired
+    composerPreviewSend.disabled =
+      previewPending || mutationPending || refreshRequired || api.sendInvoiceEmailPreview === undefined
+    composerPreviewSend.hidden = api.sendInvoiceEmailPreview === undefined
+    if (!delivering) composerPreviewPanel.hidden = true
     syncAttachments()
   }
 
@@ -699,6 +754,7 @@ export const createInvoicePaymentController = (
   const chosenAttachments = (): InvoiceAttachmentChoice => ({
     pdf: composerAttachPdf.checked,
     files: composerAttachFiles.checked,
+    append: composerAppend.checked,
     journal: composerAttachJournal.checked
       ? composerJournalLevel.value === 'summary'
         ? 'summary'
@@ -712,6 +768,7 @@ export const createInvoicePaymentController = (
   const showAttachments = (choice: InvoiceAttachmentChoice): void => {
     composerAttachPdf.checked = choice.pdf
     composerAttachFiles.checked = choice.files
+    composerAppend.checked = choice.append
     composerAttachJournal.checked = choice.journal !== false
     composerJournalLevel.value = choice.journal === false ? 'detailed' : choice.journal
     for (const box of journalFormatBoxes()) {
@@ -744,6 +801,9 @@ export const createInvoicePaymentController = (
     // Files only where the invoice has some to send.
     composerAttachFilesLabel.hidden = attachments.length === 0
     composerAttachFiles.disabled = !usable
+    // Binding files into the invoice's PDF needs the PDF, and files to bind.
+    composerAppendLabel.hidden = attachments.length === 0
+    composerAppend.disabled = !usable || !composerAttachPdf.checked
     composerAttachmentsStatus.textContent = documentPreferenceLoading
       ? 'Reading what this invoice attaches…'
       : documentPreference === null
@@ -758,7 +818,7 @@ export const createInvoicePaymentController = (
     const generation = ++documentPreferenceGeneration
     documentPreference = null
     documentPreferenceLoading = true
-    showAttachments({ pdf: false, files: false, journal: false, journalFormats: ['pdf'] })
+    showAttachments({ pdf: false, files: false, append: false, journal: false, journalFormats: ['pdf'] })
     syncComposer()
     try {
       const preference = await api.getInvoiceDocumentPreference!(invoiceId, session.signal)
@@ -779,6 +839,207 @@ export const createInvoicePaymentController = (
         syncComposer()
       }
     }
+  }
+
+  /**
+   * What the dialog opens on for this invoice: the client's To and Cc -- its
+   * saved lists, else its contacts' invoice routing -- the organization's
+   * copies, the template's subject and message, and whether the person sending
+   * is copied. A field somebody has already typed into is left as they left it.
+   */
+  const loadEmailDefaults = async (
+    session: ActiveSession,
+    invoiceId: number,
+    fill: boolean,
+  ): Promise<void> => {
+    const generation = ++emailDefaultsGeneration
+    emailDefaults = null
+    if (api.getInvoiceEmailDefaults === undefined) return
+    emailDefaultsLoading = true
+    const untouched = {
+      to: composerRecipients.value,
+      cc: composerCc.value,
+      subject: composerSubject.value,
+      message: composerBody.value,
+    }
+    let loaded: InvoiceEmailDefaults
+    try {
+      loaded = await api.getInvoiceEmailDefaults(invoiceId, session.signal)
+    } catch (error) {
+      if (current() !== session || generation !== emailDefaultsGeneration) return
+      // Unreadable is not a reason to hold the send: the dialog keeps the
+      // plain defaults it opened on, and says nothing it does not know.
+      emailDefaultsLoading = false
+      if (session.onSessionFailure(error)) {
+        clearPrivatePresentation()
+        active = null
+      }
+      return
+    }
+    if (current() !== session || generation !== emailDefaultsGeneration) return
+    emailDefaultsLoading = false
+    emailDefaults = loaded
+    composerAlwaysCc.textContent =
+      loaded.always_cc.length === 0
+        ? ''
+        : `Also copied on every invoice email: ${loaded.always_cc.map(invoiceRecipientLine).join(', ')}.`
+    composerAlwaysCc.hidden = loaded.always_cc.length === 0
+    if (!fill) return
+    if (composerRecipients.value === untouched.to) {
+      composerRecipients.value = loaded.to.map(invoiceRecipientLine).join('\n')
+    }
+    if (composerCc.value === untouched.cc) {
+      composerCc.value = loaded.cc.map(invoiceRecipientLine).join('\n')
+    }
+    if (composerSubject.value === untouched.subject) composerSubject.value = loaded.subject
+    if (composerBody.value === untouched.message) composerBody.value = loaded.message
+    composerRecipientsSource.textContent =
+      loaded.recipients_source === 'client'
+        ? "From this client's saved recipients."
+        : loaded.to.length + loaded.cc.length === 0
+          ? 'This client has no invoice recipients yet.'
+          : "From the client's contacts marked Recipient (To) and CC."
+    const address = loaded.sender.email
+    composerCopyLabel.hidden = address === null
+    composerCopy.checked = address !== null && loaded.send_me_a_copy
+    composerCopyAddress.textContent = address === null ? '' : `(${address})`
+    syncComposer()
+  }
+
+  /**
+   * The email as the Send dialog has it right now -- the To and Cc lines, the
+   * subject and message as typed, the copy, and the attachment boxes -- for a
+   * preview. Throws the sentence to show when a field cannot be read.
+   */
+  const previewRequest = (): Parameters<NonNullable<typeof api.previewInvoiceEmail>>[1] => {
+    const owed = owedDelivery()
+    const to = owed?.recipients ?? invoiceRecipients(composerRecipients.value)
+    const cc = owed?.cc ?? invoiceCopies(composerCc.value, to)
+    const subject = owed?.subject ?? composerSubject.value.trim()
+    const message = owed?.message ?? composerBody.value.trimEnd()
+    for (const problem of [
+      invoiceTemplateProblem(subject, 'Subject'),
+      invoiceTemplateProblem(message, 'Message'),
+    ]) {
+      if (problem !== null) throw new Error(problem)
+    }
+    const choice = chosenAttachments()
+    return {
+      recipients: [...to],
+      cc: [...cc],
+      subject,
+      message,
+      send_me_a_copy: owed?.sendMeACopy ?? (!composerCopyLabel.hidden && composerCopy.checked),
+      ...(documentPreference === null
+        ? {}
+        : {
+            attach_pdf: choice.pdf,
+            append_pdfs: choice.append,
+            ...(attachments.length === 0 ? {} : { attach_files: choice.files }),
+            attach_journal: choice.journal,
+            ...(choice.journal === false || choice.journalFormats.length === 0
+              ? {}
+              : { journal_formats: [...choice.journalFormats] }),
+          }),
+    }
+  }
+
+  const byteSize = (bytes: number): string =>
+    new Intl.NumberFormat('en-US', {
+      style: 'unit',
+      unit: bytes >= 1_000_000 ? 'megabyte' : 'kilobyte',
+      unitDisplay: 'short',
+      maximumFractionDigits: 1,
+    }).format(bytes >= 1_000_000 ? bytes / 1_000_000 : Math.max(1, bytes / 1_000))
+
+  const notAppendedReason: Readonly<Record<string, string>> = {
+    encrypted: 'it is password-protected, so it goes beside the invoice',
+    unreadable: 'it could not be read as a PDF, so it goes beside the invoice',
+    empty: 'it has no pages, so it goes beside the invoice',
+    too_large: 'it is too large to bind in, so it goes beside the invoice',
+  }
+
+  const renderPreview = (preview: InvoiceEmailPreview): void => {
+    const people = (list: readonly { name: string; email: string }[]) =>
+      list.length === 0 ? '—' : list.map(invoiceRecipientLine).join(', ')
+    required<HTMLElement>('[data-invoice-preview-from]').textContent = invoiceRecipientLine(preview.email.from)
+    required<HTMLElement>('[data-invoice-preview-to]').textContent = people(preview.email.to)
+    required<HTMLElement>('[data-invoice-preview-cc]').textContent = people(preview.email.cc)
+    required<HTMLElement>('[data-invoice-preview-subject]').textContent = preview.email.subject
+    required<HTMLElement>('[data-invoice-preview-text]').textContent = preview.email.text
+    const list = required<HTMLUListElement>('[data-invoice-preview-attachments]')
+    list.replaceChildren(
+      ...(preview.email.attachments.length === 0
+        ? [Object.assign(document.createElement('li'), { textContent: 'No attachments.' })]
+        : preview.email.attachments.map((attachment) => {
+            const item = document.createElement('li')
+            const behind =
+              attachment.appended.length === 0
+                ? ''
+                : ` — with ${attachment.appended.join(', ')} at the back`
+            const beside =
+              attachment.not_appended === null ? '' : ` — ${notAppendedReason[attachment.not_appended]}`
+            item.textContent = `${attachment.filename} (${byteSize(attachment.byte_size)})${behind}${beside}`
+            return item
+          })),
+    )
+    const download = required<HTMLAnchorElement>('[data-invoice-preview-document]')
+    const document_ = preview.email.attachments.find(({ kind }) => kind === 'invoice')
+    download.hidden = document_ === undefined
+    if (document_ !== undefined) {
+      download.href = preview.documentHref
+      download.download = document_.filename
+    }
+    composerPreviewPanel.hidden = false
+  }
+
+  const runPreview = (sendToMe: boolean): void => {
+    const session = current()
+    const selected = invoice
+    if (session === null || selected === null || previewPending) return
+    let input: ReturnType<typeof previewRequest>
+    try {
+      input = previewRequest()
+    } catch (error) {
+      composerPreviewResult.textContent = apiMessage(error)
+      return
+    }
+    previewPending = true
+    composerPreviewResult.textContent = sendToMe ? 'Sending a preview to you…' : 'Composing the preview…'
+    syncComposer()
+    const request = sendToMe
+      ? api.sendInvoiceEmailPreview!(selected.id, input, session.signal).then((sent) => {
+          if (current() !== session) return
+          composerPreviewResult.textContent = `A preview went to ${sent.to
+            .map(({ email }) => email)
+            .join(', ')} only, stamped PREVIEW. Nothing was sent to the client.`
+        })
+      : api.previewInvoiceEmail!(selected.id, input, session.signal).then((preview) => {
+          if (current() !== session) return
+          renderPreview(preview)
+          composerPreviewResult.textContent = ''
+        })
+    void request
+      .catch((error: unknown) => {
+        if (current() !== session) return
+        if (session.onSessionFailure(error)) {
+          clearPrivatePresentation()
+          active = null
+          return
+        }
+        // The server words a 503 for nobody, but on these routes it has one
+        // cause: no mail transport, so there is no email to compose or send.
+        composerPreviewResult.textContent =
+          error instanceof EzactoApiError && error.status === 503
+            ? 'Email delivery is not set up on this instance, so there is no email to preview.'
+            : apiMessage(error)
+      })
+      .finally(() => {
+        if (current() === session) {
+          previewPending = false
+          syncComposer()
+        }
+      })
   }
 
   const closeOverflow = (): void => {
@@ -1094,6 +1355,12 @@ export const createInvoicePaymentController = (
     documentPreference = null
     documentPreferenceLoading = false
     documentPreferenceGeneration += 1
+    emailDefaults = null
+    emailDefaultsLoading = false
+    emailDefaultsGeneration += 1
+    previewPending = false
+    composerPreviewPanel.hidden = true
+    composerPreviewResult.textContent = ''
     closeDialogs()
     paymentForm.reset()
     deleteForm.reset()
@@ -1352,14 +1619,26 @@ export const createInvoicePaymentController = (
     // Cancel and then Send again.
     const owed = owedDelivery()
     composerForm.reset()
-    composerSubject.value = 'Invoice %invoice_number%'
-    composerBody.value =
-      'Hello,\n\nPlease find invoice %invoice_number% for %invoice_amount%. Payment is due %invoice_due_date%.\n\nThank you.'
+    composerPreviewPanel.hidden = true
+    composerPreviewResult.textContent = ''
+    // Until the client's own defaults arrive, the dialog opens on Harvest's
+    // subject and a short note.
+    composerSubject.value = fallbackSubject
+    composerBody.value = fallbackMessage
+    composerCc.value = ''
+    composerAlwaysCc.hidden = true
+    composerCopyLabel.hidden = true
+    composerRecipientsSource.textContent = ''
     const today = localDate()
     if (owed !== null) {
-      // The recipients the committed send confirmed, not whatever the reset
-      // left behind: they are what the retry delivers to.
+      // The email the committed send confirmed, not whatever the reset left
+      // behind: it is what the retry delivers, header for header.
       composerRecipients.value = owed.recipients.map(invoiceRecipientLine).join('\n')
+      composerCc.value = owed.cc.map(invoiceRecipientLine).join('\n')
+      composerSubject.value = owed.subject
+      composerBody.value = owed.message
+      composerCopy.checked = owed.sendMeACopy
+      composerCopyLabel.hidden = !owed.sendMeACopy
       composerDeliverToggle.checked = true
       composerConfirm.checked = true
       composerReminderToggle.checked = false
@@ -1376,6 +1655,7 @@ export const createInvoicePaymentController = (
     // Read afresh on every opening: the invoice's choices are its own state,
     // and an earlier send may have changed them.
     if (attachmentsOffered()) void loadDocumentPreference(session, invoice.id)
+    void loadEmailDefaults(session, invoice.id, owed === null)
     // The fields are frozen while the email is owed, so the retry is what the
     // keyboard lands on.
     if (owed !== null) composerSubmit.focus()
@@ -1559,6 +1839,15 @@ export const createInvoicePaymentController = (
   composerAttachJournal.addEventListener('change', () => {
     syncComposer()
   })
+  composerAttachPdf.addEventListener('change', () => {
+    syncComposer()
+  })
+  composerPreview.addEventListener('click', () => {
+    runPreview(false)
+  })
+  composerPreviewSend.addEventListener('click', () => {
+    runPreview(true)
+  })
   composerForm.addEventListener('input', () => {
     // No command id is minted or dropped here. Once a `send` has been issued its
     // outcome may be unknown, and a fresh id on the next submit would record a
@@ -1607,14 +1896,29 @@ export const createInvoicePaymentController = (
       return
     }
     let recipients: InvoiceRecipient[] = []
+    let copies: InvoiceRecipient[] = []
     let sendReminderOn: string | null = null
     let input: InvoiceTransitionInput | null = null
     let attachmentChange: InvoiceDocumentPreferenceInput | null = null
+    let clientDefaults: Parameters<NonNullable<typeof api.setClientInvoiceSending>>[1] | null = null
     const subject = composerSubject.value.trim()
-    const body = composerBody.value.trim()
+    const body = composerBody.value.trimEnd()
+    // Copied on the email itself, the way the client sees it -- only where the
+    // person sending has an address to be copied at.
+    const sendMeACopy = delivering && !composerCopyLabel.hidden && composerCopy.checked
+    // A standing choice: the box shows it and changing it changes it.
+    const copyChanged =
+      emailDefaults !== null &&
+      !composerCopyLabel.hidden &&
+      composerCopy.checked !== emailDefaults.send_me_a_copy &&
+      api.setInvoiceCopyToSelf !== undefined
     // Recorded on the message the way Harvest recorded it, and only true when
     // the email that would carry the PDF is part of this submit.
     const attachPdf = delivering && documentPreference !== null && composerAttachPdf.checked
+    const names = {
+      clientName: emailDefaults?.client_name ?? clientLabel(selectedInvoice.client_id),
+      companyName: emailDefaults?.company_name ?? '',
+    }
     try {
       if (delivering && attachmentsOffered()) {
         if (documentPreferenceLoading) {
@@ -1629,23 +1933,52 @@ export const createInvoicePaymentController = (
         }
       }
       if (work === 'send') {
+        // The client's lists and the template's words are still on their way;
+        // a send made before they land would go to whatever was typed over
+        // half of them.
+        if (emailDefaultsLoading) throw new Error('Wait for the recipients to load, then send.')
         recipients = invoiceRecipients(composerRecipients.value)
+        copies = delivering ? invoiceCopies(composerCc.value, recipients) : []
         if (subject === '') throw new Error('Enter a subject before recording.')
-        if (body === '') throw new Error('Enter a message before recording.')
+        if (body.trim() === '') throw new Error('Enter a message before recording.')
+        // Checked here, before anything is recorded: a send that commits and
+        // then has its email refused leaves an email owed that nothing typed
+        // here can change.
+        for (const problem of [
+          invoiceTemplateProblem(subject, 'Subject'),
+          invoiceTemplateProblem(body, 'Message'),
+        ]) {
+          if (problem !== null) throw new Error(problem)
+        }
         sendReminderOn = composerReminderToggle.checked
           ? invoiceReminderDate(composerReminderDate.value, localDate())
           : null
         if (delivering && !composerConfirm.checked) {
           throw new Error('Confirm the recipients before sending this invoice email.')
         }
+        if (delivering && composerSaveDefault.checked && api.setClientInvoiceSending !== undefined) {
+          const choice = chosenAttachments()
+          clientDefaults = {
+            recipients: { to: [...recipients], cc: [...copies] },
+            ...(documentPreference === null
+              ? {}
+              : {
+                  attach_pdf: choice.pdf,
+                  append_pdfs: choice.append,
+                  ...(attachments.length === 0 ? {} : { attach_files: choice.files }),
+                  attach_journal: choice.journal,
+                  ...(choice.journal === false ? {} : { journal_formats: [...choice.journalFormats] }),
+                }),
+          }
+        }
         input = {
           command: 'send',
           expected_version: selectedInvoice.version,
           recipients,
-          subject: interpolateInvoiceTemplate(subject, selectedInvoice),
-          body: interpolateInvoiceTemplate(body, selectedInvoice),
+          subject: interpolateInvoiceTemplate(subject, selectedInvoice, names),
+          body: interpolateInvoiceTemplate(body, selectedInvoice, names),
           attach_pdf: attachPdf,
-          send_me_a_copy: false,
+          send_me_a_copy: sendMeACopy,
           thank_you: false,
           reminder: sendReminderOn !== null,
           send_reminder_on: sendReminderOn,
@@ -1662,7 +1995,7 @@ export const createInvoicePaymentController = (
     const live = invoiceSendAttemptFor(sendAttempt, selectedInvoice.id)
     // A `send` that has been issued keeps its command id for the life of the
     // attempt whatever happens in between. While it is still owed the email has
-    // not been issued at all, so the checkbox and the recipients on screen may
+    // not been issued at all, so the checkbox and the fields on screen may
     // still decide it; once it has been, `live` is the whole answer.
     const attempt: InvoiceSendAttempt =
       work === 'delivery'
@@ -1678,6 +2011,10 @@ export const createInvoicePaymentController = (
                     live?.delivery?.commandId ??
                     `web.invoice.delivery:${globalThis.crypto.randomUUID()}`,
                   recipients,
+                  cc: copies,
+                  subject,
+                  message: body,
+                  sendMeACopy,
                 }
               : null,
           }
@@ -1693,14 +2030,22 @@ export const createInvoicePaymentController = (
     // Two commands on rising versions, in the order the operator would have had
     // to guess at: the state change first, then the email. POST /deliveries
     // issues its own send once the mail is accepted, so the history carries both
-    // the message written here and the one the organization template sent.
+    // the message written here and the email that went.
     const request = (async (): Promise<Invoice> => {
-      // The attachments first: they are read when the email is built, so the
-      // email cannot be queued before they are saved, and a refusal here has
-      // to stop before the sent status is recorded rather than after it. A
-      // setting, not a command -- writing it twice writes the same thing -- so
-      // it needs no key of its own; the held keys below are what keep a retry
-      // from sending twice.
+      // Settings first: they are read when the email is built, so the email
+      // cannot be queued before they are saved, and a refusal here has to stop
+      // before the sent status is recorded rather than after it. Settings, not
+      // commands -- writing one twice writes the same thing -- so they need no
+      // key of their own; the held keys below are what keep a retry from
+      // sending twice. The client's defaults go first, so the invoice's own
+      // choices are written over the rules they will now follow.
+      if (clientDefaults !== null) {
+        try {
+          await api.setClientInvoiceSending!(selectedInvoice.client_id, clientDefaults, session.signal)
+        } catch (error) {
+          throw new AttachmentChoicesRefused(error, "This client's defaults were")
+        }
+      }
       if (attachmentChange !== null) {
         try {
           const saved = await api.setInvoiceDocumentPreference!(
@@ -1712,6 +2057,16 @@ export const createInvoicePaymentController = (
           if (current() === session) documentPreference = saved
         } catch (error) {
           throw new AttachmentChoicesRefused(error)
+        }
+      }
+      if (copyChanged) {
+        try {
+          await api.setInvoiceCopyToSelf!(composerCopy.checked, session.signal)
+          if (current() === session && emailDefaults !== null) {
+            emailDefaults = { ...emailDefaults, send_me_a_copy: composerCopy.checked }
+          }
+        } catch (error) {
+          throw new AttachmentChoicesRefused(error, 'Your copy setting was')
         }
       }
       let saved = selectedInvoice
@@ -1736,6 +2091,10 @@ export const createInvoicePaymentController = (
         const deliveryInput: InvoiceEmailDeliveryInput = {
           expected_version: saved.version,
           recipients: [...attempt.delivery.recipients],
+          ...(attempt.delivery.cc.length === 0 ? {} : { cc: [...attempt.delivery.cc] }),
+          subject: attempt.delivery.subject,
+          message: attempt.delivery.message,
+          send_me_a_copy: attempt.delivery.sendMeACopy,
           confirmed: true,
         }
         saved = await deliverInvoiceEmail!(
@@ -1786,7 +2145,7 @@ export const createInvoicePaymentController = (
           }
           // Nothing was sent. The attempt and its keys stay exactly as they
           // were, so submitting again is the same send, not a second one.
-          composerResult.textContent = `The attachment choices were not saved, so nothing was sent: ${apiMessage(error.reason)} Submit again to retry.`
+          composerResult.textContent = `${error.what} not saved, so nothing was sent: ${apiMessage(error.reason)} Submit again to retry.`
           return
         }
         // Holding the key is what keeps a retry from re-sending, and retiring

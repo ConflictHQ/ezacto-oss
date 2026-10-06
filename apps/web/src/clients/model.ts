@@ -1,13 +1,17 @@
 import type {
   ClientHierarchyNode,
+  ClientInvoiceSendingInput,
   ClientRollupNode,
   ClientRollupReport,
   GeneralResource,
   Invoice,
+  InvoiceRecipient,
   Retainer,
   Whoami,
 } from '@conflict-hq/ezacto-client'
 import { invoiceObligations, type InvoiceObligation } from '../dashboard/model.js'
+import { assertInvoiceAddressCount, parseInvoiceAddressLines } from '../invoice-addresses.js'
+import { invoiceIdentityCanWrite } from '../invoices/model.js'
 import { canReadFinancialReports } from '../reports/model.js'
 import { retainerCurrency } from '../retainers/model.js'
 
@@ -51,6 +55,23 @@ export interface ClientDirectoryApi {
     configured: boolean
     can_send_from_bill: boolean
   }>
+  /**
+   * Who this client's invoice emails go to and what they carry: the standing
+   * rules every Send dialog for the client opens on. Optional for the reason
+   * the BILL pair is: a deployment that does not mount the routes has nothing
+   * to show, and the section stays away rather than answering 404.
+   */
+  getClientInvoiceSending?(clientId: number, signal?: AbortSignal): Promise<ClientInvoiceSending>
+  /**
+   * Shared with the invoice Send dialog, which saves the same rules from an
+   * invoice -- one operation, one signature, one binding. It answers nothing
+   * the page uses, so the page reads the stored rules back after it.
+   */
+  setClientInvoiceSending?(
+    clientId: number,
+    input: ClientInvoiceSendingInput,
+    signal?: AbortSignal,
+  ): Promise<void>
   listClientContacts(
     clientId: number,
     cursor?: string,
@@ -449,4 +470,174 @@ export const clientMoney = (cents: number, currency: string): string => {
       cents / 100,
     )
   }
+}
+
+export type ClientJournalRule = 'detailed' | 'summary' | false
+export type ClientJournalFormat = 'pdf' | 'csv' | 'xlsx'
+
+export interface ClientInvoiceRecipientLists {
+  readonly to: readonly InvoiceRecipient[]
+  readonly cc: readonly InvoiceRecipient[]
+}
+
+/**
+ * A client's invoice sending, as `/api/v1/clients/:id/invoice-sending` serves
+ * it: who every invoice email for the client goes to, and what it carries.
+ *
+ * Each rule has three answers, and the third is the point: `null` follows the
+ * organization, whose own answers arrive alongside so the screen can say what
+ * following them means today. The lists work the same way -- `null` recipients
+ * follow the contacts' invoice routing, and `contacts` says who that is. The
+ * generated envelope types the rules as plain booleans, because the contract's
+ * `nullable` does not survive the generator, so the shell binding reads them
+ * into this shape rather than the screen trusting that one.
+ */
+export interface ClientInvoiceSending {
+  readonly client_id: number
+  readonly recipients: ClientInvoiceRecipientLists | null
+  readonly contacts: ClientInvoiceRecipientLists
+  readonly attach_pdf: boolean | null
+  readonly append_pdfs: boolean | null
+  readonly attach_files: boolean | null
+  readonly attach_journal: ClientJournalRule | null
+  readonly journal_formats: readonly ClientJournalFormat[] | null
+  readonly organization: {
+    readonly attach_pdf: boolean
+    readonly append_pdfs: boolean
+    readonly attach_files: boolean
+    readonly attach_journal: ClientJournalRule
+    readonly journal_formats: readonly ClientJournalFormat[]
+  }
+}
+
+/**
+ * Whether a client's invoice sending is this person's to see and change.
+ *
+ * The routes answer a signed-in session of a profile that raises invoices and
+ * nobody else, and they refuse the read as well as the write -- so there is no
+ * read-only version to offer anybody else, and the section is not offered at
+ * all. An API token is refused even with `invoices:write`, which is why the
+ * session is asked for on top of the invoice rule rather than instead of it.
+ */
+export const clientCanSetInvoiceSending = (identity: Readonly<Whoami>): boolean =>
+  identity.authentication.kind === 'session' && invoiceIdentityCanWrite(identity)
+
+/** The section's controls, as strings, exactly as the form hands them over. */
+export interface ClientInvoiceSendingFormValues {
+  /** `contacts` follows the contacts' invoice routing; `client` saves the two lists. */
+  readonly source: 'contacts' | 'client'
+  readonly to: string
+  readonly cc: string
+  /** `''` follows the organization; `'true'` and `'false'` decide for this client. */
+  readonly attachPdf: string
+  readonly appendPdfs: string
+  readonly attachFiles: string
+  /** `''` follows the organization; `'false'`, `'detailed'` and `'summary'` decide. */
+  readonly attachJournal: string
+  /** Null follows the organization's files; a list is this client's own. */
+  readonly journalFormats: readonly string[] | null
+}
+
+const sendingRule = (raw: string): boolean | null =>
+  raw === 'true' ? true : raw === 'false' ? false : null
+
+const sendingJournal = (raw: string): ClientJournalRule | null =>
+  raw === 'detailed' || raw === 'summary' ? raw : raw === 'false' ? false : null
+
+const journalFormatOrder: readonly ClientJournalFormat[] = ['pdf', 'csv', 'xlsx']
+
+/** The route's cap on each of a client's two lists. */
+const clientListLimit = 50
+
+/**
+ * The form, as the request body -- or an `Error` carrying the sentence to show.
+ *
+ * Everything the section shows goes, every time: the lists or `null` to follow
+ * the contacts, and each rule or `null` to follow the organization. The one
+ * exception is the hours report's files while the report is off: they are
+ * hidden then, and left as stored rather than sent, because they are what the
+ * report comes back with when it is switched on again -- the rule the company
+ * settings apply to the same choice.
+ *
+ * To needs somebody. A saved list that addresses nobody would open every Send
+ * dialog empty, and following the contacts is how "not decided here" is said.
+ * A Cc already in To is left out, as the Send dialog leaves it out.
+ */
+export const clientInvoiceSendingInput = (
+  values: Readonly<ClientInvoiceSendingFormValues>,
+  organization: Readonly<ClientInvoiceSending['organization']>,
+): ClientInvoiceSendingInput => {
+  let recipients: { to: InvoiceRecipient[]; cc: InvoiceRecipient[] } | null = null
+  if (values.source === 'client') {
+    const to = parseInvoiceAddressLines(values.to, 'To')
+    if (to.length === 0) {
+      throw new Error('Enter at least one address in To, or follow the contacts’ invoice routing.')
+    }
+    assertInvoiceAddressCount(to, 'To', clientListLimit)
+    const addressed = new Set(to.map(({ email }) => email.toLowerCase()))
+    const cc = parseInvoiceAddressLines(values.cc, 'Cc').filter(
+      ({ email }) => !addressed.has(email.toLowerCase()),
+    )
+    assertInvoiceAddressCount(cc, 'Cc', clientListLimit)
+    recipients = { to, cc }
+  }
+  const attachJournal = sendingJournal(values.attachJournal)
+  const journalOn = (attachJournal ?? organization.attach_journal) !== false
+  const chosenFormats = values.journalFormats
+  let journalFormats: ClientJournalFormat[] | null = null
+  if (journalOn && chosenFormats !== null) {
+    journalFormats = journalFormatOrder.filter((format) => chosenFormats.includes(format))
+    if (journalFormats.length === 0) {
+      throw new Error('Choose at least one file for the hours report.')
+    }
+  }
+  return {
+    recipients,
+    attach_pdf: sendingRule(values.attachPdf),
+    append_pdfs: sendingRule(values.appendPdfs),
+    attach_files: sendingRule(values.attachFiles),
+    attach_journal: attachJournal,
+    ...(journalOn ? { journal_formats: journalFormats } : {}),
+  }
+}
+
+/** A rule as its select holds it: `''` follows the organization. */
+export const clientSendingRuleOption = (rule: boolean | ClientJournalRule | null): string =>
+  rule === null ? '' : String(rule)
+
+export const clientJournalLabel = (rule: ClientJournalRule): string =>
+  rule === 'detailed' ? 'Every entry' : rule === 'summary' ? 'Summary' : 'Off'
+
+const journalFormatWords: Readonly<Record<ClientJournalFormat, string>> = {
+  pdf: 'PDF',
+  csv: 'CSV',
+  xlsx: 'Excel',
+}
+
+export const clientJournalFormatsLabel = (formats: readonly ClientJournalFormat[]): string =>
+  new Intl.ListFormat('en-US', { style: 'long', type: 'conjunction' }).format(
+    journalFormatOrder
+      .filter((format) => formats.includes(format))
+      .map((format) => journalFormatWords[format]),
+  )
+
+/**
+ * The first option of every rule: following the organization, with what that
+ * means today. "Organization default" alone would send the reader to the
+ * company settings to find out.
+ */
+export const clientSendingDefaultLabel = (answer: string): string =>
+  `Organization default (${answer})`
+
+/** What the two address boxes are showing, and where it comes from. */
+export const clientSendingSourceHint = (
+  sending: Readonly<Pick<ClientInvoiceSending, 'contacts'>>,
+  source: 'contacts' | 'client',
+): string => {
+  if (source === 'client') {
+    return 'Saved for this client, in place of the contacts’ invoice routing.'
+  }
+  return sending.contacts.to.length === 0 && sending.contacts.cc.length === 0
+    ? 'No contact has Recipient or CC as its invoice routing, so the Send dialog opens with no addresses.'
+    : 'From the contacts’ invoice routing: Recipient goes in To, CC in Cc. Edit a contact to change them.'
 }

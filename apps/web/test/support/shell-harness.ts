@@ -198,6 +198,7 @@ export const invoiceMessage = (invoiceId: number): InvoiceMessage => ({
   sent_from: 'Owner',
   sent_from_email: 'owner@example.test',
   recipients: [{ name: 'Accounts payable', email: 'ap@example.test' }],
+  cc: [],
   subject: 'Invoice available',
   body: 'Persisted message body',
   attach_pdf: false,

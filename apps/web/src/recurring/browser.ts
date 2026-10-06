@@ -4,6 +4,7 @@ import { invoicePagePath } from '../invoices/model.js'
 import { leavePageNotice, takePageNotice } from '../page-notice.js'
 import {
   EzactoApiError,
+  type Attachment,
   type GeneralResource,
   type RecurringFixedLine,
   type RecurringInvoice,
@@ -12,6 +13,8 @@ import {
 } from '@conflict-hq/ezacto-client'
 import {
   recurringAmountLabel,
+  recurringAttachmentThroughInput,
+  recurringAttachmentThroughLabel,
   recurringFixedTotalCents,
   recurringBasisLabel,
   recurringBlankFormValues,
@@ -129,6 +132,49 @@ const fillOptions = (
   for (const item of items) item.selected = selected.includes(item.value)
 }
 
+const attachmentSize = (bytes: number): string =>
+  new Intl.NumberFormat('en-US', {
+    style: 'unit',
+    unit: 'byte',
+    unitDisplay: 'narrow',
+    notation: bytes >= 1_000_000 ? 'compact' : 'standard',
+    maximumFractionDigits: 1,
+  }).format(bytes)
+
+/**
+ * One standing file as a row: its name, which downloads it, its size, and
+ * which invoices it goes with. The detail view shows the row as it is; the
+ * editor adds its controls to the same row.
+ */
+const attachmentRow = (definitionId: number, attachment: Readonly<Attachment>): HTMLLIElement => {
+  const item = document.createElement('li')
+  item.className = 'recurring-attachment'
+  item.dataset.recurringAttachment = String(attachment.id)
+  const file = document.createElement('div')
+  file.className = 'recurring-attachment-file'
+  const link = document.createElement('a')
+  link.href = `/api/v1/recurring-invoices/${definitionId}/attachments/${attachment.id}/content`
+  link.textContent = attachment.name
+  link.download = attachment.name
+  link.dataset.recurringAttachmentLink = ''
+  const size = document.createElement('span')
+  size.textContent = attachmentSize(attachment.byte_size)
+  file.append(link, size)
+  const through = document.createElement('p')
+  through.className = 'recurring-attachment-through'
+  through.dataset.recurringAttachmentThroughLabel = ''
+  through.textContent = recurringAttachmentThroughLabel(attachment.through)
+  item.append(file, through)
+  return item
+}
+
+const noAttachments = (): HTMLLIElement => {
+  const empty = document.createElement('li')
+  empty.className = 'recurring-attachment-empty'
+  empty.textContent = 'No files are attached to this definition.'
+  return empty
+}
+
 const collect = async (
   load: (
     cursor?: string,
@@ -215,6 +261,10 @@ export const createRecurringWorkspaceController = (
   const deleteBody = required<HTMLElement>('[data-recurring-delete-body]')
   const deleteResult = required<HTMLElement>('[data-recurring-delete-result]')
   const deleteSubmit = required<HTMLButtonElement>('[data-recurring-delete-submit]')
+  const purchaseOrderRow = required<HTMLElement>('[data-recurring-purchase-order-row]')
+  const filesSection = required<HTMLElement>('[data-recurring-files]')
+  const filesStatus = required<HTMLElement>('[data-recurring-files-status]')
+  const filesList = required<HTMLElement>('[data-recurring-files-list]')
   page.hidden = !isPage
   newLink.href = recurringEditorUrl('new')
 
@@ -328,6 +378,10 @@ export const createRecurringWorkspaceController = (
     if (deleteDialog.open) deleteDialog.close()
     deleteResult.textContent = ''
     delete deleteResult.dataset.outcome
+    purchaseOrderRow.hidden = true
+    filesSection.hidden = true
+    filesList.replaceChildren()
+    filesStatus.textContent = ''
     syncPending()
   }
 
@@ -549,6 +603,11 @@ export const createRecurringWorkspaceController = (
     markMoney(amountFact, amountIsKnown(definition))
     text('[data-recurring-subject]', definition.subject_template)
     text('[data-recurring-notes]', definition.notes_template.trim() === '' ? '—' : definition.notes_template)
+    // Shown where there is one, as the retainer is: an empty row for a
+    // purchase order nobody issued says nothing the absence does not.
+    const purchaseOrder = definition.purchase_order?.trim() ?? ''
+    purchaseOrderRow.hidden = purchaseOrder === ''
+    text('[data-recurring-purchase-order]', purchaseOrder === '' ? '—' : purchaseOrder)
     const retainerRow = required<HTMLElement>('[data-recurring-retainer-row]')
     retainerRow.hidden = definition.can_draw_from_retainer_id === null
     text(
@@ -620,6 +679,39 @@ export const createRecurringWorkspaceController = (
     }
   }
 
+  /**
+   * The files the definition sends with every invoice, read after the
+   * definition rather than with it: a list that cannot load says so on its
+   * own line and leaves the terms above it standing.
+   */
+  const loadFiles = async (
+    session: ActiveSession,
+    definitionId: number,
+    generation: number,
+  ): Promise<void> => {
+    if (api.listRecurringInvoiceAttachments === undefined) {
+      filesSection.hidden = true
+      return
+    }
+    filesSection.hidden = false
+    filesList.replaceChildren()
+    filesStatus.textContent = 'Loading attachments…'
+    try {
+      const files = await api.listRecurringInvoiceAttachments(definitionId, session.signal)
+      if (current() !== session || generation !== detailGeneration) return
+      filesList.replaceChildren(
+        ...(files.length === 0
+          ? [noAttachments()]
+          : files.map((file) => attachmentRow(definitionId, file))),
+      )
+      filesStatus.textContent = ''
+    } catch (error) {
+      if (current() !== session || generation !== detailGeneration) return
+      if (session.onSessionFailure(error)) return
+      filesStatus.textContent = messageFor(error)
+    }
+  }
+
   const loadDetail = async (): Promise<void> => {
     const session = current()
     const id = selection
@@ -645,6 +737,7 @@ export const createRecurringWorkspaceController = (
       ])
       if (current() !== session || generation !== detailGeneration) return
       renderDetail(definition)
+      void loadFiles(session, definition.id, generation)
     } catch (error) {
       if (current() !== session || generation !== detailGeneration) return
       if (session.onSessionFailure(error)) return
@@ -914,6 +1007,22 @@ export const createRecurringEditorController = (
   const timeSummary = required<HTMLSelectElement>('[data-recurring-editor-time-summary]')
   const expensesOn = required<HTMLInputElement>('[data-recurring-editor-expenses-on]')
   const expensesSummary = required<HTMLSelectElement>('[data-recurring-editor-expenses-summary]')
+  const purchaseOrder = required<HTMLInputElement>('[data-recurring-editor-purchase-order]')
+  // The definition's standing files. Uploaded, dated and removed as they are
+  // changed rather than with Save: each is its own request on a definition
+  // that already exists, which is also why a new one has none to offer yet.
+  const attachmentsSection = required<HTMLElement>('[data-recurring-editor-attachments]')
+  const attachmentsUnsaved = required<HTMLElement>('[data-recurring-attachments-unsaved]')
+  const attachmentUpload = required<HTMLElement>('[data-recurring-attachment-upload]')
+  const attachmentFile = required<HTMLInputElement>('[data-recurring-attachment-file]')
+  const attachmentSubmit = required<HTMLButtonElement>('[data-recurring-attachment-submit]')
+  const attachmentsStatus = required<HTMLElement>('[data-recurring-attachments-status]')
+  const attachmentList = required<HTMLElement>('[data-recurring-attachments]')
+  const removeDialog = required<HTMLDialogElement>('[data-recurring-attachment-remove-confirm]')
+  const removeForm = required<HTMLFormElement>('[data-recurring-attachment-remove-form]')
+  const removeBody = required<HTMLElement>('[data-recurring-attachment-remove-body]')
+  const removeSubmit = required<HTMLButtonElement>('[data-recurring-attachment-remove-submit]')
+  const removeResult = required<HTMLElement>('[data-recurring-attachment-remove-result]')
   page.hidden = !isPage
 
   let activeSession: ActiveSession | null = null
@@ -930,6 +1039,15 @@ export const createRecurringEditorController = (
    * is not.
    */
   let createKey: string | null = null
+  let attachments: readonly Attachment[] = []
+  let attachmentBusy = false
+  /**
+   * Held across a retry of the same file, as the invoice page holds its own:
+   * an upload whose answer was lost and is tried again under a fresh key would
+   * attach the file twice. Choosing another file starts a fresh command.
+   */
+  let uploadKey: string | null = null
+  let removing: Attachment | null = null
 
   const current = (): ActiveSession | null =>
     activeSession === null || activeSession.signal.aborted ? null : activeSession
@@ -1067,6 +1185,7 @@ export const createRecurringEditorController = (
     clientId: client.value,
     subjectTemplate: subject.value,
     notesTemplate: notes.value,
+    purchaseOrder: purchaseOrder.value,
     everyNMonths: every.value,
     dayOfMonth: day.value,
     nextIssueOn: next.value,
@@ -1102,6 +1221,7 @@ export const createRecurringEditorController = (
     )
     subject.value = values.subjectTemplate
     notes.value = values.notesTemplate
+    purchaseOrder.value = values.purchaseOrder
     every.value = values.everyNMonths
     day.value = values.dayOfMonth
     next.value = values.nextIssueOn
@@ -1152,7 +1272,291 @@ export const createRecurringEditorController = (
     say('', null)
     retry.hidden = true
     status.textContent = 'Loading the editor…'
+    attachments = []
+    attachmentBusy = false
+    uploadKey = null
+    removing = null
+    attachmentList.replaceChildren()
+    attachmentsStatus.textContent = ''
+    attachmentsSection.hidden = true
+    if (removeDialog.open) removeDialog.close()
+    removeResult.textContent = ''
     syncPending()
+  }
+
+  const syncAttachmentControls = (): void => {
+    attachmentSubmit.disabled = attachmentBusy
+    removeSubmit.disabled = attachmentBusy
+    for (const button of attachmentList.querySelectorAll<HTMLButtonElement>('button')) {
+      button.disabled = attachmentBusy
+    }
+  }
+
+  const attachmentButton = (
+    label: string,
+    name: string,
+    marker: string,
+    onClick: () => void,
+  ): HTMLButtonElement => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'editor-secondary'
+    button.textContent = label
+    // The row's file, in the name a screen reader announces, because three
+    // rows of "Remove" are three identical buttons when heard one at a time.
+    button.setAttribute('aria-label', name)
+    button.dataset[marker] = ''
+    button.addEventListener('click', onClick)
+    return button
+  }
+
+  /**
+   * A file's own controls: the last invoice date it goes with, and taking it
+   * off the definition. Each is offered only where the build can do it.
+   */
+  const attachmentControls = (
+    definitionId: number,
+    attachment: Readonly<Attachment>,
+  ): HTMLElement => {
+    const controls = document.createElement('div')
+    controls.className = 'recurring-attachment-controls'
+    if (api.setRecurringInvoiceAttachmentThrough !== undefined) {
+      const label = document.createElement('label')
+      label.append('Through')
+      const date = document.createElement('input')
+      date.type = 'date'
+      date.value = attachment.through ?? ''
+      date.dataset.recurringAttachmentThrough = ''
+      date.setAttribute('aria-label', `Through date for ${attachment.name}`)
+      // The box sits inside the definition's form, where Enter would save the
+      // definition and leave the page with this date unsaved. Here it saves the date.
+      date.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return
+        event.preventDefault()
+        void setThrough(definitionId, attachment, date.value)
+      })
+      label.append(date)
+      controls.append(
+        label,
+        attachmentButton(
+          'Save date',
+          `Save date for ${attachment.name}`,
+          'recurringAttachmentSetThrough',
+          () => void setThrough(definitionId, attachment, date.value),
+        ),
+      )
+      if (attachment.through !== null && attachment.through !== undefined) {
+        controls.append(
+          attachmentButton(
+            'Clear date',
+            `Clear date for ${attachment.name}`,
+            'recurringAttachmentClearThrough',
+            () => void setThrough(definitionId, attachment, null),
+          ),
+        )
+      }
+    }
+    if (api.removeRecurringInvoiceAttachment !== undefined) {
+      controls.append(
+        attachmentButton(
+          'Remove',
+          `Remove ${attachment.name}`,
+          'recurringAttachmentRemove',
+          () => openRemove(attachment),
+        ),
+      )
+    }
+    return controls
+  }
+
+  const renderAttachments = (definitionId: number): void => {
+    attachmentList.replaceChildren(
+      ...(attachments.length === 0
+        ? [noAttachments()]
+        : attachments.map((attachment) => {
+            const row = attachmentRow(definitionId, attachment)
+            row.append(attachmentControls(definitionId, attachment))
+            return row
+          })),
+    )
+    syncAttachmentControls()
+  }
+
+  /**
+   * Read after the definition, so a list that fails leaves the editor working.
+   * Says whether it read, so a caller with news of its own -- an upload --
+   * does not paint over the reason the list is missing.
+   */
+  const loadAttachments = async (session: ActiveSession, definitionId: number): Promise<boolean> => {
+    if (api.listRecurringInvoiceAttachments === undefined) return false
+    const generation = loadGeneration
+    try {
+      const listed = await api.listRecurringInvoiceAttachments(definitionId, session.signal)
+      if (current() !== session || generation !== loadGeneration) return false
+      attachments = listed
+      renderAttachments(definitionId)
+      attachmentsStatus.textContent = ''
+      return true
+    } catch (error) {
+      if (current() !== session || generation !== loadGeneration) return false
+      if (session.onSessionFailure(error)) return false
+      attachmentList.replaceChildren()
+      attachmentsStatus.textContent = messageFor(error)
+      return false
+    }
+  }
+
+  /**
+   * The section for the definition on screen. A new definition has nothing to
+   * attach a file to until it is saved, and says so rather than offering an
+   * upload that would have nowhere to go.
+   */
+  const showAttachments = (session: ActiveSession, editing: RecurringEditorTarget): void => {
+    attachments = []
+    uploadKey = null
+    attachmentList.replaceChildren()
+    attachmentsStatus.textContent = ''
+    attachmentsSection.hidden = api.listRecurringInvoiceAttachments === undefined
+    if (attachmentsSection.hidden) return
+    const saved = editing !== 'new'
+    attachmentsUnsaved.hidden = saved
+    attachmentUpload.hidden = !saved || api.uploadRecurringInvoiceAttachment === undefined
+    attachmentList.hidden = !saved
+    if (editing === 'new') return
+    attachmentsStatus.textContent = 'Loading attachments…'
+    void loadAttachments(session, editing)
+  }
+
+  const upload = async (): Promise<void> => {
+    const session = current()
+    const definitionId = target
+    if (
+      session === null ||
+      typeof definitionId !== 'number' ||
+      attachmentBusy ||
+      api.uploadRecurringInvoiceAttachment === undefined
+    ) {
+      return
+    }
+    const file = attachmentFile.files?.[0]
+    if (file === undefined) {
+      attachmentsStatus.textContent = 'Choose one file to upload.'
+      return
+    }
+    const body = new FormData()
+    body.set('file', file)
+    uploadKey ??= `web.recurring-attachment:${globalThis.crypto.randomUUID()}`
+    attachmentBusy = true
+    syncAttachmentControls()
+    attachmentsStatus.textContent = 'Uploading file…'
+    try {
+      await api.uploadRecurringInvoiceAttachment(definitionId, uploadKey, body, session.signal)
+      if (current() !== session) return
+      uploadKey = null
+      attachmentFile.value = ''
+      // Read back, as the invoice page reads its files back after an upload:
+      // the list is the server's, not this page's guess at it.
+      if (await loadAttachments(session, definitionId)) {
+        attachmentsStatus.textContent = `“${file.name}” is attached to every invoice this definition issues.`
+      }
+    } catch (error) {
+      if (current() !== session) return
+      if (session.onSessionFailure(error)) return
+      attachmentsStatus.textContent = messageFor(error)
+    } finally {
+      if (current() === session) {
+        attachmentBusy = false
+        syncAttachmentControls()
+      }
+    }
+  }
+
+  const setThrough = async (
+    definitionId: number,
+    attachment: Readonly<Attachment>,
+    raw: string | null,
+  ): Promise<void> => {
+    const session = current()
+    if (session === null || attachmentBusy || api.setRecurringInvoiceAttachmentThrough === undefined) {
+      return
+    }
+    let through: string | null
+    try {
+      through = raw === null ? null : recurringAttachmentThroughInput(raw, attachment.name)
+    } catch (error) {
+      attachmentsStatus.textContent = messageFor(error)
+      return
+    }
+    attachmentBusy = true
+    syncAttachmentControls()
+    attachmentsStatus.textContent = 'Saving…'
+    try {
+      const updated = await api.setRecurringInvoiceAttachmentThrough(
+        definitionId,
+        attachment.id,
+        through,
+        session.signal,
+      )
+      if (current() !== session) return
+      attachments = attachments.map((candidate) => (candidate.id === updated.id ? updated : candidate))
+      renderAttachments(definitionId)
+      attachmentsStatus.textContent = `“${updated.name}”: ${recurringAttachmentThroughLabel(updated.through)}.`
+    } catch (error) {
+      if (current() !== session) return
+      if (session.onSessionFailure(error)) return
+      attachmentsStatus.textContent = messageFor(error)
+    } finally {
+      if (current() === session) {
+        attachmentBusy = false
+        syncAttachmentControls()
+      }
+    }
+  }
+
+  const openRemove = (attachment: Readonly<Attachment>): void => {
+    if (current() === null || attachmentBusy) return
+    removing = attachment
+    removeResult.textContent = ''
+    removeBody.textContent =
+      `“${attachment.name}” stops going with the invoices this definition issues. ` +
+      'Invoices already issued keep their copy.'
+    removeDialog.showModal()
+  }
+
+  const runRemove = async (): Promise<void> => {
+    const session = current()
+    const definitionId = target
+    const attachment = removing
+    if (
+      session === null ||
+      typeof definitionId !== 'number' ||
+      attachment === null ||
+      attachmentBusy ||
+      api.removeRecurringInvoiceAttachment === undefined
+    ) {
+      return
+    }
+    attachmentBusy = true
+    syncAttachmentControls()
+    removeResult.textContent = 'Removing…'
+    try {
+      await api.removeRecurringInvoiceAttachment(definitionId, attachment.id, session.signal)
+      if (current() !== session) return
+      removing = null
+      removeDialog.close()
+      attachments = attachments.filter((candidate) => candidate.id !== attachment.id)
+      renderAttachments(definitionId)
+      attachmentsStatus.textContent = `“${attachment.name}” no longer goes with these invoices.`
+    } catch (error) {
+      if (current() !== session) return
+      if (session.onSessionFailure(error)) return
+      removeResult.textContent = messageFor(error)
+    } finally {
+      if (current() === session) {
+        attachmentBusy = false
+        syncAttachmentControls()
+      }
+    }
   }
 
   const showTarget = (editing: RecurringEditorTarget): void => {
@@ -1206,6 +1610,7 @@ export const createRecurringEditorController = (
           : `${recurringClientLabel(definition, clients)} · Recurring invoice`
       status.textContent = ''
       form.hidden = false
+      showAttachments(session, editing)
     } catch (error) {
       if (current() !== session || generation !== loadGeneration) return
       if (session.onSessionFailure(error)) return
@@ -1295,6 +1700,25 @@ export const createRecurringEditorController = (
   retry.addEventListener('click', () => {
     void load()
   })
+  attachmentSubmit.addEventListener('click', () => {
+    void upload()
+  })
+  attachmentFile.addEventListener('change', () => {
+    // Another file is another command; only a retry of the same one keeps the key.
+    if (!attachmentBusy) uploadKey = null
+  })
+  removeForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    void runRemove()
+  })
+  for (const cancelRemove of document.querySelectorAll<HTMLButtonElement>(
+    '[data-recurring-attachment-remove-cancel]',
+  )) {
+    cancelRemove.addEventListener('click', () => {
+      removing = null
+      removeDialog.close()
+    })
+  }
 
   return {
     async activate(identity, signal, onSessionFailure) {

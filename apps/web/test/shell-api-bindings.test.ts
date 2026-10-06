@@ -56,11 +56,15 @@ describe('every screen method the real client should supply', () => {
     // The invoice pages: an unbound lookup there is a page addressed by its
     // number that says it is unavailable in this build.
     const invoices = await readFile(resolve(root, 'src', 'invoices', 'model.ts'), 'utf8')
+    // Recurring: a definition's standing files are optional methods, and an
+    // unbound one is an Attachments section that never appears.
+    const recurring = await readFile(resolve(root, 'src', 'recurring', 'model.ts'), 'utf8')
 
     const declared = [
       ...interfaceMethods(settings, 'CompanySettingsApi'),
       ...interfaceMethods(clients, 'ClientDirectoryApi'),
       ...interfaceMethods(invoices, 'InvoicePaymentApi'),
+      ...interfaceMethods(recurring, 'RecurringWorkspaceApi'),
     ]
     expect(declared.length).toBeGreaterThan(10)
 

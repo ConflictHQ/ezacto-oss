@@ -2008,7 +2008,9 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
     // Numbers are unique, so the narrowed list is this invoice alone.
     if (body.data.length !== 1) throw new Error(`expected one invoice numbered ${number}`)
     return { data: body.data[0] }
-  }, generatedNumber)) as { data: { id: number; number: string; due_date: string } }
+  }, generatedNumber)) as {
+    data: { id: number; number: string; due_date: string; client_id: number }
+  }
   expect(generatedPayload.data.number).toBe(generatedNumber)
   const generatedId = generatedPayload.data.id
   const detail = page.locator('[data-invoice-document]')
@@ -2071,9 +2073,18 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   // recipients too, so the fields are addressed by their own data attributes.
   await expect(composer).toContainText('Also deliver by email')
   await expect(composer.locator('[data-invoice-composer-confirm-label]')).toBeHidden()
+  // The dialog opens on what the client and the template say; the To, Cc,
+  // subject and message are then the operator's.
+  await expect(composer.locator('[data-invoice-composer-subject]')).toHaveValue(
+    'Invoice #%invoice_number% from %company_name%',
+  )
+  await expect(composer).not.toContainText('not the subject and message above')
   await composer
     .locator('[data-invoice-composer-recipients]')
     .fill('Accounts Payable <ap@example.test>')
+  await composer
+    .locator('[data-invoice-composer-cc]')
+    .fill('Pat Example <pat@example.test>\nFinance <finance@example.test>')
   await composer.locator('[data-invoice-composer-subject]').fill('Invoice %invoice_number%')
   await composer
     .locator('[data-invoice-composer-body]')
@@ -2089,8 +2100,42 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(attachPdf).toBeEnabled()
   await attachPdf.check()
   await composer.locator('[data-invoice-composer-confirm]').check()
-  // The invoice has two files staged, so attaching them is on offer too.
+  // The invoice has two files staged, so attaching them is on offer too, and
+  // so is binding its PDFs into the back of the invoice's own.
   await expect(composer.getByRole('checkbox', { name: 'Attach files added to this invoice' })).toBeVisible()
+  await expect(
+    composer.getByRole('checkbox', { name: 'Append attached PDFs to the back of the invoice PDF' }),
+  ).toBeVisible()
+  // The person sending is copied unless they turn it off.
+  const copy = composer.locator('[data-invoice-composer-copy]')
+  await expect(copy).toBeChecked()
+  await composer
+    .getByRole('checkbox', { name: "Save these recipients and attachments as this client's default" })
+    .check()
+
+  // A preview composes without sending. This worker has no mail transport, so
+  // the server refuses with a 503 and nothing recorded, and the dialog says why.
+  const previewed = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/invoices/${generatedId}/deliveries/preview` &&
+      response.request().method() === 'POST',
+  )
+  await composer.getByRole('button', { name: 'Preview', exact: true }).click()
+  const previewResponse = await previewed
+  expect(previewResponse.request().postDataJSON()).toMatchObject({
+    recipients: [{ name: 'Accounts Payable', email: 'ap@example.test' }],
+    cc: [
+      { name: 'Pat Example', email: 'pat@example.test' },
+      { name: 'Finance', email: 'finance@example.test' },
+    ],
+    subject: 'Invoice %invoice_number%',
+    send_me_a_copy: true,
+    attach_pdf: true,
+  })
+  expect(previewResponse.status()).toBe(503)
+  await expect(composer.locator('[data-invoice-composer-preview-result]')).toContainText(
+    'Email delivery is not set up on this instance, so there is no email to preview.',
+  )
   for (const control of [
     composer.locator('[data-invoice-composer-recipients]'),
     composer.locator('[data-invoice-composer-subject]'),
@@ -2102,12 +2147,17 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   }
   await expectNoPageOverflow(page)
   const order: string[] = []
+  let deliveryPayload: unknown = null
   page.on('request', (request) => {
     const path = new URL(request.url()).pathname
     if (request.method() !== 'POST') return
-    if (path.endsWith('/document-preference')) order.push('preference')
+    if (path.endsWith('/invoice-sending')) order.push('client')
+    else if (path.endsWith('/document-preference')) order.push('preference')
     else if (/\/transitions$/u.test(path)) order.push('send')
-    else if (/\/deliveries$/u.test(path)) order.push('deliver')
+    else if (/\/deliveries$/u.test(path)) {
+      order.push('deliver')
+      deliveryPayload = request.postDataJSON()
+    }
   })
   const preferred = page.waitForResponse(
     (response) =>
@@ -2132,7 +2182,7 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
     subject: `Invoice ${generatedNumber}`,
     body: `Invoice #${generatedPayload.data.id} totals $75.00 and is due ${generatedPayload.data.due_date}.`,
     attach_pdf: true,
-    send_me_a_copy: false,
+    send_me_a_copy: true,
     thank_you: false,
     reminder: true,
     send_reminder_on: '2099-09-30',
@@ -2143,7 +2193,37 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(composer.locator('[data-invoice-composer-result]')).toContainText(
     'The sent status was recorded; submit again to retry the email alone.',
   )
-  expect(order).toEqual(['preference', 'send', 'deliver'])
+  expect(order).toEqual(['client', 'preference', 'send', 'deliver'])
+  // One email: To accounts payable, Cc the rest, in the words typed -- the
+  // server composes the body from them.
+  expect(deliveryPayload).toEqual({
+    expected_version: expect.any(Number),
+    recipients: [{ name: 'Accounts Payable', email: 'ap@example.test' }],
+    cc: [
+      { name: 'Pat Example', email: 'pat@example.test' },
+      { name: 'Finance', email: 'finance@example.test' },
+    ],
+    subject: 'Invoice %invoice_number%',
+    message: 'Invoice #%invoice_id% totals %invoice_amount% and is due %invoice_due_date%.',
+    send_me_a_copy: true,
+    confirmed: true,
+  })
+  // Saved as the client's default, so next month opens on the same lists.
+  const savedSending = await page.evaluate(
+    async (clientId) =>
+      (await (await fetch(`/api/v1/clients/${clientId}/invoice-sending`)).json()) as {
+        data: { recipients: { to: unknown[]; cc: unknown[] } | null; attach_pdf: boolean | null }
+      },
+    generatedPayload.data.client_id,
+  )
+  expect(savedSending.data.recipients).toEqual({
+    to: [{ name: 'Accounts Payable', email: 'ap@example.test' }],
+    cc: [
+      { name: 'Pat Example', email: 'pat@example.test' },
+      { name: 'Finance', email: 'finance@example.test' },
+    ],
+  })
+  expect(savedSending.data.attach_pdf).toBe(true)
   const persistedPreference = await page.evaluate(
     async (id) => (await (await fetch(`/api/v1/invoices/${id}/document-preference`)).json()) as {
       data: { effective: boolean }
@@ -2157,7 +2237,7 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(page.locator('[data-invoice-payment-status]')).toHaveText(
     'The sent status was already recorded. The email was not sent.',
   )
-  expect(order).toEqual(['preference', 'send', 'deliver'])
+  expect(order).toEqual(['client', 'preference', 'send', 'deliver'])
   // The invoice was sent through the real worker, so D1 carries sent_at and
   // the document says Sent. Open would mean it still has to go out.
   await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Sent')
