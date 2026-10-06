@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   invoiceDocumentMoney,
@@ -5,7 +6,14 @@ import {
   renderInvoiceDocument,
   type InvoiceDocumentInput,
 } from "../src/invoice-document.js";
-import { textWidth, type PdfImage, type PdfOperation } from "../src/pdf.js";
+import {
+  PDF_PAGE_HEIGHT,
+  PDF_PAGE_WIDTH,
+  capHeight,
+  textWidth,
+  type PdfImage,
+  type PdfOperation,
+} from "../src/pdf.js";
 
 /**
  * Issue 626, laid out as Harvest's invoice so the first one a migrated client
@@ -15,6 +23,7 @@ import { textWidth, type PdfImage, type PdfOperation } from "../src/pdf.js";
  */
 
 type TextOperation = Extract<PdfOperation, { kind: "text" }>;
+type WatermarkOperation = Extract<PdfOperation, { kind: "watermark" }>;
 
 const text = (bytes: Uint8Array): string => Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
 
@@ -61,6 +70,42 @@ const extent = (op: TextOperation): { left: number; right: number } => {
   const left = op.align === "right" ? op.x - width : op.align === "center" ? op.x - width / 2 : op.x;
   return { left, right: left + width };
 };
+
+/**
+ * The totals block line by line, top to bottom: each label, the figure beside
+ * it and the page they are set on. The block is the run of right-aligned text
+ * from "Subtotal" on; what follows it -- the payment link, the notes, the page
+ * number -- is set left or centred.
+ */
+const totalsBlock = (input: InvoiceDocumentInput): { page: number; label: TextOperation; figure: TextOperation }[] => {
+  const placed = texts(input);
+  const start = placed.findIndex(({ op }) => op.text === "Subtotal");
+  if (start === -1) throw new Error("the totals are not on the page");
+  const after = placed.findIndex(({ op }, index) => index > start && op.align !== "right");
+  const run = placed.slice(start, after === -1 ? placed.length : after);
+  return Array.from({ length: Math.ceil(run.length / 2) }, (_, index) => {
+    const label = run[index * 2]!;
+    const figure = run[index * 2 + 1];
+    if (figure === undefined) throw new Error(`"${label.op.text}" has no figure beside it`);
+    return { page: label.page, label: label.op, figure: figure.op };
+  });
+};
+
+/**
+ * Which of the two treatments a totals line is set in: a muted row, or the
+ * large bold line. Anything else comes back as its fonts and sizes, so a
+ * failure says what was set instead.
+ */
+const treatment = (label: TextOperation, figure: TextOperation): string => {
+  const set = `${label.font} ${String(label.size)} ${String(label.grey)} / ${figure.font} ${String(figure.size)}`;
+  if (set === "regular 8.25 0.38 / regular 9") return "row";
+  if (set === "bold 10.5 0.11 / regular 11.7") return "large";
+  return set;
+};
+
+/** The totals as a reader sees them: label, figure and treatment, line by line. */
+const totals = (input: InvoiceDocumentInput): string[][] =>
+  totalsBlock(input).map(({ label, figure }) => [label.text, figure.text, treatment(label, figure)]);
 
 describe("the head of the invoice", () => {
   it("[money] sets the title, the sender and who it is for as Harvest does", () => {
@@ -217,53 +262,119 @@ describe("the lines", () => {
 });
 
 describe("the totals", () => {
-  it("[money] goes straight to the amount due when nothing adjusts the total", () => {
-    const rendered = strings(invoice());
-    expect(rendered).not.toContain("Subtotal");
-    expect(rendered).toEqual(expect.arrayContaining(["Amount Due", "$3,194.95 USD"]));
+  const taxed = { subtotalCents: 200_000, taxCents: 16_500, taxRatePpm: 82_500, totalCents: 216_500 } as const;
+  const everything = {
+    subtotalCents: 200_000,
+    discountCents: 40_000,
+    discountRatePpm: 200_000,
+    taxCents: 14_200,
+    taxRatePpm: 88_750,
+    tax2Cents: 3_200,
+    tax2RatePpm: 20_000,
+    totalCents: 177_400,
+    paidCents: 100_000,
+    dueAmountCents: 77_400,
+  } as const;
+
+  it("[money] always states the net, the tax and the total, the total last and large", () => {
+    // Accounts payable books an invoice by its net amount, tax amount and
+    // total, and sends back one that leaves any of them off -- so all three are
+    // stated even at no tax, where Harvest's went straight to the amount due.
+    expect(totals(invoice())).toEqual([
+      ["Subtotal", "$3,194.95 USD", "row"],
+      ["Tax", "$0.00 USD", "row"],
+      ["Total", "$3,194.95 USD", "large"],
+    ]);
+    expect(strings(invoice())).not.toContain("Amount Due");
   });
 
-  it("[money] lists the subtotal and each adjustment that is real, with Harvest's labels", () => {
-    const rendered = strings(
-      invoice({
-        subtotalCents: 200_000,
-        discountCents: 40_000,
-        discountRatePpm: 200_000,
-        taxCents: 14_200,
-        taxRatePpm: 88_750,
-        tax2Cents: 3_200,
-        tax2RatePpm: 20_000,
-        totalCents: 177_400,
-        paidCents: 100_000,
-        dueAmountCents: 77_400,
-      }),
-    );
-    const order = ["Subtotal", "Discount (20%)", "Tax (8.875%)", "Tax 2 (2%)", "Payments", "Amount Due"];
-    expect(order.map((label) => rendered.indexOf(label))).toEqual([...order.map((label) => rendered.indexOf(label))].sort((a, b) => a - b));
-    expect(rendered).toEqual(
-      expect.arrayContaining(["$2,000.00 USD", "-$400.00 USD", "$142.00 USD", "$32.00 USD", "-$1,000.00 USD", "$774.00 USD"]),
-    );
+  it("[money] states the tax rate beside the tax when one is recorded", () => {
+    expect(totals(invoice(taxed))).toEqual([
+      ["Subtotal", "$2,000.00 USD", "row"],
+      ["Tax (8.25%)", "$165.00 USD", "row"],
+      ["Total", "$2,165.00 USD", "large"],
+    ]);
+    // A rate entered as 0 is still a rate, and is stated as one.
+    expect(totals(invoice({ taxRatePpm: 0 }))[1]).toEqual(["Tax (0%)", "$0.00 USD", "row"]);
+  });
+
+  it("[money] follows the total with the payments and the amount due, that last and large", () => {
+    expect(totals(invoice({ ...taxed, paidCents: 100_000, dueAmountCents: 116_500 }))).toEqual([
+      ["Subtotal", "$2,000.00 USD", "row"],
+      ["Tax (8.25%)", "$165.00 USD", "row"],
+      ["Total", "$2,165.00 USD", "row"],
+      ["Payments", "-$1,000.00 USD", "row"],
+      ["Amount Due", "$1,165.00 USD", "large"],
+    ]);
+    // Paid in full, it still says what is owed: nothing.
+    expect(totals(invoice({ ...taxed, paidCents: 216_500, dueAmountCents: 0 })).slice(-3)).toEqual([
+      ["Total", "$2,165.00 USD", "row"],
+      ["Payments", "-$2,165.00 USD", "row"],
+      ["Amount Due", "$0.00 USD", "large"],
+    ]);
+    // Owed other than the total with nothing paid against it, the amount due
+    // follows the total alone; owed exactly the total, it is not said twice.
+    expect(totals(invoice({ ...taxed, dueAmountCents: 100_000 })).slice(-2)).toEqual([
+      ["Total", "$2,165.00 USD", "row"],
+      ["Amount Due", "$1,000.00 USD", "large"],
+    ]);
+    expect(totals(invoice({ ...taxed, dueAmountCents: 216_500 })).at(-1)).toEqual(["Total", "$2,165.00 USD", "large"]);
+  });
+
+  it("[money] adds a discount and a second tax only when they are real, in Harvest's order", () => {
+    expect(totals(invoice(everything))).toEqual([
+      ["Subtotal", "$2,000.00 USD", "row"],
+      ["Discount (20%)", "-$400.00 USD", "row"],
+      ["Tax (8.875%)", "$142.00 USD", "row"],
+      ["Tax 2 (2%)", "$32.00 USD", "row"],
+      ["Total", "$1,774.00 USD", "row"],
+      ["Payments", "-$1,000.00 USD", "row"],
+      ["Amount Due", "$774.00 USD", "large"],
+    ]);
+    // A rate with nothing behind it prints neither.
+    const labels = totals(invoice({ discountRatePpm: 200_000, tax2Cents: 0, tax2RatePpm: 20_000 })).map(([label]) => label);
+    expect(labels).toEqual(["Subtotal", "Tax", "Total"]);
+  });
+
+  it("[unit] keeps Harvest's rhythm: the rows a line apart, the last line set clear below them", () => {
+    for (const input of [invoice(), invoice(everything)]) {
+      const baselines = totalsBlock(input).map(({ label }) => label.y);
+      const steps = baselines.slice(1).map((at, index) => baselines[index]! - at);
+      for (const step of steps.slice(0, -1)) expect(step).toBeCloseTo(14.2, 6);
+      expect(steps.at(-1)).toBeCloseTo(25, 6);
+    }
   });
 
   it("[money] keeps every totals label clear of the figure beside it, however large", () => {
-    const input = invoice({
-      subtotalCents: 123_456_789_00,
-      discountCents: 1_000_000_00,
-      totalCents: 122_456_789_00,
-      paidCents: 100_000_00,
-      dueAmountCents: 122_356_789_00,
-    });
-    for (const [label, figure] of [
-      ["Subtotal", "$123,456,789.00 USD"],
-      ["Discount", "-$1,000,000.00 USD"],
-      ["Payments", "-$100,000.00 USD"],
-      ["Amount Due", "$122,356,789.00 USD"],
-    ] as const) {
-      const name = find(input, label);
-      const value = find(input, figure);
-      expect(name.y).toBe(value.y);
-      expect(extent(name).right).toBeLessThan(extent(value).left);
+    const large = { subtotalCents: 123_456_789_00, discountCents: 1_000_000_00, totalCents: 122_456_789_00 };
+    // With payments the amount due ends the block; without them, the total.
+    for (const input of [invoice({ ...large, paidCents: 100_000_00, dueAmountCents: 122_356_789_00 }), invoice(large)]) {
+      for (const { label, figure } of totalsBlock(input)) {
+        expect(label.y).toBe(figure.y);
+        expect(extent(label).right, label.text).toBeLessThan(extent(figure).left);
+      }
     }
+  });
+
+  it("[unit] keeps the block whole on one page, clear of the page number, wherever the table ends", () => {
+    // From one row to three pages of them: on the way the block lands at the
+    // foot of a page and has to move to the next whole rather than split.
+    const pages = new Set<number>();
+    for (let count = 1; count <= 60; count += 1) {
+      const lines = Array.from({ length: count }, (_, index) => ({
+        kind: "Service",
+        description: `Line ${String(index)}`,
+        quantity: 1,
+        unitPriceCents: 100,
+        amountCents: 100,
+      }));
+      const block = totalsBlock(invoice({ ...everything, lines }));
+      expect(block, `${String(count)} rows`).toHaveLength(7);
+      expect(new Set(block.map(({ page }) => page)).size, `${String(count)} rows`).toBe(1);
+      expect(block.every(({ label, figure }) => label.y >= 62 && figure.y >= 62), `${String(count)} rows`).toBe(true);
+      pages.add(block[0]!.page);
+    }
+    expect([...pages]).toEqual([1, 2, 3]);
   });
 });
 
@@ -316,6 +427,77 @@ describe("the notes and the page", () => {
   it("[unit] names the document and renders one with no lines at all", () => {
     expect(text(renderInvoiceDocument(invoice()))).toContain("/Title (Invoice 1315)");
     const rendered = strings(invoice({ lines: [], subtotalCents: 0, totalCents: 0 }));
-    expect(rendered).toEqual(expect.arrayContaining(["Item Type", "Amount Due", "$0.00 USD"]));
+    expect(rendered).toEqual(expect.arrayContaining(["Item Type", "Total", "$0.00 USD"]));
+  });
+});
+
+describe("the preview watermark", () => {
+  // Part paid, with a purchase order and notes long enough to carry it on to
+  // a second page.
+  const twoPages = invoice({
+    purchaseOrder: "PO-778812",
+    paidCents: 100_000,
+    dueAmountCents: 219_495,
+    notes: Array.from({ length: 60 }, (_, index) => `Remittance detail ${String(index + 1)}`).join("\n"),
+  });
+
+  it("[unit] changes nothing without one: the same bytes the invoice rendered as before it existed", () => {
+    const plain = renderInvoiceDocument(twoPages);
+    for (const none of [null, "", "  \n "]) expect(renderInvoiceDocument({ ...twoPages, watermark: none })).toEqual(plain);
+    expect(text(plain)).not.toContain("/ExtGState");
+    // Recorded from this layout before the watermark was added. A deliberate
+    // change to the layout changes it and is the time to record it again; the
+    // watermark alone never may, because an invoice already sent is compared
+    // with a re-render of it.
+    expect(createHash("sha256").update(plain).digest("hex")).toBe(
+      "45d52b28ba2494a8cc2c4d26f97f728752c6ea9ff0f776a32b1c3e1314b2781b",
+    );
+  });
+
+  it("[unit] stamps every page, last, so nothing on the page can cover it", () => {
+    const stamped = layoutInvoiceDocument({ ...twoPages, watermark: "  PREVIEW " });
+    expect(stamped.pages).toHaveLength(2);
+    for (const [index, page] of stamped.pages.entries()) {
+      const mark = page.operations.at(-1);
+      if (mark?.kind !== "watermark") throw new Error(`page ${String(index + 1)} does not end with the watermark`);
+      expect(page.operations.filter((op) => op.kind === "watermark")).toHaveLength(1);
+      // Large and bold, on the diagonal, and faint enough to read the figures through.
+      expect(mark).toMatchObject({ text: "PREVIEW", font: "bold", angle: 45 });
+      expect(mark.size).toBeGreaterThanOrEqual(100);
+      expect(mark.size).toBeLessThanOrEqual(130);
+      expect(mark.opacity).toBeGreaterThanOrEqual(0.12);
+      expect(mark.opacity).toBeLessThanOrEqual(0.18);
+    }
+    const rendered = text(renderInvoiceDocument({ ...twoPages, watermark: "PREVIEW" }));
+    expect(rendered.split("(PREVIEW) Tj").length - 1).toBe(2);
+    expect(rendered.split(" /ExtGState << ").length - 1).toBe(2);
+  });
+
+  it("[money] moves and removes nothing the client reads", () => {
+    const plain = layoutInvoiceDocument(twoPages);
+    const stamped = layoutInvoiceDocument({ ...twoPages, watermark: "PREVIEW" });
+    expect(stamped.title).toBe(plain.title);
+    expect(stamped.pages.map((page) => page.operations.filter((op) => op.kind !== "watermark"))).toEqual(
+      plain.pages.map((page) => page.operations),
+    );
+  });
+
+  it("[unit] sets a long one smaller rather than run it off the page", () => {
+    const watermarkOf = (watermark: string): WatermarkOperation => {
+      const mark = layoutInvoiceDocument(invoice({ watermark })).pages[0]!.operations.at(-1);
+      if (mark?.kind !== "watermark") throw new Error("there is no watermark on the page");
+      return mark;
+    };
+    const short = watermarkOf("PREVIEW");
+    const long = watermarkOf("PREVIEW — NOT A REQUEST FOR PAYMENT");
+    expect(long.size).toBeLessThan(short.size);
+    // Turned, each still sits inside the page's 39-point margins.
+    for (const mark of [short, long]) {
+      const turn = (mark.angle * Math.PI) / 180;
+      const width = textWidth(mark.text, mark.font, mark.size);
+      const cap = capHeight(mark.font, mark.size);
+      expect(width * Math.cos(turn) + cap * Math.sin(turn), mark.text).toBeLessThanOrEqual(PDF_PAGE_WIDTH - 2 * 39 + 1e-9);
+      expect(width * Math.sin(turn) + cap * Math.cos(turn), mark.text).toBeLessThanOrEqual(PDF_PAGE_HEIGHT - 2 * 39 + 1e-9);
+    }
   });
 });

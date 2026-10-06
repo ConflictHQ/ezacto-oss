@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   PDF_PAGE_HEIGHT,
   PDF_PAGE_WIDTH,
+  capHeight,
   isPdfEncodable,
   monospacedWidth,
   renderPdf,
@@ -62,6 +64,56 @@ describe("the document it emits", () => {
     ]);
     expect(renderPdf(document)).toEqual(renderPdf(document));
   });
+
+  it("[unit] writes what it drew before watermarks existed to the same bytes", () => {
+    // Recorded from the writer before the watermark was added. Invoices already
+    // stored are compared with a re-render, so a new kind of operation must not
+    // move a byte of the ones already in use: every kind, alignment, font and
+    // optional field is here, over two pages, with a title and a page size.
+    const logo: PdfImage = {
+      width: 2,
+      height: 1,
+      colorSpace: "DeviceRGB",
+      filter: "FlateDecode",
+      data: new Uint8Array([0x78, 0x9c, 0x01, 0x02]),
+      alpha: null,
+    };
+    const masked: PdfImage = { ...logo, colorSpace: "DeviceGray", alpha: new Uint8Array([1, 2, 3]) };
+    const document: PdfDocument = {
+      width: 595.28,
+      height: 841.89,
+      title: "  Invoice 1315 (draft)  ",
+      pages: [
+        {
+          operations: [
+            { kind: "rect", x: 39, y: 600.25, width: 534, height: 17.125, grey: 0.95 },
+            { kind: "line", x1: 39, y1: 600, x2: 573, y2: 600 },
+            { kind: "line", x1: 101.5, y1: 700, x2: 101.5, y2: 650.3333, width: 0.6, grey: 0.82 },
+            { kind: "image", x: 39, y: 643, width: 220, height: 110, image: logo },
+            { kind: "text", x: 39, y: 760.5, size: 15, font: "bold", text: "INVOICE" },
+            { kind: "text", x: 415.3, y: 709.3, size: 8.25, font: "regular", text: "From", align: "right", grey: 0.38 },
+            { kind: "text", x: 40, y: 500, size: 8.25, font: "italic", text: "Phase 1 (a) \\ b) — café • “ok” 日本", align: "left" },
+            { kind: "text", x: 40, y: 480, size: 8.25, font: "bold_italic", text: "€1,000.00 EUR" },
+            { kind: "text", x: 570, y: 460, size: 10, font: "mono", text: "$19,389.80", align: "right" },
+            { kind: "text", x: 570, y: 440, size: 10, font: "mono_bold", text: "-$6,250.00", align: "right", grey: 0 },
+            { kind: "text", x: 297.64, y: 33.4, size: 9.4, font: "regular", text: "Page 1 of 2", align: "center", grey: 0.11 },
+          ],
+        },
+        {
+          operations: [
+            { kind: "image", x: 39, y: 643, width: 220, height: 110, image: logo },
+            { kind: "image", x: 300, y: 643, width: 2, height: 1, image: masked },
+            { kind: "text", x: 297.64, y: 33.4, size: 9.4, font: "regular", text: "Page 2 of 2", align: "center", grey: 0.11 },
+          ],
+        },
+      ],
+    };
+    const rendered = renderPdf(document);
+    expect(text(rendered)).not.toContain("/ExtGState");
+    expect(createHash("sha256").update(rendered).digest("hex")).toBe(
+      "12881111d85923cb5d469bd2ab53a8d777df2fedd3b8222b35ba75234d7f29a5",
+    );
+  });
 });
 
 describe("what it puts on the page", () => {
@@ -97,6 +149,13 @@ describe("what it puts on the page", () => {
     expect(textWidth("b", "bold_italic", 1000)).toBe(611);
     expect(textWidth("b", "mono", 1000)).toBe(600);
     expect(monospacedWidth("$1.00", 10)).toBe(textWidth("$1.00", "mono", 10));
+  });
+
+  it("[unit] stands a capital as tall as Adobe's metrics say", () => {
+    // CapHeight from the same AFM files: every Helvetica style 718, Courier 562.
+    expect(capHeight("bold", 1000)).toBe(718);
+    expect(capHeight("italic", 100)).toBe(71.8);
+    expect(capHeight("mono_bold", 1000)).toBe(562);
   });
 
   it("[unit] measures a character it cannot encode as the question mark it draws", () => {
@@ -230,5 +289,95 @@ describe("pictures", () => {
   it("[unit] refuses a picture with no pixels or drawn at no size", () => {
     expect(() => renderPdf(page([{ kind: "image", x: 0, y: 0, width: 1, height: 1, image: picture({ width: 0 }) }]))).toThrow(RangeError);
     expect(() => renderPdf(page([{ kind: "image", x: 0, y: 0, width: 0, height: 1, image: picture() }]))).toThrow(RangeError);
+  });
+});
+
+describe("watermarks", () => {
+  const stamp = {
+    kind: "watermark",
+    text: "PREVIEW",
+    font: "bold",
+    size: 120,
+    angle: 45,
+    opacity: 0.15,
+    rgb: [0.75, 0.1, 0.1],
+  } as const;
+  const state = " /ExtGState << /GS0 << /Type /ExtGState /ca 0.15 >> >>";
+
+  /** Each page's dictionary and its content stream, in page order. */
+  const pagesOf = (document: PdfDocument): { dictionaries: string[]; streams: string[] } => {
+    const rendered = text(renderPdf(document));
+    return {
+      dictionaries: rendered.split("\n").filter((line) => line.startsWith("<< /Type /Page /Parent")),
+      streams: [...rendered.matchAll(/<< \/Length \d+ >>\nstream\n([\s\S]*?)\nendstream/gu)].map((match) => match[1]!),
+    };
+  };
+
+  it("[unit] sets its text across the middle of the page, turned, in its colour and at its opacity", () => {
+    const { dictionaries, streams } = pagesOf(page([stamp]));
+    expect(dictionaries[0]).toContain(state);
+    const drawn = /^q\n\/GS0 gs\nBT\n0\.75 0\.1 0\.1 rg\n\/F2 120 Tf\n(\S+) (\S+) (\S+) (\S+) (\S+) (\S+) Tm\n\(PREVIEW\) Tj\nET\nQ$/u.exec(
+      streams[0]!,
+    );
+    if (drawn === null) throw new Error(`not a watermark: ${streams[0]!}`);
+    const [a, b, c, d, e, f] = drawn.slice(1).map(Number) as [number, number, number, number, number, number];
+    // Turned 45 degrees anticlockwise, without being stretched or slanted...
+    expect((Math.atan2(b, a) * 180) / Math.PI).toBeCloseTo(45, 6);
+    expect([c, d]).toEqual([-b, a]);
+    // ...about the middle of its capitals, which lands on the middle of the page.
+    const across = textWidth("PREVIEW", "bold", 120) / 2;
+    const up = capHeight("bold", 120) / 2;
+    expect(e + a * across + c * up).toBeCloseTo(PDF_PAGE_WIDTH / 2, 1);
+    expect(f + b * across + d * up).toBeCloseTo(PDF_PAGE_HEIGHT / 2, 1);
+  });
+
+  it("[unit] centres on the page it is drawn on, whatever its size", () => {
+    // Unturned, the text starts half its width left of the middle of a 400 by
+    // 300 page, its baseline half a capital's height below it.
+    const { streams } = pagesOf({ width: 400, height: 300, pages: [{ operations: [{ ...stamp, angle: 0, size: 40 }] }] });
+    const x = 200 - textWidth("PREVIEW", "bold", 40) / 2;
+    const y = 150 - capHeight("bold", 40) / 2;
+    expect(streams[0]).toContain(`1 0 0 1 ${String(Number(x.toFixed(3)))} ${String(Number(y.toFixed(3)))} Tm`);
+  });
+
+  it("[unit] gives the opacity state only to a page that draws at it, and changes nothing else on the page", () => {
+    const words = { kind: "text", x: 40, y: 700, size: 12, font: "regular", text: "Invoice 1315" } as const;
+    const { dictionaries, streams } = pagesOf({ pages: [{ operations: [words, stamp] }, { operations: [words] }] });
+    expect(dictionaries[0]).toContain(state);
+    expect(dictionaries[1]).not.toContain("/ExtGState");
+    expect(streams[1]).not.toMatch(/ gs$/mu);
+    // The state is the only difference between the two pages' resources.
+    const resources = (dictionary: string): string => /\/Resources (.*) \/Contents/u.exec(dictionary)![1]!;
+    expect(resources(dictionaries[0]!).replace(state, "")).toBe(resources(dictionaries[1]!));
+  });
+
+  it("[unit] keeps its opacity and colour to itself, between the operations around it, which it leaves as they were", () => {
+    const before = { kind: "text", x: 40, y: 700, size: 12, font: "regular", text: "Total" } as const;
+    const after = { kind: "rect", x: 39, y: 600, width: 534, height: 17, grey: 0.95 } as const;
+    const [alone] = pagesOf(page([stamp])).streams;
+    const [first] = pagesOf(page([before])).streams;
+    const [last] = pagesOf(page([after])).streams;
+    // Saved before it and restored after it, so what follows is drawn solid
+    // and in its own colour, byte for byte as it would be without it.
+    expect(alone!.startsWith("q\n")).toBe(true);
+    expect(alone!.endsWith("\nQ")).toBe(true);
+    expect(pagesOf(page([before, stamp, after])).streams[0]).toBe(`${first!}\n${alone!}\n${last!}`);
+  });
+
+  it("[unit] gives each opacity on a page one state, shared by everything drawn at it", () => {
+    const { dictionaries, streams } = pagesOf(page([stamp, { ...stamp, opacity: 0.3 }, { ...stamp, text: "DRAFT" }]));
+    expect(dictionaries[0]).toContain(
+      "/ExtGState << /GS0 << /Type /ExtGState /ca 0.15 >> /GS1 << /Type /ExtGState /ca 0.3 >> >>",
+    );
+    expect(streams[0]!.match(/^\/GS\d gs$/gmu)).toEqual(["/GS0 gs", "/GS1 gs", "/GS0 gs"]);
+  });
+
+  it("[unit] refuses a watermark it cannot draw", () => {
+    expect(() => renderPdf(page([{ ...stamp, opacity: 1.5 }]))).toThrow(/opacity/u);
+    expect(() => renderPdf(page([{ ...stamp, opacity: -0.1 }]))).toThrow(/opacity/u);
+    expect(() => renderPdf(page([{ ...stamp, opacity: Number.NaN }]))).toThrow(/opacity/u);
+    expect(() => renderPdf(page([{ ...stamp, rgb: [0, 1.2, 0] }]))).toThrow(/colour/u);
+    expect(() => renderPdf(page([{ ...stamp, size: 0 }]))).toThrow(/positive/u);
+    expect(() => renderPdf(page([{ ...stamp, angle: Number.POSITIVE_INFINITY }]))).toThrow(/finite/u);
   });
 });

@@ -1,6 +1,7 @@
 import {
   PDF_PAGE_HEIGHT,
   PDF_PAGE_WIDTH,
+  capHeight,
   isPdfEncodable,
   renderPdf,
   textWidth,
@@ -12,6 +13,7 @@ import {
 } from "./pdf.js";
 import { wrapMarkup, wrapText, type TextRun } from "./pdf-text.js";
 import type { InvoiceEmailLine } from "./invoice-email.js";
+import { invoicePaymentTermsLabel } from "./payment-terms.js";
 
 /**
  * The invoice as a document (issue 626), laid out as Harvest's.
@@ -74,6 +76,12 @@ export interface InvoiceDocumentInput {
   readonly notes?: string | null;
   /** Where the client can pay, printed only when one exists. */
   readonly paymentUrl?: string | null;
+  /**
+   * Set large across every page: "PREVIEW" on the copy an operator checks
+   * before sending, and never on what is sent. Absent or blank draws nothing,
+   * and the file is byte for byte what it was before there were watermarks.
+   */
+  readonly watermark?: string | null;
 }
 
 /** Harvest's page, in points: its margins, its two label columns, its table. */
@@ -96,6 +104,12 @@ const RIGHT_RULE = 421.5;
 const LOGO_WIDTH = 220;
 const LOGO_HEIGHT = 110;
 const PAD = 3;
+/**
+ * A preview's watermark: large, bold and on the diagonal over everything on
+ * the page, so no part of it passes for the copy that is sent, in a red faint
+ * enough that every figure under it still reads.
+ */
+const WATERMARK = { font: "bold", size: 120, angle: 45, opacity: 0.15, rgb: [0.75, 0.12, 0.12] } as const;
 
 const TABLE = {
   kind: { left: LEFT, right: 103 },
@@ -104,15 +118,6 @@ const TABLE = {
   unitPrice: { left: 417, right: 495.5 },
   amount: { left: 495.5, right: RIGHT },
 } as const;
-
-const termLabels: Readonly<Record<InvoicePaymentTerms, string | null>> = {
-  upon_receipt: "upon receipt",
-  net_15: "Net 15",
-  net_30: "Net 30",
-  net_45: "Net 45",
-  net_60: "Net 60",
-  custom: null,
-};
 
 const moneyFormats = new Map<string, Intl.NumberFormat>();
 const plainFormats = new Map<string, Intl.NumberFormat>();
@@ -159,6 +164,34 @@ const rate = (ppm: number | null | undefined): string =>
 
 const present = (value: string | null | undefined): value is string =>
   value !== null && value !== undefined && value.trim() !== "";
+
+/**
+ * The watermark at its size, or smaller where the text is long enough that,
+ * turned, it would reach past the page's margins: the same 39 points on every
+ * side.
+ */
+const watermarkOperation = (value: string): PdfOperation => {
+  const turn = (WATERMARK.angle * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(turn));
+  const sin = Math.abs(Math.sin(turn));
+  // How far it reaches across the page and up it for each point of its size.
+  const width = textWidth(value, WATERMARK.font, 1);
+  const cap = capHeight(WATERMARK.font, 1);
+  const size = Math.min(
+    WATERMARK.size,
+    (RIGHT - LEFT) / (width * cos + cap * sin),
+    (TOP - (PDF_PAGE_HEIGHT - TOP)) / (width * sin + cap * cos),
+  );
+  return {
+    kind: "watermark",
+    text: value,
+    font: WATERMARK.font,
+    size,
+    angle: WATERMARK.angle,
+    opacity: WATERMARK.opacity,
+    rgb: WATERMARK.rgb,
+  };
+};
 
 /** A page of operations being filled from the top. */
 interface Sheet {
@@ -270,7 +303,7 @@ export const layoutInvoiceDocument = (input: InvoiceDocumentInput): PdfDocument 
   const clientBottom = baseline + LEADING - 3;
   vertical(LEFT_RULE, blockTop + 1, clientBottom);
 
-  const terms = input.paymentTerms === undefined || input.paymentTerms === null ? null : termLabels[input.paymentTerms];
+  const terms = input.paymentTerms === undefined || input.paymentTerms === null ? null : invoicePaymentTermsLabel(input.paymentTerms);
   const facts: readonly (readonly [string, string, PdfFont])[] = [
     ["Invoice ID", input.number, "bold"],
     ...(present(input.purchaseOrder) ? [["PO Number", input.purchaseOrder.trim(), "regular"] as const] : []),
@@ -378,21 +411,31 @@ export const layoutInvoiceDocument = (input: InvoiceDocumentInput): PdfDocument 
     close(y);
   });
 
-  // The totals, right. The adjustments appear only when they are real, and
-  // the subtotal with them -- an invoice with none reads straight to the
-  // amount due, as Harvest's does.
+  // The totals, right. Harvest's read straight to the amount due when nothing
+  // adjusts the total, but an accounts-payable department books an invoice by
+  // its net, its tax and its total, and sends back one that does not state all
+  // three -- so the subtotal, the tax ("$0.00 USD" where there is none) and the
+  // total are always printed. Harvest never set a tax row or a "Total" label,
+  // so they are named plainly. A discount and a second tax still appear only
+  // when they are real, and the payments and the amount due only once something
+  // has been paid or what is owed is no longer the total. The last line is set
+  // large, as Harvest's amount due is: it is the figure the client is to pay.
   const paid = input.paidCents ?? 0;
   const tax2 = input.tax2Cents ?? 0;
-  const adjustments: readonly (readonly [string, number])[] = [
+  const owed = input.dueAmountCents ?? input.totalCents;
+  const totals: readonly (readonly [string, number])[] = [
+    ["Subtotal", input.subtotalCents],
     ...(input.discountCents !== 0
       ? [[`Discount${rate(input.discountRatePpm)}`, -Math.abs(input.discountCents)] as const]
       : []),
-    ...(input.taxCents !== 0 ? [[`Tax${rate(input.taxRatePpm)}`, input.taxCents] as const] : []),
+    [`Tax${rate(input.taxRatePpm)}`, input.taxCents],
     ...(tax2 !== 0 ? [[`Tax 2${rate(input.tax2RatePpm)}`, tax2] as const] : []),
+    ["Total", input.totalCents],
     ...(paid !== 0 ? [["Payments", -paid] as const] : []),
+    ...(paid !== 0 || owed !== input.totalCents ? [["Amount Due", owed] as const] : []),
   ];
-  const rows: readonly (readonly [string, number])[] =
-    adjustments.length === 0 ? [] : [["Subtotal", input.subtotalCents], ...adjustments];
+  const rows = totals.slice(0, -1);
+  const [finalLabel, finalCents] = totals[totals.length - 1]!;
   const totalsHeight = 27 + 14.2 * rows.length + 25;
   room(totalsHeight);
   baseline = y - 27;
@@ -407,11 +450,11 @@ export const layoutInvoiceDocument = (input: InvoiceDocumentInput): PdfDocument 
     text(RIGHT - PAD, baseline, figures[index]!, { size: 9, align: "right" });
     baseline -= 14.2;
   });
-  if (rows.length > 0) baseline -= 10.8;
-  const due = invoiceDocumentMoney(input.dueAmountCents ?? input.totalCents, input.currency);
-  const dueLabelEdge = Math.min(labelEdge, RIGHT - PAD - textWidth(due, "regular", 11.7) - 9);
-  text(dueLabelEdge, baseline, "Amount Due", { size: 10.5, font: "bold", align: "right" });
-  text(RIGHT - PAD, baseline, due, { size: 11.7, align: "right" });
+  baseline -= 10.8;
+  const finalFigure = invoiceDocumentMoney(finalCents, input.currency);
+  const finalLabelEdge = Math.min(labelEdge, RIGHT - PAD - textWidth(finalFigure, "regular", 11.7) - 9);
+  text(finalLabelEdge, baseline, finalLabel, { size: 10.5, font: "bold", align: "right" });
+  text(RIGHT - PAD, baseline, finalFigure, { size: 11.7, align: "right" });
   y = baseline - 6;
 
   if (present(input.paymentUrl)) {
@@ -446,6 +489,8 @@ export const layoutInvoiceDocument = (input: InvoiceDocumentInput): PdfDocument 
   }
 
   const count = pages.length;
+  // A preview's watermark goes on last, over everything else on every page.
+  const watermark = present(input.watermark) ? watermarkOperation(input.watermark.trim()) : null;
   return {
     pages: pages.map(
       (page, index): PdfPage => ({
@@ -461,6 +506,7 @@ export const layoutInvoiceDocument = (input: InvoiceDocumentInput): PdfDocument 
             align: "center",
             grey: INK,
           },
+          ...(watermark === null ? [] : [watermark]),
         ],
       }),
     ),
