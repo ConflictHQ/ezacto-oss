@@ -9,6 +9,7 @@ import {
   type RecurringFixedLinesConfigV1,
 } from './recurring-invoices.js'
 import { assertStaticRecurringAttachmentPolicy } from './attachments.js'
+import { bandClaimSelection, bandForegoneUpdate, type BandClaimCeiling } from './band-claim.js'
 
 type ContainerDatabase = BetterSQLite3Database<typeof schema> & {
   $client: BetterSqlite3.Database
@@ -715,142 +716,52 @@ export const createRecurringInvoiceEngine = (
     // week or leaves one stranded. "Whatever the band has not covered yet" needs
     // no such guess and cannot strand anything.
     if (definition.claimsProjectIds !== null) {
-      // What a band may take, before any ceiling narrows it.
-      // Under a fixed amount the client bought the period, so a band set to
-      // claim tracked time takes the non-billable hours too (#708): leaving
-      // them out makes the engagement look cheaper to deliver than it was.
-      const scoped = definition.claimScope === 'tracked' ? '' : 'AND billable = 1'
-      const eligible = `invoice_id IS NULL ${scoped}
+      const pending = {
+        text: `EXISTS (
+              SELECT 1 FROM invoice_command_ledger command
+              WHERE command.invoice_id = ? AND command.command_id = ?
+                AND command.command_kind = 'recurring.generate'
+                AND command.completed = 0
+            )`,
+        params: [invoiceId, commandId],
+      }
+      // A ceiling is a quantity in one unit or the other, never both -- the
+      // schema refuses the ambiguous combinations, so reading one column and
+      // falling through to the next is enough to know which contract this is.
+      const ceiling: BandClaimCeiling | null =
+        definition.claimMode !== 'ceiling'
+          ? null
+          : definition.claimCeilingSeconds !== null
+            ? { unit: 'seconds', limit: definition.claimCeilingSeconds }
+            : definition.claimCeilingCents !== null
+              ? { unit: 'cents', limit: definition.claimCeilingCents }
+              : null
+      const claimed = bandClaimSelection(
+        {
+          // What a band may take, before any ceiling narrows it.
+          // Under a fixed amount the client bought the period, so a band set to
+          // claim tracked time takes the non-billable hours too (#708): leaving
+          // them out makes the engagement look cheaper to deliver than it was.
+          text: `invoice_id IS NULL ${definition.claimScope === 'tracked' ? '' : 'AND billable = 1'}
             AND timer_started_at IS NULL
             AND NOT (started_time IS NOT NULL AND ended_time IS NULL)
             AND spent_date <= ?
             AND project_id IN (
               SELECT CAST(member.value AS INTEGER) FROM json_each(?) member
-            )`
-      const pending = `EXISTS (
-              SELECT 1 FROM invoice_command_ledger command
-              WHERE command.invoice_id = ? AND command.command_id = ?
-                AND command.command_kind = 'recurring.generate'
-                AND command.completed = 0
-            )`
-      // A ceiling is a quantity in one unit or the other, never both -- the
-      // schema refuses the ambiguous combinations, so reading one column and
-      // falling through to the next is enough to know which contract this is.
-      const ceiling =
-        definition.claimMode !== 'ceiling'
-          ? null
-          : definition.claimCeilingSeconds !== null
-            ? {
-                // Duration as tracked, so a rounding policy the client already
-                // sees on their invoice is the same duration the band counts.
-                measure: 'coalesce(rounded_seconds, seconds)',
-                // Time needs no price, so nothing disqualifies an entry.
-                blocked: '0',
-                limit: definition.claimCeilingSeconds,
-              }
-            : definition.claimCeilingCents !== null
-              ? {
-                  // Billable value at list, per entry, which is the same
-                  // arithmetic `foregone_billable_cents` runs below -- so what
-                  // the ceiling admits and what the band is recorded as
-                  // absorbing agree by construction rather than by coincidence.
-                  measure: `CAST(ROUND(
-                    coalesce(rounded_seconds, seconds)
-                      * coalesce(billable_rate_cents, 0) / 3600.0
-                  ) AS INTEGER)`,
-                  // An entry with no billable rate is worth nothing to a
-                  // running money total, so a ceiling that ignored it would
-                  // step straight over it and keep claiming -- and a project of
-                  // unpriced work would be claimed whole however small the
-                  // ceiling. The band stops there instead. The rest stays
-                  // billable, which is visible and correctable, where silently
-                  // absorbing work nobody can value is neither.
-                  // Only a *billable* entry with no rate is missing data. A
-                  // non-billable one is worth zero at list by definition, which
-                  // is a fact rather than a gap, so it passes through
-                  // contributing nothing instead of stopping the claim.
-                  blocked: 'billable = 1 AND billable_rate_cents IS NULL',
-                  limit: definition.claimCeilingCents,
-                }
-              : null
-      statements.push(
-        ceiling !== null
-          ? {
-              // Oldest first, and only while the running total is still inside
-              // the ceiling. An entry that would straddle it is left out whole:
-              // half a time entry has one rate, one person and one approval
-              // state, and splitting one would invent a row nobody tracked.
-              //
-              // `ORDER BY spent_date, id` is the ordering that survives a
-              // re-run. Anything depending on insertion order would claim a
-              // different subset the second time, and a band whose claimed
-              // hours move between attempts is one nobody can reconcile. The
-              // same ordering carries the block forward: once an entry the
-              // ceiling cannot measure appears, every later row is out too.
-              text: `UPDATE time_entries SET invoice_id = ?
-          WHERE id IN (
-            SELECT id FROM (
-              SELECT id,
-                sum(${ceiling.measure}) OVER (
-                  ORDER BY spent_date, id ROWS UNBOUNDED PRECEDING
-                ) AS running,
-                sum(${ceiling.blocked}) OVER (
-                  ORDER BY spent_date, id ROWS UNBOUNDED PRECEDING
-                ) AS unmeasurable
-              FROM time_entries WHERE ${eligible}
-            ) WHERE running <= ? AND unmeasurable = 0
-          )
-            AND ${pending}`,
-              params: [
-                invoiceId,
-                issueDate,
-                definition.claimsProjectIds,
-                ceiling.limit,
-                invoiceId,
-                commandId,
-              ],
-            }
-          : {
-              text: `UPDATE time_entries SET invoice_id = ?
-          WHERE ${eligible}
-            AND ${pending}`,
-              params: [
-                invoiceId,
-                issueDate,
-                definition.claimsProjectIds,
-                invoiceId,
-                commandId,
-              ],
-            },
+            )`,
+          params: [issueDate, definition.claimsProjectIds],
+        },
+        ceiling,
       )
-
-      // What the band absorbed: billable value delivered and never charged.
-      // Deliberately not `written_off_cents` -- that is settlement, and this
-      // client owes and pays the whole flat amount. Recording it there would
-      // make a fully collectible invoice read as partly written off and would
-      // block returning it to draft.
-      //
-      // Runs after the line items, because it reads the invoice total the line
-      // triggers maintain.
       statements.push({
-        text: `UPDATE invoices SET foregone_billable_cents = max(
-            0,
-            coalesce((
-              SELECT sum(CAST(ROUND(
-                coalesce(entry.rounded_seconds, entry.seconds)
-                  * coalesce(entry.billable_rate_cents, 0) / 3600.0
-              ) AS INTEGER))
-              FROM time_entries entry WHERE entry.invoice_id = invoices.id
-            ), 0) - invoices.amount_cents
-          )
-          WHERE id = ? AND EXISTS (
-            SELECT 1 FROM invoice_command_ledger command
-            WHERE command.invoice_id = ? AND command.command_id = ?
-              AND command.command_kind = 'recurring.generate'
-              AND command.completed = 0
-          )`,
-        params: [invoiceId, invoiceId, commandId],
+        text: `UPDATE time_entries SET invoice_id = ?
+          WHERE id IN (${claimed.text})
+            AND ${pending.text}`,
+        params: [invoiceId, ...claimed.params, ...pending.params],
       })
+      // After the line items, because it reads the invoice total the line
+      // triggers maintain.
+      statements.push(bandForegoneUpdate(invoiceId, pending))
     }
 
     if (definition.canDrawFromRetainerId !== null) {
