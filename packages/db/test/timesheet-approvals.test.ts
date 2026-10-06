@@ -124,6 +124,9 @@ const periodEnd = '2026-08-30'
 
 const unlocked: TrackedPolicyResolver = { isLocked: async () => false }
 
+/** User 1 in the fixture: a member, acting on her own time. */
+const maya = { userId: 1, profile: 'member' } as const
+
 const deferred = (): { promise: Promise<void>; resolve(): void } => {
   let resolve!: () => void
   const promise = new Promise<void>((done) => {
@@ -372,7 +375,7 @@ for (const [runtime, factory] of factories) {
         reviewedAt: null,
         rejectionReason: null,
       })
-      expect((await tracked.getTimeEntry(1, 1)).state).toMatchObject({
+      expect((await tracked.getTimeEntry(maya, 1)).state).toMatchObject({
         approvalStatus: 'unsubmitted',
         isLocked: false,
       })
@@ -427,7 +430,7 @@ for (const [runtime, factory] of factories) {
         totalSeconds: 3600,
         rejectionReason: null,
       })
-      expect((await tracked.getTimeEntry(1, 1)).state).toMatchObject({
+      expect((await tracked.getTimeEntry(maya, 1)).state).toMatchObject({
         approvalStatus: 'submitted',
         isLocked: false,
       })
@@ -462,7 +465,7 @@ for (const [runtime, factory] of factories) {
       )
 
       const added = await tracked.createTimeEntry(
-        1,
+        maya,
         {
           projectId: 1,
           taskId: 1,
@@ -475,7 +478,7 @@ for (const [runtime, factory] of factories) {
       expect(added.state.approvalStatus).toBe('submitted')
       expect(added.timesheetSubmissionId).toBe(submitted.id)
       const edited = await tracked.updateTimeEntry(
-        1,
+        maya,
         added.id,
         { seconds: 2700, notes: 'Editable while pending' },
         { instant: t3, date: '2026-08-26', time: '12:03' },
@@ -489,12 +492,12 @@ for (const [runtime, factory] of factories) {
         expenseCount: 2,
         totalSeconds: 6300,
       })
-      await expect(tracked.updateTimeEntry(1, 1, { notes: 'too late' }, {
+      await expect(tracked.updateTimeEntry(maya, 1, { notes: 'too late' }, {
         instant: '2026-08-31T12:04:00.000Z',
         date: '2026-08-25',
         time: '12:04',
       })).rejects.toMatchObject({ reasonCode: 'approved' })
-      expect((await tracked.getTimeEntry(1, 1)).state).toMatchObject({
+      expect((await tracked.getTimeEntry(maya, 1)).state).toMatchObject({
         approvalStatus: 'approved',
         isLocked: true,
         lockedReasonCode: 'approved',
@@ -531,7 +534,7 @@ for (const [runtime, factory] of factories) {
       ).rejects.toMatchObject({ reasonCode: 'approved_period' })
       await expect(
         tracked.createTimeEntry(
-          1,
+          maya,
           { projectId: 1, taskId: 1, spentDate: '2026-08-27', seconds: 60 },
           { instant: '2026-08-31T12:04:00.000Z', date: '2026-08-27', time: '12:04' },
         ),
@@ -567,7 +570,7 @@ for (const [runtime, factory] of factories) {
         rejectionReason: 'Please describe the client outcome.',
         reviewedByUserId: 3,
       })
-      expect((await tracked.getTimeEntry(1, 1)).state).toMatchObject({
+      expect((await tracked.getTimeEntry(maya, 1)).state).toMatchObject({
         approvalStatus: 'unsubmitted',
         isLocked: false,
       })
@@ -575,7 +578,7 @@ for (const [runtime, factory] of factories) {
         approvalStatus: 'unsubmitted',
         isLocked: false,
       })
-      await tracked.updateTimeEntry(1, 1, { notes: 'Client outcome added.' }, {
+      await tracked.updateTimeEntry(maya, 1, { notes: 'Client outcome added.' }, {
         instant: t3,
         date: '2026-08-25',
         time: '12:03',
@@ -616,7 +619,7 @@ for (const [runtime, factory] of factories) {
         'Restore the missing work.',
         t2,
       )
-      await tracked.deleteTimeEntry(1, 1)
+      await tracked.deleteTimeEntry(maya, 1, { instant: t3, date: '2026-08-31', time: '12:03' })
 
       await expect(
         approvals.submit(1, periodStart, periodEnd, t3),
@@ -655,7 +658,7 @@ for (const [runtime, factory] of factories) {
         'Stop the timer first.',
         t2,
       )
-      await tracked.restartTimeEntry(1, 1, {
+      await tracked.restartTimeEntry(maya, 1, {
         instant: t3,
         date: '2026-08-25',
         time: '12:03',
@@ -1253,7 +1256,7 @@ for (const [runtime, factory] of factories) {
       }
       const tracked = new DrizzleTrackedResourceRepository(database.orm, unlocked)
       const createOutcome = tracked.createTimeEntry(
-        1,
+        maya,
         {
           projectId: 1,
           taskId: 1,
@@ -1292,7 +1295,7 @@ for (const [runtime, factory] of factories) {
       const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
       const outcomes = await Promise.allSettled([
         tracked.updateTimeEntry(
-          1,
+          maya,
           1,
           { notes: 'A concurrent pending edit.' },
           { instant: t2, date: '2026-08-25', time: '12:02' },
@@ -1300,7 +1303,7 @@ for (const [runtime, factory] of factories) {
         approvals.approve(actor(10, 'administrator'), submitted.id, t2),
       ])
       expect(outcomes[1]).toMatchObject({ status: 'fulfilled' })
-      const entry = await tracked.getTimeEntry(1, 1)
+      const entry = await tracked.getTimeEntry(maya, 1)
       expect(entry.state).toMatchObject({ approvalStatus: 'approved', isLocked: true })
       expect(['Initial work', 'A concurrent pending edit.']).toContain(entry.notes)
       if (outcomes[0]?.status === 'rejected') {
@@ -1316,7 +1319,7 @@ for (const [runtime, factory] of factories) {
       const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
       const outcomes = await Promise.allSettled([
         tracked.createTimeEntry(
-          1,
+          maya,
           {
             projectId: 1,
             taskId: 1,
@@ -1420,7 +1423,7 @@ for (const [runtime, factory] of factories) {
       const tracked = new DrizzleTrackedResourceRepository(database.orm, racingPolicy)
       const moves = [
         tracked.updateTimeEntry(
-          1,
+          maya,
           2,
           { spentDate: '2026-08-26' },
           { instant: t2, date: '2026-08-26', time: '12:02' },
@@ -1495,7 +1498,7 @@ for (const [runtime, factory] of factories) {
       const tracked = new DrizzleTrackedResourceRepository(database.orm, racingPolicy)
       const moves = [
         tracked.updateTimeEntry(
-          1,
+          maya,
           2,
           { spentDate: '2026-08-26' },
           { instant: t2, date: '2026-08-26', time: '12:02' },
@@ -1568,7 +1571,7 @@ for (const [runtime, factory] of factories) {
       const tracked = new DrizzleTrackedResourceRepository(database.orm, unlocked)
       const submitted = await approvals.submit(1, periodStart, periodEnd, t1)
       const outcomes = await Promise.allSettled([
-        tracked.deleteTimeEntry(1, 1),
+        tracked.deleteTimeEntry(maya, 1, { instant: t2, date: '2026-08-31', time: '12:02' }),
         approvals.approve(actor(10, 'administrator'), submitted.id, t2),
       ])
       expect(outcomes.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
@@ -1630,7 +1633,7 @@ for (const [runtime, factory] of factories) {
       }
       const tracked = new DrizzleTrackedResourceRepository(database.orm, racingPolicy)
       const restartOutcome = tracked
-        .restartTimeEntry(1, 1, {
+        .restartTimeEntry(maya, 1, {
           instant: t2,
           date: '2026-08-25',
           time: '12:02',
@@ -1765,7 +1768,7 @@ for (const [runtime, factory] of factories) {
       const [detail, edit] = await Promise.all([
         approvals.get(actor(10, 'administrator'), submitted.id),
         tracked.updateTimeEntry(
-          1,
+          maya,
           1,
           { seconds: 5400, notes: 'Concurrent complete detail' },
           { instant: t2, date: '2026-08-25', time: '12:02' },

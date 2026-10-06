@@ -556,8 +556,21 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
   <main class="app-content page--grid" data-app-content${view === 'time' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">This week</p><h1>Time</h1></div>
-      <button class="primary-action" type="button" data-command-trigger data-auth-action disabled>Log time</button>
+      <!--
+        An administrator's way into a teammate's week (issue 917). Hidden for
+        everyone else, and filled once the session says who is asking.
+      -->
+      <label class="time-person" data-time-person-field hidden>Timesheet
+        <select data-time-person disabled>
+          <option value="">Yours</option>
+        </select>
+      </label>
+      <button class="primary-action" type="button" data-command-trigger data-auth-action data-time-log-time disabled>Log time</button>
     </header>
+    <aside class="time-person-banner" data-time-person-banner role="status" aria-live="polite" hidden>
+      <strong data-time-person-banner-text></strong>
+      <button type="button" data-time-person-reset>Back to your timesheet</button>
+    </aside>
     <aside class="session-status" data-session-status role="status">
       <span data-session-message>Connecting to your ${escapeHtml(brand)} session…</span>
       <button type="button" data-retry-week hidden>Retry week</button>

@@ -1132,6 +1132,7 @@ export type TimeEntry = {
 };
 
 export type TimeEntryInput = {
+  "user_id"?: number;
   "project_id": number;
   "task_id": number;
   "spent_date"?: string;
@@ -4375,10 +4376,11 @@ export class EzactoClient {
     });
   }
 
-  async listTimeEntryOptions(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimeEntryOptionListEnvelope> {
+  async listTimeEntryOptions(args: { query?: { "user_id"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimeEntryOptionListEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<TimeEntryOptionListEnvelope>("GET", "/api/v1/time-entry-options", {
+      query: args.query,
       signal: args.signal,
       headers,
     });

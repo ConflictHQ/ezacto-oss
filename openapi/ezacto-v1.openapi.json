@@ -6929,7 +6929,8 @@
     "/api/v1/time-entry-options": {
       "get": {
         "operationId": "listTimeEntryOptions",
-        "summary": "List the acting user's active project and task combinations",
+        "summary": "List the active project and task combinations a user may log time against",
+        "description": "The acting user's unless `user_id` names somebody else, which only an administrator may do (403 `row_forbidden` otherwise).",
         "tags": [
           "time-entries"
         ],
@@ -6981,13 +6982,25 @@
           }
         },
         "x-ezacto-runtime-path": "/api/v1/time-entry-options",
-        "x-ezacto-generate-client": true
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
       }
     },
     "/api/v1/time-entries": {
       "get": {
         "operationId": "listTimeEntries",
-        "summary": "List the acting user's time entries",
+        "summary": "List time entries",
+        "description": "The acting user's unless `user_id` names somebody else, which only an administrator may do (403 `row_forbidden` otherwise). An administrator may also read, update, stop and delete any entry by id; everyone else reaches only their own.",
         "tags": [
           "time-entries"
         ],
@@ -28334,6 +28347,11 @@
           "task_id"
         ],
         "properties": {
+          "user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Whose entry. Defaults to the acting user. Only an administrator may name somebody else, and only for stopped time: a timer is started by the person it tracks."
+          },
           "project_id": {
             "type": "integer",
             "minimum": 1

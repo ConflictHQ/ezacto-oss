@@ -11,6 +11,12 @@ export interface TrackedResourceClock {
   now(): ResourceTimeBoundary
 }
 
+/**
+ * Who is acting on a time entry: an administrator reaches anybody's time
+ * (#917), everybody else only their own, so the profile travels with the id.
+ */
+export type TimeEntryActor = Readonly<Pick<TeamViewer, 'userId' | 'profile'>>
+
 interface TrackedRecord {
   id: number
   harvestId: string | number | null
@@ -88,6 +94,8 @@ export interface ExpenseRecord extends TrackedRecord {
 }
 
 export interface TimeEntryFilters {
+  /** Whose entries: the actor's own unless named. */
+  userId?: number
   clientId?: number
   projectId?: number
   taskId?: number
@@ -121,6 +129,8 @@ export interface ExpenseFilters {
 }
 
 export interface CreateTimeEntryRequest {
+  /** Whose time: the actor's own unless named, and only stopped time for somebody else. */
+  userId?: number
   projectId: number
   taskId: number
   spentDate?: string
@@ -177,7 +187,7 @@ export interface TrackedResourceRepository {
   ): Promise<OrganizationTimeEntryNoteSettings>
   timeEntryOptions(userId: number): Promise<readonly TimeEntryOption[]>
   timeEntries(
-    userId: number,
+    actor: TimeEntryActor,
     filters: Readonly<TimeEntryFilters>,
   ): CursorSource<TimeEntryRecord>
   expenses(
@@ -186,27 +196,31 @@ export interface TrackedResourceRepository {
     viewer: Readonly<TeamViewer>,
   ): CursorSource<ExpenseRecord>
   canReadExpenseUser(viewer: Readonly<TeamViewer>, userId: number): Promise<boolean>
-  getTimeEntry(userId: number, id: number): Promise<TimeEntryRecord>
+  getTimeEntry(actor: TimeEntryActor, id: number): Promise<TimeEntryRecord>
   getExpense(viewer: Readonly<TeamViewer>, id: number): Promise<ExpenseRecord>
   createTimeEntry(
-    userId: number,
+    actor: TimeEntryActor,
     input: Readonly<CreateTimeEntryRequest>,
     boundary: ResourceTimeBoundary,
   ): Promise<TimeEntryRecord>
   updateTimeEntry(
-    userId: number,
+    actor: TimeEntryActor,
     id: number,
     input: Readonly<UpdateTimeEntryRequest>,
     boundary: ResourceTimeBoundary,
   ): Promise<TimeEntryRecord>
-  deleteTimeEntry(userId: number, id: number): Promise<TimeEntryRecord>
+  deleteTimeEntry(
+    actor: TimeEntryActor,
+    id: number,
+    boundary: ResourceTimeBoundary,
+  ): Promise<TimeEntryRecord>
   stopTimeEntry(
-    userId: number,
+    actor: TimeEntryActor,
     id: number,
     boundary: ResourceTimeBoundary,
   ): Promise<TimeEntryRecord>
   restartTimeEntry(
-    userId: number,
+    actor: TimeEntryActor,
     id: number,
     boundary: ResourceTimeBoundary,
   ): Promise<TimeEntryRecord>

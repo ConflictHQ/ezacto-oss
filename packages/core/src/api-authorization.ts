@@ -75,6 +75,19 @@ export const canReviewSubmissions = (profile: UserProfile): boolean =>
   submissionReview.includes(profile)
 
 /**
+ * Who may read and change another person's time entries (#917). The
+ * administrator decides what is invoiced and paid, so they have to be able to
+ * correct the time it is built from, as they could in Harvest.
+ *
+ * Administrators alone, and deliberately not the submission reviewers above:
+ * approving or returning somebody's week leaves their hours as they wrote them,
+ * where this rewrites them. The API, the repository and the web shell all ask
+ * this one question so the list cannot drift between them.
+ */
+export const canManageTeammateTime = (profile: UserProfile): boolean =>
+  profile === 'administrator'
+
+/**
  * How many submissions one bulk approval may carry. A request parser and the
  * approval ledger's own CHECK both need this number, and they sit in different
  * packages, so it is stated once here rather than twice and left to drift.

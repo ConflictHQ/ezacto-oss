@@ -244,6 +244,11 @@ export interface ReportWorkspaceApi {
   shareSavedReport?(reportId: string, userId: number, signal?: AbortSignal): Promise<void>
   executeDetailedTimeAction?(input: ReportTimeActionInput, signal?: AbortSignal): Promise<ReportTimeAction>
   /**
+   * Removing one entry from a Detailed time row: an administrator correcting
+   * somebody's time (issue 917). Optional, and without it no row offers Delete.
+   */
+  deleteTimeEntry?(id: number, signal?: AbortSignal): Promise<void>
+  /**
    * Only `week_start_day` is wanted, and only so the period control can tell a
    * whole week from an arbitrary seven days. Optional because a build without
    * it should still report: the control then falls back to Monday and calls a

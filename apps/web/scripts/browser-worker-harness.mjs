@@ -891,6 +891,54 @@ const fixtureControl = async (request, response) => {
       database.prepare('DELETE FROM users WHERE id >= 9000'),
       database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
     ])
+  } else if (action === 'teammate-time-seed' || action === 'teammate-time-cleanup') {
+    // A teammate with one entry on the fixture's own day, for the administrator
+    // to correct from Detailed time (issue 917). Ids above 9100 stay clear of
+    // the team roster's, and the seed clears first so a run that died before
+    // its cleanup does not leave this one a duplicate.
+    const teammateId = 9101
+    await database.batch([
+      database.prepare('DELETE FROM time_entries WHERE user_id = ?').bind(teammateId),
+      database.prepare('DELETE FROM user_assignments WHERE user_id = ?').bind(teammateId),
+      database.prepare('DELETE FROM user_emails WHERE user_id = ?').bind(teammateId),
+      database.prepare('DELETE FROM users WHERE id = ?').bind(teammateId),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
+    if (action === 'teammate-time-seed') {
+      await database.batch([
+        database
+          .prepare(
+            `INSERT INTO users (
+               id, first_name, last_name, timezone, is_contractor, is_active,
+               weekly_capacity, profile, manager_grants, created_at, updated_at
+             ) VALUES (?, 'Rosa', 'Fictional', ?, 0, 1, 126000, 'member', '[]', ?, ?)`,
+          )
+          .bind(teammateId, fixtureTimeZone, timestamp, timestamp),
+        database
+          .prepare(
+            `INSERT INTO user_emails (
+               id, user_id, address, verified_at, is_primary, created_at, updated_at
+             ) VALUES (?, ?, 'rosa.fictional@example.test', ?, 1, ?, ?)`,
+          )
+          .bind(teammateId, teammateId, timestamp, timestamp, timestamp),
+        database
+          .prepare(
+            `INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+             VALUES (?, 1, ?, ?, ?)`,
+          )
+          .bind(teammateId, teammateId, timestamp, timestamp),
+        database
+          .prepare(
+            `INSERT INTO time_entries (
+               id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+               spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+               billable_rate_cents, cost_rate_cents, notes, created_at, updated_at
+             ) VALUES (?, ?, 1, 1, ?, 1, ?, 4500, 4500, 4500, 1, 10000, 5000,
+               'Fictional teammate entry', ?, ?)`,
+          )
+          .bind(91011, teammateId, teammateId, spentDate, timestamp, timestamp),
+      ])
+    }
   } else if (action === 'payment-run-reset') {
     await database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`).run()
   } else if (action === 'task-admin-cleanup') {

@@ -453,6 +453,50 @@ const asUser = (
   },
 })
 
+/** A request made by `actor`, keeping the request's own headers. */
+const actingAs = (actor: RequestInit, init: RequestInit = {}): RequestInit => ({
+  ...init,
+  headers: {
+    ...(init.headers as Record<string, string> | undefined),
+    ...(actor.headers as Record<string, string>),
+  },
+})
+
+/**
+ * Issue 917's cast, beside the two seeded members: user 2 owns the time, and
+ * these three ask about it.
+ */
+const seedTeammateTime = async (database: TestDatabase): Promise<void> => {
+  await database.run(
+    `INSERT INTO users (
+      id, first_name, last_name, profile, manager_grants, created_at, updated_at
+    ) VALUES
+      (3, 'Sanitized', 'Executive', 'executive_manager', '[]', ?, ?),
+      (4, 'Sanitized', 'Manager', 'project_manager', '[]', ?, ?),
+      (5, 'Sanitized', 'Administrator', 'administrator', '[]', ?, ?)`,
+    ...Array.from({ length: 6 }, () => timestamp),
+  )
+  await database.run(
+    `INSERT INTO time_entries (
+      id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+      spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+      timer_started_at, notes, created_at, updated_at
+    ) VALUES
+      (917, 2, 1, 1, 2, 1, '2026-08-27', 3600, 3600, 3600, 1, NULL, 'Teammate hour', ?, ?),
+      (918, 2, 1, 1, 2, 1, '2026-08-28', 0, 0, 0, 1, '2026-08-28T08:30:00.000Z',
+        'Teammate timer', ?, ?)`,
+    ...Array.from({ length: 4 }, () => timestamp),
+  )
+}
+
+const onBehalfEvents = (database: TestDatabase) =>
+  database.rows<{ event_type: string; aggregate_id: number; actor: number; owner: number }>(
+    `SELECT event_type, aggregate_id,
+       json_extract(payload_json, '$.actor.id') AS actor,
+       json_extract(payload_json, '$.time_entry.user_id') AS owner
+     FROM event_outbox WHERE aggregate_type = 'time_entry' ORDER BY rowid`,
+  )
+
 for (const [runtime, factory] of factories) {
   const slowRuntimeTimeout = runtime === 'D1' ? 20_000 : undefined
   const interleavedLock = {
@@ -972,7 +1016,7 @@ for (const [runtime, factory] of factories) {
       // Somebody else's row, put to the serializer directly. The record is read
       // first and its two rates asserted, so that the absence below is a
       // redaction rather than a row that never had rates to leak.
-      const foreignRecord = await repository.getTimeEntry(2, 701)
+      const foreignRecord = await repository.getTimeEntry({ userId: 2, profile: 'member' }, 701)
       expect(foreignRecord.userId).toBe(2)
       expect(foreignRecord.billableRateCents).toBe(25_000)
       expect(foreignRecord.costRateCents).toBe(12_000)
@@ -987,7 +1031,7 @@ for (const [runtime, factory] of factories) {
       ).toBe(false)
 
       // The same viewer, the same setting, their own row.
-      const ownRecord = await repository.getTimeEntry(1, 700)
+      const ownRecord = await repository.getTimeEntry({ userId: 1, profile: 'member' }, 700)
       const own = serializeTimeEntry(ownRecord, viewerIsUserOne)
       expect(own).toMatchObject({
         billable_rate_cents: 15_000,
@@ -1402,6 +1446,252 @@ for (const [runtime, factory] of factories) {
         ),
       ).toEqual([{ count: 2 }])
     }, 20_000)
+
+    it('[security #917] keeps members, project managers and executive managers to their own time', async () => {
+      const test = await setup()
+      await seedTeammateTime(test.database)
+      const before = await test.database.rows(`SELECT * FROM time_entries ORDER BY id`)
+      for (const actor of [
+        asUser(1, 'member'),
+        asUser(4, 'project_manager'),
+        asUser(3, 'executive_manager'),
+      ]) {
+        const forbidden = [
+          await test.request('/api/v1/time-entries?user_id=2', actor),
+          await test.request('/api/v1/time-entry-options?user_id=2', actor),
+          await test.request(
+            '/api/v1/time-entries',
+            actingAs(
+              actor,
+              jsonRequest('POST', {
+                user_id: 2,
+                project_id: 1,
+                task_id: 1,
+                spent_date: '2026-08-26',
+                seconds: 900,
+              }),
+            ),
+          ),
+        ]
+        for (const response of forbidden) {
+          expect(response.status).toBe(403)
+          expect(await response.json()).toMatchObject({ error: { code: 'row_forbidden' } })
+        }
+        // Somebody else's entry is not there at all for them, as before #917.
+        const hidden = [
+          await test.request('/api/v1/time-entries/917', actor),
+          await test.request(
+            '/api/v1/time-entries/917',
+            actingAs(actor, jsonRequest('PATCH', { notes: 'Not yours' })),
+          ),
+          await test.request('/api/v1/time-entries/918/stop', actingAs(actor, { method: 'POST' })),
+          await test.request('/api/v1/time-entries/917/restart', actingAs(actor, { method: 'POST' })),
+          await test.request('/api/v1/time-entries/917', actingAs(actor, { method: 'DELETE' })),
+        ]
+        for (const response of hidden) {
+          expect(response.status).toBe(404)
+          expect(await response.text()).not.toContain('Teammate')
+        }
+      }
+      expect(await test.database.rows(`SELECT * FROM time_entries ORDER BY id`)).toEqual(before)
+      expect(await onBehalfEvents(test.database)).toEqual([])
+    }, slowRuntimeTimeout)
+
+    it("[security #917] lets an administrator list, log, correct, stop and delete a teammate's time", async () => {
+      const test = await setup()
+      await seedTeammateTime(test.database)
+      const admin = asUser(5, 'administrator')
+
+      const listed = await test.request('/api/v1/time-entries?user_id=2', admin)
+      expect(listed.status).toBe(200)
+      expect(await data<Array<{ id: number; user_id: number }>>(listed)).toMatchObject([
+        { id: 917, user_id: 2, notes: 'Teammate hour' },
+        { id: 918, user_id: 2, is_running: true },
+      ])
+      // Unnamed, the list is still the administrator's own week.
+      expect(await data(await test.request('/api/v1/time-entries', admin))).toEqual([])
+      // The teammate's project/task pairs, which are what a teammate's entry
+      // may be logged against; the administrator holds no assignment at all.
+      expect(await data(await test.request('/api/v1/time-entry-options?user_id=2', admin))).toEqual([
+        { project_id: 1, task_id: 1, minimum_note_length: 0 },
+        { project_id: 1, task_id: 2, minimum_note_length: 0 },
+      ])
+      expect(await data(await test.request('/api/v1/time-entry-options', admin))).toEqual([])
+      expect(
+        await data<{ user_id: number }>(await test.request('/api/v1/time-entries/917', admin)),
+      ).toMatchObject({ user_id: 2 })
+
+      const logged = await test.request(
+        '/api/v1/time-entries',
+        actingAs(
+          admin,
+          jsonRequest('POST', {
+            user_id: 2,
+            project_id: 1,
+            task_id: 1,
+            spent_date: '2026-08-26',
+            seconds: 900,
+            notes: 'Logged for a teammate',
+          }),
+        ),
+      )
+      expect(logged.status).toBe(201)
+      const loggedEntry = await data<{ id: number; user_id: number }>(logged)
+      expect(loggedEntry.user_id).toBe(2)
+
+      // A timer is its owner's to start.
+      const timer = await test.request(
+        '/api/v1/time-entries',
+        actingAs(admin, jsonRequest('POST', { user_id: 2, project_id: 1, task_id: 1 })),
+      )
+      expect(timer.status).toBe(422)
+      expect(await timer.json()).toMatchObject({
+        error: { fields: [{ field: 'user_id', code: 'timer_owned' }] },
+      })
+      // The teammate's assignments decide, not the administrator's.
+      const unassigned = await test.request(
+        '/api/v1/time-entries',
+        actingAs(
+          admin,
+          jsonRequest('POST', {
+            user_id: 2,
+            project_id: 2,
+            task_id: 1,
+            spent_date: '2026-08-26',
+            seconds: 900,
+          }),
+        ),
+      )
+      expect(unassigned.status).toBe(403)
+      expect(await unassigned.json()).toMatchObject({
+        error: {
+          code: 'project_assignment_required',
+          message: 'The person this belongs to is not assigned to the active project and task.',
+        },
+      })
+
+      const corrected = await test.request(
+        '/api/v1/time-entries/917',
+        actingAs(admin, jsonRequest('PATCH', { seconds: 5400, notes: 'Corrected' })),
+      )
+      expect(corrected.status).toBe(200)
+      expect(await data(corrected)).toMatchObject({
+        id: 917,
+        user_id: 2,
+        seconds: 5400,
+        notes: 'Corrected',
+      })
+      // The entry stays the teammate's: its owner is not something an edit sets.
+      const reassigned = await test.request(
+        '/api/v1/time-entries/917',
+        actingAs(admin, jsonRequest('PATCH', { user_id: 5 })),
+      )
+      expect(reassigned.status).toBe(422)
+      expect(await reassigned.json()).toMatchObject({
+        error: {
+          fields: expect.arrayContaining([
+            expect.objectContaining({ field: 'user_id', code: 'unknown' }),
+          ]),
+        },
+      })
+
+      test.setBoundary({ instant: '2026-08-28T09:30:00.000Z', date: '2026-08-28', time: '09:30' })
+      const stopped = await test.request(
+        '/api/v1/time-entries/918/stop',
+        actingAs(admin, { method: 'POST' }),
+      )
+      expect(stopped.status).toBe(200)
+      expect(await data(stopped)).toMatchObject({ id: 918, user_id: 2, is_running: false })
+      const restarted = await test.request(
+        '/api/v1/time-entries/917/restart',
+        actingAs(admin, { method: 'POST' }),
+      )
+      expect(restarted.status).toBe(422)
+      expect(await restarted.json()).toMatchObject({
+        error: { fields: [{ field: 'time_entry', code: 'timer_owned' }] },
+      })
+
+      const deleted = await test.request('/api/v1/time-entries/917', actingAs(admin, { method: 'DELETE' }))
+      expect(deleted.status).toBe(200)
+      expect((await test.request('/api/v1/time-entries/917', admin)).status).toBe(404)
+
+      expect(await onBehalfEvents(test.database)).toEqual([
+        { event_type: 'time_entry.created_on_behalf', aggregate_id: loggedEntry.id, actor: 5, owner: 2 },
+        { event_type: 'time_entry.updated_on_behalf', aggregate_id: 917, actor: 5, owner: 2 },
+        { event_type: 'time_entry.stopped_on_behalf', aggregate_id: 918, actor: 5, owner: 2 },
+        { event_type: 'time_entry.deleted_on_behalf', aggregate_id: 917, actor: 5, owner: 2 },
+      ])
+    }, slowRuntimeTimeout)
+
+    it('[security #917] holds locks, approvals and invoice claims against an administrator', async () => {
+      const test = await setup()
+      await seedTeammateTime(test.database)
+      const admin = asUser(5, 'administrator')
+      const patch = () =>
+        test.request('/api/v1/time-entries/917', actingAs(admin, jsonRequest('PATCH', { notes: 'Blocked' })))
+      const remove = () =>
+        test.request('/api/v1/time-entries/917', actingAs(admin, { method: 'DELETE' }))
+      const create = (spentDate: string) =>
+        test.request(
+          '/api/v1/time-entries',
+          actingAs(
+            admin,
+            jsonRequest('POST', {
+              user_id: 2,
+              project_id: 1,
+              task_id: 1,
+              spent_date: spentDate,
+              seconds: 600,
+            }),
+          ),
+        )
+      const lockedBy = async (response: Response, code: string) => {
+        expect(response.status).toBe(422)
+        expect(await response.json()).toMatchObject({
+          error: { code: 'tracked_mutation_locked', fields: [{ code }] },
+        })
+      }
+
+      await test.database.run(`UPDATE time_entries SET invoice_id = 1 WHERE id = 917`)
+      await lockedBy(await patch(), 'invoiced')
+      await lockedBy(await remove(), 'invoiced')
+      await test.database.run(`UPDATE time_entries SET invoice_id = NULL WHERE id = 917`)
+
+      test.locks.add('time_entry:917')
+      test.locks.add('tracked_date:2026-08-26')
+      await lockedBy(await patch(), 'policy_locked')
+      await lockedBy(await remove(), 'policy_locked')
+      await lockedBy(await create('2026-08-26'), 'policy_locked')
+      test.locks.clear()
+
+      // A week cannot be submitted around a running timer.
+      await test.database.run(
+        `UPDATE time_entries SET seconds = 1800, seconds_without_timer = 1800,
+           rounded_seconds = 1800, timer_started_at = NULL WHERE id = 918`,
+      )
+      const approvals = createTimesheetApprovalRepository(test.database.orm)
+      const submission = await approvals.submit(2, '2026-08-24', '2026-08-30', '2026-08-28T09:01:00.000Z')
+      await approvals.approve(
+        { userId: 5, profile: 'administrator' },
+        submission.id,
+        '2026-08-28T09:02:00.000Z',
+      )
+      await lockedBy(await patch(), 'approved')
+      await lockedBy(await remove(), 'approved')
+      const intoApproved = await create('2026-08-25')
+      expect(intoApproved.status).toBe(422)
+      expect(await intoApproved.json()).toMatchObject({
+        error: { fields: [{ field: 'spent_date', code: 'approved_period' }] },
+      })
+
+      expect(
+        await test.database.rows(`SELECT id, notes FROM time_entries WHERE user_id = 2 ORDER BY id`),
+      ).toEqual([
+        { id: 917, notes: 'Teammate hour' },
+        { id: 918, notes: 'Teammate timer' },
+      ])
+      expect(await onBehalfEvents(test.database)).toEqual([])
+    }, slowRuntimeTimeout)
 
     it('[api] supports expense pricing, combined filters, CRUD, and strict input validation', async () => {
       const test = await setup()

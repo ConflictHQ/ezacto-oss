@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   apiScopeProfiles,
   apiScopes,
+  canManageTeammateTime,
   canProfileUseApiScope,
   isApiScope,
   profilesAllowedEveryApiScope,
@@ -105,5 +106,19 @@ describe('API scope/profile policy', () => {
       'schedule:write': ['project_manager', 'executive_manager', 'administrator'],
       'reports:read': ['accounting', 'executive_manager', 'administrator'],
     })
+  })
+
+  it('[security #917] lets an administrator alone manage another person\'s time', () => {
+    // Executive managers review weeks; they do not rewrite them. Every profile
+    // is listed so a widened rule fails here rather than in production.
+    const profiles = [
+      'member',
+      'project_manager',
+      'people_admin',
+      'accounting',
+      'executive_manager',
+      'administrator',
+    ] as const
+    expect(profiles.filter(canManageTeammateTime)).toEqual(['administrator'])
   })
 })

@@ -42,7 +42,7 @@ import type {
 } from '../deliveries/browser.js'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 import type { ClientDirectoryApi, ClientInvoiceSending } from '../clients/model.js'
-import type { ProjectDirectoryApi } from '../projects/model.js'
+import { personLabel, type ProjectDirectoryApi } from '../projects/model.js'
 import { detailedTimeExportPath, type ReportWorkspaceApi } from '../reports/model.js'
 import type { ExpenseWorkflowApi } from '../expenses/model.js'
 import type { ExpenseCategoryDirectoryApi } from '../expense-categories/model.js'
@@ -169,13 +169,24 @@ export interface ShellApi
     query: string,
     signal?: AbortSignal,
   ): Promise<readonly PaletteEntity[]>
-  listTimeEntryOptions(signal?: AbortSignal): Promise<readonly TimeEntryOption[]>
+  /** `userId` names a teammate, which only an administrator may do (issue 917). */
+  listTimeEntryOptions(
+    signal?: AbortSignal,
+    userId?: number,
+  ): Promise<readonly TimeEntryOption[]>
   getTimeEntrySettings(signal?: AbortSignal): Promise<TimeEntrySettings>
   listTimeEntries(query: {
     readonly from?: string
     readonly to?: string
     readonly is_running?: boolean
+    /** A teammate's entries, which only an administrator may ask for (issue 917). */
+    readonly user_id?: number
   }, signal?: AbortSignal): Promise<readonly TimeEntry[]>
+  /**
+   * One entry by id, for the editor a report row opens (issue 917). Optional because
+   * the week never needs it: it already holds every entry it draws.
+   */
+  getTimeEntry?(id: number, signal?: AbortSignal): Promise<TimeEntry>
   listExpenses?(query: {
     readonly from?: string
     readonly to?: string
@@ -302,6 +313,19 @@ export const hydratePendingTimesheetDetails = async (
     (detail): detail is TimesheetSubmissionDetail => detail?.status === 'submitted',
   )
 }
+
+/**
+ * Whose week an administrator can open on Time (issue 917): everyone active except
+ * themselves, named the way the project screens name people, in name order.
+ */
+export const timePersonChoices = (
+  people: readonly GeneralResource[],
+  selfId: number,
+): readonly { readonly id: number; readonly name: string }[] =>
+  people
+    .filter((person) => person.id !== selfId && person['is_active'] !== false)
+    .map((person) => ({ id: person.id, name: personLabel(person.id, people) }))
+    .sort((left, right) => left.name.localeCompare(right.name, 'en-US'))
 
 export const timeEntryNoteLength = (notes: string | null | undefined): number =>
   notes === null || notes === undefined ? 0 : Array.from(notes.trim()).length
@@ -900,10 +924,18 @@ const isModuleDisabled = (error: EzactoApiError): boolean => {
   return typeof body === 'object' && body !== null && body.error?.code === 'module_disabled'
 }
 
+/**
+ * `userId` loads a teammate's week for an administrator (issue 917): that person's
+ * entries and the project/task pairs they may log against. The running timer
+ * and the expenses stay the signed-in person's -- the header timer is theirs,
+ * and the week only reads expenses to offer submitting it, which is the
+ * owner's to do and is not offered on somebody else's week.
+ */
 export const loadShellSnapshot = async (
   api: ShellApi,
   now = new Date(),
   signal?: AbortSignal,
+  userId?: number,
 ): Promise<ShellSnapshot> => {
   const timeEntrySettings = await api.getTimeEntrySettings(signal)
   const range = weekRange(localDate(now), timeEntrySettings.week_start_day)
@@ -924,10 +956,12 @@ export const loadShellSnapshot = async (
   }) ?? Promise.resolve([])
   const [resources, entries, running, expenses, timeEntryOptions] = await Promise.all([
     loadCatalogResources(api, signal),
-    api.listTimeEntries(range, signal),
+    api.listTimeEntries(userId === undefined ? range : { ...range, user_id: userId }, signal),
     api.listTimeEntries({ is_running: true }, signal),
     expenseRequest,
-    api.listTimeEntryOptions(signal),
+    userId === undefined
+      ? api.listTimeEntryOptions(signal)
+      : api.listTimeEntryOptions(signal, userId),
   ])
   const displayedEntries = displayEntries(entries, resources)
   const displayedRunning = displayEntries(running, resources)
@@ -2132,8 +2166,13 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
-  listTimeEntryOptions: async (signal) =>
-    (await client.listTimeEntryOptions(withSignal(signal))).data,
+  listTimeEntryOptions: async (signal, userId) =>
+    (
+      await client.listTimeEntryOptions({
+        ...(userId === undefined ? {} : { query: { user_id: userId } }),
+        ...withSignal(signal),
+      })
+    ).data,
   getTimeEntrySettings: async (signal) =>
     (await client.getTimeEntrySettings(withSignal(signal))).data,
   listTimeEntries: async (query, signal) => {
@@ -2170,6 +2209,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     } while (cursor !== undefined)
     return expenses
   },
+  getTimeEntry: async (id, signal) =>
+    (await client.getTimeEntry({ id, ...withSignal(signal) })).data,
   createTimeEntry: async (input, signal) =>
     (await client.createTimeEntry({ body: input, ...withSignal(signal) })).data,
   updateTimeEntry: async (id, patch, signal) =>
