@@ -24,11 +24,11 @@ describe('form encoding', () => {
     // ignored parameter.
     const params = stripeForm({
       line_items: [{ price: 'price_1', quantity: 1 }],
-      metadata: { ezacto_invoice_id: '1315' },
+      metadata: { invoice_id: '1315' },
     })
     expect(params.get('line_items[0][price]')).toBe('price_1')
     expect(params.get('line_items[0][quantity]')).toBe('1')
-    expect(params.get('metadata[ezacto_invoice_id]')).toBe('1315')
+    expect(params.get('metadata[invoice_id]')).toBe('1315')
   })
 
   it('[unit] leaves out what was not set rather than sending empty keys', () => {
@@ -134,13 +134,13 @@ describe('creating a payment link', () => {
       const body = new URLSearchParams(await request.clone().text())
       expect(body.get('line_items[0][price]')).toBe('price_1')
       expect(body.get('line_items[0][quantity]')).toBe('1')
-      expect(body.get('metadata[ezacto_invoice_id]')).toBe('1315')
+      expect(body.get('metadata[invoice_id]')).toBe('1315')
       return json({ id: 'plink_1', url: 'https://buy.stripe.com/test_example' })
     })
     expect(
       await client(fetch).createPaymentLink({
         priceId: 'price_1',
-        metadata: { ezacto_invoice_id: '1315' },
+        metadata: { invoice_id: '1315' },
       }),
     ).toEqual({ id: 'plink_1', url: 'https://buy.stripe.com/test_example' })
   })

@@ -83,7 +83,7 @@ const sign = async (payload: string, timestamp = nowSeconds): Promise<string> =>
 }
 
 const paidSession = (
-  metadata: Record<string, string> = { ezacto_invoice_id: '1315' },
+  metadata: Record<string, string> = { invoice_id: '1315' },
   money: { amount: number; currency: string } = { amount: 250_000, currency: 'usd' },
 ) =>
   JSON.stringify({
@@ -209,7 +209,7 @@ describe('minting the link an invoice is paid at', () => {
     const keys = harness.server.fetch.mock.calls.map(([request]) =>
       (request as Request).headers.get('idempotency-key'),
     )
-    expect(keys).toEqual(['ezacto-invoice-1315-price', 'ezacto-invoice-1315-link'])
+    expect(keys).toEqual(['invoice-1315-price', 'invoice-1315-link'])
   })
 })
 
@@ -240,7 +240,7 @@ describe('receiving a payment', () => {
     // payload, so any amount written here would be a guess.
     const harness = runtime()
     const payload = paidSession(
-      { ezacto_invoice_id: '1315' },
+      { invoice_id: '1315' },
       { amount: 808_193_392, currency: 'crc' },
     )
     expect(
