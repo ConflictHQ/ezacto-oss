@@ -926,7 +926,7 @@ describe('invoice browse browser behavior', () => {
     expect(dialog.open).toBe(true)
     // The dialog says the two things are separate and which order they run in.
     expect(dialog.textContent).toContain('Also deliver by email')
-    expect(dialog.textContent).toContain("It lists this invoice's line items, with whatever attachments are set for this invoice")
+    expect(dialog.textContent).toContain("It lists this invoice's line items, with the attachments chosen below.")
     expect(dialog.textContent).toContain('%invoice_number%')
 
     const recipients = document.querySelector<HTMLTextAreaElement>(

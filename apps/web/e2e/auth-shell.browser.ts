@@ -2071,21 +2071,50 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
     .fill('Invoice #%invoice_id% totals %invoice_amount% and is due %invoice_due_date%.')
   await composer.getByLabel('Record a planned reminder date').check()
   await composer.locator('[data-invoice-composer-reminder-date]').fill('2099-09-30')
+  // What goes with the email is chosen once there is an email: the PDF box
+  // opens on the invoice's own answer, and waits for delivery to be asked for.
+  const attachPdf = composer.getByRole('checkbox', { name: 'Attach a PDF of this invoice' })
+  await expect(attachPdf).toBeDisabled()
+  await expect(attachPdf).not.toBeChecked()
+  await composer.getByLabel('Also deliver by email').check()
+  await expect(attachPdf).toBeEnabled()
+  await attachPdf.check()
+  await composer.locator('[data-invoice-composer-confirm]').check()
+  // The invoice has two files staged, so attaching them is on offer too.
+  await expect(composer.getByRole('checkbox', { name: 'Attach files added to this invoice' })).toBeVisible()
   for (const control of [
     composer.locator('[data-invoice-composer-recipients]'),
     composer.locator('[data-invoice-composer-subject]'),
     composer.locator('[data-invoice-composer-body]'),
-    composer.getByRole('button', { name: 'Send invoice', exact: true }),
+    composer.locator('label', { hasText: 'Attach a PDF of this invoice' }),
+    composer.getByRole('button', { name: 'Send and deliver', exact: true }),
   ]) {
     await expectPhoneControl(control)
   }
   await expectNoPageOverflow(page)
+  const order: string[] = []
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname
+    if (request.method() !== 'POST') return
+    if (path.endsWith('/document-preference')) order.push('preference')
+    else if (/\/transitions$/u.test(path)) order.push('send')
+    else if (/\/deliveries$/u.test(path)) order.push('deliver')
+  })
+  const preferred = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/invoices/${generatedId}/document-preference` &&
+      response.request().method() === 'POST',
+  )
   const sent = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname.match(/^\/api\/v1\/invoices\/\d+\/transitions$/u) !==
         null && response.request().method() === 'POST',
   )
-  await composer.getByRole('button', { name: 'Send invoice', exact: true }).click()
+  await composer.getByRole('button', { name: 'Send and deliver', exact: true }).click()
+  const preferredResponse = await preferred
+  expect(preferredResponse.status()).toBe(200)
+  // Only what was changed from what the invoice would do anyway.
+  expect(preferredResponse.request().postDataJSON()).toEqual({ attach_pdf: true })
   const sentResponse = await sent
   expect(sentResponse.status()).toBe(201)
   expect(sentResponse.request().postDataJSON()).toMatchObject({
@@ -2093,13 +2122,33 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
     recipients: [{ name: 'Accounts Payable', email: 'ap@example.test' }],
     subject: `Invoice ${generatedNumber}`,
     body: `Invoice #${generatedPayload.data.id} totals $75.00 and is due ${generatedPayload.data.due_date}.`,
-    attach_pdf: false,
+    attach_pdf: true,
     send_me_a_copy: false,
     thank_you: false,
     reminder: true,
     send_reminder_on: '2099-09-30',
   })
+  // This worker has no mail transport, so the email itself is refused -- after
+  // the sent status committed, which is the case the dialog has to get right:
+  // the email is owed, and nothing may record a second send.
+  await expect(composer.locator('[data-invoice-composer-result]')).toContainText(
+    'The sent status was recorded; submit again to retry the email alone.',
+  )
+  expect(order).toEqual(['preference', 'send', 'deliver'])
+  const persistedPreference = await page.evaluate(
+    async (id) => (await (await fetch(`/api/v1/invoices/${id}/document-preference`)).json()) as {
+      data: { effective: boolean }
+    },
+    generatedId,
+  )
+  expect(persistedPreference.data.effective).toBe(true)
+  await composer.getByLabel('Also deliver by email').uncheck()
+  await composer.getByRole('button', { name: 'Skip the email', exact: true }).click()
   await expect(composer).toBeHidden()
+  await expect(page.locator('[data-invoice-payment-status]')).toHaveText(
+    'The sent status was already recorded. The email was not sent.',
+  )
+  expect(order).toEqual(['preference', 'send', 'deliver'])
   // The invoice was sent through the real worker, so D1 carries sent_at and
   // the document says Sent. Open would mean it still has to go out.
   await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Sent')

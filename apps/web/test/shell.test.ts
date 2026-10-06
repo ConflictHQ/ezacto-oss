@@ -837,8 +837,12 @@ describe('S-1 through S-5 application shell', () => {
     expect(detail).toContain('data-invoice-composer-deliver-toggle')
     expect(detail).toContain('Also deliver by email')
     expect(detail).toContain('data-invoice-composer-confirm')
-    // What the client actually receives: the lines, and still no PDF.
-    expect(detail).toContain("It lists this invoice's line items, with whatever attachments are set for this invoice")
+    // What the client actually receives: the lines, and the attachments the
+    // dialog itself offers -- the PDF, the hours report and the invoice's files.
+    expect(detail).toContain("It lists this invoice's line items, with the attachments chosen below.")
+    expect(detail).toContain('Attach a PDF of this invoice')
+    expect(detail).toContain('Attach the hours report')
+    expect(detail).toContain('Attach files added to this invoice')
     expect(detail).toContain('data-invoice-reminder-line')
     expect(detail).toContain('data-invoice-composer-dialog')
     expect(detail).toContain('%invoice_number%')

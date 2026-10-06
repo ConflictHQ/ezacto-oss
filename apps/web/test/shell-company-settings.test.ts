@@ -226,6 +226,154 @@ describe('company settings', () => {
     globalThis.location.hash = ''
   })
 
+  it('[browser] saves what an invoice email carries by default, writing only what changed', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    globalThis.location.hash = '#invoices'
+    const defaults = {
+      company_name: 'Northwind Studio',
+      company_address: '1 Example Way',
+      notes: null,
+      subject: null,
+    }
+    const setOrganizationInvoiceDocuments = vi.fn(
+      async (input: Record<string, unknown>) => ({
+        attach_pdf: false,
+        attach_files: true,
+        attach_journal: false as const,
+        journal_formats: ['pdf' as const],
+        ...input,
+      }),
+    )
+    const api: ShellApi = {
+      ...companyApi(),
+      getInvoiceDefaults: vi.fn(async () => defaults),
+      updateInvoiceDefaults: vi.fn(async () => defaults),
+      getOrganizationInvoiceDocuments: vi.fn(async () => ({
+        attach_pdf: false,
+        attach_files: true,
+        attach_journal: false as const,
+        journal_formats: ['pdf' as const],
+      })),
+      setOrganizationInvoiceDocuments,
+    }
+    await mountShell(api)
+
+    const form = document.querySelector<HTMLFormElement>('[data-invoice-defaults-form]')!
+    await vi.waitFor(() => expect(form.hidden).toBe(false))
+    // A third section of the same form, under its own heading.
+    const heading = [...form.querySelectorAll('h3')].map((item) => item.textContent)
+    expect(heading).toEqual(['Company information', 'Default values', 'Sending'])
+    const pdf = form.querySelector<HTMLInputElement>('[data-invoice-defaults-attach-pdf]')!
+    const files = form.querySelector<HTMLInputElement>('[data-invoice-defaults-attach-files]')!
+    const journal = form.querySelector<HTMLInputElement>('[data-invoice-defaults-attach-journal]')!
+    expect(pdf.closest('label')?.hidden).toBe(false)
+    expect(pdf.checked).toBe(false)
+    expect(files.checked).toBe(true)
+    expect(journal.checked).toBe(false)
+    // The report's detail and files only matter while it is attached.
+    const detail = form.querySelector<HTMLElement>('[data-invoice-defaults-journal-detail]')!
+    expect(detail.hidden).toBe(true)
+
+    pdf.click()
+    journal.click()
+    expect(detail.hidden).toBe(false)
+    form.querySelector<HTMLSelectElement>('[data-invoice-defaults-journal-level]')!.value = 'summary'
+    form.querySelector<HTMLInputElement>('[data-invoice-defaults-journal-formats] input[value="pdf"]')!.click()
+    form.requestSubmit()
+    // A report with no files to go as is refused before anything is written.
+    expect(document.querySelector('[data-invoice-defaults-result]')?.textContent).toBe(
+      'Choose at least one file for the hours report.',
+    )
+    expect(api.updateInvoiceDefaults).not.toHaveBeenCalled()
+
+    form.querySelector<HTMLInputElement>('[data-invoice-defaults-journal-formats] input[value="xlsx"]')!.click()
+    form.requestSubmit()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-defaults-result]')?.textContent).toBe('Saved.'),
+    )
+    expect(api.updateInvoiceDefaults).toHaveBeenCalledTimes(1)
+    // Files were left alone, so they are not written over whatever is stored.
+    expect(setOrganizationInvoiceDocuments).toHaveBeenCalledWith(
+      { attach_pdf: true, attach_journal: 'summary', journal_formats: ['xlsx'] },
+      expect.any(AbortSignal),
+    )
+
+    // Saving again with nothing changed under Sending writes only the rest.
+    form.requestSubmit()
+    await vi.waitFor(() => expect(api.updateInvoiceDefaults).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-defaults-result]')?.textContent).toBe('Saved.'),
+    )
+    expect(setOrganizationInvoiceDocuments).toHaveBeenCalledTimes(1)
+    globalThis.location.hash = ''
+  })
+
+  it('[browser] says which half of the invoice settings a failed save kept', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    globalThis.location.hash = '#invoices'
+    const defaults = { company_name: 'Northwind Studio', company_address: null, notes: null, subject: null }
+    const api: ShellApi = {
+      ...companyApi(),
+      getInvoiceDefaults: vi.fn(async () => defaults),
+      updateInvoiceDefaults: vi.fn(async () => defaults),
+      getOrganizationInvoiceDocuments: vi.fn(async () => ({
+        attach_pdf: false,
+        attach_files: false,
+        attach_journal: false as const,
+        journal_formats: ['pdf' as const],
+      })),
+      setOrganizationInvoiceDocuments: vi.fn(async () => {
+        throw new Error('Storage unavailable.')
+      }),
+    }
+    await mountShell(api)
+    const form = document.querySelector<HTMLFormElement>('[data-invoice-defaults-form]')!
+    await vi.waitFor(() => expect(form.hidden).toBe(false))
+    form.querySelector<HTMLInputElement>('[data-invoice-defaults-attach-pdf]')!.click()
+    form.requestSubmit()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-defaults-result]')?.textContent).toBe(
+        'The company information and default values were saved, but the sending defaults were not: Storage unavailable.',
+      ),
+    )
+    globalThis.location.hash = ''
+  })
+
+  it('[browser] keeps the rest of the invoice settings when the sending defaults cannot be read', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    globalThis.location.hash = '#invoices'
+    const defaults = { company_name: 'Northwind Studio', company_address: '1 Example Way', notes: null, subject: null }
+    const api: ShellApi = {
+      ...companyApi(),
+      getInvoiceDefaults: vi.fn(async () => defaults),
+      updateInvoiceDefaults: vi.fn(async () => defaults),
+      getOrganizationInvoiceDocuments: vi.fn(async () => {
+        throw new Error('Storage unavailable.')
+      }),
+      setOrganizationInvoiceDocuments: vi.fn(),
+    }
+    await mountShell(api)
+    const form = document.querySelector<HTMLFormElement>('[data-invoice-defaults-form]')!
+    await vi.waitFor(() => expect(form.hidden).toBe(false))
+    expect(document.querySelector('[data-settings-invoices-status]')?.textContent).toBe(
+      'The sending defaults could not be loaded: Storage unavailable.',
+    )
+    expect(
+      [...form.querySelectorAll<HTMLElement>('[data-invoice-defaults-sending]')].every(
+        (part) => part.hidden,
+      ),
+    ).toBe(true)
+    form.requestSubmit()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-defaults-result]')?.textContent).toBe('Saved.'),
+    )
+    expect(api.setOrganizationInvoiceDocuments).not.toHaveBeenCalled()
+    globalThis.location.hash = ''
+  })
+
   it('[browser #801] shows the payment reminder default, saves a change, and switches it off', async () => {
     stubModulesEndpoint()
     renderBrowserShell({ view: 'settings-company' })

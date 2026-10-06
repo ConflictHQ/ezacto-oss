@@ -1,5 +1,6 @@
 import type {
   Invoice,
+  InvoiceDocumentPreferenceEnvelope,
   InvoiceLine,
   InvoiceMessage,
   InvoicePayment,
@@ -12,6 +13,8 @@ import {
   invoiceCanMarkSent,
   invoiceCanEditLines,
   invoiceCanRecordPayment,
+  invoiceAttachmentChanges,
+  invoiceAttachmentsEffective,
   invoiceDraft,
   invoiceDraftRebase,
   invoiceEditFocusFromHash,
@@ -758,5 +761,81 @@ describe('invoice edit plan', () => {
       'line-create',
     ])
     expect(plan[0]).toMatchObject({ edit: { subject: 'Mine', purchase_order: 'PO-2' } })
+  })
+})
+
+describe('invoice email attachments', () => {
+  const preference = (
+    overrides: Partial<InvoiceDocumentPreferenceEnvelope['data']> = {},
+  ): InvoiceDocumentPreferenceEnvelope['data'] => ({
+    invoice_id: 7,
+    attach_pdf: false,
+    organization_attach_pdf: false,
+    effective: false,
+    attach_files: false,
+    organization_attach_files: false,
+    effective_files: false,
+    attach_journal: false,
+    organization_attach_journal: false,
+    effective_journal: false,
+    journal_formats: null,
+    organization_journal_formats: ['pdf'],
+    effective_journal_formats: ['pdf'],
+    ...overrides,
+  })
+
+  it('[unit] opens on what the invoice would do anyway', () => {
+    expect(
+      invoiceAttachmentsEffective(
+        preference({ effective: true, effective_journal: 'summary', effective_journal_formats: ['csv'] }),
+      ),
+    ).toEqual({ pdf: true, files: false, journal: 'summary', journalFormats: ['csv'] })
+    // `true` is not a level: the worker attaches nothing for it, so neither does the box.
+    expect(invoiceAttachmentsEffective(preference({ effective_journal: true })).journal).toBe(false)
+  })
+
+  it('[unit] writes only what changed, and hands a choice back to the organization when it matches', () => {
+    const base = preference()
+    const unchanged = invoiceAttachmentsEffective(base)
+    expect(invoiceAttachmentChanges(base, unchanged, true)).toBeNull()
+    expect(
+      invoiceAttachmentChanges(
+        base,
+        { pdf: true, files: true, journal: 'detailed', journalFormats: ['pdf', 'xlsx'] },
+        true,
+      ),
+    ).toEqual({
+      attach_pdf: true,
+      attach_files: true,
+      attach_journal: 'detailed',
+      journal_formats: ['pdf', 'xlsx'],
+    })
+    // The invoice attached its PDF on its own say-so; unticking it lands back
+    // on the organization's answer, so the invoice follows it again.
+    const pinned = preference({ attach_pdf: true, effective: true })
+    expect(
+      invoiceAttachmentChanges(pinned, { ...invoiceAttachmentsEffective(pinned), pdf: false }, true),
+    ).toEqual({ attach_pdf: null })
+    // No files to attach, no files written, whatever the box says.
+    expect(invoiceAttachmentChanges(base, { ...unchanged, files: true }, false)).toBeNull()
+    // The same files in another order are the same files.
+    const reportOn = preference({ effective_journal: 'detailed', effective_journal_formats: ['pdf', 'csv'] })
+    expect(
+      invoiceAttachmentChanges(
+        reportOn,
+        { ...invoiceAttachmentsEffective(reportOn), journalFormats: ['csv', 'pdf'] },
+        true,
+      ),
+    ).toBeNull()
+  })
+
+  it('[unit] refuses an hours report with no files to send it as', () => {
+    expect(() =>
+      invoiceAttachmentChanges(
+        preference(),
+        { pdf: false, files: false, journal: 'summary', journalFormats: [] },
+        true,
+      ),
+    ).toThrow('Choose at least one file for the hours report.')
   })
 })

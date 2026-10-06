@@ -116,7 +116,27 @@ export const renderInvoiceComposerDialog = (): string => `
             <input id="ez-invoice-reminder-date" name="reminderDate" data-invoice-composer-reminder-date type="date">
           </label>
           <label class="invoice-composer-check"><input name="deliver" data-invoice-composer-deliver-toggle type="checkbox" aria-describedby="invoice-deliver-hint"> Also deliver by email</label>
-          <p class="hint" id="invoice-deliver-hint">The email goes out from the verified organization sender on the configured invoice template, not the subject and message above. It lists this invoice's line items, with whatever attachments are set for this invoice, such as the hours report.</p>
+          <p class="hint" id="invoice-deliver-hint">The email goes out from the verified organization sender on the configured invoice template, not the subject and message above. It lists this invoice's line items, with the attachments chosen below.</p>
+          <fieldset class="invoice-composer-attachments" data-invoice-composer-attachments>
+            <legend>Attach to the email</legend>
+            <label class="invoice-composer-check"><input name="attachPdf" data-invoice-composer-attach-pdf type="checkbox"> Attach a PDF of this invoice</label>
+            <div class="invoice-composer-journal">
+              <label class="invoice-composer-check"><input name="attachJournal" data-invoice-composer-attach-journal type="checkbox"> Attach the hours report</label>
+              <label class="visually-hidden" for="ez-invoice-composer-journal-level">Hours report detail</label>
+              <select id="ez-invoice-composer-journal-level" name="journalLevel" data-invoice-composer-journal-level hidden>
+                <option value="detailed">Every entry</option>
+                <option value="summary">Summary</option>
+              </select>
+              <fieldset class="invoice-composer-formats" data-invoice-composer-journal-formats hidden>
+                <legend class="visually-hidden">Hours report files</legend>
+                <label><input type="checkbox" name="journalFormat" value="pdf"> PDF</label>
+                <label><input type="checkbox" name="journalFormat" value="csv"> CSV</label>
+                <label><input type="checkbox" name="journalFormat" value="xlsx"> Excel</label>
+              </fieldset>
+            </div>
+            <label class="invoice-composer-check" data-invoice-composer-attach-files-label hidden><input name="attachFiles" data-invoice-composer-attach-files type="checkbox"> Attach files added to this invoice</label>
+            <p class="hint" data-invoice-composer-attachments-status role="status" aria-live="polite">Attachments go with the email, so they are chosen once it is to be delivered.</p>
+          </fieldset>
           <label class="invoice-composer-check" data-invoice-composer-confirm-label hidden><input name="confirmed" data-invoice-composer-confirm type="checkbox"> I confirm these recipients and want to send this invoice.</label>
         </section>
         <aside class="invoice-variable-reference" aria-labelledby="invoice-variable-title">

@@ -1942,6 +1942,14 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getInvoiceReminderPreference({ id, ...withSignal(signal) })).data,
   setInvoiceReminderPreference: async (id, reminders, signal) =>
     (await client.setInvoiceReminderPreference({ id, body: { reminders }, ...withSignal(signal) })).data,
+  getInvoiceDocumentPreference: async (id, signal) =>
+    (await client.getInvoiceDocumentPreference({ id, ...withSignal(signal) })).data,
+  setInvoiceDocumentPreference: async (id, input, signal) =>
+    (await client.setInvoiceDocumentPreference({ id, body: input, ...withSignal(signal) })).data,
+  getOrganizationInvoiceDocuments: async (signal) =>
+    (await client.getOrganizationInvoiceDocuments({ ...withSignal(signal) })).data,
+  setOrganizationInvoiceDocuments: async (input, signal) =>
+    (await client.setOrganizationInvoiceDocuments({ body: input, ...withSignal(signal) })).data,
   uploadInvoiceAttachment: async (id, commandId, body, signal) =>
     (
       await client.createInvoiceAttachment({

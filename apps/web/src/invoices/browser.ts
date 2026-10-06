@@ -9,6 +9,7 @@ import {
   type InvoicePayment,
   type InvoicePaymentInput,
   type InvoicePaymentUpdateInput,
+  type InvoiceDocumentPreferenceInput,
   type InvoiceRecipient,
   type InvoiceTransitionInput,
   type Whoami,
@@ -18,6 +19,8 @@ import {
   interpolateInvoiceTemplate,
   invoiceApiErrorCode,
   invoiceApiMessage,
+  invoiceAttachmentChanges,
+  invoiceAttachmentsEffective,
   invoiceCanEditLines,
   invoiceCanIssueTransition,
   invoiceCanMarkSent,
@@ -51,7 +54,10 @@ import {
   invoiceIsPastDue,
   invoiceStateLabel,
   invoiceStatusPill,
+  type InvoiceAttachmentChoice,
+  type InvoiceDocumentPreference,
   type InvoiceHoursReportFormat,
+  type InvoiceJournalFormat,
   type InvoiceOverflowCommand,
   type InvoicePaymentApi,
   type InvoiceQuickBooksState,
@@ -453,6 +459,17 @@ interface ActiveSession {
   readonly generation: number
 }
 
+/**
+ * The attachment choices were refused before anything was sent. Kept apart
+ * from the send's own failures because it means the opposite thing: nothing
+ * left the building, and the held keys are untouched for the retry.
+ */
+class AttachmentChoicesRefused extends Error {
+  constructor(readonly reason: unknown) {
+    super('The attachment choices were not saved.')
+  }
+}
+
 export interface InvoicePaymentController {
   activate(
     identity: Whoami,
@@ -514,6 +531,20 @@ export const createInvoicePaymentController = (
   const composerConfirm = required<HTMLInputElement>('[data-invoice-composer-confirm]')
   const composerResult = required<HTMLElement>('[data-invoice-composer-result]')
   const composerSubmit = required<HTMLButtonElement>('[data-invoice-composer-submit]')
+  const composerAttachments = required<HTMLFieldSetElement>('[data-invoice-composer-attachments]')
+  const composerAttachPdf = required<HTMLInputElement>('[data-invoice-composer-attach-pdf]')
+  const composerAttachJournal = required<HTMLInputElement>('[data-invoice-composer-attach-journal]')
+  const composerJournalLevel = required<HTMLSelectElement>('[data-invoice-composer-journal-level]')
+  const composerJournalFormats = required<HTMLFieldSetElement>(
+    '[data-invoice-composer-journal-formats]',
+  )
+  const composerAttachFilesLabel = required<HTMLElement>(
+    '[data-invoice-composer-attach-files-label]',
+  )
+  const composerAttachFiles = required<HTMLInputElement>('[data-invoice-composer-attach-files]')
+  const composerAttachmentsStatus = required<HTMLElement>(
+    '[data-invoice-composer-attachments-status]',
+  )
   const overflow = required<HTMLElement>('[data-invoice-overflow]')
   const overflowToggle = required<HTMLButtonElement>('[data-invoice-overflow-toggle]')
   const overflowMenu = required<HTMLElement>('[data-invoice-overflow-menu]')
@@ -570,6 +601,11 @@ export const createInvoicePaymentController = (
   let reminders: InvoiceReminderPreference | null = null
   let remindersSaving = false
   let quickBooksSyncing = false
+  // What this invoice's email carries now, as the server resolved it when the
+  // Send dialog opened: null until it is read, and when it cannot be.
+  let documentPreference: InvoiceDocumentPreference | null = null
+  let documentPreferenceLoading = false
+  let documentPreferenceGeneration = 0
 
   const current = (): ActiveSession | null =>
     active !== null &&
@@ -648,6 +684,99 @@ export const createInvoicePaymentController = (
     composerSubject.disabled = frozen
     composerBody.disabled = frozen
     composerReminderToggle.disabled = frozen
+    syncAttachments()
+  }
+
+  const attachmentsOffered = (): boolean =>
+    api.getInvoiceDocumentPreference !== undefined && api.setInvoiceDocumentPreference !== undefined
+
+  const journalFormatBoxes = (): HTMLInputElement[] => [
+    ...composerJournalFormats.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
+  ]
+
+  const chosenAttachments = (): InvoiceAttachmentChoice => ({
+    pdf: composerAttachPdf.checked,
+    files: composerAttachFiles.checked,
+    journal: composerAttachJournal.checked
+      ? composerJournalLevel.value === 'summary'
+        ? 'summary'
+        : 'detailed'
+      : false,
+    journalFormats: journalFormatBoxes()
+      .filter((box) => box.checked)
+      .map((box) => box.value as InvoiceJournalFormat),
+  })
+
+  const showAttachments = (choice: InvoiceAttachmentChoice): void => {
+    composerAttachPdf.checked = choice.pdf
+    composerAttachFiles.checked = choice.files
+    composerAttachJournal.checked = choice.journal !== false
+    composerJournalLevel.value = choice.journal === false ? 'detailed' : choice.journal
+    for (const box of journalFormatBoxes()) {
+      box.checked = choice.journalFormats.includes(box.value as InvoiceJournalFormat)
+    }
+  }
+
+  // Attachments go with the email, so they are offered while it is being
+  // sent and read-only otherwise -- and only once the invoice's own answer is
+  // in, because each box opens on what the invoice would do anyway, and a box
+  // ticked before that answer arrives is a change from nothing anybody saw.
+  // Unlike the recipients they stay open while an email is owed: they are
+  // the invoice's setting, read when the email is built, not part of the
+  // delivery command a retry has to repeat.
+  const syncAttachments = (): void => {
+    composerAttachments.hidden = !attachmentsOffered()
+    const delivering = composerDeliverToggle.checked
+    const usable =
+      delivering &&
+      documentPreference !== null &&
+      !documentPreferenceLoading &&
+      !mutationPending &&
+      !refreshRequired
+    composerAttachPdf.disabled = !usable
+    composerAttachJournal.disabled = !usable
+    composerJournalLevel.disabled = !usable
+    composerJournalLevel.hidden = !composerAttachJournal.checked
+    composerJournalFormats.hidden = !composerAttachJournal.checked
+    for (const box of journalFormatBoxes()) box.disabled = !usable
+    // Files only where the invoice has some to send.
+    composerAttachFilesLabel.hidden = attachments.length === 0
+    composerAttachFiles.disabled = !usable
+    composerAttachmentsStatus.textContent = documentPreferenceLoading
+      ? 'Reading what this invoice attaches…'
+      : documentPreference === null
+        ? 'What this invoice attaches could not be read, so the email goes with its saved choices.'
+        : delivering
+          ? ''
+          : 'Attachments go with the email, so they are chosen once it is to be delivered.'
+    composerAttachmentsStatus.hidden = composerAttachmentsStatus.textContent === ''
+  }
+
+  const loadDocumentPreference = async (session: ActiveSession, invoiceId: number): Promise<void> => {
+    const generation = ++documentPreferenceGeneration
+    documentPreference = null
+    documentPreferenceLoading = true
+    showAttachments({ pdf: false, files: false, journal: false, journalFormats: ['pdf'] })
+    syncComposer()
+    try {
+      const preference = await api.getInvoiceDocumentPreference!(invoiceId, session.signal)
+      if (current() !== session || generation !== documentPreferenceGeneration) return
+      documentPreference = preference
+      showAttachments(invoiceAttachmentsEffective(preference))
+    } catch (error) {
+      if (current() !== session || generation !== documentPreferenceGeneration) return
+      if (session.onSessionFailure(error)) {
+        clearPrivatePresentation()
+        active = null
+        return
+      }
+      documentPreference = null
+    } finally {
+      if (current() === session && generation === documentPreferenceGeneration) {
+        documentPreferenceLoading = false
+        syncComposer()
+      }
+    }
   }
 
   const closeOverflow = (): void => {
@@ -851,6 +980,8 @@ export const createInvoicePaymentController = (
       attachmentStatus.textContent =
         `${attachments.length} ${attachments.length === 1 ? 'file' : 'files'} attached.`
       renderAttachments()
+      // The Send dialog offers the files only once there are some.
+      syncAttachments()
     } catch (error) {
       if (current() !== session) return
       if (session.onSessionFailure(error)) return
@@ -958,6 +1089,9 @@ export const createInvoicePaymentController = (
     sendAttempt = null
     pendingTransition = null
     transitionCommandId = null
+    documentPreference = null
+    documentPreferenceLoading = false
+    documentPreferenceGeneration += 1
     closeDialogs()
     paymentForm.reset()
     deleteForm.reset()
@@ -1192,6 +1326,9 @@ export const createInvoicePaymentController = (
     // submit, all off the attempt, so no entry point sets them independently.
     syncControls()
     composerDialog.showModal()
+    // Read afresh on every opening: the invoice's choices are its own state,
+    // and an earlier send may have changed them.
+    if (attachmentsOffered()) void loadDocumentPreference(session, invoice.id)
     // The fields are frozen while the email is owed, so the retry is what the
     // keyboard lands on.
     if (owed !== null) composerSubmit.focus()
@@ -1372,6 +1509,9 @@ export const createInvoicePaymentController = (
   composerDeliverToggle.addEventListener('change', () => {
     syncComposer()
   })
+  composerAttachJournal.addEventListener('change', () => {
+    syncComposer()
+  })
   composerForm.addEventListener('input', () => {
     // No command id is minted or dropped here. Once a `send` has been issued its
     // outcome may be unknown, and a fresh id on the next submit would record a
@@ -1422,9 +1562,25 @@ export const createInvoicePaymentController = (
     let recipients: InvoiceRecipient[] = []
     let sendReminderOn: string | null = null
     let input: InvoiceTransitionInput | null = null
+    let attachmentChange: InvoiceDocumentPreferenceInput | null = null
     const subject = composerSubject.value.trim()
     const body = composerBody.value.trim()
+    // Recorded on the message the way Harvest recorded it, and only true when
+    // the email that would carry the PDF is part of this submit.
+    const attachPdf = delivering && documentPreference !== null && composerAttachPdf.checked
     try {
+      if (delivering && attachmentsOffered()) {
+        if (documentPreferenceLoading) {
+          throw new Error('Wait for the attachments to load, then send.')
+        }
+        if (documentPreference !== null) {
+          attachmentChange = invoiceAttachmentChanges(
+            documentPreference,
+            chosenAttachments(),
+            attachments.length > 0,
+          )
+        }
+      }
       if (work === 'send') {
         recipients = invoiceRecipients(composerRecipients.value)
         if (subject === '') throw new Error('Enter a subject before recording.')
@@ -1441,7 +1597,7 @@ export const createInvoicePaymentController = (
           recipients,
           subject: interpolateInvoiceTemplate(subject, selectedInvoice),
           body: interpolateInvoiceTemplate(body, selectedInvoice),
-          attach_pdf: false,
+          attach_pdf: attachPdf,
           send_me_a_copy: false,
           thank_you: false,
           reminder: sendReminderOn !== null,
@@ -1492,6 +1648,25 @@ export const createInvoicePaymentController = (
     // issues its own send once the mail is accepted, so the history carries both
     // the message written here and the one the organization template sent.
     const request = (async (): Promise<Invoice> => {
+      // The attachments first: they are read when the email is built, so the
+      // email cannot be queued before they are saved, and a refusal here has
+      // to stop before the sent status is recorded rather than after it. A
+      // setting, not a command -- writing it twice writes the same thing -- so
+      // it needs no key of its own; the held keys below are what keep a retry
+      // from sending twice.
+      if (attachmentChange !== null) {
+        try {
+          const saved = await api.setInvoiceDocumentPreference!(
+            selectedInvoice.id,
+            attachmentChange,
+            session.signal,
+          )
+          // Adopted, so a retry after a later failure finds nothing to change.
+          if (current() === session) documentPreference = saved
+        } catch (error) {
+          throw new AttachmentChoicesRefused(error)
+        }
+      }
       let saved = selectedInvoice
       if (input !== null) {
         saved = await transitionInvoice(
@@ -1556,6 +1731,17 @@ export const createInvoicePaymentController = (
       .catch(async (error: unknown) => {
         if (current() !== session) return
         mutationPending = false
+        if (error instanceof AttachmentChoicesRefused) {
+          if (session.onSessionFailure(error.reason)) {
+            clearPrivatePresentation()
+            active = null
+            return
+          }
+          // Nothing was sent. The attempt and its keys stay exactly as they
+          // were, so submitting again is the same send, not a second one.
+          composerResult.textContent = `The attachment choices were not saved, so nothing was sent: ${apiMessage(error.reason)} Submit again to retry.`
+          return
+        }
         // Holding the key is what keeps a retry from re-sending, and retiring
         // it is what keeps a lost response from bricking the dialog. Both come
         // off the failure: `command_id_reused` is the ledger reporting this

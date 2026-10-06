@@ -15,6 +15,7 @@ import { createInvoicePaymentController } from '../src/invoices/browser.js'
 import {
   invoiceQuickBooksLine,
   invoiceRemindersLine,
+  type InvoiceDocumentPreference,
   type InvoicePaymentApi,
   type InvoiceReminderPreference,
 } from '../src/invoices/model.js'
@@ -1224,5 +1225,256 @@ describe('the Reminders fact and its switch (issue 850)', () => {
     toggle().dispatchEvent(new Event('change'))
     await vi.waitFor(() => expect(line()).toBe('Next reminder Sep 18, 2026'))
     expect(setInvoiceReminderPreference).toHaveBeenLastCalledWith(expect.any(Number), null, expect.any(AbortSignal))
+  })
+})
+
+describe('the Send dialog attachments', () => {
+  const preference = (overrides: Partial<InvoiceDocumentPreference> = {}): InvoiceDocumentPreference => ({
+    invoice_id: 7,
+    attach_pdf: false,
+    organization_attach_pdf: false,
+    effective: false,
+    attach_files: false,
+    organization_attach_files: false,
+    effective_files: false,
+    attach_journal: false,
+    organization_attach_journal: false,
+    effective_journal: false,
+    journal_formats: null,
+    organization_journal_formats: ['pdf'],
+    effective_journal_formats: ['pdf'],
+    ...overrides,
+  })
+
+  /**
+   * A draft with one staged file, sent from the dialog. Every request lands
+   * in `calls` in the order it was made, which is what these tests are about:
+   * the attachments are written before anything is sent, or not at all.
+   */
+  const sending = (overrides: Partial<InvoicePaymentApi> = {}) => {
+    renderDetail()
+    let current = invoice('SEND', {
+      state: 'draft',
+      sent_at: null,
+      due_date: '2099-09-30',
+      line_items: [line()],
+    })
+    let stored = preference()
+    const calls: string[] = []
+    const api: Partial<InvoicePaymentApi> = {
+      getInvoice: vi.fn(async () => current),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+      listInvoiceAttachments: vi.fn(async () => [
+        {
+          id: 5,
+          name: 'purchase-order.pdf',
+          content_hash: 'sha256-fixture',
+          byte_size: 2_048,
+          content_type: 'application/pdf',
+          uploaded_by_user_id: 1,
+          created_at: timestamp,
+          updated_at: timestamp,
+        },
+      ]),
+      getInvoiceDocumentPreference: vi.fn(async () => stored),
+      setInvoiceDocumentPreference: vi.fn(async (_id: number, input) => {
+        calls.push('preference')
+        stored = preference({
+          effective: input.attach_pdf ?? stored.effective,
+          effective_journal: input.attach_journal ?? stored.effective_journal,
+          effective_journal_formats: input.journal_formats ?? stored.effective_journal_formats,
+        })
+        return stored
+      }),
+      transitionInvoice: vi.fn(
+        async (_id: number, _key: string, input: InvoiceTransitionInput) => {
+          calls.push('send')
+          current = {
+            ...current,
+            state: 'open',
+            sent_at: timestamp,
+            version: input.expected_version + 1,
+          }
+          return current
+        },
+      ),
+      deliverInvoiceEmail: vi.fn(async (_id: number, _key: string, input) => {
+        calls.push('deliver')
+        current = { ...current, version: input.expected_version + 1 }
+        return current
+      }),
+      ...overrides,
+    }
+    return { api, calls }
+  }
+
+  const box = (selector: string): HTMLInputElement =>
+    document.querySelector<HTMLInputElement>(selector)!
+
+  const openComposer = async (api: Partial<InvoicePaymentApi>): Promise<void> => {
+    await createInvoicePaymentController(api).activate(
+      identity(1),
+      new AbortController().signal,
+      () => false,
+    )
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-attachment-status]')?.textContent).toBe(
+        '1 file attached.',
+      ),
+    )
+    document.querySelector<HTMLButtonElement>('[data-invoice-send]')!.click()
+    // The dialog opens on the invoice's own answer, read for this opening.
+    await vi.waitFor(() =>
+      expect(api.getInvoiceDocumentPreference).toHaveBeenCalledWith(7, expect.any(AbortSignal)),
+    )
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('[data-invoice-composer-attachments-status]')?.textContent,
+      ).not.toBe('Reading what this invoice attaches…'),
+    )
+  }
+
+  const deliverTo = (recipient: string): void => {
+    const recipients = document.querySelector<HTMLTextAreaElement>(
+      '[data-invoice-composer-recipients]',
+    )!
+    recipients.value = recipient
+    recipients.dispatchEvent(new Event('input', { bubbles: true }))
+    box('[data-invoice-composer-deliver-toggle]').click()
+    box('[data-invoice-composer-confirm]').click()
+  }
+
+  it('[e2e:invoice-email] opens on what the invoice attaches, and saves only what changed before sending', async () => {
+    const { api, calls } = sending()
+    await openComposer(api)
+
+    // Attachments go with the email, so they wait for it.
+    expect(box('[data-invoice-composer-attach-pdf]').disabled).toBe(true)
+    expect(document.querySelector('[data-invoice-composer-attachments-status]')?.textContent).toBe(
+      'Attachments go with the email, so they are chosen once it is to be delivered.',
+    )
+    // The file is staged, so attaching files is a choice on offer.
+    expect(
+      document.querySelector<HTMLElement>('[data-invoice-composer-attach-files-label]')?.hidden,
+    ).toBe(false)
+    deliverTo('Accounts Payable <ap@example.test>')
+    const pdf = box('[data-invoice-composer-attach-pdf]')
+    expect(pdf.disabled).toBe(false)
+    expect(pdf.checked).toBe(false)
+    pdf.click()
+    const journal = box('[data-invoice-composer-attach-journal]')
+    journal.click()
+    const level = document.querySelector<HTMLSelectElement>('[data-invoice-composer-journal-level]')!
+    expect(level.hidden).toBe(false)
+    level.value = 'summary'
+    box('[data-invoice-composer-journal-formats] input[value="csv"]').click()
+    submit('[data-invoice-composer-form]')
+
+    await vi.waitFor(() => expect(calls).toEqual(['preference', 'send', 'deliver']))
+    expect(api.setInvoiceDocumentPreference).toHaveBeenCalledWith(
+      7,
+      { attach_pdf: true, attach_journal: 'summary', journal_formats: ['pdf', 'csv'] },
+      expect.any(AbortSignal),
+    )
+    // Recorded on the message, as Harvest recorded it.
+    expect(api.transitionInvoice).toHaveBeenCalledWith(
+      7,
+      expect.any(String),
+      expect.objectContaining({ command: 'send', attach_pdf: true }),
+      expect.any(AbortSignal),
+    )
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLDialogElement>('[data-invoice-composer-dialog]')?.open).toBe(
+        false,
+      ),
+    )
+  })
+
+  it('[reliability] sends nothing when the attachments are refused, and a retry is the same send', async () => {
+    const setInvoiceDocumentPreference = vi
+      .fn<NonNullable<InvoicePaymentApi['setInvoiceDocumentPreference']>>()
+      .mockRejectedValueOnce(
+        new EzactoApiError(500, { error: { code: 'internal_error', message: 'Storage unavailable.' } }, null),
+      )
+      .mockImplementation(async () => preference({ effective: true }))
+    let sends = 0
+    const transitionInvoice = vi.fn(
+      async (_id: number, _key: string, input: InvoiceTransitionInput) => {
+        sends += 1
+        if (sends === 1) throw new Error('network unavailable')
+        return invoice('SEND', { state: 'open', sent_at: timestamp, version: input.expected_version + 1 })
+      },
+    )
+    const { api, calls } = sending({ setInvoiceDocumentPreference, transitionInvoice })
+    await openComposer(api)
+    deliverTo('ap@example.test')
+    box('[data-invoice-composer-attach-pdf]').click()
+
+    submit('[data-invoice-composer-form]')
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-composer-result]')?.textContent).toBe(
+        'The attachment choices were not saved, so nothing was sent: Storage unavailable. Submit again to retry.',
+      ),
+    )
+    expect(transitionInvoice).not.toHaveBeenCalled()
+    expect(calls).toEqual([])
+
+    // Saved this time; the send itself then fails on the way.
+    submit('[data-invoice-composer-form]')
+    await vi.waitFor(() => expect(transitionInvoice).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-composer-result]')?.textContent).toBe(
+        'network unavailable',
+      ),
+    )
+    // Saving the choices again would write what is already written: the
+    // retry is the send alone, under the key it was first sent with.
+    submit('[data-invoice-composer-form]')
+    await vi.waitFor(() => expect(transitionInvoice).toHaveBeenCalledTimes(2))
+    expect(setInvoiceDocumentPreference).toHaveBeenCalledTimes(2)
+    expect(transitionInvoice.mock.calls[1]?.[1]).toBe(transitionInvoice.mock.calls[0]?.[1])
+  })
+
+  it('[browser] says when it cannot read the attachments, and sends without touching them', async () => {
+    const { api, calls } = sending({
+      getInvoiceDocumentPreference: vi.fn(async () => {
+        throw new EzactoApiError(503, { error: { code: 'unavailable', message: 'down' } }, null)
+      }),
+      listInvoiceAttachments: vi.fn(async () => []),
+    })
+    await createInvoicePaymentController(api).activate(identity(1), new AbortController().signal, () => false)
+    document.querySelector<HTMLButtonElement>('[data-invoice-send]')!.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-composer-attachments-status]')?.textContent).toBe(
+        'What this invoice attaches could not be read, so the email goes with its saved choices.',
+      ),
+    )
+    // No staged files, so no files to offer.
+    expect(
+      document.querySelector<HTMLElement>('[data-invoice-composer-attach-files-label]')?.hidden,
+    ).toBe(true)
+    deliverTo('ap@example.test')
+    expect(box('[data-invoice-composer-attach-pdf]').disabled).toBe(true)
+    submit('[data-invoice-composer-form]')
+    await vi.waitFor(() => expect(calls).toEqual(['send', 'deliver']))
+    expect(api.setInvoiceDocumentPreference).not.toHaveBeenCalled()
+    expect(api.transitionInvoice).toHaveBeenCalledWith(
+      7,
+      expect.any(String),
+      expect.objectContaining({ attach_pdf: false }),
+      expect.any(AbortSignal),
+    )
+  })
+
+  it('[browser] offers no attachments where the build has no route for them', async () => {
+    const { api } = sending()
+    delete api.getInvoiceDocumentPreference
+    delete api.setInvoiceDocumentPreference
+    await createInvoicePaymentController(api).activate(identity(1), new AbortController().signal, () => false)
+    document.querySelector<HTMLButtonElement>('[data-invoice-send]')!.click()
+    expect(document.querySelector<HTMLElement>('[data-invoice-composer-attachments]')?.hidden).toBe(
+      true,
+    )
   })
 })

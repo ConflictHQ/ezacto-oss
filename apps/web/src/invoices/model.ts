@@ -14,6 +14,8 @@ import type {
   InvoicePaymentUpdateInput,
   InvoiceQuickBooksEnvelope,
   InvoiceReminderPreferenceEnvelope,
+  InvoiceDocumentPreferenceEnvelope,
+  InvoiceDocumentPreferenceInput,
   InvoiceRecipient,
   InvoiceTransitionInput,
   VersionedRowDeleteInput,
@@ -70,6 +72,8 @@ export const invoiceConflictCodes: ReadonlySet<string> = new Set([
 /** Where one invoice stands with QuickBooks, as the API reports it (issue 819). */
 export type InvoiceQuickBooksState = InvoiceQuickBooksEnvelope['data']
 export type InvoiceReminderPreference = InvoiceReminderPreferenceEnvelope['data']
+/** Which documents go with an invoice's email, its own choice and what it resolves to. */
+export type InvoiceDocumentPreference = InvoiceDocumentPreferenceEnvelope['data']
 
 export type InvoiceState = Invoice['state']
 
@@ -196,6 +200,91 @@ export interface InvoicePaymentApi {
     reminders: boolean | null,
     signal?: AbortSignal,
   ): Promise<InvoiceReminderPreference>
+  /**
+   * What the Send dialog attaches: the invoice PDF, the hours report and the
+   * invoice's own files, each the invoice's own choice or the organization's
+   * (issues 626 and 647). Optional because a deployment without the routes
+   * has nothing to choose, and the dialog then offers nothing.
+   */
+  getInvoiceDocumentPreference?(id: number, signal?: AbortSignal): Promise<InvoiceDocumentPreference>
+  setInvoiceDocumentPreference?(
+    id: number,
+    input: InvoiceDocumentPreferenceInput,
+    signal?: AbortSignal,
+  ): Promise<InvoiceDocumentPreference>
+}
+
+export type InvoiceJournalFormat = 'pdf' | 'csv' | 'xlsx'
+
+/** The hours report's files, in the order the product lists them. */
+export const invoiceJournalFormats: readonly InvoiceJournalFormat[] = ['pdf', 'csv', 'xlsx']
+
+/** What goes with an invoice's email, as the Send dialog's boxes hold it. */
+export interface InvoiceAttachmentChoice {
+  readonly pdf: boolean
+  readonly files: boolean
+  readonly journal: 'detailed' | 'summary' | false
+  readonly journalFormats: readonly InvoiceJournalFormat[]
+}
+
+const journalLevel = (value: unknown): 'detailed' | 'summary' | false =>
+  value === 'detailed' || value === 'summary' ? value : false
+
+const sameFormats = (
+  left: readonly InvoiceJournalFormat[],
+  right: readonly InvoiceJournalFormat[],
+): boolean => [...left].sort().join() === [...right].sort().join()
+
+/**
+ * What the email will carry if nobody changes anything: the invoice's own
+ * choices where it has them, the organization's where it does not. The
+ * server resolves it, so the dialog opens on its answer rather than working
+ * the precedence out a second time.
+ */
+export const invoiceAttachmentsEffective = (
+  preference: Readonly<InvoiceDocumentPreference>,
+): InvoiceAttachmentChoice => ({
+  pdf: preference.effective,
+  files: preference.effective_files,
+  journal: journalLevel(preference.effective_journal),
+  journalFormats: preference.effective_journal_formats,
+})
+
+/**
+ * The invoice's own preference, written only where the dialog was changed from
+ * what the invoice would have done anyway -- or null when nothing was.
+ *
+ * A choice that lands back on the organization's default is written as null,
+ * which hands the invoice back to the organization rather than pinning it to a
+ * value that happens to match today: a default changed next month should still
+ * reach it. Files are only ever written where the invoice has some to offer.
+ */
+export const invoiceAttachmentChanges = (
+  preference: Readonly<InvoiceDocumentPreference>,
+  chosen: Readonly<InvoiceAttachmentChoice>,
+  filesOffered: boolean,
+): InvoiceDocumentPreferenceInput | null => {
+  if (chosen.journal !== false && chosen.journalFormats.length === 0) {
+    throw new Error('Choose at least one file for the hours report.')
+  }
+  const effective = invoiceAttachmentsEffective(preference)
+  const input: InvoiceDocumentPreferenceInput = {}
+  if (chosen.pdf !== effective.pdf) {
+    input.attach_pdf = chosen.pdf === preference.organization_attach_pdf ? null : chosen.pdf
+  }
+  if (filesOffered && chosen.files !== effective.files) {
+    input.attach_files = chosen.files === preference.organization_attach_files ? null : chosen.files
+  }
+  if (chosen.journal !== effective.journal) {
+    input.attach_journal =
+      chosen.journal === journalLevel(preference.organization_attach_journal) ? null : chosen.journal
+  }
+  if (chosen.journal !== false && !sameFormats(chosen.journalFormats, effective.journalFormats)) {
+    input.journal_formats = sameFormats(chosen.journalFormats, preference.organization_journal_formats)
+      ? null
+      : [...chosen.journalFormats]
+  }
+  return Object.keys(input).length === 0 ? null : input
 }
 
 /**

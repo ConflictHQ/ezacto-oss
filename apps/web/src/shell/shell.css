@@ -1734,6 +1734,60 @@
   width: auto;
   min-height: auto;
 }
+/* What goes with the email. Grouped under the delivery switch because it
+   only means anything once the email is being sent, and greyed until then. */
+.invoice-composer-attachments {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+.invoice-composer-attachments > legend {
+  padding: 0 4px;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.invoice-composer-attachments .invoice-composer-check {
+  min-height: 44px;
+  color: var(--ez-ink);
+  font-size: 14px;
+}
+.invoice-composer-attachments .invoice-composer-check:has(input:disabled) {
+  color: var(--ez-muted);
+}
+.invoice-composer-journal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+.invoice-composer-journal select {
+  width: auto;
+}
+.invoice-composer-formats {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.invoice-composer-formats label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  color: var(--ez-ink);
+  font-size: 14px;
+}
+.invoice-composer-formats input {
+  width: auto;
+  min-height: auto;
+}
 .invoice-variable-reference {
   align-self: start;
   padding: 16px;
@@ -4083,6 +4137,50 @@ dialog h2,
   display: grid;
   gap: 4px;
   color: var(--ez-muted);
+}
+
+/* A checkbox row in the invoice settings form: the box beside its words, not
+   above them, however the form lays out its other fields. Specific enough to
+   hold against the form's own label and input rules. */
+.settings-form.invoice-defaults-form label.invoice-defaults-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  color: var(--ez-ink);
+}
+.settings-form.invoice-defaults-form .invoice-defaults-check input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--ez-action);
+}
+.settings-form.invoice-defaults-form .invoice-defaults-select {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font: inherit;
+}
+.settings-form.invoice-defaults-form .invoice-defaults-formats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 16px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.settings-form.invoice-defaults-form .invoice-defaults-formats legend {
+  padding: 0;
+  color: var(--ez-muted);
+  font-size: 13px;
 }
 
 /* The BILL delivery switch on a client (issue 542). Its own section rather
