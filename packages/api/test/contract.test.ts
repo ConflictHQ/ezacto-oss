@@ -482,7 +482,7 @@ describe("OpenAPI contract", () => {
       required: string[];
       additionalProperties: boolean;
     }>;
-    expect(generations).toHaveLength(2);
+    expect(generations).toHaveLength(3);
     expect(generations[0]?.required).not.toContain("from");
     expect(generations[1]).toEqual({
       type: "object",
@@ -490,6 +490,40 @@ describe("OpenAPI contract", () => {
       properties: {
         kind: { const: "free_form" },
         client_id: { type: "integer", minimum: 1 },
+      },
+      additionalProperties: false,
+    });
+    // A band: a selection, its fee and its terms, and none of the summary
+    // types a tracked request prices its selection by.
+    expect(generations[2]).toMatchObject({
+      required: [
+        "kind",
+        "client_id",
+        "to",
+        "project_ids",
+        "line_items",
+        "claim_mode",
+      ],
+      additionalProperties: false,
+    });
+    expect(Object.keys(generations[2]!.properties)).toEqual([
+      "kind",
+      "client_id",
+      "from",
+      "to",
+      "project_ids",
+      "line_items",
+      "claim_mode",
+      "claim_ceiling_seconds",
+      "claim_ceiling_cents",
+      "overage_summary_type",
+    ]);
+    expect(generations[2]!.properties.kind).toEqual({ const: "banded" });
+    expect(schemas.InvoiceGenerationEnvelope).toMatchObject({
+      required: ["data", "links"],
+      properties: {
+        data: { $ref: "#/components/schemas/Invoice" },
+        band: { $ref: "#/components/schemas/InvoiceBandClaim" },
       },
       additionalProperties: false,
     });

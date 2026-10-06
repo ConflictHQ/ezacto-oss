@@ -614,15 +614,56 @@ export interface InvoiceGenerationFreeFormRequest {
   clientId: number;
 }
 
+/** One line of a band's fee, written as a free-form line is. */
+export interface InvoiceGenerationFeeLine {
+  kind: string;
+  description: string | null;
+  quantity: number;
+  unitPriceCents: number;
+  projectId: number | null;
+}
+
+/**
+ * A flat fee covering tracked time: the fee lines, and the uninvoiced time on
+ * the projects in the period, all of which the draft takes. The band covers it
+ * all, or the oldest up to a ceiling in hours or in value; what it leaves is
+ * billed after the fee, grouped by `overageSummaryType`.
+ */
+export interface InvoiceGenerationBandedRequest {
+  kind: "banded";
+  clientId: number;
+  from: string | null;
+  to: string;
+  projectIds: readonly number[];
+  lineItems: readonly InvoiceGenerationFeeLine[];
+  claimMode: "all" | "ceiling";
+  claimCeilingSeconds: number | null;
+  claimCeilingCents: number | null;
+  overageSummaryType: InvoiceGenerationTimeSummary | null;
+}
+
 export interface InvoiceGenerationCommand {
   commandId: string;
   principal: UserPrincipal;
-  request: InvoiceGenerationRequest | InvoiceGenerationFreeFormRequest;
+  request:
+    | InvoiceGenerationRequest
+    | InvoiceGenerationFreeFormRequest
+    | InvoiceGenerationBandedRequest;
+}
+
+/** What a banded draft's fee covered, and what it billed past its ceiling. */
+export interface InvoiceBandClaimResource {
+  claimed_entry_count: number;
+  claimed_seconds: number;
+  billed_entry_count: number;
+  billed_seconds: number;
 }
 
 /** Implemented by #50; this API story only owns validation and delegation. */
 export interface InvoiceGenerationPort {
-  generate(input: InvoiceGenerationCommand): Promise<InvoiceResource>;
+  generate(
+    input: InvoiceGenerationCommand,
+  ): Promise<InvoiceResource & { band?: InvoiceBandClaimResource }>;
 }
 
 /**
@@ -840,7 +881,10 @@ const lifecycleCommands = [
   "write_off",
   "reopen",
 ] as const;
-const generationKinds = ["tracked", "free_form"] as const;
+const generationKinds = ["tracked", "free_form", "banded"] as const;
+const claimModes = ["all", "ceiling"] as const;
+/** A fee is a handful of lines; the hours it covers are what can run long. */
+const maximumFeeLines = 100;
 const timeSummaryTypes = ["project", "task", "people", "detailed"] as const;
 const expenseSummaryTypes = [
   "project",
@@ -1244,38 +1288,16 @@ const serializeRetainerLedgerEntry = (
   created_at: entry.createdAt,
 });
 
-const parseGenerationRequest = async <Bindings extends object>(
-  context: Context<ApiContext<Bindings>>,
-): Promise<InvoiceGenerationCommand["request"]> => {
-  const body = await readObjectBody(context);
-  const kindErrors: FieldError[] = [];
-  const kind =
-    enumValue(body, "kind", generationKinds, kindErrors) ?? "tracked";
-  assertFields(kindErrors);
-  if (kind === "free_form") {
-    // The client is the whole request. A range, a project or a summary type
-    // would describe tracked work a blank draft never reads, so each is
-    // refused rather than ignored.
-    const errors = unknownFieldErrors(body, new Set(["kind", "client_id"]));
-    const clientId = integerValue(body, "client_id", errors, {
-      required: true,
-      minimum: 1,
-    });
-    assertFields(errors);
-    return { kind, clientId: clientId! };
-  }
-  const errors = unknownFieldErrors(
-    body,
-    new Set([
-      "kind",
-      "client_id",
-      "from",
-      "to",
-      "project_ids",
-      "time_summary_type",
-      "expense_summary_type",
-    ]),
-  );
+/** The client, period and projects a tracked or banded request selects. */
+const parseGenerationSelection = (
+  body: JsonObject,
+  errors: FieldError[],
+): {
+  clientId: number | undefined;
+  from: string | null | undefined;
+  to: string | null | undefined;
+  projectIds: unknown;
+} => {
   const clientId = integerValue(body, "client_id", errors, {
     required: true,
     minimum: 1,
@@ -1305,6 +1327,243 @@ const parseGenerationRequest = async <Bindings extends object>(
       message: "project_ids must be a non-empty unique array of positive ids",
     });
   }
+  return { clientId: clientId ?? undefined, from, to, projectIds };
+};
+
+/** The fee: free-form lines, each priced as the line editor prices one. */
+const parseFeeLines = (
+  body: JsonObject,
+  errors: FieldError[],
+): InvoiceGenerationFeeLine[] => {
+  const lines = body.line_items;
+  if (
+    !Array.isArray(lines) ||
+    lines.length === 0 ||
+    lines.length > maximumFeeLines
+  ) {
+    errors.push({
+      field: "line_items",
+      code: "invalid_fee",
+      message: `line_items must hold the fee in 1-${maximumFeeLines} lines`,
+    });
+    return [];
+  }
+  return lines.flatMap((line, index) => {
+    const field = `line_items[${index}]`;
+    if (!isJsonObject(line)) {
+      errors.push({
+        field,
+        code: "invalid_line",
+        message: `${field} must be an object`,
+      });
+      return [];
+    }
+    const lineErrors = unknownFieldErrors(
+      line,
+      new Set([
+        "kind",
+        "description",
+        "quantity",
+        "unit_price_cents",
+        "project_id",
+      ]),
+    );
+    const kind = stringValue(line, "kind", lineErrors, {
+      required: true,
+      max: 255,
+    });
+    if (typeof kind === "string" && kind.trim() === "") {
+      lineErrors.push({
+        field: "kind",
+        code: "invalid_string",
+        message: "kind must not be blank",
+      });
+    }
+    const description = stringValue(line, "description", lineErrors, {
+      nullable: true,
+    });
+    const quantity = line.quantity;
+    if (typeof quantity !== "number" || !Number.isFinite(quantity)) {
+      lineErrors.push({
+        field: "quantity",
+        code: "invalid_number",
+        message: "quantity must be a finite JSON number",
+      });
+    }
+    const unitPriceCents = integerValue(line, "unit_price_cents", lineErrors, {
+      required: true,
+      minimum: -9_000_000_000_000,
+      maximum: 9_000_000_000_000,
+    });
+    const projectId = integerValue(line, "project_id", lineErrors, {
+      nullable: true,
+      minimum: 1,
+    });
+    if (
+      lineErrors.length === 0 &&
+      typeof quantity === "number" &&
+      typeof unitPriceCents === "number"
+    ) {
+      try {
+        calculateInvoiceLineAmountCents(quantity, unitPriceCents);
+      } catch {
+        lineErrors.push({
+          field: "quantity",
+          code: "amount_out_of_range",
+          message: "quantity and unit_price_cents produce an invalid amount",
+        });
+      }
+    }
+    if (lineErrors.length > 0) {
+      errors.push(
+        ...lineErrors.map((error) => ({
+          ...error,
+          field: `${field}.${error.field}`,
+        })),
+      );
+      return [];
+    }
+    return [
+      {
+        kind: kind!,
+        description: description ?? null,
+        quantity: quantity as number,
+        unitPriceCents: unitPriceCents!,
+        projectId: projectId ?? null,
+      },
+    ];
+  });
+};
+
+/**
+ * A band's terms. Everything, or a ceiling in exactly one unit with a grouping
+ * for what is billed past it -- and a term that does not apply is refused
+ * rather than ignored, since a limit on a band that takes everything would
+ * read as one that does not.
+ */
+const parseBandTerms = (body: JsonObject, errors: FieldError[]) => {
+  const claimMode = enumValue(body, "claim_mode", claimModes, errors, true);
+  const seconds = integerValue(body, "claim_ceiling_seconds", errors, {
+    nullable: true,
+    minimum: 1,
+  });
+  const cents = integerValue(body, "claim_ceiling_cents", errors, {
+    nullable: true,
+    minimum: 1,
+  });
+  const overage = Object.hasOwn(body, "overage_summary_type")
+    ? nullableEnumValue(body, "overage_summary_type", timeSummaryTypes, errors)
+    : null;
+  if (claimMode === "all") {
+    for (const [field, value] of [
+      ["claim_ceiling_seconds", seconds],
+      ["claim_ceiling_cents", cents],
+      ["overage_summary_type", overage],
+    ] as const) {
+      if (value !== undefined && value !== null) {
+        errors.push({
+          field,
+          code: "not_applicable",
+          message: `${field} applies only to a band with a ceiling`,
+        });
+      }
+    }
+  }
+  if (claimMode === "ceiling") {
+    const inSeconds = seconds !== undefined && seconds !== null;
+    const inCents = cents !== undefined && cents !== null;
+    if (inSeconds === inCents) {
+      errors.push({
+        field: "claim_ceiling",
+        code: "one_required",
+        message:
+          "a ceiling needs one of claim_ceiling_seconds or claim_ceiling_cents",
+      });
+    }
+    if (overage === null) {
+      errors.push({
+        field: "overage_summary_type",
+        code: "required",
+        message: "a ceiling needs overage_summary_type for the hours past it",
+      });
+    }
+  }
+  return {
+    claimMode: claimMode!,
+    claimCeilingSeconds: seconds ?? null,
+    claimCeilingCents: cents ?? null,
+    overageSummaryType: overage ?? null,
+  };
+};
+
+const parseGenerationRequest = async <Bindings extends object>(
+  context: Context<ApiContext<Bindings>>,
+): Promise<InvoiceGenerationCommand["request"]> => {
+  const body = await readObjectBody(context);
+  const kindErrors: FieldError[] = [];
+  const kind =
+    enumValue(body, "kind", generationKinds, kindErrors) ?? "tracked";
+  assertFields(kindErrors);
+  if (kind === "free_form") {
+    // The client is the whole request. A range, a project or a summary type
+    // would describe tracked work a blank draft never reads, so each is
+    // refused rather than ignored.
+    const errors = unknownFieldErrors(body, new Set(["kind", "client_id"]));
+    const clientId = integerValue(body, "client_id", errors, {
+      required: true,
+      minimum: 1,
+    });
+    assertFields(errors);
+    return { kind, clientId: clientId! };
+  }
+  if (kind === "banded") {
+    // A band bills its fee and leaves expenses alone, so the summary types a
+    // tracked request prices its selection with are refused here.
+    const errors = unknownFieldErrors(
+      body,
+      new Set([
+        "kind",
+        "client_id",
+        "from",
+        "to",
+        "project_ids",
+        "line_items",
+        "claim_mode",
+        "claim_ceiling_seconds",
+        "claim_ceiling_cents",
+        "overage_summary_type",
+      ]),
+    );
+    const selection = parseGenerationSelection(body, errors);
+    const lineItems = parseFeeLines(body, errors);
+    const terms = parseBandTerms(body, errors);
+    assertFields(errors);
+    return {
+      kind,
+      clientId: selection.clientId!,
+      from: selection.from ?? null,
+      to: selection.to!,
+      projectIds: selection.projectIds as number[],
+      lineItems,
+      ...terms,
+    };
+  }
+  const errors = unknownFieldErrors(
+    body,
+    new Set([
+      "kind",
+      "client_id",
+      "from",
+      "to",
+      "project_ids",
+      "time_summary_type",
+      "expense_summary_type",
+    ]),
+  );
+  const { clientId, from, to, projectIds } = parseGenerationSelection(
+    body,
+    errors,
+  );
   const timeSummaryType = nullableEnumValue(
     body,
     "time_summary_type",
@@ -1351,9 +1610,9 @@ const installGeneration = <Bindings extends object>(
         message: "Invoice generation is not available in this deployment.",
       });
     }
-    let invoice: InvoiceResource;
+    let generated: InvoiceResource & { band?: InvoiceBandClaimResource };
     try {
-      invoice = await options.generation.generate({
+      generated = await options.generation.generate({
         commandId,
         principal,
         request,
@@ -1361,9 +1620,12 @@ const installGeneration = <Bindings extends object>(
     } catch (error) {
       return translateMoneyError(error);
     }
+    // What a band covered is the command's answer, not part of the invoice.
+    const { band, ...invoice } = generated;
     return context.json(
       {
         data: invoice,
+        ...(band === undefined ? {} : { band }),
         links: { self: `/api/v1/invoices/${invoice.id}` },
       },
       201,

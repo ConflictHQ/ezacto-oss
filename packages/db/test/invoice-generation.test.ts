@@ -10,6 +10,8 @@ import {
   createInvoiceGenerationService,
   maximumGenerationManifestBytes,
   maximumGenerationSourceRows,
+  type GenerateBandedInvoiceRequest,
+  type GeneratedInvoice,
   type InvoiceGenerationDatabase,
   type InvoiceGenerationError,
 } from '../src/invoice-generation.js'
@@ -26,7 +28,12 @@ interface TestDatabase {
   run(sql: string, ...params: unknown[]): Promise<void>
   rows<T>(sql: string, ...params: unknown[]): Promise<T[]>
   migrate(): Promise<void>
-  migrateThrough(id: '0025_time_entry_note_requirements' | '0094_payment_actuals'): Promise<void>
+  migrateThrough(
+    id:
+      | '0025_time_entry_note_requirements'
+      | '0094_payment_actuals'
+      | '0097_organization_invoice_defaults',
+  ): Promise<void>
   close(): Promise<void>
 }
 
@@ -233,9 +240,9 @@ for (const [runtime, factory] of factories) {
       })
       expect(first.line_items).toHaveLength(3)
       expect(first.line_items.map(({ description }) => description)).toEqual([
-        'Generation Project — Design',
-        'Generation Project — Review',
-        'Generation Project — Travel',
+        '[GEN] Generation Project: Design (2026-08-01 - 2026-08-31)',
+        '[GEN] Generation Project: Review (2026-08-01 - 2026-08-31)',
+        '[GEN] Generation Project: Travel (2026-08-01 - 2026-08-31)',
       ])
       expect(
         await database.rows(
@@ -660,8 +667,8 @@ for (const [runtime, factory] of factories) {
       })
 
       expect(invoice.line_items.map(({ kind, description }) => ({ kind, description }))).toEqual([
-        { kind: 'Service', description: 'Generation Project' },
-        { kind: 'Expense', description: 'Generation Project' },
+        { kind: 'Service', description: '[GEN] Generation Project (2026-08-01 - 2026-08-31)' },
+        { kind: 'Expense', description: '[GEN] Generation Project (2026-08-01 - 2026-08-31)' },
       ])
       expect(invoice.line_items).toEqual(
         expect.arrayContaining([
@@ -721,8 +728,14 @@ for (const [runtime, factory] of factories) {
       })
 
       expect(invoice.line_items.map(({ kind, description }) => ({ kind, description }))).toEqual([
-        { kind: 'Service', description: 'Generation Project — Tracked Person' },
-        { kind: 'Expense', description: 'Generation Project — Tracked Person' },
+        {
+          kind: 'Service',
+          description: '[GEN] Generation Project: Tracked Person (2026-08-01 - 2026-08-31)',
+        },
+        {
+          kind: 'Expense',
+          description: '[GEN] Generation Project: Tracked Person (2026-08-01 - 2026-08-31)',
+        },
       ])
     })
 
@@ -739,9 +752,9 @@ for (const [runtime, factory] of factories) {
       })
 
       expect(invoice.line_items.map(({ description }) => description)).toEqual([
-        '2026-08-10 · Tracked Person · Generation Project · Design\nDesign notes',
-        '2026-08-11 · Tracked Person · Generation Project · Review\nReview notes',
-        '2026-08-12 · Tracked Person · Generation Project · Travel\nTrain',
+        '[GEN] Generation Project - 2026-08-10 - Design / Tracked Person: Design notes',
+        '[GEN] Generation Project - 2026-08-11 - Review / Tracked Person: Review notes',
+        '[GEN] Generation Project - 2026-08-12 - Travel / Tracked Person: Train',
       ])
     })
 
@@ -757,10 +770,10 @@ for (const [runtime, factory] of factories) {
       })
 
       expect(invoice.line_items.map(({ description }) => description)).toEqual([
-        '2026-08-10 · Tracked Person · Generation Project · Design',
-        '2026-08-11 · Tracked Person · Generation Project · Review\nReview notes',
+        '[GEN] Generation Project - 2026-08-10 - Design / Tracked Person',
+        '[GEN] Generation Project - 2026-08-11 - Review / Tracked Person: Review notes',
         // Expense notes carry no visibility flag and are unchanged.
-        '2026-08-12 · Tracked Person · Generation Project · Travel\nTrain',
+        '[GEN] Generation Project - 2026-08-12 - Travel / Tracked Person: Train',
       ])
       expect(
         await database.rows<{ description: string }>(
@@ -781,14 +794,122 @@ for (const [runtime, factory] of factories) {
         })
       const invoice = await generate()
       expect(invoice.line_items.map(({ description }) => description)).toEqual([
-        '2026-08-10 · Tracked Person · Generation Project · Design',
-        '2026-08-11 · Tracked Person · Generation Project · Review\nReview notes',
+        '[GEN] Generation Project - 2026-08-10 - Design / Tracked Person',
+        '[GEN] Generation Project - 2026-08-11 - Review / Tracked Person: Review notes',
       ])
 
       // A replay answers with the stored invoice, not a re-derivation: turning
       // the default back to visible afterwards changes nothing already written.
       await database.run(`UPDATE organizations SET report_notes_client_visible_default = 1`)
       expect(await generate()).toEqual(invoice)
+    })
+
+    it("[money] leaves the [code] prefix off a project that has no code, as Harvest did", async () => {
+      const database = await setup()
+      await database.run(`UPDATE projects SET code = '' WHERE id = 1`)
+      const invoice = await generator(database).generate({
+        commandId: 'codeless-project',
+        principal,
+        request: { ...request, timeSummaryType: 'task', expenseSummaryType: 'detailed' },
+      })
+
+      expect(invoice.line_items.map(({ description }) => description)).toEqual([
+        'Generation Project: Design (2026-08-01 - 2026-08-31)',
+        'Generation Project: Review (2026-08-01 - 2026-08-31)',
+        'Generation Project - 2026-08-12 - Travel / Tracked Person: Train',
+      ])
+    })
+
+    it("[money] writes every date in a line in the organization's own date format", async () => {
+      // Harvest wrote the account's format into its lines: the same archive
+      // has 09/17/2019 from years on %m/%d/%Y and 2025-10-08 from years on
+      // %Y-%m-%d. An import carries the account's format over.
+      const database = await setup()
+      await database.run(`UPDATE organizations SET date_format = '%m/%d/%Y'`)
+      const service = generator(database)
+      const grouped = await service.generate({
+        commandId: 'us-dates-grouped',
+        principal,
+        request: { ...request, timeSummaryType: 'project', expenseSummaryType: null },
+      })
+      expect(grouped.line_items.map(({ description }) => description)).toEqual([
+        '[GEN] Generation Project (08/01/2026 - 08/31/2026)',
+      ])
+      // The invoice's own period stays a calendar date; only the words change.
+      expect(grouped).toMatchObject({ period_start: '2026-08-01', period_end: '2026-08-31' })
+
+      await database.run('UPDATE time_entries SET invoice_id = NULL')
+      await database.run(`UPDATE organizations SET date_format = '%d.%m.%Y'`)
+      const detailed = await service.generate({
+        commandId: 'dotted-dates-detailed',
+        principal,
+        request: { ...request, timeSummaryType: 'detailed', expenseSummaryType: 'detailed' },
+      })
+      expect(detailed.line_items.map(({ description }) => description)).toEqual([
+        '[GEN] Generation Project - 10.08.2026 - Design / Tracked Person: Design notes',
+        '[GEN] Generation Project - 11.08.2026 - Review / Tracked Person: Review notes',
+        '[GEN] Generation Project - 12.08.2026 - Travel / Tracked Person: Train',
+      ])
+    })
+
+    it('[money] names the period a grouped line covers from the first entry billed', async () => {
+      // An open start bills everything uninvoiced, and the line says so with
+      // the same dates the invoice carries: its earliest row, then `to`.
+      const database = await setup()
+      const invoice = await generator(database).generate({
+        commandId: 'open-start-line-period',
+        principal,
+        request: { ...request, from: null, timeSummaryType: 'people', expenseSummaryType: null },
+      })
+
+      expect(invoice.period_start).toBe('2026-08-10')
+      expect(invoice.line_items.map(({ description }) => description)).toEqual([
+        '[GEN] Generation Project: Tracked Person (2026-08-10 - 2026-08-31)',
+      ])
+    })
+
+    it("[money] fills the default subject's placeholders for the draft it starts", async () => {
+      // One default for every client: the client, the month the work was in
+      // rather than the month the draft is raised in, and the project when
+      // there is exactly one. The text around them is kept as written.
+      const database = await setup()
+      await database.run(
+        `INSERT INTO projects (id, client_id, name, code, hourly_rate_cents, created_at, updated_at)
+         VALUES (2, 1, 'Second Project', 'TWO', 10001, ?, ?)`,
+        occurredAt,
+        occurredAt,
+      )
+      await database.run(
+        `UPDATE organizations SET invoice_default_subject = ?`,
+        'Acme Studio <> %client%: %period_month_name% %period_year% %project%',
+      )
+      // Raised in September, for August.
+      const service = createInvoiceGenerationService(database.orm, {
+        clock: () => '2026-09-03T12:00:00.000Z',
+      })
+
+      const august = await service.generate(command('subject-one-project'))
+      expect(august).toMatchObject({ issue_date: '2026-09-03', period_start: '2026-08-01' })
+      expect(august.subject).toBe(
+        'Acme Studio <> Generation Client: August 2026 Generation Project',
+      )
+
+      await database.run('UPDATE time_entries SET invoice_id = NULL')
+      await database.run('UPDATE expenses SET invoice_id = NULL')
+      const both = await service.generate({
+        ...command('subject-two-projects'),
+        request: { ...request, projectIds: [1, 2] },
+      })
+      expect(both.subject).toBe('Acme Studio <> Generation Client: August 2026 ')
+
+      // A blank draft has no period, so it takes the month it is issued in.
+      expect((await service.generate(freeForm('subject-free-form'))).subject).toBe(
+        'Acme Studio <> Generation Client: September 2026 ',
+      )
+
+      // A subject that fills to nothing is no subject.
+      await database.run(`UPDATE organizations SET invoice_default_subject = '%project%'`)
+      expect((await service.generate(freeForm('subject-fills-to-nothing'))).subject).toBeNull()
     })
 
     it('[unit] rejects a grouped duration whose sum exceeds a safe integer', async () => {
@@ -1139,6 +1260,11 @@ for (const [runtime, factory] of factories) {
         line_items: [],
       })
       const [receipt] = await storedReceipt(database, 'blank-draft')
+      // Recorded by the service as it stood before bands, so a blank draft's
+      // receipt still replays: its kind hashes exactly as it did.
+      expect(receipt!.inputFingerprint).toBe(
+        'sha256:74d38502804df212d1435f3113936899c722cd9e9cfa9a871c60462e29a33336',
+      )
       expect(JSON.parse(receipt!.requestJson)).toEqual({
         schema_version: 1,
         expected_version: 0,
@@ -1367,6 +1493,654 @@ for (const [runtime, factory] of factories) {
            WHERE command_kind = 'invoice.create' AND completed = 1 ORDER BY command_id`,
         ),
       ).toEqual([{ commandId: 'before-ledger-rebuild' }, { commandId: 'blank-after-rebuild' }])
+    })
+  })
+}
+
+/**
+ * A band's month: two people at their own rates, seeded out of date order so
+ * that "oldest first" can only mean the spent date. By date: 10h of Tracked
+ * Person at 150.00/h (id 14), 5h of Second Person at 100.00/h (13), 2.5h of
+ * Tracked Person (12), 2.75h of Second Person (11) -- 20.25h, worth 2,650.00 at
+ * list. The base seed's expense stays: a band claims time and nothing else.
+ */
+const seedBand = async (database: TestDatabase): Promise<void> => {
+  await database.run('DELETE FROM time_entries')
+  await database.run(
+    `INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+     VALUES (3, 'Second', 'Person', 'member', '[]', ?, ?)`,
+    occurredAt,
+    occurredAt,
+  )
+  await database.run(
+    `INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+     VALUES (2, 1, 3, ?, ?)`,
+    occurredAt,
+    occurredAt,
+  )
+  await database.run(
+    `INSERT INTO time_entries (
+       id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+       spent_date, seconds, seconds_without_timer, rounded_seconds, notes, billable,
+       billable_rate_cents, cost_rate_cents, created_at, updated_at
+     ) VALUES
+       (14, 2, 1, 1, 1, 1, '2026-08-03', 36000, 36000, 36000, 'Discovery', 1,
+        15000, 5000, ?, ?),
+       (13, 3, 1, 2, 2, 2, '2026-08-05', 18000, 18000, 18000, 'Review pass', 1,
+        10000, 5000, ?, ?),
+       (12, 2, 1, 1, 1, 1, '2026-08-07', 9000, 9000, 9000, 'Build', 1,
+        15000, 5000, ?, ?),
+       (11, 3, 1, 2, 2, 2, '2026-08-09', 9900, 9900, 9900, 'Second review', 1,
+        10000, 5000, ?, ?)`,
+    ...Array.from({ length: 8 }, () => occurredAt),
+  )
+}
+
+const feeLine = {
+  kind: 'Service',
+  description: 'Monthly retainer',
+  quantity: 1,
+  unitPriceCents: 150_000,
+  projectId: null,
+}
+
+const bandRequest = (
+  overrides: Partial<GenerateBandedInvoiceRequest> = {},
+): GenerateBandedInvoiceRequest => ({
+  kind: 'banded',
+  clientId: 1,
+  from: '2026-08-01',
+  to: '2026-08-31',
+  projectIds: [1],
+  lineItems: [feeLine],
+  claimMode: 'all',
+  claimCeilingSeconds: null,
+  claimCeilingCents: null,
+  overageSummaryType: null,
+  ...overrides,
+})
+
+const banded = (commandId: string, overrides: Partial<GenerateBandedInvoiceRequest> = {}) => ({
+  commandId,
+  principal,
+  request: bandRequest(overrides),
+})
+
+/** Sixteen hours, the rest billed per person. */
+const hoursCeiling = {
+  claimMode: 'ceiling',
+  claimCeilingSeconds: 57_600,
+  overageSummaryType: 'people',
+} as const
+
+const lineShapes = (invoice: Pick<GeneratedInvoice, 'line_items'>) =>
+  invoice.line_items.map(
+    ({ position, kind, description, quantity, unit_price_cents, amount_cents, project_id }) => ({
+      position,
+      kind,
+      description,
+      quantity,
+      unit_price_cents,
+      amount_cents,
+      project_id,
+    }),
+  )
+
+const feeShape = {
+  position: 0,
+  kind: 'Service',
+  description: 'Monthly retainer',
+  quantity: 1,
+  unit_price_cents: 150_000,
+  amount_cents: 150_000,
+  project_id: null,
+}
+
+const schemaObjects = (database: TestDatabase) =>
+  database.rows<{ type: string; name: string; tbl_name: string; sql: string | null }>(
+    `SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name`,
+  )
+
+for (const [runtime, factory] of factories) {
+  describe(`banded invoice generation (${runtime})`, () => {
+    let active: TestDatabase | undefined
+    afterEach(async () => {
+      await active?.close()
+      active = undefined
+    })
+
+    const setup = async (): Promise<TestDatabase> => {
+      active = await factory()
+      await seed(active)
+      await seedBand(active)
+      return active
+    }
+
+    const invoicedEntries = async (database: TestDatabase, invoiceId: number) =>
+      (
+        await database.rows<{ id: number }>(
+          'SELECT id FROM time_entries WHERE invoice_id = ? ORDER BY id',
+          invoiceId,
+        )
+      ).map(({ id }) => id)
+
+    const absorbed = (database: TestDatabase, invoiceId: number) =>
+      database.rows<{ foregone: number; writtenOff: number }>(
+        `SELECT foregone_billable_cents AS foregone, written_off_cents AS writtenOff
+         FROM invoices WHERE id = ?`,
+        invoiceId,
+      )
+
+    it('[money] covers every uninvoiced hour with the fee and bills none of them', async () => {
+      const database = await setup()
+      const invoice = await generator(database).generate(banded('band-all'))
+
+      expect(invoice).toMatchObject({
+        client_id: 1,
+        currency: 'USD',
+        state: 'draft',
+        version: 0,
+        subject: 'Tracked work 2026-08-01 – 2026-08-31',
+        period_start: '2026-08-01',
+        period_end: '2026-08-31',
+        project_id: 1,
+        amount_cents: 150_000,
+        due_amount_cents: 150_000,
+      })
+      // The fee is the invoice: the hours it covers contribute no line.
+      expect(lineShapes(invoice)).toEqual([feeShape])
+      expect(invoice.band).toEqual({
+        claimed_entry_count: 4,
+        claimed_seconds: 72_900,
+        billed_entry_count: 0,
+        billed_seconds: 0,
+      })
+      expect(await invoicedEntries(database, invoice.id)).toEqual([11, 12, 13, 14])
+      // Expenses are not a band's to claim.
+      expect(await database.rows('SELECT invoice_id AS invoiceId FROM expenses')).toEqual([
+        { invoiceId: null },
+      ])
+      // 2,650.00 of work for a 1,500.00 fee: what the band absorbed is recorded
+      // the way the recurring engine records it, and not as a write-off.
+      expect(await absorbed(database, invoice.id)).toEqual([{ foregone: 115_000, writtenOff: 0 }])
+
+      const [receipt] = await storedReceipt(database, 'band-all')
+      expect(JSON.parse(receipt!.requestJson)).toEqual({
+        schema_version: 1,
+        expected_version: 0,
+        kind: 'banded',
+        client_id: 1,
+        from: '2026-08-01',
+        to: '2026-08-31',
+        project_ids: [1],
+        claim_mode: 'all',
+        claim_ceiling_seconds: null,
+        claim_ceiling_cents: null,
+        overage_summary_type: null,
+        currency: 'USD',
+        amount_cents: 150_000,
+        line_count: 1,
+        fee_line_count: 1,
+        time_entry_count: 4,
+        expense_count: 0,
+        claimed_entry_count: 4,
+        claimed_seconds: 72_900,
+        billed_entry_count: 0,
+        billed_seconds: 0,
+      })
+
+      // The covered time no longer reads as uninvoiced; the expense still does.
+      const report = await createReportRepository(database.orm).uninvoiced({
+        clientId: 1,
+        projectId: 1,
+        from: '2026-08-01',
+        to: '2026-08-31',
+      })
+      expect(report.totals).toEqual([
+        expect.objectContaining({
+          currency: 'USD',
+          roundedSeconds: 0,
+          timeEntryCount: 0,
+          expenseCount: 1,
+          totalCents: 333,
+        }),
+      ])
+    })
+
+    it("[money] a ceiling in hours covers the oldest whole entries and bills the rest at each person's rate", async () => {
+      const database = await setup()
+      const invoice = await generator(database).generate(banded('band-hours', hoursCeiling))
+
+      // By spent date, not id: 10h and 5h fit inside 16. The 2.5h entry would
+      // take the band to 17.5h, so it is left out whole -- and so is everything
+      // after it -- and billed after the fee, per person at that person's rate.
+      expect(invoice.band).toEqual({
+        claimed_entry_count: 2,
+        claimed_seconds: 54_000,
+        billed_entry_count: 2,
+        billed_seconds: 18_900,
+      })
+      expect(lineShapes(invoice)).toEqual([
+        feeShape,
+        {
+          position: 1,
+          kind: 'Service',
+          description: '[GEN] Generation Project: Second Person (2026-08-01 - 2026-08-31)',
+          quantity: 2.75,
+          unit_price_cents: 10_000,
+          amount_cents: 27_500,
+          project_id: 1,
+        },
+        {
+          position: 2,
+          kind: 'Service',
+          description: '[GEN] Generation Project: Tracked Person (2026-08-01 - 2026-08-31)',
+          quantity: 2.5,
+          unit_price_cents: 15_000,
+          amount_cents: 37_500,
+          project_id: 1,
+        },
+      ])
+      expect(invoice.amount_cents).toBe(215_000)
+      // Covered and billed alike, every entry is this invoice's now.
+      expect(await invoicedEntries(database, invoice.id)).toEqual([11, 12, 13, 14])
+      // 2,000.00 of covered work against a 1,500.00 fee; the billed hours are
+      // charged at the value they add, so they absorb nothing.
+      expect(await absorbed(database, invoice.id)).toEqual([{ foregone: 50_000, writtenOff: 0 }])
+      const [receipt] = await storedReceipt(database, 'band-hours')
+      expect(JSON.parse(receipt!.requestJson)).toMatchObject({
+        claim_mode: 'ceiling',
+        claim_ceiling_seconds: 57_600,
+        claim_ceiling_cents: null,
+        overage_summary_type: 'people',
+        amount_cents: 215_000,
+        line_count: 3,
+        fee_line_count: 1,
+        time_entry_count: 4,
+        claimed_entry_count: 2,
+        claimed_seconds: 54_000,
+        billed_entry_count: 2,
+        billed_seconds: 18_900,
+      })
+    })
+
+    it('[money] a ceiling in value covers by worth at list and bills a straddling entry whole', async () => {
+      const database = await setup()
+      const invoice = await generator(database).generate(
+        banded('band-value', {
+          claimMode: 'ceiling',
+          claimCeilingCents: 190_000,
+          overageSummaryType: 'detailed',
+        }),
+      )
+
+      // The oldest entry is worth 1,500.00 and fits; the next is worth 500.00
+      // and would take the band past 1,900.00, so it is billed whole, and the
+      // two after it with it.
+      expect(invoice.band).toEqual({
+        claimed_entry_count: 1,
+        claimed_seconds: 36_000,
+        billed_entry_count: 3,
+        billed_seconds: 36_900,
+      })
+      expect(lineShapes(invoice)).toEqual([
+        feeShape,
+        {
+          position: 1,
+          kind: 'Service',
+          description:
+            '[GEN] Generation Project - 2026-08-09 - Review / Second Person: Second review',
+          quantity: 2.75,
+          unit_price_cents: 10_000,
+          amount_cents: 27_500,
+          project_id: 1,
+        },
+        {
+          position: 2,
+          kind: 'Service',
+          description: '[GEN] Generation Project - 2026-08-07 - Design / Tracked Person: Build',
+          quantity: 2.5,
+          unit_price_cents: 15_000,
+          amount_cents: 37_500,
+          project_id: 1,
+        },
+        {
+          position: 3,
+          kind: 'Service',
+          description:
+            '[GEN] Generation Project - 2026-08-05 - Review / Second Person: Review pass',
+          quantity: 5,
+          unit_price_cents: 10_000,
+          amount_cents: 50_000,
+          project_id: 1,
+        },
+      ])
+      expect(invoice.amount_cents).toBe(265_000)
+      expect(await invoicedEntries(database, invoice.id)).toEqual([11, 12, 13, 14])
+      expect(await absorbed(database, invoice.id)).toEqual([{ foregone: 0, writtenOff: 0 }])
+    })
+
+    it('[money] raises the fee over no uninvoiced time, and says it covered none', async () => {
+      // A flat fee is owed whether or not anything was tracked yet.
+      const database = await setup()
+      await database.run('DELETE FROM time_entries')
+      const service = generator(database)
+
+      const open = await service.generate(
+        banded('band-nothing-open', {
+          from: null,
+          lineItems: [{ ...feeLine, description: null }],
+        }),
+      )
+      // Nothing to date an open start from, so the period has an end and no
+      // invented start, and there is no period subject to write.
+      expect(open).toMatchObject({
+        period_start: null,
+        period_end: '2026-08-31',
+        subject: null,
+        amount_cents: 150_000,
+      })
+      expect(lineShapes(open)).toEqual([{ ...feeShape, description: null }])
+      expect(open.band).toEqual({
+        claimed_entry_count: 0,
+        claimed_seconds: 0,
+        billed_entry_count: 0,
+        billed_seconds: 0,
+      })
+      const [receipt] = await storedReceipt(database, 'band-nothing-open')
+      expect(JSON.parse(receipt!.requestJson)).toMatchObject({
+        from: null,
+        to: '2026-08-31',
+        time_entry_count: 0,
+        claimed_entry_count: 0,
+      })
+
+      const ranged = await service.generate(banded('band-nothing-ranged', hoursCeiling))
+      expect(ranged).toMatchObject({
+        period_start: '2026-08-01',
+        period_end: '2026-08-31',
+        subject: 'Tracked work 2026-08-01 – 2026-08-31',
+      })
+      expect(lineShapes(ranged)).toEqual([feeShape])
+      expect(ranged.band).toMatchObject({ claimed_entry_count: 0, billed_entry_count: 0 })
+      expect(await absorbed(database, ranged.id)).toEqual([{ foregone: 0, writtenOff: 0 }])
+    })
+
+    it('[unit] replays a banded draft and refuses its command id for any other input', async () => {
+      const database = await setup()
+      const service = generator(database)
+      const [first, concurrent] = await Promise.all([
+        service.generate(banded('band-replay', hoursCeiling)),
+        service.generate(banded('band-replay', hoursCeiling)),
+      ])
+      expect(concurrent).toEqual(first)
+      // A replay answers from the receipt, the band included.
+      expect(await service.generate(banded('band-replay', hoursCeiling))).toEqual(first)
+      expect(first.band).toMatchObject({ claimed_entry_count: 2, billed_entry_count: 2 })
+
+      for (const reused of [
+        banded('band-replay', { ...hoursCeiling, claimCeilingSeconds: 7_200 }),
+        banded('band-replay', { ...hoursCeiling, overageSummaryType: 'task' }),
+        banded('band-replay', {
+          ...hoursCeiling,
+          lineItems: [{ ...feeLine, unitPriceCents: 150_001 }],
+        }),
+        banded('band-replay'),
+        command('band-replay'),
+        freeForm('band-replay'),
+      ]) {
+        await expect(service.generate(reused)).rejects.toMatchObject({
+          code: 'command_id_reused',
+        })
+      }
+
+      // Another band over the same selection is another fee; the hours are the
+      // first one's, so it covers none of them.
+      const second = await service.generate(banded('band-second', hoursCeiling))
+      expect(second.band).toEqual({
+        claimed_entry_count: 0,
+        claimed_seconds: 0,
+        billed_entry_count: 0,
+        billed_seconds: 0,
+      })
+      expect(await invoicedEntries(database, first.id)).toEqual([11, 12, 13, 14])
+      expect(
+        await database.rows(
+          `SELECT
+             (SELECT count(*) FROM invoices) AS invoices,
+             (SELECT count(*) FROM invoice_command_ledger WHERE completed = 1) AS receipts,
+             (SELECT count(*) FROM event_outbox
+               WHERE event_type = 'invoice.created') AS createdEvents`,
+        ),
+      ).toEqual([{ invoices: 2, receipts: 2, createdEvents: 2 }])
+    })
+
+    it('[money] starts a banded draft with the organization defaults, placeholders filled', async () => {
+      const database = await setup()
+      await database.run(
+        `UPDATE organizations SET invoice_default_subject = ?, invoice_default_notes = ?`,
+        '%client% retainer, %period_month_name% %period_year% (%project%)',
+        'Pay by transfer.',
+      )
+      const invoice = await generator(database).generate(banded('band-defaults', hoursCeiling))
+      expect(invoice.subject).toBe('Generation Client retainer, August 2026 (Generation Project)')
+      expect(invoice.notes).toBe('Pay by transfer.')
+    })
+
+    it('[unit] refuses a band whose terms do not hold together, and writes nothing', async () => {
+      const database = await setup()
+      await database.run(
+        `INSERT INTO clients (id, name, currency, payment_terms, created_at, updated_at)
+         VALUES (2, 'Other Client', 'USD', 'net_30', ?, ?)`,
+        occurredAt,
+        occurredAt,
+      )
+      await database.run(
+        `INSERT INTO projects (id, client_id, name, code, hourly_rate_cents, created_at, updated_at)
+         VALUES (2, 2, 'Other Project', 'OTH', 10000, ?, ?),
+                (3, 1, 'Euro Project', 'EUR', 10000, ?, ?)`,
+        ...Array.from({ length: 4 }, () => occurredAt),
+      )
+      await database.run(`UPDATE projects SET billing_currency = 'EUR' WHERE id = 3`)
+      const service = generator(database)
+      const cases: Array<[Partial<GenerateBandedInvoiceRequest>, string]> = [
+        [
+          { claimMode: 'ceiling', overageSummaryType: 'people' },
+          'a ceiling needs exactly one positive limit, in seconds or in cents',
+        ],
+        [
+          { ...hoursCeiling, claimCeilingCents: 100_000 },
+          'a ceiling needs exactly one positive limit, in seconds or in cents',
+        ],
+        [
+          { ...hoursCeiling, claimCeilingSeconds: 0 },
+          'a ceiling needs exactly one positive limit, in seconds or in cents',
+        ],
+        [
+          { ...hoursCeiling, overageSummaryType: null },
+          'a ceiling needs overageSummaryType: project, task, people, or detailed',
+        ],
+        [{ claimCeilingSeconds: 3_600 }, 'a band covering all of the time takes no ceiling'],
+        [{ overageSummaryType: 'people' }, 'a band covering all of the time bills no overage'],
+        [{ lineItems: [] }, 'lineItems must hold the fee in 1-100 lines'],
+        [
+          { lineItems: [{ ...feeLine, kind: ' ' }] },
+          'lineItems[0].kind must be a non-blank string of at most 255 characters',
+        ],
+        [
+          { lineItems: [{ ...feeLine, projectId: 2 }] },
+          'a fee line project must belong to the selected client',
+        ],
+        [{ projectIds: [1, 3] }, 'selected projects must bill in one invoice currency'],
+        [{ projectIds: [2] }, 'every selected project must belong to the selected client'],
+      ]
+      for (const [index, [overrides, message]] of cases.entries()) {
+        await expect(
+          service.generate(banded(`band-refused-${index}`, overrides)),
+        ).rejects.toMatchObject({ code: 'invalid_command_input', message })
+      }
+      await expect(
+        service.generate({
+          ...banded('band-with-summary'),
+          request: { ...bandRequest(), timeSummaryType: 'task' } as GenerateBandedInvoiceRequest,
+        }),
+      ).rejects.toMatchObject({
+        code: 'invalid_command_input',
+        message: 'a banded invoice takes no timeSummaryType',
+      })
+      await expect(
+        service.generate({ ...banded('band-by-member'), principal: { userId: 2, profile: 'member' } }),
+      ).rejects.toMatchObject({ code: 'forbidden' })
+      // Hours past the ceiling are billed at their rate, so one without a rate
+      // cannot be billed -- the same refusal a tracked draft gives.
+      await database.run('UPDATE time_entries SET billable_rate_cents = NULL WHERE id = 12')
+      await expect(service.generate(banded('band-unpriced-overage', hoursCeiling))).rejects.toMatchObject({
+        code: 'invalid_command_input',
+        message: 'time entry 12 has no billable rate',
+      })
+      expect(
+        await database.rows(
+          `SELECT (SELECT count(*) FROM invoices) AS invoices,
+             (SELECT count(*) FROM invoice_command_ledger) AS receipts,
+             (SELECT count(*) FROM time_entries WHERE invoice_id IS NOT NULL) AS claimed`,
+        ),
+      ).toEqual([{ invoices: 0, receipts: 0, claimed: 0 }])
+
+      // Covering all of it needs no price: an unpriced hour is an hour.
+      const all = await service.generate(banded('band-covers-unpriced'))
+      expect(all.band).toMatchObject({ claimed_entry_count: 4, billed_entry_count: 0 })
+    })
+
+    it('[unit] holds a banded invoice.create manifest to its own shape', async () => {
+      const database = await setup()
+      const manifest = {
+        schema_version: 1,
+        expected_version: 0,
+        kind: 'banded',
+        client_id: 1,
+        from: '2026-08-01',
+        to: '2026-08-31',
+        project_ids: [1],
+        claim_mode: 'ceiling',
+        claim_ceiling_seconds: 57_600,
+        claim_ceiling_cents: null,
+        overage_summary_type: 'people',
+        currency: 'USD',
+        amount_cents: 215_000,
+        line_count: 3,
+        fee_line_count: 1,
+        time_entry_count: 4,
+        expense_count: 0,
+        claimed_entry_count: 2,
+        claimed_seconds: 54_000,
+        billed_entry_count: 2,
+        billed_seconds: 18_900,
+      }
+      const insert = (invoiceId: number, body: object) =>
+        database.run(
+          `INSERT INTO invoice_command_ledger (
+             invoice_id, command_id, command_kind, input_fingerprint, actor_type, actor_id,
+             expected_invoice_version, occurred_at, request_json, source_manifest_json,
+             line_manifest_json
+           ) VALUES (?, ?, 'invoice.create', ?, 'user', 1, 0, ?, ?, ?, ?)`,
+          invoiceId,
+          `banded-manifest-${invoiceId}`,
+          `sha256:${'0'.repeat(64)}`,
+          occurredAt,
+          JSON.stringify(body),
+          JSON.stringify({ schema_version: 1, time_entries: [], expenses: [] }),
+          JSON.stringify({ schema_version: 1, lines: [] }),
+        )
+
+      await insert(500, manifest)
+      await insert(501, {
+        ...manifest,
+        from: null,
+        claim_mode: 'all',
+        claim_ceiling_seconds: null,
+        overage_summary_type: null,
+        claimed_entry_count: 4,
+        claimed_seconds: 72_900,
+        billed_entry_count: 0,
+        billed_seconds: 0,
+      })
+      for (const [invoiceId, body] of [
+        // Everything, with a ceiling or an overage grouping beside it.
+        [510, { ...manifest, claim_mode: 'all' }],
+        [511, { ...manifest, claim_mode: 'all', claim_ceiling_seconds: null }],
+        // A ceiling in both units, in neither, or with no grouping for the rest.
+        [512, { ...manifest, claim_ceiling_cents: 100_000 }],
+        [513, { ...manifest, claim_ceiling_seconds: null }],
+        [514, { ...manifest, overage_summary_type: null }],
+        [515, { ...manifest, overage_summary_type: 'category' }],
+        // Entries that are neither covered nor billed, or billed twice over.
+        [516, { ...manifest, billed_entry_count: 1 }],
+        // No fee, or more fee lines than lines.
+        [517, { ...manifest, fee_line_count: 0 }],
+        [518, { ...manifest, fee_line_count: 4 }],
+        // Expenses, a summary of the selection, an inverted or missing period.
+        [519, { ...manifest, expense_count: 1 }],
+        [520, { ...manifest, time_summary_type: 'people' }],
+        [521, { ...manifest, from: '2026-09-01' }],
+        [522, { ...manifest, to: null }],
+        [523, { ...manifest, project_ids: [] }],
+      ] as const) {
+        await expect(insert(invoiceId, body)).rejects.toThrow(/CHECK constraint failed/)
+      }
+      expect(
+        await database.rows(
+          'SELECT invoice_id AS invoiceId FROM invoice_command_ledger ORDER BY invoice_id',
+        ),
+      ).toEqual([{ invoiceId: 500 }, { invoiceId: 501 }])
+    })
+
+    it('[unit] carries every receipt across the 0098 ledger rebuild and changes nothing else', async () => {
+      active = await factory(false)
+      await active.migrateThrough('0097_organization_invoice_defaults')
+      await seed(active)
+      const service = generator(active)
+      const tracked = await service.generate(command('tracked-before-0098'))
+      const blank = await service.generate(freeForm('blank-before-0098'))
+      // Red before green: the old creation CHECK has no shape for a band.
+      await expect(service.generate(banded('band-before-0098'))).rejects.toThrow(
+        /CHECK constraint failed/,
+      )
+      const receipts = `SELECT * FROM invoice_command_ledger ORDER BY invoice_id, command_id`
+      const before = { schema: await schemaObjects(active), receipts: await active.rows(receipts) }
+
+      await active.migrate()
+
+      const after = { schema: await schemaObjects(active), receipts: await active.rows(receipts) }
+      // Byte for byte, every receipt the rebuild copied.
+      expect(after.receipts).toEqual(before.receipts)
+      // The whole schema, object by object: the ledger's CHECK and the line
+      // manifest guard changed, and nothing else did -- the ledger's index and
+      // guards are back exactly as they were.
+      const named = (rows: typeof before.schema) =>
+        new Map(rows.map((row) => [`${row.type}:${row.name}`, row]))
+      const old = named(before.schema)
+      const rebuilt = named(after.schema)
+      expect([...rebuilt.keys()].sort()).toEqual([...old.keys()].sort())
+      expect(
+        [...rebuilt.entries()]
+          .filter(([key, row]) => old.get(key)?.sql !== row.sql)
+          .map(([key]) => key)
+          .sort(),
+      ).toEqual(['table:invoice_command_ledger', 'trigger:invoice_generation_line_manifest_guard'])
+      expect(rebuilt.get('table:invoice_command_ledger')!.sql).toContain(
+        "json_extract(request_json, '$.kind') = 'banded'",
+      )
+      expect(rebuilt.get('trigger:invoice_generation_line_manifest_guard')!.sql).toContain(
+        "line.project_id IS json_extract(member.value, '$.project_id')",
+      )
+
+      // The receipts written before still replay as themselves.
+      expect(await service.generate(command('tracked-before-0098'))).toEqual(tracked)
+      expect(await service.generate(freeForm('blank-before-0098'))).toEqual(blank)
+      // The tracked draft took the hours, so this band covers none of them.
+      const band = await service.generate(banded('band-after-0098', hoursCeiling))
+      expect(band).toMatchObject({ number: '3', amount_cents: 150_000 })
+      expect(band.band).toMatchObject({ claimed_entry_count: 0, billed_entry_count: 0 })
     })
   })
 }

@@ -1951,7 +1951,7 @@
 .invoice-new-dialog > form > footer [data-retry-invoice-catalog] {
   margin-right: auto;
 }
-/* The two types as cards, the chosen one in the action colour. */
+/* The types as cards, the chosen one in the action colour. */
 .invoice-new-kind {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -2135,10 +2135,105 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
+/* The band's card has the longest words, so it takes the row below the two. */
+.invoice-new-dialog .invoice-new-kind-wide {
+  grid-column: 1 / -1;
+}
+.invoice-new-tracked-only,
+.invoice-new-band {
+  display: grid;
+  gap: 20px;
+}
+.invoice-new-tracked-only[hidden],
+.invoice-new-band[hidden],
+.invoice-new-ceiling[hidden],
+.invoice-fee-remove[hidden] {
+  display: none;
+}
+/* The fee, a line at a time: what it is, then how many at what, and its amount. */
+.invoice-fee-lines {
+  display: grid;
+  gap: 16px;
+}
+.invoice-new-dialog .invoice-fee-line {
+  display: grid;
+  /* The amount column holds a typical fee's width, so lines stay aligned. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(7.5rem, auto) auto;
+  align-items: end;
+  gap: 8px 10px;
+}
+.invoice-new-dialog .invoice-fee-line + .invoice-fee-line {
+  padding-top: 16px;
+  border-top: 1px solid var(--ez-border);
+}
+.invoice-new-dialog .invoice-fee-description {
+  grid-column: 1 / -1;
+}
+.invoice-new-dialog .invoice-fee-amount {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.invoice-new-dialog .invoice-fee-amount strong,
+.invoice-fee-foot strong {
+  color: var(--ez-ink);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.invoice-new-dialog .invoice-fee-amount strong {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 44px;
+}
+.invoice-fee-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.invoice-fee-foot p {
+  margin: 0;
+  color: var(--ez-muted);
+  font-size: 14px;
+}
+.invoice-new-dialog .invoice-fee-line button,
+.invoice-new-dialog .invoice-fee-foot button {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.invoice-new-ceiling {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.invoice-new-ceiling .field-hint,
+.invoice-new-ceiling .invoice-new-overage {
+  grid-column: 1 / -1;
+}
+.invoice-band-preview {
+  margin: 0;
+  color: var(--ez-ink);
+  font-size: 14px;
+}
+.invoice-band-preview:empty {
+  display: none;
+}
 @media (max-width: 560px) {
   .invoice-new-kind,
-  .invoice-new-detail {
+  .invoice-new-detail,
+  .invoice-new-ceiling {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .invoice-new-dialog .invoice-fee-line {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 }
 

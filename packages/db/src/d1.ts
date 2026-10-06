@@ -68,9 +68,13 @@ export { createMoneyResourceRepository, type InvoiceDocumentContext } from './mo
 export {
   createInvoiceGenerationService,
   InvoiceGenerationError,
+  type BandedFeeLine,
+  type GenerateBandedInvoiceRequest,
   type GenerateFreeFormInvoiceRequest,
   type GenerateInvoiceCommand,
   type GenerateInvoiceRequest,
+  type GeneratedInvoice,
+  type InvoiceBandClaim,
   type InvoiceGenerationService,
 } from './invoice-generation.js'
 export {

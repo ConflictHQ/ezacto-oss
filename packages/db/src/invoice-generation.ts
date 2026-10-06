@@ -14,6 +14,7 @@ import {
   type UninvoicedTimeCandidateRow,
 } from './reports.js'
 import type { InvoiceResource } from './money-resources.js'
+import { bandClaimSelection, bandForegoneUpdate, type BandClaimCeiling } from './band-claim.js'
 
 type ContainerDatabase = BetterSQLite3Database<typeof schema> & {
   $client: BetterSqlite3.Database
@@ -53,6 +54,40 @@ export interface GenerateFreeFormInvoiceRequest {
   clientId: number
 }
 
+/** One line of a band's fee, written as a free-form line is. */
+export interface BandedFeeLine {
+  kind: string
+  description: string | null
+  quantity: number
+  unitPriceCents: number
+  projectId: number | null
+}
+
+/**
+ * A flat fee covering tracked time: the fee lines, and the uninvoiced time on
+ * the selected projects in the period, which the fee consumes instead of
+ * pricing (a band, as a recurring definition with `claims_project_ids` raises
+ * one). Every entry read lands on this invoice. Those the band claims -- all of
+ * them, or the oldest up to a ceiling by the recurring engine's own rule --
+ * contribute no line; the rest are billed after the fee as tracked lines at
+ * each person's rate. Expenses are not a band's to claim and are left alone.
+ */
+export interface GenerateBandedInvoiceRequest {
+  kind: 'banded'
+  clientId: number
+  /** Null leaves the start open, as on a tracked request. */
+  from: string | null
+  to: string
+  projectIds: readonly number[]
+  lineItems: readonly BandedFeeLine[]
+  claimMode: 'all' | 'ceiling'
+  /** Exactly one of the two is set on a ceiling, and neither on `all`. */
+  claimCeilingSeconds: number | null
+  claimCeilingCents: number | null
+  /** How hours past the ceiling are billed: required on a ceiling, null on `all`. */
+  overageSummaryType: InvoiceGenerationTimeSummary | null
+}
+
 export interface GenerateInvoicePrincipal {
   userId: number
   profile: string
@@ -61,8 +96,23 @@ export interface GenerateInvoicePrincipal {
 export interface GenerateInvoiceCommand {
   commandId: string
   principal: GenerateInvoicePrincipal
-  request: GenerateInvoiceRequest | GenerateFreeFormInvoiceRequest
+  request: GenerateInvoiceRequest | GenerateFreeFormInvoiceRequest | GenerateBandedInvoiceRequest
 }
+
+/**
+ * What a banded draft's fee covered and what it billed past its ceiling, as
+ * its receipt records them. A band over no uninvoiced time is still a fee the
+ * client owes, so zero claimed hours is an answer rather than a refusal.
+ */
+export interface InvoiceBandClaim {
+  claimed_entry_count: number
+  claimed_seconds: number
+  billed_entry_count: number
+  billed_seconds: number
+}
+
+/** The draft; a banded one also says what its fee covered. */
+export type GeneratedInvoice = InvoiceResource & { band?: InvoiceBandClaim }
 
 export type InvoiceGenerationErrorCode =
   | 'invalid_command_input'
@@ -83,7 +133,7 @@ export class InvoiceGenerationError extends Error {
 }
 
 export interface InvoiceGenerationService {
-  generate(input: GenerateInvoiceCommand): Promise<InvoiceResource>
+  generate(input: GenerateInvoiceCommand): Promise<GeneratedInvoice>
 }
 
 export interface InvoiceGenerationServiceOptions {
@@ -101,11 +151,13 @@ interface StoredCreateCommand {
   actorId: number | null
   expectedInvoiceVersion: number | null
   completed: number | boolean
+  requestJson: string | null
   resultJson: string | null
 }
 
 interface ClientDefaults {
   id: number
+  name: string
   currency: string
   paymentTerms: 'upon_receipt' | 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'custom'
   /** The organization's Default values, copied onto the draft (migration 0097). */
@@ -113,16 +165,26 @@ interface ClientDefaults {
   defaultNotes: string | null
 }
 
+interface SelectedProject {
+  id: number
+  clientId: number
+  isActive: number
+  name: string
+  currency: string
+}
+
 interface GeneratedLine {
   id: number
   position: number
-  kind: 'Service' | 'Expense'
-  description: string
+  kind: string
+  description: string | null
   quantity: number
   unitPriceCents: number
   amountCents: number
-  projectId: number
+  projectId: number | null
 }
+
+type DraftLine = Omit<GeneratedLine, 'id' | 'position'>
 
 interface TimeGroup {
   key: string
@@ -138,13 +200,30 @@ interface ExpenseGroup {
   expenses: UninvoicedExpenseCandidateRow[]
 }
 
-type NormalizedRequest = GenerateInvoiceRequest | GenerateFreeFormInvoiceRequest
+/**
+ * What a generated line's description is written from besides its own rows:
+ * the period the invoice covers, as Harvest wrote it into every grouped line,
+ * in the organization's date format, and whether a note may reach the client.
+ */
+interface LineContext {
+  periodStart: string
+  periodEnd: string
+  dateFormat: string
+  notesVisibleByDefault: boolean
+}
+
+type NormalizedRequest =
+  | GenerateInvoiceRequest
+  | GenerateFreeFormInvoiceRequest
+  | GenerateBandedInvoiceRequest
 
 interface InvoiceHeader {
   subject: string | null
   periodStart: string | null
   periodEnd: string | null
   projectId: number | null
+  /** The one project's name, for a default subject's `%project%`. */
+  projectName: string | null
 }
 
 /** Everything one creation command writes, before the manifests describing it. */
@@ -156,6 +235,8 @@ interface GenerationContent {
   lines: readonly GeneratedLine[]
   currency: string
   amountCents: number
+  /** A banded draft's fee line count and what the fee covered; null otherwise. */
+  band: (InvoiceBandClaim & { feeLineCount: number }) | null
 }
 
 const commandIdPattern = /^[A-Za-z0-9._:-]{1,128}$/
@@ -201,31 +282,13 @@ const trackedOnlyFields = [
   'expenseSummaryType',
 ] as const
 
-const normalizedRequest = (input: GenerateInvoiceCommand): NormalizedRequest => {
-  if (!commandIdPattern.test(input.commandId)) {
-    invalid('commandId must be 1-128 ASCII characters from [A-Za-z0-9._:-]')
-  }
-  if (!Number.isSafeInteger(input.principal.userId) || input.principal.userId < 1) {
-    invalid('principal.userId must be a positive safe integer')
-  }
-  const request = input.request
-  if (!Number.isSafeInteger(request.clientId) || request.clientId < 1) {
-    invalid('clientId must be a positive safe integer')
-  }
-  const kind: unknown = request.kind
-  if (kind !== undefined && kind !== 'tracked' && kind !== 'free_form') {
-    invalid('kind must be tracked or free_form')
-  }
-  if (request.kind === 'free_form') {
-    // Refused rather than ignored: a range or a project on a blank draft says
-    // the caller expected tracked work on it, and none will be there.
-    for (const field of trackedOnlyFields) {
-      if (Reflect.get(request, field) !== undefined) {
-        invalid(`a free-form invoice takes no ${field}`)
-      }
-    }
-    return { kind: 'free_form', clientId: request.clientId }
-  }
+const timeSummaries: ReadonlySet<unknown> = new Set(['project', 'task', 'people', 'detailed'])
+/** A fee is a handful of lines; the hours it covers are what can run long. */
+export const maximumBandFeeLines = 100
+
+const normalizedSelection = (
+  request: Pick<GenerateInvoiceRequest, 'from' | 'to' | 'projectIds'>,
+): Pick<GenerateInvoiceRequest, 'from' | 'to' | 'projectIds'> => {
   const from = request.from ?? null
   if (from !== null) assertDate(from, 'from')
   assertDate(request.to, 'to')
@@ -239,14 +302,125 @@ const normalizedRequest = (input: GenerateInvoiceCommand): NormalizedRequest => 
   ) {
     invalid('projectIds must be a non-empty unique positive integer list')
   }
+  return {
+    from,
+    to: request.to,
+    projectIds: [...request.projectIds].sort((left, right) => left - right),
+  }
+}
+
+const normalizedFeeLine = (line: BandedFeeLine, index: number): BandedFeeLine => {
+  const field = `lineItems[${index}]`
+  if (typeof line.kind !== 'string' || line.kind.trim() === '' || line.kind.length > 255) {
+    invalid(`${field}.kind must be a non-blank string of at most 255 characters`)
+  }
+  if (
+    line.description !== null &&
+    (typeof line.description !== 'string' || line.description.length > 100_000)
+  ) {
+    invalid(`${field}.description must be a bounded string or null`)
+  }
+  if (line.projectId !== null && (!Number.isSafeInteger(line.projectId) || line.projectId < 1)) {
+    invalid(`${field}.projectId must be a positive safe integer or null`)
+  }
+  try {
+    calculateInvoiceLineAmountCents(line.quantity, line.unitPriceCents)
+  } catch {
+    invalid(`${field} quantity and unit price must produce a bounded amount`)
+  }
+  return {
+    kind: line.kind,
+    description: line.description,
+    quantity: line.quantity,
+    unitPriceCents: line.unitPriceCents,
+    projectId: line.projectId,
+  }
+}
+
+const positiveLimit = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+
+const normalizedBandedRequest = (
+  request: GenerateBandedInvoiceRequest,
+): GenerateBandedInvoiceRequest => {
+  for (const field of ['timeSummaryType', 'expenseSummaryType'] as const) {
+    // A band bills its own fee; a summary for the whole selection says the
+    // caller expected the hours priced, which is the tracked kind.
+    if (Reflect.get(request, field) !== undefined) invalid(`a banded invoice takes no ${field}`)
+  }
+  const selection = normalizedSelection(request)
+  if (
+    !Array.isArray(request.lineItems) ||
+    request.lineItems.length === 0 ||
+    request.lineItems.length > maximumBandFeeLines
+  ) {
+    invalid(`lineItems must hold the fee in 1-${maximumBandFeeLines} lines`)
+  }
+  const lineItems = request.lineItems.map(normalizedFeeLine)
+  const seconds = request.claimCeilingSeconds ?? null
+  const cents = request.claimCeilingCents ?? null
+  const overage = request.overageSummaryType ?? null
+  if (request.claimMode === 'all') {
+    // Refused rather than ignored: a limit on a band that takes everything
+    // would read as one that does not.
+    if (seconds !== null || cents !== null) invalid('a band covering all of the time takes no ceiling')
+    if (overage !== null) invalid('a band covering all of the time bills no overage')
+  } else if (request.claimMode === 'ceiling') {
+    if (
+      !(positiveLimit(seconds) && cents === null) &&
+      !(positiveLimit(cents) && seconds === null)
+    ) {
+      invalid('a ceiling needs exactly one positive limit, in seconds or in cents')
+    }
+    if (!timeSummaries.has(overage)) {
+      invalid('a ceiling needs overageSummaryType: project, task, people, or detailed')
+    }
+  } else {
+    invalid('claimMode must be all or ceiling')
+  }
+  return {
+    kind: 'banded',
+    clientId: request.clientId,
+    ...selection,
+    lineItems,
+    claimMode: request.claimMode,
+    claimCeilingSeconds: seconds,
+    claimCeilingCents: cents,
+    overageSummaryType: overage,
+  }
+}
+
+const normalizedRequest = (input: GenerateInvoiceCommand): NormalizedRequest => {
+  if (!commandIdPattern.test(input.commandId)) {
+    invalid('commandId must be 1-128 ASCII characters from [A-Za-z0-9._:-]')
+  }
+  if (!Number.isSafeInteger(input.principal.userId) || input.principal.userId < 1) {
+    invalid('principal.userId must be a positive safe integer')
+  }
+  const request = input.request
+  if (!Number.isSafeInteger(request.clientId) || request.clientId < 1) {
+    invalid('clientId must be a positive safe integer')
+  }
+  const kind: unknown = request.kind
+  if (kind !== undefined && kind !== 'tracked' && kind !== 'free_form' && kind !== 'banded') {
+    invalid('kind must be tracked, free_form, or banded')
+  }
+  if (request.kind === 'free_form') {
+    // Refused rather than ignored: a range or a project on a blank draft says
+    // the caller expected tracked work on it, and none will be there.
+    for (const field of trackedOnlyFields) {
+      if (Reflect.get(request, field) !== undefined) {
+        invalid(`a free-form invoice takes no ${field}`)
+      }
+    }
+    return { kind: 'free_form', clientId: request.clientId }
+  }
+  if (request.kind === 'banded') return normalizedBandedRequest(request)
+  const selection = normalizedSelection(request)
   if (request.timeSummaryType === null && request.expenseSummaryType === null) {
     invalid('at least one generation summary type is required')
   }
-  return {
-    ...request,
-    from,
-    projectIds: [...request.projectIds].sort((left, right) => left - right),
-  }
+  return { ...request, ...selection }
 }
 
 const canonicalJson = (value: unknown): string => {
@@ -279,6 +453,48 @@ const digest = async (value: string): Promise<string> => {
 const stableId = async (namespace: string, commandId: string, suffix = ''): Promise<number> =>
   Number.parseInt((await digest(`${namespace}\u001f${commandId}\u001f${suffix}`)).slice(0, 13), 16) + 1
 
+/** A band's terms, as its fingerprint and its receipt both name them. */
+const bandTerms = (request: GenerateBandedInvoiceRequest) => ({
+  claim_mode: request.claimMode,
+  claim_ceiling_seconds: request.claimCeilingSeconds,
+  claim_ceiling_cents: request.claimCeilingCents,
+  overage_summary_type: request.overageSummaryType,
+})
+
+const fingerprintInput = (request: NormalizedRequest): Record<string, unknown> => {
+  switch (request.kind) {
+    case 'free_form':
+      return { expected_version: 0, kind: request.kind, client_id: request.clientId }
+    case 'banded':
+      return {
+        expected_version: 0,
+        kind: request.kind,
+        client_id: request.clientId,
+        from: request.from,
+        to: request.to,
+        project_ids: request.projectIds,
+        line_items: request.lineItems.map((line) => ({
+          kind: line.kind,
+          description: line.description,
+          quantity: line.quantity,
+          unit_price_cents: line.unitPriceCents,
+          project_id: line.projectId,
+        })),
+        ...bandTerms(request),
+      }
+    default:
+      return {
+        expected_version: 0,
+        client_id: request.clientId,
+        from: request.from,
+        to: request.to,
+        project_ids: request.projectIds,
+        time_summary_type: request.timeSummaryType,
+        expense_summary_type: request.expenseSummaryType,
+      }
+  }
+}
+
 const fingerprint = async (
   commandId: string,
   userId: number,
@@ -291,19 +507,9 @@ const fingerprint = async (
       actor: { type: 'user', id: userId },
       // A tracked request hashes the keys it always has, so every receipt
       // written before blank drafts still replays; an open start hashes as a
-      // null `from`. A free-form one carries the kind no tracked input has.
-      input:
-        request.kind === 'free_form'
-          ? { expected_version: 0, kind: request.kind, client_id: request.clientId }
-          : {
-              expected_version: 0,
-              client_id: request.clientId,
-              from: request.from,
-              to: request.to,
-              project_ids: request.projectIds,
-              time_summary_type: request.timeSummaryType,
-              expense_summary_type: request.expenseSummaryType,
-            },
+      // null `from`. A free-form or banded one carries the kind no tracked
+      // input has, so no two kinds can hash alike.
+      input: fingerprintInput(request),
     }),
   )}`
 
@@ -380,16 +586,48 @@ const readCommand = (
   first(database, {
     text: `SELECT input_fingerprint AS "inputFingerprint", actor_type AS "actorType",
         actor_id AS "actorId", expected_invoice_version AS "expectedInvoiceVersion",
-        completed, result_json AS "resultJson"
+        completed, request_json AS "requestJson", result_json AS "resultJson"
       FROM invoice_command_ledger WHERE invoice_id = ? AND command_id = ?`,
     params: [invoiceId, commandId],
   })
+
+/**
+ * What a banded receipt says its fee covered. Read back from the receipt rather
+ * than carried beside it, so a replay answers exactly what the first call did.
+ */
+const storedBandClaim = (requestJson: string | null): InvoiceBandClaim | null => {
+  let stored: unknown
+  try {
+    stored = requestJson === null ? null : JSON.parse(requestJson)
+  } catch {
+    throw new InvoiceGenerationError('command_storage_conflict', 'stored generation request is invalid')
+  }
+  if (typeof stored !== 'object' || stored === null || Reflect.get(stored, 'kind') !== 'banded') {
+    return null
+  }
+  const count = (key: keyof InvoiceBandClaim): number => {
+    const value: unknown = Reflect.get(stored, key)
+    if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
+      throw new InvoiceGenerationError(
+        'command_storage_conflict',
+        'stored banded request has an unsupported shape',
+      )
+    }
+    return value
+  }
+  return {
+    claimed_entry_count: count('claimed_entry_count'),
+    claimed_seconds: count('claimed_seconds'),
+    billed_entry_count: count('billed_entry_count'),
+    billed_seconds: count('billed_seconds'),
+  }
+}
 
 const parseStoredInvoice = (
   command: StoredCreateCommand,
   expectedFingerprint: string,
   userId: number,
-): InvoiceResource => {
+): GeneratedInvoice => {
   if (
     command.inputFingerprint !== expectedFingerprint ||
     command.actorType !== 'user' ||
@@ -422,7 +660,9 @@ const parseStoredInvoice = (
       'stored generation result has an unsupported shape',
     )
   }
-  return Reflect.get(stored, 'invoice') as InvoiceResource
+  const invoice = Reflect.get(stored, 'invoice') as InvoiceResource
+  const band = storedBandClaim(command.requestJson)
+  return band === null ? invoice : { ...invoice, band }
 }
 
 const checkedSum = (values: readonly number[], field: string): number => {
@@ -518,38 +758,60 @@ const lineManifest = (lines: readonly GeneratedLine[]): string =>
     })),
   })
 
+const selectionManifest = (
+  request: NormalizedRequest,
+  periodStart: string | null,
+): Record<string, unknown> => {
+  switch (request.kind) {
+    case 'free_form':
+      return { kind: request.kind, client_id: request.clientId }
+    case 'banded':
+      return {
+        kind: request.kind,
+        client_id: request.clientId,
+        from: periodStart,
+        to: request.to,
+        project_ids: request.projectIds,
+        ...bandTerms(request),
+      }
+    default:
+      return {
+        client_id: request.clientId,
+        from: periodStart,
+        to: request.to,
+        project_ids: request.projectIds,
+        time_summary_type: request.timeSummaryType,
+        expense_summary_type: request.expenseSummaryType,
+      }
+  }
+}
+
 /**
  * The creation CHECK and event guard read this against the header, so a
  * tracked `from` is the period the invoice covers -- for an open start, the
  * first date it bills -- and a blank draft records its kind and no selection.
+ * A banded one records its terms, how many of its lines are the fee, and what
+ * the fee covered against what was billed past it.
  */
-const requestManifest = (
-  request: NormalizedRequest,
-  periodStart: string | null,
-  currency: string,
-  amountCents: number,
-  lineCount: number,
-  timeCount: number,
-  expenseCount: number,
-): string =>
+const requestManifest = (request: NormalizedRequest, content: GenerationContent): string =>
   canonicalJson({
     schema_version: 1,
     expected_version: 0,
-    ...(request.kind === 'free_form'
-      ? { kind: request.kind, client_id: request.clientId }
+    ...selectionManifest(request, content.header.periodStart),
+    currency: content.currency,
+    amount_cents: content.amountCents,
+    line_count: content.lines.length,
+    time_entry_count: content.timeEntries.length,
+    expense_count: content.expenses.length,
+    ...(content.band === null
+      ? {}
       : {
-          client_id: request.clientId,
-          from: periodStart,
-          to: request.to,
-          project_ids: request.projectIds,
-          time_summary_type: request.timeSummaryType,
-          expense_summary_type: request.expenseSummaryType,
+          fee_line_count: content.band.feeLineCount,
+          claimed_entry_count: content.band.claimed_entry_count,
+          claimed_seconds: content.band.claimed_seconds,
+          billed_entry_count: content.band.billed_entry_count,
+          billed_seconds: content.band.billed_seconds,
         }),
-    currency,
-    amount_cents: amountCents,
-    line_count: lineCount,
-    time_entry_count: timeCount,
-    expense_count: expenseCount,
   })
 
 const exactLinePrice = (
@@ -569,33 +831,64 @@ const exactLinePrice = (
   return { quantity: 1, unitPriceCents: amountCents }
 }
 
+/** Harvest's `[code] ` before a project's name, or the name alone when it has no code. */
+const projectLabel = (name: string, code: string): string =>
+  code.trim() === '' ? name : `[${code}] ${name}`
+
 /**
+ * A calendar date as the organization writes dates (`date_format`, which an
+ * import carries over from the Harvest account). Harvest wrote every date in a
+ * generated line in the account's own format, so an account that kept
+ * `%m/%d/%Y` reads `08/31/2026` there and one on `%Y-%m-%d` reads `2026-08-31`.
+ */
+const organizationDate = (date: string, format: string): string =>
+  format.replace(/%[Ymd]/gu, (token) =>
+    token === '%Y' ? date.slice(0, 4) : token === '%m' ? date.slice(5, 7) : date.slice(8, 10),
+  )
+
+/** A grouped line names the period it covers: ` (2026-08-01 - 2026-08-31)`. */
+const linePeriod = (context: LineContext): string =>
+  ` (${organizationDate(context.periodStart, context.dateFormat)} - ${organizationDate(
+    context.periodEnd,
+    context.dateFormat,
+  )})`
+
+/**
+ * Harvest's line descriptions, to the character, so a draft reads as the
+ * invoices a client has been receiving:
+ *
+ * - by project: `[code] Project (from - to)`
+ * - by task or person: `[code] Project: Task (from - to)`, `... : Person (...)`
+ * - detailed: `[code] Project - date - Task / Person: note`
+ *
  * A detailed line carries the entry's note only where a client may read it
  * (D20): the entry's own `client_visible`, else the organization's default. The
  * line is printed on the invoice, listed in its email, and mirrored to the
- * books, so an internal note written into it would leave by all three.
+ * books, so an internal note written into it would leave by all three. Without
+ * one the line simply ends at the person.
  */
 const timeDescription = (
   entry: UninvoicedTimeCandidateRow,
   summary: InvoiceGenerationTimeSummary,
-  notesVisibleByDefault: boolean,
+  context: LineContext,
 ): string => {
+  const project = projectLabel(entry.projectName, entry.projectCode)
   switch (summary) {
     case 'project':
-      return entry.projectName
+      return `${project}${linePeriod(context)}`
     case 'task':
-      return `${entry.projectName} — ${entry.taskName}`
+      return `${project}: ${entry.taskName}${linePeriod(context)}`
     case 'people':
-      return `${entry.projectName} — ${entry.userName}`
+      return `${project}: ${entry.userName}${linePeriod(context)}`
     case 'detailed': {
-      const detail = `${entry.spentDate} · ${entry.userName} · ${entry.projectName} · ${entry.taskName}`
+      const detail = `${project} - ${organizationDate(entry.spentDate, context.dateFormat)} - ${entry.taskName} / ${entry.userName}`
       const visible = reportNoteIsClientVisible(
         { clientVisible: entry.clientVisible === null ? null : entry.clientVisible === 1 },
-        notesVisibleByDefault,
+        context.notesVisibleByDefault,
       )
       return !visible || entry.notes === null || entry.notes.trim() === ''
         ? detail
-        : `${detail}\n${entry.notes}`
+        : `${detail}: ${entry.notes}`
     }
   }
 }
@@ -619,7 +912,7 @@ const timeKey = (
 const groupTime = (
   entries: readonly UninvoicedTimeCandidateRow[],
   summary: InvoiceGenerationTimeSummary,
-  notesVisibleByDefault: boolean,
+  context: LineContext,
 ): TimeGroup[] => {
   const groups = new Map<string, TimeGroup>()
   for (const entry of entries) {
@@ -629,7 +922,7 @@ const groupTime = (
       groups.set(key, {
         key,
         projectId: entry.projectId,
-        description: timeDescription(entry, summary, notesVisibleByDefault),
+        description: timeDescription(entry, summary, context),
         entries: [entry],
       })
     } else {
@@ -639,22 +932,25 @@ const groupTime = (
   return [...groups.values()]
 }
 
+/** The same shapes, with the expense category where time has its task. */
 const expenseDescription = (
   expense: UninvoicedExpenseCandidateRow,
   summary: InvoiceGenerationExpenseSummary,
+  context: LineContext,
 ): string => {
+  const project = projectLabel(expense.projectName, expense.projectCode)
   switch (summary) {
     case 'project':
-      return expense.projectName
+      return `${project}${linePeriod(context)}`
     case 'category':
-      return `${expense.projectName} — ${expense.categoryName}`
+      return `${project}: ${expense.categoryName}${linePeriod(context)}`
     case 'people':
-      return `${expense.projectName} — ${expense.userName}`
+      return `${project}: ${expense.userName}${linePeriod(context)}`
     case 'detailed': {
-      const detail = `${expense.spentDate} · ${expense.userName} · ${expense.projectName} · ${expense.categoryName}`
+      const detail = `${project} - ${organizationDate(expense.spentDate, context.dateFormat)} - ${expense.categoryName} / ${expense.userName}`
       return expense.notes === null || expense.notes.trim() === ''
         ? detail
-        : `${detail}\n${expense.notes}`
+        : `${detail}: ${expense.notes}`
     }
   }
 }
@@ -678,6 +974,7 @@ const expenseKey = (
 const groupExpenses = (
   expenses: readonly UninvoicedExpenseCandidateRow[],
   summary: InvoiceGenerationExpenseSummary,
+  context: LineContext,
 ): ExpenseGroup[] => {
   const groups = new Map<string, ExpenseGroup>()
   for (const expense of expenses) {
@@ -687,7 +984,7 @@ const groupExpenses = (
       groups.set(key, {
         key,
         projectId: expense.projectId,
-        description: expenseDescription(expense, summary),
+        description: expenseDescription(expense, summary, context),
         expenses: [expense],
       })
     } else {
@@ -697,81 +994,82 @@ const groupExpenses = (
   return [...groups.values()]
 }
 
-const buildLines = async (
-  commandId: string,
-  timeEntries: readonly UninvoicedTimeCandidateRow[],
-  expenses: readonly UninvoicedExpenseCandidateRow[],
-  request: GenerateInvoiceRequest,
-  notesVisibleByDefault: boolean,
-): Promise<GeneratedLine[]> => {
-  const draft: Omit<GeneratedLine, 'id' | 'position'>[] = []
-  if (request.timeSummaryType !== null) {
-    for (const group of groupTime(timeEntries, request.timeSummaryType, notesVisibleByDefault)) {
-      const roundedSeconds = checkedIntegerSum(
-        group.entries.map((entry) => entry.roundedSeconds),
-        'time duration',
-      )
-      const amountCents = checkedSignedSum(
-        group.entries.map((entry) =>
-          trackedAmountCents(
-            entry.roundedSeconds,
-            entry.billableRateCents ?? invalid(`time entry ${entry.id} has no billable rate`),
-          ),
+/** Tracked time priced at each entry's own rate, one line per group. */
+const timeLines = (
+  entries: readonly UninvoicedTimeCandidateRow[],
+  summary: InvoiceGenerationTimeSummary,
+  context: LineContext,
+): DraftLine[] =>
+  groupTime(entries, summary, context).map((group) => {
+    const roundedSeconds = checkedIntegerSum(
+      group.entries.map((entry) => entry.roundedSeconds),
+      'time duration',
+    )
+    const amountCents = checkedSignedSum(
+      group.entries.map((entry) =>
+        trackedAmountCents(
+          entry.roundedSeconds,
+          entry.billableRateCents ?? invalid(`time entry ${entry.id} has no billable rate`),
         ),
-        'time line amount',
-      )
-      const rates = new Set(group.entries.map((entry) => entry.billableRateCents))
-      const quantity = roundedSeconds / 3_600
-      const pricing = exactLinePrice(
-        amountCents,
-        quantity,
-        rates.size === 1
-          ? (group.entries[0]!.billableRateCents ?? 0)
-          : Math.round(amountCents / quantity),
-      )
-      draft.push({
-        kind: 'Service',
-        description: group.description,
-        quantity: pricing.quantity,
-        unitPriceCents: pricing.unitPriceCents,
-        amountCents,
-        projectId: group.projectId,
-      })
+      ),
+      'time line amount',
+    )
+    const rates = new Set(group.entries.map((entry) => entry.billableRateCents))
+    const quantity = roundedSeconds / 3_600
+    const pricing = exactLinePrice(
+      amountCents,
+      quantity,
+      rates.size === 1
+        ? (group.entries[0]!.billableRateCents ?? 0)
+        : Math.round(amountCents / quantity),
+    )
+    return {
+      kind: 'Service',
+      description: group.description,
+      quantity: pricing.quantity,
+      unitPriceCents: pricing.unitPriceCents,
+      amountCents,
+      projectId: group.projectId,
     }
-  }
-  if (request.expenseSummaryType !== null) {
-    for (const group of groupExpenses(expenses, request.expenseSummaryType)) {
-      const amountCents = checkedSum(
-        group.expenses.map((expense) => expense.totalCostCents),
-        'expense line amount',
-      )
-      const detailedUnits =
-        request.expenseSummaryType === 'detailed' ? group.expenses[0]!.units : null
-      const preferredQuantity =
-        detailedUnits !== null && detailedUnits > 0 ? detailedUnits : group.expenses.length
-      const pricing = exactLinePrice(
-        amountCents,
-        preferredQuantity,
-        Math.round(amountCents / preferredQuantity),
-      )
-      draft.push({
-        kind: 'Expense',
-        description: group.description,
-        quantity: pricing.quantity,
-        unitPriceCents: pricing.unitPriceCents,
-        amountCents,
-        projectId: group.projectId,
-      })
+  })
+
+const expenseLines = (
+  expenses: readonly UninvoicedExpenseCandidateRow[],
+  summary: InvoiceGenerationExpenseSummary,
+  context: LineContext,
+): DraftLine[] =>
+  groupExpenses(expenses, summary, context).map((group) => {
+    const amountCents = checkedSum(
+      group.expenses.map((expense) => expense.totalCostCents),
+      'expense line amount',
+    )
+    const detailedUnits = summary === 'detailed' ? group.expenses[0]!.units : null
+    const preferredQuantity =
+      detailedUnits !== null && detailedUnits > 0 ? detailedUnits : group.expenses.length
+    const pricing = exactLinePrice(
+      amountCents,
+      preferredQuantity,
+      Math.round(amountCents / preferredQuantity),
+    )
+    return {
+      kind: 'Expense',
+      description: group.description,
+      quantity: pricing.quantity,
+      unitPriceCents: pricing.unitPriceCents,
+      amountCents,
+      projectId: group.projectId,
     }
-  }
-  return Promise.all(
+  })
+
+/** Lines take their ids from the command, so a retry writes the same ones. */
+const numberedLines = (commandId: string, draft: readonly DraftLine[]): Promise<GeneratedLine[]> =>
+  Promise.all(
     draft.map(async (line, position) => ({
       ...line,
       id: await stableId('invoice-generation-line', commandId, String(position)),
       position,
     })),
   )
-}
 
 const dueDate = (issueDate: string, terms: ClientDefaults['paymentTerms']): string => {
   const days =
@@ -794,7 +1092,7 @@ const readClient = async (
   clientId: number,
 ): Promise<ClientDefaults> => {
   const client = await first<Omit<ClientDefaults, 'defaultSubject' | 'defaultNotes'>>(database, {
-    text: `SELECT id, upper(currency) AS currency, payment_terms AS "paymentTerms"
+    text: `SELECT id, name, upper(currency) AS currency, payment_terms AS "paymentTerms"
       FROM clients WHERE id = ?`,
     params: [clientId],
   })
@@ -818,12 +1116,14 @@ const readClient = async (
 
 const validateSelection = async (
   database: InvoiceGenerationDatabase,
-  request: GenerateInvoiceRequest,
-): Promise<ClientDefaults> => {
+  request: Pick<GenerateInvoiceRequest, 'clientId' | 'projectIds'>,
+): Promise<{ client: ClientDefaults; projects: readonly SelectedProject[] }> => {
   const client = await readClient(database, request.clientId)
-  const projects = await all<{ id: number; clientId: number; isActive: number }>(database, {
-    text: `SELECT id, client_id AS "clientId", is_active AS "isActive" FROM projects
-      WHERE id IN (SELECT CAST(value AS INTEGER) FROM json_each(?)) ORDER BY id`,
+  const projects = await all<SelectedProject>(database, {
+    text: `SELECT project.id, project.client_id AS "clientId", project.is_active AS "isActive",
+        project.name, upper(coalesce(project.billing_currency, client.currency)) AS currency
+      FROM projects project JOIN clients client ON client.id = project.client_id
+      WHERE project.id IN (SELECT CAST(value AS INTEGER) FROM json_each(?)) ORDER BY project.id`,
     params: [JSON.stringify(request.projectIds)],
   })
   if (
@@ -840,7 +1140,41 @@ const validateSelection = async (
   if (projects.some((project) => project.isActive !== 1)) {
     invalid('an archived project cannot be invoiced')
   }
-  return client
+  return { client, projects }
+}
+
+const monthNames = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
+/**
+ * The organization's default subject, with its placeholders filled for this
+ * draft so one default reads right for every client:
+ *
+ * - `%client%` -- the client's name
+ * - `%project%` -- the project, on an invoice for exactly one; empty otherwise
+ * - `%period_month_name%`, `%period_year%` -- the month the invoice period
+ *   starts in: September for a 2026-09-01 to 2026-09-30 draft issued in
+ *   October. A draft with no start takes its end, and one with no period at
+ *   all, its issue date.
+ *
+ * Everything else is kept as written. A subject that fills to nothing is no
+ * subject, rather than a blank one.
+ */
+const defaultSubject = (
+  template: string,
+  client: ClientDefaults,
+  header: InvoiceHeader,
+  issueDate: string,
+): string | null => {
+  const period = header.periodStart ?? header.periodEnd ?? issueDate
+  const subject = template
+    .replace(/%client%/gu, () => client.name)
+    .replace(/%project%/gu, () => header.projectName ?? '')
+    .replace(/%period_month_name%/gu, () => monthNames[Number(period.slice(5, 7)) - 1]!)
+    .replace(/%period_year%/gu, () => period.slice(0, 4))
+  return subject.trim() === '' ? null : subject
 }
 
 const lineInsert = (
@@ -1148,6 +1482,7 @@ const createStatements = (input: {
   requestJson: string
   sourceManifestJson: string
   lineManifestJson: string
+  band: GenerationContent['band']
 }): SqlStatement[] => {
   const issueDate = input.occurredAt.slice(0, 10)
   const statements: SqlStatement[] = [
@@ -1194,7 +1529,9 @@ const createStatements = (input: {
         input.command.principal.userId,
         // The organization's defaults win over the period subject: a draft
         // starts the way Harvest's Default values said it should.
-        input.client.defaultSubject ?? input.header.subject,
+        input.client.defaultSubject === null
+          ? input.header.subject
+          : defaultSubject(input.client.defaultSubject, input.client, input.header, issueDate),
         input.client.defaultNotes,
         input.currency,
         issueDate,
@@ -1245,6 +1582,20 @@ const createStatements = (input: {
       ),
     )
   }
+  if (input.band !== null) {
+    // What the band absorbed, recorded as the recurring engine records it.
+    statements.push(
+      bandForegoneUpdate(input.invoiceId, {
+        text: `EXISTS (
+            SELECT 1 FROM invoice_command_ledger command
+            WHERE command.invoice_id = ? AND command.command_id = ?
+              AND command.command_kind = 'invoice.create'
+              AND command.input_fingerprint = ? AND command.completed = 0
+          )`,
+        params: [input.invoiceId, input.command.commandId, input.fingerprint],
+      }),
+    )
+  }
   statements.push(
     outboxInsert(
       input.invoiceId,
@@ -1266,12 +1617,43 @@ const createStatements = (input: {
   return statements
 }
 
+/**
+ * Read once, beside the rows: the organization default for a note's
+ * visibility, which an entry with no answer of its own follows (D20), and the
+ * date format its lines are written in. An instance with no organization row
+ * yet takes the columns' own defaults.
+ */
+const lineContext = async (
+  database: InvoiceGenerationDatabase,
+  periodStart: string,
+  periodEnd: string,
+): Promise<LineContext> => {
+  const organization = await first<{ visibleDefault: number; dateFormat: string }>(database, {
+    text: `SELECT report_notes_client_visible_default AS "visibleDefault",
+        date_format AS "dateFormat"
+      FROM organizations ORDER BY id LIMIT 1`,
+    params: [],
+  })
+  return {
+    periodStart,
+    periodEnd,
+    dateFormat: organization?.dateFormat ?? '%Y-%m-%d',
+    notesVisibleByDefault: organization === null || organization.visibleDefault !== 0,
+  }
+}
+
+const earliestDate = (rows: readonly { spentDate: string }[]): string | null =>
+  rows.reduce<string | null>(
+    (earliest, row) => (earliest === null || row.spentDate < earliest ? row.spentDate : earliest),
+    null,
+  )
+
 const trackedContent = async (
   database: InvoiceGenerationDatabase,
   commandId: string,
   request: GenerateInvoiceRequest,
 ): Promise<GenerationContent> => {
-  const client = await validateSelection(database, request)
+  const { client, projects } = await validateSelection(database, request)
   const candidates = await readUninvoicedCandidates(database, {
     clientId: request.clientId,
     from: request.from,
@@ -1297,21 +1679,19 @@ const trackedContent = async (
   }
   if (preview.length !== 1) invalid('selected tracked rows must use one invoice currency')
   const currencyTotal = preview[0]!
-  // Read once, beside the rows: the organization default for a note's
-  // visibility, which an entry with no answer of its own follows (D20). An
-  // instance with no organization row yet takes the column's own default.
-  const organization = await first<{ visibleDefault: number }>(database, {
-    text: `SELECT report_notes_client_visible_default AS "visibleDefault"
-      FROM organizations ORDER BY id LIMIT 1`,
-    params: [],
-  })
-  const lines = await buildLines(
-    commandId,
-    timeEntries,
-    expenses,
-    request,
-    organization === null || organization.visibleDefault !== 0,
-  )
+  // An open start has no date of its own, so the period begins on the earliest
+  // row this invoice bills: a date the document can stand behind, where a
+  // placeholder would print as a 1970 period on the invoice and its subject.
+  const periodStart = request.from ?? earliestDate([...timeEntries, ...expenses])!
+  const context = await lineContext(database, periodStart, request.to)
+  const lines = await numberedLines(commandId, [
+    ...(request.timeSummaryType === null
+      ? []
+      : timeLines(timeEntries, request.timeSummaryType, context)),
+    ...(request.expenseSummaryType === null
+      ? []
+      : expenseLines(expenses, request.expenseSummaryType, context)),
+  ])
   const amountCents = checkedSum(
     lines.map((line) => line.amountCents),
     'invoice amount',
@@ -1319,14 +1699,6 @@ const trackedContent = async (
   if (amountCents !== currencyTotal.totalCents) {
     throw new Error('invoice generation lines diverged from the canonical uninvoiced preview')
   }
-  // An open start has no date of its own, so the period begins on the earliest
-  // row this invoice bills: a date the document can stand behind, where a
-  // placeholder would print as a 1970 period on the invoice and its subject.
-  const periodStart =
-    request.from ??
-    [...timeEntries, ...expenses]
-      .map((row) => row.spentDate)
-      .reduce((earliest, date) => (date < earliest ? date : earliest))
   return {
     client,
     header: {
@@ -1334,12 +1706,14 @@ const trackedContent = async (
       periodStart,
       periodEnd: request.to,
       projectId: request.projectIds.length === 1 ? request.projectIds[0]! : null,
+      projectName: projects.length === 1 ? projects[0]!.name : null,
     },
     timeEntries,
     expenses,
     lines,
     currency: currencyTotal.currency,
     amountCents,
+    band: null,
   }
 }
 
@@ -1351,12 +1725,173 @@ const freeFormContent = async (
   const client = await readClient(database, request.clientId)
   return {
     client,
-    header: { subject: null, periodStart: null, periodEnd: null, projectId: null },
+    header: {
+      subject: null,
+      periodStart: null,
+      periodEnd: null,
+      projectId: null,
+      projectName: null,
+    },
     timeEntries: [],
     expenses: [],
     lines: [],
     currency: client.currency,
     amountCents: 0,
+    band: null,
+  }
+}
+
+/**
+ * A band raised by hand: the fee first, then whatever the band leaves to bill.
+ *
+ * The time it reads is exactly what a tracked draft over the same selection
+ * would bill, and all of it lands on this invoice, so none of it reads as
+ * uninvoiced afterwards. Which of it the fee covers is decided by the rule the
+ * recurring engine applies (`bandClaimSelection`), run over exactly these
+ * entries; the rest is priced as tracked lines, at each person's own rate,
+ * grouped as asked.
+ */
+const bandedContent = async (
+  database: InvoiceGenerationDatabase,
+  commandId: string,
+  request: GenerateBandedInvoiceRequest,
+): Promise<GenerationContent> => {
+  const { client, projects } = await validateSelection(database, request)
+  // The fee is charged in the projects' billing currency, which every hour on
+  // them is billed in too; it cannot be in two at once.
+  if (new Set(projects.map((project) => project.currency)).size !== 1) {
+    invalid('selected projects must bill in one invoice currency')
+  }
+  const currency = projects[0]!.currency
+  const feeProjects = [
+    ...new Set(request.lineItems.flatMap((line) => (line.projectId === null ? [] : [line.projectId]))),
+  ]
+  if (feeProjects.length > 0) {
+    const owned = await all<{ id: number }>(database, {
+      text: `SELECT id FROM projects
+        WHERE client_id = ? AND id IN (SELECT CAST(value AS INTEGER) FROM json_each(?))`,
+      params: [request.clientId, JSON.stringify(feeProjects)],
+    })
+    if (owned.length !== feeProjects.length) {
+      invalid('a fee line project must belong to the selected client')
+    }
+  }
+  const { timeEntries } = await readUninvoicedCandidates(database, {
+    clientId: request.clientId,
+    from: request.from,
+    to: request.to,
+    projectIds: request.projectIds,
+  })
+  if (timeEntries.length > maximumGenerationSourceRows) {
+    invalid(
+      `one generation command can consume at most ${maximumGenerationSourceRows} tracked rows`,
+    )
+  }
+  try {
+    uninvoicedGenerationPreview({ timeEntries, expenses: [] })
+  } catch (error) {
+    if (error instanceof RangeError) invalid(error.message)
+    throw error
+  }
+  const ceiling: BandClaimCeiling | null =
+    request.claimMode === 'all'
+      ? null
+      : request.claimCeilingSeconds !== null
+        ? { unit: 'seconds', limit: request.claimCeilingSeconds }
+        : { unit: 'cents', limit: request.claimCeilingCents! }
+  const claimedIds =
+    timeEntries.length === 0
+      ? new Set<number>()
+      : new Set(
+          (
+            await all<{ id: number }>(
+              database,
+              bandClaimSelection(
+                {
+                  text: `id IN (SELECT CAST(value AS INTEGER) FROM json_each(?))`,
+                  params: [JSON.stringify(timeEntries.map((entry) => entry.id))],
+                },
+                ceiling,
+              ),
+            )
+          ).map(({ id }) => id),
+        )
+  const claimed = timeEntries.filter((entry) => claimedIds.has(entry.id))
+  const billed = timeEntries.filter((entry) => !claimedIds.has(entry.id))
+  // The same open start a tracked draft has, dated from the earliest entry the
+  // invoice takes. A band over nothing yet has no such entry, so its period
+  // has an end and no invented start.
+  const periodStart = request.from ?? earliestDate(timeEntries)
+  const fee: DraftLine[] = request.lineItems.map((line) => ({
+    kind: line.kind,
+    description: line.description,
+    quantity: line.quantity,
+    unitPriceCents: line.unitPriceCents,
+    amountCents: calculateInvoiceLineAmountCents(line.quantity, line.unitPriceCents),
+    projectId: line.projectId,
+  }))
+  let overage: DraftLine[] = []
+  if (billed.length > 0) {
+    // Without a ceiling the band takes every entry it was offered, so an entry
+    // left over means one moved between the two reads.
+    if (request.overageSummaryType === null || periodStart === null) {
+      throw new InvoiceGenerationError(
+        'generation_conflict',
+        'tracked rows changed while generation was reading them',
+      )
+    }
+    overage = timeLines(
+      billed,
+      request.overageSummaryType,
+      await lineContext(database, periodStart, request.to),
+    )
+  }
+  const lines = await numberedLines(commandId, [...fee, ...overage])
+  const amountCents = checkedSum(
+    lines.map((line) => line.amountCents),
+    'invoice amount',
+  )
+  const seconds = (entries: readonly UninvoicedTimeCandidateRow[]): number =>
+    checkedIntegerSum(
+      entries.map((entry) => entry.roundedSeconds),
+      'time duration',
+    )
+  return {
+    client,
+    header: {
+      subject: periodStart === null ? null : `Tracked work ${periodStart} – ${request.to}`,
+      periodStart,
+      periodEnd: request.to,
+      projectId: request.projectIds.length === 1 ? request.projectIds[0]! : null,
+      projectName: projects.length === 1 ? projects[0]!.name : null,
+    },
+    timeEntries,
+    expenses: [],
+    lines,
+    currency,
+    amountCents,
+    band: {
+      feeLineCount: fee.length,
+      claimed_entry_count: claimed.length,
+      claimed_seconds: seconds(claimed),
+      billed_entry_count: billed.length,
+      billed_seconds: seconds(billed),
+    },
+  }
+}
+
+const generationContent = (
+  database: InvoiceGenerationDatabase,
+  commandId: string,
+  request: NormalizedRequest,
+): Promise<GenerationContent> => {
+  switch (request.kind) {
+    case 'free_form':
+      return freeFormContent(database, request)
+    case 'banded':
+      return bandedContent(database, commandId, request)
+    default:
+      return trackedContent(database, commandId, request)
   }
 }
 
@@ -1364,7 +1899,7 @@ export const createInvoiceGenerationService = (
   database: InvoiceGenerationDatabase,
   options: InvoiceGenerationServiceOptions = {},
 ): InvoiceGenerationService => ({
-  async generate(input): Promise<InvoiceResource> {
+  async generate(input): Promise<GeneratedInvoice> {
     const request = normalizedRequest(input)
     await assertAuthorized(database, input.principal)
     const invoiceId = await stableId('invoice-generation', input.commandId)
@@ -1379,21 +1914,11 @@ export const createInvoiceGenerationService = (
       return parseStoredInvoice(existing, inputFingerprint, input.principal.userId)
     }
 
-    const { client, header, timeEntries, expenses, lines, currency, amountCents } =
-      request.kind === 'free_form'
-        ? await freeFormContent(database, request)
-        : await trackedContent(database, input.commandId, request)
+    const content = await generationContent(database, input.commandId, request)
+    const { client, header, timeEntries, expenses, lines, currency, amountCents } = content
     const sourceManifestJson = sourceManifest(timeEntries, expenses)
     const lineManifestJson = lineManifest(lines)
-    const requestJson = requestManifest(
-      request,
-      header.periodStart,
-      currency,
-      amountCents,
-      lines.length,
-      timeEntries.length,
-      expenses.length,
-    )
+    const requestJson = requestManifest(request, content)
     const manifestBytes = new TextEncoder().encode(
       `${sourceManifestJson}${lineManifestJson}${requestJson}`,
     ).byteLength
@@ -1422,6 +1947,7 @@ export const createInvoiceGenerationService = (
           requestJson,
           sourceManifestJson,
           lineManifestJson,
+          band: content.band,
         }),
       )
     } catch (error) {
@@ -1439,8 +1965,11 @@ export const createInvoiceGenerationService = (
         to: request.to,
         projectIds: request.projectIds,
       })
-      const currentTime = request.timeSummaryType === null ? [] : current.timeEntries
-      const currentExpenses = request.expenseSummaryType === null ? [] : current.expenses
+      // A band reads all the time and no expenses; a tracked draft, what it bills.
+      const currentTime =
+        request.kind === 'banded' || request.timeSummaryType !== null ? current.timeEntries : []
+      const currentExpenses =
+        request.kind !== 'banded' && request.expenseSummaryType !== null ? current.expenses : []
       if (
         candidateSignature(timeEntries, expenses) !==
         candidateSignature(currentTime, currentExpenses)

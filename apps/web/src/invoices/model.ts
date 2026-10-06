@@ -5,6 +5,7 @@ import type {
   Invoice,
   InvoiceEditInput,
   InvoiceEmailDeliveryInput,
+  InvoiceGenerationInput,
   InvoiceLine,
   InvoiceLineInput,
   InvoiceLineUpdateInput,
@@ -21,6 +22,7 @@ import type {
   VersionedRowDeleteInput,
   Whoami,
 } from '@conflict-hq/ezacto-client'
+import { parseDurationSeconds } from '../shell/model.js'
 
 /**
  * The sentence to show for a failed invoice request: the first field the API
@@ -1468,3 +1470,167 @@ export const invoicePeriod = (invoice: Readonly<Invoice>): string | null =>
   invoice.period_start === null || invoice.period_end === null
     ? null
     : `${invoice.period_start} – ${invoice.period_end}`
+
+/** One line of a band's fee as the New invoice dialog holds it. */
+export interface InvoiceFeeLineValues {
+  readonly description: string
+  readonly quantity: string
+  readonly unitPrice: string
+}
+
+/** A band's fee and terms as the New invoice dialog holds them. */
+export interface InvoiceBandValues {
+  readonly lines: readonly InvoiceFeeLineValues[]
+  readonly claimMode: 'all' | 'ceiling'
+  readonly ceilingUnit: 'hours' | 'value'
+  readonly ceiling: string
+  readonly overageSummary: string
+}
+
+type BandedGenerationInput = Extract<InvoiceGenerationInput, { kind: 'banded' }>
+
+export type InvoiceBandTerms = Pick<
+  BandedGenerationInput,
+  | 'line_items'
+  | 'claim_mode'
+  | 'claim_ceiling_seconds'
+  | 'claim_ceiling_cents'
+  | 'overage_summary_type'
+>
+
+/**
+ * A fee line's amount, in exact cents, or null while it does not parse. It is
+ * the invoice editor's arithmetic, so the dialog cannot preview a figure the
+ * draft will not carry -- and a price typed as cents reads back as money,
+ * a hundred times too large, before it is sent.
+ */
+export const invoiceFeeLineAmountCents = (
+  line: Readonly<Pick<InvoiceFeeLineValues, 'quantity' | 'unitPrice'>>,
+): number | null => {
+  try {
+    return invoiceLineValues(line.quantity, line.unitPrice).amountCents
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Hours for a band's limit: plain hours (`100`, `99.5`) or the forms the
+ * recurring editor takes (`100h`, `99h30m`).
+ */
+export const invoiceBandCeilingSeconds = (raw: string): number => {
+  const value = raw.trim()
+  try {
+    return parseDurationSeconds(/^\d+(?:\.\d+)?$/u.test(value) ? `${value}h` : value)
+  } catch {
+    throw new Error('Enter the limit in hours, as 100, 99.5 or 99h30m.')
+  }
+}
+
+const overageSummaries: ReadonlySet<string> = new Set(['project', 'task', 'people', 'detailed'])
+
+/**
+ * The fee and terms a banded request carries, from what the dialog holds; a
+ * line or a limit that does not parse throws the sentence to show. A value
+ * limit is typed as money, the way the fee's own prices are.
+ */
+export const invoiceBandTerms = (values: Readonly<InvoiceBandValues>): InvoiceBandTerms => {
+  if (values.lines.length === 0) throw new Error('Add at least one fee line.')
+  const lineItems = values.lines.map((line, index) => {
+    let priced: InvoiceLineValues
+    try {
+      priced = invoiceLineValues(line.quantity, line.unitPrice)
+    } catch (error) {
+      throw new Error(`Fee line ${index + 1}: ${(error as Error).message}`, { cause: error })
+    }
+    const description = line.description.trim()
+    return {
+      kind: 'Service',
+      description: description === '' ? null : description,
+      quantity: priced.quantity,
+      unit_price_cents: priced.unitPriceCents,
+    }
+  })
+  if (values.claimMode === 'all') return { line_items: lineItems, claim_mode: 'all' }
+  if (!overageSummaries.has(values.overageSummary)) {
+    throw new Error('Choose how the hours past the limit are grouped.')
+  }
+  const overage = values.overageSummary as NonNullable<
+    BandedGenerationInput['overage_summary_type']
+  >
+  if (values.ceilingUnit === 'hours') {
+    return {
+      line_items: lineItems,
+      claim_mode: 'ceiling',
+      claim_ceiling_seconds: invoiceBandCeilingSeconds(values.ceiling),
+      overage_summary_type: overage,
+    }
+  }
+  let cents: number
+  try {
+    cents = invoiceLineUnitPriceCents(values.ceiling)
+  } catch {
+    throw new Error('Enter the limit as an amount, like 4500.00.')
+  }
+  if (cents < 1) throw new Error('The limit must be more than zero.')
+  return {
+    line_items: lineItems,
+    claim_mode: 'ceiling',
+    claim_ceiling_cents: cents,
+    overage_summary_type: overage,
+  }
+}
+
+/** What the uninvoiced report says the selected projects have waiting. */
+export interface InvoiceBandAvailable {
+  readonly seconds: number
+  /** Null when the report withholds money from this viewer. */
+  readonly cents: number | null
+  readonly unpricedEntries: number
+}
+
+const bandHours = (seconds: number): string => `${(seconds / 3_600).toFixed(2)} h`
+
+/**
+ * The band before it is raised, in what the uninvoiced report can stand behind.
+ *
+ * The report has totals, not entries, and which entries the band takes is the
+ * server's rule -- oldest first, whole entries only -- so this says no more
+ * than the totals prove: how much is waiting, at most the limit covered, and
+ * at least the rest billed. The draft has the exact split.
+ */
+export const invoiceBandPreview = (
+  available: Readonly<InvoiceBandAvailable>,
+  claimMode: 'all' | 'ceiling',
+  limit: { readonly unit: 'seconds' | 'cents'; readonly value: number } | null,
+  money: (cents: number) => string,
+): string => {
+  if (available.seconds === 0 && available.unpricedEntries === 0 && (available.cents ?? 0) === 0) {
+    return 'Nothing is uninvoiced on these projects in the period; the fee stands on its own.'
+  }
+  const waiting = `${bandHours(available.seconds)} uninvoiced in the period`
+  if (claimMode === 'all') return `${waiting}, all of it covered by the fee.`
+  if (limit === null) return `${waiting}. Enter the limit to see what the fee covers.`
+  if (limit.unit === 'seconds') {
+    return available.seconds <= limit.value
+      ? `${waiting}, all of it within the ${bandHours(limit.value)} limit.`
+      : `${waiting}: up to ${bandHours(limit.value)} covered, oldest first, and at least ${bandHours(
+          available.seconds - limit.value,
+        )} billed at each person's rate. An entry is never split, so the draft has the exact figures.`
+  }
+  const unpriced =
+    available.unpricedEntries === 0
+      ? ''
+      : ` ${available.unpricedEntries} ${available.unpricedEntries === 1 ? 'entry has' : 'entries have'} no billable rate, and a value limit stops at the first of them.`
+  if (available.cents === null) {
+    return `${waiting}; the fee covers work worth up to ${money(limit.value)} at list, oldest first.${unpriced}`
+  }
+  const worth = `${waiting}, worth ${money(available.cents)} at list`
+  return available.cents <= limit.value && available.unpricedEntries === 0
+    ? `${worth}, all of it within the ${money(limit.value)} limit.`
+    : available.cents <= limit.value
+      ? `${worth}.${unpriced}`
+      : `${worth}: up to ${money(limit.value)} of it covered, oldest first, and at least ${money(
+          available.cents - limit.value,
+        )} billed at each person's rate. An entry is never split, so the draft has the exact figures.${unpriced}`
+}

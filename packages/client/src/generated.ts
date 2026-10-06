@@ -1654,6 +1654,36 @@ export type InvoiceGenerationInput = {
 } | {
   "kind": "free_form";
   "client_id": number;
+} | {
+  "kind": "banded";
+  "client_id": number;
+  "from"?: string | null;
+  "to": string;
+  "project_ids": Array<number>;
+  "line_items": Array<{
+  "kind": string;
+  "description"?: string | null;
+  "quantity": number;
+  "unit_price_cents": number;
+  "project_id"?: number | null;
+}>;
+  "claim_mode": "all" | "ceiling";
+  "claim_ceiling_seconds"?: number | null;
+  "claim_ceiling_cents"?: number | null;
+  "overage_summary_type"?: "project" | "task" | "people" | "detailed" | null;
+};
+
+export type InvoiceBandClaim = {
+  "claimed_entry_count": number;
+  "claimed_seconds": number;
+  "billed_entry_count": number;
+  "billed_seconds": number;
+};
+
+export type InvoiceGenerationEnvelope = {
+  "data": Invoice;
+  "band"?: InvoiceBandClaim;
+  "links": Links;
 };
 
 export type InvoiceCommandSnapshot = {
@@ -4547,10 +4577,10 @@ export class EzactoClient {
     });
   }
 
-  async generateInvoice(args: { "Idempotency-Key": string; body: InvoiceGenerationInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceEnvelope> {
+  async generateInvoice(args: { "Idempotency-Key": string; body: InvoiceGenerationInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceGenerationEnvelope> {
     const headers = new Headers(args.headers);
     if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
-    return this.request<InvoiceEnvelope>("POST", "/api/v1/invoice-generations", {
+    return this.request<InvoiceGenerationEnvelope>("POST", "/api/v1/invoice-generations", {
       body: args.body,
       signal: args.signal,
       headers,
