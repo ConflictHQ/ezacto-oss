@@ -213,7 +213,8 @@ export const readCheckoutCompletion = (
   }
 
   const metadata = object(session['metadata'])
-  const invoiceId = Number(metadata['ezacto_invoice_id'])
+  // `ezacto_invoice_id` is the key links minted before the neutral name carry.
+  const invoiceId = Number(metadata['invoice_id'] ?? metadata['ezacto_invoice_id'])
 
   return {
     eventId: typeof body['id'] === 'string' ? body['id'] : '',

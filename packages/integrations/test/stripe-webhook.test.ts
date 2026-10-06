@@ -205,7 +205,7 @@ describe('reading a completed checkout', () => {
           payment_intent: 'pi_example',
           amount_total: 2500,
           currency: 'usd',
-          metadata: { ezacto_invoice_id: '1315' },
+          metadata: { invoice_id: '1315' },
           ...overrides,
         },
       },
@@ -220,6 +220,14 @@ describe('reading a completed checkout', () => {
       currency: 'USD',
       invoiceId: 1315,
     })
+  })
+
+  it('[money] still reads a link minted under the old ezacto_invoice_id key', async () => {
+    // Links already out in the world carry the old key; their payments must
+    // still land on the invoice.
+    expect(
+      readCheckoutCompletion(session({ metadata: { ezacto_invoice_id: '1315' } }))?.invoiceId,
+    ).toBe(1315)
   })
 
   it('[money] ignores a session that completed without being paid', async () => {
@@ -241,11 +249,11 @@ describe('reading a completed checkout', () => {
     // and a guess here would credit somebody else's.
     expect(readCheckoutCompletion(session({ metadata: {} }))?.invoiceId).toBeNull()
     expect(
-      readCheckoutCompletion(session({ metadata: { ezacto_invoice_id: 'not-a-number' } }))
+      readCheckoutCompletion(session({ metadata: { invoice_id: 'not-a-number' } }))
         ?.invoiceId,
     ).toBeNull()
     expect(
-      readCheckoutCompletion(session({ metadata: { ezacto_invoice_id: '-3' } }))?.invoiceId,
+      readCheckoutCompletion(session({ metadata: { invoice_id: '-3' } }))?.invoiceId,
     ).toBeNull()
   })
 
