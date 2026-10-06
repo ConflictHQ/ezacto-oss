@@ -43,7 +43,7 @@ import type {
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 import type { ClientDirectoryApi } from '../clients/model.js'
 import type { ProjectDirectoryApi } from '../projects/model.js'
-import type { ReportWorkspaceApi } from '../reports/model.js'
+import { detailedTimeExportPath, type ReportWorkspaceApi } from '../reports/model.js'
 import type { ExpenseWorkflowApi } from '../expenses/model.js'
 import type { ExpenseCategoryDirectoryApi } from '../expense-categories/model.js'
 import type { InvoiceEditorApi, InvoicePaymentApi } from '../invoices/model.js'
@@ -2284,5 +2284,23 @@ export const createSameOriginShellApi = (): ShellApi => ({
     const disposition = response.headers.get('content-disposition') ?? ''
     const named = /filename="([^"]+)"/u.exec(disposition)?.[1]
     return { blob: await response.blob(), filename: named ?? `hours-${String(id)}.${format}` }
+  },
+  // The detailed time report as a file, for the same reason: the name the
+  // server gives it -- period and client -- is in a header the client drops.
+  downloadDetailedTimeReport: async (request, format, audience, signal) => {
+    const response = await globalThis.fetch(detailedTimeExportPath(request, format, audience), {
+      credentials: 'same-origin',
+      ...(signal === undefined ? {} : { signal }),
+    })
+    if (!response.ok) {
+      const body: unknown = await response.json().catch(() => null)
+      throw new EzactoApiError(response.status, body, response.headers.get('x-request-id'))
+    }
+    const disposition = response.headers.get('content-disposition') ?? ''
+    const named = /filename="([^"]+)"/u.exec(disposition)?.[1]
+    return {
+      blob: await response.blob(),
+      filename: named ?? `detailed-time-${request.from}-to-${request.to}.${format}`,
+    }
   },
 })

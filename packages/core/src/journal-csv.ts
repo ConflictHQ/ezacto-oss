@@ -4,6 +4,7 @@ import {
   journalProjectLabel,
   summariseJournal,
   type JournalDocumentInput,
+  type JournalReportInput,
 } from "./journal-document.js";
 
 /**
@@ -43,7 +44,7 @@ const numberCell = (value: string): string => {
   return value;
 };
 
-export const renderJournalCsv = (input: JournalDocumentInput): Uint8Array => {
+export const renderJournalCsv = (input: JournalDocumentInput | JournalReportInput): Uint8Array => {
   const total = input.entries.reduce((sum, entry) => sum + entry.seconds, 0);
   const rows: string[][] = [];
   if (input.detail === "detailed") {

@@ -58,6 +58,39 @@ export interface JournalDocumentInput {
   readonly entries: readonly JournalEntry[];
 }
 
+/** A line of the recap: what it is, then what it says. */
+export type JournalRecapRow = readonly [label: string, value: string];
+
+/**
+ * What a report exported on its own says where an invoice's journal names the
+ * invoice: the detailed time report's Export, which is what Harvest's
+ * "Detailed time report" PDF was.
+ *
+ * Harvest's recap states what the report was asked for rather than counting
+ * what came back -- "1 Client", "All tasks", "Everyone" -- so a report run for
+ * one project still names the project when the month found no work on it, and
+ * the total says which hours it adds up: "86.83 Uninvoiced billable hours".
+ */
+export interface JournalReportRecap {
+  /** Set after the total, as Harvest sets it: `Uninvoiced billable hours`. */
+  readonly hoursLabel: string;
+  /** The block beside the timeframe and total, in order. */
+  readonly scope: readonly JournalRecapRow[];
+}
+
+/**
+ * The same document with no invoice behind it: everything an invoice's journal
+ * carries but the invoice's number, and the recap that replaces it. The period
+ * is the report's own, not the span of its entries.
+ */
+export interface JournalReportInput extends Omit<JournalDocumentInput, "invoiceNumber"> {
+  readonly recap: JournalReportRecap;
+}
+
+/** "2026-06-01 – 2026-06-30", one date for one day, `None` for no entries. */
+export const journalTimeframe = (start: string | null, end: string | null): string =>
+  start === null || end === null ? "None" : start === end ? start : `${start} – ${end}`;
+
 /**
  * Rounded to a hundredth of an hour, which is how the product already shows
  * decimal time. Each row is rounded on its own and a total is rounded from the
@@ -275,7 +308,7 @@ const counted = (count: number, singular: string, plural: string): string =>
  * PDF back: a test can say no line sits below the floor and no note lost a
  * character, which is what a client reading the document needs to be true.
  */
-export const layoutJournalDocument = (input: JournalDocumentInput): PdfDocument => {
+export const layoutJournalDocument = (input: JournalDocumentInput | JournalReportInput): PdfDocument => {
   const time = (seconds: number): string => hours(seconds, input.timeFormat);
   const total = input.entries.reduce((sum, entry) => sum + entry.seconds, 0);
   const detailed = input.detail === "detailed";
@@ -344,16 +377,10 @@ export const layoutJournalDocument = (input: JournalDocumentInput): PdfDocument 
   });
   rule(TOP - 40, 0.8);
 
-  const clients = input.entries.map((entry) => entry.clientName);
-  const projects = input.entries.map((entry) => entry.projectName);
-  const tasks = input.entries.flatMap((entry) => (entry.taskName === null ? [] : [entry.taskName]));
-  const distinct = (values: readonly string[]): number =>
-    new Set(values.filter((value) => value.trim() !== "")).size;
-  const allBillable = input.entries.every((entry) => entry.billable);
   const recapTop = TOP - 82;
   let recapBottom = recapTop;
   const recap = (
-    rows: readonly (readonly [string, string])[],
+    rows: readonly JournalRecapRow[],
     labelX: number,
     valueX: number,
     measure: number,
@@ -367,34 +394,45 @@ export const layoutJournalDocument = (input: JournalDocumentInput): PdfDocument 
     }
     recapBottom = Math.min(recapBottom, baseline);
   };
-  recap(
-    [
-      ["Invoice", input.invoiceNumber],
+  const timeframe = journalTimeframe(input.periodStart, input.periodEnd);
+  const summaryAt = [MARGIN, MARGIN + 73, 300 - (MARGIN + 73)] as const;
+  const scopeAt = [311, 408, RIGHT - 408] as const;
+  if ("recap" in input) {
+    // A report run on its own: no invoice to name, and the block beside the
+    // total says what the report was asked for.
+    recap(
       [
-        "Timeframe",
-        input.periodStart === null || input.periodEnd === null
-          ? "None"
-          : input.periodStart === input.periodEnd
-            ? input.periodStart
-            : `${input.periodStart} – ${input.periodEnd}`,
+        ["Timeframe", timeframe],
+        ["Total", `${time(total)} ${input.recap.hoursLabel}`],
       ],
-      ["Total", `${time(total)} ${allBillable ? "Invoiced billable hours" : "Invoiced hours"}`],
-    ],
-    MARGIN,
-    MARGIN + 73,
-    300 - (MARGIN + 73),
-  );
-  recap(
-    [
-      [counted(distinct(clients), "Client", "Clients"), names(clients)],
-      [counted(distinct(projects), "Project", "Projects"), names(projects)],
-      [counted(distinct(tasks), "Task", "Tasks"), names(tasks)],
-      ["Team", names(input.entries.map((entry) => entry.personName))],
-    ],
-    311,
-    408,
-    RIGHT - 408,
-  );
+      ...summaryAt,
+    );
+    recap(input.recap.scope, ...scopeAt);
+  } else {
+    const clients = input.entries.map((entry) => entry.clientName);
+    const projects = input.entries.map((entry) => entry.projectName);
+    const tasks = input.entries.flatMap((entry) => (entry.taskName === null ? [] : [entry.taskName]));
+    const distinct = (values: readonly string[]): number =>
+      new Set(values.filter((value) => value.trim() !== "")).size;
+    const allBillable = input.entries.every((entry) => entry.billable);
+    recap(
+      [
+        ["Invoice", input.invoiceNumber],
+        ["Timeframe", timeframe],
+        ["Total", `${time(total)} ${allBillable ? "Invoiced billable hours" : "Invoiced hours"}`],
+      ],
+      ...summaryAt,
+    );
+    recap(
+      [
+        [counted(distinct(clients), "Client", "Clients"), names(clients)],
+        [counted(distinct(projects), "Project", "Projects"), names(projects)],
+        [counted(distinct(tasks), "Task", "Tasks"), names(tasks)],
+        ["Team", names(input.entries.map((entry) => entry.personName))],
+      ],
+      ...scopeAt,
+    );
+  }
   y = recapBottom - 14;
 
   /** A band naming a group and its hours, as Harvest heads each person. */
@@ -542,8 +580,14 @@ export const layoutJournalDocument = (input: JournalDocumentInput): PdfDocument 
       ],
     };
   });
-  return { pages: numbered, title: `${title} for invoice ${input.invoiceNumber}` };
+  return {
+    pages: numbered,
+    title:
+      "recap" in input
+        ? `${title}: ${input.clientName}, ${timeframe}`
+        : `${title} for invoice ${input.invoiceNumber}`,
+  };
 };
 
-export const renderJournalDocument = (input: JournalDocumentInput): Uint8Array =>
+export const renderJournalDocument = (input: JournalDocumentInput | JournalReportInput): Uint8Array =>
   renderPdf(layoutJournalDocument(input));
