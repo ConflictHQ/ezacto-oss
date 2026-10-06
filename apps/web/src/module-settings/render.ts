@@ -78,6 +78,23 @@ export const renderModuleSettingsPage = (view?: string): string => `
           <textarea name="notes" data-invoice-defaults-notes rows="9" maxlength="100000"></textarea>
         </label>
         <p class="hint">Printed below the line items: how to pay, bank and wire details, terms. Formatting: <code>*bold*</code> and <code>_italic_</code>.</p>
+        <h3 data-invoice-defaults-sending hidden>Sending</h3>
+        <label class="invoice-defaults-check" data-invoice-defaults-sending hidden><input type="checkbox" name="attach_pdf" data-invoice-defaults-attach-pdf>Attach the invoice PDF by default</label>
+        <label class="invoice-defaults-check" data-invoice-defaults-sending hidden><input type="checkbox" name="attach_journal" data-invoice-defaults-attach-journal>Attach the hours report by default</label>
+        <label data-invoice-defaults-journal-detail hidden>Hours report detail
+          <select class="invoice-defaults-select" name="journal_level" data-invoice-defaults-journal-level>
+            <option value="detailed">Every entry</option>
+            <option value="summary">Summary</option>
+          </select>
+        </label>
+        <fieldset class="invoice-defaults-formats" data-invoice-defaults-journal-formats hidden>
+          <legend>Hours report files</legend>
+          <label class="invoice-defaults-check"><input type="checkbox" name="journal_format" value="pdf">PDF</label>
+          <label class="invoice-defaults-check"><input type="checkbox" name="journal_format" value="csv">CSV</label>
+          <label class="invoice-defaults-check"><input type="checkbox" name="journal_format" value="xlsx">Excel</label>
+        </fieldset>
+        <label class="invoice-defaults-check" data-invoice-defaults-sending hidden><input type="checkbox" name="attach_files" data-invoice-defaults-attach-files>Attach invoice files by default</label>
+        <p class="hint" data-invoice-defaults-sending hidden>What an invoice's email carries unless the invoice says otherwise. Each invoice can still change these when it is sent.</p>
         <button class="primary-action" type="submit" data-invoice-defaults-submit>Save invoice settings</button>
       </form>
       <p class="form-result" data-invoice-defaults-result role="status" aria-live="polite"></p>

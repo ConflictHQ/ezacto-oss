@@ -107,6 +107,34 @@ export const recurringWorkspaceUrl = (selection: number | null = null): string =
     ? '/invoices/recurring'
     : `/invoices/recurring?definition=${selection}`
 
+/** What the editor page is writing: a definition by its id, or a new one. */
+export type RecurringEditorTarget = number | 'new'
+
+/**
+ * The editor is a page of its own rather than a dialog over the list: a
+ * definition carries a schedule, a template, a band and a table of lines, and
+ * at dialog width the table scrolled sideways under its own labels.
+ */
+export const recurringEditorUrl = (target: RecurringEditorTarget): string =>
+  target === 'new' ? '/invoices/recurring/new' : `/invoices/recurring/${target}/edit`
+
+export const recurringEditorTargetFromPathname = (
+  pathname: string,
+): RecurringEditorTarget | null => {
+  if (/^\/invoices\/recurring\/new\/?$/u.test(pathname)) return 'new'
+  const match = /^\/invoices\/recurring\/([1-9][0-9]*)\/edit\/?$/u.exec(pathname)
+  if (match === null) return null
+  const id = Number(match[1])
+  return Number.isSafeInteger(id) ? id : null
+}
+
+/**
+ * Where leaving the editor goes: back to the definition it was opened on, or
+ * to the list for a definition that never existed.
+ */
+export const recurringEditorReturnUrl = (target: RecurringEditorTarget): string =>
+  recurringWorkspaceUrl(target === 'new' ? null : target)
+
 /**
  * The 1st, the 2nd, the 31st. Ordinals rather than "day 1", because a cadence
  * is read aloud when someone is deciding whether it is the one they meant.
@@ -734,6 +762,26 @@ export const recurringDurationInput = (seconds: number): string => {
     : minutes.toFixed(6).replace(/0+$/u, '').replace(/\.$/u, '')
   if (minutes === 0) return `${hours}h`
   return hours === 0 ? `${trimmed}m` : `${hours}h${trimmed}m`
+}
+
+/**
+ * What one line will bill, for the editor's preview, or null while its
+ * quantity or price does not parse. The arithmetic is the detail view's and
+ * `recurringFixedTotalCents`'s, so the editor cannot preview a figure the
+ * definition would not raise -- and a unit price typed in cents, where one
+ * zero too many is a hundredfold invoice, reads back as money before it saves.
+ */
+export const recurringLineAmountCents = (
+  values: Readonly<Pick<RecurringLineFormValues, 'quantity' | 'unitPriceCents'>>,
+): number | null => {
+  const quantityText = values.quantity.trim()
+  const quantity = Number(quantityText)
+  if (quantityText === '' || !Number.isFinite(quantity) || quantity <= 0) return null
+  const priceText = values.unitPriceCents.trim()
+  if (!/^-?(?:0|[1-9][0-9]*)$/u.test(priceText)) return null
+  const cents = Number(priceText)
+  if (!Number.isSafeInteger(cents) || Math.abs(cents) > centsLimit) return null
+  return Math.round(quantity * cents)
 }
 
 export const recurringBlankLine = (): RecurringLineFormValues => ({

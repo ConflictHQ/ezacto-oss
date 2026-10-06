@@ -816,8 +816,12 @@ describe('S-1 through S-5 application shell', () => {
     expect(detail).toContain('data-ez-theme="precision"')
     expect(detail).toContain('data-invoice-detail-lines')
     expect(detail).toContain('data-invoice-line-add')
-    expect(detail).toContain('data-invoice-line-dialog')
-    expect(detail).toContain('data-invoice-line-delete-dialog')
+    // Lines and the document change on the edit page now, so the detail page
+    // links there rather than opening a second editor in a dialog.
+    expect(detail).not.toContain('data-invoice-line-dialog')
+    expect(detail).not.toContain('data-invoice-line-delete-dialog')
+    expect(detail).not.toContain('data-invoice-edit-dialog')
+    expect(detail).toMatch(/<a class="invoice-edit-link" data-invoice-edit[^>]*>Edit invoice<\/a>/u)
     expect(detail).toContain('data-invoice-detail-payments')
     expect(detail).toContain('data-invoice-payment-record')
     expect(detail).toContain('data-invoice-payment-settle')
@@ -833,8 +837,12 @@ describe('S-1 through S-5 application shell', () => {
     expect(detail).toContain('data-invoice-composer-deliver-toggle')
     expect(detail).toContain('Also deliver by email')
     expect(detail).toContain('data-invoice-composer-confirm')
-    // What the client actually receives: the lines, and still no PDF.
-    expect(detail).toContain("It lists this invoice's line items, with whatever attachments are set for this invoice")
+    // What the client actually receives: the lines, and the attachments the
+    // dialog itself offers -- the PDF, the hours report and the invoice's files.
+    expect(detail).toContain("It lists this invoice's line items, with the attachments chosen below.")
+    expect(detail).toContain('Attach a PDF of this invoice')
+    expect(detail).toContain('Attach the hours report')
+    expect(detail).toContain('Attach files added to this invoice')
     expect(detail).toContain('data-invoice-reminder-line')
     expect(detail).toContain('data-invoice-composer-dialog')
     expect(detail).toContain('%invoice_number%')
@@ -859,7 +867,7 @@ describe('S-1 through S-5 application shell', () => {
     expect(detail).not.toMatch(/name="(?:provider|reference|send_thank_you)"/u)
     expect(webAssets.stylesheet).toContain('.invoice-document {')
     expect(webAssets.stylesheet).toContain('.invoice-payment-dialog-actions {')
-    expect(webAssets.stylesheet).toContain('.invoice-line-dialog {')
+    expect(webAssets.stylesheet).toContain('.line-editor-row {')
     expect(webAssets.stylesheet).toContain('.invoice-line-actions {')
     expect(webAssets.stylesheet).toContain('.invoice-load-more {')
     // Red text, never a red fill: the destructive rules set a colour and no

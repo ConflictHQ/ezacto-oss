@@ -1291,13 +1291,27 @@
   align-items: center;
   gap: 10px;
 }
-.invoice-document-actions button {
+.invoice-document-actions button,
+.invoice-document-actions .invoice-edit-link {
   min-height: 44px;
   padding: 0 14px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-ink);
   color: var(--ez-ground);
+}
+/* Edit invoice leads to a page, so it is a link, drawn as the header's other
+   actions are. Without an href (a closed invoice) it is the disabled state a
+   link has, and the title says why. */
+.invoice-document-actions .invoice-edit-link {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  white-space: nowrap;
+}
+:is(.invoice-edit-link, .invoice-line-add)[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 .invoice-overflow {
   position: relative;
@@ -1406,14 +1420,19 @@
   color: var(--ez-muted);
   font-size: 13px;
 }
-.invoice-line-heading button,
-.invoice-line-actions button {
+.invoice-line-heading .invoice-line-add,
+.invoice-line-actions a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 44px;
   padding: 0 14px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
   color: var(--ez-ink);
+  text-decoration: none;
+  white-space: nowrap;
 }
 .invoice-line-editor > .form-result,
 .invoice-line-editor > .hint {
@@ -1448,12 +1467,13 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+/* One link now, so the cell stays a table cell: a flex cell drops out of the
+   table's own layout and its rule no longer meets the rest of the row's. */
 .invoice-line-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
+  text-align: right;
+  white-space: nowrap;
 }
-.invoice-line-actions button {
+.invoice-line-actions a {
   min-height: 36px;
   padding-inline: 10px;
 }
@@ -1647,48 +1667,6 @@
   grid-template-columns: minmax(0, 1fr) minmax(110px, 0.35fr);
   gap: 12px;
 }
-.invoice-line-dialog {
-  width: min(680px, calc(100vw - 32px));
-}
-.invoice-line-number-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-.invoice-line-tax-fields {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 20px;
-  margin: 0;
-  padding: 12px;
-  border: 1px solid var(--ez-border);
-  border-radius: var(--ez-radius);
-}
-.invoice-line-tax-fields legend {
-  padding-inline: 4px;
-  color: var(--ez-muted);
-  font-size: 13px;
-}
-.invoice-line-tax-fields label {
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  gap: 8px;
-}
-.invoice-line-tax-fields input {
-  width: auto;
-  min-height: auto;
-}
-.invoice-line-preview {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  margin: 0;
-  padding: 12px;
-  border: 1px solid var(--ez-border);
-  border-radius: var(--ez-radius);
-  font-variant-numeric: tabular-nums;
-}
 .invoice-payment-dialog-actions {
   display: flex;
   justify-content: flex-end;
@@ -1706,12 +1684,12 @@
 /* The invoice dialogs share one frame: the title and the actions stay put in
    bands of their own while a long form scrolls between them, so Save is never
    below the fold. */
-:is(.invoice-payment-dialog, .invoice-line-dialog, .invoice-transition-dialog, .invoice-composer-dialog) > form {
+:is(.invoice-payment-dialog, .invoice-transition-dialog, .invoice-composer-dialog) > form {
   max-height: calc(100dvh - 48px);
   padding: 0 24px;
   overflow-y: auto;
 }
-:is(.invoice-payment-dialog, .invoice-line-dialog, .invoice-transition-dialog, .invoice-composer-dialog) > form > header {
+:is(.invoice-payment-dialog, .invoice-transition-dialog, .invoice-composer-dialog) > form > header {
   position: sticky;
   top: 0;
   z-index: 1;
@@ -1720,10 +1698,10 @@
   border-bottom: 1px solid var(--ez-border);
   background: var(--ez-ground);
 }
-:is(.invoice-payment-dialog, .invoice-line-dialog, .invoice-transition-dialog, .invoice-composer-dialog) h2 {
+:is(.invoice-payment-dialog, .invoice-transition-dialog, .invoice-composer-dialog) h2 {
   margin: 0;
 }
-:is(.invoice-payment-dialog, .invoice-line-dialog, .invoice-transition-dialog, .invoice-composer-dialog) > form > .invoice-payment-dialog-actions {
+:is(.invoice-payment-dialog, .invoice-transition-dialog, .invoice-composer-dialog) > form > .invoice-payment-dialog-actions {
   position: sticky;
   bottom: 0;
   margin: 4px -24px 0;
@@ -1731,22 +1709,12 @@
   border-top: 1px solid var(--ez-border);
   background: var(--ez-surface);
 }
-:is(.invoice-payment-dialog, .invoice-line-dialog, .invoice-transition-dialog, .invoice-composer-dialog) .hint {
+:is(.invoice-payment-dialog, .invoice-transition-dialog, .invoice-composer-dialog) .hint {
   margin-top: -6px;
   font-size: 13px;
 }
 .invoice-payment-dialog-actions button:not(.primary-action) {
   background: var(--ez-ground);
-}
-.invoice-edit-rate-fields {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-@media (max-width: 560px) {
-  .invoice-edit-rate-fields {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 .invoice-composer-layout {
   display: grid;
@@ -1763,6 +1731,60 @@
   gap: 8px;
 }
 .invoice-composer-check input {
+  width: auto;
+  min-height: auto;
+}
+/* What goes with the email. Grouped under the delivery switch because it
+   only means anything once the email is being sent, and greyed until then. */
+.invoice-composer-attachments {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+.invoice-composer-attachments > legend {
+  padding: 0 4px;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.invoice-composer-attachments .invoice-composer-check {
+  min-height: 44px;
+  color: var(--ez-ink);
+  font-size: 14px;
+}
+.invoice-composer-attachments .invoice-composer-check:has(input:disabled) {
+  color: var(--ez-muted);
+}
+.invoice-composer-journal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+.invoice-composer-journal select {
+  width: auto;
+}
+.invoice-composer-formats {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.invoice-composer-formats label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  color: var(--ez-ink);
+  font-size: 14px;
+}
+.invoice-composer-formats input {
   width: auto;
   min-height: auto;
 }
@@ -3092,15 +3114,12 @@
     flex-direction: column;
   }
   .invoice-payment-heading button,
-  .invoice-line-heading button,
+  .invoice-line-heading .invoice-line-add,
   .invoice-payment-dialog-actions button,
   .retainer-dialog-actions button {
     width: 100%;
   }
   .invoice-payment-amount-fields {
-    grid-template-columns: 1fr;
-  }
-  .invoice-line-number-fields {
     grid-template-columns: 1fr;
   }
   .invoice-line-table {
@@ -3137,11 +3156,10 @@
     font-size: 11px;
   }
   .invoice-line-actions {
-    justify-content: stretch;
     padding-top: 0 !important;
   }
-  .invoice-line-actions button {
-    flex: 1;
+  .invoice-line-actions a {
+    display: flex;
     min-height: 44px;
   }
   .invoice-attachment-form {
@@ -4166,6 +4184,49 @@ dialog h2,
   justify-self: start;
   min-height: 44px;
   margin-top: 6px;
+}
+/* A checkbox row in the invoice settings form: the box beside its words, not
+   above them, however the form lays out its other fields. Specific enough to
+   hold against the form's own label and input rules. */
+.settings-form.invoice-defaults-form label.invoice-defaults-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  color: var(--ez-ink);
+}
+.settings-form.invoice-defaults-form .invoice-defaults-check input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--ez-action);
+}
+.settings-form.invoice-defaults-form .invoice-defaults-select {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font: inherit;
+}
+.settings-form.invoice-defaults-form .invoice-defaults-formats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 16px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.settings-form.invoice-defaults-form .invoice-defaults-formats legend {
+  padding: 0;
+  color: var(--ez-muted);
+  font-size: 13px;
 }
 
 /* The BILL delivery switch on a client (issue 542). Its own section rather
@@ -6137,6 +6198,7 @@ dialog textarea {
   .invoice-load-more,
   .invoice-reminder-line,
   .invoice-document-actions button,
+  .invoice-document-actions .invoice-edit-link,
   .invoice-overflow,
   .invoice-line-editor,
   .invoice-line-actions,
@@ -6471,95 +6533,587 @@ dialog textarea {
   min-height: 44px;
   padding: 8px 16px;
 }
-/* The editor. A definition is one instruction with a schedule attached, so the
-   scheduling half sits on a grid that collapses to one column and the wording
-   half runs full width underneath it — the fields a person reads across are the
-   ones they set together. */
-.recurring-editor-dialog::backdrop {
-  background: color-mix(in srgb, var(--ez-ink) 45%, transparent);
+/* The links that open the recurring editor read as the buttons they replaced:
+   New is the page's primary action, Edit sits with Delete. */
+.recurring-new-link,
+.recurring-edit-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  text-decoration: none;
 }
-.recurring-editor-form {
-  display: grid;
-  gap: 16px;
-  width: min(760px, 92vw);
-  max-height: 80vh;
-  overflow-y: auto;
+.recurring-edit-link {
+  padding: 8px 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
 }
-.recurring-editor-form header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
+[data-recurring-delete-result][data-outcome='error'],
+:is([data-recurring-editor-result], [data-invoice-edit-result])[data-outcome='error'] {
+  color: var(--ez-red);
 }
-.recurring-editor-form footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.recurring-editor-form label {
-  display: grid;
-  gap: 4px;
-  font-size: 12px;
+[data-recurring-delete-result][data-outcome='pending'],
+:is([data-recurring-editor-result], [data-invoice-edit-result])[data-outcome='pending'] {
   color: var(--ez-muted);
 }
-.recurring-editor-form input,
-.recurring-editor-form select,
-.recurring-editor-form textarea,
-.recurring-editor-form button {
+
+/*
+ * Full-page editors: the recurring definition and the invoice.
+ *
+ * Both were dialogs, and both outgrew one -- the recurring editor's line table
+ * scrolled sideways inside it and clipped its own labels at the left edge, and
+ * the invoice's fields were stacked into a column too narrow to read a line
+ * item in. A page gives each section the width it needs.
+ *
+ * One centred column on the settings measure, sections divided by rules as
+ * settings sections are, every control 44px tall, and the actions in a band
+ * held at the foot of the window so Save is never below the fold of a long
+ * invoice -- the frame the invoice dialogs already used, at page scale.
+ */
+/* The settings measure, held narrower: a form page, where a wide window would
+   otherwise stretch a date field across a third of it. */
+.page--settings.editor-page {
+  width: min(1180px, 100%);
+}
+.editor-page-heading > div {
+  min-width: 0;
+}
+.editor-back {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  white-space: nowrap;
+}
+.editor-form {
+  display: grid;
+  min-width: 0;
+}
+.editor-section {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 24px 0 26px;
+  border-top: 1px solid var(--ez-border);
+}
+.editor-section > h2 {
+  margin: 0;
+  font:
+    600 17px/1.3 var(--ez-font-display),
+    sans-serif;
+}
+.editor-section .hint {
+  max-width: 76ch;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.editor-subsection {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.editor-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px 20px;
+  min-width: 0;
+}
+.editor-span-2 {
+  grid-column: span 2;
+}
+.editor-span-all {
+  grid-column: 1 / -1;
+}
+/* A field with a hint: the hint describes the control rather than naming it,
+   so it sits beside the label instead of inside it. */
+.editor-field {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+.editor-form label,
+.editor-fact {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.editor-form input:not([type='checkbox']):not([type='radio']),
+.editor-form select,
+.editor-form textarea {
+  width: 100%;
+  min-width: 0;
   min-height: 44px;
   padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+  font: inherit;
+  font-size: 15px;
+}
+.editor-form select[multiple] {
+  padding: 4px;
+}
+.editor-form select[multiple] option {
+  padding: 6px 8px;
+  border-radius: calc(var(--ez-radius) - 2px);
+}
+.editor-form textarea {
+  line-height: 1.45;
+  resize: vertical;
+}
+.editor-form .field-hint {
+  color: var(--ez-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+/* Read, not edited: the field's shape so it lines up with the ones beside it,
+   on the second surface so it does not invite a click. */
+.editor-fact strong {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface-2);
+  color: var(--ez-ink);
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.editor-form label.editor-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  color: var(--ez-ink);
+  font-size: 14px;
+  cursor: pointer;
+}
+.editor-grid > .editor-check {
+  align-self: end;
+}
+.editor-form .editor-check input,
+.editor-form .editor-choice-card input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--ez-action);
+}
+/* A choice between two kinds of thing reads as two cards, as New invoice's
+   Type does, rather than as a select that hides the second answer. */
+.editor-choice {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.editor-choice legend {
+  margin-bottom: 8px;
+  padding: 0;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.editor-form .editor-choice-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: calc(var(--ez-radius) * 1.5);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.editor-form .editor-choice-card input {
+  margin-top: 1px;
+}
+.editor-choice-card:hover {
+  border-color: color-mix(in srgb, var(--ez-action) 45%, var(--ez-border));
+}
+.editor-choice-card:has(input:checked) {
+  border-color: var(--ez-action);
+  background: color-mix(in srgb, var(--ez-action) 6%, var(--ez-ground));
+  box-shadow: 0 0 0 1px var(--ez-action);
+}
+.editor-choice-card:has(input:focus-visible) {
+  outline: 2px solid var(--ez-action);
+  outline-offset: 2px;
+}
+.editor-choice-card span {
+  display: grid;
+  gap: 3px;
+}
+.editor-choice-card strong {
+  font-size: 14px;
+}
+.editor-choice-card small {
+  color: var(--ez-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.editor-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 16px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
   color: var(--ez-ink);
   font: inherit;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
 }
-.recurring-editor-form textarea {
-  min-height: 72px;
+.editor-secondary:hover {
+  background: var(--ez-surface-2);
 }
-.recurring-editor-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
-  gap: 12px 16px;
+.editor-form .primary-action {
+  min-height: 44px;
+  padding: 0 20px;
 }
-/* A checkbox is not a field with a value below its name, so it opts out of the
-   label grid rather than sitting in a 44px-tall box of its own. */
-.recurring-editor-form label.recurring-editor-check {
+.editor-form button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+/* The band Save lives in, held at the foot of the window while the form
+   scrolls under it, and slightly wider than the column so it reads as the
+   page's footing rather than one more section. */
+.editor-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  color: var(--ez-ink);
-  font-size: inherit;
+  justify-content: flex-end;
+  gap: 8px 12px;
+  margin: 0 -20px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--ez-border);
+  background: var(--ez-surface);
+  box-shadow: 0 -10px 24px -18px color-mix(in srgb, var(--ez-ink) 45%, transparent);
 }
-.recurring-editor-form .recurring-editor-check input {
-  min-height: 0;
-  padding: 0;
+.editor-actions .form-result {
+  flex: 1 1 280px;
+  min-width: 0;
+  font-size: 14px;
 }
-.recurring-editor-line {
+.editor-actions .form-result:empty {
+  display: none;
+}
+
+/*
+ * The line table. Both editors carry one, and it is the part the dialog could
+ * not hold: nine fields a row on the recurring definition, seven on an invoice.
+ *
+ * On a wide window it is a table -- a numbered row per line, the description
+ * taking the width that is left, the figures in narrow right-hand columns and
+ * the line's project and taxes on a second row beneath its description, where
+ * Harvest kept the linked project. Below that it becomes a card per line with
+ * every field labelled, and nothing ever scrolls sideways.
+ */
+.line-editor {
+  --line-columns: 28px minmax(112px, 150px) minmax(0, 1fr) 92px 132px 116px 44px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+  min-width: 0;
+}
+.line-editor-head {
+  display: none;
+}
+.line-editor-rows {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.line-editor-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-areas:
+    'kind description description description'
+    'quantity price amount remove'
+    'meta meta meta meta'
+    'removed removed removed removed';
+  align-items: start;
   gap: 12px 16px;
-  margin: 0 0 12px;
-  padding: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 14px 16px 16px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
+  background: var(--ez-ground);
 }
-.recurring-editor-line legend {
-  padding: 0 4px;
+.line-editor-row > legend {
+  padding: 0 6px;
   color: var(--ez-muted);
-  font-size: 12px;
+  font:
+    500 12px/1.4 var(--ez-font-mono),
+    monospace;
 }
-.recurring-editor-lines .hint,
-.recurring-editor-import .hint {
-  max-width: 72ch;
+.line-editor-number {
+  display: none;
+  grid-area: number;
 }
-[data-recurring-editor-result][data-outcome='error'],
-[data-recurring-delete-result][data-outcome='error'] {
+.line-editor-kind {
+  grid-area: kind;
+}
+.line-editor-description {
+  grid-area: description;
+}
+.line-editor-description textarea {
+  min-height: 72px;
+}
+.line-editor-quantity {
+  grid-area: quantity;
+}
+.line-editor-price {
+  grid-area: price;
+}
+.line-editor-quantity input,
+.line-editor-price input {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.line-editor-amount {
+  display: grid;
+  grid-area: amount;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.line-editor-amount strong {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 44px;
+  color: var(--ez-ink);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.line-editor-remove {
+  display: inline-flex;
+  grid-area: remove;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  align-self: end;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.line-editor-remove > span[aria-hidden='true'] {
+  font-size: 20px;
+  line-height: 1;
+}
+.line-editor-remove:hover {
+  border-color: var(--ez-red);
   color: var(--ez-red);
 }
-[data-recurring-editor-result][data-outcome='pending'],
-[data-recurring-delete-result][data-outcome='pending'] {
+.line-editor-meta {
+  display: grid;
+  grid-area: meta;
+  /* The date keeps the width its digits need; below it a date field clips. */
+  grid-template-columns: minmax(0, 2fr) minmax(9rem, 1fr) minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: 12px 16px;
+  min-width: 0;
+}
+/* An invoice line's second row is the linked project and the two taxes, the
+   project held to a select's width rather than the whole row's, as Harvest
+   kept it under the description. */
+.invoice-line-meta {
+  grid-template-columns: minmax(0, 30rem) auto auto;
+  justify-content: start;
+}
+.line-editor-meta label:not(.editor-check) {
+  font-size: 12px;
+}
+/* Marked to go, and still on the page until it saves: dimmed, dashed, and
+   saying so beside the one control that keeps it. */
+.line-editor-row[data-removed] {
+  border-style: dashed;
+  background: var(--ez-surface);
+}
+.line-editor-row[data-removed] > :not(legend):not(.line-editor-removed) {
+  opacity: 0.5;
+}
+.line-editor-row[data-removed] textarea {
+  text-decoration: line-through;
+}
+.line-editor-removed {
+  display: flex;
+  flex-wrap: wrap;
+  grid-area: removed;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin: 0;
+  color: var(--ez-ink);
+  font-size: 14px;
+}
+.line-editor-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.line-editor-total {
+  margin: 0;
   color: var(--ez-muted);
+  font-size: 14px;
+}
+.line-editor-total strong {
+  margin-left: 8px;
+  color: var(--ez-ink);
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+@media (min-width: 960px) {
+  .line-editor-head {
+    display: grid;
+    grid-template-columns: var(--line-columns);
+    gap: 12px;
+    padding: 0 12px 8px;
+    border-bottom: 1px solid var(--ez-border);
+    color: var(--ez-muted);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .line-editor-numeric {
+    text-align: right;
+  }
+  .line-editor-rows {
+    gap: 0;
+  }
+  .line-editor-row {
+    grid-template-columns: var(--line-columns);
+    grid-template-areas:
+      'number kind description quantity price amount remove'
+      '. . meta meta meta meta .'
+      '. . removed removed removed removed .';
+    gap: 8px 12px;
+    padding: 12px;
+    border: 0;
+    border-bottom: 1px solid var(--ez-border);
+    border-radius: 0;
+    background: transparent;
+  }
+  .line-editor-row[data-removed] {
+    border-style: solid;
+    border-bottom-style: dashed;
+  }
+  /* The column headings name these, so each control's own label is kept for
+     a screen reader and taken off the row. */
+  .line-editor-row > legend,
+  .line-editor-label,
+  .line-editor-remove-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+  .line-editor-number {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    color: var(--ez-muted);
+    font:
+      500 12px/1 var(--ez-font-mono),
+      monospace;
+  }
+  .line-editor-amount {
+    gap: 0;
+  }
+  .line-editor-remove {
+    align-self: start;
+    width: 44px;
+    padding: 0;
+  }
+}
+@media (max-width: 720px) {
+  .editor-page-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .editor-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px 12px;
+  }
+  .editor-span-2,
+  .editor-span-all {
+    grid-column: 1 / -1;
+  }
+  .editor-choice {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .line-editor-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      'kind kind'
+      'description description'
+      'quantity price'
+      'amount amount'
+      'meta meta'
+      'remove remove'
+      'removed removed';
+    gap: 12px;
+    padding: 12px 12px 14px;
+  }
+  .line-editor-amount {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+  .line-editor-amount strong {
+    min-height: 0;
+  }
+  .line-editor-meta,
+  .invoice-line-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .line-editor-project {
+    grid-column: 1 / -1;
+  }
+  .line-editor-foot {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .editor-actions {
+    margin: 0 -16px;
+    padding: 12px 16px;
+  }
+  .editor-actions > a,
+  .editor-actions > button {
+    flex: 1 1 0;
+  }
 }
 
 /* Invoice configuration. Two sections on one page, because they answer one

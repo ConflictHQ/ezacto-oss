@@ -1,10 +1,14 @@
 /** @vitest-environment happy-dom */
 
 import { EzactoApiError, type GeneralResource, type RecurringInvoice, type Whoami } from '@conflict-hq/ezacto-client'
-import { describe, expect, it, vi } from 'vitest'
-import { createRecurringWorkspaceController } from '../src/recurring/browser.js'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  createRecurringEditorController,
+  createRecurringWorkspaceController,
+} from '../src/recurring/browser.js'
 import type { RecurringWorkspaceApi } from '../src/recurring/model.js'
-import { invoiceTabs, renderAppShell } from '../src/index.js'
+import { invoiceTabs, renderAppShell, webAssets } from '../src/index.js'
+import { leavePageNotice } from '../src/page-notice.js'
 
 const timestamp = '2026-09-09T12:00:00.000Z'
 const today = () => '2026-10-01T09:00:00.000Z'
@@ -124,7 +128,10 @@ const page = <Resource>(data: readonly Resource[], nextCursor: string | null = n
   page: { next_cursor: nextCursor },
 })
 
-const writeDocument = (path = '/invoices/recurring'): void => {
+const writeDocument = (
+  path = '/invoices/recurring',
+  view: 'invoice-recurring' | 'invoice-recurring-editor' = 'invoice-recurring',
+): void => {
   window.history.replaceState(null, '', path)
   document.open()
   document.write(
@@ -132,7 +139,7 @@ const writeDocument = (path = '/invoices/recurring'): void => {
       environment: 'test',
       release: 'recurring-browser-test',
       activeSection: 'Invoices',
-      view: 'invoice-recurring',
+      view,
       tabs: invoiceTabs('invoice-recurring'),
     })
       .replace(
@@ -174,6 +181,29 @@ const activate = async (
   who = identity(),
 ): Promise<void> => {
   await createRecurringWorkspaceController(api, today).activate(who, signal, () => false)
+}
+
+/** The editor page, at `/invoices/recurring/new` or a definition's edit path. */
+const openEditor = async (
+  api: Partial<RecurringWorkspaceApi>,
+  path = '/invoices/recurring/new',
+  signal = new AbortController().signal,
+  who = identity(),
+): Promise<void> => {
+  writeDocument(path, 'invoice-recurring-editor')
+  // Signed in, as the shell leaves the page once it has a session: focus
+  // cannot land inside an inert, hidden shell.
+  const shell = document.querySelector<HTMLElement>('[data-authenticated-shell]')!
+  shell.hidden = false
+  shell.inert = false
+  await createRecurringEditorController(api, today).activate(who, signal, () => false)
+}
+
+/** Saving leaves the page; the navigation is what a test can see of it. */
+const stubNavigation = (): ReturnType<typeof vi.fn> => {
+  const assign = vi.fn()
+  vi.stubGlobal('location', Object.assign(new URL(globalThis.location.href), { assign }))
+  return assign
 }
 
 const control = <Element extends HTMLElement>(selector: string): Element => {
@@ -455,277 +485,6 @@ describe('Recurring workspace controller', () => {
     )
   })
 
-  it('[money] sends a band ceiling, and shows its boxes only once one applies', async () => {
-    // #707. Without a control this is a column nobody can set, which is the
-    // same defect #485 catalogued -- and a ceiling box visible while the band
-    // claims everything invites a number that never applies.
-    writeDocument()
-    const api = baseApi()
-    await activate(api)
-
-    control<HTMLButtonElement>('[data-recurring-new]').click()
-    const ceiling = control<HTMLElement>('[data-recurring-editor-ceiling]')
-    expect(ceiling.hidden).toBe(true)
-
-    control<HTMLSelectElement>('[data-recurring-editor-client]').value = '5'
-    control<HTMLInputElement>('[data-recurring-editor-subject]').value = 'Banded team'
-    control<HTMLInputElement>('[data-recurring-editor-next]').value = '2026-11-10'
-    lineInput(0, 'kind').value = 'Service'
-    lineInput(0, 'description').value = 'Band'
-    lineInput(0, 'quantity').value = '1'
-    lineInput(0, 'unitPriceCents').value = '9368500'
-    const claims = control<HTMLSelectElement>('[data-recurring-editor-claims]')
-    for (const option of claims.options) option.selected = option.value === '7'
-    const mode = control<HTMLSelectElement>('[data-recurring-editor-claim-mode]')
-    mode.value = 'ceiling'
-    mode.dispatchEvent(new window.Event('change'))
-    expect(ceiling.hidden).toBe(false)
-    control<HTMLSelectElement>('[data-recurring-editor-claim-scope]').value = 'tracked'
-    control<HTMLSelectElement>('[data-recurring-editor-ceiling-unit]').value = 'money'
-    control<HTMLInputElement>('[data-recurring-editor-ceiling-amount]').value = '9368500'
-    submitEditor()
-
-    await vi.waitFor(() => expect(api.createRecurringInvoice).toHaveBeenCalled())
-    expect(api.createRecurringInvoice).toHaveBeenCalledWith(
-      expect.objectContaining({
-        claims_project_ids: [7],
-        claim_mode: 'ceiling',
-        claim_ceiling_seconds: null,
-        claim_ceiling_cents: 9_368_500,
-        claim_scope: 'tracked',
-      }),
-      expect.any(String),
-      expect.any(AbortSignal),
-    )
-  })
-
-  it('[browser] creates a definition, carrying a through date and an installment total', async () => {
-    // The gap this closes. `createRecurringInvoice` had no call site, so the
-    // three live definitions were loaded by a script; nothing in the product
-    // could write one, let alone one whose credit line counts itself off.
-    writeDocument()
-    const api = baseApi()
-    await activate(api)
-
-    const newButton = control<HTMLButtonElement>('[data-recurring-new]')
-    expect(newButton.hidden).toBe(false)
-    newButton.click()
-
-    expect(lineFields()).toHaveLength(1)
-    control<HTMLSelectElement>('[data-recurring-editor-client]').value = '5'
-    control<HTMLInputElement>('[data-recurring-editor-subject]').value = 'Platform'
-    control<HTMLTextAreaElement>('[data-recurring-editor-notes]').value = 'Thanks.'
-    control<HTMLInputElement>('[data-recurring-editor-every]').value = '3'
-    control<HTMLInputElement>('[data-recurring-editor-day]').value = '15'
-    control<HTMLInputElement>('[data-recurring-editor-next]').value = '2026-11-15'
-    lineInput(0, 'kind').value = 'Credit'
-    lineInput(0, 'description').value = 'CREDIT %line_installment_number% of %line_installment_total%'
-    lineInput(0, 'quantity').value = '1'
-    lineInput(0, 'unitPriceCents').value = '-45000'
-    lineInput(0, 'through').value = '2026-12-15'
-    lineInput(0, 'installments').value = '4'
-    lineInput(0, 'projectId').value = '7'
-    submitEditor()
-
-    await vi.waitFor(() => expect(api.createRecurringInvoice).toHaveBeenCalled())
-    expect(api.createRecurringInvoice).toHaveBeenCalledWith(
-      {
-        client_id: 5,
-        subject_template: 'Platform',
-        notes_template: 'Thanks.',
-        every_n_months: 3,
-        day_of_month: 15,
-        next_issue_on: '2026-11-15',
-        amount_config: {
-          schema_version: 1,
-          type: 'fixed_lines',
-          line_items: [
-            {
-              kind: 'Credit',
-              description: 'CREDIT %line_installment_number% of %line_installment_total%',
-              quantity: 1,
-              unit_price_cents: -45_000,
-              taxed: false,
-              taxed2: false,
-              project_id: 7,
-              through: '2026-12-15',
-              installments: 4,
-            },
-          ],
-        },
-        can_draw_from_retainer_id: null,
-        claims_project_ids: null,
-        claim_mode: 'all',
-        claim_ceiling_seconds: null,
-        claim_ceiling_cents: null,
-        claim_scope: 'billable',
-        cost_alert_basis_points: null,
-      },
-      expect.any(String),
-      expect.any(AbortSignal),
-    )
-    // The list is stale the moment a definition exists that was not on it.
-    await vi.waitFor(() => expect(api.listRecurringInvoices).toHaveBeenCalledTimes(2))
-  })
-
-  it('[browser] edits a definition without rewriting the half it was not shown', async () => {
-    // PATCH on this resource is a replace. A form seeded only from the fields on
-    // screen sends back an amount config it invented, which is how a line's
-    // through date disappears during a correction to the day of month.
-    writeDocument()
-    const api = baseApi({
-      listRecurringInvoices: vi.fn(async () => page([credited])),
-      getRecurringInvoice: vi.fn(async () => credited),
-    })
-    await activate(api)
-    await openDefinition(api, 3)
-
-    control<HTMLButtonElement>('[data-recurring-edit]').click()
-    expect(lineFields()).toHaveLength(2)
-    expect(control<HTMLInputElement>('[data-recurring-editor-subject]').value).toBe(
-      'Platform and credit',
-    )
-    // The two keys the editor exists to reach are on the form, filled in.
-    expect(lineInput(1, 'through').value).toBe('2026-12-01')
-    expect(lineInput(1, 'installments').value).toBe('4')
-    expect(lineInput(0, 'through').value).toBe('')
-    expect(lineInput(0, 'installments').value).toBe('')
-
-    control<HTMLInputElement>('[data-recurring-editor-day]').value = '15'
-    submitEditor()
-
-    await vi.waitFor(() => expect(api.updateRecurringInvoice).toHaveBeenCalled())
-    expect(api.updateRecurringInvoice).toHaveBeenCalledWith(
-      3,
-      expect.objectContaining({
-        day_of_month: 15,
-        subject_template: 'Platform and credit',
-        notes_template: 'Thank you.',
-        amount_config: credited.amount_config,
-      }),
-      expect.any(AbortSignal),
-    )
-  })
-
-  it('[browser] keeps a client and a project the catalog did not return', async () => {
-    // A definition outlives the archiving of the client it bills, and the
-    // catalog is one page-size from being incomplete on a large account. A
-    // select that cannot show the id it is set to falls back to its first
-    // option, and since `PATCH` is a replace, saving anything at all would then
-    // move the definition to a client nobody chose.
-    writeDocument()
-    const stranded: RecurringInvoice = {
-      ...credited,
-      client_id: 99,
-      amount_config: {
-        schema_version: 1,
-        type: 'fixed_lines',
-        line_items: [
-          {
-            kind: 'Service',
-            description: 'Platform',
-            quantity: 1,
-            unit_price_cents: 900_000,
-            taxed: false,
-            taxed2: false,
-            project_id: 88,
-          },
-        ],
-      },
-    }
-    const api = baseApi({
-      listRecurringInvoices: vi.fn(async () => page([stranded])),
-      getRecurringInvoice: vi.fn(async () => stranded),
-    })
-    await activate(api)
-    await openDefinition(api, 3)
-
-    control<HTMLButtonElement>('[data-recurring-edit]').click()
-    const clientSelect = control<HTMLSelectElement>('[data-recurring-editor-client]')
-    // Counted first: an empty select would satisfy every check below by having
-    // nothing to disagree with.
-    const clientOptions = [...clientSelect.options].map((item) => item.value)
-    expect(clientOptions).toEqual(['', '4', '5', '99'])
-    expect(clientSelect.value).toBe('99')
-    expect([...clientSelect.options].at(-1)!.textContent).toBe('#99')
-    const projectSelect = lineInput(0, 'projectId') as HTMLSelectElement
-    expect([...projectSelect.options].map((item) => item.value)).toEqual(['', '7', '88'])
-    expect(projectSelect.value).toBe('88')
-
-    submitEditor()
-    await vi.waitFor(() => expect(api.updateRecurringInvoice).toHaveBeenCalled())
-    expect(api.updateRecurringInvoice).toHaveBeenCalledWith(
-      3,
-      expect.objectContaining({
-        client_id: 99,
-        amount_config: stranded.amount_config,
-      }),
-      expect.any(AbortSignal),
-    )
-  })
-
-  it('[browser] refuses an installment total with nothing to count back from', async () => {
-    // The 0044 trigger refuses the same config, and so does
-    // `assertRecurringAmountConfig`, but neither can say which line. Caught here
-    // the request is never sent and the sentence names the row.
-    writeDocument()
-    const api = baseApi()
-    await activate(api)
-
-    control<HTMLButtonElement>('[data-recurring-new]').click()
-    control<HTMLSelectElement>('[data-recurring-editor-client]').value = '4'
-    control<HTMLInputElement>('[data-recurring-editor-subject]').value = 'Platform'
-    control<HTMLInputElement>('[data-recurring-editor-next]').value = '2026-11-15'
-    lineInput(0, 'unitPriceCents').value = '100'
-    lineInput(0, 'installments').value = '4'
-    submitEditor()
-
-    expect(control<HTMLElement>('[data-recurring-editor-result]').textContent).toBe(
-      'Line 1 needs a through date before it can count installments.',
-    )
-    expect(api.createRecurringInvoice).not.toHaveBeenCalled()
-    // The dialog stays up with the offending value still in it. Closing it would
-    // throw away everything else the person had typed.
-    expect(control<HTMLDialogElement>('[data-recurring-editor]').open).toBe(true)
-    expect(lineInput(0, 'installments').value).toBe('4')
-  })
-
-  it('[browser] shows the server refusal without closing the editor', async () => {
-    writeDocument()
-    const api = baseApi({
-      listRecurringInvoices: vi.fn(async () => page([credited])),
-      getRecurringInvoice: vi.fn(async () => credited),
-      updateRecurringInvoice: vi.fn(async () => {
-        // The real class, because `messageFor` reads the body only off an
-        // `EzactoApiError` -- a hand-rolled lookalike would have proved the
-        // fallback path instead of the one the shell actually takes.
-        throw new EzactoApiError(
-          422,
-          {
-            error: {
-              code: 'validation_failed',
-              message: 'amount_config must be a versioned object',
-            },
-          },
-          null,
-        )
-      }),
-    })
-    await activate(api)
-    await openDefinition(api, 3)
-
-    control<HTMLButtonElement>('[data-recurring-edit]').click()
-    submitEditor()
-
-    await vi.waitFor(() =>
-      expect(control<HTMLElement>('[data-recurring-editor-result]').textContent).toBe(
-        'amount_config must be a versioned object',
-      ),
-    )
-    expect(control<HTMLElement>('[data-recurring-editor-result]').dataset.outcome).toBe('error')
-    expect(control<HTMLDialogElement>('[data-recurring-editor]').open).toBe(true)
-  })
-
   it('[browser] will not delete a definition on one click, then returns to the list', async () => {
     writeDocument()
     const api = baseApi()
@@ -794,23 +553,6 @@ describe('Recurring workspace controller', () => {
     )
   })
 
-  it('[browser] names the client constraint only where it applies', async () => {
-    writeDocument()
-    const api = baseApi()
-    await activate(api)
-
-    // Creating: the client is free, so the constraint is not mentioned.
-    control<HTMLButtonElement>('[data-recurring-new]').click()
-    expect(control<HTMLElement>('[data-recurring-client-hint]').hidden).toBe(true)
-    control<HTMLButtonElement>('[data-recurring-editor-cancel]').click()
-
-    // Editing: the database refuses a client change once an invoice links back,
-    // and reports it as the same opaque conflict as everything else.
-    await openDefinition(api, 1)
-    control<HTMLButtonElement>('[data-recurring-edit]').click()
-    expect(control<HTMLElement>('[data-recurring-client-hint]').hidden).toBe(false)
-  })
-
   it('[security] offers no write controls to a profile that cannot write invoices', async () => {
     // The API refuses a member at `invoices:write`; the screen should not put
     // the button in front of one first.
@@ -828,53 +570,6 @@ describe('Recurring workspace controller', () => {
     const writeControls = [...document.querySelectorAll<HTMLElement>('[data-recurring-write]')]
     expect(writeControls).toHaveLength(3)
     expect(writeControls.filter((button) => button.hidden)).toHaveLength(3)
-  })
-
-  it('[browser] retries a failed create under the key it already sent', async () => {
-    // The create is the only write here not addressed to an id, so the
-    // idempotency key is the only thing telling the server that a second
-    // attempt is the same command. A fresh key on retry is a second definition
-    // -- and a network failure the browser saw is not proof the server did not
-    // take the first one.
-    writeDocument()
-    const createRecurringInvoice = vi
-      .fn<RecurringWorkspaceApi['createRecurringInvoice']>()
-      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
-      .mockResolvedValueOnce({ ...managed, id: 9 })
-    const api = baseApi({ createRecurringInvoice })
-    await activate(api)
-
-    control<HTMLButtonElement>('[data-recurring-new]').click()
-    control<HTMLSelectElement>('[data-recurring-editor-client]').value = '4'
-    control<HTMLInputElement>('[data-recurring-editor-subject]').value = 'Platform'
-    control<HTMLInputElement>('[data-recurring-editor-next]').value = '2026-11-15'
-    lineInput(0, 'unitPriceCents').value = '100'
-    submitEditor()
-
-    await vi.waitFor(() =>
-      expect(control<HTMLElement>('[data-recurring-editor-result]').dataset.outcome).toBe(
-        'error',
-      ),
-    )
-    expect(control<HTMLDialogElement>('[data-recurring-editor]').open).toBe(true)
-
-    submitEditor()
-    await vi.waitFor(() => expect(createRecurringInvoice).toHaveBeenCalledTimes(2))
-    const [firstKey, secondKey] = createRecurringInvoice.mock.calls.map((call) => call[1])
-    expect(typeof firstKey).toBe('string')
-    expect(secondKey).toBe(firstKey)
-    // And the key is spent once it lands: the next definition is a new command.
-    await vi.waitFor(() =>
-      expect(control<HTMLDialogElement>('[data-recurring-editor]').open).toBe(false),
-    )
-    control<HTMLButtonElement>('[data-recurring-new]').click()
-    control<HTMLSelectElement>('[data-recurring-editor-client]').value = '4'
-    control<HTMLInputElement>('[data-recurring-editor-subject]').value = 'Platform again'
-    control<HTMLInputElement>('[data-recurring-editor-next]').value = '2026-11-15'
-    lineInput(0, 'unitPriceCents').value = '100'
-    submitEditor()
-    await vi.waitFor(() => expect(createRecurringInvoice).toHaveBeenCalledTimes(3))
-    expect(createRecurringInvoice.mock.calls[2]![1]).not.toBe(firstKey)
   })
 
   it('[browser] hides the write controls where the build has no write path', async () => {
@@ -903,5 +598,553 @@ describe('Recurring workspace controller', () => {
     expect(document.querySelector('[data-recurring-list-status]')?.textContent).toBe(
       'Sign in to view recurring invoices.',
     )
+  })
+  it('[browser] leads to the editor page for a new definition and for the open one', async () => {
+    // The editor was a dialog over this pane, and its line table scrolled
+    // sideways under its own labels. It is a page now; these are the ways in.
+    writeDocument()
+    const api = baseApi()
+    await activate(api)
+
+    const newLink = control<HTMLAnchorElement>('[data-recurring-new]')
+    expect(newLink.tagName).toBe('A')
+    expect(newLink.getAttribute('href')).toBe('/invoices/recurring/new')
+    expect(document.querySelector('[data-recurring-editor]')).toBeNull()
+
+    await openDefinition(api, 1)
+    const editLink = control<HTMLAnchorElement>('[data-recurring-edit]')
+    expect(editLink.hidden).toBe(false)
+    expect(editLink.getAttribute('href')).toBe('/invoices/recurring/1/edit')
+  })
+
+  it('[browser] says what the editor saved where it lands, once', async () => {
+    // The editor saves and then navigates here; the page it lands on is a new
+    // document, so the result travels with the navigation and is read once.
+    leavePageNotice('/invoices/recurring', 'Definition saved.')
+    writeDocument('/invoices/recurring?definition=1')
+    const api = baseApi()
+    await activate(api)
+    await vi.waitFor(() =>
+      expect(control<HTMLElement>('[data-recurring-detail-status]').textContent).toBe(
+        'Definition saved.',
+      ),
+    )
+
+    writeDocument('/invoices/recurring')
+    await activate(baseApi())
+    expect(control<HTMLElement>('[data-recurring-list-status]').textContent).toBe(
+      '2 definitions loaded.',
+    )
+  })
+
+  it('[browser] keeps a failed load in view rather than covering it with the notice', async () => {
+    leavePageNotice('/invoices/recurring', 'Definition created.')
+    writeDocument()
+    await activate(
+      baseApi({
+        listRecurringInvoices: vi.fn(async () => {
+          throw new EzactoApiError(
+            500,
+            { error: { code: 'internal_error', message: 'The list is unavailable.' } },
+            null,
+          )
+        }),
+      }),
+    )
+    expect(control<HTMLElement>('[data-recurring-list-status]').textContent).toBe(
+      'The list is unavailable.',
+    )
+  })
+})
+
+describe('Recurring editor page', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('[money] sends a band ceiling, and shows its boxes only once one applies', async () => {
+    // #707. Without a control this is a column nobody can set, which is the
+    // same defect #485 catalogued -- and a ceiling box visible while the band
+    // claims everything invites a number that never applies.
+    const api = baseApi()
+    await openEditor(api)
+    stubNavigation()
+
+    const ceiling = control<HTMLElement>('[data-recurring-editor-ceiling]')
+    expect(ceiling.hidden).toBe(true)
+
+    control<HTMLSelectElement>('[data-recurring-editor-client]').value = '5'
+    control<HTMLInputElement>('[data-recurring-editor-subject]').value = 'Banded team'
+    control<HTMLInputElement>('[data-recurring-editor-next]').value = '2026-11-10'
+    lineInput(0, 'kind').value = 'Service'
+    lineInput(0, 'description').value = 'Band'
+    lineInput(0, 'quantity').value = '1'
+    lineInput(0, 'unitPriceCents').value = '9368500'
+    const claims = control<HTMLSelectElement>('[data-recurring-editor-claims]')
+    for (const option of claims.options) option.selected = option.value === '7'
+    const mode = control<HTMLSelectElement>('[data-recurring-editor-claim-mode]')
+    mode.value = 'ceiling'
+    mode.dispatchEvent(new window.Event('change'))
+    expect(ceiling.hidden).toBe(false)
+    control<HTMLSelectElement>('[data-recurring-editor-claim-scope]').value = 'tracked'
+    control<HTMLSelectElement>('[data-recurring-editor-ceiling-unit]').value = 'money'
+    control<HTMLInputElement>('[data-recurring-editor-ceiling-amount]').value = '9368500'
+    submitEditor()
+
+    await vi.waitFor(() => expect(api.createRecurringInvoice).toHaveBeenCalled())
+    expect(api.createRecurringInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        claims_project_ids: [7],
+        claim_mode: 'ceiling',
+        claim_ceiling_seconds: null,
+        claim_ceiling_cents: 9_368_500,
+        claim_scope: 'tracked',
+      }),
+      expect.any(String),
+      expect.any(AbortSignal),
+    )
+  })
+
+  it('[browser] creates a definition, carrying a through date and an installment total, and opens it', async () => {
+    // The gap this closes. `createRecurringInvoice` had no call site, so the
+    // three live definitions were loaded by a script; nothing in the product
+    // could write one, let alone one whose credit line counts itself off.
+    const api = baseApi()
+    await openEditor(api)
+    const assign = stubNavigation()
+
+    const form = control<HTMLFormElement>('[data-recurring-editor-form]')
+    expect(form.hidden).toBe(false)
+    expect(control<HTMLElement>('[data-recurring-editor-title]').textContent).toBe(
+      'New recurring invoice',
+    )
+    // Today, from the controller's clock, so a new definition is not undated.
+    expect(control<HTMLInputElement>('[data-recurring-editor-next]').value).toBe('2026-10-01')
+    // Cancel and Back return to the list a new definition would have joined.
+    expect(control<HTMLAnchorElement>('[data-recurring-editor-cancel]').getAttribute('href')).toBe(
+      '/invoices/recurring',
+    )
+    expect(lineFields()).toHaveLength(1)
+    control<HTMLSelectElement>('[data-recurring-editor-client]').value = '5'
+    control<HTMLInputElement>('[data-recurring-editor-subject]').value = 'Platform'
+    control<HTMLTextAreaElement>('[data-recurring-editor-notes]').value = 'Thanks.'
+    control<HTMLInputElement>('[data-recurring-editor-every]').value = '3'
+    control<HTMLInputElement>('[data-recurring-editor-day]').value = '15'
+    control<HTMLInputElement>('[data-recurring-editor-next]').value = '2026-11-15'
+    lineInput(0, 'kind').value = 'Credit'
+    lineInput(0, 'description').value = 'CREDIT %line_installment_number% of %line_installment_total%'
+    lineInput(0, 'quantity').value = '1'
+    lineInput(0, 'unitPriceCents').value = '-45000'
+    lineInput(0, 'through').value = '2026-12-15'
+    lineInput(0, 'installments').value = '4'
+    lineInput(0, 'projectId').value = '7'
+    submitEditor()
+
+    await vi.waitFor(() => expect(api.createRecurringInvoice).toHaveBeenCalled())
+    expect(api.createRecurringInvoice).toHaveBeenCalledWith(
+      {
+        client_id: 5,
+        subject_template: 'Platform',
+        notes_template: 'Thanks.',
+        every_n_months: 3,
+        day_of_month: 15,
+        next_issue_on: '2026-11-15',
+        amount_config: {
+          schema_version: 1,
+          type: 'fixed_lines',
+          line_items: [
+            {
+              kind: 'Credit',
+              description: 'CREDIT %line_installment_number% of %line_installment_total%',
+              quantity: 1,
+              unit_price_cents: -45_000,
+              taxed: false,
+              taxed2: false,
+              project_id: 7,
+              through: '2026-12-15',
+              installments: 4,
+            },
+          ],
+        },
+        can_draw_from_retainer_id: null,
+        claims_project_ids: null,
+        claim_mode: 'all',
+        claim_ceiling_seconds: null,
+        claim_ceiling_cents: null,
+        claim_scope: 'billable',
+        cost_alert_basis_points: null,
+      },
+      expect.any(String),
+      expect.any(AbortSignal),
+    )
+    // The definition the server made is where the editor goes, and what it
+    // saved travels with it.
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/recurring?definition=9'))
+    expect(JSON.parse(globalThis.sessionStorage.getItem('ezacto.page-notice') ?? '{}')).toEqual({
+      pathname: '/invoices/recurring',
+      message: 'Definition created.',
+    })
+  })
+
+  it('[browser] edits a definition without rewriting the half it was not shown', async () => {
+    // PATCH on this resource is a replace. A form seeded only from the fields on
+    // screen sends back an amount config it invented, which is how a line's
+    // through date disappears during a correction to the day of month.
+    const api = baseApi({ getRecurringInvoice: vi.fn(async () => credited) })
+    await openEditor(api, '/invoices/recurring/3/edit')
+    const assign = stubNavigation()
+
+    // Read back for itself rather than trusting a copy from the list.
+    expect(api.getRecurringInvoice).toHaveBeenCalledWith(3, expect.any(AbortSignal))
+    expect(control<HTMLElement>('[data-recurring-editor-title]').textContent).toBe(
+      'Edit recurring invoice',
+    )
+    expect(control<HTMLElement>('[data-recurring-editor-eyebrow]').textContent).toBe(
+      'Northpeak · Recurring invoice',
+    )
+    expect(control<HTMLAnchorElement>('[data-recurring-editor-cancel]').getAttribute('href')).toBe(
+      '/invoices/recurring?definition=3',
+    )
+    expect(lineFields()).toHaveLength(2)
+    expect(control<HTMLInputElement>('[data-recurring-editor-subject]').value).toBe(
+      'Platform and credit',
+    )
+    // The two keys the editor exists to reach are on the form, filled in.
+    expect(lineInput(1, 'through').value).toBe('2026-12-01')
+    expect(lineInput(1, 'installments').value).toBe('4')
+    expect(lineInput(0, 'through').value).toBe('')
+    expect(lineInput(0, 'installments').value).toBe('')
+
+    control<HTMLInputElement>('[data-recurring-editor-day]').value = '15'
+    submitEditor()
+
+    await vi.waitFor(() => expect(api.updateRecurringInvoice).toHaveBeenCalled())
+    expect(api.updateRecurringInvoice).toHaveBeenCalledWith(
+      3,
+      expect.objectContaining({
+        day_of_month: 15,
+        subject_template: 'Platform and credit',
+        notes_template: 'Thank you.',
+        amount_config: credited.amount_config,
+      }),
+      expect.any(AbortSignal),
+    )
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/recurring?definition=3'))
+    expect(JSON.parse(globalThis.sessionStorage.getItem('ezacto.page-notice') ?? '{}')).toEqual({
+      pathname: '/invoices/recurring',
+      message: 'Definition saved.',
+    })
+  })
+
+  it('[browser] keeps a client and a project the catalog did not return', async () => {
+    // A definition outlives the archiving of the client it bills, and the
+    // catalog is one page-size from being incomplete on a large account. A
+    // select that cannot show the id it is set to falls back to its first
+    // option, and since `PATCH` is a replace, saving anything at all would then
+    // move the definition to a client nobody chose.
+    const stranded: RecurringInvoice = {
+      ...credited,
+      client_id: 99,
+      amount_config: {
+        schema_version: 1,
+        type: 'fixed_lines',
+        line_items: [
+          {
+            kind: 'Service',
+            description: 'Platform',
+            quantity: 1,
+            unit_price_cents: 900_000,
+            taxed: false,
+            taxed2: false,
+            project_id: 88,
+          },
+        ],
+      },
+    }
+    const api = baseApi({ getRecurringInvoice: vi.fn(async () => stranded) })
+    await openEditor(api, '/invoices/recurring/3/edit')
+    stubNavigation()
+
+    const clientSelect = control<HTMLSelectElement>('[data-recurring-editor-client]')
+    // Counted first: an empty select would satisfy every check below by having
+    // nothing to disagree with.
+    const clientOptions = [...clientSelect.options].map((item) => item.value)
+    expect(clientOptions).toEqual(['', '4', '5', '99'])
+    expect(clientSelect.value).toBe('99')
+    expect([...clientSelect.options].at(-1)!.textContent).toBe('#99')
+    const projectSelect = lineInput(0, 'projectId') as HTMLSelectElement
+    expect([...projectSelect.options].map((item) => item.value)).toEqual(['', '7', '88'])
+    expect(projectSelect.value).toBe('88')
+
+    submitEditor()
+    await vi.waitFor(() => expect(api.updateRecurringInvoice).toHaveBeenCalled())
+    expect(api.updateRecurringInvoice).toHaveBeenCalledWith(
+      3,
+      expect.objectContaining({
+        client_id: 99,
+        amount_config: stranded.amount_config,
+      }),
+      expect.any(AbortSignal),
+    )
+  })
+
+  it('[browser] refuses an installment total with nothing to count back from', async () => {
+    // The 0044 trigger refuses the same config, and so does
+    // `assertRecurringAmountConfig`, but neither can say which line. Caught here
+    // the request is never sent and the sentence names the row.
+    const api = baseApi()
+    await openEditor(api)
+    const assign = stubNavigation()
+
+    control<HTMLSelectElement>('[data-recurring-editor-client]').value = '4'
+    control<HTMLInputElement>('[data-recurring-editor-subject]').value = 'Platform'
+    control<HTMLInputElement>('[data-recurring-editor-next]').value = '2026-11-15'
+    lineInput(0, 'unitPriceCents').value = '100'
+    lineInput(0, 'installments').value = '4'
+    submitEditor()
+
+    expect(control<HTMLElement>('[data-recurring-editor-result]').textContent).toBe(
+      'Line 1 needs a through date before it can count installments.',
+    )
+    expect(control<HTMLElement>('[data-recurring-editor-result]').dataset.outcome).toBe('error')
+    expect(api.createRecurringInvoice).not.toHaveBeenCalled()
+    // The page stays, with the offending value still in it: leaving would
+    // throw away everything else the person had typed.
+    expect(assign).not.toHaveBeenCalled()
+    expect(lineInput(0, 'installments').value).toBe('4')
+  })
+
+  it('[browser] shows the server refusal and stays on the page', async () => {
+    const api = baseApi({
+      getRecurringInvoice: vi.fn(async () => credited),
+      updateRecurringInvoice: vi.fn(async () => {
+        // The real class, because `messageFor` reads the body only off an
+        // `EzactoApiError` -- a hand-rolled lookalike would have proved the
+        // fallback path instead of the one the shell actually takes.
+        throw new EzactoApiError(
+          422,
+          {
+            error: {
+              code: 'validation_failed',
+              message: 'amount_config must be a versioned object',
+            },
+          },
+          null,
+        )
+      }),
+    })
+    await openEditor(api, '/invoices/recurring/3/edit')
+    const assign = stubNavigation()
+
+    submitEditor()
+
+    await vi.waitFor(() =>
+      expect(control<HTMLElement>('[data-recurring-editor-result]').textContent).toBe(
+        'amount_config must be a versioned object',
+      ),
+    )
+    expect(control<HTMLElement>('[data-recurring-editor-result]').dataset.outcome).toBe('error')
+    expect(assign).not.toHaveBeenCalled()
+    expect(control<HTMLButtonElement>('[data-recurring-editor-submit]').disabled).toBe(false)
+  })
+
+  it('[browser] names the client constraint only where it applies', async () => {
+    // Creating: the client is free, so the constraint is not mentioned.
+    await openEditor(baseApi())
+    expect(control<HTMLElement>('[data-recurring-client-hint]').hidden).toBe(true)
+
+    // Editing: the database refuses a client change once an invoice links back,
+    // and reports it as the same opaque conflict as everything else.
+    await openEditor(baseApi(), '/invoices/recurring/1/edit')
+    expect(control<HTMLElement>('[data-recurring-client-hint]').hidden).toBe(false)
+  })
+
+  it('[browser] retries a failed create under the key it already sent', async () => {
+    // The create is the only write here not addressed to an id, so the
+    // idempotency key is the only thing telling the server that a second
+    // attempt is the same command. A fresh key on retry is a second definition
+    // -- and a network failure the browser saw is not proof the server did not
+    // take the first one.
+    const createRecurringInvoice = vi
+      .fn<RecurringWorkspaceApi['createRecurringInvoice']>()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce({ ...managed, id: 9 })
+      .mockResolvedValueOnce({ ...managed, id: 10 })
+    const api = baseApi({ createRecurringInvoice })
+    await openEditor(api)
+    const assign = stubNavigation()
+
+    const fill = (subject: string): void => {
+      control<HTMLSelectElement>('[data-recurring-editor-client]').value = '4'
+      control<HTMLInputElement>('[data-recurring-editor-subject]').value = subject
+      control<HTMLInputElement>('[data-recurring-editor-next]').value = '2026-11-15'
+      lineInput(0, 'unitPriceCents').value = '100'
+    }
+    fill('Platform')
+    submitEditor()
+
+    await vi.waitFor(() =>
+      expect(control<HTMLElement>('[data-recurring-editor-result]').dataset.outcome).toBe(
+        'error',
+      ),
+    )
+    expect(assign).not.toHaveBeenCalled()
+
+    submitEditor()
+    await vi.waitFor(() => expect(createRecurringInvoice).toHaveBeenCalledTimes(2))
+    const [firstKey, secondKey] = createRecurringInvoice.mock.calls.map((call) => call[1])
+    expect(typeof firstKey).toBe('string')
+    expect(secondKey).toBe(firstKey)
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/recurring?definition=9'))
+
+    // And the key is spent once it lands: the next visit to the page is a new
+    // command, not a replay of the one that already made a definition.
+    vi.unstubAllGlobals()
+    await openEditor(api)
+    stubNavigation()
+    fill('Platform again')
+    submitEditor()
+    await vi.waitFor(() => expect(createRecurringInvoice).toHaveBeenCalledTimes(3))
+    expect(createRecurringInvoice.mock.calls[2]![1]).not.toBe(firstKey)
+  })
+
+  it('[money] shows what each line and each issue bills, in the client currency', async () => {
+    // Unit prices are typed in cents, where a zero too many is a hundredfold
+    // invoice, so each line reads back as money before anything is saved.
+    await openEditor(baseApi())
+    const total = control<HTMLElement>('[data-recurring-editor-total]')
+    const client = control<HTMLSelectElement>('[data-recurring-editor-client]')
+    client.value = '4'
+    client.dispatchEvent(new Event('change'))
+    lineInput(0, 'quantity').value = '2'
+    lineInput(0, 'unitPriceCents').value = '450000'
+    lineInput(0, 'unitPriceCents').dispatchEvent(new Event('input', { bubbles: true }))
+    const amount = (position: number): string =>
+      lineFields()[position]!.querySelector('[data-recurring-line-amount]')!.textContent ?? ''
+    expect(amount(0)).toBe('€9,000.00')
+    expect(total.textContent).toBe('€9,000.00')
+
+    control<HTMLButtonElement>('[data-recurring-editor-add-line]').click()
+    expect(lineFields()).toHaveLength(2)
+    // A line that does not parse yet is a dash, and the total waits for it
+    // rather than adding up the lines that happen to.
+    expect(amount(1)).toBe('—')
+    expect(total.textContent).toBe('—')
+    lineInput(1, 'unitPriceCents').value = '-50000'
+    lineInput(1, 'unitPriceCents').dispatchEvent(new Event('input', { bubbles: true }))
+    expect(total.textContent).toBe('€8,500.00')
+
+    client.value = '5'
+    client.dispatchEvent(new Event('change'))
+    expect(total.textContent).toBe('$8,500.00')
+  })
+
+  it('[browser] numbers the lines the way its messages count them, and removes one', async () => {
+    const api = baseApi({ getRecurringInvoice: vi.fn(async () => credited) })
+    await openEditor(api, '/invoices/recurring/3/edit')
+    const numbers = (): string[] =>
+      lineFields().map(
+        (line) => line.querySelector('[data-recurring-line-position]')?.textContent ?? '',
+      )
+    expect(numbers()).toEqual(['Line 1', 'Line 2'])
+    lineFields()[0]!.querySelector<HTMLButtonElement>('[data-recurring-line-remove]')!.click()
+    expect(numbers()).toEqual(['Line 1'])
+    expect(lineInput(0, 'kind').value).toBe('Credit')
+    // Focus lands where the row was, not at the top of the page.
+    expect(document.activeElement).toBe(lineInput(0, 'kind'))
+  })
+
+  it('[browser] switches between fixed lines and a sweep without losing either', async () => {
+    await openEditor(baseApi())
+    const sweepChoice = document.querySelector<HTMLInputElement>(
+      '[data-recurring-editor-type][value="line_items_import"]',
+    )!
+    sweepChoice.checked = true
+    sweepChoice.dispatchEvent(new Event('change'))
+    expect(control<HTMLElement>('[data-recurring-editor-import]').hidden).toBe(false)
+    expect(control<HTMLElement>('[data-recurring-editor-fixed]').hidden).toBe(true)
+    expect(control<HTMLElement>('[data-recurring-editor-band]').hidden).toBe(true)
+    // An imported definition opens on its sweep, with the fixed lines seeded
+    // blank behind it.
+    await openEditor(
+      baseApi({ getRecurringInvoice: vi.fn(async () => sweep) }),
+      '/invoices/recurring/2/edit',
+    )
+    expect(
+      document.querySelector<HTMLInputElement>(
+        '[data-recurring-editor-type][value="line_items_import"]',
+      )!.checked,
+    ).toBe(true)
+    expect(control<HTMLElement>('[data-recurring-editor-import]').hidden).toBe(false)
+    expect(
+      [...control<HTMLSelectElement>('[data-recurring-editor-projects]').selectedOptions].map(
+        (option) => option.value,
+      ),
+    ).toEqual(['7'])
+  })
+
+  it('[security] offers no form to a profile that cannot write invoices', async () => {
+    const api = baseApi()
+    await openEditor(api, '/invoices/recurring/new', new AbortController().signal, identity('member'))
+    expect(control<HTMLFormElement>('[data-recurring-editor-form]').hidden).toBe(true)
+    expect(control<HTMLElement>('[data-recurring-editor-status]').textContent).toBe(
+      'Your profile cannot change recurring invoices.',
+    )
+    expect(api.listRecurringClients).not.toHaveBeenCalled()
+  })
+
+  it('[browser] says where the build cannot write, and offers a retry when the read fails', async () => {
+    const api = baseApi()
+    delete api.updateRecurringInvoice
+    await openEditor(api, '/invoices/recurring/1/edit')
+    expect(control<HTMLElement>('[data-recurring-editor-status]').textContent).toBe(
+      'This build cannot edit recurring invoices.',
+    )
+
+    const failing = baseApi({
+      getRecurringInvoice: vi
+        .fn<RecurringWorkspaceApi['getRecurringInvoice']>()
+        .mockRejectedValueOnce(
+          new EzactoApiError(404, { error: { code: 'not_found', message: '' } }, null),
+        )
+        .mockResolvedValueOnce(managed),
+    })
+    await openEditor(failing, '/invoices/recurring/1/edit')
+    expect(control<HTMLElement>('[data-recurring-editor-status]').textContent).toBe(
+      'That recurring definition no longer exists.',
+    )
+    const retry = control<HTMLButtonElement>('[data-recurring-editor-retry]')
+    expect(retry.hidden).toBe(false)
+    retry.click()
+    await vi.waitFor(() =>
+      expect(control<HTMLFormElement>('[data-recurring-editor-form]').hidden).toBe(false),
+    )
+  })
+
+  it('[security] takes the form down with the session', async () => {
+    const session = new AbortController()
+    await openEditor(baseApi({ getRecurringInvoice: vi.fn(async () => credited) }), '/invoices/recurring/3/edit', session.signal)
+    expect(lineFields()).toHaveLength(2)
+    session.abort()
+    expect(control<HTMLFormElement>('[data-recurring-editor-form]').hidden).toBe(true)
+    expect(lineFields()).toHaveLength(0)
+    expect(control<HTMLSelectElement>('[data-recurring-editor-client]').options).toHaveLength(0)
+    expect(control<HTMLElement>('[data-recurring-editor-status]').textContent).toBe(
+      'Sign in to edit recurring invoices.',
+    )
+  })
+
+  it('[e2e:phone-editor] lays the line table out as cards on a phone and a table on a wide screen', () => {
+    // happy-dom does no layout, so the browser suite measures the 390px page;
+    // what is pinned here is that the rules it measures exist: a 44px floor on
+    // every control, cards with every field labelled below 720px, and the
+    // table only where it has the width for its columns.
+    const css = webAssets.stylesheet
+    expect(css).toMatch(
+      /\.editor-form input:not\(\[type='checkbox'\]\):not\(\[type='radio'\]\),\n\.editor-form select,\n\.editor-form textarea \{[^}]*min-height: 44px;/u,
+    )
+    expect(css).toMatch(/@media \(min-width: 960px\) \{\n {2}\.line-editor-head \{\n {4}display: grid;/u)
+    expect(css).toMatch(/\.editor-actions \{\n {2}position: sticky;\n {2}bottom: 0;/u)
+    const phone = css.slice(css.indexOf('@media (max-width: 720px) {\n  .editor-page-heading'))
+    expect(phone).toMatch(/\.line-editor-row \{\n {4}grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/u)
+    expect(phone).toMatch(/\.editor-span-2,\n {2}\.editor-span-all \{\n {4}grid-column: 1 \/ -1;/u)
   })
 })

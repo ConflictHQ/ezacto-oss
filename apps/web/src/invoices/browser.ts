@@ -4,31 +4,33 @@ import {
   type Attachment,
   EzactoApiError,
   type Invoice,
-  type InvoiceEditInput,
   type InvoiceEmailDeliveryInput,
-  type InvoiceLine,
-  type InvoiceLineInput,
-  type InvoiceLineUpdateInput,
   type InvoiceMessage,
   type InvoicePayment,
   type InvoicePaymentInput,
   type InvoicePaymentUpdateInput,
+  type InvoiceDocumentPreferenceInput,
   type InvoiceRecipient,
   type InvoiceTransitionInput,
   type Whoami,
 } from '@conflict-hq/ezacto-client'
+import { takePageNotice } from '../page-notice.js'
 import {
   interpolateInvoiceTemplate,
+  invoiceApiErrorCode,
+  invoiceApiMessage,
+  invoiceAttachmentChanges,
+  invoiceAttachmentsEffective,
   invoiceCanEditLines,
   invoiceCanIssueTransition,
   invoiceCanMarkSent,
   invoiceCanRecordPayment,
+  invoiceConflictCodes,
+  invoiceEditHref,
   invoiceIdFromPathname,
   invoiceIdentityCanRead,
   invoiceIdentityCanWrite,
   invoiceLineQuantityForForm,
-  invoiceLineUnitPriceForForm,
-  invoiceLineValues,
   invoiceMessageLabel,
   invoiceOverflowTransitions,
   invoicePaymentAmountCents,
@@ -37,10 +39,9 @@ import {
   invoicePaymentCanUpdate,
   invoicePaymentLocalInstant,
   invoicePaymentProviderLabel,
+  invoicePagePath,
   invoicePaymentTiming,
   invoicePeriod,
-  invoiceRatePercentForForm,
-  invoiceRatePpm,
   invoiceRecipientLine,
   invoiceRecipients,
   invoiceReminderDate,
@@ -53,7 +54,10 @@ import {
   invoiceIsPastDue,
   invoiceStateLabel,
   invoiceStatusPill,
+  type InvoiceAttachmentChoice,
+  type InvoiceDocumentPreference,
   type InvoiceHoursReportFormat,
+  type InvoiceJournalFormat,
   type InvoiceOverflowCommand,
   type InvoicePaymentApi,
   type InvoiceQuickBooksState,
@@ -150,7 +154,7 @@ const invoiceStatePill = (invoice: Readonly<Invoice>): HTMLSpanElement => {
 
 const invoiceNumberLink = (invoice: Readonly<Invoice>): HTMLAnchorElement => {
   const link = document.createElement('a')
-  link.href = `/invoices/${invoice.id}`
+  link.href = invoicePagePath(invoice.id)
   link.textContent = `Invoice ${invoice.number}`
   return link
 }
@@ -235,8 +239,6 @@ export const renderInvoiceDetail = (
     readonly canWrite: boolean
     readonly onEditPayment: (payment: InvoicePayment) => void
     readonly onDeletePayment: (payment: InvoicePayment) => void
-    readonly onEditLine: (line: InvoiceLine) => void
-    readonly onDeleteLine: (line: InvoiceLine) => void
   },
 ): void => {
   required<HTMLElement>('[data-invoice-detail-number]').textContent = invoice.number
@@ -309,17 +311,14 @@ export const renderInvoiceDetail = (
         const controls = document.createElement('td')
         controls.className = 'invoice-line-actions'
         if (actions?.canWrite === true && invoiceCanEditLines(invoice)) {
-          const edit = document.createElement('button')
-          edit.type = 'button'
+          // Lines change on the edit page, with the rest of the document; this
+          // opens it on this line. Removing one is done there too, where it can
+          // still be undone until the page saves.
+          const edit = document.createElement('a')
+          edit.href = invoiceEditHref(invoice.id, { line: line.id })
           edit.dataset.invoiceLineEdit = String(line.id)
           edit.textContent = 'Edit'
-          edit.addEventListener('click', () => actions.onEditLine(line))
-          const remove = document.createElement('button')
-          remove.type = 'button'
-          remove.dataset.invoiceLineDelete = String(line.id)
-          remove.textContent = 'Delete'
-          remove.addEventListener('click', () => actions.onDeleteLine(line))
-          controls.append(edit, remove)
+          controls.append(edit)
         }
         row.append(description, quantity, rate, amount, controls)
         return row
@@ -442,36 +441,9 @@ export const renderInvoiceDetail = (
   document.title = `${document.documentElement.dataset.brand ?? 'ezacto'} — Invoice ${invoice.number}`
 }
 
-const apiMessage = (error: unknown): string => {
-  if (error instanceof EzactoApiError && typeof error.body === 'object' && error.body !== null) {
-    const detail = Reflect.get(error.body, 'error')
-    if (typeof detail === 'object' && detail !== null) {
-      const fields = Reflect.get(detail, 'fields')
-      if (Array.isArray(fields)) {
-        const first = fields.find(
-          (field) =>
-            typeof field === 'object' &&
-            field !== null &&
-            typeof Reflect.get(field, 'message') === 'string',
-        )
-        if (first !== undefined) return String(Reflect.get(first, 'message'))
-      }
-      const message = Reflect.get(detail, 'message')
-      if (typeof message === 'string' && message.trim() !== '') return message
-    }
-  }
-  return error instanceof Error ? error.message : 'The request could not be completed.'
-}
+const apiMessage = invoiceApiMessage
 
-const apiErrorCode = (error: unknown): string | null => {
-  if (!(error instanceof EzactoApiError) || typeof error.body !== 'object' || error.body === null) {
-    return null
-  }
-  const detail = Reflect.get(error.body, 'error')
-  if (typeof detail !== 'object' || detail === null) return null
-  const code = Reflect.get(detail, 'code')
-  return typeof code === 'string' ? code : null
-}
+const apiErrorCode = invoiceApiErrorCode
 
 const localDate = (): string => {
   const now = new Date()
@@ -485,6 +457,17 @@ interface ActiveSession {
   readonly signal: AbortSignal
   readonly onSessionFailure: (error: unknown) => boolean
   readonly generation: number
+}
+
+/**
+ * The attachment choices were refused before anything was sent. Kept apart
+ * from the send's own failures because it means the opposite thing: nothing
+ * left the building, and the held keys are untouched for the retry.
+ */
+class AttachmentChoicesRefused extends Error {
+  constructor(readonly reason: unknown) {
+    super('The attachment choices were not saved.')
+  }
 }
 
 export interface InvoicePaymentController {
@@ -548,6 +531,20 @@ export const createInvoicePaymentController = (
   const composerConfirm = required<HTMLInputElement>('[data-invoice-composer-confirm]')
   const composerResult = required<HTMLElement>('[data-invoice-composer-result]')
   const composerSubmit = required<HTMLButtonElement>('[data-invoice-composer-submit]')
+  const composerAttachments = required<HTMLFieldSetElement>('[data-invoice-composer-attachments]')
+  const composerAttachPdf = required<HTMLInputElement>('[data-invoice-composer-attach-pdf]')
+  const composerAttachJournal = required<HTMLInputElement>('[data-invoice-composer-attach-journal]')
+  const composerJournalLevel = required<HTMLSelectElement>('[data-invoice-composer-journal-level]')
+  const composerJournalFormats = required<HTMLFieldSetElement>(
+    '[data-invoice-composer-journal-formats]',
+  )
+  const composerAttachFilesLabel = required<HTMLElement>(
+    '[data-invoice-composer-attach-files-label]',
+  )
+  const composerAttachFiles = required<HTMLInputElement>('[data-invoice-composer-attach-files]')
+  const composerAttachmentsStatus = required<HTMLElement>(
+    '[data-invoice-composer-attachments-status]',
+  )
   const overflow = required<HTMLElement>('[data-invoice-overflow]')
   const overflowToggle = required<HTMLButtonElement>('[data-invoice-overflow-toggle]')
   const overflowMenu = required<HTMLElement>('[data-invoice-overflow-menu]')
@@ -567,41 +564,9 @@ export const createInvoicePaymentController = (
   const hoursExport = required<HTMLElement>('[data-invoice-hours-export]')
   const hoursToggle = required<HTMLButtonElement>('[data-invoice-hours-toggle]')
   const hoursMenu = required<HTMLElement>('[data-invoice-hours-menu]')
-  const editInvoice = required<HTMLButtonElement>('[data-invoice-edit]')
-  const editDialog = required<HTMLDialogElement>('[data-invoice-edit-dialog]')
-  const editForm = required<HTMLFormElement>('[data-invoice-edit-form]')
-  const editSubject = required<HTMLInputElement>('[data-invoice-edit-subject]')
-  const editPurchaseOrder = required<HTMLInputElement>('[data-invoice-edit-purchase-order]')
-  const editNotes = required<HTMLTextAreaElement>('[data-invoice-edit-notes]')
-  const editIssueDate = required<HTMLInputElement>('[data-invoice-edit-issue-date]')
-  const editDueDate = required<HTMLInputElement>('[data-invoice-edit-due-date]')
-  const editPaymentTerms = required<HTMLSelectElement>('[data-invoice-edit-payment-terms]')
-  const editTax = required<HTMLInputElement>('[data-invoice-edit-tax]')
-  const editTax2 = required<HTMLInputElement>('[data-invoice-edit-tax2]')
-  const editDiscount = required<HTMLInputElement>('[data-invoice-edit-discount]')
-  const editResult = required<HTMLElement>('[data-invoice-edit-result]')
-  const editSubmit = required<HTMLButtonElement>('[data-invoice-edit-submit]')
-  const addLine = required<HTMLButtonElement>('[data-invoice-line-add]')
+  const editInvoice = required<HTMLAnchorElement>('[data-invoice-edit]')
+  const addLine = required<HTMLAnchorElement>('[data-invoice-line-add]')
   const lineReadonlyNotice = required<HTMLElement>('[data-invoice-line-readonly]')
-  const lineWorkflowStatus = required<HTMLElement>('[data-invoice-line-status]')
-  const lineDialog = required<HTMLDialogElement>('[data-invoice-line-dialog]')
-  const lineForm = required<HTMLFormElement>('[data-invoice-line-form]')
-  const lineTitle = required<HTMLElement>('[data-invoice-line-dialog-title]')
-  const lineKind = required<HTMLInputElement>('[data-invoice-line-kind]')
-  const lineDescription = required<HTMLTextAreaElement>('[data-invoice-line-description]')
-  const lineQuantity = required<HTMLInputElement>('[data-invoice-line-quantity]')
-  const lineRate = required<HTMLInputElement>('[data-invoice-line-rate]')
-  const lineRateLabel = required<HTMLElement>('[data-invoice-line-rate-label]')
-  const lineTaxed = required<HTMLInputElement>('[data-invoice-line-taxed]')
-  const lineTaxed2 = required<HTMLInputElement>('[data-invoice-line-taxed2]')
-  const linePreview = required<HTMLElement>('[data-invoice-line-preview]')
-  const lineResult = required<HTMLElement>('[data-invoice-line-result]')
-  const lineSubmit = required<HTMLButtonElement>('[data-invoice-line-submit]')
-  const lineDeleteDialog = required<HTMLDialogElement>('[data-invoice-line-delete-dialog]')
-  const lineDeleteForm = required<HTMLFormElement>('[data-invoice-line-delete-form]')
-  const lineDeleteSummary = required<HTMLElement>('[data-invoice-line-delete-summary]')
-  const lineDeleteResult = required<HTMLElement>('[data-invoice-line-delete-result]')
-  const lineDeleteSubmit = required<HTMLButtonElement>('[data-invoice-line-delete-submit]')
   const attachmentForm = required<HTMLFormElement>('[data-invoice-attachment-form]')
   const attachmentSubmit = required<HTMLButtonElement>('[data-invoice-attachment-submit]')
   const attachmentStatus = required<HTMLElement>('[data-invoice-attachment-status]')
@@ -617,8 +582,6 @@ export const createInvoicePaymentController = (
   let attachmentCommandId: string | null = null
   let editingPayment: InvoicePayment | null = null
   let deletingPayment: InvoicePayment | null = null
-  let editingLine: InvoiceLine | null = null
-  let deletingLine: InvoiceLine | null = null
   let mutationPending = false
   let refreshRequired = false
   let paymentCommandId: string | null = null
@@ -632,16 +595,17 @@ export const createInvoicePaymentController = (
   let sendAttempt: InvoiceSendAttempt | null = null
   let pendingTransition: InvoiceOverflowCommand | null = null
   let transitionCommandId: string | null = null
-  let lineCommandId: string | null = null
-  let lineDeleteCommandId: string | null = null
-  let editHeaderCommandId: string | null = null
-  let editFinancialsCommandId: string | null = null
   // Null until the state has loaded, and null for good where the deployment
   // has no QuickBooks routes: the line and the button follow it (issue 819).
   let quickBooks: InvoiceQuickBooksState | null = null
   let reminders: InvoiceReminderPreference | null = null
   let remindersSaving = false
   let quickBooksSyncing = false
+  // What this invoice's email carries now, as the server resolved it when the
+  // Send dialog opened: null until it is read, and when it cannot be.
+  let documentPreference: InvoiceDocumentPreference | null = null
+  let documentPreferenceLoading = false
+  let documentPreferenceGeneration = 0
 
   const current = (): ActiveSession | null =>
     active !== null &&
@@ -652,32 +616,6 @@ export const createInvoicePaymentController = (
 
   const commandId = (kind: 'record' | 'update' | 'delete'): string =>
     `web.invoice.payment.${kind}:${globalThis.crypto.randomUUID()}`
-
-  const lineMutationCommandId = (kind: 'create' | 'update' | 'delete'): string =>
-    `web.invoice.line.${kind}:${globalThis.crypto.randomUUID()}`
-
-  const syncLinePreview = (): void => {
-    // The dash stands for a quantity or rate that does not parse yet, which is
-    // not an amount, so the marker comes and goes with the figure.
-    const preview = (value: string | null): void => {
-      linePreview.textContent = value ?? '—'
-      markMoney(linePreview, value !== null)
-    }
-    if (invoice === null) {
-      preview(null)
-      return
-    }
-    try {
-      preview(
-        money(
-          invoiceLineValues(lineQuantity.value, lineRate.value).amountCents,
-          invoice.currency,
-        ),
-      )
-    } catch {
-      preview(null)
-    }
-  }
 
   const syncPrecision = (): void => {
     const timestamp = precision.value === 'timestamp'
@@ -746,6 +684,99 @@ export const createInvoicePaymentController = (
     composerSubject.disabled = frozen
     composerBody.disabled = frozen
     composerReminderToggle.disabled = frozen
+    syncAttachments()
+  }
+
+  const attachmentsOffered = (): boolean =>
+    api.getInvoiceDocumentPreference !== undefined && api.setInvoiceDocumentPreference !== undefined
+
+  const journalFormatBoxes = (): HTMLInputElement[] => [
+    ...composerJournalFormats.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
+  ]
+
+  const chosenAttachments = (): InvoiceAttachmentChoice => ({
+    pdf: composerAttachPdf.checked,
+    files: composerAttachFiles.checked,
+    journal: composerAttachJournal.checked
+      ? composerJournalLevel.value === 'summary'
+        ? 'summary'
+        : 'detailed'
+      : false,
+    journalFormats: journalFormatBoxes()
+      .filter((box) => box.checked)
+      .map((box) => box.value as InvoiceJournalFormat),
+  })
+
+  const showAttachments = (choice: InvoiceAttachmentChoice): void => {
+    composerAttachPdf.checked = choice.pdf
+    composerAttachFiles.checked = choice.files
+    composerAttachJournal.checked = choice.journal !== false
+    composerJournalLevel.value = choice.journal === false ? 'detailed' : choice.journal
+    for (const box of journalFormatBoxes()) {
+      box.checked = choice.journalFormats.includes(box.value as InvoiceJournalFormat)
+    }
+  }
+
+  // Attachments go with the email, so they are offered while it is being
+  // sent and read-only otherwise -- and only once the invoice's own answer is
+  // in, because each box opens on what the invoice would do anyway, and a box
+  // ticked before that answer arrives is a change from nothing anybody saw.
+  // Unlike the recipients they stay open while an email is owed: they are
+  // the invoice's setting, read when the email is built, not part of the
+  // delivery command a retry has to repeat.
+  const syncAttachments = (): void => {
+    composerAttachments.hidden = !attachmentsOffered()
+    const delivering = composerDeliverToggle.checked
+    const usable =
+      delivering &&
+      documentPreference !== null &&
+      !documentPreferenceLoading &&
+      !mutationPending &&
+      !refreshRequired
+    composerAttachPdf.disabled = !usable
+    composerAttachJournal.disabled = !usable
+    composerJournalLevel.disabled = !usable
+    composerJournalLevel.hidden = !composerAttachJournal.checked
+    composerJournalFormats.hidden = !composerAttachJournal.checked
+    for (const box of journalFormatBoxes()) box.disabled = !usable
+    // Files only where the invoice has some to send.
+    composerAttachFilesLabel.hidden = attachments.length === 0
+    composerAttachFiles.disabled = !usable
+    composerAttachmentsStatus.textContent = documentPreferenceLoading
+      ? 'Reading what this invoice attaches…'
+      : documentPreference === null
+        ? 'What this invoice attaches could not be read, so the email goes with its saved choices.'
+        : delivering
+          ? ''
+          : 'Attachments go with the email, so they are chosen once it is to be delivered.'
+    composerAttachmentsStatus.hidden = composerAttachmentsStatus.textContent === ''
+  }
+
+  const loadDocumentPreference = async (session: ActiveSession, invoiceId: number): Promise<void> => {
+    const generation = ++documentPreferenceGeneration
+    documentPreference = null
+    documentPreferenceLoading = true
+    showAttachments({ pdf: false, files: false, journal: false, journalFormats: ['pdf'] })
+    syncComposer()
+    try {
+      const preference = await api.getInvoiceDocumentPreference!(invoiceId, session.signal)
+      if (current() !== session || generation !== documentPreferenceGeneration) return
+      documentPreference = preference
+      showAttachments(invoiceAttachmentsEffective(preference))
+    } catch (error) {
+      if (current() !== session || generation !== documentPreferenceGeneration) return
+      if (session.onSessionFailure(error)) {
+        clearPrivatePresentation()
+        active = null
+        return
+      }
+      documentPreference = null
+    } finally {
+      if (current() === session && generation === documentPreferenceGeneration) {
+        documentPreferenceLoading = false
+        syncComposer()
+      }
+    }
   }
 
   const closeOverflow = (): void => {
@@ -756,6 +787,23 @@ export const createInvoicePaymentController = (
   const closeHoursMenu = (): void => {
     hoursMenu.hidden = true
     hoursToggle.setAttribute('aria-expanded', 'false')
+  }
+
+  /**
+   * A link that is either on offer or says why not. An anchor without an href
+   * is not focusable and goes nowhere, which is the disabled state a link has;
+   * the title carries the reason the way the old button's did.
+   */
+  const offerLink = (link: HTMLAnchorElement, href: string | null, refusal: string): void => {
+    if (href === null) {
+      link.removeAttribute('href')
+      link.setAttribute('aria-disabled', 'true')
+      link.title = link.hidden ? '' : refusal
+      return
+    }
+    link.href = href
+    link.removeAttribute('aria-disabled')
+    link.title = ''
   }
 
   const syncControls = (): void => {
@@ -840,16 +888,23 @@ export const createInvoicePaymentController = (
     if (!anyTransition || controlsLocked) closeOverflow()
     readonlyNotice.hidden = session === null || canWrite
     const canEditLines = canWrite && invoice !== null && invoiceCanEditLines(invoice)
+    // Both lead to the edit page, which reads the invoice afresh, so neither
+    // waits on a command in flight here. A closed invoice rejects every native
+    // edit, so the document and its lines share one gate, and the link says why
+    // rather than going anywhere.
     addLine.hidden = !canWrite
-    addLine.disabled = controlsLocked || !canEditLines
-    addLine.title =
-      canWrite && !canEditLines ? 'Line items cannot be changed on a closed invoice.' : ''
+    offerLink(
+      addLine,
+      canEditLines ? invoiceEditHref(invoice!.id, 'new-line') : null,
+      'Line items cannot be changed on a closed invoice.',
+    )
     lineReadonlyNotice.hidden = session === null || canWrite
-    // A closed invoice rejects every native edit, so the header shares the line gate.
     editInvoice.hidden = !canWrite
-    editInvoice.disabled = controlsLocked || !canEditLines
-    editInvoice.title =
-      canWrite && !canEditLines ? 'A closed invoice can no longer be edited.' : ''
+    offerLink(
+      editInvoice,
+      canEditLines ? invoiceEditHref(invoice!.id) : null,
+      'A closed invoice can no longer be edited.',
+    )
     for (const control of paymentForm.querySelectorAll<
       HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement
     >('input, select, textarea, button')) {
@@ -859,7 +914,7 @@ export const createInvoicePaymentController = (
     paymentSubmit.disabled = controlsLocked
     deleteSubmit.disabled = controlsLocked
     for (const control of article.querySelectorAll<HTMLButtonElement>(
-      '[data-invoice-payment-edit], [data-invoice-payment-delete], [data-invoice-line-edit], [data-invoice-line-delete]',
+      '[data-invoice-payment-edit], [data-invoice-payment-delete]',
     )) {
       control.disabled = controlsLocked
     }
@@ -868,23 +923,10 @@ export const createInvoicePaymentController = (
     >('input, textarea, button')) {
       control.disabled = controlsLocked
     }
-    for (const control of lineForm.querySelectorAll<
-      HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement
-    >('input, textarea, button')) {
-      control.disabled = controlsLocked
-    }
-    for (const control of editForm.querySelectorAll<
-      HTMLInputElement | HTMLSelectElement | HTMLButtonElement
-    >('input, select, button')) {
-      control.disabled = controlsLocked
-    }
     for (const control of transitionForm.querySelectorAll<HTMLButtonElement>('button')) {
       control.disabled = controlsLocked
     }
     transitionSubmit.disabled = controlsLocked
-    lineSubmit.disabled = controlsLocked
-    editSubmit.disabled = controlsLocked
-    lineDeleteSubmit.disabled = controlsLocked
     syncReminder()
     syncComposer()
   }
@@ -893,9 +935,6 @@ export const createInvoicePaymentController = (
     if (paymentDialog.open) paymentDialog.close()
     if (deleteDialog.open) deleteDialog.close()
     if (composerDialog.open) composerDialog.close()
-    if (lineDialog.open) lineDialog.close()
-    if (lineDeleteDialog.open) lineDeleteDialog.close()
-    if (editDialog.open) editDialog.close()
     if (transitionDialog.open) transitionDialog.close()
     closeOverflow()
   }
@@ -941,6 +980,8 @@ export const createInvoicePaymentController = (
       attachmentStatus.textContent =
         `${attachments.length} ${attachments.length === 1 ? 'file' : 'files'} attached.`
       renderAttachments()
+      // The Send dialog offers the files only once there are some.
+      syncAttachments()
     } catch (error) {
       if (current() !== session) return
       if (session.onSessionFailure(error)) return
@@ -1040,8 +1081,6 @@ export const createInvoicePaymentController = (
     attachmentCommandId = null
     editingPayment = null
     deletingPayment = null
-    editingLine = null
-    deletingLine = null
     mutationPending = false
     refreshRequired = false
     paymentCommandId = null
@@ -1050,27 +1089,18 @@ export const createInvoicePaymentController = (
     sendAttempt = null
     pendingTransition = null
     transitionCommandId = null
-    lineCommandId = null
-    lineDeleteCommandId = null
-    editHeaderCommandId = null
-    editFinancialsCommandId = null
+    documentPreference = null
+    documentPreferenceLoading = false
+    documentPreferenceGeneration += 1
     closeDialogs()
     paymentForm.reset()
     deleteForm.reset()
     composerForm.reset()
-    lineForm.reset()
-    lineDeleteForm.reset()
-    editForm.reset()
     attachmentForm.reset()
     paymentResult.textContent = ''
     deleteResult.textContent = ''
     composerResult.textContent = ''
     transitionResult.textContent = ''
-    lineResult.textContent = ''
-    lineDeleteResult.textContent = ''
-    editResult.textContent = ''
-    lineWorkflowStatus.textContent = ''
-    linePreview.textContent = '—'
     workflowStatus.textContent = ''
     attachmentStatus.textContent = ''
     attachmentList.replaceChildren()
@@ -1148,8 +1178,6 @@ export const createInvoicePaymentController = (
       payments = loadedPayments
       const editedId = editingPayment?.id
       const deletedId = deletingPayment?.id
-      const editedLineId = editingLine?.id
-      const deletedLineId = deletingLine?.id
       editingPayment =
         editedId === undefined || editedId === null
           ? null
@@ -1158,26 +1186,15 @@ export const createInvoicePaymentController = (
         deletedId === undefined || deletedId === null
           ? null
           : (payments.find((payment) => payment.id === deletedId) ?? null)
-      editingLine =
-        editedLineId === undefined || editedLineId === null
-          ? null
-          : (loadedInvoice.line_items.find((line) => line.id === editedLineId) ?? null)
-      deletingLine =
-        deletedLineId === undefined || deletedLineId === null
-          ? null
-          : (loadedInvoice.line_items.find((line) => line.id === deletedLineId) ?? null)
       renderInvoiceDetail(loadedInvoice, messages, loadedPayments, {
         canWrite: invoiceIdentityCanWrite(session.identity),
         onEditPayment: (payment) => openPaymentDialog(payment),
         onDeletePayment: (payment) => openDeleteDialog(payment),
-        onEditLine: (line) => openLineDialog(line),
-        onDeleteLine: (line) => openLineDeleteDialog(line),
       })
       refreshRequired = false
       article.hidden = false
       status.textContent = ''
       workflowStatus.textContent = options.successMessage ?? ''
-      lineWorkflowStatus.textContent = ''
       const canWrite = invoiceIdentityCanWrite(session.identity)
       attachmentForm.hidden = !canWrite || api.uploadInvoiceAttachment === undefined
       attachmentReadonly.hidden = canWrite || api.uploadInvoiceAttachment === undefined
@@ -1269,92 +1286,6 @@ export const createInvoicePaymentController = (
     deleteSubmit.focus()
   }
 
-  const openLineDialog = (line: InvoiceLine | null): void => {
-    const session = current()
-    if (
-      session === null ||
-      invoice === null ||
-      mutationPending ||
-      refreshRequired ||
-      !invoiceIdentityCanWrite(session.identity) ||
-      !invoiceCanEditLines(invoice)
-    ) {
-      return
-    }
-    editingLine = line
-    lineCommandId = null
-    lineForm.reset()
-    lineTitle.textContent = line === null ? 'Add line item' : 'Edit line item'
-    lineSubmit.textContent = line === null ? 'Add line' : 'Save line'
-    lineKind.value = line?.kind ?? 'Service'
-    lineDescription.value = line?.description ?? ''
-    lineQuantity.value = line === null ? '1' : invoiceLineQuantityForForm(line)
-    lineRate.value = line === null ? '0.00' : invoiceLineUnitPriceForForm(line.unit_price_cents)
-    lineTaxed.checked = line?.taxed ?? false
-    lineTaxed2.checked = line?.taxed2 ?? false
-    lineRateLabel.textContent = `Rate (${invoice.currency})`
-    lineResult.textContent = ''
-    syncLinePreview()
-    syncControls()
-    lineDialog.showModal()
-    lineKind.focus()
-  }
-
-  const openLineDeleteDialog = (line: InvoiceLine): void => {
-    const session = current()
-    if (
-      session === null ||
-      invoice === null ||
-      mutationPending ||
-      refreshRequired ||
-      !invoiceIdentityCanWrite(session.identity) ||
-      !invoiceCanEditLines(invoice)
-    ) {
-      return
-    }
-    deletingLine = line
-    lineDeleteCommandId = null
-    lineDeleteResult.textContent = ''
-    lineDeleteSummary.replaceChildren(
-      `${line.description?.trim() || line.kind} (`,
-      moneyText(money(line.amount_cents, invoice.currency)),
-      ')',
-    )
-    syncControls()
-    lineDeleteDialog.showModal()
-    lineDeleteSubmit.focus()
-  }
-
-  const openEditDialog = (): void => {
-    const session = current()
-    if (
-      session === null ||
-      invoice === null ||
-      mutationPending ||
-      refreshRequired ||
-      !invoiceIdentityCanWrite(session.identity) ||
-      !invoiceCanEditLines(invoice)
-    ) {
-      return
-    }
-    editHeaderCommandId = null
-    editFinancialsCommandId = null
-    editForm.reset()
-    editSubject.value = invoice.subject ?? ''
-    editPurchaseOrder.value = invoice.purchase_order ?? ''
-    editNotes.value = invoice.notes ?? ''
-    editIssueDate.value = invoice.issue_date
-    editDueDate.value = invoice.due_date
-    editPaymentTerms.value = invoice.payment_terms
-    editTax.value = invoiceRatePercentForForm(invoice.tax_rate_ppm)
-    editTax2.value = invoiceRatePercentForForm(invoice.tax2_rate_ppm)
-    editDiscount.value = invoiceRatePercentForForm(invoice.discount_rate_ppm)
-    editResult.textContent = ''
-    syncControls()
-    editDialog.showModal()
-    editSubject.focus()
-  }
-
   const openComposer = (): void => {
     const session = current()
     if (
@@ -1395,6 +1326,9 @@ export const createInvoicePaymentController = (
     // submit, all off the attempt, so no entry point sets them independently.
     syncControls()
     composerDialog.showModal()
+    // Read afresh on every opening: the invoice's choices are its own state,
+    // and an earlier send may have changed them.
+    if (attachmentsOffered()) void loadDocumentPreference(session, invoice.id)
     // The fields are frozen while the email is owed, so the retry is what the
     // keyboard lands on.
     if (owed !== null) composerSubmit.focus()
@@ -1433,11 +1367,7 @@ export const createInvoicePaymentController = (
     transitionSubmit.focus()
   }
 
-  const conflictCodes = new Set([
-    'invoice_version_conflict',
-    'trigger_row_conflict',
-    'command_id_reused',
-  ])
+  const conflictCodes = invoiceConflictCodes
 
   const handleMutationFailure = async (
     error: unknown,
@@ -1465,10 +1395,6 @@ export const createInvoicePaymentController = (
       // retires it there rather than here: it is the only caller that knows
       // which command the spent key names.
       transitionCommandId = null
-      lineCommandId = null
-      lineDeleteCommandId = null
-      editHeaderCommandId = null
-      editFinancialsCommandId = null
       const loaded = await loadDetail(session, { hideDocument: false })
       if (current() !== session) return
       result.textContent = loaded
@@ -1476,20 +1402,6 @@ export const createInvoicePaymentController = (
         : 'The invoice changed elsewhere and the latest values could not be loaded. Retry the invoice.'
       if (editingPayment === null && paymentDialog.open) paymentDialog.close()
       if (deletingPayment === null && deleteDialog.open) deleteDialog.close()
-      if (editingLine === null && lineDialog.open) lineDialog.close()
-      if (deletingLine === null && lineDeleteDialog.open) lineDeleteDialog.close()
-      if (
-        lineDialog.open &&
-        (invoice === null || !invoiceCanEditLines(invoice))
-      ) {
-        lineDialog.close()
-      }
-      if (
-        lineDeleteDialog.open &&
-        (invoice === null || !invoiceCanEditLines(invoice))
-      ) {
-        lineDeleteDialog.close()
-      }
       if (composerDialog.open && (invoice === null || !invoiceCanMarkSent(invoice))) {
         composerDialog.close()
       }
@@ -1501,9 +1413,6 @@ export const createInvoicePaymentController = (
       ) {
         pendingTransition = null
         transitionDialog.close()
-      }
-      if (editDialog.open && (invoice === null || !invoiceCanEditLines(invoice))) {
-        editDialog.close()
       }
       return
     }
@@ -1600,6 +1509,9 @@ export const createInvoicePaymentController = (
   composerDeliverToggle.addEventListener('change', () => {
     syncComposer()
   })
+  composerAttachJournal.addEventListener('change', () => {
+    syncComposer()
+  })
   composerForm.addEventListener('input', () => {
     // No command id is minted or dropped here. Once a `send` has been issued its
     // outcome may be unknown, and a fresh id on the next submit would record a
@@ -1650,9 +1562,25 @@ export const createInvoicePaymentController = (
     let recipients: InvoiceRecipient[] = []
     let sendReminderOn: string | null = null
     let input: InvoiceTransitionInput | null = null
+    let attachmentChange: InvoiceDocumentPreferenceInput | null = null
     const subject = composerSubject.value.trim()
     const body = composerBody.value.trim()
+    // Recorded on the message the way Harvest recorded it, and only true when
+    // the email that would carry the PDF is part of this submit.
+    const attachPdf = delivering && documentPreference !== null && composerAttachPdf.checked
     try {
+      if (delivering && attachmentsOffered()) {
+        if (documentPreferenceLoading) {
+          throw new Error('Wait for the attachments to load, then send.')
+        }
+        if (documentPreference !== null) {
+          attachmentChange = invoiceAttachmentChanges(
+            documentPreference,
+            chosenAttachments(),
+            attachments.length > 0,
+          )
+        }
+      }
       if (work === 'send') {
         recipients = invoiceRecipients(composerRecipients.value)
         if (subject === '') throw new Error('Enter a subject before recording.')
@@ -1669,7 +1597,7 @@ export const createInvoicePaymentController = (
           recipients,
           subject: interpolateInvoiceTemplate(subject, selectedInvoice),
           body: interpolateInvoiceTemplate(body, selectedInvoice),
-          attach_pdf: false,
+          attach_pdf: attachPdf,
           send_me_a_copy: false,
           thank_you: false,
           reminder: sendReminderOn !== null,
@@ -1720,6 +1648,25 @@ export const createInvoicePaymentController = (
     // issues its own send once the mail is accepted, so the history carries both
     // the message written here and the one the organization template sent.
     const request = (async (): Promise<Invoice> => {
+      // The attachments first: they are read when the email is built, so the
+      // email cannot be queued before they are saved, and a refusal here has
+      // to stop before the sent status is recorded rather than after it. A
+      // setting, not a command -- writing it twice writes the same thing -- so
+      // it needs no key of its own; the held keys below are what keep a retry
+      // from sending twice.
+      if (attachmentChange !== null) {
+        try {
+          const saved = await api.setInvoiceDocumentPreference!(
+            selectedInvoice.id,
+            attachmentChange,
+            session.signal,
+          )
+          // Adopted, so a retry after a later failure finds nothing to change.
+          if (current() === session) documentPreference = saved
+        } catch (error) {
+          throw new AttachmentChoicesRefused(error)
+        }
+      }
       let saved = selectedInvoice
       if (input !== null) {
         saved = await transitionInvoice(
@@ -1784,6 +1731,17 @@ export const createInvoicePaymentController = (
       .catch(async (error: unknown) => {
         if (current() !== session) return
         mutationPending = false
+        if (error instanceof AttachmentChoicesRefused) {
+          if (session.onSessionFailure(error.reason)) {
+            clearPrivatePresentation()
+            active = null
+            return
+          }
+          // Nothing was sent. The attempt and its keys stay exactly as they
+          // were, so submitting again is the same send, not a second one.
+          composerResult.textContent = `The attachment choices were not saved, so nothing was sent: ${apiMessage(error.reason)} Submit again to retry.`
+          return
+        }
         // Holding the key is what keeps a retry from re-sending, and retiring
         // it is what keeps a lost response from bricking the dialog. Both come
         // off the failure: `command_id_reused` is the ledger reporting this
@@ -1828,331 +1786,6 @@ export const createInvoicePaymentController = (
           mutationPending = false
           syncControls()
         }
-      })
-  })
-  editInvoice.addEventListener('click', openEditDialog)
-  editForm.addEventListener('input', () => {
-    if (!mutationPending) {
-      editHeaderCommandId = null
-      editFinancialsCommandId = null
-    }
-    editResult.textContent = ''
-  })
-  editForm.addEventListener('submit', (event) => {
-    event.preventDefault()
-    const session = current()
-    const selectedInvoice = invoice
-    const updateInvoice = api.updateInvoice
-    if (
-      session === null ||
-      selectedInvoice === null ||
-      updateInvoice === undefined ||
-      mutationPending ||
-      refreshRequired ||
-      !invoiceIdentityCanWrite(session.identity) ||
-      !invoiceCanEditLines(selectedInvoice)
-    ) {
-      return
-    }
-    const subject = editSubject.value.trim()
-    const purchaseOrder = editPurchaseOrder.value.trim()
-    // Not trimmed to a single line: notes are prose the client reads, and the
-    // paragraph breaks someone typed are part of what they wrote. Only the
-    // surrounding whitespace goes, so an all-whitespace note still clears.
-    const notes = editNotes.value.trim()
-    let rates: Pick<InvoiceEditInput, 'tax_rate_ppm' | 'tax2_rate_ppm' | 'discount_rate_ppm'>
-    try {
-      if (editIssueDate.value === '' || editDueDate.value === '') {
-        throw new Error('Enter both an issue date and a due date.')
-      }
-      if (editDueDate.value < editIssueDate.value) {
-        throw new Error('Due date cannot precede the issue date.')
-      }
-      rates = {
-        tax_rate_ppm: invoiceRatePpm(editTax.value, 'Tax 1'),
-        tax2_rate_ppm: invoiceRatePpm(editTax2.value, 'Tax 2'),
-        discount_rate_ppm: invoiceRatePpm(editDiscount.value, 'Discount'),
-      }
-    } catch (error) {
-      editResult.textContent = apiMessage(error)
-      return
-    }
-    const header = {
-      subject: subject === '' ? null : subject,
-      purchase_order: purchaseOrder === '' ? null : purchaseOrder,
-      notes: notes === '' ? null : notes,
-      issue_date: editIssueDate.value,
-      due_date: editDueDate.value,
-      payment_terms: editPaymentTerms.value as Invoice['payment_terms'],
-    }
-    const headerChanged =
-      header.subject !== selectedInvoice.subject ||
-      header.purchase_order !== selectedInvoice.purchase_order ||
-      header.notes !== selectedInvoice.notes ||
-      header.issue_date !== selectedInvoice.issue_date ||
-      header.due_date !== selectedInvoice.due_date ||
-      header.payment_terms !== selectedInvoice.payment_terms
-    const ratesChanged =
-      rates.tax_rate_ppm !== selectedInvoice.tax_rate_ppm ||
-      rates.tax2_rate_ppm !== selectedInvoice.tax2_rate_ppm ||
-      rates.discount_rate_ppm !== selectedInvoice.discount_rate_ppm
-    if (!headerChanged && !ratesChanged) {
-      editResult.textContent = 'Nothing changed.'
-      return
-    }
-    editHeaderCommandId ??= `web.invoice.header:${globalThis.crypto.randomUUID()}`
-    editFinancialsCommandId ??= `web.invoice.financials:${globalThis.crypto.randomUUID()}`
-    const headerCommand = editHeaderCommandId
-    const financialsCommand = editFinancialsCommandId
-    mutationPending = true
-    editResult.textContent = 'Saving invoice…'
-    syncControls()
-    // The API takes exactly one edit kind per request, so changing both the
-    // document and the rates is two commands on rising versions.
-    const request = (async (): Promise<Invoice> => {
-      let saved = selectedInvoice
-      if (headerChanged) {
-        saved = await updateInvoice(
-          selectedInvoice.id,
-          headerCommand,
-          { expected_version: saved.version, ...header },
-          session.signal,
-        )
-        // The document is committed even if the rates fail below. Adopting it
-        // now leaves a retry sending only the rates, at the version it returned.
-        // From here the rendered document is behind the server whatever happens
-        // next, so it is already stale: say so, rather than letting a rates
-        // failure leave the page showing a version nobody saved.
-        if (current() === session) {
-          invoice = saved
-          editHeaderCommandId = null
-          refreshRequired = true
-        }
-      }
-      if (ratesChanged) {
-        saved = await updateInvoice(
-          selectedInvoice.id,
-          financialsCommand,
-          { expected_version: saved.version, ...rates },
-          session.signal,
-        )
-      }
-      return saved
-    })()
-    void request
-      .then(async (updatedInvoice) => {
-        if (current() !== session) return
-        invoice = updatedInvoice
-        refreshRequired = true
-        editHeaderCommandId = null
-        editFinancialsCommandId = null
-        editResult.textContent = ''
-        editDialog.close()
-        workflowStatus.textContent = 'Invoice saved. Refreshing invoice…'
-        syncControls()
-        const loaded = await loadDetail(session, {
-          hideDocument: false,
-          successMessage: 'Invoice saved.',
-        })
-        if (!loaded && current() === session && refreshRequired) {
-          workflowStatus.textContent =
-            'Invoice saved, but the updated invoice could not be refreshed. Retry invoice; the change will not be submitted again.'
-        }
-      })
-      .catch(async (error: unknown) => {
-        await handleMutationFailure(error, session, editResult)
-        // A conflict already reloaded inside handleMutationFailure. Any other
-        // failure that arrives with the document half-saved has not, and the
-        // page would otherwise keep rendering the header the user typed as
-        // though the whole edit had failed.
-        if (current() === session && refreshRequired) {
-          await loadDetail(session, { hideDocument: false })
-        }
-      })
-      .finally(() => {
-        if (current() !== session) return
-        mutationPending = false
-        syncControls()
-      })
-  })
-  addLine.addEventListener('click', () => openLineDialog(null))
-  lineForm.addEventListener('input', () => {
-    if (!mutationPending) lineCommandId = null
-    lineResult.textContent = ''
-    syncLinePreview()
-  })
-  lineForm.addEventListener('submit', (event) => {
-    event.preventDefault()
-    const session = current()
-    const selectedInvoice = invoice
-    const selectedLine = editingLine
-    const createLine = api.createInvoiceLine
-    const updateLine = api.updateInvoiceLine
-    if (
-      session === null ||
-      selectedInvoice === null ||
-      mutationPending ||
-      refreshRequired ||
-      !invoiceIdentityCanWrite(session.identity) ||
-      !invoiceCanEditLines(selectedInvoice) ||
-      (selectedLine === null ? createLine === undefined : updateLine === undefined)
-    ) {
-      return
-    }
-    const kind = lineKind.value.trim()
-    const description = lineDescription.value.trim()
-    let values: ReturnType<typeof invoiceLineValues>
-    let position: number
-    try {
-      if (kind === '') throw new Error('Enter an item type.')
-      if (kind.length > 255) throw new Error('Item type cannot exceed 255 characters.')
-      if (description.length > 100_000) {
-        throw new Error('Description cannot exceed 100,000 characters.')
-      }
-      values = invoiceLineValues(lineQuantity.value, lineRate.value)
-      position =
-        selectedLine?.position ??
-        selectedInvoice.line_items.reduce(
-          (next, line) => Math.max(next, line.position + 1),
-          0,
-        )
-      if (!Number.isSafeInteger(position)) throw new Error('No more lines can be added.')
-    } catch (error) {
-      lineResult.textContent = apiMessage(error)
-      return
-    }
-    const common = {
-      expected_version: selectedInvoice.version,
-      position,
-      kind,
-      description: description === '' ? null : description,
-      quantity: values.quantity,
-      unit_price_cents: values.unitPriceCents,
-      taxed: lineTaxed.checked,
-      taxed2: lineTaxed2.checked,
-    }
-    const input: InvoiceLineInput | InvoiceLineUpdateInput =
-      selectedLine === null
-        ? common
-        : {
-            ...common,
-            expected_updated_at: selectedLine.updated_at,
-            project_id: selectedLine.project_id,
-          }
-    const kindOfMutation = selectedLine === null ? 'create' : 'update'
-    lineCommandId ??= lineMutationCommandId(kindOfMutation)
-    const activeCommand = lineCommandId
-    mutationPending = true
-    lineResult.textContent = selectedLine === null ? 'Adding line…' : 'Saving line…'
-    syncControls()
-    const request =
-      selectedLine === null
-        ? createLine!(
-            selectedInvoice.id,
-            activeCommand,
-            input as InvoiceLineInput,
-            session.signal,
-          )
-        : updateLine!(
-            selectedInvoice.id,
-            selectedLine.id,
-            activeCommand,
-            input as InvoiceLineUpdateInput,
-            session.signal,
-          )
-    void request
-      .then(async (updatedInvoice) => {
-        if (current() !== session) return
-        invoice = updatedInvoice
-        refreshRequired = true
-        lineCommandId = null
-        editingLine = null
-        lineResult.textContent = ''
-        lineDialog.close()
-        lineWorkflowStatus.textContent =
-          selectedLine === null
-            ? 'Line added. Refreshing invoice…'
-            : 'Line saved. Refreshing invoice…'
-        syncControls()
-        const loaded = await loadDetail(session, {
-          hideDocument: false,
-        })
-        if (loaded && current() === session) {
-          lineWorkflowStatus.textContent = selectedLine === null ? 'Line added.' : 'Line saved.'
-        }
-        if (!loaded && current() === session && refreshRequired) {
-          lineWorkflowStatus.textContent =
-            selectedLine === null
-              ? 'Line added, but the updated invoice could not be refreshed. Retry invoice; the line will not be submitted again.'
-              : 'Line saved, but the updated invoice could not be refreshed. Retry invoice; the change will not be submitted again.'
-        }
-      })
-      .catch((error: unknown) => handleMutationFailure(error, session, lineResult))
-      .finally(() => {
-        if (current() !== session) return
-        mutationPending = false
-        syncControls()
-      })
-  })
-  lineDeleteForm.addEventListener('submit', (event) => {
-    event.preventDefault()
-    const session = current()
-    const selectedInvoice = invoice
-    const selectedLine = deletingLine
-    const deleteLine = api.deleteInvoiceLine
-    if (
-      session === null ||
-      selectedInvoice === null ||
-      selectedLine === null ||
-      mutationPending ||
-      refreshRequired ||
-      deleteLine === undefined ||
-      !invoiceIdentityCanWrite(session.identity) ||
-      !invoiceCanEditLines(selectedInvoice)
-    ) {
-      return
-    }
-    lineDeleteCommandId ??= lineMutationCommandId('delete')
-    const activeCommand = lineDeleteCommandId
-    mutationPending = true
-    lineDeleteResult.textContent = 'Deleting line…'
-    syncControls()
-    void deleteLine(
-      selectedInvoice.id,
-      selectedLine.id,
-      activeCommand,
-      {
-        expected_version: selectedInvoice.version,
-        expected_updated_at: selectedLine.updated_at,
-      },
-      session.signal,
-    )
-      .then(async (updatedInvoice) => {
-        if (current() !== session) return
-        invoice = updatedInvoice
-        refreshRequired = true
-        lineDeleteCommandId = null
-        deletingLine = null
-        lineDeleteResult.textContent = ''
-        lineDeleteDialog.close()
-        lineWorkflowStatus.textContent = 'Line deleted. Refreshing invoice…'
-        syncControls()
-        const loaded = await loadDetail(session, {
-          hideDocument: false,
-        })
-        if (loaded && current() === session) lineWorkflowStatus.textContent = 'Line deleted.'
-        if (!loaded && current() === session && refreshRequired) {
-          lineWorkflowStatus.textContent =
-            'Line deleted, but the updated invoice could not be refreshed. Retry invoice; the deletion will not be submitted again.'
-        }
-      })
-      .catch((error: unknown) =>
-        handleMutationFailure(error, session, lineDeleteResult),
-      )
-      .finally(() => {
-        if (current() !== session) return
-        mutationPending = false
-        syncControls()
       })
   })
   paymentForm.addEventListener('input', () => {
@@ -2336,24 +1969,6 @@ export const createInvoicePaymentController = (
     deletingPayment = null
     deleteCommandId = null
     deleteResult.textContent = ''
-  })
-  lineDialog.addEventListener('close', () => {
-    if (mutationPending) return
-    editingLine = null
-    lineCommandId = null
-    lineResult.textContent = ''
-  })
-  editDialog.addEventListener('close', () => {
-    if (mutationPending) return
-    editHeaderCommandId = null
-    editFinancialsCommandId = null
-    editResult.textContent = ''
-  })
-  lineDeleteDialog.addEventListener('close', () => {
-    if (mutationPending) return
-    deletingLine = null
-    lineDeleteCommandId = null
-    lineDeleteResult.textContent = ''
   })
   record.addEventListener('click', () => openPaymentDialog(null))
   // Mark paid is Record payment with its three fields answered from the invoice
@@ -2635,7 +2250,12 @@ export const createInvoicePaymentController = (
         syncControls()
         return
       }
-      await loadDetail(session, { hideDocument: true })
+      // What the edit page saved, if this is where it came back to: said in
+      // the status line above the document once the document is up, and not
+      // over a failure to load it.
+      const notice = takePageNotice(globalThis.location.pathname)
+      const loaded = await loadDetail(session, { hideDocument: true })
+      if (loaded && notice !== null && current() === session) status.textContent = notice
     },
   }
 }

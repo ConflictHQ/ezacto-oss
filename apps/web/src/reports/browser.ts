@@ -30,7 +30,7 @@ import {
   type Whoami,
 } from '@conflict-hq/ezacto-client'
 import { createPeriodControl } from '../components/period.js'
-import { invoiceIdentityCanWrite } from '../invoices/model.js'
+import { invoiceIdentityCanWrite, invoicePagePath } from '../invoices/model.js'
 import { moneyText } from '../money-display.js'
 // The team roster's own formatter. Utilization is one figure with one meaning,
 // and a second renderer for it here is how the same person comes to read 17%
@@ -825,7 +825,7 @@ const renderInvoiced = (report: Readonly<InvoicedReport>): DocumentFragment => {
     line.append(textElement('td', row.issue_date), textElement('td', row.due_date))
     const invoice = element('th')
     invoice.scope = 'row'
-    invoice.append(linkElement(`/invoices/${row.invoice_id}`, row.number))
+    invoice.append(linkElement(invoicePagePath(row.invoice_id), row.number))
     line.append(invoice)
     const client = element('td')
     client.append(linkElement(`/clients/${row.client_id}`, row.client_name))
@@ -876,7 +876,7 @@ const renderPaymentsReceived = (
     line.append(textElement('td', row.payment_date))
     const invoice = element('th')
     invoice.scope = 'row'
-    invoice.append(linkElement(`/invoices/${row.invoice_id}`, row.invoice_number))
+    invoice.append(linkElement(invoicePagePath(row.invoice_id), row.invoice_number))
     const client = element('td')
     client.append(linkElement(`/clients/${row.client_id}`, row.client_name))
     line.append(invoice, client, textElement('td', row.provider))
@@ -1597,7 +1597,7 @@ const detailedTimeCells = (
       // acts on, where a dash reads as a value that failed to load.
       claim.append(textElement('span', 'Not claimed', 'report-muted'))
     } else {
-      claim.append(linkElement(`/invoices/${row.invoice_id}`, `#${row.invoice_id}`))
+      claim.append(linkElement(invoicePagePath(row.invoice_id), `#${row.invoice_id}`))
     }
     cells.push(claim)
   }

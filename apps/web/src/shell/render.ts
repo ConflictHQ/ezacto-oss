@@ -14,7 +14,7 @@ import { renderTaskAdminPage } from '../tasks/render.js'
 import { renderTeamPages } from '../team/render.js'
 import { renderExpenseCategoriesPage } from '../expense-categories/render.js'
 import { renderEmailConfigPage } from '../email-config/render.js'
-import { renderRecurringPage } from '../recurring/render.js'
+import { renderRecurringEditorPage, renderRecurringPage } from '../recurring/render.js'
 import { renderEstimatesPage } from '../estimates/render.js'
 import { renderRetainerDialogs, renderRetainerPage } from '../retainers/render.js'
 import {
@@ -25,10 +25,9 @@ import {
 import {
   renderInvoiceAttachmentSection,
   renderInvoiceComposerDialog,
-  renderInvoiceEditDialog,
+  renderInvoiceEditPage,
   renderInvoicePaymentDialogs,
   renderInvoicePaymentSection,
-  renderInvoiceLineDialogs,
   renderInvoiceLineEditor,
   renderInvoiceOverflowMenu,
   renderInvoiceTransitionDialog,
@@ -74,8 +73,10 @@ export interface AppShellOptions {
     | 'timesheet-approvals'
     | 'invoice-list'
     | 'invoice-detail'
+    | 'invoice-edit'
     | 'invoice-generation'
     | 'invoice-recurring'
+    | 'invoice-recurring-editor'
     | 'invoice-estimates'
     | 'invoice-retainers'
     | 'client-list'
@@ -720,7 +721,7 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
           <h2 data-invoice-detail-number>—</h2>
           <p data-invoice-detail-subject hidden></p>
         </div>
-        <div class="invoice-document-actions"><strong class="invoice-state" data-invoice-detail-state>—</strong><button type="button" data-invoice-print>Print</button><div class="invoice-overflow invoice-hours-export" data-invoice-hours-export hidden><button type="button" data-invoice-hours-toggle aria-haspopup="true" aria-expanded="false" aria-controls="ez-invoice-hours-menu">Export hours</button><div class="invoice-overflow-menu" id="ez-invoice-hours-menu" data-invoice-hours-menu role="menu" hidden><p class="invoice-hours-menu-label">Every entry</p><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="pdf" data-hours-detail="detailed">PDF</button><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="csv" data-hours-detail="detailed">CSV</button><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="xlsx" data-hours-detail="detailed">Excel</button><p class="invoice-hours-menu-label">Summary</p><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="pdf" data-hours-detail="summary">PDF</button><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="csv" data-hours-detail="summary">CSV</button><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="xlsx" data-hours-detail="summary">Excel</button></div></div><button type="button" data-invoice-edit disabled hidden>Edit invoice</button><button type="button" data-invoice-send disabled hidden>Send invoice</button><button type="button" data-invoice-quickbooks-sync disabled hidden>Sync to QuickBooks</button><button type="button" class="primary-action" data-invoice-payment-settle data-auth-action disabled hidden>Mark paid</button>${renderInvoiceOverflowMenu()}</div>
+        <div class="invoice-document-actions"><strong class="invoice-state" data-invoice-detail-state>—</strong><button type="button" data-invoice-print>Print</button><div class="invoice-overflow invoice-hours-export" data-invoice-hours-export hidden><button type="button" data-invoice-hours-toggle aria-haspopup="true" aria-expanded="false" aria-controls="ez-invoice-hours-menu">Export hours</button><div class="invoice-overflow-menu" id="ez-invoice-hours-menu" data-invoice-hours-menu role="menu" hidden><p class="invoice-hours-menu-label">Every entry</p><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="pdf" data-hours-detail="detailed">PDF</button><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="csv" data-hours-detail="detailed">CSV</button><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="xlsx" data-hours-detail="detailed">Excel</button><p class="invoice-hours-menu-label">Summary</p><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="pdf" data-hours-detail="summary">PDF</button><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="csv" data-hours-detail="summary">CSV</button><button class="invoice-overflow-item" type="button" role="menuitem" data-hours-format="xlsx" data-hours-detail="summary">Excel</button></div></div><a class="invoice-edit-link" data-invoice-edit aria-disabled="true" hidden>Edit invoice</a><button type="button" data-invoice-send disabled hidden>Send invoice</button><button type="button" data-invoice-quickbooks-sync disabled hidden>Sync to QuickBooks</button><button type="button" class="primary-action" data-invoice-payment-settle data-auth-action disabled hidden>Mark paid</button>${renderInvoiceOverflowMenu()}</div>
       </header>
       <p class="invoice-reminder-line" data-invoice-reminder-line hidden></p>
       <dl class="invoice-facts">
@@ -756,6 +757,7 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
       </section>
     </article>
   </main>
+  ${renderInvoiceEditPage(view)}
   <!--
     New invoice is one step, as it was in Harvest: who, and whether the draft is
     filled from tracked work or starts empty. Everything after that is the draft.
@@ -848,6 +850,7 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
     </form>
   </dialog>
   ${renderRecurringPage(view)}
+  ${renderRecurringEditorPage(view)}
   ${renderEstimatesPage(view)}
   ${renderRetainerPage(view)}
   ${renderEmailConfigPage(view)}
@@ -866,8 +869,6 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
   ${renderRoleAdminPage(view)}
   ${renderNotFoundPage(view)}
   ${renderInvoiceComposerDialog()}
-  ${renderInvoiceEditDialog()}
-  ${renderInvoiceLineDialogs()}
   ${renderInvoicePaymentDialogs()}
   ${renderInvoiceTransitionDialog()}
   ${renderRetainerDialogs()}

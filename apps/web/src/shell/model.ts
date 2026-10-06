@@ -46,7 +46,7 @@ import type { ProjectDirectoryApi } from '../projects/model.js'
 import type { ReportWorkspaceApi } from '../reports/model.js'
 import type { ExpenseWorkflowApi } from '../expenses/model.js'
 import type { ExpenseCategoryDirectoryApi } from '../expense-categories/model.js'
-import type { InvoicePaymentApi } from '../invoices/model.js'
+import type { InvoiceEditorApi, InvoicePaymentApi } from '../invoices/model.js'
 import type { RoleAdminApi } from '../roles/model.js'
 import type { TaskAdminApi } from '../tasks/model.js'
 import type { TeamDirectoryApi } from '../team/model.js'
@@ -90,6 +90,7 @@ export interface ShellApi
     Partial<EstimateWorkspaceApi>,
     Partial<RetainerWorkspaceApi>,
     Partial<InvoicePaymentApi>,
+    Partial<InvoiceEditorApi>,
     Partial<RoleAdminApi>,
     Partial<TaskAdminApi>,
     Partial<TeamDirectoryApi>,
@@ -1916,6 +1917,17 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     ).data,
   getInvoice: async (id, signal) =>
     (await client.getInvoice({ id, ...withSignal(signal) })).data,
+  // Unfiltered by is_active: a line keeps the link it has to a project archived
+  // since, and the select has to be able to show it.
+  listInvoiceClientProjects: (clientId, cursor, signal) =>
+    client.listProjects({
+      query: {
+        per_page: 200,
+        client_id: clientId,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+      ...withSignal(signal),
+    }),
   listInvoiceMessages: async (id, signal) =>
     (await client.listInvoiceMessages({ id, ...withSignal(signal) })).data,
   listInvoicePayments: async (id, signal) =>
@@ -1930,6 +1942,14 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getInvoiceReminderPreference({ id, ...withSignal(signal) })).data,
   setInvoiceReminderPreference: async (id, reminders, signal) =>
     (await client.setInvoiceReminderPreference({ id, body: { reminders }, ...withSignal(signal) })).data,
+  getInvoiceDocumentPreference: async (id, signal) =>
+    (await client.getInvoiceDocumentPreference({ id, ...withSignal(signal) })).data,
+  setInvoiceDocumentPreference: async (id, input, signal) =>
+    (await client.setInvoiceDocumentPreference({ id, body: input, ...withSignal(signal) })).data,
+  getOrganizationInvoiceDocuments: async (signal) =>
+    (await client.getOrganizationInvoiceDocuments({ ...withSignal(signal) })).data,
+  setOrganizationInvoiceDocuments: async (input, signal) =>
+    (await client.setOrganizationInvoiceDocuments({ body: input, ...withSignal(signal) })).data,
   uploadInvoiceAttachment: async (id, commandId, body, signal) =>
     (
       await client.createInvoiceAttachment({

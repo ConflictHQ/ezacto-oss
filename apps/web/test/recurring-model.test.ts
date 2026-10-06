@@ -12,11 +12,15 @@ import {
   recurringDefinitionInput,
   recurringDueLabel,
   recurringDueState,
+  recurringEditorReturnUrl,
+  recurringEditorTargetFromPathname,
+  recurringEditorUrl,
   recurringFixedTotalCents,
   recurringFormValuesFromDefinition,
   recurringGenerationOutcome,
   recurringIdentityCanWrite,
   recurringIssuedMessage,
+  recurringLineAmountCents,
   recurringListOrder,
   recurringMatchesSearch,
   recurringSelectionFromUrl,
@@ -747,5 +751,31 @@ describe('a banded engagement, from the form (#484)', () => {
         }) as never,
       ).claim_ceiling_seconds,
     ).toBe(5_430)
+  })
+})
+
+describe('recurring editor addresses and previews', () => {
+  it('[unit] addresses the editor page for a new definition and an existing one', () => {
+    expect(recurringEditorUrl('new')).toBe('/invoices/recurring/new')
+    expect(recurringEditorUrl(3)).toBe('/invoices/recurring/3/edit')
+    expect(recurringEditorTargetFromPathname('/invoices/recurring/new')).toBe('new')
+    expect(recurringEditorTargetFromPathname('/invoices/recurring/3/edit')).toBe(3)
+    expect(recurringEditorTargetFromPathname('/invoices/recurring/3/edit/')).toBe(3)
+    expect(recurringEditorTargetFromPathname('/invoices/recurring/0/edit')).toBeNull()
+    expect(recurringEditorTargetFromPathname('/invoices/recurring')).toBeNull()
+    expect(recurringEditorTargetFromPathname('/invoices/recurring/9007199254740992/edit')).toBeNull()
+    // Leaving goes back to where the editor was opened from.
+    expect(recurringEditorReturnUrl('new')).toBe('/invoices/recurring')
+    expect(recurringEditorReturnUrl(3)).toBe('/invoices/recurring?definition=3')
+  })
+
+  it('[money] previews a line the way the definition will bill it, or not at all', () => {
+    expect(recurringLineAmountCents({ quantity: '2', unitPriceCents: '450000' })).toBe(900_000)
+    expect(recurringLineAmountCents({ quantity: '1.5', unitPriceCents: '-334' })).toBe(-501)
+    // A credit is a negative price; a quantity of nothing is not a line.
+    expect(recurringLineAmountCents({ quantity: '0', unitPriceCents: '100' })).toBeNull()
+    expect(recurringLineAmountCents({ quantity: '', unitPriceCents: '100' })).toBeNull()
+    expect(recurringLineAmountCents({ quantity: '1', unitPriceCents: '1.50' })).toBeNull()
+    expect(recurringLineAmountCents({ quantity: '1', unitPriceCents: '' })).toBeNull()
   })
 })

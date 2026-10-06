@@ -47,8 +47,11 @@ describe('worker entry', () => {
       '/clients/1',
       '/invoices',
       '/invoices/1',
+      '/invoices/1/edit',
       '/invoices/new',
       '/invoices/recurring',
+      '/invoices/recurring/new',
+      '/invoices/recurring/1/edit',
       '/invoices/retainers',
       '/reports',
       '/settings/user',
@@ -152,6 +155,42 @@ describe('worker entry', () => {
     '[security] rejects invalid invoice detail path %s',
     async (path) => {
       expect((await app.request(path, {}, env)).status).toBe(404)
+    },
+  )
+
+  it('[acceptance] serves the invoice editor as a page of its own', async () => {
+    // The edit dialog was cramped; the editor is a full page now, beside the
+    // detail page it returns to and addressed the same way.
+    const res = await app.request('/invoices/42/edit', {}, env)
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(html).toContain('data-app-view="invoice-edit"')
+    expect(html).toMatch(/<main[^>]+data-invoice-edit-page>/u)
+    expect(html).toContain('href="/invoices" data-money-nav hidden aria-current="page"')
+  })
+
+  it.each([
+    '/invoices/0/edit',
+    '/invoices/nope/edit',
+    '/invoices/9007199254740992/edit',
+    '/invoices/recurring/0/edit',
+    '/invoices/recurring/nope/edit',
+    '/invoices/recurring/9007199254740992/edit',
+  ])('[security] rejects invalid editor path %s', async (path) => {
+    expect((await app.request(path, {}, env)).status).toBe(404)
+  })
+
+  it.each(['/invoices/recurring/new', '/invoices/recurring/7/edit'])(
+    '[acceptance] serves the recurring editor at %s under the Recurring tab',
+    async (path) => {
+      // Ahead of /invoices/:invoiceId and its own editor in the table, and a
+      // step inside the Recurring tab rather than a destination of its own.
+      const res = await app.request(path, {}, env)
+      expect(res.status).toBe(200)
+      const html = await res.text()
+      expect(html).toContain('data-app-view="invoice-recurring-editor"')
+      expect(html).toMatch(/<main[^>]+data-recurring-editor-page>/u)
+      expect(html).toContain('<a href="/invoices/recurring" aria-current="page">Recurring</a>')
     },
   )
 
@@ -330,7 +369,7 @@ describe('worker entry', () => {
     },
   )
 
-  it.each(['/', '/dashboard', '/clients', '/clients/42', '/projects', '/projects/42', '/tasks', '/expenses', '/expenses/42', '/expense-categories', '/invoices', '/invoices/42', '/invoices/new', '/approvals', '/reports'])(
+  it.each(['/', '/dashboard', '/clients', '/clients/42', '/projects', '/projects/42', '/tasks', '/expenses', '/expenses/42', '/expense-categories', '/invoices', '/invoices/42', '/invoices/42/edit', '/invoices/new', '/invoices/recurring/new', '/invoices/recurring/42/edit', '/approvals', '/reports'])(
     '[security] renders %s as an inert shell under an overlay when a session cookie is present',
     async (path) => {
       const res = await app.request(

@@ -75,7 +75,8 @@ const expectPhoneControl = async (control: Locator): Promise<void> => {
   expect(box).not.toBeNull()
   expect(box!.x).toBeGreaterThanOrEqual(0)
   expect(box!.x + box!.width).toBeLessThanOrEqual(390)
-  expect(box!.height).toBeGreaterThanOrEqual(44)
+  // Float error, not a smaller control: a dialog's open transform reads 44px as 43.99997.
+  expect(box!.height).toBeGreaterThanOrEqual(44 - 0.01)
 }
 
 const expectNoPageOverflow = async (page: Page): Promise<void> => {
@@ -2071,21 +2072,50 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
     .fill('Invoice #%invoice_id% totals %invoice_amount% and is due %invoice_due_date%.')
   await composer.getByLabel('Record a planned reminder date').check()
   await composer.locator('[data-invoice-composer-reminder-date]').fill('2099-09-30')
+  // What goes with the email is chosen once there is an email: the PDF box
+  // opens on the invoice's own answer, and waits for delivery to be asked for.
+  const attachPdf = composer.getByRole('checkbox', { name: 'Attach a PDF of this invoice' })
+  await expect(attachPdf).toBeDisabled()
+  await expect(attachPdf).not.toBeChecked()
+  await composer.getByLabel('Also deliver by email').check()
+  await expect(attachPdf).toBeEnabled()
+  await attachPdf.check()
+  await composer.locator('[data-invoice-composer-confirm]').check()
+  // The invoice has two files staged, so attaching them is on offer too.
+  await expect(composer.getByRole('checkbox', { name: 'Attach files added to this invoice' })).toBeVisible()
   for (const control of [
     composer.locator('[data-invoice-composer-recipients]'),
     composer.locator('[data-invoice-composer-subject]'),
     composer.locator('[data-invoice-composer-body]'),
-    composer.getByRole('button', { name: 'Send invoice', exact: true }),
+    composer.locator('label', { hasText: 'Attach a PDF of this invoice' }),
+    composer.getByRole('button', { name: 'Send and deliver', exact: true }),
   ]) {
     await expectPhoneControl(control)
   }
   await expectNoPageOverflow(page)
+  const order: string[] = []
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname
+    if (request.method() !== 'POST') return
+    if (path.endsWith('/document-preference')) order.push('preference')
+    else if (/\/transitions$/u.test(path)) order.push('send')
+    else if (/\/deliveries$/u.test(path)) order.push('deliver')
+  })
+  const preferred = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/invoices/${generatedId}/document-preference` &&
+      response.request().method() === 'POST',
+  )
   const sent = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname.match(/^\/api\/v1\/invoices\/\d+\/transitions$/u) !==
         null && response.request().method() === 'POST',
   )
-  await composer.getByRole('button', { name: 'Send invoice', exact: true }).click()
+  await composer.getByRole('button', { name: 'Send and deliver', exact: true }).click()
+  const preferredResponse = await preferred
+  expect(preferredResponse.status()).toBe(200)
+  // Only what was changed from what the invoice would do anyway.
+  expect(preferredResponse.request().postDataJSON()).toEqual({ attach_pdf: true })
   const sentResponse = await sent
   expect(sentResponse.status()).toBe(201)
   expect(sentResponse.request().postDataJSON()).toMatchObject({
@@ -2093,13 +2123,33 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
     recipients: [{ name: 'Accounts Payable', email: 'ap@example.test' }],
     subject: `Invoice ${generatedNumber}`,
     body: `Invoice #${generatedPayload.data.id} totals $75.00 and is due ${generatedPayload.data.due_date}.`,
-    attach_pdf: false,
+    attach_pdf: true,
     send_me_a_copy: false,
     thank_you: false,
     reminder: true,
     send_reminder_on: '2099-09-30',
   })
+  // This worker has no mail transport, so the email itself is refused -- after
+  // the sent status committed, which is the case the dialog has to get right:
+  // the email is owed, and nothing may record a second send.
+  await expect(composer.locator('[data-invoice-composer-result]')).toContainText(
+    'The sent status was recorded; submit again to retry the email alone.',
+  )
+  expect(order).toEqual(['preference', 'send', 'deliver'])
+  const persistedPreference = await page.evaluate(
+    async (id) => (await (await fetch(`/api/v1/invoices/${id}/document-preference`)).json()) as {
+      data: { effective: boolean }
+    },
+    generatedId,
+  )
+  expect(persistedPreference.data.effective).toBe(true)
+  await composer.getByLabel('Also deliver by email').uncheck()
+  await composer.getByRole('button', { name: 'Skip the email', exact: true }).click()
   await expect(composer).toBeHidden()
+  await expect(page.locator('[data-invoice-payment-status]')).toHaveText(
+    'The sent status was already recorded. The email was not sent.',
+  )
+  expect(order).toEqual(['preference', 'send', 'deliver'])
   // The invoice was sent through the real worker, so D1 carries sent_at and
   // the document says Sent. Open would mean it still has to go out.
   await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Sent')
@@ -2119,7 +2169,50 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(generatedRow).toContainText('$75.00')
 })
 
-test('[e2e:invoice-lines] adds, edits, and deletes exact lines through the real worker and D1', async ({
+/**
+ * Everything on the page that reaches past the right edge of the viewport and
+ * is not inside a scroll container of its own. Naming the offender is the
+ * difference between "the page is 6px too wide" and knowing what to fix.
+ */
+const horizontalOverflow = async (
+  page: Page,
+): Promise<{ scrollWidth: number; clientWidth: number; offenders: string[] }> =>
+  page.evaluate(() => {
+    const doc = document.documentElement
+    const offenders: string[] = []
+    for (const element of Array.from(document.querySelectorAll<HTMLElement>('*'))) {
+      const rect = element.getBoundingClientRect()
+      if (rect.width === 0 || (rect.right <= doc.clientWidth + 0.5 && rect.left >= -0.5)) continue
+      let clipped = false
+      for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+        const overflowX = getComputedStyle(parent).overflowX
+        if (overflowX === 'auto' || overflowX === 'hidden' || overflowX === 'scroll') {
+          clipped = true
+          break
+        }
+      }
+      if (!clipped) {
+        offenders.push(
+          `${element.tagName.toLowerCase()}.${String(element.className) || '(none)'} left=${rect.left.toFixed(1)} right=${rect.right.toFixed(1)}`,
+        )
+      }
+    }
+    return {
+      scrollWidth: Math.max(doc.scrollWidth, document.body.scrollWidth),
+      clientWidth: doc.clientWidth,
+      offenders,
+    }
+  })
+
+/** The editor pages, at a laptop width and a phone width: nothing past either edge. */
+const expectEditorFits = async (page: Page, width: number): Promise<void> => {
+  await page.setViewportSize({ width, height: width < 720 ? 844 : 900 })
+  const report = await horizontalOverflow(page)
+  expect(report.offenders, `overflows at ${width}px: ${report.offenders.join(' | ')}`).toEqual([])
+  expect(report.scrollWidth).toBeLessThanOrEqual(report.clientWidth)
+}
+
+test('[e2e:invoice-lines] adds, edits, and removes exact lines on the edit page through the real worker and D1', async ({
   context,
   page,
 }) => {
@@ -2224,17 +2317,19 @@ test('[e2e:invoice-lines] adds, edits, and deletes exact lines through the real 
   await page.goto(`/invoices/${draft.id}`)
 
   const detail = page.locator('[data-invoice-document]')
-  const add = detail.getByRole('button', { name: 'Add line', exact: true })
-  const editor = page.locator('[data-invoice-line-dialog]')
+  const editor = page.locator('[data-invoice-edit-form]')
+  const rows = editor.locator('[data-invoice-edit-line]')
   await expect(detail).toBeVisible()
+  // Lines change on the edit page now. Add line is a way there that opens on
+  // a fresh line; Cancel comes back having changed nothing.
+  const add = detail.getByRole('link', { name: 'Add line', exact: true })
   await expectPhoneControl(add)
   await add.click()
-  await editor.getByRole('button', { name: 'Cancel' }).click()
-  await expect(editor).toBeHidden()
-  await expect(detail.locator('[data-invoice-line-id]')).toHaveCount(1)
-  await add.click()
-  await editor.getByRole('button', { name: 'Close invoice line dialog' }).click()
-  await expect(editor).toBeHidden()
+  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.id}/edit#new-line$`, 'u'))
+  await expect(editor).toBeVisible()
+  await expect(rows).toHaveCount(2)
+  await editor.getByRole('link', { name: 'Cancel' }).click()
+  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.id}$`, 'u'))
   await expect(detail.locator('[data-invoice-line-id]')).toHaveCount(1)
 
   const commandIds: string[] = []
@@ -2246,6 +2341,7 @@ test('[e2e:invoice-lines] adds, edits, and deletes exact lines through the real 
       commandIds.push(request.headers()['idempotency-key'] ?? '')
     }
   })
+  // The line lands and its answer is lost on the way back.
   await page.route(
     `**/api/v1/invoices/${draft.id}/line-items`,
     async (route) => {
@@ -2256,38 +2352,55 @@ test('[e2e:invoice-lines] adds, edits, and deletes exact lines through the real 
     { times: 1 },
   )
 
-  await add.click()
-  await editor.getByLabel('Item type').fill('Consulting')
-  await editor.getByLabel('Description').fill('Exact tenth-hour adjustment')
-  await editor.getByLabel('Quantity').fill('0.1')
-  await editor.getByLabel('Rate (USD)').fill('1.05')
-  await editor.getByLabel('Apply tax 1').check()
-  await expect(editor.locator('[data-invoice-line-preview]')).toHaveText('$0.11')
+  await detail.getByRole('link', { name: 'Add line', exact: true }).click()
+  await expect(rows).toHaveCount(2)
+  const added = rows.nth(1)
+  await expect(added.getByLabel('Description')).toBeFocused()
+  await added.getByLabel('Item type').fill('Consulting')
+  await added.getByLabel('Description').fill('Exact tenth-hour adjustment')
+  await added.getByLabel('Quantity').fill('0.1')
+  await added.getByLabel('Unit price (USD)').fill('1.05')
+  await added.getByLabel('Tax 1').check()
+  await expect(added.locator('[data-invoice-edit-line-amount]')).toHaveText('$0.11')
   for (const control of [
-    editor.getByLabel('Item type'),
-    editor.getByLabel('Description'),
-    editor.getByLabel('Quantity'),
-    editor.getByLabel('Rate (USD)'),
-    editor.getByRole('button', { name: 'Add line', exact: true }),
+    added.getByLabel('Item type'),
+    added.getByLabel('Description'),
+    added.getByLabel('Quantity'),
+    added.getByLabel('Unit price (USD)'),
+    added.getByLabel('Linked project'),
+    added.getByRole('button', { name: 'Remove line' }),
+    editor.getByRole('button', { name: 'Add a line' }),
+    editor.getByRole('button', { name: 'Save invoice' }),
+    editor.getByRole('link', { name: 'Cancel' }),
   ]) {
     await expectPhoneControl(control)
   }
   await expectNoPageOverflow(page)
+  await expectEditorFits(page, 390)
 
-  await editor.getByRole('button', { name: 'Add line', exact: true }).click()
-  await expect(editor.locator('[data-invoice-line-result]')).not.toHaveText('')
+  await editor.getByRole('button', { name: 'Save invoice' }).click()
+  // Nothing before the line had to land, so the page says only what failed,
+  // keeps everything typed, and keeps the line's key for the retry.
+  await expect(editor.locator('[data-invoice-edit-result]')).toHaveAttribute(
+    'data-outcome',
+    'error',
+  )
   await expect(editor).toBeVisible()
+  await expect(added.getByLabel('Description')).toHaveValue('Exact tenth-hour adjustment')
   const retried = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === `/api/v1/invoices/${draft.id}/line-items` &&
       response.request().method() === 'POST',
   )
-  await editor.getByRole('button', { name: 'Add line', exact: true }).click()
+  await editor.getByRole('button', { name: 'Save invoice' }).click()
   expect((await retried).status()).toBe(201)
-  await expect(editor).toBeHidden()
+  // The same key twice: the second request is the ledger replaying the first,
+  // not a second line.
   expect(commandIds).toHaveLength(2)
   expect(commandIds[0]).not.toBe('')
   expect(commandIds[0]).toBe(commandIds[1])
+  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.id}$`, 'u'))
+  await expect(page.locator('[data-invoice-detail-status]')).toHaveText('Invoice saved.')
 
   const createdRow = detail.locator('[data-invoice-line-id]', { hasText: 'Consulting' })
   await expect(createdRow).toHaveCount(1)
@@ -2329,53 +2442,67 @@ test('[e2e:invoice-lines] adds, edits, and deletes exact lines through the real 
     taxed: true,
   })
 
-  await createdRow.getByRole('button', { name: 'Edit' }).click()
-  await editor.getByLabel('Description').fill('Updated fractional adjustment')
-  await editor.getByLabel('Quantity').fill('1.5')
-  await editor.getByLabel('Rate (USD)').fill('2.05')
-  await expect(editor.locator('[data-invoice-line-preview]')).toHaveText('$3.08')
+  // The per-line Edit opens the page on that line.
+  await createdRow.getByRole('link', { name: 'Edit' }).click()
+  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.id}/edit#line-${createdLine.id}$`, 'u'))
+  const editing = editor.locator(`#invoice-line-${createdLine.id}`)
+  await expect(editing.getByLabel('Description')).toBeFocused()
+  await editing.getByLabel('Description').fill('Updated fractional adjustment')
+  await editing.getByLabel('Quantity').fill('1.5')
+  await editing.getByLabel('Unit price (USD)').fill('2.05')
+  await expect(editing.locator('[data-invoice-edit-line-amount]')).toHaveText('$3.08')
   const updated = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname ===
         `/api/v1/invoices/${draft.id}/line-items/${createdLine.id}` &&
       response.request().method() === 'PATCH',
   )
-  await editor.getByRole('button', { name: 'Save line', exact: true }).click()
+  await editor.getByRole('button', { name: 'Save invoice' }).click()
   const updatedResponse = await updated
   expect(updatedResponse.status()).toBe(200)
   expect(updatedResponse.request().postDataJSON()).toMatchObject({
     expected_version: persistedCreated.data.version,
     expected_updated_at: createdLine.updated_at,
     kind: 'Consulting',
+    description: 'Updated fractional adjustment',
     quantity: 1.5,
     unit_price_cents: 205,
+    taxed: true,
   })
-  await expect(editor).toBeHidden()
+  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.id}$`, 'u'))
   await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$78.39')
   await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$3.39')
 
-  const updatedRow = detail.locator('[data-invoice-line-id]', { hasText: 'Consulting' })
-  await updatedRow.getByRole('button', { name: 'Delete' }).click()
-  const confirmation = page.locator('[data-invoice-line-delete-dialog]')
-  await expect(confirmation).toBeVisible()
-  await confirmation.getByRole('button', { name: 'Cancel' }).click()
-  await expect(confirmation).toBeHidden()
-  await expect(updatedRow).toHaveCount(1)
-  await updatedRow.getByRole('button', { name: 'Delete' }).click()
-  await confirmation.getByRole('button', { name: 'Close delete line dialog' }).click()
-  await expect(confirmation).toBeHidden()
-  await expect(updatedRow).toHaveCount(1)
-  await updatedRow.getByRole('button', { name: 'Delete' }).click()
+  // Removing a line is marked first and can be kept; it goes when the page
+  // saves -- in the same save as a change to the document itself.
+  await detail.getByRole('link', { name: 'Edit invoice' }).click()
+  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.id}/edit$`, 'u'))
+  const removing = editor.locator(`#invoice-line-${createdLine.id}`)
+  await removing.getByRole('button', { name: 'Remove line' }).click()
+  await expect(removing.getByText('This line is removed when you save.')).toBeVisible()
+  await removing.getByRole('button', { name: 'Keep this line' }).click()
+  await expect(removing.getByText('This line is removed when you save.')).toBeHidden()
+  await removing.getByRole('button', { name: 'Remove line' }).click()
+  await editor.getByLabel('Purchase order').fill('PO-EDIT-1')
+  const header = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/invoices/${draft.id}` &&
+      response.request().method() === 'PATCH',
+  )
   const deleted = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname ===
         `/api/v1/invoices/${draft.id}/line-items/${createdLine.id}` &&
       response.request().method() === 'DELETE',
   )
-  await confirmation.getByRole('button', { name: 'Delete line', exact: true }).click()
+  await editor.getByRole('button', { name: 'Save invoice' }).click()
+  const headerResponse = await header
+  expect(headerResponse.status()).toBe(200)
+  expect(headerResponse.request().postDataJSON()).toMatchObject({ purchase_order: 'PO-EDIT-1' })
   expect((await deleted).status()).toBe(200)
-  await expect(confirmation).toBeHidden()
+  await expect(page).toHaveURL(new RegExp(`/invoices/${draft.id}$`, 'u'))
   await expect(detail.locator('[data-invoice-line-id]')).toHaveCount(1)
+  await expect(detail.locator('[data-invoice-detail-purchase-order]')).toHaveText('PO-EDIT-1')
   await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$75.00')
   await expect(detail.locator('[data-invoice-detail-due]')).toHaveText('$0.00')
   await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Paid')
@@ -2389,6 +2516,183 @@ test('[e2e:invoice-lines] adds, edits, and deletes exact lines through the real 
   expect(persistedDeleted.data.amount_cents).toBe(7_500)
   expect(persistedDeleted.data.due_amount_cents).toBe(0)
   expect(persistedDeleted.data.line_items.some((line) => line.id === createdLine.id)).toBe(false)
+
+  // And at a laptop width it is a table, with nothing past either edge.
+  await detail.getByRole('link', { name: 'Edit invoice' }).click()
+  await expect(editor).toBeVisible()
+  await expectEditorFits(page, 1280)
+  await expect(editor.locator('.line-editor-head')).toBeVisible()
+  await expectEditorFits(page, 768)
+  await expectEditorFits(page, 390)
+})
+
+test('[e2e:recurring-editor] creates and edits a definition on its own page through the real worker and D1', async ({
+  page,
+}) => {
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/invoices/recurring')
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
+  await page.locator('[data-sign-in-form]').getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  // New is a page now, not a dialog over the list.
+  const newLink = page.getByRole('link', { name: 'New recurring invoice' })
+  await expectPhoneControl(newLink)
+  await newLink.click()
+  await expect(page).toHaveURL(/\/invoices\/recurring\/new$/u)
+  await expect(page).toHaveTitle('ezacto — New recurring invoice')
+  const editor = page.locator('[data-recurring-editor-form]')
+  await expect(editor).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'New recurring invoice' })).toBeVisible()
+  const lines = editor.locator('[data-recurring-line]')
+  await expect(lines).toHaveCount(1)
+
+  // By role: a select's own options are text inside its label, so a label
+  // match reads them as part of the name.
+  const client = editor.getByRole('combobox', { name: 'Client', exact: true })
+  await client.selectOption({ label: 'Browser Acceptance Client' })
+  await editor.getByLabel('Next issue').fill('2026-10-01')
+  await editor
+    .getByLabel('Subject', { exact: true })
+    .fill('Browser retainer for %invoice_issue_month_name%')
+  const first = lines.nth(0)
+  await first.getByLabel('Kind').fill('Service')
+  await first.getByLabel('Description').fill('Monthly platform retainer')
+  await first.getByLabel('Quantity').fill('1')
+  await first.getByLabel('Unit price (cents)').fill('250000')
+  const project = first.getByRole('combobox', { name: 'Project', exact: true })
+  await project.selectOption({ label: 'Browser Acceptance Project' })
+  // Cents read back as money before anything is saved.
+  await expect(first.locator('[data-recurring-line-amount]')).toHaveText('$2,500.00')
+  await expect(editor.locator('[data-recurring-editor-total]')).toHaveText('$2,500.00')
+  for (const control of [
+    client,
+    editor.getByLabel('Next issue'),
+    editor.getByLabel('Months between issues'),
+    editor.getByLabel('Subject', { exact: true }),
+    first.getByLabel('Kind'),
+    first.getByLabel('Description'),
+    first.getByLabel('Quantity'),
+    first.getByLabel('Unit price (cents)'),
+    project,
+    first.getByLabel('Through'),
+    first.getByLabel('Installments'),
+    first.getByRole('button', { name: 'Remove line' }),
+    editor.getByRole('button', { name: 'Add a line' }),
+    editor.getByRole('link', { name: 'Cancel' }),
+    editor.getByRole('button', { name: 'Save definition' }),
+  ]) {
+    await expectPhoneControl(control)
+  }
+  await expectNoPageOverflow(page)
+  await expectEditorFits(page, 390)
+
+  const created = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/recurring-invoices' &&
+      response.request().method() === 'POST',
+  )
+  await editor.getByRole('button', { name: 'Save definition' }).click()
+  const createdResponse = await created
+  expect(createdResponse.status()).toBe(201)
+  expect(createdResponse.request().postDataJSON()).toMatchObject({
+    client_id: 1,
+    subject_template: 'Browser retainer for %invoice_issue_month_name%',
+    next_issue_on: '2026-10-01',
+    every_n_months: 1,
+    day_of_month: 1,
+    amount_config: {
+      type: 'fixed_lines',
+      line_items: [
+        {
+          kind: 'Service',
+          description: 'Monthly platform retainer',
+          quantity: 1,
+          unit_price_cents: 250_000,
+          project_id: 1,
+        },
+      ],
+    },
+  })
+  // Back on the definition it made, saying so. The page navigates as soon as
+  // the answer lands, so the new id is read off the address it went to.
+  await expect(page).toHaveURL(/\/invoices\/recurring\?definition=\d+$/u)
+  const definitionId = Number(new URL(page.url()).searchParams.get('definition'))
+  await expect(page.locator('[data-recurring-detail-status]')).toHaveText('Definition created.')
+  await expect(page.locator('[data-recurring-amount]')).toHaveText('$2,500.00')
+
+  await page.getByRole('link', { name: 'Edit definition' }).click()
+  await expect(page).toHaveURL(new RegExp(`/invoices/recurring/${definitionId}/edit$`, 'u'))
+  await expect(editor).toBeVisible()
+  await expect(lines).toHaveCount(1)
+  await expect(lines.nth(0).getByLabel('Description')).toHaveValue('Monthly platform retainer')
+  await editor.getByLabel('Day of month').fill('15')
+  await editor.getByRole('button', { name: 'Add a line' }).click()
+  await expect(lines).toHaveCount(2)
+  const credit = lines.nth(1)
+  await expect(credit.getByLabel('Description')).toBeFocused()
+  await credit.getByLabel('Kind').fill('Credit')
+  await credit
+    .getByLabel('Description')
+    .fill('CREDIT %line_installment_number% of %line_installment_total%')
+  await credit.getByLabel('Unit price (cents)').fill('-25000')
+  await credit.getByLabel('Through').fill('2027-01-15')
+  await credit.getByLabel('Installments').fill('4')
+  await expect(editor.locator('[data-recurring-editor-total]')).toHaveText('$2,250.00')
+  // A laptop width draws the lines as a table, and nothing on the page passes
+  // either edge at either width.
+  await expectEditorFits(page, 1280)
+  await expect(editor.locator('.line-editor-head')).toBeVisible()
+  await expectEditorFits(page, 768)
+  await expectEditorFits(page, 390)
+
+  const updated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/api/v1/recurring-invoices/${definitionId}` &&
+      response.request().method() === 'PATCH',
+  )
+  await editor.getByRole('button', { name: 'Save definition' }).click()
+  const updatedResponse = await updated
+  expect(updatedResponse.status()).toBe(200)
+  expect(updatedResponse.request().postDataJSON()).toMatchObject({
+    day_of_month: 15,
+    amount_config: {
+      type: 'fixed_lines',
+      line_items: [
+        { kind: 'Service', unit_price_cents: 250_000, project_id: 1 },
+        {
+          kind: 'Credit',
+          description: 'CREDIT %line_installment_number% of %line_installment_total%',
+          quantity: 1,
+          unit_price_cents: -25_000,
+          through: '2027-01-15',
+          installments: 4,
+          project_id: null,
+        },
+      ],
+    },
+  })
+  await expect(page).toHaveURL(new RegExp(`/invoices/recurring\\?definition=${definitionId}$`, 'u'))
+  await expect(page.locator('[data-recurring-detail-status]')).toHaveText('Definition saved.')
+  await expect(page.locator('[data-recurring-cadence]')).toHaveText('Every month on the 15th')
+  await expect(page.locator('[data-recurring-config]')).toContainText('CREDIT')
+
+  // Cancel leaves without a word and without a write.
+  await page.getByRole('link', { name: 'Edit definition' }).click()
+  await editor.getByLabel('Subject', { exact: true }).fill('Not saved')
+  await editor.getByRole('link', { name: 'Cancel' }).click()
+  await expect(page).toHaveURL(new RegExp(`/invoices/recurring\\?definition=${definitionId}$`, 'u'))
+  await expect(page.locator('[data-recurring-detail-title]')).toHaveText(
+    'Browser retainer for %invoice_issue_month_name%',
+  )
+
+  // Leave the shared database as the other specs expect it: nothing has been
+  // raised from this definition, so it can go.
+  const removed = await page.evaluate(
+    async (id) => (await fetch(`/api/v1/recurring-invoices/${id}`, { method: 'DELETE' })).status,
+    definitionId,
+  )
+  expect(removed).toBe(204)
 })
 
 test('[e2e:invoice-cycle] records a final payment, restores the open balance on delete, and settles it from Mark paid', async ({

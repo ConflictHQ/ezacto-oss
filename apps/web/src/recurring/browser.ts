@@ -1,5 +1,7 @@
 import { renderDataTable, type CellContent } from '../components/data-table.js'
 import { markMoney, moneyText } from '../money-display.js'
+import { invoicePagePath } from '../invoices/model.js'
+import { leavePageNotice, takePageNotice } from '../page-notice.js'
 import {
   EzactoApiError,
   type GeneralResource,
@@ -20,10 +22,14 @@ import {
   recurringDefinitionInput,
   recurringDueLabel,
   recurringDueState,
+  recurringEditorReturnUrl,
+  recurringEditorTargetFromPathname,
+  recurringEditorUrl,
   recurringFormValuesFromDefinition,
   recurringGenerationOutcome,
   recurringIdentityCanWrite,
   recurringIssuedMessage,
+  recurringLineAmountCents,
   recurringListOrder,
   recurringMatchesSearch,
   recurringMoney,
@@ -31,6 +37,7 @@ import {
   recurringSelectionFromUrl,
   recurringWorkspaceUrl,
   type RecurringDefinitionFormValues,
+  type RecurringEditorTarget,
   type RecurringLineFormValues,
   type RecurringWorkspaceApi,
 } from './model.js'
@@ -122,6 +129,27 @@ const fillOptions = (
   for (const item of items) item.selected = selected.includes(item.value)
 }
 
+const collect = async (
+  load: (
+    cursor?: string,
+    signal?: AbortSignal,
+  ) => Promise<{
+    readonly data: readonly GeneralResource[]
+    readonly page: { readonly next_cursor: string | null }
+  }>,
+  signal: AbortSignal,
+): Promise<GeneralResource[]> => {
+  const resources: GeneralResource[] = []
+  let cursor: string | undefined
+  do {
+    signal.throwIfAborted()
+    const response = await load(cursor, signal)
+    resources.push(...response.data)
+    cursor = response.page.next_cursor ?? undefined
+  } while (cursor !== undefined)
+  return resources
+}
+
 interface ActiveSession {
   readonly identity: Whoami
   readonly signal: AbortSignal
@@ -150,6 +178,9 @@ export interface RecurringWorkspaceController {
  * And when the server refuses, the four refusals stay apart -- "not due yet"
  * and "already issued" are the definition working, not failing, and reading
  * them as errors is what sends someone off to fix a definition that was right.
+ *
+ * New and Edit lead to the editor page (`createRecurringEditorController`
+ * below), which comes back here with what it saved.
  */
 export const createRecurringWorkspaceController = (
   api: Partial<RecurringWorkspaceApi>,
@@ -176,54 +207,16 @@ export const createRecurringWorkspaceController = (
   const confirmForm = required<HTMLFormElement>('[data-recurring-confirm-form]')
   const confirmBody = required<HTMLElement>('[data-recurring-confirm-body]')
   const confirmSubmit = required<HTMLButtonElement>('[data-recurring-confirm-submit]')
-  const newButton = required<HTMLButtonElement>('[data-recurring-new]')
-  const editButton = required<HTMLButtonElement>('[data-recurring-edit]')
+  const newLink = required<HTMLAnchorElement>('[data-recurring-new]')
+  const editLink = required<HTMLAnchorElement>('[data-recurring-edit]')
   const deleteButton = required<HTMLButtonElement>('[data-recurring-delete]')
-  const editorDialog = required<HTMLDialogElement>('[data-recurring-editor]')
-  const editorForm = required<HTMLFormElement>('[data-recurring-editor-form]')
-  const editorTitle = required<HTMLElement>('[data-recurring-editor-title]')
-  const editorSubmit = required<HTMLButtonElement>('[data-recurring-editor-submit]')
-  const editorResult = required<HTMLElement>('[data-recurring-editor-result]')
-  const editorClient = required<HTMLSelectElement>('[data-recurring-editor-client]')
-  const clientHint = required<HTMLElement>('[data-recurring-client-hint]')
-  const editorEvery = required<HTMLInputElement>('[data-recurring-editor-every]')
-  const editorDay = required<HTMLInputElement>('[data-recurring-editor-day]')
-  const editorNext = required<HTMLInputElement>('[data-recurring-editor-next]')
-  const editorRetainer = required<HTMLInputElement>('[data-recurring-editor-retainer]')
-  const editorSubject = required<HTMLInputElement>('[data-recurring-editor-subject]')
-  const editorNotes = required<HTMLTextAreaElement>('[data-recurring-editor-notes]')
-  const editorType = required<HTMLSelectElement>('[data-recurring-editor-type]')
-  const editorFixed = required<HTMLElement>('[data-recurring-editor-fixed]')
-  const editorImport = required<HTMLElement>('[data-recurring-editor-import]')
-  const editorLineList = required<HTMLElement>('[data-recurring-editor-line-list]')
-  const editorAddLine = required<HTMLButtonElement>('[data-recurring-editor-add-line]')
-  const lineTemplate = required<HTMLTemplateElement>('[data-recurring-line-template]')
-  const editorProjects = required<HTMLSelectElement>('[data-recurring-editor-projects]')
-  // The banded picker (#484). Beside the fixed lines rather than the import
-  // block, because it is the flat-amount case: these projects' hours are
-  // claimed by the amount, not priced into it.
-  const editorClaims = required<HTMLSelectElement>('[data-recurring-editor-claims]')
-  // How much of the period that band takes (#707), and in which unit.
-  const editorClaimMode = required<HTMLSelectElement>('[data-recurring-editor-claim-mode]')
-  const editorClaimScope = required<HTMLSelectElement>('[data-recurring-editor-claim-scope]')
-  const editorCostAlert = required<HTMLInputElement>('[data-recurring-editor-cost-alert]')
-  const editorCeiling = required<HTMLElement>('[data-recurring-editor-ceiling]')
-  const editorCeilingUnit = required<HTMLSelectElement>('[data-recurring-editor-ceiling-unit]')
-  const editorCeilingAmount = required<HTMLInputElement>(
-    '[data-recurring-editor-ceiling-amount]',
-  )
-  const editorTimeOn = required<HTMLInputElement>('[data-recurring-editor-time-on]')
-  const editorTimeSummary = required<HTMLSelectElement>('[data-recurring-editor-time-summary]')
-  const editorExpensesOn = required<HTMLInputElement>('[data-recurring-editor-expenses-on]')
-  const editorExpensesSummary = required<HTMLSelectElement>(
-    '[data-recurring-editor-expenses-summary]',
-  )
   const deleteDialog = required<HTMLDialogElement>('[data-recurring-delete-confirm]')
   const deleteForm = required<HTMLFormElement>('[data-recurring-delete-form]')
   const deleteBody = required<HTMLElement>('[data-recurring-delete-body]')
   const deleteResult = required<HTMLElement>('[data-recurring-delete-result]')
   const deleteSubmit = required<HTMLButtonElement>('[data-recurring-delete-submit]')
   page.hidden = !isPage
+  newLink.href = recurringEditorUrl('new')
 
   let activeSession: ActiveSession | null = null
   let selection: number | null = null
@@ -244,40 +237,11 @@ export const createRecurringWorkspaceController = (
   let issueKey: string | null = null
   /** The definition the detail view is currently showing; null while it is not showing one. */
   let detail: RecurringInvoice | null = null
-  /** Null while the editor is closed; a definition id when editing, 'new' when creating. */
-  let editing: number | 'new' | null = null
   let mutationPending = false
   let deleting: number | null = null
-  /**
-   * Held the same way `issueKey` is, and for the same reason: the create is the
-   * only write here that is not addressed to an id, so a retry under a fresh
-   * key is a second definition rather than a second attempt at the first.
-   */
-  let createKey: string | null = null
 
   const current = (): ActiveSession | null =>
     activeSession === null || activeSession.signal.aborted ? null : activeSession
-
-  const collect = async (
-    load: (
-      cursor?: string,
-      signal?: AbortSignal,
-    ) => Promise<{
-      readonly data: readonly GeneralResource[]
-      readonly page: { readonly next_cursor: string | null }
-    }>,
-    signal: AbortSignal,
-  ): Promise<GeneralResource[]> => {
-    const resources: GeneralResource[] = []
-    let cursor: string | undefined
-    do {
-      signal.throwIfAborted()
-      const response = await load(cursor, signal)
-      resources.push(...response.data)
-      cursor = response.page.next_cursor ?? undefined
-    } while (cursor !== undefined)
-    return resources
-  }
 
   /**
    * Client and project names, loaded once per session and awaited by both
@@ -312,17 +276,19 @@ export const createRecurringWorkspaceController = (
     loadMore.disabled = listPending
     listRetry.disabled = listPending
     // Hidden rather than disabled where the build or the profile cannot write:
-    // a permanently dead button is a thing an operator keeps trying. Disabled is
-    // for the seconds a save is in flight, which is a state that ends.
-    newButton.hidden = !canWrite() || api.createRecurringInvoice === undefined
-    editButton.hidden =
-      !canWrite() || api.updateRecurringInvoice === undefined || detail === null
+    // a permanently dead control is a thing an operator keeps trying. Disabled
+    // is for the seconds a delete is in flight, which is a state that ends.
+    newLink.hidden = !canWrite() || api.createRecurringInvoice === undefined
+    editLink.hidden =
+      !canWrite() ||
+      api.updateRecurringInvoice === undefined ||
+      api.getRecurringInvoice === undefined ||
+      detail === null
     deleteButton.hidden =
       !canWrite() || api.deleteRecurringInvoice === undefined || detail === null
-    for (const button of [newButton, editButton, deleteButton, editorSubmit, deleteSubmit]) {
+    for (const button of [deleteButton, deleteSubmit]) {
       button.disabled = mutationPending
     }
-    editorAddLine.disabled = mutationPending
   }
 
   const syncView = (): void => {
@@ -343,10 +309,8 @@ export const createRecurringWorkspaceController = (
     issueKey = null
     catalog = null
     detail = null
-    editing = null
     deleting = null
     mutationPending = false
-    createKey = null
     list.replaceChildren()
     list.removeAttribute('aria-busy')
     config.replaceChildren()
@@ -360,255 +324,11 @@ export const createRecurringWorkspaceController = (
     loadMore.hidden = true
     listRetry.hidden = true
     detailRetry.hidden = true
-    // The editor holds a client's name, an amount and a schedule, so it is torn
-    // down with the rest of the page rather than left standing behind a modal.
-    if (editorDialog.open) editorDialog.close()
+    editLink.href = recurringWorkspaceUrl()
     if (deleteDialog.open) deleteDialog.close()
-    editorLineList.replaceChildren()
-    editorClient.replaceChildren()
-    editorProjects.replaceChildren()
-    editorForm.reset()
-    editorResult.textContent = ''
-    delete editorResult.dataset.outcome
     deleteResult.textContent = ''
     delete deleteResult.dataset.outcome
     syncPending()
-  }
-
-  const syncLinePositions = (): void => {
-    const lines = [...editorLineList.querySelectorAll<HTMLElement>('[data-recurring-line]')]
-    lines.forEach((line, position) => {
-      const legend = line.querySelector<HTMLElement>('[data-recurring-line-position]')
-      // Numbered from 1 to match `recurringDefinitionInput`, whose messages say
-      // "Line 2 needs a quantity" -- an editor that counts differently from the
-      // sentence pointing at it sends someone to the wrong row.
-      if (legend !== null) legend.textContent = `Line ${position + 1}`
-    })
-  }
-
-  const appendLine = (values: Readonly<RecurringLineFormValues>): void => {
-    const source = lineTemplate.content.firstElementChild
-    if (source === null) throw new Error('recurring line template is empty')
-    const line = source.cloneNode(true) as HTMLElement
-    lineField(line, 'kind').value = values.kind
-    lineField(line, 'description').value = values.description
-    lineField(line, 'quantity').value = values.quantity
-    lineField(line, 'unitPriceCents').value = values.unitPriceCents
-    lineField(line, 'through').value = values.through
-    lineField(line, 'installments').value = values.installments
-    ;(lineField(line, 'taxed') as HTMLInputElement).checked = values.taxed
-    ;(lineField(line, 'taxed2') as HTMLInputElement).checked = values.taxed2
-    fillOptions(
-      lineField(line, 'projectId') as HTMLSelectElement,
-      projects.map((project) => ({
-        label: recurringProjectLabel(project.id, projects),
-        value: String(project.id),
-      })),
-      [values.projectId],
-      'No project',
-    )
-    line.querySelector<HTMLButtonElement>('[data-recurring-line-remove]')?.addEventListener(
-      'click',
-      () => {
-        if (mutationPending) return
-        line.remove()
-        syncLinePositions()
-      },
-    )
-    editorLineList.append(line)
-    syncLinePositions()
-  }
-
-  const readLine = (line: HTMLElement): RecurringLineFormValues => ({
-    kind: lineField(line, 'kind').value,
-    description: lineField(line, 'description').value,
-    quantity: lineField(line, 'quantity').value,
-    unitPriceCents: lineField(line, 'unitPriceCents').value,
-    taxed: (lineField(line, 'taxed') as HTMLInputElement).checked,
-    taxed2: (lineField(line, 'taxed2') as HTMLInputElement).checked,
-    projectId: lineField(line, 'projectId').value,
-    through: lineField(line, 'through').value,
-    installments: lineField(line, 'installments').value,
-  })
-
-  // The ceiling boxes only mean anything once a band claims to one, and a
-  // number sitting in a hidden box is a number somebody will later assume
-  // applied.
-  const syncClaimMode = (): void => {
-    editorCeiling.hidden = editorClaimMode.value !== 'ceiling'
-  }
-
-  const syncAmountType = (): void => {
-    const fixed = editorType.value !== 'line_items_import'
-    editorFixed.hidden = !fixed
-    editorImport.hidden = fixed
-  }
-
-  const readForm = (): RecurringDefinitionFormValues => ({
-    clientId: editorClient.value,
-    subjectTemplate: editorSubject.value,
-    notesTemplate: editorNotes.value,
-    everyNMonths: editorEvery.value,
-    dayOfMonth: editorDay.value,
-    nextIssueOn: editorNext.value,
-    retainerId: editorRetainer.value,
-    amountType: editorType.value === 'line_items_import' ? 'line_items_import' : 'fixed_lines',
-    lines: [...editorLineList.querySelectorAll<HTMLElement>('[data-recurring-line]')].map(
-      readLine,
-    ),
-    projectIds: [...editorProjects.options]
-      .filter((item) => item.selected)
-      .map((item) => item.value),
-    claimsProjectIds: [...editorClaims.options]
-      .filter((item) => item.selected)
-      .map((item) => item.value),
-    claimMode: editorClaimMode.value === 'ceiling' ? 'ceiling' : 'all',
-    claimCeilingUnit: editorCeilingUnit.value === 'money' ? 'money' : 'time',
-    claimCeiling: editorCeilingAmount.value,
-    claimScope: editorClaimScope.value === 'tracked' ? 'tracked' : 'billable',
-    costAlertPercent: editorCostAlert.value,
-    importTime: editorTimeOn.checked,
-    timeSummary: editorTimeSummary.value,
-    importExpenses: editorExpensesOn.checked,
-    expenseSummary: editorExpensesSummary.value,
-  })
-
-  const fillForm = (values: Readonly<RecurringDefinitionFormValues>): void => {
-    fillOptions(
-      editorClient,
-      clients.map((client) => ({
-        label: recurringClientLabel({ client_id: client.id }, clients),
-        value: String(client.id),
-      })),
-      [values.clientId],
-      'Choose a client',
-    )
-    editorSubject.value = values.subjectTemplate
-    editorNotes.value = values.notesTemplate
-    editorEvery.value = values.everyNMonths
-    editorDay.value = values.dayOfMonth
-    editorNext.value = values.nextIssueOn
-    editorRetainer.value = values.retainerId
-    editorType.value = values.amountType
-    editorLineList.replaceChildren()
-    for (const line of values.lines) appendLine(line)
-    fillOptions(
-      editorProjects,
-      projects.map((project) => ({
-        label: recurringProjectLabel(project.id, projects),
-        value: String(project.id),
-      })),
-      values.projectIds,
-      null,
-    )
-    fillOptions(
-      editorClaims,
-      projects.map((project) => ({
-        label: recurringProjectLabel(project.id, projects),
-        value: String(project.id),
-      })),
-      values.claimsProjectIds,
-      null,
-    )
-    editorClaimScope.value = values.claimScope
-    editorCostAlert.value = values.costAlertPercent
-    editorClaimMode.value = values.claimMode
-    editorCeilingUnit.value = values.claimCeilingUnit
-    editorCeilingAmount.value = values.claimCeiling
-    syncClaimMode()
-    editorTimeOn.checked = values.importTime
-    editorTimeSummary.value = values.timeSummary
-    editorExpensesOn.checked = values.importExpenses
-    editorExpensesSummary.value = values.expenseSummary
-    syncAmountType()
-  }
-
-  const openEditor = (target: number | 'new'): void => {
-    const session = current()
-    if (session === null || !canWrite(session) || mutationPending) return
-    if (target === 'new') {
-      if (api.createRecurringInvoice === undefined) return
-      // A fresh dialog is a fresh command. The key is only held across a retry
-      // of the same submission, which is what `createKey ??=` on save does.
-      createKey = null
-      fillForm({ ...recurringBlankFormValues(), nextIssueOn: now().slice(0, 10) })
-      editorTitle.textContent = 'New recurring invoice'
-      clientHint.hidden = true
-    } else {
-      if (api.updateRecurringInvoice === undefined || detail === null) return
-      fillForm(recurringFormValuesFromDefinition(detail))
-      editorTitle.textContent = 'Edit recurring invoice'
-      // `recurring_invoices_linked_invoice_client_update` aborts a client change
-      // whenever a linked invoice names a different one, and the API reports it
-      // as the same opaque conflict as everything else. Nothing on the payload
-      // says whether this definition has billed, so the control stays usable --
-      // a definition that never issued may legitimately move -- and says what
-      // the constraint is rather than letting the reader discover it on save.
-      clientHint.hidden = false
-    }
-    editing = target
-    editorResult.textContent = ''
-    delete editorResult.dataset.outcome
-    editorDialog.showModal()
-  }
-
-  const saveDefinition = async (): Promise<void> => {
-    const session = current()
-    const target = editing
-    if (session === null || target === null || mutationPending || !canWrite(session)) return
-    const save =
-      target === 'new'
-        ? api.createRecurringInvoice === undefined
-          ? null
-          : async (input: RecurringInvoiceInput): Promise<void> => {
-              // `??=`, not `=`, exactly as `runIssue` holds `issueKey`: a save
-              // that fails after the server took it must retry under the key it
-              // already used, or the retry is a second definition rather than a
-              // second attempt at the first.
-              createKey ??= globalThis.crypto.randomUUID()
-              await api.createRecurringInvoice!(input, createKey, session.signal)
-              createKey = null
-            }
-        : api.updateRecurringInvoice === undefined
-          ? null
-          : async (input: RecurringInvoiceInput): Promise<void> => {
-              await api.updateRecurringInvoice!(target, input, session.signal)
-            }
-    if (save === null) return
-    let input: RecurringInvoiceInput
-    try {
-      input = recurringDefinitionInput(readForm())
-    } catch (error) {
-      // Refused before the request, and named. `assertRecurringAmountConfig`
-      // and the 0044 trigger both refuse the same configs, but neither can say
-      // which line was wrong by the time their message reaches a browser.
-      editorResult.dataset.outcome = 'error'
-      editorResult.textContent = messageFor(error)
-      return
-    }
-    mutationPending = true
-    syncPending()
-    editorResult.dataset.outcome = 'pending'
-    editorResult.textContent = 'Saving…'
-    try {
-      await save(input)
-      if (current() !== session) return
-      editing = null
-      editorDialog.close()
-      // Both views are stale: a create adds a row, an edit can move the row's
-      // date, its client and its total all at once.
-      await Promise.all([loadList(true), selection === null ? undefined : loadDetail()])
-    } catch (error) {
-      if (current() !== session) return
-      if (session.onSessionFailure(error)) return
-      editorResult.dataset.outcome = 'error'
-      editorResult.textContent = messageFor(error)
-    } finally {
-      if (current() === session) {
-        mutationPending = false
-        syncPending()
-      }
-    }
   }
 
   const runDelete = async (): Promise<void> => {
@@ -850,9 +570,11 @@ export const createRecurringWorkspaceController = (
     )
     detailBody.hidden = false
     detailStatus.textContent = `${recurringDueLabel(state)} — next on ${definition.next_issue_on}.`
-    // The editor seeds itself from this, not from the list row: the list may be
-    // a page behind, and PATCH replaces the whole definition.
+    // The editor reads the definition back for itself rather than trusting this
+    // copy or the list row: PATCH replaces the whole definition, and the list
+    // may be a page behind. This is only what Edit and Delete act on.
     detail = definition
+    editLink.href = recurringEditorUrl(definition.id)
     syncPending()
   }
 
@@ -873,7 +595,7 @@ export const createRecurringWorkspaceController = (
       issueKey = null
       issueResult.dataset.outcome = 'issued'
       issueResult.textContent = recurringIssuedMessage(result.generation)
-      issuedLink.href = `/invoices/${String(result.invoice.id)}`
+      issuedLink.href = invoicePagePath(result.invoice.id)
       issuedLink.hidden = false
       // The cadence moved, so the list and the facts above are now stale.
       await Promise.all([loadList(true), loadDetail()])
@@ -1046,12 +768,6 @@ export const createRecurringWorkspaceController = (
     })
   }
 
-  newButton.addEventListener('click', () => {
-    openEditor('new')
-  })
-  editButton.addEventListener('click', () => {
-    if (selection !== null) openEditor(selection)
-  })
   deleteButton.addEventListener('click', () => {
     const session = current()
     if (session === null || !canWrite(session) || detail === null || mutationPending) return
@@ -1068,32 +784,6 @@ export const createRecurringWorkspaceController = (
       'A definition that has already raised an invoice cannot be deleted.'
     deleteDialog.showModal()
   })
-  editorClaimMode.addEventListener('change', () => {
-    syncClaimMode()
-    editorResult.textContent = ''
-    delete editorResult.dataset.outcome
-  })
-  editorType.addEventListener('change', () => {
-    syncAmountType()
-    editorResult.textContent = ''
-    delete editorResult.dataset.outcome
-  })
-  editorAddLine.addEventListener('click', () => {
-    if (mutationPending) return
-    appendLine(recurringBlankLine())
-  })
-  editorForm.addEventListener('submit', (event) => {
-    event.preventDefault()
-    void saveDefinition()
-  })
-  for (const cancel of document.querySelectorAll<HTMLButtonElement>(
-    '[data-recurring-editor-cancel]',
-  )) {
-    cancel.addEventListener('click', () => {
-      editing = null
-      editorDialog.close()
-    })
-  }
   deleteForm.addEventListener('submit', (event) => {
     event.preventDefault()
     void runDelete()
@@ -1123,6 +813,9 @@ export const createRecurringWorkspaceController = (
       const session = { identity, signal, onSessionFailure }
       activeSession = session
       selection = recurringSelectionFromUrl(new URL(globalThis.location.href))
+      // What the editor saved, if this page is where it came back to. Taken
+      // before the loads so a second activation cannot say it twice.
+      const notice = takePageNotice(globalThis.location.pathname)
       clearPrivatePresentation()
       syncView()
       globalThis.addEventListener('popstate', applyLocation, { signal })
@@ -1138,6 +831,512 @@ export const createRecurringWorkspaceController = (
         { once: true },
       )
       await Promise.all([loadList(true), loadDetail()])
+      if (notice === null || current() !== session) return
+      // Said where the reader is looking, and only over a view that loaded: a
+      // failed load's sentence is the more urgent of the two.
+      if (selection !== null) {
+        if (!detailBody.hidden) detailStatus.textContent = notice
+      } else if (listRetry.hidden) {
+        listStatus.textContent = notice
+      }
+    },
+  }
+}
+
+export interface RecurringEditorController {
+  activate(
+    identity: Whoami,
+    signal: AbortSignal,
+    onSessionFailure: (error: unknown) => boolean,
+  ): Promise<void>
+}
+
+/**
+ * The definition editor page (`/invoices/recurring/new`,
+ * `/invoices/recurring/:id/edit`).
+ *
+ * `POST`, `PATCH` and `DELETE` on this resource had been served since the API
+ * shipped and no screen called any of them, so the first live definitions were
+ * loaded by a script and one was corrected by hand-written SQL. This writes all
+ * of a definition, the two keys migrations 0041 and 0044 added included.
+ *
+ * It reads the definition back itself rather than taking the workspace's copy:
+ * PATCH is a replace, so a form seeded from anything stale would send the stale
+ * half back as though somebody had chosen it. Saving returns to the definition
+ * with what was saved said there; Cancel returns without a word.
+ */
+export const createRecurringEditorController = (
+  api: Partial<RecurringWorkspaceApi>,
+  now: () => string = () => new Date().toISOString(),
+): RecurringEditorController => {
+  const isPage = document.documentElement.dataset.appView === 'invoice-recurring-editor'
+  const page = required<HTMLElement>('[data-recurring-editor-page]')
+  const eyebrow = required<HTMLElement>('[data-recurring-editor-eyebrow]')
+  const title = required<HTMLElement>('[data-recurring-editor-title]')
+  const back = required<HTMLAnchorElement>('[data-recurring-editor-back]')
+  const status = required<HTMLElement>('[data-recurring-editor-status]')
+  const retry = required<HTMLButtonElement>('[data-recurring-editor-retry]')
+  const form = required<HTMLFormElement>('[data-recurring-editor-form]')
+  const cancel = required<HTMLAnchorElement>('[data-recurring-editor-cancel]')
+  const submit = required<HTMLButtonElement>('[data-recurring-editor-submit]')
+  const result = required<HTMLElement>('[data-recurring-editor-result]')
+  const client = required<HTMLSelectElement>('[data-recurring-editor-client]')
+  const clientHint = required<HTMLElement>('[data-recurring-client-hint]')
+  const every = required<HTMLInputElement>('[data-recurring-editor-every]')
+  const day = required<HTMLInputElement>('[data-recurring-editor-day]')
+  const next = required<HTMLInputElement>('[data-recurring-editor-next]')
+  const retainer = required<HTMLInputElement>('[data-recurring-editor-retainer]')
+  const subject = required<HTMLInputElement>('[data-recurring-editor-subject]')
+  const notes = required<HTMLTextAreaElement>('[data-recurring-editor-notes]')
+  const amountTypes = [
+    ...document.querySelectorAll<HTMLInputElement>('[data-recurring-editor-type]'),
+  ]
+  const fixedSection = required<HTMLElement>('[data-recurring-editor-fixed]')
+  const bandSection = required<HTMLElement>('[data-recurring-editor-band]')
+  const importSection = required<HTMLElement>('[data-recurring-editor-import]')
+  const lineList = required<HTMLElement>('[data-recurring-editor-line-list]')
+  const addLine = required<HTMLButtonElement>('[data-recurring-editor-add-line]')
+  const total = required<HTMLElement>('[data-recurring-editor-total]')
+  const lineTemplate = required<HTMLTemplateElement>('[data-recurring-line-template]')
+  const sweepProjects = required<HTMLSelectElement>('[data-recurring-editor-projects]')
+  // The banded picker (#484). Beside the fixed lines rather than the import
+  // block, because it is the flat-amount case: these projects' hours are
+  // claimed by the amount, not priced into it.
+  const claims = required<HTMLSelectElement>('[data-recurring-editor-claims]')
+  // How much of the period that band takes (#707), and in which unit.
+  const claimMode = required<HTMLSelectElement>('[data-recurring-editor-claim-mode]')
+  const claimScope = required<HTMLSelectElement>('[data-recurring-editor-claim-scope]')
+  const costAlert = required<HTMLInputElement>('[data-recurring-editor-cost-alert]')
+  const ceiling = required<HTMLElement>('[data-recurring-editor-ceiling]')
+  const ceilingUnit = required<HTMLSelectElement>('[data-recurring-editor-ceiling-unit]')
+  const ceilingAmount = required<HTMLInputElement>('[data-recurring-editor-ceiling-amount]')
+  const timeOn = required<HTMLInputElement>('[data-recurring-editor-time-on]')
+  const timeSummary = required<HTMLSelectElement>('[data-recurring-editor-time-summary]')
+  const expensesOn = required<HTMLInputElement>('[data-recurring-editor-expenses-on]')
+  const expensesSummary = required<HTMLSelectElement>('[data-recurring-editor-expenses-summary]')
+  page.hidden = !isPage
+
+  let activeSession: ActiveSession | null = null
+  let target: RecurringEditorTarget | null = null
+  let clients: readonly GeneralResource[] = []
+  let projects: readonly GeneralResource[] = []
+  let loadGeneration = 0
+  let pending = false
+  /**
+   * Held the same way the workspace holds its issue key, and for the same
+   * reason: the create is the only write here not addressed to an id, so a
+   * retry under a fresh key is a second definition rather than a second
+   * attempt at the first. A page load is a fresh command; a retry of this one
+   * is not.
+   */
+  let createKey: string | null = null
+
+  const current = (): ActiveSession | null =>
+    activeSession === null || activeSession.signal.aborted ? null : activeSession
+
+  const say = (message: string, outcome: 'error' | 'pending' | null): void => {
+    result.textContent = message
+    if (outcome === null) delete result.dataset.outcome
+    else result.dataset.outcome = outcome
+  }
+
+  const lines = (): HTMLElement[] => [
+    ...lineList.querySelectorAll<HTMLElement>('[data-recurring-line]'),
+  ]
+
+  const selectedType = (): RecurringDefinitionFormValues['amountType'] =>
+    amountTypes.find((input) => input.checked)?.value === 'line_items_import'
+      ? 'line_items_import'
+      : 'fixed_lines'
+
+  const currency = (): string => recurringCurrency({ client_id: Number(client.value) }, clients)
+
+  const syncPending = (): void => {
+    submit.disabled = pending
+    addLine.disabled = pending
+    for (const remove of lineList.querySelectorAll<HTMLButtonElement>(
+      '[data-recurring-line-remove]',
+    )) {
+      remove.disabled = pending
+    }
+  }
+
+  /**
+   * Each line's amount and the total of them, in the client's currency. A line
+   * that does not parse yet shows a dash and the total waits for it: a total
+   * that silently left a line out is a figure nobody can check.
+   */
+  const syncAmounts = (): void => {
+    const money = currency()
+    let sum = 0
+    let complete = true
+    for (const line of lines()) {
+      const cents = recurringLineAmountCents(readLine(line))
+      const amount = line.querySelector<HTMLElement>('[data-recurring-line-amount]')
+      if (amount !== null) {
+        amount.textContent = cents === null ? '—' : recurringMoney(cents, money)
+        markMoney(amount, cents !== null)
+      }
+      if (cents === null) complete = false
+      else sum += cents
+    }
+    total.textContent = complete && lines().length > 0 ? recurringMoney(sum, money) : '—'
+    markMoney(total, complete && lines().length > 0)
+  }
+
+  const syncLinePositions = (): void => {
+    lines().forEach((line, position) => {
+      // Numbered from 1 to match `recurringDefinitionInput`, whose messages say
+      // "Line 2 needs a quantity" -- an editor that counts differently from the
+      // sentence pointing at it sends someone to the wrong row.
+      const legend = line.querySelector<HTMLElement>('[data-recurring-line-position]')
+      if (legend !== null) legend.textContent = `Line ${position + 1}`
+      const number = line.querySelector<HTMLElement>('[data-recurring-line-number]')
+      if (number !== null) number.textContent = String(position + 1)
+    })
+    syncPending()
+  }
+
+  const readLine = (line: HTMLElement): RecurringLineFormValues => ({
+    kind: lineField(line, 'kind').value,
+    description: lineField(line, 'description').value,
+    quantity: lineField(line, 'quantity').value,
+    unitPriceCents: lineField(line, 'unitPriceCents').value,
+    taxed: (lineField(line, 'taxed') as HTMLInputElement).checked,
+    taxed2: (lineField(line, 'taxed2') as HTMLInputElement).checked,
+    projectId: lineField(line, 'projectId').value,
+    through: lineField(line, 'through').value,
+    installments: lineField(line, 'installments').value,
+  })
+
+  const appendLine = (values: Readonly<RecurringLineFormValues>): HTMLElement => {
+    const source = lineTemplate.content.firstElementChild
+    if (source === null) throw new Error('recurring line template is empty')
+    const line = source.cloneNode(true) as HTMLElement
+    lineField(line, 'kind').value = values.kind
+    lineField(line, 'description').value = values.description
+    lineField(line, 'quantity').value = values.quantity
+    lineField(line, 'unitPriceCents').value = values.unitPriceCents
+    lineField(line, 'through').value = values.through
+    lineField(line, 'installments').value = values.installments
+    ;(lineField(line, 'taxed') as HTMLInputElement).checked = values.taxed
+    ;(lineField(line, 'taxed2') as HTMLInputElement).checked = values.taxed2
+    fillOptions(
+      lineField(line, 'projectId') as HTMLSelectElement,
+      projects.map((project) => ({
+        label: recurringProjectLabel(project.id, projects),
+        value: String(project.id),
+      })),
+      [values.projectId],
+      'No project',
+    )
+    line.querySelector<HTMLButtonElement>('[data-recurring-line-remove]')?.addEventListener(
+      'click',
+      () => {
+        if (pending) return
+        const following = line.nextElementSibling
+        line.remove()
+        syncLinePositions()
+        syncAmounts()
+        // Focus goes where the row was rather than back to the top of the page.
+        const landing =
+          following?.querySelector<HTMLElement>('[data-recurring-line-field="kind"]') ?? addLine
+        landing.focus()
+      },
+    )
+    lineList.append(line)
+    syncLinePositions()
+    return line
+  }
+
+  // The ceiling boxes only mean anything once a band claims to one, and a
+  // number sitting in a hidden box is a number somebody will later assume
+  // applied.
+  const syncClaimMode = (): void => {
+    ceiling.hidden = claimMode.value !== 'ceiling'
+  }
+
+  const syncAmountType = (): void => {
+    const fixed = selectedType() !== 'line_items_import'
+    fixedSection.hidden = !fixed
+    bandSection.hidden = !fixed
+    importSection.hidden = fixed
+  }
+
+  const readForm = (): RecurringDefinitionFormValues => ({
+    clientId: client.value,
+    subjectTemplate: subject.value,
+    notesTemplate: notes.value,
+    everyNMonths: every.value,
+    dayOfMonth: day.value,
+    nextIssueOn: next.value,
+    retainerId: retainer.value,
+    amountType: selectedType(),
+    lines: lines().map(readLine),
+    projectIds: [...sweepProjects.options]
+      .filter((item) => item.selected)
+      .map((item) => item.value),
+    claimsProjectIds: [...claims.options]
+      .filter((item) => item.selected)
+      .map((item) => item.value),
+    claimMode: claimMode.value === 'ceiling' ? 'ceiling' : 'all',
+    claimCeilingUnit: ceilingUnit.value === 'money' ? 'money' : 'time',
+    claimCeiling: ceilingAmount.value,
+    claimScope: claimScope.value === 'tracked' ? 'tracked' : 'billable',
+    costAlertPercent: costAlert.value,
+    importTime: timeOn.checked,
+    timeSummary: timeSummary.value,
+    importExpenses: expensesOn.checked,
+    expenseSummary: expensesSummary.value,
+  })
+
+  const fillForm = (values: Readonly<RecurringDefinitionFormValues>): void => {
+    fillOptions(
+      client,
+      clients.map((resource) => ({
+        label: recurringClientLabel({ client_id: resource.id }, clients),
+        value: String(resource.id),
+      })),
+      [values.clientId],
+      'Choose a client',
+    )
+    subject.value = values.subjectTemplate
+    notes.value = values.notesTemplate
+    every.value = values.everyNMonths
+    day.value = values.dayOfMonth
+    next.value = values.nextIssueOn
+    retainer.value = values.retainerId
+    for (const input of amountTypes) input.checked = input.value === values.amountType
+    lineList.replaceChildren()
+    for (const line of values.lines) appendLine(line)
+    const projectChoices = projects.map((project) => ({
+      label: recurringProjectLabel(project.id, projects),
+      value: String(project.id),
+    }))
+    fillOptions(sweepProjects, projectChoices, values.projectIds, null)
+    fillOptions(claims, projectChoices, values.claimsProjectIds, null)
+    // As tall as the account's projects, within reason: six empty rows under
+    // two projects read as a list still loading.
+    for (const list of [sweepProjects, claims]) {
+      list.size = Math.min(Math.max(list.options.length, 3), 8)
+    }
+    claimScope.value = values.claimScope
+    costAlert.value = values.costAlertPercent
+    claimMode.value = values.claimMode
+    ceilingUnit.value = values.claimCeilingUnit
+    ceilingAmount.value = values.claimCeiling
+    syncClaimMode()
+    timeOn.checked = values.importTime
+    timeSummary.value = values.timeSummary
+    expensesOn.checked = values.importExpenses
+    expensesSummary.value = values.expenseSummary
+    syncAmountType()
+    syncAmounts()
+  }
+
+  const clearPrivatePresentation = (): void => {
+    loadGeneration += 1
+    clients = []
+    projects = []
+    pending = false
+    createKey = null
+    // The form holds a client's name, an amount and a schedule, so it goes
+    // with the session rather than standing on the page after it.
+    form.hidden = true
+    form.reset()
+    lineList.replaceChildren()
+    client.replaceChildren()
+    sweepProjects.replaceChildren()
+    claims.replaceChildren()
+    total.textContent = '—'
+    say('', null)
+    retry.hidden = true
+    status.textContent = 'Loading the editor…'
+    syncPending()
+  }
+
+  const showTarget = (editing: RecurringEditorTarget): void => {
+    const returnTo = recurringEditorReturnUrl(editing)
+    back.href = returnTo
+    back.textContent = editing === 'new' ? 'Back to recurring' : 'Back to the definition'
+    cancel.href = returnTo
+    title.textContent = editing === 'new' ? 'New recurring invoice' : 'Edit recurring invoice'
+    // `recurring_invoices_linked_invoice_client_update` aborts a client change
+    // whenever a linked invoice names a different one, and the API reports it
+    // as the same opaque conflict as everything else. Nothing on the payload
+    // says whether this definition has billed, so the control stays usable --
+    // a definition that never issued may legitimately move -- and says what
+    // the constraint is rather than letting the reader discover it on save.
+    clientHint.hidden = editing === 'new'
+    document.title = document.title.replace(
+      / — .*$/u,
+      editing === 'new' ? ' — New recurring invoice' : ' — Edit recurring invoice',
+    )
+  }
+
+  const load = async (): Promise<void> => {
+    const session = current()
+    const editing = target
+    if (session === null || editing === null) return
+    const generation = ++loadGeneration
+    form.hidden = true
+    retry.hidden = true
+    status.textContent = editing === 'new' ? 'Loading clients and projects…' : 'Loading the definition…'
+    try {
+      const [loadedClients, loadedProjects, definition] = await Promise.all([
+        api.listRecurringClients === undefined
+          ? Promise.resolve<GeneralResource[]>([])
+          : collect(api.listRecurringClients, session.signal),
+        api.listRecurringProjects === undefined
+          ? Promise.resolve<GeneralResource[]>([])
+          : collect(api.listRecurringProjects, session.signal),
+        editing === 'new' ? Promise.resolve(null) : api.getRecurringInvoice!(editing, session.signal),
+      ])
+      if (current() !== session || generation !== loadGeneration) return
+      clients = loadedClients
+      projects = loadedProjects
+      fillForm(
+        definition === null
+          ? { ...recurringBlankFormValues(), nextIssueOn: now().slice(0, 10) }
+          : recurringFormValuesFromDefinition(definition),
+      )
+      eyebrow.textContent =
+        definition === null
+          ? 'Recurring invoice'
+          : `${recurringClientLabel(definition, clients)} · Recurring invoice`
+      status.textContent = ''
+      form.hidden = false
+    } catch (error) {
+      if (current() !== session || generation !== loadGeneration) return
+      if (session.onSessionFailure(error)) return
+      status.textContent = messageFor(error)
+      retry.hidden = false
+    }
+  }
+
+  const save = async (): Promise<void> => {
+    const session = current()
+    const editing = target
+    if (session === null || editing === null || pending || !recurringIdentityCanWrite(session.identity)) {
+      return
+    }
+    let input: RecurringInvoiceInput
+    try {
+      input = recurringDefinitionInput(readForm())
+    } catch (error) {
+      // Refused before the request, and named. `assertRecurringAmountConfig`
+      // and the 0044 trigger both refuse the same configs, but neither can say
+      // which line was wrong by the time their message reaches a browser.
+      say(messageFor(error), 'error')
+      return
+    }
+    pending = true
+    syncPending()
+    say('Saving…', 'pending')
+    try {
+      let saved: RecurringInvoice
+      if (editing === 'new') {
+        // `??=`, not `=`, exactly as the workspace holds its issue key: a save
+        // that fails after the server took it must retry under the key it
+        // already used, or the retry is a second definition rather than a
+        // second attempt at the first.
+        createKey ??= globalThis.crypto.randomUUID()
+        saved = await api.createRecurringInvoice!(input, createKey, session.signal)
+        createKey = null
+      } else {
+        saved = await api.updateRecurringInvoice!(editing, input, session.signal)
+      }
+      if (current() !== session) return
+      leavePageNotice(
+        recurringWorkspaceUrl(),
+        editing === 'new' ? 'Definition created.' : 'Definition saved.',
+      )
+      say('Saved. Opening the definition…', 'pending')
+      globalThis.location.assign(recurringWorkspaceUrl(saved.id))
+    } catch (error) {
+      if (current() !== session) return
+      if (session.onSessionFailure(error)) return
+      say(messageFor(error), 'error')
+    } finally {
+      if (current() === session) {
+        pending = false
+        syncPending()
+      }
+    }
+  }
+
+  const clearResult = (): void => {
+    if (!pending) say('', null)
+  }
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault()
+    void save()
+  })
+  form.addEventListener('input', clearResult)
+  lineList.addEventListener('input', syncAmounts)
+  client.addEventListener('change', syncAmounts)
+  claimMode.addEventListener('change', () => {
+    syncClaimMode()
+    clearResult()
+  })
+  for (const input of amountTypes) {
+    input.addEventListener('change', () => {
+      syncAmountType()
+      clearResult()
+    })
+  }
+  addLine.addEventListener('click', () => {
+    if (pending) return
+    const line = appendLine(recurringBlankLine())
+    syncAmounts()
+    lineField(line, 'description').focus()
+  })
+  retry.addEventListener('click', () => {
+    void load()
+  })
+
+  return {
+    async activate(identity, signal, onSessionFailure) {
+      if (!isPage) return
+      const session = { identity, signal, onSessionFailure }
+      activeSession = session
+      clearPrivatePresentation()
+      target = recurringEditorTargetFromPathname(globalThis.location.pathname)
+      signal.addEventListener(
+        'abort',
+        () => {
+          if (activeSession !== session) return
+          activeSession = null
+          clearPrivatePresentation()
+          status.textContent = 'Sign in to edit recurring invoices.'
+        },
+        { once: true },
+      )
+      if (target === null) {
+        status.textContent = 'That recurring definition does not exist.'
+        return
+      }
+      showTarget(target)
+      if (!recurringIdentityCanWrite(identity)) {
+        status.textContent =
+          identity.authentication.kind === 'token'
+            ? 'This API token cannot change recurring invoices.'
+            : 'Your profile cannot change recurring invoices.'
+        return
+      }
+      const writable =
+        target === 'new'
+          ? api.createRecurringInvoice !== undefined
+          : api.updateRecurringInvoice !== undefined && api.getRecurringInvoice !== undefined
+      if (!writable) {
+        status.textContent =
+          target === 'new'
+            ? 'This build cannot create recurring invoices.'
+            : 'This build cannot edit recurring invoices.'
+        return
+      }
+      await load()
     },
   }
 }

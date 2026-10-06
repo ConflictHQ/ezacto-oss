@@ -27,8 +27,12 @@ import {
   ssoLastCheckedLabel,
   ssoVerificationMessage,
   timeTrackingFacts,
+  invoiceSendingChanges,
+  invoiceSendingChoice,
   type CompanySettingsApi,
   type InvoiceDefaultsSetting,
+  type InvoiceDocumentsSetting,
+  type InvoiceSendingChoice,
   type InstanceThemeView,
   type BackupRun,
 } from './model.js'
@@ -393,6 +397,18 @@ export const createModuleSettingsController = (
   const invoiceDefaultsNotes = required<HTMLTextAreaElement>('[data-invoice-defaults-notes]')
   const invoiceDefaultsSubmit = required<HTMLButtonElement>('[data-invoice-defaults-submit]')
   const invoiceDefaultsResult = required<HTMLElement>('[data-invoice-defaults-result]')
+  // Sending: what an invoice's email carries unless the invoice says otherwise.
+  const sendingParts = [
+    ...document.querySelectorAll<HTMLElement>('[data-invoice-defaults-sending]'),
+  ]
+  const sendingPdf = required<HTMLInputElement>('[data-invoice-defaults-attach-pdf]')
+  const sendingJournal = required<HTMLInputElement>('[data-invoice-defaults-attach-journal]')
+  const sendingJournalDetail = required<HTMLElement>('[data-invoice-defaults-journal-detail]')
+  const sendingJournalLevel = required<HTMLSelectElement>('[data-invoice-defaults-journal-level]')
+  const sendingJournalFormats = required<HTMLFieldSetElement>(
+    '[data-invoice-defaults-journal-formats]',
+  )
+  const sendingFiles = required<HTMLInputElement>('[data-invoice-defaults-attach-files]')
   const remindersStatus = required<HTMLElement>('[data-settings-reminders-status]')
   const remindersForm = required<HTMLFormElement>('[data-reminder-settings-form]')
   const remindersEnabled = required<HTMLInputElement>('[data-reminder-settings-enabled]')
@@ -485,6 +501,51 @@ export const createModuleSettingsController = (
     syncReminderFields()
   }
 
+  // The Sending defaults as stored, so a save writes only what changed; null
+  // where this build or this read has none to offer.
+  let sending: InvoiceDocumentsSetting | null = null
+
+  const sendingFormatBoxes = (): HTMLInputElement[] => [
+    ...sendingJournalFormats.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
+  ]
+
+  // The report's detail and files only matter while it is attached.
+  const syncSendingJournal = (): void => {
+    const shown = sending !== null && sendingJournal.checked
+    sendingJournalDetail.hidden = !shown
+    sendingJournalFormats.hidden = !shown
+  }
+  sendingJournal.addEventListener('change', syncSendingJournal)
+
+  const showSending = (setting: InvoiceDocumentsSetting | null): void => {
+    sending = setting
+    for (const part of sendingParts) part.hidden = setting === null
+    if (setting !== null) {
+      const choice = invoiceSendingChoice(setting)
+      sendingPdf.checked = choice.attachPdf
+      sendingFiles.checked = choice.attachFiles
+      sendingJournal.checked = choice.journal !== false
+      sendingJournalLevel.value = choice.journal === false ? 'detailed' : choice.journal
+      for (const box of sendingFormatBoxes()) {
+        box.checked = choice.journalFormats.some((format) => format === box.value)
+      }
+    }
+    syncSendingJournal()
+  }
+
+  const chosenSending = (): InvoiceSendingChoice => ({
+    attachPdf: sendingPdf.checked,
+    attachFiles: sendingFiles.checked,
+    journal: sendingJournal.checked
+      ? sendingJournalLevel.value === 'summary'
+        ? 'summary'
+        : 'detailed'
+      : false,
+    journalFormats: sendingFormatBoxes()
+      .filter((box) => box.checked)
+      .map((box) => box.value as InvoiceSendingChoice['journalFormats'][number]),
+  })
+
   const showInvoiceDefaults = (defaults: InvoiceDefaultsSetting): void => {
     invoiceDefaultsName.value = defaults.company_name
     invoiceDefaultsAddress.value = defaults.company_address ?? ''
@@ -500,10 +561,19 @@ export const createModuleSettingsController = (
       invoiceDefaultsResult.textContent = 'The company name cannot be blank.'
       return
     }
+    let sendingChange: ReturnType<typeof invoiceSendingChanges>
+    try {
+      sendingChange = sending === null ? null : invoiceSendingChanges(sending, chosenSending())
+    } catch (error) {
+      invoiceDefaultsResult.textContent =
+        error instanceof Error ? error.message : 'Check the sending defaults.'
+      return
+    }
     invoiceDefaultsResult.textContent = 'Saving…'
     invoiceDefaultsSubmit.disabled = true
     // Blank is no default; the server stores it as one.
     const text = (value: string): string | null => (value.trim() === '' ? null : value)
+    let defaultsSaved = false
     try {
       const saved = await api.updateInvoiceDefaults(
         {
@@ -514,17 +584,28 @@ export const createModuleSettingsController = (
         },
         active.signal,
       )
+      defaultsSaved = true
+      active.present(() => showInvoiceDefaults(saved))
+      // The two halves are two endpoints. Sending is written second and only
+      // where it changed, so a refusal there leaves the first half saved and
+      // says so rather than reading as though nothing was.
+      if (sendingChange !== null && api.setOrganizationInvoiceDocuments !== undefined) {
+        const stored = await api.setOrganizationInvoiceDocuments(sendingChange, active.signal)
+        active.present(() => showSending(stored))
+      }
       active.present(() => {
-        showInvoiceDefaults(saved)
         invoiceDefaultsResult.textContent = 'Saved.'
       })
     } catch (error) {
       active.presentFailure(error, () => {
-        invoiceDefaultsResult.textContent = messageFor(
+        const reason = messageFor(
           error,
           'Only administrators and accounting can change invoice settings.',
           'Invoice settings could not be saved.',
         )
+        invoiceDefaultsResult.textContent = defaultsSaved
+          ? `The company information and default values were saved, but the sending defaults were not: ${reason}`
+          : reason
       })
     } finally {
       if (currentSession() === active) invoiceDefaultsSubmit.disabled = false
@@ -980,14 +1061,30 @@ export const createModuleSettingsController = (
       return
     }
     try {
-      const defaults = await api.getInvoiceDefaults(active.signal)
+      // Sending is read beside the defaults and is the lesser half: a build
+      // without its routes, or a read of it that fails, leaves the rest of the
+      // form working and says so, rather than taking the section down.
+      const [defaults, documents] = await Promise.all([
+        api.getInvoiceDefaults(active.signal),
+        api.getOrganizationInvoiceDocuments === undefined ||
+        api.setOrganizationInvoiceDocuments === undefined
+          ? Promise.resolve(null)
+          : api.getOrganizationInvoiceDocuments(active.signal).then(
+              (setting): InvoiceDocumentsSetting | Error => setting,
+              (error: unknown): InvoiceDocumentsSetting | Error =>
+                error instanceof Error ? error : new Error('The sending defaults could not be loaded.'),
+            ),
+      ])
       active.present(() => {
         showInvoiceDefaults(defaults)
+        showSending(documents instanceof Error ? null : documents)
         invoiceDefaultsForm.hidden = false
         invoicesStatus.textContent =
-          defaults.company_address === null
-            ? 'No company address yet: invoices print the name alone until one is saved.'
-            : ''
+          documents instanceof Error
+            ? `The sending defaults could not be loaded: ${documents.message}`
+            : defaults.company_address === null
+              ? 'No company address yet: invoices print the name alone until one is saved.'
+              : ''
       })
     } catch (error) {
       active.presentFailure(error, () => {

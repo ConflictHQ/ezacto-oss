@@ -3,6 +3,8 @@ import {
   type BackupRun,
   type BackupStatusEnvelope,
   type EmailHealth,
+  type OrganizationInvoiceDocumentsEnvelope,
+  type OrganizationInvoiceDocumentsInput,
   type SenderIdentity,
   type SsoDomain,
   type SsoDomainCheck,
@@ -85,9 +87,70 @@ export interface InvoiceDefaultsSetting {
   readonly subject: string | null
 }
 
+/**
+ * What every invoice's email carries unless the invoice says otherwise: the
+ * PDF, the hours report at a level and in some files, and the invoice's own
+ * files. Each invoice can still change them when it is sent.
+ */
+export type InvoiceDocumentsSetting = OrganizationInvoiceDocumentsEnvelope['data']
+
+type JournalFormat = 'pdf' | 'csv' | 'xlsx'
+
+/** The Sending defaults as the form's controls hold them. */
+export interface InvoiceSendingChoice {
+  readonly attachPdf: boolean
+  readonly attachFiles: boolean
+  readonly journal: 'detailed' | 'summary' | false
+  readonly journalFormats: readonly JournalFormat[]
+}
+
+export const invoiceSendingChoice = (setting: Readonly<InvoiceDocumentsSetting>): InvoiceSendingChoice => ({
+  attachPdf: setting.attach_pdf,
+  attachFiles: setting.attach_files,
+  journal:
+    setting.attach_journal === 'detailed' || setting.attach_journal === 'summary'
+      ? setting.attach_journal
+      : false,
+  journalFormats: setting.journal_formats,
+})
+
+/**
+ * The defaults that changed, as the request writes them, or null when none
+ * did. Only what changed goes, so saving the company's name does not rewrite
+ * attachment defaults somebody set from another tab a minute ago. The files of
+ * a report switched off are left as they were rather than sent: they are what
+ * it comes back with when it is switched on again.
+ */
+export const invoiceSendingChanges = (
+  setting: Readonly<InvoiceDocumentsSetting>,
+  chosen: Readonly<InvoiceSendingChoice>,
+): OrganizationInvoiceDocumentsInput | null => {
+  if (chosen.journal !== false && chosen.journalFormats.length === 0) {
+    throw new Error('Choose at least one file for the hours report.')
+  }
+  const stored = invoiceSendingChoice(setting)
+  const input: OrganizationInvoiceDocumentsInput = {}
+  if (chosen.attachPdf !== stored.attachPdf) input.attach_pdf = chosen.attachPdf
+  if (chosen.attachFiles !== stored.attachFiles) input.attach_files = chosen.attachFiles
+  if (chosen.journal !== stored.journal) input.attach_journal = chosen.journal
+  if (
+    chosen.journal !== false &&
+    [...chosen.journalFormats].sort().join() !== [...stored.journalFormats].sort().join()
+  ) {
+    input.journal_formats = [...chosen.journalFormats]
+  }
+  return Object.keys(input).length === 0 ? null : input
+}
+
 export interface CompanySettingsApi {
   /** Optional: a build without the route hides nothing it cannot save. */
   getInvoiceDefaults?(signal?: AbortSignal): Promise<InvoiceDefaultsSetting>
+  /** The attachment defaults, under Sending in the same section. Optional the same way. */
+  getOrganizationInvoiceDocuments?(signal?: AbortSignal): Promise<InvoiceDocumentsSetting>
+  setOrganizationInvoiceDocuments?(
+    input: OrganizationInvoiceDocumentsInput,
+    signal?: AbortSignal,
+  ): Promise<InvoiceDocumentsSetting>
   updateInvoiceDefaults?(
     patch: Partial<InvoiceDefaultsSetting>,
     signal?: AbortSignal,
