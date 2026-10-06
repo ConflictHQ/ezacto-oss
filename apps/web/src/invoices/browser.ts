@@ -27,7 +27,6 @@ import {
   invoiceCanRecordPayment,
   invoiceConflictCodes,
   invoiceEditHref,
-  invoiceIdFromPathname,
   invoiceIdentityCanRead,
   invoiceIdentityCanWrite,
   invoiceLineQuantityForForm,
@@ -44,6 +43,7 @@ import {
   invoicePeriod,
   invoiceRecipientLine,
   invoiceRecipients,
+  invoiceReferenceFromPathname,
   invoiceReminderDate,
   invoicePlannedReminder,
   invoiceQuickBooksLine,
@@ -59,6 +59,7 @@ import {
   type InvoiceHoursReportFormat,
   type InvoiceJournalFormat,
   type InvoiceOverflowCommand,
+  type InvoicePageReference,
   type InvoicePaymentApi,
   type InvoiceQuickBooksState,
   type InvoiceReminderPreference,
@@ -154,7 +155,7 @@ const invoiceStatePill = (invoice: Readonly<Invoice>): HTMLSpanElement => {
 
 const invoiceNumberLink = (invoice: Readonly<Invoice>): HTMLAnchorElement => {
   const link = document.createElement('a')
-  link.href = invoicePagePath(invoice.id)
+  link.href = invoicePagePath(invoice)
   link.textContent = `Invoice ${invoice.number}`
   return link
 }
@@ -315,7 +316,7 @@ export const renderInvoiceDetail = (
           // opens it on this line. Removing one is done there too, where it can
           // still be undone until the page saves.
           const edit = document.createElement('a')
-          edit.href = invoiceEditHref(invoice.id, { line: line.id })
+          edit.href = invoiceEditHref(invoice, { line: line.id })
           edit.dataset.invoiceLineEdit = String(line.id)
           edit.textContent = 'Edit'
           controls.append(edit)
@@ -895,14 +896,14 @@ export const createInvoicePaymentController = (
     addLine.hidden = !canWrite
     offerLink(
       addLine,
-      canEditLines ? invoiceEditHref(invoice!.id, 'new-line') : null,
+      canEditLines ? invoiceEditHref(invoice!, 'new-line') : null,
       'Line items cannot be changed on a closed invoice.',
     )
     lineReadonlyNotice.hidden = session === null || canWrite
     editInvoice.hidden = !canWrite
     offerLink(
       editInvoice,
-      canEditLines ? invoiceEditHref(invoice!.id) : null,
+      canEditLines ? invoiceEditHref(invoice!) : null,
       'A closed invoice can no longer be edited.',
     )
     for (const control of paymentForm.querySelectorAll<
@@ -1145,14 +1146,22 @@ export const createInvoicePaymentController = (
     session: ActiveSession,
     options: { readonly hideDocument: boolean; readonly successMessage?: string },
   ): Promise<boolean> => {
-    const invoiceId = invoiceIdFromPathname(globalThis.location.pathname)
+    // The address names the invoice until it has loaded. From then on the page
+    // is that invoice, and a refresh reads it by id rather than looking its
+    // number up again.
+    const reference: InvoicePageReference | null =
+      invoice === null
+        ? invoiceReferenceFromPathname(globalThis.location.pathname)
+        : { kind: 'id', id: invoice.id }
     const getInvoice = api.getInvoice
+    const findInvoiceByNumber = api.findInvoiceByNumber
     const listMessages = api.listInvoiceMessages
     const listPayments = api.listInvoicePayments
     if (
       current() !== session ||
-      invoiceId === null ||
+      reference === null ||
       getInvoice === undefined ||
+      (reference.kind === 'number' && findInvoiceByNumber === undefined) ||
       listMessages === undefined ||
       listPayments === undefined
     ) {
@@ -1168,6 +1177,18 @@ export const createInvoicePaymentController = (
     if (options.hideDocument) article.hidden = true
     else article.setAttribute('aria-busy', 'true')
     try {
+      const invoiceId =
+        reference.kind === 'id'
+          ? reference.id
+          : ((await findInvoiceByNumber!(reference.number, session.signal))?.id ?? null)
+      if (current() !== session || requested !== requestGeneration) return false
+      if (invoiceId === null) {
+        // No invoice has that number: the page an id naming nothing shows.
+        status.textContent = 'The requested invoice does not exist.'
+        retry.hidden = false
+        if (options.hideDocument) article.hidden = true
+        return false
+      }
       const [loadedInvoice, messages, loadedPayments] = await Promise.all([
         getInvoice(invoiceId, session.signal),
         listMessages(invoiceId, session.signal),
@@ -1175,6 +1196,16 @@ export const createInvoicePaymentController = (
       ])
       if (current() !== session || requested !== requestGeneration) return false
       invoice = loadedInvoice
+      // Opened by id, the page lands on the number: the address somebody
+      // copies from here is the one every link in the app draws.
+      const canonical = invoicePagePath(loadedInvoice)
+      if (globalThis.location.pathname !== canonical) {
+        globalThis.history.replaceState(
+          globalThis.history.state,
+          '',
+          `${canonical}${globalThis.location.search}${globalThis.location.hash}`,
+        )
+      }
       payments = loadedPayments
       const editedId = editingPayment?.id
       const deletedId = deletingPayment?.id

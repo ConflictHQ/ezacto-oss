@@ -558,7 +558,8 @@ export const createRetainerWorkspaceController = (
             render: (movement) => {
               if (movement.entry.invoice_id === null) return '—'
               const link = document.createElement('a')
-              link.href = invoicePagePath(movement.entry.invoice_id)
+              // A ledger entry names its invoice by id alone, so the link goes by id.
+              link.href = invoicePagePath({ id: movement.entry.invoice_id, number: null })
               link.textContent = `#${String(movement.entry.invoice_id)}`
               return link
             },

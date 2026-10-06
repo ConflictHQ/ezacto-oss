@@ -130,6 +130,7 @@ import {
 import {
   brandFromSources,
   instancePaletteContract,
+  invoiceNumberIsAddressable,
   invoiceTabs,
   renderAppShell,
   reportKindTabs,
@@ -1140,8 +1141,8 @@ export const createApp = (
         ),
       )
 
-      // Invoices' other three destinations, ahead of /invoices/:invoiceId so a
-      // named tab is a tab and not an invoice number that failed to parse. The
+      // Invoices' other three destinations, ahead of /invoices/:invoiceNumber so
+      // a named tab is a tab and not an invoice numbered after it. The
       // strip ships before the screens behind it: a labelled empty pane says
       // where recurring invoices, retainers and sender configuration will live,
       // and an absent section says nothing at all.
@@ -1705,7 +1706,11 @@ export const createApp = (
         )
       })
 
-      app.get('/invoices/:invoiceId', async (context) => {
+      // An invoice's pages by record id. Every link the app draws addresses an
+      // invoice by its number (below); these serve a number that cannot be a
+      // path segment, and anything that still holds an id. The page reads the
+      // invoice and moves the address bar onto its number.
+      app.get('/invoices/by-id/:invoiceId', async (context) => {
         const rawInvoiceId = context.req.param('invoiceId')
         const invoiceId = Number(rawInvoiceId)
         if (
@@ -1735,16 +1740,71 @@ export const createApp = (
         )
       })
 
-      // The invoice editor: the document fields and every line on one page,
-      // saved together, the way Harvest's Edit invoice worked. Addressed by the
-      // invoice id like the detail page beside it.
-      app.get('/invoices/:invoiceId/edit', async (context) => {
+      app.get('/invoices/by-id/:invoiceId/edit', async (context) => {
         const rawInvoiceId = context.req.param('invoiceId')
         const invoiceId = Number(rawInvoiceId)
         if (
           !/^[1-9][0-9]*$/u.test(rawInvoiceId) ||
           !Number.isSafeInteger(invoiceId)
         ) {
+          return context.notFound()
+        }
+        return context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            ...(await shellChrome(context.env)),
+            activeSection: 'Invoices',
+            view: 'invoice-edit',
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        )
+      })
+
+      // An invoice's page by its number, `/invoices/4021`: the name on the
+      // document, and the address every link draws. A number is text -- "089"
+      // is its own address -- and `invoiceNumberIsAddressable` is the one rule
+      // for which numbers are, shared with the links, so a reserved segment
+      // (`new`, the tabs above, `by-id`) is never read as one.
+      app.get('/invoices/:invoiceNumber', async (context) => {
+        if (!invoiceNumberIsAddressable(context.req.param('invoiceNumber'))) {
+          return context.notFound()
+        }
+        return context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            ...(await shellChrome(context.env)),
+            activeSection: 'Invoices',
+            view: 'invoice-detail',
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        )
+      })
+
+      // The invoice editor: the document fields and every line on one page,
+      // saved together, the way Harvest's Edit invoice worked. Addressed by the
+      // invoice number like the detail page beside it.
+      app.get('/invoices/:invoiceNumber/edit', async (context) => {
+        if (!invoiceNumberIsAddressable(context.req.param('invoiceNumber'))) {
           return context.notFound()
         }
         return context.html(

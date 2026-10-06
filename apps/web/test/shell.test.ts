@@ -184,6 +184,23 @@ describe('S-1 through S-5 application shell', () => {
     expect(listInvoicePayments).toHaveBeenCalledWith({ id: 7, signal })
   })
 
+  it('[unit] finds the invoice a page address names by its exact number', async () => {
+    const found = { id: 41, number: '089' }
+    const listInvoices = vi
+      .fn<(args: unknown) => Promise<{ data: unknown[]; links: object; page: object }>>()
+      .mockResolvedValueOnce({ data: [found], links: {}, page: { next_cursor: null } })
+      .mockResolvedValueOnce({ data: [], links: {}, page: { next_cursor: null } })
+    const api = createShellApi({ listInvoices } as unknown as EzactoClient)
+    const signal = new AbortController().signal
+
+    expect(await api.findInvoiceByNumber!('089', signal)).toBe(found)
+    // The number as the address carries it, and nothing else: no state, so a
+    // paid or closed invoice opens as readily as a draft.
+    expect(listInvoices).toHaveBeenLastCalledWith({ query: { number: '089' }, signal })
+    expect(await api.findInvoiceByNumber!('89', signal)).toBeNull()
+    expect(listInvoices).toHaveBeenLastCalledWith({ query: { number: '89' }, signal })
+  })
+
   it('[unit] requests only one bounded approval queue page', async () => {
     const listPendingTimesheetSubmissions = vi.fn(async () => ({
       data: [],

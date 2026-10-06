@@ -53,10 +53,14 @@ describe('every screen method the real client should supply', () => {
       'utf8',
     )
     const clients = await readFile(resolve(root, 'src', 'clients', 'model.ts'), 'utf8')
+    // The invoice pages: an unbound lookup there is a page addressed by its
+    // number that says it is unavailable in this build.
+    const invoices = await readFile(resolve(root, 'src', 'invoices', 'model.ts'), 'utf8')
 
     const declared = [
       ...interfaceMethods(settings, 'CompanySettingsApi'),
       ...interfaceMethods(clients, 'ClientDirectoryApi'),
+      ...interfaceMethods(invoices, 'InvoicePaymentApi'),
     ]
     expect(declared.length).toBeGreaterThan(10)
 
@@ -88,5 +92,7 @@ describe('every screen method the real client should supply', () => {
     expect(methods).toContain('getTimeEntrySettings')
     expect(methods).toContain('getQuickBooksConnection')
     expect(methods).toContain('listSsoDomains')
+    const invoices = await readFile(resolve(root, 'src', 'invoices', 'model.ts'), 'utf8')
+    expect(interfaceMethods(invoices, 'InvoicePaymentApi')).toContain('findInvoiceByNumber')
   })
 })

@@ -12,15 +12,17 @@ import {
   invoiceEditFocusFromHash,
   invoiceEditPlan,
   invoiceEditStepKey,
-  invoiceIdFromPathname,
   invoiceIdentityCanRead,
   invoiceIdentityCanWrite,
   invoiceLineValues,
   invoicePagePath,
+  invoiceReferenceFromPathname,
+  invoiceReferencePath,
   type InvoiceDraft,
   type InvoiceEditStep,
   type InvoiceEditorApi,
   type InvoiceLineDraft,
+  type InvoicePageReference,
 } from './model.js'
 
 const required = <ElementType extends Element>(selector: string): ElementType => {
@@ -74,7 +76,7 @@ export interface InvoiceEditorController {
 }
 
 /**
- * The invoice edit page (`/invoices/:id/edit`): the document and its lines,
+ * The invoice edit page (`/invoices/:number/edit`): the document and its lines,
  * saved together.
  *
  * The API takes one edit per command, so Save is a sequence -- the document,
@@ -129,7 +131,8 @@ export const createInvoiceEditorController = (
   page.hidden = !isPage
 
   let active: ActiveSession | null = null
-  let invoiceId: number | null = null
+  /** The address the page was opened at; the invoice it names is read on load. */
+  let reference: InvoicePageReference | null = null
   /** The invoice as the server last answered: what the page is planned against. */
   let invoice: Invoice | null = null
   let projects: readonly GeneralResource[] = []
@@ -407,14 +410,26 @@ export const createInvoiceEditorController = (
   }
 
   const load = async (session: ActiveSession): Promise<void> => {
-    const id = invoiceId
+    const opened = reference
     const getInvoice = api.getInvoice
-    if (id === null || getInvoice === undefined) return
+    if (opened === null || getInvoice === undefined) return
     const generation = ++loadGeneration
     form.hidden = true
     retry.hidden = true
     status.textContent = 'Loading invoice…'
     try {
+      // The address names the invoice until it has loaded; after that the page
+      // is that invoice, and reading it again goes by id.
+      const id =
+        invoice?.id ??
+        (opened.kind === 'id'
+          ? opened.id
+          : ((await api.findInvoiceByNumber!(opened.number, session.signal))?.id ?? null))
+      if (current() !== session || generation !== loadGeneration) return
+      if (id === null) {
+        status.textContent = 'That invoice does not exist.'
+        return
+      }
       const loaded = await getInvoice(id, session.signal)
       if (current() !== session || generation !== loadGeneration) return
       // The name and the projects are niceties: a failure to read either still
@@ -427,6 +442,18 @@ export const createInvoiceEditorController = (
       ])
       if (current() !== session || generation !== loadGeneration) return
       invoice = loaded
+      // Opened by id, the page lands on the number, as the detail page does,
+      // and the way back leads to the invoice's own address.
+      const canonical = invoicePagePath(loaded, 'edit')
+      if (globalThis.location.pathname !== canonical) {
+        globalThis.history.replaceState(
+          globalThis.history.state,
+          '',
+          `${canonical}${globalThis.location.search}${globalThis.location.hash}`,
+        )
+      }
+      back.href = invoicePagePath(loaded)
+      cancel.href = invoicePagePath(loaded)
       client.textContent =
         named !== null && typeof named.name === 'string' && named.name.trim() !== ''
           ? named.name.trim()
@@ -522,10 +549,10 @@ export const createInvoiceEditorController = (
     row.id = `invoice-line-${created.id}`
   }
 
-  const finish = (id: number): void => {
-    leavePageNotice(invoicePagePath(id), 'Invoice saved.')
+  const finish = (saved: Invoice): void => {
+    leavePageNotice(invoicePagePath(saved), 'Invoice saved.')
     say('Invoice saved. Opening it…', 'pending')
-    globalThis.location.assign(invoicePagePath(id))
+    globalThis.location.assign(invoicePagePath(saved))
   }
 
   const reloadAfterConflict = async (session: ActiveSession, before: Invoice): Promise<void> => {
@@ -579,7 +606,7 @@ export const createInvoiceEditorController = (
       return
     }
     if (steps.length === 0) {
-      if (committed) finish(start.id)
+      if (committed) finish(start)
       else say('Nothing changed.', null)
       return
     }
@@ -612,7 +639,7 @@ export const createInvoiceEditorController = (
         }
         steps = invoiceEditPlan(after, readDraft())
       }
-      finish(start.id)
+      finish(start)
     } catch (error) {
       if (current() !== session) return
       if (session.onSessionFailure(error)) return
@@ -673,7 +700,7 @@ export const createInvoiceEditorController = (
       const session: ActiveSession = { identity, signal, onSessionFailure }
       active = session
       clearPrivatePresentation()
-      invoiceId = invoiceIdFromPathname(globalThis.location.pathname, 'edit')
+      reference = invoiceReferenceFromPathname(globalThis.location.pathname, 'edit')
       signal.addEventListener(
         'abort',
         () => {
@@ -684,12 +711,14 @@ export const createInvoiceEditorController = (
         },
         { once: true },
       )
-      if (invoiceId === null) {
+      if (reference === null) {
         status.textContent = 'That invoice does not exist.'
         return
       }
-      back.href = invoicePagePath(invoiceId)
-      cancel.href = invoicePagePath(invoiceId)
+      // Back to the page this one was opened from, until the invoice has
+      // loaded and its own address replaces it.
+      back.href = invoiceReferencePath(reference)
+      cancel.href = invoiceReferencePath(reference)
       if (!invoiceIdentityCanRead(identity)) {
         status.textContent =
           identity.authentication.kind === 'token'
@@ -704,6 +733,7 @@ export const createInvoiceEditorController = (
       }
       if (
         api.getInvoice === undefined ||
+        (reference.kind === 'number' && api.findInvoiceByNumber === undefined) ||
         api.updateInvoice === undefined ||
         api.createInvoiceLine === undefined ||
         api.updateInvoiceLine === undefined ||

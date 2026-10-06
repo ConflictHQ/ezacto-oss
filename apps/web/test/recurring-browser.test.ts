@@ -159,7 +159,7 @@ const baseApi = (
     [managed, sweep].find((candidate) => candidate.id === id)!,
   ),
   generateRecurringInvoice: vi.fn(async () => ({
-    invoice: { id: 91 },
+    invoice: { id: 91, number: '0091' },
     generation: { period: '2026-09', next_issue_on: '2026-11-01' },
   })),
   listRecurringClients: vi.fn(async () =>
@@ -346,7 +346,8 @@ describe('Recurring workspace controller', () => {
 
     const link = document.querySelector<HTMLAnchorElement>('[data-recurring-issued-link]')!
     expect(link.hidden).toBe(false)
-    expect(link.getAttribute('href')).toBe('/invoices/91')
+    // The invoice's number, not its id: the address every invoice link uses.
+    expect(link.getAttribute('href')).toBe('/invoices/0091')
   })
 
   it('[security] retries an issue under the key it already used', async () => {
@@ -362,7 +363,7 @@ describe('Recurring workspace controller', () => {
         attempt += 1
         if (attempt === 1) throw Object.assign(new Error('network'), { status: 500 })
         return {
-          invoice: { id: 91 },
+          invoice: { id: 91, number: '0091' },
           generation: { period: '2026-09', next_issue_on: '2026-11-01' },
         }
       }),

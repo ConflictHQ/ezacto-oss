@@ -265,11 +265,12 @@ describe('Retainer workspace controller', () => {
         ?.textContent,
     ).toBe('$3,200.00')
     expect(ledgerText()).toContain('Quarter boundary')
+    // A ledger entry names its invoice by id alone, so the link goes by id.
     expect(
       document
         .querySelector('[data-retainer-ledger] tbody a')
         ?.getAttribute('href'),
-    ).toBe('/invoices/77')
+    ).toBe('/invoices/by-id/77')
     // Nothing to warn about on a retainer with a deposit and an agreed amount.
     expect(document.querySelector<HTMLElement>('[data-retainer-notes]')?.hidden).toBe(true)
   })

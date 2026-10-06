@@ -295,7 +295,7 @@ describe('invoice generation browser behavior', () => {
       })
       expect(tracked).not.toHaveProperty('from')
       // The draft is the next step.
-      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/21'))
+      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/INV-21'))
       const submit = wizard.querySelector<HTMLButtonElement>('[data-invoice-generation-submit]')!
       await vi.waitFor(() => expect(submit.disabled).toBe(false))
 
@@ -390,7 +390,7 @@ describe('invoice generation browser behavior', () => {
 
       // Retrying replays the same command, then saves the setting.
       wizard.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
-      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/21'))
+      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/INV-21'))
       expect(generateInvoice).toHaveBeenCalledTimes(2)
       expect(generateInvoice.mock.calls[1]![0]).toBe(generateInvoice.mock.calls[0]![0])
       expect(setInvoiceJournal).toHaveBeenCalledTimes(2)
@@ -429,7 +429,7 @@ describe('invoice generation browser behavior', () => {
       expect(wizard.querySelector<HTMLInputElement>('[data-invoice-attach-journal]')!.checked)
         .toBe(false)
       wizard.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
-      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/21'))
+      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/INV-21'))
       expect(setInvoiceJournal).not.toHaveBeenCalled()
     } finally {
       vi.unstubAllGlobals()
@@ -614,7 +614,7 @@ describe('invoice browse browser behavior', () => {
     )
     expect(first.textContent).toContain('$82.50')
     expect(first.querySelector<HTMLAnchorElement>('a')?.getAttribute('href')).toBe(
-      '/invoices/7',
+      '/invoices/INV-7',
     )
     expect(document.querySelector('[data-invoice-list-status]')?.textContent).toBe(
       '1 invoice loaded; more are available.',

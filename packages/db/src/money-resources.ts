@@ -77,6 +77,12 @@ export interface InvoiceListWindow {
   states?: readonly InvoiceState[]
   /** Client ids to keep, or undefined for every client; see `MoneyWindow.clientIds`. */
   clientIds?: readonly number[]
+  /**
+   * The one invoice number to keep, or undefined for every number. Compared
+   * exactly, as text -- "089" keeps "089" and not "89" -- and on the unique
+   * index, so the page is that invoice or nothing.
+   */
+  number?: string
 }
 
 export type InvoiceState = 'draft' | 'open' | 'paid' | 'closed'
@@ -644,9 +650,9 @@ const invoiceListOrder = `issue_date DESC, ${invoiceNumberOrderKey('number')} DE
 /**
  * The ids on one page of the invoice list, newest first, as a common table
  * expression both halves of the page read: the snapshot bound, the optional
- * state and client narrowings (independent, and composed, because "the open
- * invoices for this subtree" needs both at once), then everything strictly
- * after the previous page's last invoice.
+ * state, client and number narrowings (independent, and composed, because
+ * "the open invoices for this subtree" needs both at once), then everything
+ * strictly after the previous page's last invoice.
  *
  * "After" is a row-value comparison on the whole sort key. The cursor's own
  * key is computed from its number by the same expression, inside the query,
@@ -658,7 +664,7 @@ const invoicePageFor = (window: Readonly<InvoiceListWindow>): string =>
     WHERE ${createdInstant} <= ?${inClause('state', window.states)}${inClause(
       'client_id',
       window.clientIds,
-    )}${
+    )}${window.number === undefined ? '' : ' AND number = ?'}${
       window.after === null
         ? ''
         : `
@@ -678,6 +684,7 @@ const invoicePageParams = (window: Readonly<InvoiceListWindow>): unknown[] => [
   window.createdThrough,
   ...(window.states ?? []),
   ...(window.clientIds ?? []),
+  ...(window.number === undefined ? [] : [window.number]),
   ...(window.after === null
     ? []
     : [window.after.issueDate, window.after.number, window.after.id]),

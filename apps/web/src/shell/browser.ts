@@ -5648,7 +5648,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         }
         // The draft is the next step, as it was in Harvest: open it.
         invoiceResult.textContent = `Draft invoice ${invoice.number} created. Opening it…`
-        globalThis.location.assign(invoicePagePath(invoice.id))
+        globalThis.location.assign(invoicePagePath(invoice))
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
