@@ -75,7 +75,8 @@ const expectPhoneControl = async (control: Locator): Promise<void> => {
   expect(box).not.toBeNull()
   expect(box!.x).toBeGreaterThanOrEqual(0)
   expect(box!.x + box!.width).toBeLessThanOrEqual(390)
-  expect(box!.height).toBeGreaterThanOrEqual(44)
+  // Float error, not a smaller control: a dialog's open transform reads 44px as 43.99997.
+  expect(box!.height).toBeGreaterThanOrEqual(44 - 0.01)
 }
 
 const expectNoPageOverflow = async (page: Page): Promise<void> => {
