@@ -32,7 +32,8 @@ interface TestDatabase {
     id:
       | '0025_time_entry_note_requirements'
       | '0094_payment_actuals'
-      | '0097_organization_invoice_defaults',
+      | '0097_organization_invoice_defaults'
+      | '0098_banded_invoice_create',
   ): Promise<void>
   close(): Promise<void>
 }
@@ -2108,7 +2109,9 @@ for (const [runtime, factory] of factories) {
       const receipts = `SELECT * FROM invoice_command_ledger ORDER BY invoice_id, command_id`
       const before = { schema: await schemaObjects(active), receipts: await active.rows(receipts) }
 
-      await active.migrate()
+      // Through 0098 alone: what is compared is that migration's change, not
+      // whatever later migrations add.
+      await active.migrateThrough('0098_banded_invoice_create')
 
       const after = { schema: await schemaObjects(active), receipts: await active.rows(receipts) }
       // Byte for byte, every receipt the rebuild copied.
@@ -2134,7 +2137,9 @@ for (const [runtime, factory] of factories) {
         "line.project_id IS json_extract(member.value, '$.project_id')",
       )
 
-      // The receipts written before still replay as themselves.
+      // The receipts written before still replay as themselves, on the
+      // database as it stands today.
+      await active.migrate()
       expect(await service.generate(command('tracked-before-0098'))).toEqual(tracked)
       expect(await service.generate(freeForm('blank-before-0098'))).toEqual(blank)
       // The tracked draft took the hours, so this band covers none of them.

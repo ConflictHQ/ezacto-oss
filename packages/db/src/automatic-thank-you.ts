@@ -69,7 +69,31 @@ export const setOrganizationThankYouPolicy = async (
 export interface ThankYouRecipient {
   readonly name: string
   readonly email: string
+  /** The header the invoice email put them in; the follow-ups keep it. */
+  readonly role: 'to' | 'cc'
 }
+
+/**
+ * The To and Cc headers of a follow-up, from whoever was sent the invoice.
+ * Somebody copied on the invoice is copied on what follows it, not promoted to
+ * an addressee of a reminder they were only ever copied on.
+ */
+export const followUpHeaders = (
+  recipients: readonly ThankYouRecipient[],
+): {
+  readonly to: readonly { readonly name: string; readonly email: string }[]
+  readonly cc: readonly { readonly name: string; readonly email: string }[]
+} => ({
+  to: recipients.filter(({ role }) => role === 'to').map(({ name, email }) => ({ name, email })),
+  cc: recipients.filter(({ role }) => role === 'cc').map(({ name, email }) => ({ name, email })),
+})
+
+const mailboxJson = (people: readonly { readonly name: string; readonly email: string }[]) =>
+  JSON.stringify(
+    people.map((person) =>
+      person.name === '' ? { email: person.email } : { email: person.email, name: person.name },
+    ),
+  )
 
 /**
  * Everything the thank-you needs, already rendered.
@@ -146,7 +170,8 @@ export const recordThankYouDelivery = async (
   input: Readonly<ThankYouDelivery>,
 ): Promise<ThankYouOutcome> => {
   // A message addressed to nobody is not a send; it is a row claiming one.
-  if (input.recipients.length === 0) return 'no_recipients'
+  const headers = followUpHeaders(input.recipients)
+  if (headers.to.length === 0) return 'no_recipients'
   if (await hasThankYouIntent(database, input.invoicePaymentId)) return 'already_sent'
 
   const payments = await database.all<{
@@ -189,19 +214,16 @@ export const recordThankYouDelivery = async (
   await runAtomic(database, [
     {
       text: `INSERT INTO email_log (
-          id, from_json, reply_to_json, to_json, template, subject,
+          id, from_json, reply_to_json, to_json, cc_json, template, subject,
           related_type, related_id, created_at, updated_at
         )
-        SELECT ?, ?, ?, ?, ?, ?, 'invoice', ?, ?, ?`,
+        SELECT ?, ?, ?, ?, ?, ?, ?, 'invoice', ?, ?, ?`,
       params: [
         input.deliveryId,
         JSON.stringify({ email: input.fromEmail, name: input.fromName }),
         input.replyToEmail === null ? null : JSON.stringify([{ email: input.replyToEmail }]),
-        JSON.stringify(
-          input.recipients.map((person) =>
-            person.name === '' ? { email: person.email } : { email: person.email, name: person.name },
-          ),
-        ),
+        mailboxJson(headers.to),
+        headers.cc.length === 0 ? null : mailboxJson(headers.cc),
         `thank_you:${String(input.templateVersion)}`,
         input.subject,
         input.invoiceId,
@@ -270,7 +292,7 @@ export const readThankYouRecipients = async (
   invoiceId: number,
 ): Promise<readonly ThankYouRecipient[]> =>
   database.all<ThankYouRecipient>(
-    sql`SELECT recipient.name AS name, recipient.email AS email
+    sql`SELECT recipient.name AS name, recipient.email AS email, recipient.role AS role
         FROM invoice_email_recipients recipient
         WHERE recipient.invoice_message_id = (
           SELECT message.id FROM invoice_messages message

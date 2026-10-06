@@ -1,6 +1,10 @@
 import { composeReminder, daysPastDue, type ReminderInvoice } from '@ezacto/core'
 import { sql } from 'drizzle-orm'
-import { readThankYouRecipients } from './automatic-thank-you.js'
+import {
+  followUpHeaders,
+  readThankYouRecipients,
+  type ThankYouRecipient,
+} from './automatic-thank-you.js'
 import type { EmailConfigurationStore } from './email-configuration.js'
 import { runAtomic, type InvoiceStateDatabase } from './invoice-state.js'
 import type { ScheduledReminderRecord } from './reminders.js'
@@ -27,6 +31,7 @@ export interface ReminderPortMessage {
   readonly fromEmail: string
   readonly replyToEmail: string | null
   readonly to: readonly { readonly name: string; readonly email: string }[]
+  readonly cc: readonly { readonly name: string; readonly email: string }[]
   readonly templateVersion: number
   readonly subject: string
   readonly textBody: string
@@ -161,7 +166,7 @@ export const createReminderPort = (
       ...composed,
     })
     if (outcome !== 'recorded') return null
-    return { deliveryId, to: recipients, ...composed }
+    return { deliveryId, ...followUpHeaders(recipients), ...composed }
   },
 })
 
@@ -176,7 +181,7 @@ export interface ReminderDelivery {
   readonly fromName: string
   readonly fromEmail: string
   readonly replyToEmail: string | null
-  readonly recipients: readonly { readonly name: string; readonly email: string }[]
+  readonly recipients: readonly ThankYouRecipient[]
   readonly subject: string
   readonly textBody: string
   readonly htmlBody: string | null
@@ -194,7 +199,8 @@ export const recordReminderDelivery = async (
   database: InvoiceStateDatabase,
   input: Readonly<ReminderDelivery>,
 ): Promise<ReminderOutcome> => {
-  if (input.recipients.length === 0) return 'no_recipients'
+  const headers = followUpHeaders(input.recipients)
+  if (headers.to.length === 0) return 'no_recipients'
   if (await hasReminderDelivery(database, input.scheduledReminderId)) return 'already_sent'
   const invoices = await database.all<{ state: string }>(
     sql`SELECT state FROM invoices WHERE id = ${input.invoiceId}`,
@@ -219,19 +225,26 @@ export const recordReminderDelivery = async (
   await runAtomic(database, [
     {
       text: `INSERT INTO email_log (
-          id, from_json, reply_to_json, to_json, template, subject,
+          id, from_json, reply_to_json, to_json, cc_json, template, subject,
           related_type, related_id, created_at, updated_at
         )
-        SELECT ?, ?, ?, ?, ?, ?, 'invoice', ?, ?, ?`,
+        SELECT ?, ?, ?, ?, ?, ?, ?, 'invoice', ?, ?, ?`,
       params: [
         input.deliveryId,
         JSON.stringify({ email: input.fromEmail, name: input.fromName }),
         input.replyToEmail === null ? null : JSON.stringify([{ email: input.replyToEmail }]),
         JSON.stringify(
-          input.recipients.map((person) =>
+          headers.to.map((person) =>
             person.name === '' ? { email: person.email } : { email: person.email, name: person.name },
           ),
         ),
+        headers.cc.length === 0
+          ? null
+          : JSON.stringify(
+              headers.cc.map((person) =>
+                person.name === '' ? { email: person.email } : { email: person.email, name: person.name },
+              ),
+            ),
         `reminder:${String(input.templateVersion)}`,
         input.subject,
         input.invoiceId,

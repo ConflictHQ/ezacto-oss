@@ -24,6 +24,7 @@ export const invoiceExtraKinds = [
   'journal',
   'reminders',
   'journal_formats',
+  'append',
 ] as const
 export type InvoiceExtraKind = (typeof invoiceExtraKinds)[number]
 
@@ -39,6 +40,21 @@ export type InvoiceExtraKind = (typeof invoiceExtraKinds)[number]
 export type InvoiceExtraValue = boolean | 'detailed' | 'summary' | readonly JournalFormat[]
 
 export type InvoiceExtras = Partial<Record<InvoiceExtraKind, InvoiceExtraValue>>
+
+/**
+ * What a client's own rules can say (migration 0099): how its invoices go --
+ * the document, the files, whether the files are bound into the document, the
+ * hours report and its formats. Whether its invoices are chased or thanked
+ * stays the organization's and the invoice's.
+ */
+export const clientInvoiceExtraKinds = [
+  'document',
+  'files',
+  'journal',
+  'journal_formats',
+  'append',
+] as const satisfies readonly InvoiceExtraKind[]
+export type ClientInvoiceExtraKind = (typeof clientInvoiceExtraKinds)[number]
 
 const isKind = (value: string): value is InvoiceExtraKind =>
   (invoiceExtraKinds as readonly string[]).includes(value)
@@ -82,25 +98,35 @@ export const parseInvoiceExtras = (stored: string | null): InvoiceExtras => {
 export interface ResolvedInvoiceExtra {
   /** What will actually happen. */
   readonly effective: InvoiceExtraValue
-  /** `null` when this invoice has not answered and follows the organization. */
+  /** `null` when this invoice has not answered and follows its client. */
   readonly invoice: InvoiceExtraValue | null
+  /** `null` when the client has no rule and follows the organization. */
+  readonly client: InvoiceExtraValue | null
   readonly organization: InvoiceExtraValue
 }
 
 /** Off, for every kind, unless something says otherwise. */
 const OFF: InvoiceExtraValue = false
 
+/**
+ * An invoice's own answer, else its client's standing rule, else the
+ * organization's: the order an operator would give if asked, and the one a
+ * Send dialog shows them.
+ */
 export const resolveInvoiceExtra = (
   organization: InvoiceExtras,
   invoice: InvoiceExtras,
   kind: InvoiceExtraKind,
+  client: InvoiceExtras = {},
 ): ResolvedInvoiceExtra => {
   const organizationValue = organization[kind] ?? OFF
+  const clientValue = client[kind]
   const invoiceValue = invoice[kind]
   return {
     invoice: invoiceValue ?? null,
+    client: clientValue ?? null,
     organization: organizationValue,
-    effective: invoiceValue ?? organizationValue,
+    effective: invoiceValue ?? clientValue ?? organizationValue,
   }
 }
 
@@ -118,19 +144,71 @@ const readOrganizationExtras = async (
 
 export const readOrganizationInvoiceExtras = readOrganizationExtras
 
-/** Both answers for one invoice, or `null` when the invoice does not exist. */
+/**
+ * The three answers for one invoice -- its own, its client's, the
+ * organization's -- or `null` when the invoice does not exist.
+ */
 export const readInvoiceExtras = async (
   database: InvoiceStateDatabase,
   invoiceId: number,
-): Promise<{ invoice: InvoiceExtras; organization: InvoiceExtras } | null> => {
-  const rows = await database.all<{ extras: string | null }>(
-    sql`SELECT invoice_extras AS extras FROM invoices WHERE id = ${invoiceId}`,
+): Promise<{
+  invoice: InvoiceExtras
+  client: InvoiceExtras
+  organization: InvoiceExtras
+} | null> => {
+  const rows = await database.all<{ extras: string | null; clientId: number }>(
+    sql`SELECT invoice_extras AS extras, client_id AS clientId FROM invoices
+        WHERE id = ${invoiceId}`,
   )
   if (rows[0] === undefined) return null
   return {
     invoice: parseInvoiceExtras(rows[0].extras),
+    client: (await readClientInvoiceExtras(database, rows[0].clientId)) ?? {},
     organization: await readOrganizationExtras(database),
   }
+}
+
+/** A client's rules, keeping only the kinds a client can hold. */
+const clientOnly = (extras: InvoiceExtras): InvoiceExtras =>
+  Object.fromEntries(
+    Object.entries(extras).filter(([kind]) =>
+      (clientInvoiceExtraKinds as readonly string[]).includes(kind),
+    ),
+  )
+
+/** A client's rules alone, or `null` when the client does not exist. */
+export const readClientInvoiceExtras = async (
+  database: InvoiceStateDatabase,
+  clientId: number,
+): Promise<InvoiceExtras | null> => {
+  // `*` rather than the column by name, so a database migration 0099 has not
+  // reached yet reads a client with no rules instead of refusing to read one.
+  const rows = await database.all<Record<string, unknown>>(
+    sql`SELECT * FROM clients WHERE id = ${clientId}`,
+  )
+  if (rows[0] === undefined) return null
+  const stored = rows[0].invoice_extras
+  return clientOnly(parseInvoiceExtras(typeof stored === 'string' ? stored : null))
+}
+
+/**
+ * Replaces a client's rules with exactly these. A kind left out follows the
+ * organization; an empty set clears the column, so "no rules" has one
+ * spelling.
+ */
+export const setClientInvoiceExtras = async (
+  database: InvoiceStateDatabase,
+  clientId: number,
+  extras: Partial<Record<ClientInvoiceExtraKind, InvoiceExtraValue>>,
+  updatedAt: string,
+): Promise<boolean> => {
+  const kept = clientOnly(extras)
+  const next = Object.keys(kept).length === 0 ? null : JSON.stringify(kept)
+  const rows = await database.all<{ id: number }>(
+    sql`UPDATE clients SET invoice_extras = ${next}, updated_at = ${updatedAt}
+        WHERE id = ${clientId} RETURNING id`,
+  )
+  return rows.length === 1
 }
 
 /**
@@ -146,9 +224,9 @@ export const resolveInvoiceExtraFor = async (
 ): Promise<ResolvedInvoiceExtra> => {
   const both = await readInvoiceExtras(database, invoiceId)
   if (both === null) {
-    return { effective: OFF, invoice: null, organization: OFF }
+    return { effective: OFF, invoice: null, client: null, organization: OFF }
   }
-  return resolveInvoiceExtra(both.organization, both.invoice, kind)
+  return resolveInvoiceExtra(both.organization, both.invoice, kind, both.client)
 }
 
 /**

@@ -136,10 +136,11 @@ describe('what was actually sent', () => {
     invoiceMessageId,
     invoiceId: 1,
     objectKey: invoiceDocumentKey(1, invoiceMessageId),
-    filename: invoiceDocumentFilename('1315'),
+    filename: invoiceDocumentFilename('1315', 'Example Studio, LLC'),
     contentType: 'application/pdf',
     byteSize: 2048,
     invoiceVersion: 3,
+    appendedAttachmentIds: [] as number[],
     now: at,
   })
 
@@ -150,11 +151,21 @@ describe('what was actually sent', () => {
       invoiceMessageId: 10,
       invoiceId: 1,
       objectKey: 'invoice-documents/1/10.pdf',
-      filename: 'invoice-1315.pdf',
+      filename: 'INVOICE_1315_EXAMPLE_STUDIO_LLC.pdf',
       contentType: 'application/pdf',
       byteSize: 2048,
       invoiceVersion: 3,
+      appendedAttachmentIds: [],
     })
+  })
+
+  it('[money] remembers which files were bound into the back of the document', async () => {
+    // A retried delivery attaches the document that went the first time and
+    // must not send those files beside it a second time, so the record says
+    // which they were, in the order they were bound.
+    const database = await fixture()
+    await recordAttachedDocument(database, { ...document(10), appendedAttachmentIds: [7, 3] })
+    expect((await readAttachedDocument(database, 10))?.appendedAttachmentIds).toEqual([7, 3])
   })
 
   it('[money] records one document per message, so a resend carries its own', async () => {
@@ -223,11 +234,22 @@ describe('naming the object and the file', () => {
     expect(invoiceDocumentKey(1315, 42)).toBe('invoice-documents/1315/42.pdf')
   })
 
+  it('[unit] names the file as Harvest did, number and company', () => {
+    expect(invoiceDocumentFilename('4021', 'Example, LLC')).toBe('INVOICE_4021_EXAMPLE_LLC.pdf')
+    expect(invoiceDocumentFilename('4021', '  Café Ñandú & Co.  ')).toBe(
+      'INVOICE_4021_CAFE_NANDU_CO.pdf',
+    )
+    // Nothing left of the company after the cleaning leaves the number alone.
+    expect(invoiceDocumentFilename('4021', '株式会社')).toBe('INVOICE_4021.pdf')
+  })
+
   it('[security] strips anything from the invoice number that is not a filename', () => {
     // Invoice numbers are operator text and reach the recipient's filesystem.
-    expect(invoiceDocumentFilename('1315')).toBe('invoice-1315.pdf')
-    expect(invoiceDocumentFilename('../../etc/passwd')).toBe('invoice-..-..-etc-passwd.pdf')
-    expect(invoiceDocumentFilename('2026/09 #7')).toBe('invoice-2026-09--7.pdf')
+    expect(invoiceDocumentFilename('1315', 'Example')).toBe('INVOICE_1315_EXAMPLE.pdf')
+    expect(invoiceDocumentFilename('../../etc/passwd', 'Example')).toBe(
+      'INVOICE_..-..-etc-passwd_EXAMPLE.pdf',
+    )
+    expect(invoiceDocumentFilename('2026/09 #7', 'Example')).toBe('INVOICE_2026-09--7_EXAMPLE.pdf')
   })
 })
 
@@ -353,6 +375,7 @@ describe('the files the journal goes as', () => {
     expect(await resolveJournalFormats(database, 1)).toEqual(['pdf'])
     expect(await readJournalFormatsPreference(database, 1)).toEqual({
       invoice: null,
+      client: null,
       organization: ['pdf'],
     })
   })
@@ -364,6 +387,7 @@ describe('the files the journal goes as', () => {
     expect(await setInvoiceJournalFormats(database, { invoiceId: 1, formats: ['xlsx'] })).toBe(true)
     expect(await readJournalFormatsPreference(database, 1)).toEqual({
       invoice: ['xlsx'],
+      client: null,
       organization: ['pdf', 'csv'],
     })
     expect(await resolveJournalFormats(database, 2)).toEqual(['pdf', 'csv'])

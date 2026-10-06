@@ -88,7 +88,11 @@ const seed = async (database: Harness, mailgun = false): Promise<void> => {
   )
 }
 
-const command = (database: Harness, evidenceVersion = 1) =>
+const command = (
+  database: Harness,
+  evidenceVersion = 1,
+  cc: readonly { name: string; email: string }[] = [],
+) =>
   executeInvoiceLifecycleCommand(database.orm, {
     invoiceId: 1,
     commandId: 'deliver-invoice-1',
@@ -103,6 +107,7 @@ const command = (database: Harness, evidenceVersion = 1) =>
       sentBy: 'Avery Ng', sentByEmail: null,
       sentFrom: 'Delivery Org', sentFromEmail: 'billing@example.com',
       recipients: [{ name: 'Client', email: 'client@example.net' }],
+      ...(cc.length === 0 ? {} : { cc }),
       subject: 'Invoice INV-1', body: 'Amount $12.34', attachPdf: false,
       sendMeACopy: false, thankYou: false, reminder: false, sendReminderOn: null,
     },
@@ -111,7 +116,11 @@ const command = (database: Harness, evidenceVersion = 1) =>
       senderEvidenceVersion: evidenceVersion, fromName: 'Delivery Org',
       fromEmail: 'billing@example.com', replyToEmail: null,
       subject: 'Invoice INV-1', textBody: 'Amount $12.34', htmlBody: null,
-      recipients: [{ deliveryId: 700, name: 'Client', email: 'client@example.net' }],
+      deliveryId: 700,
+      recipients: [
+        { name: 'Client', email: 'client@example.net', role: 'to' },
+        ...cc.map((person) => ({ ...person, role: 'cc' as const })),
+      ],
     },
   })
 
@@ -146,8 +155,66 @@ for (const [name, factory] of [['SQLite', container], ['real D1', d1]] as const)
       }])
       const repository = createMoneyResourceRepository(database.orm)
       await expect(repository.listInvoiceDeliveryJobs('evt-delivery-1')).resolves.toEqual([
-        expect.objectContaining({ deliveryId: 700, templateVersion: 1 }),
+        expect.objectContaining({
+          deliveryId: 700,
+          templateVersion: 1,
+          to: [{ name: 'Client', email: 'client@example.net' }],
+          cc: [],
+        }),
       ])
+    })
+
+    it('sends one email To the client and Cc everyone copied, each recorded against it', async () => {
+      database = await factory()
+      await seed(database)
+      const cc = [
+        { name: 'Pat Example', email: 'pat@example.net' },
+        { name: '', email: 'finance@example.com' },
+      ]
+      await expect(command(database, 1, cc)).resolves.toMatchObject({ event_count: 1 })
+      // One email, not one per address: the To and the Cc headers are the same
+      // message, so accounts payable and the people copied can answer all of it.
+      expect(await database.rows(
+        `SELECT id, to_json, cc_json, status FROM email_log`,
+      )).toEqual([{
+        id: 700,
+        to_json: JSON.stringify([{ email: 'client@example.net', name: 'Client' }]),
+        cc_json: JSON.stringify([
+          { email: 'pat@example.net', name: 'Pat Example' },
+          { email: 'finance@example.com' },
+        ]),
+        status: 'queued',
+      }])
+      expect(await database.rows(
+        `SELECT recipient_index, delivery_id, role, name, email
+         FROM invoice_email_recipients ORDER BY recipient_index`,
+      )).toEqual([
+        { recipient_index: 0, delivery_id: 700, role: 'to', name: 'Client', email: 'client@example.net' },
+        { recipient_index: 1, delivery_id: 700, role: 'cc', name: 'Pat Example', email: 'pat@example.net' },
+        { recipient_index: 2, delivery_id: 700, role: 'cc', name: '', email: 'finance@example.com' },
+      ])
+      const repository = createMoneyResourceRepository(database.orm)
+      await expect(repository.listInvoiceDeliveryJobs('evt-delivery-1')).resolves.toEqual([
+        expect.objectContaining({
+          deliveryId: 700,
+          to: [{ name: 'Client', email: 'client@example.net' }],
+          cc,
+        }),
+      ])
+      // The message carries both headers, and reads its status off the email.
+      const [message] = (await repository.listMessages(1))!
+      expect(message).toMatchObject({
+        recipients: [{ name: 'Client', email: 'client@example.net' }],
+        cc,
+        delivery_status: 'queued',
+      })
+      // The same command again is the same send, not a second one.
+      await expect(command(database, 1, cc)).resolves.toMatchObject({ event_count: 1 })
+      expect(await database.rows(`SELECT count(*) AS count FROM email_log`)).toEqual([{ count: 1 }])
+      // The same key with a different copy list is a different command.
+      await expect(
+        command(database, 1, [{ name: 'Pat Example', email: 'pat@example.net' }]),
+      ).rejects.toMatchObject({ code: 'command_id_reused' })
     })
 
     it('persists the intent for a deployment-attested Mailgun sender', async () => {

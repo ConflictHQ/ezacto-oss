@@ -174,6 +174,15 @@ export interface InvoiceDeliveryContext {
   organizationName: string
   clientName: string
   lineItems: InvoiceDeliveryLine[]
+  /**
+   * The four facts Harvest's invoice email summarised besides the money: the
+   * purchase order, the terms beside the due date, what is still owed, and the
+   * notes that carry the payment details.
+   */
+  purchaseOrder: string | null
+  notes: string | null
+  paymentTerms: 'upon_receipt' | 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'custom'
+  dueAmountCents: number
 }
 
 /**
@@ -184,13 +193,9 @@ export interface InvoiceDeliveryContext {
  * uploaded mark goes in the corner.
  */
 export interface InvoiceDocumentContext extends InvoiceDeliveryContext {
-  purchaseOrder: string | null
-  notes: string | null
-  paymentTerms: 'upon_receipt' | 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'custom'
   discountRatePpm: number | null
   taxRatePpm: number | null
   tax2RatePpm: number | null
-  dueAmountCents: number
   paidAmountCents: number
   /** Null where the organization has entered none. */
   organizationAddress: string | null
@@ -199,6 +204,10 @@ export interface InvoiceDocumentContext extends InvoiceDeliveryContext {
   logo: { fileKey: string; contentType: string } | null
 }
 
+/**
+ * One email to queue: every recipient of a message is a header of it, so a
+ * message is exactly one job however many people it went to.
+ */
 export interface InvoiceDeliveryJob {
   deliveryId: number
   senderIdentityId: number
@@ -207,8 +216,8 @@ export interface InvoiceDeliveryJob {
   fromName: string
   fromEmail: string
   replyToEmail: string | null
-  recipientName: string
-  recipientEmail: string
+  to: Array<{ name: string; email: string }>
+  cc: Array<{ name: string; email: string }>
   templateVersion: number
   subject: string
   textBody: string
@@ -322,6 +331,8 @@ export interface InvoiceMessageResource {
   sent_from: string | null
   sent_from_email: string | null
   recipients: Array<{ name: string; email: string }>
+  /** Who the email was copied to; empty for a message that copied nobody. */
+  cc: Array<{ name: string; email: string }>
   subject: string | null
   body: string | null
   attach_pdf: boolean
@@ -446,6 +457,12 @@ export interface RecurringInvoiceResource {
    * wolf.
    */
   cost_alert_basis_points: number | null
+  /**
+   * The client's purchase order every invoice this definition issues is raised
+   * under, or null. A yearly order is replaced by editing it when the client
+   * issues the next one.
+   */
+  purchase_order: string | null
   created_at: string
   updated_at: string
 }
@@ -470,6 +487,12 @@ export interface RecurringInvoiceInput {
   claimCeilingCents?: number | null
   claimScope?: 'billable' | 'tracked'
   costAlertBasisPoints?: number | null
+  /**
+   * Absent leaves the stored purchase order as it is, so a caller written
+   * before the field existed does not clear it by not knowing about it; null
+   * clears it.
+   */
+  purchaseOrder?: string | null
   occurredAt: string
 }
 
@@ -785,7 +808,10 @@ const deliveryContextSelect = `SELECT invoice.id AS "invoiceId", invoice.number,
     invoice.tax_amount_cents AS "taxAmountCents",
     invoice.tax2_amount_cents AS "tax2AmountCents",
     invoice.issue_date AS "issueDate", invoice.due_date AS "dueDate",
-    organization.name AS "organizationName", client.name AS "clientName"
+    organization.name AS "organizationName", client.name AS "clientName",
+    invoice.purchase_order AS "purchaseOrder", invoice.notes,
+    invoice.payment_terms AS "paymentTerms",
+    invoice.due_amount_cents AS "dueAmountCents"
   FROM invoices invoice
   JOIN clients client ON client.id = invoice.client_id
   JOIN organizations organization ON organization.id = 1
@@ -1091,9 +1117,10 @@ const assertEstimateCommandReceipt = (
 
 type RawMessage = Omit<
   InvoiceMessageResource,
-  'recipients' | 'attach_pdf' | 'send_me_a_copy' | 'thank_you' | 'reminder'
+  'recipients' | 'cc' | 'attach_pdf' | 'send_me_a_copy' | 'thank_you' | 'reminder'
 > & {
   recipients: unknown
+  cc: unknown
   attach_pdf: number | boolean
   send_me_a_copy: number | boolean
   thank_you: number | boolean
@@ -1103,6 +1130,7 @@ type RawMessage = Omit<
 const hydrateMessage = (row: RawMessage): InvoiceMessageResource => ({
   ...row,
   recipients: parseJson<Array<{ name: string; email: string }>>(row.recipients, []),
+  cc: parseJson<Array<{ name: string; email: string }>>(row.cc, []),
   attach_pdf: Boolean(row.attach_pdf),
   send_me_a_copy: Boolean(row.send_me_a_copy),
   thank_you: Boolean(row.thank_you),
@@ -1170,7 +1198,7 @@ export type CompleteRecurringOutcome =
 const recurringSelect = `SELECT id, client_id, subject_template, notes_template,
   every_n_months, day_of_month, next_issue_on, amount_config,
   can_draw_from_retainer_id, claims_project_ids, claim_mode, claim_ceiling_seconds,
-  claim_ceiling_cents, claim_scope, cost_alert_basis_points,
+  claim_ceiling_cents, claim_scope, cost_alert_basis_points, purchase_order,
   created_at, updated_at
   FROM recurring_invoices
   WHERE definition_status = 'complete'`
@@ -1250,13 +1278,20 @@ export class MoneyResourceRepository {
     if (typeof eventId !== 'string' || eventId.length < 1 || eventId.length > 255) {
       throw new RangeError('event id must be a bounded string')
     }
-    return all(this.database, {
+    const rows = await all<
+      Omit<InvoiceDeliveryJob, 'to' | 'cc'> & {
+        role: 'to' | 'cc'
+        recipientName: string
+        recipientEmail: string
+      }
+    >(this.database, {
       text: `SELECT recipient.delivery_id AS "deliveryId",
           intent.sender_identity_id AS "senderIdentityId",
           intent.sender_identity_version AS "senderIdentityVersion",
           intent.sender_evidence_version AS "senderEvidenceVersion",
           intent.from_name AS "fromName", intent.from_email AS "fromEmail",
           intent.reply_to_email AS "replyToEmail",
+          recipient.role AS role,
           recipient.name AS "recipientName", recipient.email AS "recipientEmail",
           intent.template_version AS "templateVersion", intent.subject,
           intent.text_body AS "textBody", intent.html_body AS "htmlBody",
@@ -1267,6 +1302,17 @@ export class MoneyResourceRepository {
         WHERE intent.event_id = ? ORDER BY recipient.recipient_index`,
       params: [eventId],
     })
+    // One job per email, in the order the recipients were written. A message
+    // sent before copies existed wrote one email per recipient, and each of
+    // those stays its own job, so a retry of one delivers exactly what it would
+    // have.
+    const jobs = new Map<number, InvoiceDeliveryJob>()
+    for (const { role, recipientName, recipientEmail, ...email } of rows) {
+      const job = jobs.get(email.deliveryId) ?? { ...email, to: [], cc: [] }
+      jobs.set(email.deliveryId, job)
+      job[role].push({ name: recipientName, email: recipientEmail })
+    }
+    return [...jobs.values()]
   }
 
   async listEstimates(window: MoneyWindow): Promise<EstimateResource[]> {
@@ -2006,11 +2052,22 @@ export class MoneyResourceRepository {
     if ((await this.getInvoice(invoiceId)) === null) return null
     return (
       await all<RawMessage>(this.database, {
-        text: `SELECT id, invoice_id, sent_by, sent_by_email, sent_from, sent_from_email,
-          recipients, subject, body, attach_pdf, send_me_a_copy, thank_you, reminder,
-          send_reminder_on, event_type, delivery_status, provider_message_id,
-          created_at, updated_at FROM invoice_messages
-          WHERE invoice_id = ? ORDER BY created_at, id`,
+        // A message ezacto sent has its status on the email that carried it,
+        // which every recipient row names; one Harvest sent has it on the row.
+        text: `SELECT message.id, message.invoice_id, message.sent_by, message.sent_by_email,
+          message.sent_from, message.sent_from_email, message.recipients,
+          message.cc_recipients AS cc, message.subject, message.body, message.attach_pdf,
+          message.send_me_a_copy, message.thank_you, message.reminder,
+          message.send_reminder_on, message.event_type,
+          coalesce(message.delivery_status, (
+            SELECT log.status FROM invoice_email_recipients recipient
+            JOIN email_log log ON log.id = recipient.delivery_id
+            WHERE recipient.invoice_message_id = message.id
+            ORDER BY recipient.recipient_index LIMIT 1
+          )) AS delivery_status,
+          message.provider_message_id, message.created_at, message.updated_at
+          FROM invoice_messages message
+          WHERE message.invoice_id = ? ORDER BY message.created_at, message.id`,
         params: [invoiceId],
       })
     ).map(hydrateMessage)
@@ -2302,6 +2359,11 @@ export class MoneyResourceRepository {
         claim_ceiling_cents: input.claimCeilingCents ?? null,
         claim_scope: input.claimScope ?? 'billable',
         cost_alert_basis_points: input.costAlertBasisPoints ?? null,
+        // Only when there is one, so a definition without one fingerprints as
+        // it did before the field existed.
+        ...(input.purchaseOrder === undefined || input.purchaseOrder === null
+          ? {}
+          : { purchase_order: input.purchaseOrder }),
       },
     })
     const expected = {
@@ -2327,6 +2389,7 @@ export class MoneyResourceRepository {
       claim_ceiling_cents: input.claimCeilingCents ?? null,
       claim_scope: input.claimScope ?? 'billable',
       cost_alert_basis_points: input.costAlertBasisPoints ?? null,
+      purchase_order: input.purchaseOrder ?? null,
       created_at: input.occurredAt,
       updated_at: input.occurredAt,
     }
@@ -2338,8 +2401,8 @@ export class MoneyResourceRepository {
             every_n_months, day_of_month, next_issue_on, amount_config,
             can_draw_from_retainer_id, claims_project_ids,
             claim_mode, claim_ceiling_seconds, claim_ceiling_cents, claim_scope,
-            cost_alert_basis_points, created_at, updated_at
-          ) VALUES (?, ?, 'complete', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            cost_alert_basis_points, purchase_order, created_at, updated_at
+          ) VALUES (?, ?, 'complete', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           params: [
             input.resourceId,
             input.clientId,
@@ -2356,6 +2419,7 @@ export class MoneyResourceRepository {
             input.claimCeilingCents ?? null,
             input.claimScope ?? 'billable',
             input.costAlertBasisPoints ?? null,
+            input.purchaseOrder ?? null,
             input.occurredAt,
             input.occurredAt,
           ],
@@ -2408,7 +2472,8 @@ export class MoneyResourceRepository {
         notes_template = ?, every_n_months = ?, day_of_month = ?, next_issue_on = ?,
         amount_config = ?, can_draw_from_retainer_id = ?, claims_project_ids = ?,
         claim_mode = ?, claim_ceiling_seconds = ?, claim_ceiling_cents = ?,
-        claim_scope = ?, cost_alert_basis_points = ?, updated_at = ?
+        claim_scope = ?, cost_alert_basis_points = ?,
+        purchase_order = CASE WHEN ? THEN ? ELSE purchase_order END, updated_at = ?
         WHERE id = ? AND definition_status = 'complete'`,
       params: [
         input.clientId,
@@ -2425,6 +2490,8 @@ export class MoneyResourceRepository {
         input.claimCeilingCents ?? null,
         input.claimScope ?? 'billable',
         input.costAlertBasisPoints ?? null,
+        input.purchaseOrder === undefined ? 0 : 1,
+        input.purchaseOrder ?? null,
         input.occurredAt,
         id,
       ],
@@ -2621,6 +2688,17 @@ export class MoneyResourceRepository {
     }
     if (input.subjectTemplate.trim().length === 0) {
       throw new TypeError('subjectTemplate must be non-empty')
+    }
+    const purchaseOrder = input.purchaseOrder
+    if (
+      purchaseOrder !== undefined &&
+      purchaseOrder !== null &&
+      (typeof purchaseOrder !== 'string' ||
+        purchaseOrder.trim().length === 0 ||
+        purchaseOrder.trim().length > 1_000 ||
+        purchaseOrder !== purchaseOrder.trim())
+    ) {
+      throw new TypeError('purchaseOrder must be null or 1 to 1000 characters without surrounding space')
     }
     if (!Number.isSafeInteger(input.everyNMonths) || input.everyNMonths < 1) {
       throw new RangeError('everyNMonths must be positive')

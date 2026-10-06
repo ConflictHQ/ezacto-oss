@@ -87,6 +87,7 @@ describe('carrying the old answers across', () => {
     expect(both!.invoice).toEqual({ document: false })
     expect(resolveInvoiceExtra(both!.organization, both!.invoice, 'document')).toEqual({
       invoice: false,
+      client: null,
       organization: true,
       effective: false,
     })
@@ -161,6 +162,7 @@ describe('the surfaces that were three triples', () => {
     await setOrganizationAttachPolicy(database, true)
     expect(await readAttachPreference(database, 1)).toEqual({
       invoice: null,
+      client: null,
       organization: true,
     })
     expect(await setInvoiceAttachPolicy(database, { invoiceId: 1, enabled: false })).toBe(true)
@@ -200,6 +202,7 @@ describe('the surfaces that were three triples', () => {
     const both = await readInvoiceExtras(database, 1)
     expect(resolveInvoiceExtra(both!.organization, both!.invoice, 'journal')).toEqual({
       invoice: 'detailed',
+      client: null,
       organization: 'summary',
       effective: 'detailed',
     })
