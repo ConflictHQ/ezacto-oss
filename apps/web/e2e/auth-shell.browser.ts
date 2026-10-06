@@ -27,6 +27,8 @@ test.beforeEach(async ({ page }) => {
 })
 
 type BrowserFixtureAction =
+  | 'banded-invoice-cleanup'
+  | 'banded-invoice-seed'
   | 'invoice-generation-cleanup'
   | 'invoice-generation-seed'
   | 'project-directory-cleanup'
@@ -46,7 +48,9 @@ test.afterEach(async ({ request }, testInfo) => {
     : testInfo.title ===
         '[e2e:invoice-cycle] generates a real draft through the authenticated wizard'
       ? 'invoice-generation-cleanup'
-      : null
+      : testInfo.title.includes('[e2e:invoice-banded]')
+        ? 'banded-invoice-cleanup'
+        : null
   if (action === null) return
   const cleaned = await controlBrowserFixture(request, action)
   expect(cleaned.status()).toBe(204)
@@ -2167,6 +2171,143 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   )
   await expect(generatedRow).toBeVisible()
   await expect(generatedRow).toContainText('$75.00')
+})
+
+test('[e2e:invoice-banded] raises a flat fee covering tracked time, up to a limit, through the real worker and D1', async ({
+  page,
+  request,
+}) => {
+  const seeded = await controlBrowserFixture(request, 'banded-invoice-seed')
+  expect(seeded.status()).toBe(204)
+
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/invoices/new')
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  const wizard = page.locator('[data-invoice-new-dialog]')
+  await expect(wizard).toBeVisible()
+  await expect(wizard.getByLabel('Client')).toHaveValue('1')
+  const bandType = wizard.getByRole('radio', { name: /^Flat fee covering tracked time/u })
+  await bandType.check()
+  await expectPhoneControl(bandType.locator('..'))
+  // The band's own project, so nothing another spec bills moves.
+  await expect(wizard.getByRole('checkbox', { name: /^Browser Band Project/u })).toHaveCount(1)
+  for (const projectChoice of await wizard.locator('input[name="project"]').all()) {
+    await projectChoice.setChecked((await projectChoice.inputValue()) === '9100')
+  }
+  await wizard.getByRole('radio', { name: 'Date range' }).check()
+  await wizard.getByLabel('From', { exact: true }).fill('2026-07-01')
+  await wizard.getByLabel('To', { exact: true }).fill('2026-07-31')
+
+  // The fee, read back in money as it is typed.
+  const fee = wizard.locator('[data-invoice-fee-line]')
+  await expect(fee).toHaveCount(1)
+  await fee.getByLabel('Description').fill('July retainer')
+  await fee.getByLabel('Unit price').fill('1200.00')
+  await expect(fee.locator('[data-invoice-fee-amount]')).toHaveText('$1,200.00')
+  await expect(wizard.locator('[data-invoice-fee-total]')).toHaveText('$1,200.00')
+
+  // Up to 17 hours: the report proves no more than "at least 1h billed";
+  // the 2h entry that crosses the limit is billed whole, which the draft shows.
+  await wizard.getByRole('radio', { name: 'Up to a limit' }).check()
+  await wizard.getByLabel('Up to', { exact: true }).fill('17')
+  await wizard
+    .getByLabel('Bill the hours past the limit, grouped by')
+    .selectOption('detailed')
+  await expect(wizard.locator('[data-invoice-band-preview]')).toHaveText(
+    "18.00 h uninvoiced in the period: up to 17.00 h covered, oldest first, and at least 1.00 h billed at each person's rate. An entry is never split, so the draft has the exact figures.",
+  )
+  for (const control of [
+    fee.getByLabel('Description'),
+    fee.getByLabel('Quantity'),
+    fee.getByLabel('Unit price'),
+    wizard.getByRole('button', { name: 'Add line' }),
+    wizard.getByLabel('Limit in'),
+    wizard.getByLabel('Up to', { exact: true }),
+    wizard.getByLabel('Bill the hours past the limit, grouped by'),
+    wizard.getByRole('button', { name: 'Create draft' }),
+  ]) {
+    await expectPhoneControl(control)
+  }
+  await expectNoPageOverflow(page)
+
+  const generated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/invoice-generations' &&
+      response.request().method() === 'POST',
+  )
+  await wizard.getByRole('button', { name: 'Create draft' }).click()
+  const generatedResponse = await generated
+  expect(generatedResponse.status()).toBe(201)
+  expect(generatedResponse.request().postDataJSON()).toEqual({
+    kind: 'banded',
+    client_id: 1,
+    from: '2026-07-01',
+    to: '2026-07-31',
+    project_ids: [9100],
+    line_items: [
+      { kind: 'Service', description: 'July retainer', quantity: 1, unit_price_cents: 120_000 },
+    ],
+    claim_mode: 'ceiling',
+    claim_ceiling_seconds: 61_200,
+    overage_summary_type: 'detailed',
+  })
+
+  // The draft opens: the fee, then the hour past the limit at its rate.
+  await expect(page).toHaveURL(/\/invoices\/\d+$/u)
+  const invoiceId = Number(new URL(page.url()).pathname.split('/').pop())
+  const overage =
+    '[BAND] Browser Band Project - 2026-07-20 - Browser Acceptance Task / Browser Owner: Browser band fixture overage'
+  const read = (await page.evaluate(
+    async (id) => (await fetch(`/api/v1/invoices/${String(id)}`)).json(),
+    invoiceId,
+  )) as {
+    data: {
+      amount_cents: number
+      period_start: string | null
+      period_end: string | null
+      line_items: Array<{
+        description: string | null
+        quantity: number
+        unit_price_cents: number
+        amount_cents: number
+      }>
+    }
+  }
+  expect(read.data).toMatchObject({
+    amount_cents: 140_000,
+    period_start: '2026-07-01',
+    period_end: '2026-07-31',
+  })
+  expect(
+    read.data.line_items.map(({ description, quantity, unit_price_cents, amount_cents }) => ({
+      description,
+      quantity,
+      unit_price_cents,
+      amount_cents,
+    })),
+  ).toEqual([
+    { description: 'July retainer', quantity: 1, unit_price_cents: 120_000, amount_cents: 120_000 },
+    { description: overage, quantity: 2, unit_price_cents: 10_000, amount_cents: 20_000 },
+  ])
+  const detail = page.locator('[data-invoice-document]')
+  await expect(detail).toBeVisible()
+  await expect(detail.locator('[data-invoice-detail-lines]')).toContainText('July retainer')
+  await expect(detail.locator('[data-invoice-detail-lines]')).toContainText(overage)
+  await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$1,400.00')
+
+  // Covered or billed, the band's hours are this invoice's now.
+  const uninvoiced = (await page.evaluate(
+    async () =>
+      (
+        await fetch(
+          '/api/v1/reports/uninvoiced?from=2026-07-01&to=2026-07-31&client_id=1&project_id=9100',
+        )
+      ).json(),
+  )) as { data: { totals: unknown[] } }
+  expect(uninvoiced.data.totals).toEqual([])
 })
 
 /**

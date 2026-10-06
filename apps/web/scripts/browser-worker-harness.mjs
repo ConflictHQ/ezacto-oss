@@ -609,6 +609,72 @@ const fixtureControl = async (request, response) => {
       ),
       database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
     ])
+  } else if (action === 'banded-invoice-seed') {
+    /**
+     * A band's month on a project of its own, so nothing another spec bills
+     * or counts moves: 8h, 8h and 2h in July at 100.00/h, all 'Browser Band
+     * fixture' rows. Under a 17h limit the first two are covered and the 2h
+     * entry, which would cross it, is billed whole.
+     */
+    await database.batch([
+      database.prepare(
+        `DELETE FROM time_entries
+         WHERE invoice_id IS NULL AND notes LIKE 'Browser band fixture%'`,
+      ),
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO projects (
+             id, client_id, name, code, hourly_rate_cents, created_at, updated_at
+           ) VALUES (9100, 1, 'Browser Band Project', 'BAND', 10000, ?, ?)`,
+        )
+        .bind(timestamp, timestamp),
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+           VALUES (9100, 9100, 1, ?, ?)`,
+        )
+        .bind(timestamp, timestamp),
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO task_assignments (
+             id, project_id, task_id, billable, created_at, updated_at
+           ) VALUES (9100, 9100, 1, 1, ?, ?)`,
+        )
+        .bind(timestamp, timestamp),
+      database
+        .prepare(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, notes, created_at, updated_at
+           ) VALUES
+             (9101, 1, 9100, 1, 9100, 9100, '2026-07-06', 28800, 28800, 28800, 1,
+              10000, 5000, 'Browser band fixture week one', ?, ?),
+             (9102, 1, 9100, 1, 9100, 9100, '2026-07-13', 28800, 28800, 28800, 1,
+              10000, 5000, 'Browser band fixture week two', ?, ?),
+             (9103, 1, 9100, 1, 9100, 9100, '2026-07-20', 7200, 7200, 7200, 1,
+              10000, 5000, 'Browser band fixture overage', ?, ?)`,
+        )
+        .bind(timestamp, timestamp, timestamp, timestamp, timestamp, timestamp),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
+    const seeded = await database
+      .prepare(
+        `SELECT count(*) AS count, sum(rounded_seconds) AS seconds FROM time_entries
+         WHERE invoice_id IS NULL AND notes LIKE 'Browser band fixture%'`,
+      )
+      .first()
+    if (seeded?.count !== 3 || seeded.seconds !== 64800) {
+      throw new Error('banded invoice fixture did not own one exact work set')
+    }
+  } else if (action === 'banded-invoice-cleanup') {
+    await database.batch([
+      database.prepare(
+        `DELETE FROM time_entries
+         WHERE invoice_id IS NULL AND notes LIKE 'Browser band fixture%'`,
+      ),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
   } else if (action === 'invoice-line-seed') {
     await database.batch([
       database.prepare('DELETE FROM time_entries WHERE id = 904'),
