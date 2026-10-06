@@ -110,6 +110,17 @@ export type InvoiceHoursReportFormat = 'pdf' | 'csv' | 'xlsx'
 
 export interface InvoicePaymentApi {
   getInvoice(id: number, signal?: AbortSignal): Promise<Invoice>
+  /**
+   * The one invoice with exactly this number, or null: how a page addressed by
+   * number (`/invoices/4021`) finds the record it is for. Compared as text, so
+   * "089" is not "89".
+   */
+  findInvoiceByNumber(number: string, signal?: AbortSignal): Promise<Invoice | null>
+  /**
+   * The client the invoice is for, so the page can name it. A name is a
+   * nicety: the page reads without one, and says "Client #id" instead.
+   */
+  getDirectoryClient?(id: number, signal?: AbortSignal): Promise<GeneralResource>
   /** The hours this invoice billed, as a file (the work journal, issue 647). */
   downloadInvoiceHoursReport?(
     id: number,
@@ -297,7 +308,12 @@ export const invoiceAttachmentChanges = (
 export interface InvoiceEditorApi
   extends Pick<
     InvoicePaymentApi,
-    'getInvoice' | 'updateInvoice' | 'createInvoiceLine' | 'updateInvoiceLine' | 'deleteInvoiceLine'
+    | 'getInvoice'
+    | 'findInvoiceByNumber'
+    | 'updateInvoice'
+    | 'createInvoiceLine'
+    | 'updateInvoiceLine'
+    | 'deleteInvoiceLine'
   > {
   /** The client the invoice is for, by name. A name is a nicety; the page edits without one. */
   getDirectoryClient?(id: number, signal?: AbortSignal): Promise<GeneralResource>
@@ -385,28 +401,107 @@ export const invoiceIdentityCanWrite = (identity: Readonly<Whoami>): boolean =>
   invoiceIdentityHasScope(identity, 'invoices:write')
 
 /**
+ * The second segment of every page the worker serves under `/invoices/` that
+ * is not an invoice -- the tabs, `new`, the `configure` redirect -- and
+ * `by-id`, which addresses an invoice by its record id. A number spelled like
+ * one of these cannot be its own address: `/invoices/new` is the New invoice
+ * dialog, whatever invoice is numbered "new". The worker's tests hold this
+ * list to its route table.
+ */
+const reservedInvoiceSegments: ReadonlySet<string> = new Set([
+  'by-id',
+  'configure',
+  'estimates',
+  'new',
+  'recurring',
+  'retainers',
+])
+
+/**
+ * Whether an invoice number can be its own page address (`/invoices/4021`).
+ *
+ * It has to be a path segment no browser rewrites or reads as anything else --
+ * letters, digits, `.`, `_` and `-`, starting with a letter or a digit, at
+ * most 64 characters -- and none of the reserved segments above. A number
+ * that is not is still reachable: its pages fall back to the record id.
+ *
+ * Numbers are text throughout: "089" is its own address, not invoice 89's,
+ * and nothing here parses one. The worker's route table asks the same
+ * question, so a link drawn here is a page served there.
+ */
+export const invoiceNumberIsAddressable = (number: string): boolean =>
+  /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(number) && !reservedInvoiceSegments.has(number)
+
+/**
+ * An invoice page's address, as the page reads it back: the number it was
+ * opened by, or the record id under `by-id`.
+ */
+export type InvoicePageReference =
+  | { readonly kind: 'number'; readonly number: string }
+  | { readonly kind: 'id'; readonly id: number }
+
+/** What a link to an invoice needs: its id, and its number where the caller has one. */
+export interface InvoiceAddress {
+  readonly id: number
+  readonly number: string | null | undefined
+}
+
+/**
  * Where an invoice's pages live, and the one place that says so.
  *
- * Every link the app draws to an invoice is built here and every invoice page
- * reads its address back through `invoiceIdFromPathname` below, so moving the
- * address from the record id to the invoice number is a change to these two
- * functions and the worker's route table -- not a search through every screen
- * that happens to link to an invoice.
+ * Every link the app draws to an invoice is built here, and every invoice page
+ * reads its address back through `invoiceReferenceFromPathname` below. The
+ * address is the invoice number -- `/invoices/4021`, `/invoices/4021/edit` --
+ * because that is the name on the document, the one people quote and keep.
+ * Where the caller has no number, or the number cannot be a path segment, the
+ * page is addressed by its record id under `/invoices/by-id/`, and the page
+ * swaps that for the number once it has read the invoice.
  */
-export const invoicePagePath = (invoiceId: number, page: 'detail' | 'edit' = 'detail'): string =>
-  page === 'edit' ? `/invoices/${invoiceId}/edit` : `/invoices/${invoiceId}`
+export const invoicePagePath = (
+  invoice: InvoiceAddress,
+  page: 'detail' | 'edit' = 'detail',
+): string =>
+  invoiceReferencePath(
+    typeof invoice.number === 'string' && invoiceNumberIsAddressable(invoice.number)
+      ? { kind: 'number', number: invoice.number }
+      : { kind: 'id', id: invoice.id },
+    page,
+  )
 
-/** The invoice a detail (or edit) page is for; null for any other path. */
-export const invoiceIdFromPathname = (
+/** The address a reference names: `invoiceReferenceFromPathname` the other way round. */
+export const invoiceReferencePath = (
+  reference: InvoicePageReference,
+  page: 'detail' | 'edit' = 'detail',
+): string => {
+  const base =
+    reference.kind === 'number'
+      ? `/invoices/${reference.number}`
+      : `/invoices/by-id/${reference.id}`
+  return page === 'edit' ? `${base}/edit` : base
+}
+
+const invoicePagePatterns: Readonly<Record<'detail' | 'edit', RegExp>> = {
+  detail: /^\/invoices\/(?:by-id\/([1-9][0-9]*)|([^/]+))\/?$/u,
+  edit: /^\/invoices\/(?:by-id\/([1-9][0-9]*)|([^/]+))\/edit\/?$/u,
+}
+
+/**
+ * The invoice a detail (or edit) page is addressed to; null for any other
+ * path, including a number that cannot be an address and an id past a safe
+ * integer. A number comes back as the text it is, leading zeros and all.
+ */
+export const invoiceReferenceFromPathname = (
   pathname: string,
   page: 'detail' | 'edit' = 'detail',
-): number | null => {
-  const match = (
-    page === 'edit' ? /^\/invoices\/([1-9][0-9]*)\/edit\/?$/u : /^\/invoices\/([1-9][0-9]*)\/?$/u
-  ).exec(pathname)
+): InvoicePageReference | null => {
+  const match = invoicePagePatterns[page].exec(pathname)
   if (match === null) return null
-  const id = Number(match[1])
-  return Number.isSafeInteger(id) ? id : null
+  if (match[1] !== undefined) {
+    const id = Number(match[1])
+    return Number.isSafeInteger(id) ? { kind: 'id', id } : null
+  }
+  const number = match[2]!
+  return invoiceNumberIsAddressable(number) ? { kind: 'number', number } : null
 }
 
 /**
@@ -416,8 +511,8 @@ export const invoiceIdFromPathname = (
  */
 export type InvoiceEditFocus = { readonly line: number } | 'new-line'
 
-export const invoiceEditHref = (invoiceId: number, focus?: InvoiceEditFocus): string =>
-  `${invoicePagePath(invoiceId, 'edit')}${
+export const invoiceEditHref = (invoice: InvoiceAddress, focus?: InvoiceEditFocus): string =>
+  `${invoicePagePath(invoice, 'edit')}${
     focus === undefined ? '' : focus === 'new-line' ? '#new-line' : `#line-${focus.line}`
   }`
 

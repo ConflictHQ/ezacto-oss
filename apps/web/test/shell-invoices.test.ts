@@ -295,7 +295,7 @@ describe('invoice generation browser behavior', () => {
       })
       expect(tracked).not.toHaveProperty('from')
       // The draft is the next step.
-      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/21'))
+      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/INV-21'))
       const submit = wizard.querySelector<HTMLButtonElement>('[data-invoice-generation-submit]')!
       await vi.waitFor(() => expect(submit.disabled).toBe(false))
 
@@ -667,7 +667,7 @@ describe('invoice generation browser behavior', () => {
 
       // Retrying replays the same command, then saves the setting.
       wizard.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
-      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/21'))
+      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/INV-21'))
       expect(generateInvoice).toHaveBeenCalledTimes(2)
       expect(generateInvoice.mock.calls[1]![0]).toBe(generateInvoice.mock.calls[0]![0])
       expect(setInvoiceJournal).toHaveBeenCalledTimes(2)
@@ -706,7 +706,7 @@ describe('invoice generation browser behavior', () => {
       expect(wizard.querySelector<HTMLInputElement>('[data-invoice-attach-journal]')!.checked)
         .toBe(false)
       wizard.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
-      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/21'))
+      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/INV-21'))
       expect(setInvoiceJournal).not.toHaveBeenCalled()
     } finally {
       vi.unstubAllGlobals()
@@ -891,7 +891,7 @@ describe('invoice browse browser behavior', () => {
     )
     expect(first.textContent).toContain('$82.50')
     expect(first.querySelector<HTMLAnchorElement>('a')?.getAttribute('href')).toBe(
-      '/invoices/7',
+      '/invoices/INV-7',
     )
     expect(document.querySelector('[data-invoice-list-status]')?.textContent).toBe(
       '1 invoice loaded; more are available.',
@@ -1044,6 +1044,38 @@ describe('invoice browse browser behavior', () => {
     expect(documentShell.textContent).toContain('Accounts payable')
     expect(documentShell.textContent).toContain('Persisted message body')
     expect(documentShell.textContent).not.toMatch(/Download PDF|Send reminder/u)
+  })
+
+  it('[browser] names the client on an invoice opened directly, before the client list arrives', async () => {
+    // Saving in the editor lands here on a fresh page load. The page painted
+    // as soon as the invoice arrived, the names of every client came later,
+    // and nothing painted again -- so the client read "Client #11", an
+    // internal id on a document a client is sent.
+    renderBrowserShell({ view: 'invoice-detail' })
+    let releaseDirectory = (): void => undefined
+    const directoryHeld = new Promise<void>((resolve) => {
+      releaseDirectory = resolve
+    })
+    const api: ShellApi = {
+      ...browserApi(),
+      listDirectoryClients: vi.fn(async () => {
+        await directoryHeld
+        return { data: [resource(11, 'Northwind Freight')], page: { next_cursor: null } }
+      }),
+      getDirectoryClient: vi.fn(async (id: number) => resource(id, 'Northwind Freight')),
+      getInvoice: vi.fn(async () => invoice(7)),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+    }
+
+    const mounted = mountShell(api)
+    const documentShell = document.querySelector<HTMLElement>('[data-invoice-document]')!
+    await vi.waitFor(() => expect(documentShell.hidden).toBe(false))
+    const client = document.querySelector('[data-invoice-detail-client]')!
+    expect(client.textContent).toBe('Northwind Freight')
+    releaseDirectory()
+    await mounted
+    expect(client.textContent).toBe('Northwind Freight')
   })
 
   it('[e2e:invoice-cycle] sends a draft through the composer and shows its scheduled reminder', async () => {

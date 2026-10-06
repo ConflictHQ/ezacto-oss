@@ -365,6 +365,7 @@ const invoiceStates: readonly InvoiceState[] = ["draft", "open", "paid", "closed
 export interface InvoiceListWindow extends KeysetWindow<InvoiceListPosition> {
   states?: readonly InvoiceState[];
   clientIds?: readonly number[];
+  number?: string;
 }
 
 export interface RetainerCursorWindow extends CursorWindow {
@@ -433,6 +434,39 @@ const clientIdFilter = (requestUrl: URL): readonly number[] | undefined => {
     wanted.add(Number(value));
   }
   return [...wanted];
+};
+
+/**
+ * The `number` query parameter: the invoice with exactly this number. It is how
+ * the web app opens `/invoices/4021` -- the address carries the number, and the
+ * page needs the record behind it.
+ *
+ * Compared as text, exactly as given: nothing is trimmed or parsed, so "089"
+ * is not "89". Numbers are unique, so the answer is that invoice or an empty
+ * page. One number, unlike `state` and `client_id`: a repeated parameter would
+ * be a set, and this one does not answer for a set. Bounded the way the
+ * contract bounds it, in characters rather than UTF-16 units.
+ */
+const invoiceNumberFilter = (requestUrl: URL): string | undefined => {
+  const raw = requestUrl.searchParams.getAll("number");
+  if (raw.length === 0) return undefined;
+  if (raw.length > 1) {
+    throw validationError([
+      { field: "number", code: "duplicate", message: "number may appear once" },
+    ]);
+  }
+  const value = raw[0]!;
+  const length = Array.from(value).length;
+  if (length < 1 || length > 64) {
+    throw validationError([
+      {
+        field: "number",
+        code: "invalid",
+        message: "number must be an invoice number of 1 to 64 characters",
+      },
+    ]);
+  }
+  return value;
 };
 
 interface MoneyResourceService {
@@ -1721,6 +1755,7 @@ const installInvoiceReads = <Bindings extends object>(
     const requestUrl = new URL(context.req.url);
     const states = invoiceStateFilter(requestUrl);
     const clientIds = clientIdFilter(requestUrl);
+    const number = invoiceNumberFilter(requestUrl);
     return context.json(
       await keysetCursorPage({
         requestUrl,
@@ -1741,6 +1776,7 @@ const installInvoiceReads = <Bindings extends object>(
               ...window,
               ...(states === undefined ? {} : { states }),
               ...(clientIds === undefined ? {} : { clientIds }),
+              ...(number === undefined ? {} : { number }),
             }),
         },
       }),

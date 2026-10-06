@@ -174,6 +174,10 @@ const server = (initial: Invoice) => {
   const priced = (quantity: number, unit: number): number => Math.round(quantity * unit)
   const api = {
     getInvoice: vi.fn(async () => current),
+    // The list narrowed to one number: exact, and compared as text.
+    findInvoiceByNumber: vi.fn(async (number: string) =>
+      number === current.number ? current : null,
+    ),
     getDirectoryClient: vi.fn(async (id: number) => resource(id, { name: 'Northpeak' })),
     listInvoiceClientProjects: vi.fn(async () => ({
       data: [
@@ -267,8 +271,8 @@ const server = (initial: Invoice) => {
   }
 }
 
-const renderEditor = (hash = ''): void => {
-  window.history.replaceState(null, '', `/invoices/7/edit${hash}`)
+const renderEditor = (path: string, hash: string): void => {
+  window.history.replaceState(null, '', `${path}${hash}`)
   globalThis.sessionStorage.clear()
   document.open()
   document.write(
@@ -292,9 +296,15 @@ const renderEditor = (hash = ''): void => {
 
 const open = async (
   api: Partial<InvoiceEditorApi>,
-  options: { readonly hash?: string; readonly who?: Whoami; readonly signal?: AbortSignal } = {},
+  options: {
+    readonly path?: string
+    readonly hash?: string
+    readonly who?: Whoami
+    readonly signal?: AbortSignal
+  } = {},
 ): Promise<void> => {
-  renderEditor(options.hash ?? '')
+  // Where every link in the app sends it: the invoice's number.
+  renderEditor(options.path ?? '/invoices/INV-7/edit', options.hash ?? '')
   await createInvoiceEditorController(api).activate(
     options.who ?? identity(),
     options.signal ?? new AbortController().signal,
@@ -353,7 +363,10 @@ describe('invoice edit page', () => {
     const { api } = server(invoice())
     await open(api)
 
+    // The address carries the number; the page reads the record by its id.
+    expect(api.findInvoiceByNumber).toHaveBeenCalledWith('INV-7', expect.any(AbortSignal))
     expect(api.getInvoice).toHaveBeenCalledWith(7, expect.any(AbortSignal))
+    expect(globalThis.location.pathname).toBe('/invoices/INV-7/edit')
     expect(control<HTMLFormElement>('[data-invoice-edit-form]').hidden).toBe(false)
     expect(control('[data-invoice-edit-title]').textContent).toBe('Edit invoice INV-7')
     expect(document.title).toBe('ezacto — Edit invoice INV-7')
@@ -368,10 +381,10 @@ describe('invoice edit page', () => {
     expect(control<HTMLInputElement>('[data-invoice-edit-tax]').value).toBe('')
     // Back and Cancel return to the invoice the page was opened from.
     expect(control<HTMLAnchorElement>('[data-invoice-edit-back]').getAttribute('href')).toBe(
-      '/invoices/7',
+      '/invoices/INV-7',
     )
     expect(control<HTMLAnchorElement>('[data-invoice-edit-cancel]').getAttribute('href')).toBe(
-      '/invoices/7',
+      '/invoices/INV-7',
     )
 
     expect(rows()).toHaveLength(2)
@@ -410,7 +423,7 @@ describe('invoice edit page', () => {
     type(control('[data-invoice-edit-tax]'), '8.25')
     save()
 
-    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/7'))
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/INV-7'))
     expect(backend.api.updateInvoice).toHaveBeenCalledTimes(2)
     expect(backend.api.updateInvoice).toHaveBeenNthCalledWith(
       1,
@@ -438,7 +451,7 @@ describe('invoice edit page', () => {
     )
     expect(backend.api.createInvoiceLine).not.toHaveBeenCalled()
     expect(backend.api.updateInvoiceLine).not.toHaveBeenCalled()
-    expect(notice()).toEqual({ pathname: '/invoices/7', message: 'Invoice saved.' })
+    expect(notice()).toEqual({ pathname: '/invoices/INV-7', message: 'Invoice saved.' })
   })
 
   it('[e2e:invoice-header] clears a note to null and sends nothing when nothing changed', async () => {
@@ -459,7 +472,7 @@ describe('invoice edit page', () => {
     save()
     await vi.waitFor(() => expect(backend.api.updateInvoice).toHaveBeenCalledTimes(1))
     expect(backend.api.updateInvoice.mock.calls[0]?.[2]).toMatchObject({ notes: null })
-    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/7'))
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/INV-7'))
   })
 
   it('[reliability] keeps a committed header edit and retries only the failed rate command', async () => {
@@ -485,7 +498,7 @@ describe('invoice edit page', () => {
     const firstRates = backend.api.updateInvoice.mock.calls[1]!
 
     save()
-    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/7'))
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/INV-7'))
     // Only what was left, under the key it was first sent with, at the version
     // the committed header returned.
     expect(backend.api.updateInvoice).toHaveBeenCalledTimes(3)
@@ -520,7 +533,7 @@ describe('invoice edit page', () => {
     expect(control<HTMLInputElement>('[data-invoice-edit-subject]').disabled).toBe(false)
 
     save()
-    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/7'))
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/INV-7'))
     const [first, second] = backend.api.updateInvoice.mock.calls
     expect(second?.[2]).toMatchObject({
       expected_version: 2,
@@ -610,7 +623,7 @@ describe('invoice edit page', () => {
     expect(rows()).toHaveLength(2)
 
     save()
-    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/7'))
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/INV-7'))
     // The lost answer is replayed under the key it was sent with, not sent
     // again as a second line; nothing that landed is sent twice.
     expect(backend.api.createInvoiceLine).toHaveBeenCalledTimes(2)
@@ -661,7 +674,7 @@ describe('invoice edit page', () => {
     expect(field(0, 'quantity').value).toBe('3')
 
     save()
-    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/7'))
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/invoices/INV-7'))
     const calls = backend.api.updateInvoice.mock.calls.length
     expect(calls).toBe(0)
     const [first, second] = backend.api.updateInvoiceLine.mock.calls
@@ -711,6 +724,49 @@ describe('invoice edit page', () => {
     expect(document.activeElement).toBe(field(2, 'description'))
   })
 
+  it('[browser] opened by id, lands on the number with its hash, and leads back there', async () => {
+    const { api } = server(invoice())
+    const entries = globalThis.history.length
+    await open(api, { path: '/invoices/by-id/7/edit', hash: '#line-22' })
+
+    expect(api.findInvoiceByNumber).not.toHaveBeenCalled()
+    expect(api.getInvoice).toHaveBeenCalledWith(7, expect.any(AbortSignal))
+    // Replaced rather than pushed: going back leaves the page, it does not
+    // revisit the id.
+    expect(globalThis.location.pathname).toBe('/invoices/INV-7/edit')
+    expect(globalThis.location.hash).toBe('#line-22')
+    expect(globalThis.history.length).toBe(entries)
+    expect(document.activeElement).toBe(field(1, 'description'))
+    expect(control<HTMLAnchorElement>('[data-invoice-edit-back]').getAttribute('href')).toBe(
+      '/invoices/INV-7',
+    )
+    expect(control<HTMLAnchorElement>('[data-invoice-edit-cancel]').getAttribute('href')).toBe(
+      '/invoices/INV-7',
+    )
+
+    // A number that cannot be a path segment keeps the id it was opened by.
+    const spaced = server(invoice({ number: 'INV 7' }))
+    await open(spaced.api, { path: '/invoices/by-id/7/edit' })
+    expect(control<HTMLFormElement>('[data-invoice-edit-form]').hidden).toBe(false)
+    expect(globalThis.location.pathname).toBe('/invoices/by-id/7/edit')
+    expect(control<HTMLAnchorElement>('[data-invoice-edit-back]').getAttribute('href')).toBe(
+      '/invoices/by-id/7',
+    )
+  })
+
+  it('[browser] says so when no invoice has the number, and reads nothing else', async () => {
+    const { api } = server(invoice())
+    await open(api, { path: '/invoices/INV-8/edit' })
+
+    expect(api.findInvoiceByNumber).toHaveBeenCalledWith('INV-8', expect.any(AbortSignal))
+    expect(api.getInvoice).not.toHaveBeenCalled()
+    expect(control('[data-invoice-edit-status]').textContent).toBe('That invoice does not exist.')
+    expect(control<HTMLFormElement>('[data-invoice-edit-form]').hidden).toBe(true)
+    expect(control<HTMLAnchorElement>('[data-invoice-edit-back]').getAttribute('href')).toBe(
+      '/invoices/INV-8',
+    )
+  })
+
   it('[money] previews each line in exact cents, and holds the total while a line does not parse', async () => {
     const { api } = server(invoice())
     await open(api)
@@ -740,6 +796,7 @@ describe('invoice edit page', () => {
       'You have read-only invoice access. Editing an invoice requires the invoices:write scope.',
     )
     expect(reader.api.getInvoice).not.toHaveBeenCalled()
+    expect(reader.api.findInvoiceByNumber).not.toHaveBeenCalled()
 
     const partial: Partial<InvoiceEditorApi> = { ...server(invoice()).api }
     delete partial.deleteInvoiceLine

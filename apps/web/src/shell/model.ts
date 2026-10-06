@@ -1917,6 +1917,9 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     ).data,
   getInvoice: async (id, signal) =>
     (await client.getInvoice({ id, ...withSignal(signal) })).data,
+  // Exact and unique, so the page holds that invoice or nothing.
+  findInvoiceByNumber: async (number, signal) =>
+    (await client.listInvoices({ query: { number }, ...withSignal(signal) })).data[0] ?? null,
   // Unfiltered by is_active: a line keeps the link it has to a project archived
   // since, and the select has to be able to show it.
   listInvoiceClientProjects: (clientId, cursor, signal) =>

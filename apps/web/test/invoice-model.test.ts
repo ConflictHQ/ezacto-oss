@@ -23,7 +23,6 @@ import {
   invoiceEditFocusFromHash,
   invoiceEditHref,
   invoiceEditPlan,
-  invoiceIdFromPathname,
   invoiceIdentityCanRead,
   invoiceIdentityCanWrite,
   invoiceMessageLabel,
@@ -41,11 +40,14 @@ import {
   invoicePaymentLocalInstant,
   invoicePaymentProviderLabel,
   invoicePaymentTiming,
+  invoiceNumberIsAddressable,
   invoicePagePath,
   invoicePeriod,
   invoiceProfileHasAccess,
   invoiceRecipients,
   invoiceRecipientLine,
+  invoiceReferenceFromPathname,
+  invoiceReferencePath,
   invoiceReminderDate,
   invoicePlannedReminder,
   invoiceSendFailure,
@@ -116,31 +118,119 @@ describe('invoice workspace model', () => {
     ).toBe(false)
   })
 
-  it('[unit] accepts only a positive safe invoice id in the detail path', () => {
-    expect(invoiceIdFromPathname('/invoices/42')).toBe(42)
-    expect(invoiceIdFromPathname('/invoices/42/')).toBe(42)
-    expect(invoiceIdFromPathname('/invoices/0')).toBeNull()
-    expect(invoiceIdFromPathname('/invoices/-1')).toBeNull()
-    expect(invoiceIdFromPathname('/invoices/12/edit')).toBeNull()
-    expect(invoiceIdFromPathname('/invoices/9007199254740992')).toBeNull()
+  it('[unit] reads an invoice page address as a number or a record id, and nothing else', () => {
+    expect(invoiceReferenceFromPathname('/invoices/4021')).toEqual({ kind: 'number', number: '4021' })
+    // Text, not a quantity: the leading zero is part of the number.
+    expect(invoiceReferenceFromPathname('/invoices/089')).toEqual({ kind: 'number', number: '089' })
+    expect(invoiceReferenceFromPathname('/invoices/INV-2026.07_b')).toEqual({
+      kind: 'number',
+      number: 'INV-2026.07_b',
+    })
+    expect(invoiceReferenceFromPathname('/invoices/4021/')).toEqual({ kind: 'number', number: '4021' })
+    expect(invoiceReferenceFromPathname(`/invoices/${'9'.repeat(64)}`)).toEqual({
+      kind: 'number',
+      number: '9'.repeat(64),
+    })
+    expect(invoiceReferenceFromPathname('/invoices/by-id/42')).toEqual({ kind: 'id', id: 42 })
+    expect(invoiceReferenceFromPathname('/invoices/by-id/42/')).toEqual({ kind: 'id', id: 42 })
+    // The routes beside the invoices are never a number.
+    for (const reserved of ['new', 'recurring', 'retainers', 'estimates', 'configure', 'by-id']) {
+      expect(invoiceReferenceFromPathname(`/invoices/${reserved}`), reserved).toBeNull()
+      expect(invoiceReferenceFromPathname(`/invoices/${reserved}/edit`, 'edit'), reserved).toBeNull()
+    }
+    // An id is a positive safe integer written plainly, or it is nothing.
+    for (const id of ['0', '042', '-1', '9007199254740992', 'INV-7']) {
+      expect(invoiceReferenceFromPathname(`/invoices/by-id/${id}`), id).toBeNull()
+      expect(invoiceReferenceFromPathname(`/invoices/by-id/${id}/edit`, 'edit'), id).toBeNull()
+    }
+    // A segment a browser would rewrite, or one too long, is not an address.
+    for (const segment of ['-12', '.12', '..', 'INV%2012', 'INV%2F12', 'Ä12', '9'.repeat(65)]) {
+      expect(invoiceReferenceFromPathname(`/invoices/${segment}`), segment).toBeNull()
+    }
+    expect(invoiceReferenceFromPathname('/invoices')).toBeNull()
+    expect(invoiceReferenceFromPathname('/invoices/12/edit')).toBeNull()
+    expect(invoiceReferenceFromPathname('/invoices/by-id/12/edit')).toBeNull()
+    // The edit page reads its own address the same way.
+    expect(invoiceReferenceFromPathname('/invoices/089/edit', 'edit')).toEqual({
+      kind: 'number',
+      number: '089',
+    })
+    expect(invoiceReferenceFromPathname('/invoices/089/edit/', 'edit')).toEqual({
+      kind: 'number',
+      number: '089',
+    })
+    expect(invoiceReferenceFromPathname('/invoices/by-id/42/edit', 'edit')).toEqual({
+      kind: 'id',
+      id: 42,
+    })
+    // "edit" is a number like any other; its edit page is /invoices/edit/edit.
+    expect(invoiceReferenceFromPathname('/invoices/edit', 'edit')).toBeNull()
+    expect(invoiceReferenceFromPathname('/invoices/edit/edit', 'edit')).toEqual({
+      kind: 'number',
+      number: 'edit',
+    })
+    expect(invoiceReferenceFromPathname('/invoices/089', 'edit')).toBeNull()
   })
 
-  it('[unit] builds and reads every invoice page address in one place', () => {
-    // The move from record ids to invoice numbers in these addresses is meant
-    // to be a change here and in the worker's routes, so every page reads its
-    // own address back through the same pair of functions that builds it.
-    expect(invoicePagePath(42)).toBe('/invoices/42')
-    expect(invoicePagePath(42, 'edit')).toBe('/invoices/42/edit')
-    expect(invoiceIdFromPathname(invoicePagePath(42))).toBe(42)
-    expect(invoiceIdFromPathname(invoicePagePath(42, 'edit'), 'edit')).toBe(42)
-    expect(invoiceIdFromPathname('/invoices/42/edit/', 'edit')).toBe(42)
-    expect(invoiceIdFromPathname('/invoices/42', 'edit')).toBeNull()
-    expect(invoiceIdFromPathname('/invoices/0/edit', 'edit')).toBeNull()
-    expect(invoiceIdFromPathname('/invoices/9007199254740992/edit', 'edit')).toBeNull()
+  it('[unit] addresses an invoice by its number, and by its id only where the number cannot be a path', () => {
+    expect(invoicePagePath({ id: 42, number: '4021' })).toBe('/invoices/4021')
+    expect(invoicePagePath({ id: 42, number: '4021' }, 'edit')).toBe('/invoices/4021/edit')
+    expect(invoicePagePath({ id: 42, number: '089' })).toBe('/invoices/089')
+    expect(invoicePagePath({ id: 42, number: 'INV-2026.07_b' })).toBe('/invoices/INV-2026.07_b')
+    // No number to hand: the record id.
+    expect(invoicePagePath({ id: 42, number: null })).toBe('/invoices/by-id/42')
+    expect(invoicePagePath({ id: 42, number: undefined }, 'edit')).toBe('/invoices/by-id/42/edit')
+    // A number spelled like a route beside it, or one that is not a path
+    // segment, would open some other page; it goes by id instead.
+    for (const number of [
+      'new',
+      'recurring',
+      'retainers',
+      'estimates',
+      'configure',
+      'by-id',
+      '',
+      'INV 7',
+      'INV/7',
+      'INV#7',
+      'INV?7',
+      'INV%7',
+      '-7',
+      '.7',
+      '..',
+      'Ä7',
+      '7\n',
+      '9'.repeat(65),
+    ]) {
+      expect(invoiceNumberIsAddressable(number), number).toBe(false)
+      expect(invoicePagePath({ id: 42, number }), number).toBe('/invoices/by-id/42')
+      expect(invoicePagePath({ id: 42, number }, 'edit'), number).toBe('/invoices/by-id/42/edit')
+    }
+    expect(invoiceNumberIsAddressable('New')).toBe(true)
+    // Each address reads back as the page it was built for.
+    for (const invoice of [
+      { id: 42, number: '4021' },
+      { id: 42, number: '089' },
+      { id: 42, number: 'new' },
+      { id: 9_007_199_254_740_991, number: null },
+    ]) {
+      for (const page of ['detail', 'edit'] as const) {
+        const path = invoicePagePath(invoice, page)
+        const reference = invoiceReferenceFromPathname(path, page)
+        expect(reference, path).toEqual(
+          invoice.number !== null && invoiceNumberIsAddressable(invoice.number)
+            ? { kind: 'number', number: invoice.number }
+            : { kind: 'id', id: invoice.id },
+        )
+        expect(invoiceReferencePath(reference!, page)).toBe(path)
+      }
+    }
     // The edit page opens on a line, or on a fresh one, by its hash.
-    expect(invoiceEditHref(42)).toBe('/invoices/42/edit')
-    expect(invoiceEditHref(42, { line: 7 })).toBe('/invoices/42/edit#line-7')
-    expect(invoiceEditHref(42, 'new-line')).toBe('/invoices/42/edit#new-line')
+    expect(invoiceEditHref({ id: 42, number: '089' })).toBe('/invoices/089/edit')
+    expect(invoiceEditHref({ id: 42, number: '089' }, { line: 7 })).toBe('/invoices/089/edit#line-7')
+    expect(invoiceEditHref({ id: 42, number: null }, 'new-line')).toBe(
+      '/invoices/by-id/42/edit#new-line',
+    )
     expect(invoiceEditFocusFromHash('#line-7')).toEqual({ line: 7 })
     expect(invoiceEditFocusFromHash('#new-line')).toBe('new-line')
     expect(invoiceEditFocusFromHash('#line-0')).toBeNull()

@@ -264,6 +264,9 @@ export const browserApi = (
     timeFormat: 'decimal' as const,
     clock: '12h' as const,
     whoami: vi.fn(async () => identity),
+    // The invoice-detail view opens at /invoices/INV-7, the number of the
+    // invoice the detail tests read; each test supplies that invoice itself.
+    findInvoiceByNumber: vi.fn(async (number: string) => (number === 'INV-7' ? invoice(7) : null)),
     signIn: vi.fn(async () => principal),
     logoutCurrentSession: vi.fn(async () => ({
       ...currentSession,
@@ -424,7 +427,7 @@ export const renderBrowserShell = (
       : options.view === 'invoice-list'
         ? '/invoices?week=2026-08-28'
         : options.view === 'invoice-detail'
-          ? '/invoices/7?week=2026-08-28'
+          ? '/invoices/INV-7?week=2026-08-28'
           : options.view === 'timesheet-approvals'
             ? '/approvals?week=2026-08-28'
             : options.view === 'settings-company'

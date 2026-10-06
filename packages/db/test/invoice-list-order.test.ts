@@ -136,7 +136,7 @@ const positionOf = (invoice: Pick<InvoiceResource, 'issue_date' | 'number' | 'id
 const walk = async (
   database: TestDatabase,
   take: number,
-  narrowing: Pick<InvoiceListWindow, 'states' | 'clientIds'> = {},
+  narrowing: Pick<InvoiceListWindow, 'states' | 'clientIds' | 'number'> = {},
 ): Promise<InvoiceResource[]> => {
   const money = createMoneyResourceRepository(database.orm)
   const createdThrough = await money.invoiceListSnapshot()
@@ -303,6 +303,40 @@ describe.each(factories)('the invoice list on %s', (_runtime, factory) => {
     expect(
       (await walk(database, 1, { states: ['open', 'paid'], clientIds: [1] })).map((row) => row.id),
     ).toEqual([1, 6])
+  })
+
+  it('[money] narrows to one exact number, as text, leading zeros and all', async () => {
+    // How a page addressed by number finds its invoice. "089" and "89" are two
+    // invoices in a book that has both, and neither is the other's page.
+    const database = await fixture(factory, [
+      { id: 1, number: '089', issueDate: '2026-09-01' },
+      { id: 2, number: '89', issueDate: '2026-09-02' },
+      { id: 3, number: '0089', issueDate: '2026-09-03', clientId: 2 },
+      { id: 4, number: 'INV-89', issueDate: '2026-09-04', state: 'paid' },
+    ])
+    for (const [number, id] of [
+      ['089', 1],
+      ['89', 2],
+      ['0089', 3],
+      ['INV-89', 4],
+    ] as const) {
+      expect((await walk(database, 1, { number })).map((row) => row.id), number).toEqual([id])
+    }
+    // Equality, not a pattern, a prefix, a case-folded or a trimmed match.
+    for (const number of ['8', '9', '0', 'inv-89', '%89', '_89', 'INV-8_', '089 ', ' 089']) {
+      expect(await walk(database, 50, { number }), number).toEqual([])
+    }
+    // Composed with the other narrowings rather than instead of them.
+    expect(await walk(database, 1, { number: '0089', clientIds: [1] })).toEqual([])
+    expect(
+      (await walk(database, 1, { number: '0089', clientIds: [2] })).map((row) => row.id),
+    ).toEqual([3])
+    expect(await walk(database, 1, { number: 'INV-89', states: ['draft', 'open'] })).toEqual([])
+    expect(
+      (await walk(database, 1, { number: 'INV-89', states: ['paid'], clientIds: [1] })).map(
+        (row) => row.id,
+      ),
+    ).toEqual([4])
   })
 
   it('[unit] has no snapshot for an empty table, so the endpoint answers an empty page', async () => {

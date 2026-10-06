@@ -157,7 +157,7 @@ export const renderInvoiceComposerDialog = (): string => `
   </dialog>`
 
 /**
- * The invoice editor, as a page of its own (`/invoices/:id/edit`).
+ * The invoice editor, as a page of its own (`/invoices/:number/edit`).
  *
  * Modelled on Harvest's Edit invoice: the document's fields at the top, every
  * line editable in place below them, the notes under the lines, and one Save

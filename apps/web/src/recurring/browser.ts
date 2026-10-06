@@ -595,7 +595,7 @@ export const createRecurringWorkspaceController = (
       issueKey = null
       issueResult.dataset.outcome = 'issued'
       issueResult.textContent = recurringIssuedMessage(result.generation)
-      issuedLink.href = invoicePagePath(result.invoice.id)
+      issuedLink.href = invoicePagePath(result.invoice)
       issuedLink.hidden = false
       // The cadence moved, so the list and the facts above are now stale.
       await Promise.all([loadList(true), loadDetail()])
