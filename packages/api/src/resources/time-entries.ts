@@ -1,4 +1,5 @@
 import {
+  canManageTeammateTime,
   canViewMoneyField,
   maximumTimeEntryNoteLength,
   type ApprovalStatus,
@@ -154,6 +155,28 @@ const listKeys = new Set([
   'updated_since',
 ])
 
+/**
+ * Naming another person's time, in a filter or a new entry, is an
+ * administrator's alone (#917). Everyone else may name only themselves, which
+ * is the same as naming nobody.
+ */
+const assertMayNameUser = (
+  principal: Readonly<UserPrincipal>,
+  userId: number | undefined,
+): void => {
+  if (
+    userId !== undefined &&
+    userId !== principal.userId &&
+    !canManageTeammateTime(principal.profile)
+  ) {
+    throw new ApiError({
+      status: 403,
+      code: 'row_forbidden',
+      message: 'Time entries are limited to the acting user.',
+    })
+  }
+}
+
 const timeFilters = (
   url: URL,
   principal: Readonly<UserPrincipal>,
@@ -200,14 +223,9 @@ const timeFilters = (
     })
   }
   assertFields(errors)
-  if (userId !== undefined && userId !== principal.userId) {
-    throw new ApiError({
-      status: 403,
-      code: 'row_forbidden',
-      message: 'Time entries are limited to the acting user.',
-    })
-  }
+  assertMayNameUser(principal, userId)
   return {
+    ...(userId !== undefined ? { userId } : {}),
     ...(clientId !== undefined ? { clientId } : {}),
     ...(projectId !== undefined ? { projectId } : {}),
     ...(taskId !== undefined ? { taskId } : {}),
@@ -238,8 +256,13 @@ const bodyKeys = new Set([
   'calendar_event_ref',
 ])
 
+// Whose entry is chosen when it is created and never changed after, so only
+// creation accepts `user_id`.
+const createBodyKeys = new Set([...bodyKeys, 'user_id'])
+
 const createInput = (body: Record<string, unknown>): CreateTimeEntryRequest => {
-  const errors = unknownFieldErrors(body, bodyKeys)
+  const errors = unknownFieldErrors(body, createBodyKeys)
+  const userId = optionalPositiveInteger(body, 'user_id', errors)
   const projectId = requiredPositiveInteger(body, 'project_id', errors)
   const taskId = requiredPositiveInteger(body, 'task_id', errors)
   const spentDate = optionalDate(body, 'spent_date', errors)
@@ -256,6 +279,7 @@ const createInput = (body: Record<string, unknown>): CreateTimeEntryRequest => {
   )
   assertFields(errors)
   return {
+    ...(userId !== undefined ? { userId } : {}),
     projectId: projectId!,
     taskId: taskId!,
     ...(spentDate !== undefined ? { spentDate } : {}),
@@ -308,6 +332,8 @@ const updateInput = (body: Record<string, unknown>): UpdateTimeEntryRequest => {
 }
 
 const selfLink = (id: number) => `/api/v1/time-entries/${id}`
+
+const optionKeys = new Set(['user_id'])
 
 const serializeTimeEntrySettings = (
   settings: Readonly<OrganizationTimeEntrySettings>,
@@ -420,7 +446,14 @@ export const installTimeEntryRoutes = <Bindings extends object>(
     requireApiScope(context, 'time_entries:read')
     const principal = context.get('principal')
     try {
-      const rows = await options.repository.timeEntryOptions(principal.userId)
+      // An administrator logging a teammate's time picks from that person's
+      // assignments, not their own (#917).
+      const params = strictSearchParams(new URL(context.req.url), optionKeys)
+      const errors: FieldError[] = []
+      const userId = queryPositiveInteger(params, 'user_id', errors)
+      assertFields(errors)
+      assertMayNameUser(principal, userId)
+      const rows = await options.repository.timeEntryOptions(userId ?? principal.userId)
       return context.json(
         {
           data: rows.map((row) => ({
@@ -446,7 +479,7 @@ export const installTimeEntryRoutes = <Bindings extends object>(
       const filters = timeFilters(url, principal)
       const envelope = await cursorPage({
         requestUrl: url,
-        source: options.repository.timeEntries(principal.userId, filters),
+        source: options.repository.timeEntries(principal, filters),
         viewer: principal,
         serializer: serializeTimeEntry,
         cursorSigningKey: options.cursorSigningKey,
@@ -462,8 +495,9 @@ export const installTimeEntryRoutes = <Bindings extends object>(
     const principal = context.get('principal')
     try {
       const input = createInput(await readObjectBody(context))
+      assertMayNameUser(principal, input.userId)
       const entry = await options.repository.createTimeEntry(
-        principal.userId,
+        principal,
         input,
         options.clock.now(),
       )
@@ -485,7 +519,7 @@ export const installTimeEntryRoutes = <Bindings extends object>(
     const principal = context.get('principal')
     try {
       const entry = await options.repository.getTimeEntry(
-        principal.userId,
+        principal,
         resourceId(context.req.param('id'), 'time entry'),
       )
       return context.json(
@@ -506,7 +540,7 @@ export const installTimeEntryRoutes = <Bindings extends object>(
     const principal = context.get('principal')
     try {
       const entry = await options.repository.updateTimeEntry(
-        principal.userId,
+        principal,
         resourceId(context.req.param('id'), 'time entry'),
         updateInput(await readObjectBody(context)),
         options.clock.now(),
@@ -529,8 +563,9 @@ export const installTimeEntryRoutes = <Bindings extends object>(
     const principal = context.get('principal')
     try {
       const entry = await options.repository.deleteTimeEntry(
-        principal.userId,
+        principal,
         resourceId(context.req.param('id'), 'time entry'),
+        options.clock.now(),
       )
       return context.json(
         {
@@ -550,7 +585,7 @@ export const installTimeEntryRoutes = <Bindings extends object>(
     const principal = context.get('principal')
     try {
       const entry = await options.repository.stopTimeEntry(
-        principal.userId,
+        principal,
         resourceId(context.req.param('id'), 'time entry'),
         options.clock.now(),
       )
@@ -572,7 +607,7 @@ export const installTimeEntryRoutes = <Bindings extends object>(
     const principal = context.get('principal')
     try {
       const entry = await options.repository.restartTimeEntry(
-        principal.userId,
+        principal,
         resourceId(context.req.param('id'), 'time entry'),
         options.clock.now(),
       )

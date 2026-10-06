@@ -383,16 +383,21 @@ const timeEntryOperations: ApiContractOperation[] = [
     method: "get",
     path: "/api/v1/time-entry-options",
     operationId: "listTimeEntryOptions",
-    summary: "List the acting user's active project and task combinations",
+    summary: "List the active project and task combinations a user may log time against",
+    description:
+      "The acting user's unless `user_id` names somebody else, which only an administrator may do (403 `row_forbidden` otherwise).",
     tag: "time-entries",
     responseStatus: 200,
     responseSchema: "TimeEntryOptionListEnvelope",
+    parameters: [query("user_id", integerSchema)],
   },
   {
     method: "get",
     path: "/api/v1/time-entries",
     operationId: "listTimeEntries",
-    summary: "List the acting user's time entries",
+    summary: "List time entries",
+    description:
+      "The acting user's unless `user_id` names somebody else, which only an administrator may do (403 `row_forbidden` otherwise). An administrator may also read, update, stop and delete any entry by id; everyone else reaches only their own.",
     tag: "time-entries",
     responseStatus: 200,
     responseSchema: "TimeEntryPage",
@@ -4591,6 +4596,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: ["project_id", "task_id"],
     properties: {
+      user_id: {
+        ...integerSchema,
+        description:
+          "Whose entry. Defaults to the acting user. Only an administrator may name somebody else, and only for stopped time: a timer is started by the person it tracks.",
+      },
       project_id: integerSchema,
       task_id: integerSchema,
       spent_date: dateSchema,
