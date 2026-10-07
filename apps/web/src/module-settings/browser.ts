@@ -6,7 +6,7 @@ import {
   type Whoami,
 } from '@conflict-hq/ezacto-client'
 import { renderDataTable } from '../components/data-table.js'
-import { DEMO_UNAVAILABLE, isDemoDeployment } from '../demo.js'
+import { DEMO_UNAVAILABLE, demoUnavailable, isDemoDeployment } from '../demo.js'
 import { invoiceAddressLines } from '../invoice-addresses.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
@@ -306,7 +306,7 @@ const signInMethodLabels: Record<SignInMethodState['method'], string> = {
   apple: 'Apple (in the mobile app)',
 }
 
-const renderSignInMethodCard = (state: SignInMethodState): string => {
+const renderSignInMethodCard = (state: SignInMethodState, demo: boolean): string => {
   const label = signInMethodLabels[state.method]
   // An unconfigured method is shown rather than hidden, and its toggle is
   // disabled: "this deployment has no credentials for it" is the answer an
@@ -320,7 +320,7 @@ const renderSignInMethodCard = (state: SignInMethodState): string => {
     `<article class="module-settings-card" data-sign-in-card="${state.method}">` +
     `<header class="module-settings-card-header">` +
     `<div><h2>${label}</h2><p class="module-code">${state.method}</p></div>` +
-    `<label class="module-toggle"><input type="checkbox" data-sign-in-toggle="${state.method}"${state.enabled ? ' checked' : ''}${state.configured ? '' : ' disabled'}><span>${state.enabled ? 'Enabled' : 'Disabled'}</span></label>` +
+    `<label class="module-toggle"><input type="checkbox" data-sign-in-toggle="${state.method}"${state.enabled ? ' checked' : ''}${state.configured && !demo ? '' : ' disabled'}><span>${state.enabled ? 'Enabled' : 'Disabled'}</span></label>` +
     `</header>` +
     `<p class="module-settings-warning">${note}</p>` +
     `<p class="form-result" data-sign-in-result="${state.method}" role="status" aria-live="polite"></p>` +
@@ -809,14 +809,19 @@ export const createModuleSettingsController = (
           },
           { key: 'record', label: 'DNS record', render: (domain) => ssoRecordCell(domain) },
         ],
+        // The demo refuses both (issue 931), so neither is offered as if it worked.
         actions: (domain) => [
           {
             label: 'Verify',
             primary: true,
-            disabled: ssoBusy,
+            disabled: ssoBusy || demo,
             onSelect: () => void verifySsoDomain(domain),
           },
-          { label: 'Remove', disabled: ssoBusy, onSelect: () => void removeSsoDomain(domain) },
+          {
+            label: 'Remove',
+            disabled: ssoBusy || demo,
+            onSelect: () => void removeSsoDomain(domain),
+          },
         ],
       }),
     )
@@ -1712,8 +1717,12 @@ export const createModuleSettingsController = (
       active.present(() => {
         ssoState = domains
         paintSsoDomains()
-        ssoForm.hidden = false
-        ssoStatus.textContent = ''
+        // A domain is who single sign-on lets in, so on the public demo
+        // (issue 931) the list is shown and nothing about it changes.
+        ssoForm.hidden = demo
+        ssoStatus.textContent = demo
+          ? demoUnavailable('Adding, verifying or removing a domain')
+          : ''
       })
     } catch (error) {
       active.presentFailure(error, () => {
@@ -1886,9 +1895,12 @@ export const createModuleSettingsController = (
     active: ActiveSession,
     states: readonly SignInMethodState[],
   ): void => {
-    signInStatus.textContent = ''
+    // The public demo shares one administrator with every visitor (issue
+    // 931), and a method switched off is the next visitor locked out: the
+    // methods are shown, and no switch moves.
+    signInStatus.textContent = demo ? demoUnavailable('Switching a sign-in method') : ''
     signInList.hidden = false
-    signInList.innerHTML = states.map(renderSignInMethodCard).join('')
+    signInList.innerHTML = states.map((state) => renderSignInMethodCard(state, demo)).join('')
     for (const toggle of signInList.querySelectorAll<HTMLInputElement>(
       '[data-sign-in-toggle]',
     )) {

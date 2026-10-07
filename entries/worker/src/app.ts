@@ -770,21 +770,24 @@ export const createApp = (
     installApp(app) {
       // What the public demo refuses (#931): ahead of every route, and after
       // authentication, so a stranger still meets a 401 and a visitor signed
-      // into the demo meets the same 403 for every one of them. The list and
-      // why each entry is on it are in `demo-lockdown.ts`.
-      app.use('/api/v1/*', async (context, next) => {
-        // Absent only where a test calls the app without bindings, which is no
-        // deployment and so not the demo.
-        const env = context.env as AppEnv | undefined
-        if (
-          env !== undefined &&
-          demoDeployment(env) &&
-          (await demoRefuses(context.req.raw, context.req.path))
-        ) {
-          throw demoRefusal()
-        }
-        await next()
-      })
+      // into the demo meets the same 403 for every one of them. `/auth` too,
+      // for the password reset that would lock the next visitor out. The list
+      // and why each entry is on it are in `demo-lockdown.ts`.
+      for (const surface of ['/api/v1/*', '/auth/*']) {
+        app.use(surface, async (context, next) => {
+          // Absent only where a test calls the app without bindings, which is
+          // no deployment and so not the demo.
+          const env = context.env as AppEnv | undefined
+          if (
+            env !== undefined &&
+            demoDeployment(env) &&
+            (await demoRefuses(context.req.raw, context.req.path))
+          ) {
+            throw demoRefusal()
+          }
+          await next()
+        })
+      }
       // Before anything that needs a session, and outside the API surface: the
       // wordmark on the sign-in page is fetched by a browser that has none.
       if (brandAssets !== undefined) {

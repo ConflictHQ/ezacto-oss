@@ -374,6 +374,69 @@ describe('the public demo (ENVIRONMENT=dev, DEMO_MODE=true)', () => {
     expect(rows?.count).toBe(0)
   })
 
+  it('[security] refuses what would lock the next visitor out, and the way in stays as printed', async () => {
+    // Every visitor is the same administrator. Each of these, let through,
+    // keeps whoever comes next out of the accounts the front page prints
+    // until the nightly rebuild -- or lets one visitor decide who else gets in.
+    const attempts: readonly (readonly [string, string, unknown])[] = [
+      ['POST', '/api/v1/two-factor', undefined],
+      ['POST', '/api/v1/two-factor/confirm', { code: '123456' }],
+      ['DELETE', '/api/v1/two-factor', { code: '123456' }],
+      ['PATCH', '/api/v1/admin/sign-in-methods/password', { enabled: false }],
+      ['POST', '/api/v1/settings/sso-domains', { domain: 'visitor.example' }],
+      ['POST', '/api/v1/settings/sso-domains/1/verify', undefined],
+      ['DELETE', '/api/v1/settings/sso-domains/1', undefined],
+    ]
+    for (const [method, path, body] of attempts) {
+      const response = await call(fixture, method, path, body === undefined ? {} : { body })
+      expect({ method, path, status: response.status, code: await errorCode(response) }).toEqual({
+        method,
+        path,
+        status: 403,
+        code: 'demo_disabled',
+      })
+    }
+    // A reset needs a token rather than a session, and is refused all the same.
+    const reset = await fixture.app.request(
+      '/auth/password/reset',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: 'http://localhost' },
+        body: JSON.stringify({ token: 'A'.repeat(43), password: 'a password nobody else knows' }),
+      },
+      fixture.env,
+    )
+    expect({ status: reset.status, code: await errorCode(reset) }).toEqual({
+      status: 403,
+      code: 'demo_disabled',
+    })
+
+    // Nothing moved: no second factor, password sign-in still on, no domain,
+    // and the published password still signs in.
+    const twoFactor = (await (await call(fixture, 'GET', '/api/v1/two-factor')).json()) as {
+      data: { enrolled: boolean; pending_confirmation: boolean }
+    }
+    expect(twoFactor.data).toMatchObject({ enrolled: false, pending_confirmation: false })
+    const methods = (await (await call(fixture, 'GET', '/api/v1/admin/sign-in-methods')).json()) as {
+      data: { method: string; enabled: boolean }[]
+    }
+    expect(methods.data.find((state) => state.method === 'password')?.enabled).toBe(true)
+    const domains = (await (await call(fixture, 'GET', '/api/v1/settings/sso-domains')).json()) as {
+      data: unknown[]
+    }
+    expect(domains.data).toEqual([])
+    const signIn = await fixture.app.request(
+      '/auth/sign-in',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: 'http://localhost' },
+        body: JSON.stringify(owner),
+      },
+      fixture.env,
+    )
+    expect(signIn.status).toBe(200)
+  })
+
   it('[security] delivers an invoice email to the allowed recipients and nobody else', async () => {
     await draftInvoice(fixture, 503)
     const sent = await call(fixture, 'POST', '/api/v1/invoices/503/deliveries', {

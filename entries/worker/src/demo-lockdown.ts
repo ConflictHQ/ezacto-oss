@@ -5,9 +5,10 @@ import { ApiError } from '@ezacto/api'
  *
  * ezacto.io prints its administrator's password on its own front page, so every
  * route below is one any visitor can call -- and each of them reaches past the
- * demo's own database: a payment or accounting provider, the identity the
+ * demo's own database (a payment or accounting provider, the identity the
  * operator's real mail is sent under, the details an invoice tells a client to
- * pay into, or object storage the nightly rebuild never empties. Mail is not
+ * pay into, object storage the nightly rebuild never empties), or would lock
+ * the next visitor out of the shared accounts until that rebuild. Mail is not
  * here: it is sent, and held at the queue to the domains the deployment lists
  * -- see `demoMailDomains` and `createRecipientAllowlistQueue`.
  *
@@ -83,11 +84,30 @@ export const DEMO_UPLOAD_ROUTES: readonly string[] = [
   'post /api/v1/settings/brand-assets/:slot',
 ]
 
+/**
+ * What would lock the next visitor out of the accounts the demo publishes, or
+ * let one visitor decide who else gets in: a new password (the reset is the
+ * only route that sets one), a second factor nobody else holds, a way of
+ * signing in switched off, and SSO provisioning opened to a domain a visitor
+ * controls.
+ */
+export const DEMO_ACCESS_ROUTES: readonly string[] = [
+  'post /auth/password/reset',
+  'post /api/v1/two-factor',
+  'post /api/v1/two-factor/confirm',
+  'delete /api/v1/two-factor',
+  'patch /api/v1/admin/sign-in-methods/:method',
+  'post /api/v1/settings/sso-domains',
+  'post /api/v1/settings/sso-domains/:id/verify',
+  'delete /api/v1/settings/sso-domains/:id',
+]
+
 export const DEMO_REFUSED_ROUTES: readonly string[] = [
   ...DEMO_INTEGRATION_ROUTES,
   ...DEMO_PAYMENT_ROUTES,
   ...DEMO_IDENTITY_ROUTES,
   ...DEMO_UPLOAD_ROUTES,
+  ...DEMO_ACCESS_ROUTES,
 ]
 
 /**

@@ -612,6 +612,40 @@ describe('two-step sign-in in your own settings', () => {
     )
   })
 
+  it.each([
+    ['off', false],
+    ['on', true],
+  ])(
+    '[security] on the public demo, shows it %s and offers no way to change it',
+    async (word, enrolled) => {
+      // Issue 931. Everyone on the demo signs in as the same people: a second
+      // factor one visitor sets up locks the next one out, and one removed
+      // leaves a published account open. The Worker refuses both.
+      renderBrowserShell({ view: 'settings-user', demo: true })
+      await mountShell(
+        twoFactorApi({
+          getTwoFactorStatus: vi.fn(async () =>
+            status({ enrolled, recovery_codes_remaining: enrolled ? 1 : 0 }),
+          ),
+        }),
+      )
+
+      await vi.waitFor(() =>
+        expect(
+          document.querySelector<HTMLElement>('[data-settings-2fa-status]')!.textContent,
+        ).toBe('Changing two-step sign-in: not available on the public demo.'),
+      )
+      expect(panel().textContent).toContain(word === 'on' ? 'On' : 'Off')
+      expect(
+        document.querySelector<HTMLButtonElement>('[data-settings-2fa-begin]')!.hidden,
+      ).toBe(true)
+      expect(
+        document.querySelector<HTMLFormElement>('[data-settings-2fa-disable-form]')!.hidden,
+      ).toBe(true)
+      expect(enrolment().hidden).toBe(true)
+    },
+  )
+
   it('stays out of the way in a build without the two-factor endpoints', async () => {
     renderBrowserShell({ view: 'settings-user' })
     await mountShell(browserApi())

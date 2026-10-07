@@ -407,6 +407,58 @@ describe('company settings', () => {
     globalThis.location.hash = ''
   })
 
+  it('[security] on the public demo, shows the ways in and the SSO domains and changes neither', async () => {
+    // Issue 931. Every visitor is the same administrator: a sign-in method
+    // switched off or a domain removed is the next visitor locked out, so the
+    // Worker refuses both and the page offers neither.
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company', demo: true })
+    globalThis.location.hash = '#sign-in'
+    const api = companyApi([senderIdentity()], [ssoDomain()])
+    await mountShell(api)
+
+    const toggle = (): HTMLInputElement | null =>
+      document.querySelector<HTMLInputElement>('[data-sign-in-toggle="password"]')
+    await vi.waitFor(() => expect(toggle()).not.toBeNull())
+    expect(toggle()!.checked).toBe(true)
+    expect(toggle()!.disabled).toBe(true)
+    expect(document.querySelector('[data-settings-sign-in-status]')!.textContent).toBe(
+      'Switching a sign-in method: not available on the public demo.',
+    )
+
+    openSection('sso')
+    await vi.waitFor(() => expect(ssoTable().hidden).toBe(false))
+    expect(ssoTable().textContent).toContain('northpeak.test')
+    expect(ssoAction(0, 'Verify').disabled).toBe(true)
+    expect(ssoAction(0, 'Remove').disabled).toBe(true)
+    expect(document.querySelector<HTMLFormElement>('[data-sso-domain-form]')!.hidden).toBe(true)
+    expect(document.querySelector('[data-settings-sso-status]')!.textContent).toBe(
+      'Adding, verifying or removing a domain: not available on the public demo.',
+    )
+    expect(api.verifySsoDomain).not.toHaveBeenCalled()
+    expect(api.removeSsoDomain).not.toHaveBeenCalled()
+    globalThis.location.hash = ''
+  })
+
+  it('[browser] keeps the ways in and the SSO domains changeable anywhere but the demo', async () => {
+    stubModulesEndpoint()
+    openCompanySettings('sign-in')
+    await mountShell(companyApi([senderIdentity()], [ssoDomain()]))
+
+    const toggle = (): HTMLInputElement | null =>
+      document.querySelector<HTMLInputElement>('[data-sign-in-toggle="password"]')
+    await vi.waitFor(() => expect(toggle()).not.toBeNull())
+    expect(toggle()!.disabled).toBe(false)
+    expect(document.querySelector('[data-settings-sign-in-status]')!.textContent).toBe('')
+
+    openSection('sso')
+    await vi.waitFor(() => expect(ssoTable().hidden).toBe(false))
+    expect(ssoAction(0, 'Verify').disabled).toBe(false)
+    expect(ssoAction(0, 'Remove').disabled).toBe(false)
+    expect(document.querySelector<HTMLFormElement>('[data-sso-domain-form]')!.hidden).toBe(false)
+    expect(document.querySelector('[data-settings-sso-status]')!.textContent).toBe('')
+  })
+
   it('[browser] says which half of the invoice settings a failed save kept', async () => {
     stubModulesEndpoint()
     renderBrowserShell({ view: 'settings-company' })

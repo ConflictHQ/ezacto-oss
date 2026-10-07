@@ -2,12 +2,13 @@
  * The public demo (issue 931).
  *
  * The demo prints its own administrator's password on its sign-in page, so the
- * Worker refuses everything there that would reach past the demo's database:
- * provider connections, payment links and payouts, the sender identity and the
- * invoice defaults, and file uploads. Its mail goes only to the recipient
- * domains the deployment lists. Those refusals are the control; this is only
- * how the screens say so. A control the demo refuses renders disabled or
- * withheld, with a note in its place, instead of failing after the click.
+ * Worker refuses everything there that would reach past the demo's database or
+ * lock the next visitor out: provider connections, payment links and payouts,
+ * the sender identity and the invoice defaults, file uploads, and the password,
+ * second factor, sign-in methods and SSO domains. Its mail goes only to the
+ * recipient domains the deployment lists. Those refusals are the control; this
+ * is only how the screens say so. A control the demo refuses renders disabled
+ * or withheld, with a note in its place, instead of failing after the click.
  *
  * The shell marks `<html>` when the Worker served the page as the demo, with
  * the domains its mail may reach, which every module can read without asking

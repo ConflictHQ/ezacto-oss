@@ -299,8 +299,11 @@ carries:
   quote or send a payout, change a sender identity, the invoice defaults
   (company information and the notes that carry bank details) or an invoice's
   payment options, or upload any file, answer `403 demo_disabled` — "Not
-  available on the public demo." The list is `entries/worker/src/demo-lockdown.ts`,
-  and the screens disable those controls with the same note.
+  available on the public demo." So do the ones that would lock the next
+  visitor out: a password reset, enrolling or removing a second factor,
+  switching a sign-in method, and adding, verifying or removing an SSO domain.
+  The list is `entries/worker/src/demo-lockdown.ts`, and the screens disable
+  those controls with the same note.
 - **Storage** takes no visitor's file: uploads meet a read-only store, and the
   demo is not exported nightly into a bucket the rebuild never empties. Invoice
   documents are still rendered and staged, because allowed mail carries them.
