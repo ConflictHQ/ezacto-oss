@@ -162,6 +162,13 @@ export interface EmailLogStore {
     failureReason?: string,
   ): Promise<EmailLogRecord>
   markQueueFailed(deliveryId: number): Promise<EmailLogRecord>
+  /**
+   * Ends a queued message as `failed` without handing it to any provider, with
+   * the reason it was refused. Idempotent for that reason, because the outbox
+   * re-enqueues a persisted delivery on every retry. Refuses a message a
+   * provider attempt holds the lease on, and any message already past `queued`.
+   */
+  markRefused(deliveryId: number, reason: string): Promise<EmailLogRecord>
   markBounced(deliveryId: number): Promise<EmailLogRecord>
   markComplained(deliveryId: number): Promise<EmailLogRecord>
   getByProviderMessageId(providerMessageId: string): Promise<EmailLogRecord | null>
@@ -389,6 +396,71 @@ export const createQueuedMailer = (
     }
   },
 })
+
+/**
+ * Why a message ended without being sent: none of its recipients is at a
+ * domain the deployment may email (#931). The public demo prints its own
+ * administrator's password on its front page, so it delivers only to the
+ * domains its operator lists. Recorded as a `provider_rejected` reason, the one
+ * failure the log can carry a reason on -- but no provider was asked, which the
+ * log's empty `provider` says.
+ */
+export const RECIPIENT_NOT_ALLOWED = 'demo_recipient_not_allowed'
+
+const recipientDomain = (email: string): string =>
+  email.slice(email.lastIndexOf('@') + 1).normalize('NFC').trim().toLowerCase()
+
+/**
+ * The message with only the recipients at the allowed domains, or null when
+ * none is. Domains match exactly and case-insensitively: `example.com` admits
+ * `a@Example.com` and not `a@mail.example.com`.
+ *
+ * A message whose To list empties while copies remain goes To them instead.
+ * Everything else about it -- sender, subject, body, files -- is untouched.
+ */
+export const restrictRecipients = (
+  message: EmailMessage,
+  allowedDomains: ReadonlySet<string>,
+): EmailMessage | null => {
+  const allowed = (recipient: EmailRecipient): boolean =>
+    allowedDomains.has(recipientDomain(recipient.email))
+  const to = message.to.filter(allowed)
+  const cc = (message.cc ?? []).filter(allowed)
+  if (to.length === 0 && cc.length === 0) return null
+  const restricted: EmailMessage = { ...message, to: to.length === 0 ? cc : to }
+  // An empty Cc list is refused by the queue, so no copies is no Cc at all.
+  delete restricted.cc
+  if (to.length > 0 && cc.length > 0) restricted.cc = cc
+  return restricted
+}
+
+/**
+ * A producer that delivers only to the allowed domains. Each job leaves with
+ * the allowed recipients alone; a job with none left is not put on the queue
+ * at all, and its log row ends `failed` with `RECIPIENT_NOT_ALLOWED`. The log
+ * row keeps every address the message was written to, because that is what
+ * was asked; the queue carries only what may go.
+ *
+ * A queue rather than a check in each sender, so a mail path added later is
+ * held to the same list without anyone having to remember it.
+ */
+export const createRecipientAllowlistQueue = (
+  queue: EmailQueue,
+  log: Pick<EmailLogStore, 'markRefused'>,
+  allowedDomains: readonly string[],
+): EmailQueue => {
+  const allowed = new Set(allowedDomains.map((domain) => domain.trim().toLowerCase()))
+  return {
+    async send(job) {
+      const message = restrictRecipients(job.message, allowed)
+      if (message === null) {
+        await log.markRefused(job.deliveryId, RECIPIENT_NOT_ALLOWED)
+        return
+      }
+      await queue.send({ ...job, message })
+    },
+  }
+}
 
 export interface SenderIdentityResolver {
   resolveSenderIdentity(id?: number): Promise<ResolvedSenderIdentity | null>

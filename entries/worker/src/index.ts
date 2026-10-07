@@ -1,13 +1,13 @@
 import * as Sentry from '@sentry/cloudflare'
 import type { QueuedEmailJob } from '@ezacto/mailer'
-import { createApp, type WorkerEnv } from './app.js'
+import { createApp, demoDeployment, demoMailDomains, type WorkerEnv } from './app.js'
 import { isDataRequest } from './data-request.js'
 import { workerBrandAssetSurface } from './brand-assets.js'
 import { workerSignInMethodSurface } from './sign-in-methods.js'
 import { workerInstanceThemeSurface } from './instance-theme.js'
 import { consumeCloudflareEmailBatch } from './email-queue.js'
 import { createAttachmentResolver } from './invoice-documents.js'
-import { runDemoMaintenance } from './demo.js'
+import { runDemoMaintenance, seedDemoSender } from './demo.js'
 import { runNightlyExport } from './nightly-export.js'
 import { createScheduledBillReconciliation } from '@ezacto/integrations'
 import {
@@ -170,13 +170,23 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
       env.ATTACHMENTS === undefined
         ? undefined
         : createAttachmentResolver(createR2AttachmentObjectStore(env.ATTACHMENTS)),
+      // The demo's second net (#931): whoever enqueued a job, it reaches only
+      // the domains the demo may email. Absent everywhere else.
+      demoMailDomains(env) ?? undefined,
     )
   },
   async scheduled(controller, env) {
     const services = await createRuntimeServices(env)
     if (controller.cron === '* * * * *')
       await services.paymentRuns?.processDue(new Date().toISOString())
-    if (controller.cron === '0 3 * * *' && env.ATTACHMENTS !== undefined) {
+    // Not on the demo (#931): its database is thrown away at this hour, and an
+    // export would copy whatever visitors typed into it into the bucket, which
+    // nothing ever empties.
+    if (
+      controller.cron === '0 3 * * *' &&
+      env.ATTACHMENTS !== undefined &&
+      !demoDeployment(env)
+    ) {
       await runNightlyExport(env.DB, env.ATTACHMENTS)
     }
     if (controller.cron === '0 3 * * *') {
@@ -220,7 +230,10 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
     }
     // Refuses on any deployment that is not the demo, so this line is safe to
     // read as unconditional. See `runDemoMaintenance`.
-    await runDemoMaintenance(env, controller.cron)
+    const maintenance = await runDemoMaintenance(env, controller.cron)
+    // The rebuild empties the demo's sender with everything else, and nobody
+    // using the demo may make another (#931).
+    if (maintenance.ran === 'rebuild') await seedDemoSender(services, env)
     await services.outbox.drain()
   },
 }

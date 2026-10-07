@@ -266,4 +266,30 @@ describe('the failure column (#485)', () => {
       'provider_rejected: mailbox full',
     )
   })
+
+  it('[security] names the domains the public demo emails instead of blaming a provider (issue 931)', () => {
+    // No provider saw a message the demo held back: "provider_rejected" alone
+    // would send whoever reads the row looking for one.
+    const root = document.documentElement
+    root.setAttribute('data-demo-deployment', '')
+    try {
+      root.setAttribute('data-demo-mail-domains', 'example.com,example.org')
+      expect(failureText('provider_rejected', 'demo_recipient_not_allowed')).toBe(
+        'Not delivered: the public demo only emails example.com and example.org.',
+      )
+      root.setAttribute('data-demo-mail-domains', '')
+      expect(failureText('provider_rejected', 'demo_recipient_not_allowed')).toBe(
+        'Not delivered: the public demo emails nobody.',
+      )
+    } finally {
+      root.removeAttribute('data-demo-deployment')
+      root.removeAttribute('data-demo-mail-domains')
+    }
+    // A row that outlived the demo it was written on.
+    expect(failureText('provider_rejected', 'demo_recipient_not_allowed')).toBe(
+      'Not delivered: the public demo did not email this address.',
+    )
+    // Any other rejection still reads as the provider's.
+    expect(failureText('provider_rejected', 'demo_other')).toBe('provider_rejected: demo_other')
+  })
 })

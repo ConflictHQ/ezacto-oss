@@ -70,6 +70,7 @@ import {
 import { createEstimateWorkspaceController } from '../estimates/browser.js'
 import { createRetainerWorkspaceController } from '../retainers/browser.js'
 import { createModuleSettingsController } from '../module-settings/browser.js'
+import { demoUnavailable, isDemoDeployment } from '../demo.js'
 import {
   createInvoicePaymentController,
   invoiceMatchesSearch,
@@ -2083,6 +2084,13 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const result = required<HTMLElement>('[data-settings-payout-result]')
     const submit = required<HTMLButtonElement>('[data-settings-payout-submit]')
     section.hidden = false
+    // The public demo pays nobody (issue 931). It has no Wise to ask, so the
+    // read could only fail; it says why instead, and offers no form.
+    if (isDemoDeployment()) {
+      form.hidden = true
+      status.textContent = demoUnavailable('Setting where you are paid')
+      return
+    }
 
     const paint = (state: PayoutDestinationState): void => {
       unconfigured.hidden = state.configured
@@ -2406,6 +2414,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const disableForm = required<HTMLFormElement>('[data-settings-2fa-disable-form]')
     const disableResult = required<HTMLElement>('[data-settings-2fa-disable-result]')
     section.hidden = false
+    // Everyone on the public demo signs in as the same people (issue 931): a
+    // second factor one visitor sets up is the next one locked out, and one
+    // removed is a published account left open. The state is shown; neither
+    // control is offered.
+    const demo = isDemoDeployment()
 
     const paint = (state: TwoFactorStatus): void => {
       writeFacts(factsList, [
@@ -2422,11 +2435,11 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
           state.enrolled ? String(state.recovery_codes_remaining) : '—',
         ],
       ])
-      begin.hidden = state.enrolled
+      begin.hidden = demo || state.enrolled
       begin.textContent = state.pending_confirmation
         ? 'Start again'
         : 'Set up two-step sign-in'
-      disableForm.hidden = !state.enrolled
+      disableForm.hidden = demo || !state.enrolled
       // An unfinished enrolment cannot be resumed: the secret was shown once
       // and is not readable back, so the only honest offer is to start again.
       status.textContent = state.pending_confirmation
@@ -2438,6 +2451,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         status.textContent =
           'Few recovery codes left. Turn two-step sign-in off and on again to get a fresh set.'
       }
+      if (demo) status.textContent = demoUnavailable('Changing two-step sign-in')
     }
 
     const reload = async (): Promise<void> => {

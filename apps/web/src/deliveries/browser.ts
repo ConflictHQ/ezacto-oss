@@ -1,4 +1,5 @@
 import { renderDataTable } from '../components/data-table.js'
+import { DEMO_RECIPIENT_NOT_ALLOWED, demoMailRefusal } from '../demo.js'
 
 /**
  * What was sent, and what became of it (issue 485).
@@ -93,6 +94,9 @@ export const deliveryLabel = (value: string): string =>
  * showing the status alone makes every failure look the same.
  */
 export const failureText = (code: string | null, reason: string | null): string => {
+  // The demo's own refusal names the domains it may email (issue 931):
+  // "provider_rejected" would blame a provider nobody asked.
+  if (reason === DEMO_RECIPIENT_NOT_ALLOWED) return demoMailRefusal()
   if (code === null && reason === null) return ''
   if (code === null) return reason ?? ''
   return reason === null ? code : `${code}: ${reason}`

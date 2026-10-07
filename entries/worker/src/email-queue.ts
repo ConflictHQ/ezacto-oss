@@ -5,10 +5,12 @@ import type {
   QueuedEmailJob,
 } from '@ezacto/mailer'
 import {
+  RECIPIENT_NOT_ALLOWED,
   createDeploymentSenderQueuedMailer,
   createQueuedMailer,
   createSenderBoundQueuedMailer,
   processQueuedEmail,
+  restrictRecipients,
   type EmailAttachmentResolver,
   type SenderBoundQueuedMailer,
   type SenderIdentityResolver,
@@ -39,11 +41,37 @@ export const consumeCloudflareEmailBatch = async (
    * sent without it (issue 626).
    */
   resolveAttachment?: EmailAttachmentResolver,
+  /**
+   * The public demo's allowlist (#931): the only recipient domains a job may
+   * reach. The demo's producer already sends nothing else; this holds whatever
+   * reached the queue another way -- before the deployment became the demo, or
+   * through a path the producer never saw. Absent everywhere but the demo.
+   */
+  allowedDomains?: readonly string[],
 ): Promise<void> => {
+  const allowed =
+    allowedDomains === undefined
+      ? null
+      : new Set(allowedDomains.map((domain) => domain.trim().toLowerCase()))
   await Promise.all(
     batch.messages.map(async (message) => {
+      let job = message.body
+      if (allowed !== null) {
+        const restricted = restrictRecipients(job.message, allowed)
+        if (restricted === null) {
+          // Nobody it may reach. A message still queued ends refused; one that
+          // already ended, however it ended, is only acknowledged. A live
+          // provider lease makes the batch throw, so the queue offers it again
+          // once the lease has run out.
+          const current = await log.get(job.deliveryId)
+          if (current?.status === 'queued') await log.markRefused(current.id, RECIPIENT_NOT_ALLOWED)
+          message.ack()
+          return
+        }
+        job = { ...job, message: restricted }
+      }
       const disposition = await processQueuedEmail(
-        message.body,
+        job,
         message.attempts,
         log,
         provider,
@@ -61,7 +89,7 @@ export const consumeCloudflareEmailBatch = async (
 export { createQueuedAuthMailer } from '@ezacto/api'
 
 export const createWorkerDeploymentAuthMailer = (
-  queue: Queue<QueuedEmailJob>,
+  queue: EmailQueue,
   log: EmailLogStore,
   from: string,
   templates: {
@@ -71,10 +99,7 @@ export const createWorkerDeploymentAuthMailer = (
   appOrigin: string,
 ): AuthMailer =>
   createQueuedAuthMailer(
-    createDeploymentSenderQueuedMailer(
-      from,
-      createQueuedMailer(log, createCloudflareEmailQueue(queue)),
-    ),
+    createDeploymentSenderQueuedMailer(from, createQueuedMailer(log, queue)),
     templates,
     organizationName,
     appOrigin,
@@ -82,27 +107,20 @@ export const createWorkerDeploymentAuthMailer = (
 
 /** The staff sign-in email on the same queue as the other deployment mail. */
 export const createWorkerStaffMagicLinkMailer = (
-  queue: Queue<QueuedEmailJob>,
+  queue: EmailQueue,
   log: EmailLogStore,
   from: string,
   organizationName: () => Promise<string>,
 ): StaffMagicLinkMailer =>
   createQueuedStaffMagicLinkMailer(
-    createDeploymentSenderQueuedMailer(
-      from,
-      createQueuedMailer(log, createCloudflareEmailQueue(queue)),
-    ),
+    createDeploymentSenderQueuedMailer(from, createQueuedMailer(log, queue)),
     organizationName,
   )
 
 export const createWorkerOrganizationMailer = (
-  queue: Queue<QueuedEmailJob>,
+  queue: EmailQueue,
   log: EmailLogStore,
   provider: string,
   identities: SenderIdentityResolver,
 ): SenderBoundQueuedMailer =>
-  createSenderBoundQueuedMailer(
-    identities,
-    createQueuedMailer(log, createCloudflareEmailQueue(queue)),
-    provider,
-  )
+  createSenderBoundQueuedMailer(identities, createQueuedMailer(log, queue), provider)

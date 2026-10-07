@@ -6,6 +6,7 @@ import {
   type Whoami,
 } from '@conflict-hq/ezacto-client'
 import { renderDataTable } from '../components/data-table.js'
+import { DEMO_UNAVAILABLE, demoUnavailable, isDemoDeployment } from '../demo.js'
 import { invoiceAddressLines } from '../invoice-addresses.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
@@ -305,7 +306,7 @@ const signInMethodLabels: Record<SignInMethodState['method'], string> = {
   apple: 'Apple (in the mobile app)',
 }
 
-const renderSignInMethodCard = (state: SignInMethodState): string => {
+const renderSignInMethodCard = (state: SignInMethodState, demo: boolean): string => {
   const label = signInMethodLabels[state.method]
   // An unconfigured method is shown rather than hidden, and its toggle is
   // disabled: "this deployment has no credentials for it" is the answer an
@@ -319,7 +320,7 @@ const renderSignInMethodCard = (state: SignInMethodState): string => {
     `<article class="module-settings-card" data-sign-in-card="${state.method}">` +
     `<header class="module-settings-card-header">` +
     `<div><h2>${label}</h2><p class="module-code">${state.method}</p></div>` +
-    `<label class="module-toggle"><input type="checkbox" data-sign-in-toggle="${state.method}"${state.enabled ? ' checked' : ''}${state.configured ? '' : ' disabled'}><span>${state.enabled ? 'Enabled' : 'Disabled'}</span></label>` +
+    `<label class="module-toggle"><input type="checkbox" data-sign-in-toggle="${state.method}"${state.enabled ? ' checked' : ''}${state.configured && !demo ? '' : ' disabled'}><span>${state.enabled ? 'Enabled' : 'Disabled'}</span></label>` +
     `</header>` +
     `<p class="module-settings-warning">${note}</p>` +
     `<p class="form-result" data-sign-in-result="${state.method}" role="status" aria-live="polite"></p>` +
@@ -401,6 +402,23 @@ export const createModuleSettingsController = (
   const invoiceDefaultsNotes = required<HTMLTextAreaElement>('[data-invoice-defaults-notes]')
   const invoiceDefaultsSubmit = required<HTMLButtonElement>('[data-invoice-defaults-submit]')
   const invoiceDefaultsResult = required<HTMLElement>('[data-invoice-defaults-result]')
+  // The public demo (issue 931). The company information and default values
+  // are what every invoice tells a client to pay into, and its marks are files
+  // in storage the nightly rebuild never empties, so both are read-only there
+  // and say so. The sending defaults below them stay the demo's to change.
+  const demo = isDemoDeployment()
+  const invoiceDefaultsDemo = required<HTMLElement>('[data-invoice-defaults-demo]')
+  const brandDemo = required<HTMLElement>('[data-settings-brand-demo]')
+  invoiceDefaultsDemo.hidden = !demo
+  brandDemo.hidden = !demo
+  for (const field of [
+    invoiceDefaultsName,
+    invoiceDefaultsAddress,
+    invoiceDefaultsSubject,
+    invoiceDefaultsNotes,
+  ]) {
+    field.disabled = demo
+  }
   // Sending: what an invoice's email carries unless the invoice says otherwise.
   const sendingParts = [
     ...document.querySelectorAll<HTMLElement>('[data-invoice-defaults-sending]'),
@@ -608,17 +626,20 @@ export const createModuleSettingsController = (
     let defaultsSaved = false
     let attachmentsSaved = false
     try {
-      const saved = await api.updateInvoiceDefaults(
-        {
-          company_name: invoiceDefaultsName.value,
-          company_address: text(invoiceDefaultsAddress.value),
-          subject: text(invoiceDefaultsSubject.value),
-          notes: text(invoiceDefaultsNotes.value),
-        },
-        active.signal,
-      )
+      // Read-only on the demo, so only the halves below are written there.
+      if (!demo) {
+        const saved = await api.updateInvoiceDefaults(
+          {
+            company_name: invoiceDefaultsName.value,
+            company_address: text(invoiceDefaultsAddress.value),
+            subject: text(invoiceDefaultsSubject.value),
+            notes: text(invoiceDefaultsNotes.value),
+          },
+          active.signal,
+        )
+        active.present(() => showInvoiceDefaults(saved))
+      }
       defaultsSaved = true
-      active.present(() => showInvoiceDefaults(saved))
       // The two halves are two endpoints. Sending is written second and only
       // where it changed, so a refusal there leaves the first half saved and
       // says so rather than reading as though nothing was.
@@ -788,14 +809,19 @@ export const createModuleSettingsController = (
           },
           { key: 'record', label: 'DNS record', render: (domain) => ssoRecordCell(domain) },
         ],
+        // The demo refuses both (issue 931), so neither is offered as if it worked.
         actions: (domain) => [
           {
             label: 'Verify',
             primary: true,
-            disabled: ssoBusy,
+            disabled: ssoBusy || demo,
             onSelect: () => void verifySsoDomain(domain),
           },
-          { label: 'Remove', disabled: ssoBusy, onSelect: () => void removeSsoDomain(domain) },
+          {
+            label: 'Remove',
+            disabled: ssoBusy || demo,
+            onSelect: () => void removeSsoDomain(domain),
+          },
         ],
       }),
     )
@@ -847,7 +873,7 @@ export const createModuleSettingsController = (
         const input = document.createElement('input')
         input.type = 'file'
         input.accept = brandAssetAccept
-        input.disabled = brandBusy
+        input.disabled = brandBusy || demo
         input.addEventListener('change', () => {
           const file = input.files?.[0]
           input.value = ''
@@ -1427,6 +1453,12 @@ export const createModuleSettingsController = (
   }
 
   const loadQuickBooks = async (identity: Whoami, active: ActiveSession): Promise<void> => {
+    // The demo connects to no provider at all, so there is no connection to
+    // read -- and asking would read as a failure to retry.
+    if (demo) {
+      quickBooksStatus.textContent = DEMO_UNAVAILABLE
+      return
+    }
     if (identity.profile !== 'administrator') {
       quickBooksStatus.textContent =
         'Connecting an accounting system is an administrator action.'
@@ -1685,8 +1717,12 @@ export const createModuleSettingsController = (
       active.present(() => {
         ssoState = domains
         paintSsoDomains()
-        ssoForm.hidden = false
-        ssoStatus.textContent = ''
+        // A domain is who single sign-on lets in, so on the public demo
+        // (issue 931) the list is shown and nothing about it changes.
+        ssoForm.hidden = demo
+        ssoStatus.textContent = demo
+          ? demoUnavailable('Adding, verifying or removing a domain')
+          : ''
       })
     } catch (error) {
       active.presentFailure(error, () => {
@@ -1859,9 +1895,12 @@ export const createModuleSettingsController = (
     active: ActiveSession,
     states: readonly SignInMethodState[],
   ): void => {
-    signInStatus.textContent = ''
+    // The public demo shares one administrator with every visitor (issue
+    // 931), and a method switched off is the next visitor locked out: the
+    // methods are shown, and no switch moves.
+    signInStatus.textContent = demo ? demoUnavailable('Switching a sign-in method') : ''
     signInList.hidden = false
-    signInList.innerHTML = states.map(renderSignInMethodCard).join('')
+    signInList.innerHTML = states.map((state) => renderSignInMethodCard(state, demo)).join('')
     for (const toggle of signInList.querySelectorAll<HTMLInputElement>(
       '[data-sign-in-toggle]',
     )) {

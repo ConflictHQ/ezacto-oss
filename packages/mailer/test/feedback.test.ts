@@ -42,6 +42,7 @@ const store = (): EmailLogStore => {
     markSent: vi.fn(async () => record()),
     markProviderFailed: vi.fn(async () => record({ status: 'failed' })),
     markQueueFailed: vi.fn(async () => record({ status: 'failed', failureCode: 'queue_unavailable' })),
+    markRefused: vi.fn(async () => record({ status: 'failed', failureCode: 'provider_rejected' })),
     markBounced: vi.fn(async () => record({ status: 'bounced' })),
     markComplained: vi.fn(async () => record({ status: 'complained' })),
     getByProviderMessageId: vi.fn(async () => record()),

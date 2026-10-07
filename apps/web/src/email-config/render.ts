@@ -14,6 +14,8 @@
  * progress goes back to the same one.
  */
 
+import { demoUnavailable } from '../demo.js'
+
 export const renderEmailConfigPage = (view?: string): string => `
   <main class="app-content invoice-workspace email-config-workspace page--grid" data-invoice-configure-page${view === 'settings-templates' ? '' : ' hidden'}>
     <header class="context-row">
@@ -26,6 +28,7 @@ export const renderEmailConfigPage = (view?: string): string => `
       <p class="form-result email-sender-warning" data-sender-warning role="status" aria-live="polite" hidden></p>
       <p class="form-result invoice-page-status" data-sender-status role="status" aria-live="polite">Loading sender identities…</p>
       <div data-sender-list></div>
+      <p class="hint" data-sender-demo hidden>${demoUnavailable('Changing a sender identity')}</p>
       <div class="email-config-actions">
         <button class="invoice-load-more" type="button" data-sender-retry hidden>Retry loading senders</button>
       </div>

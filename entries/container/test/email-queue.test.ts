@@ -54,6 +54,7 @@ describe('container in-process email queue', () => {
         return record(attempts, 'failed')
       },
       markQueueFailed: async () => record(attempts, 'failed'),
+      markRefused: async () => record(attempts, 'failed'),
       markBounced: async () => record(attempts, 'bounced'),
       markComplained: async () => record(attempts, 'complained'),
       getByProviderMessageId: async () => null,
@@ -123,6 +124,7 @@ describe('container in-process email queue', () => {
         return record(attempts, 'failed')
       },
       markQueueFailed: async () => record(attempts, 'failed'),
+      markRefused: async () => record(attempts, 'failed'),
       markBounced: async () => record(attempts, 'bounced'),
       markComplained: async () => record(attempts, 'complained'),
       getByProviderMessageId: async () => null,
@@ -178,6 +180,7 @@ describe('container in-process email queue', () => {
       markSent: async () => record(1, 'queued'),
       markProviderFailed: async () => record(1, 'failed'),
       markQueueFailed: async () => record(1, 'failed'),
+      markRefused: async () => record(1, 'failed'),
       markBounced: async () => record(1, 'bounced'),
       markComplained: async () => record(1, 'complained'),
       getByProviderMessageId: async () => null,

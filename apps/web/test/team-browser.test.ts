@@ -116,7 +116,7 @@ const receipt = (version: number): TeamCommandReceipt => ({
   occurred_at: timestamp,
 })
 
-const writeDocument = (view: 'team-list' | 'team-person'): void => {
+const writeDocument = (view: 'team-list' | 'team-person', demo = false): void => {
   window.history.replaceState(null, '', view === 'team-list' ? '/team' : '/team/1')
   document.open()
   document.write(
@@ -125,6 +125,7 @@ const writeDocument = (view: 'team-list' | 'team-person'): void => {
       release: 'team-browser-test',
       activeSection: 'Team',
       view,
+      demo,
     })
       .replace(/ {2}<link[^>]+(?:fonts\.googleapis|fonts\.gstatic|\/assets\/ezacto\.css)[^>]*>\n/gu, '')
       .replace('  <script type="module" src="/assets/ezacto.js"></script>\n', ''),
@@ -1357,6 +1358,25 @@ describe('the payout destination panel (#543)', () => {
         'R. Adeyemi',
       ),
     )
+  })
+
+  it('[security] on the public demo, asks Wise nothing and says why there is no form', async () => {
+    // Issue 931: the demo composes no Wise, so the read could only fail.
+    writeDocument('team-person', true)
+    const api = destinationApi()
+    await createTeamDirectoryController(api).activate(
+      identity(),
+      new AbortController().signal,
+      () => false,
+    )
+    const status = document.querySelector<HTMLElement>('[data-team-payout-status]')!
+    await vi.waitFor(() =>
+      expect(status.textContent).toBe(
+        'Setting where someone is paid: not available on the public demo.',
+      ),
+    )
+    expect(payoutForm().hidden).toBe(true)
+    expect(api.getWisePayoutDestination).not.toHaveBeenCalled()
   })
 
   it('says a destination is set without ever printing the identifier', async () => {

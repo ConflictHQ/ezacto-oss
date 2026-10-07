@@ -1,4 +1,5 @@
 import { iconMarkup } from '../components/icons.js'
+import { demoUnavailable } from '../demo.js'
 import { COMPANY_SETTINGS_SECTIONS } from '../settings-sections.js'
 
 /**
@@ -62,6 +63,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p>What every invoice prints, and what a new draft starts with. The company name and address print on every invoice when it is sent, existing ones included. The default subject and notes are copied onto each new draft, where they can still be changed. Payment terms are set on each client.</p></header>
       <p class="form-result" data-settings-invoices-status role="status" aria-live="polite">Loading invoice settings…</p>
       <form class="settings-form invoice-defaults-form" data-invoice-defaults-form hidden>
+        <p class="hint" data-invoice-defaults-demo hidden>${demoUnavailable('Company information and default values')}</p>
         <h3>Company information</h3>
         <label>Name
           <input name="company_name" data-invoice-defaults-name maxlength="255" autocomplete="organization" required>
@@ -140,6 +142,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <header><h2 id="settings-brand-title">Brand</h2>
       <p>The marks this instance draws on itself and on the documents it sends. An uploaded mark replaces the one configured at deploy time; remove it and the deployment's own setting comes back. PNG, JPEG or WebP up to 512&nbsp;KB &mdash; SVG is not accepted, because it can carry script and these files are served to anyone who opens the sign-in page.</p></header>
       <p class="form-result" data-settings-brand-status role="status" aria-live="polite">Loading brand assets…</p>
+      <p class="hint" data-settings-brand-demo hidden>${demoUnavailable('Uploading a mark')}</p>
       <div class="settings-brand-slots" data-settings-brand-slots hidden></div>
       <p class="form-result" data-settings-brand-result role="status" aria-live="polite"></p>
     </section>

@@ -1,4 +1,5 @@
 import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { isDemoDeployment } from '../demo.js'
 import { markMoney, moneyText } from '../money-display.js'
 import { invoicePagePath } from '../invoices/model.js'
 import { leavePageNotice, takePageNotice } from '../page-notice.js'
@@ -1016,6 +1017,10 @@ export const createRecurringEditorController = (
   const attachmentUpload = required<HTMLElement>('[data-recurring-attachment-upload]')
   const attachmentFile = required<HTMLInputElement>('[data-recurring-attachment-file]')
   const attachmentSubmit = required<HTMLButtonElement>('[data-recurring-attachment-submit]')
+  // The public demo takes no files (issue 931); the files a definition already
+  // has stay listed, and only the upload is withheld.
+  const attachmentsDemo = required<HTMLElement>('[data-recurring-attachments-demo]')
+  const demo = isDemoDeployment()
   const attachmentsStatus = required<HTMLElement>('[data-recurring-attachments-status]')
   const attachmentList = required<HTMLElement>('[data-recurring-attachments]')
   const removeDialog = required<HTMLDialogElement>('[data-recurring-attachment-remove-confirm]')
@@ -1420,7 +1425,8 @@ export const createRecurringEditorController = (
     if (attachmentsSection.hidden) return
     const saved = editing !== 'new'
     attachmentsUnsaved.hidden = saved
-    attachmentUpload.hidden = !saved || api.uploadRecurringInvoiceAttachment === undefined
+    attachmentUpload.hidden = demo || !saved || api.uploadRecurringInvoiceAttachment === undefined
+    attachmentsDemo.hidden = !demo || !saved || api.uploadRecurringInvoiceAttachment === undefined
     attachmentList.hidden = !saved
     if (editing === 'new') return
     attachmentsStatus.textContent = 'Loading attachments…'

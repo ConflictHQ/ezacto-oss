@@ -115,6 +115,8 @@ import {
   SenderIdentityUnavailableError,
   SesMailer,
   configuredEmailSender,
+  createRecipientAllowlistQueue,
+  type EmailQueue,
   type HttpEmailProvider,
   type MailgunOptions,
   type SesMailerOptions,
@@ -125,6 +127,7 @@ import {
   cloudflareAccessConfig,
   DEMO_API_TOKEN_MAX_LIFETIME_MS,
   demoDeployment,
+  demoMailDomains,
   type WorkerEnv,
 } from "./app.js";
 import {
@@ -136,10 +139,12 @@ import {
   createWiseRuntime,
 } from "@ezacto/integrations";
 import {
+  createCloudflareEmailQueue,
   createWorkerDeploymentAuthMailer,
   createWorkerOrganizationMailer,
   createWorkerStaffMagicLinkMailer,
 } from "./email-queue.js";
+import { demoRefusal } from "./demo-lockdown.js";
 
 const cursorSecretPattern = /^[A-Za-z0-9_-]+$/;
 const cursorSecretBytes = 32;
@@ -538,6 +543,49 @@ export const createD1AttachmentOwnerAuthorizer =
     }
   };
 
+/** The secrets that let this deployment reach a payment or accounting provider. */
+type ProviderCredentials = Pick<
+  WorkerEnv,
+  | "QUICKBOOKS_CLIENT_ID"
+  | "QUICKBOOKS_CLIENT_SECRET"
+  | "QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN"
+  | "WISE_TOKEN"
+  | "WISE_PROFILE_ID"
+  | "WISE_WEBHOOK_PUBLIC_KEY"
+  | "BILL_DEV_KEY"
+  | "BILL_COMPANY_ID"
+  | "BILL_USERNAME"
+  | "BILL_PASSWORD"
+  | "BILL_REPLY_TO_USER_ID"
+  | "STRIPE_API_KEY"
+  | "STRIPE_WEBHOOK_SECRET"
+>;
+
+/**
+ * None at all on the public demo (#931), whatever secrets the deployment
+ * carries. Every runtime below is composed from this, so on the demo each one
+ * reports itself unconfigured: QuickBooks and Wise are not mounted, BILL and
+ * Stripe say they are not set up and mint no link, no mirror subscribes, no
+ * payout can be quoted, and the hourly and minutely crons have no account to
+ * call. The routes that would change any of it are refused outright as well --
+ * see `demo-lockdown.ts` -- but this is the half that holds for code paths
+ * nobody thought to list.
+ */
+export const providerCredentials = (env: WorkerEnv): ProviderCredentials =>
+  demoDeployment(env) ? {} : env;
+
+/**
+ * Object storage the demo reads and never writes (#931). The upload routes are
+ * refused before they get here; this refuses with the same answer whatever
+ * route reaches it, including one added after that list was written.
+ */
+const readOnlyObjects = (objects: AttachmentObjectPort): AttachmentObjectPort => ({
+  get: (key) => objects.get(key),
+  put: async () => {
+    throw demoRefusal();
+  },
+});
+
 export const createRuntimeServices = async (
   env: WorkerEnv,
   options: {
@@ -548,6 +596,8 @@ export const createRuntimeServices = async (
   } = {},
 ): Promise<RuntimeServices> => {
   const database = requireDatabase(env);
+  const demo = demoDeployment(env);
+  const credentials = providerCredentials(env);
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY);
   // Portal magic-link auth is opt-in on the presence of its key. An install
   // that has not set one does not serve the routes at all, rather than serving
@@ -605,12 +655,28 @@ export const createRuntimeServices = async (
     emailProvider !== null;
   const emailQueueReady =
     emailTransportReady && env.APP_BASE_URL !== undefined;
+  // Where every message this deployment composes goes next, and so the one
+  // place the demo holds them to its allowlist (#931): composed, validated and
+  // logged as anywhere, then queued for the allowed recipients alone, or ended
+  // `failed` where none is allowed. Every mailer below is built on this, so a
+  // mail path added later is held to the list without anyone remembering it.
+  const mailDomains = demoMailDomains(env);
+  const emailQueue: EmailQueue | undefined =
+    env.EMAIL_QUEUE === undefined
+      ? undefined
+      : mailDomains === null
+        ? createCloudflareEmailQueue(env.EMAIL_QUEUE)
+        : createRecipientAllowlistQueue(
+            createCloudflareEmailQueue(env.EMAIL_QUEUE),
+            emailLog,
+            mailDomains,
+          );
   const mailFrom = resolveMailFrom(env);
   const deploymentAuthMailer =
     !emailQueueReady || mailFrom === undefined
       ? undefined
       : createWorkerDeploymentAuthMailer(
-          env.EMAIL_QUEUE!,
+          emailQueue!,
           emailLog,
           mailFrom,
           emailConfiguration,
@@ -621,7 +687,7 @@ export const createRuntimeServices = async (
     !emailQueueReady || mailFrom === undefined
       ? undefined
       : createWorkerStaffMagicLinkMailer(
-          env.EMAIL_QUEUE!,
+          emailQueue!,
           emailLog,
           mailFrom,
           organizationName,
@@ -630,7 +696,7 @@ export const createRuntimeServices = async (
     !emailTransportReady
       ? undefined
       : createWorkerOrganizationMailer(
-          env.EMAIL_QUEUE!,
+          emailQueue!,
           emailLog,
           emailProvider.name,
           emailConfiguration,
@@ -650,13 +716,14 @@ export const createRuntimeServices = async (
   // cannot connect is worse than no button -- `entry-surface.ts` declares that
   // gating so both halves of the contract guard know about it.
   const quickBooks =
-    env.QUICKBOOKS_CLIENT_ID === undefined || env.QUICKBOOKS_CLIENT_SECRET === undefined
+    credentials.QUICKBOOKS_CLIENT_ID === undefined ||
+    credentials.QUICKBOOKS_CLIENT_SECRET === undefined
       ? null
       : createQuickBooksRuntime({
           config: {
-            clientId: env.QUICKBOOKS_CLIENT_ID,
-            clientSecret: env.QUICKBOOKS_CLIENT_SECRET,
-            webhookVerifierToken: env.QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN,
+            clientId: credentials.QUICKBOOKS_CLIENT_ID,
+            clientSecret: credentials.QUICKBOOKS_CLIENT_SECRET,
+            webhookVerifierToken: credentials.QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN,
             environment: env.QUICKBOOKS_ENVIRONMENT,
             appBaseUrl: env.APP_BASE_URL,
           },
@@ -671,11 +738,11 @@ export const createRuntimeServices = async (
   // the contract guard agree.
   const paymentRuns = createPaymentRunsService(
     drizzle,
-    env.WISE_TOKEN === undefined
+    credentials.WISE_TOKEN === undefined
       ? null
       : createWisePaymentProvider({
-          token: env.WISE_TOKEN,
-          profileId: env.WISE_PROFILE_ID,
+          token: credentials.WISE_TOKEN,
+          profileId: credentials.WISE_PROFILE_ID,
           fetch: (input, init) => fetch(input as RequestInfo, init as RequestInit),
         }),
     (error, context) => {
@@ -683,13 +750,13 @@ export const createRuntimeServices = async (
     },
   )
   const wise =
-    env.WISE_TOKEN === undefined
+    credentials.WISE_TOKEN === undefined
       ? null
       : createWiseRuntime({
           config: {
-            token: env.WISE_TOKEN,
-            profileId: env.WISE_PROFILE_ID,
-            webhookPublicKey: env.WISE_WEBHOOK_PUBLIC_KEY,
+            token: credentials.WISE_TOKEN,
+            profileId: credentials.WISE_PROFILE_ID,
+            webhookPublicKey: credentials.WISE_WEBHOOK_PUBLIC_KEY,
           },
           accounts: (() => {
             const store = createPayoutAccountStore(drizzle);
@@ -720,11 +787,11 @@ export const createRuntimeServices = async (
   // changes with the credential is only whether a mirror can run.
   const bill = createBillRuntime({
     config: {
-      devKey: env.BILL_DEV_KEY,
-      companyId: env.BILL_COMPANY_ID,
-      username: env.BILL_USERNAME,
-      password: env.BILL_PASSWORD,
-      replyToUserId: env.BILL_REPLY_TO_USER_ID,
+      devKey: credentials.BILL_DEV_KEY,
+      companyId: credentials.BILL_COMPANY_ID,
+      username: credentials.BILL_USERNAME,
+      password: credentials.BILL_PASSWORD,
+      replyToUserId: credentials.BILL_REPLY_TO_USER_ID,
       environment: env.BILL_ENVIRONMENT,
     },
     links: createBillLinkStore(drizzle, () => new Date()),
@@ -738,8 +805,8 @@ export const createRuntimeServices = async (
   const stripeLinks = createStripeLinkStore(drizzle)
   const stripe = createStripeRuntime({
     config: {
-      apiKey: env.STRIPE_API_KEY,
-      webhookSecret: env.STRIPE_WEBHOOK_SECRET,
+      apiKey: credentials.STRIPE_API_KEY,
+      webhookSecret: credentials.STRIPE_WEBHOOK_SECRET,
     },
     source: {
       readInvoice: async (invoiceId: number) => {
@@ -1223,7 +1290,9 @@ export const createRuntimeServices = async (
       : {
           attachments: {
             metadata: createAttachmentStore(drizzle),
-            objects: createR2AttachmentObjectStore(env.ATTACHMENTS),
+            objects: demo
+              ? readOnlyObjects(createR2AttachmentObjectStore(env.ATTACHMENTS))
+              : createR2AttachmentObjectStore(env.ATTACHMENTS),
             authorizeOwnerAccess: createD1AttachmentOwnerAuthorizer(database),
           },
         }),

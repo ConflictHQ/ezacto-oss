@@ -147,6 +147,7 @@ import type {
   QueuedEmailJob,
   SenderBoundQueuedMailer,
 } from '@ezacto/mailer'
+import { demoRefusal, demoRefuses } from './demo-lockdown.js'
 
 /** Worker bindings stay entry-owned; the shared API package is runtime-agnostic. */
 export type Env = {
@@ -182,6 +183,13 @@ export type AppEnv = Env & {
    * whatever this says -- see `demoDeployment`.
    */
   DEMO_MODE?: string
+  /**
+   * The recipient domains the public demo may email, comma-separated (#931).
+   * A deploy-time variable from the deployment's own environment, never in the
+   * repository, and read only where `demoDeployment` holds -- see
+   * `demoMailDomains`.
+   */
+  DEMO_MAIL_ALLOWED_DOMAINS?: string
 }
 
 export type WorkerEnv = AppEnv & {
@@ -517,6 +525,12 @@ export const createApp = (
       // refuse independently. This only stops the page offering a way in that
       // would be turned away.
       passwordSignIn: live('password'),
+      // So the controls the demo refuses say so before they are clicked
+      // (#931). The same caveat: `demo-lockdown.ts` is what refuses them.
+      demo: demoDeployment(env),
+      // And so the Send dialog can say where demo mail goes. Not a secret:
+      // the note prints the same list to anyone using the demo.
+      ...(demoDeployment(env) ? { demoMailDomains: demoMailDomains(env) ?? [] } : {}),
     }
   }
 
@@ -754,6 +768,26 @@ export const createApp = (
           },
         }),
     installApp(app) {
+      // What the public demo refuses (#931): ahead of every route, and after
+      // authentication, so a stranger still meets a 401 and a visitor signed
+      // into the demo meets the same 403 for every one of them. `/auth` too,
+      // for the password reset that would lock the next visitor out. The list
+      // and why each entry is on it are in `demo-lockdown.ts`.
+      for (const surface of ['/api/v1/*', '/auth/*']) {
+        app.use(surface, async (context, next) => {
+          // Absent only where a test calls the app without bindings, which is
+          // no deployment and so not the demo.
+          const env = context.env as AppEnv | undefined
+          if (
+            env !== undefined &&
+            demoDeployment(env) &&
+            (await demoRefuses(context.req.raw, context.req.path))
+          ) {
+            throw demoRefusal()
+          }
+          await next()
+        })
+      }
       // Before anything that needs a session, and outside the API surface: the
       // wordmark on the sign-in page is fetched by a browser that has none.
       if (brandAssets !== undefined) {
@@ -2062,6 +2096,29 @@ export const appleProvider = (env: AppEnv): AppleProviderConfig | null => {
  */
 export const demoDeployment = (env: AppEnv): boolean =>
   env.ENVIRONMENT !== 'prod' && env.DEMO_MODE === 'true'
+
+/**
+ * The recipient domains the public demo may deliver mail to (#931), or null
+ * where this deployment is not the demo and mail goes wherever it is addressed.
+ *
+ * The demo prints its own administrator's password, so anything it can send,
+ * anyone can send -- from the sender the operator's real mail shares. It keeps
+ * a real transport, because its operator tests mail on it before production,
+ * and delivers only to the domains `DEMO_MAIL_ALLOWED_DOMAINS` lists. On the
+ * demo an unset or empty list is no domain at all: it delivers nothing. Lower
+ * case, a leading `@` dropped, each domain once.
+ */
+export const demoMailDomains = (env: AppEnv): readonly string[] | null => {
+  if (!demoDeployment(env)) return null
+  return [
+    ...new Set(
+      (env.DEMO_MAIL_ALLOWED_DOMAINS ?? '')
+        .split(',')
+        .map((domain) => domain.trim().toLowerCase().replace(/^@/u, ''))
+        .filter((domain) => domain !== ''),
+    ),
+  ]
+}
 
 /**
  * Longest an API token minted on the demo may live.

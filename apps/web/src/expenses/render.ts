@@ -1,3 +1,5 @@
+import { demoUnavailable } from '../demo.js'
+
 export const renderExpenseWorkflowPages = (view?: string): string => `
   <main class="app-content expense-workspace page--grid" data-expense-list-page${view === 'expense-list' ? '' : ' hidden'}>
     <header class="context-row">
@@ -83,6 +85,7 @@ export const renderExpenseWorkflowPages = (view?: string): string => `
           <label>Attach a receipt<input name="file" type="file" required></label>
           <button type="submit" data-expense-attachment-submit>Upload receipt</button>
           <p class="hint">One file, up to 25 MB.</p>
+          <p class="hint" data-expense-attachment-demo hidden>${demoUnavailable('Uploading a receipt')}</p>
         </form>
         <p class="form-result" data-expense-attachment-status role="status" aria-live="polite"></p>
         <ul data-expense-attachments></ul>

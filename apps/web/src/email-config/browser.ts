@@ -1,4 +1,5 @@
 import { renderDataTable } from '../components/data-table.js'
+import { isDemoDeployment } from '../demo.js'
 import {
   EzactoApiError,
   type EmailTemplate,
@@ -84,6 +85,11 @@ export const createEmailConfigurationController = (
   const senderWarning = required<HTMLElement>('[data-sender-warning]')
   const senderList = required<HTMLElement>('[data-sender-list]')
   const senderRetry = required<HTMLButtonElement>('[data-sender-retry]')
+  // Read-only on the public demo (issue 931): the deployment's sender is the
+  // one the demo's invoices go out as, and nobody using it may change that.
+  const senderDemo = required<HTMLElement>('[data-sender-demo]')
+  const demo = isDemoDeployment()
+  senderDemo.hidden = !demo
   const templateStatus = required<HTMLElement>('[data-template-status]')
   const templateList = required<HTMLElement>('[data-template-list]')
   const templateRetry = required<HTMLButtonElement>('[data-template-retry]')
@@ -222,6 +228,7 @@ export const createEmailConfigurationController = (
                       {
                         label: 'Make default',
                         primary: true,
+                        disabled: demo,
                         onSelect: () => {
                           void runSenderCommand('default', identity)
                         },
@@ -229,6 +236,7 @@ export const createEmailConfigurationController = (
                     ]),
                 {
                   label: 'Refresh evidence',
+                  disabled: demo,
                   onSelect: () => {
                     void runSenderCommand('refresh', identity)
                   },
@@ -240,6 +248,7 @@ export const createEmailConfigurationController = (
                   : [
                       {
                         label: 'Archive',
+                        disabled: demo,
                         onSelect: () => {
                           void runSenderCommand('archive', identity)
                         },
