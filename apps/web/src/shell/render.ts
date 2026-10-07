@@ -1,9 +1,15 @@
 import { renderStaffPayments } from '../staff-payments/render.js'
 import { shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
-import { iconMarkup } from '../components/icons.js'
+import { iconMarkup, type IconName } from '../components/icons.js'
 import { INSTANCE_THEME_STYLESHEET_PATH } from '../instance-theme.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import { type ColorScheme, colorSchemeMeta, resolveColorScheme } from '../theme-preference.js'
+import {
+  type NavLayout,
+  resolveNavLayout,
+  resolveSidebarState,
+  type SidebarState,
+} from '../nav-layout.js'
 import { type DeploymentBrand, resolveDeploymentBrand } from '../brand.js'
 import { renderClientDirectoryPages } from '../clients/render.js'
 import { renderRoleAdminPage } from '../roles/render.js'
@@ -57,6 +63,13 @@ export interface AppShellOptions {
    * Absent means `system`, which the stylesheet resolves without a script.
    */
   readonly colorScheme?: ColorScheme
+  /**
+   * Sidebar or top bar, and whether the sidebar is narrowed to its icons --
+   * read from the person's cookies like `colorScheme`, so the page is laid out
+   * once, in the layout they chose. Absent means a full-width sidebar.
+   */
+  readonly navLayout?: NavLayout
+  readonly sidebar?: SidebarState
   readonly activeSection?:
     // 'Settings' matches no nav item on purpose. Without it the default lands
     // on 'Time', so the module settings page marked Time as the page you were
@@ -348,6 +361,27 @@ const directorySections: ReadonlySet<string> = new Set(['Projects', 'Tasks', 'Cl
  */
 const foldedSections = ['Home', 'Tasks', 'Team'] as const
 
+/**
+ * Each section's mark (the 2026-10 reskin). A collapsed sidebar is read by
+ * these alone, so every section has one; the label stays in the link, hidden
+ * from sight but not from a screen reader, so the link's name never changes.
+ */
+const sectionIcons: Readonly<
+  Record<(typeof sections)[number] | (typeof foldedSections)[number], IconName>
+> = {
+  Time: 'clock',
+  Approvals: 'check',
+  Expenses: 'card',
+  Projects: 'folder',
+  Clients: 'person',
+  Invoices: 'document',
+  Payments: 'banknote',
+  Reports: 'chart',
+  Home: 'home',
+  Tasks: 'list',
+  Team: 'people',
+}
+
 const hrefFor = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
   section === 'Home'
     ? '/dashboard'
@@ -462,13 +496,15 @@ export const renderAppShell = (options: AppShellOptions): string => {
   // is a promise the caller made, not one the value kept.
   const colorScheme = resolveColorScheme(options.colorScheme)
   const instancePalette = options.instanceTheme === true
+  const navLayout = resolveNavLayout(options.navLayout)
+  const sidebar = resolveSidebarState(options.sidebar)
   const navLink = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
-    `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Payments' ? ' data-staff-payments-nav hidden' : ''}${section === 'Expenses' ? ' data-expenses-nav' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${section}</a>`
+    `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Payments' ? ' data-staff-payments-nav hidden' : ''}${section === 'Expenses' ? ' data-expenses-nav' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${iconMarkup(sectionIcons[section])}<span class="nav-label">${section}</span></a>`
   const navigation = sections.map(navLink).join('')
   const foldedNavigation = foldedSections.map(navLink).join('')
 
   return `<!doctype html>
-<html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="${colorScheme}"${instancePalette ? ' data-ez-palette="instance"' : ''} data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
+<html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="${colorScheme}"${instancePalette ? ' data-ez-palette="instance"' : ''} data-ez-nav="${navLayout}" data-ez-sidebar="${sidebar}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -545,8 +581,15 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
     </div>
   </aside>
   <div class="authenticated-shell" data-authenticated-shell${resumeSession ? '' : ' hidden'} inert aria-busy="true">
-  <header class="topbar">
-    <a class="brand" href="/dashboard" aria-label="${escapeHtml(brand)} home" data-home-link>${wordmark(b.wordmarkDark, brand)}</a>
+  <!--
+    One header, two layouts (the 2026-10 reskin): the stylesheet lays these
+    same elements down the left or across the top, from data-ez-nav on the
+    root. The collapse toggle only shows in the sidebar, and only at desktop
+    width; below 900px both layouts fold into the Menu drawer.
+  -->
+  <header class="topbar" id="ez-app-nav" data-app-nav>
+    <a class="brand" href="/dashboard" aria-label="${escapeHtml(brand)} home" data-home-link><span class="brand-wordmark">${wordmark(b.wordmarkDark, brand)}</span><span class="brand-glyph">${iconMarkup('home')}</span></a>
+    <button class="nav-collapse" type="button" data-sidebar-toggle aria-controls="ez-app-nav" aria-pressed="${sidebar === 'collapsed' ? 'true' : 'false'}" aria-label="Collapse sidebar">${iconMarkup('sidebar')}</button>
     <nav class="primary-nav" aria-label="Primary">${navigation}</nav>
     <button class="timer-chip" type="button" data-timer-chip data-state="loading" data-auth-action disabled aria-haspopup="dialog">
       ${iconMarkup('clock')}
@@ -561,7 +604,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
       from storage before the first paint.
     -->
     <button class="money-toggle" type="button" data-money-toggle data-auth-action disabled aria-pressed="false" aria-label="Hide money amounts ($)" title="Hide money amounts ($)"><span aria-hidden="true">$</span></button>
-    <button class="command-trigger" type="button" data-command-trigger data-auth-action disabled aria-haspopup="dialog" aria-label="Search and commands (⌘K)">${iconMarkup('magnifier')}<span aria-hidden="true">⌘K</span></button>
+    <button class="command-trigger" type="button" data-command-trigger data-auth-action disabled aria-haspopup="dialog" aria-label="Search and commands (⌘K)">${iconMarkup('magnifier')}<span class="command-trigger-label" aria-hidden="true">Search</span><span aria-hidden="true">⌘K</span></button>
     <button class="menu-trigger" type="button" data-menu-trigger aria-label="Open navigation" aria-haspopup="dialog">Menu</button>
     <div class="account" data-auth-shell data-state="loading">
       <div class="account-identity" data-current-identity hidden>
@@ -570,8 +613,8 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <span class="visually-hidden">Signed in as </span><span class="identity-name" data-current-profile>—</span>
           <span class="identity-meta">User #<span data-current-user-id>—</span></span>
         </span>
-        <a class="identity-settings" href="/settings/user" data-settings-link>Settings</a>
-        <button type="button" class="identity-signout" data-logout>Sign out</button>
+        <a class="identity-settings" href="/settings/user" data-settings-link>${iconMarkup('sliders')}<span class="identity-action-label">Settings</span></a>
+        <button type="button" class="identity-signout" data-logout>${iconMarkup('sign-out')}<span class="identity-action-label">Sign out</span></button>
         <p class="auth-result visually-hidden" data-logout-result role="status" aria-live="polite"></p>
       </div>
     </div>
@@ -1013,6 +1056,15 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
     <header><div><p class="eyebrow">Menu</p><h2 id="menu-title">Navigate</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
     <nav aria-label="Mobile primary">${navigation}</nav>
     <nav class="secondary-nav" data-secondary-nav aria-label="More">${foldedNavigation}</nav>
+    <!--
+      The layout switch, where the navigation is (the 2026-10 reskin). Settings
+      carries the same pair beside the theme; both write one cookie.
+    -->
+    <div class="menu-layout" role="group" aria-label="Navigation">
+      <span class="menu-layout-label" aria-hidden="true">Navigation</span>
+      <button type="button" data-nav-layout-choice="sidebar" aria-pressed="${navLayout === 'sidebar' ? 'true' : 'false'}">Sidebar</button>
+      <button type="button" data-nav-layout-choice="topbar" aria-pressed="${navLayout === 'topbar' ? 'true' : 'false'}">Top bar</button>
+    </div>
     <!--
       The dialog's footer (issue 859). The form is the footer rather than being
       wrapped in one: the stylesheet gives it the band, and the browser code

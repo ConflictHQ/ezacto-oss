@@ -280,6 +280,14 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <button type="button" data-color-scheme-choice="dark" aria-pressed="false">Dark</button>
       </div>
     </section>
+    <section class="settings-density" aria-labelledby="settings-nav-heading">
+      <h2 id="settings-nav-heading">Navigation</h2>
+      <p class="hint">A sidebar down the left, or a bar across the top. Yours and this browser's, like the theme. On a narrow screen both fold into the same menu.</p>
+      <div class="settings-density-choice" role="group" aria-label="Navigation">
+        <button type="button" data-nav-layout-choice="sidebar" aria-pressed="true">Sidebar</button>
+        <button type="button" data-nav-layout-choice="topbar" aria-pressed="false">Top bar</button>
+      </div>
+    </section>
     <section class="settings-density" aria-labelledby="settings-density-heading">
       <h2 id="settings-density-heading">Row density</h2>
       <p class="hint">How much of a table fits on your screen. This is yours and this machine's — nobody else's view changes, and the company setting beside it is unaffected.</p>

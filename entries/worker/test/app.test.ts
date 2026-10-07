@@ -75,11 +75,16 @@ describe('worker entry', () => {
     const home = await (await app.request('/dashboard', {}, env)).text()
     expect(home).toContain('data-app-view="dashboard"')
     expect(home).toContain('data-dashboard-page')
-    expect(home).toContain('<a href="/dashboard" aria-current="page">Home</a>')
+    // A section link is its mark and its label; the label is the name.
+    expect(home).toMatch(
+      /<a href="\/dashboard" aria-current="page"><svg[^>]*>(?:(?!<\/a>)[^])*<span class="nav-label">Home<\/span><\/a>/u,
+    )
 
     const time = await (await app.request('/', {}, env)).text()
     expect(time).toContain('data-app-view="time"')
-    expect(time).toContain('<a href="/" aria-current="page">Time</a>')
+    expect(time).toMatch(
+      /<a href="\/" aria-current="page"><svg[^>]*>(?:(?!<\/a>)[^])*<span class="nav-label">Time<\/span><\/a>/u,
+    )
   })
 
   it('[unit] keeps the URL settings shipped under', async () => {
@@ -168,6 +173,25 @@ describe('worker entry', () => {
     expect(hostile).not.toContain('<script>x</script>')
   })
 
+  it('[unit] lays the header out in the layout the cookies chose, on every shell route', async () => {
+    // The same header is a sidebar or a top bar by an attribute on the root,
+    // rendered from the person's cookies so the page never jumps from one to
+    // the other after it paints.
+    const root = (html: string): string => /<html[^>]*>/u.exec(html)?.[0] ?? ''
+    for (const path of ['/', '/invoices', '/settings/user', '/no-such-page']) {
+      const chosen = await (
+        await app.request(
+          path,
+          { headers: { cookie: 'ezacto_nav=topbar; ezacto_sidebar=collapsed' } },
+          env,
+        )
+      ).text()
+      expect(root(chosen), path).toContain(' data-ez-nav="topbar" data-ez-sidebar="collapsed"')
+      const unset = await (await app.request(path, {}, env)).text()
+      expect(root(unset), path).toContain(' data-ez-nav="sidebar" data-ez-sidebar="expanded"')
+    }
+  })
+
   it('[unit] marks no primary section on a page outside the primary nav', async () => {
     // activeSection defaults to Time, so settings marked Time as the page you
     // were on.
@@ -175,7 +199,7 @@ describe('worker entry', () => {
     expect(html).toContain('data-app-view="settings-company"')
     // The Week/Day strip marks itself; what must not be marked is a primary
     // section, and Time is the one the default would have claimed.
-    expect(html).not.toContain('<a href="/" aria-current="page">Time</a>')
+    expect(html).not.toMatch(/<a href="\/" aria-current="page"><svg/u)
     const nav = /<nav class="primary-nav"[^>]*>(.*?)<\/nav>/su.exec(html)?.[1] ?? ''
     expect(nav).not.toContain('aria-current')
   })

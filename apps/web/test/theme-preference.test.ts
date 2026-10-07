@@ -246,10 +246,10 @@ describe('light, dark, or whatever the operating system says (the 2026-10 reskin
     )
     // What the server sees is the same header, and it resolves the value
     // against the closed list before it reaches markup.
-    expect(readDisplayPreferences(`other=1; ${jar.cookie}`)).toEqual({ colorScheme: 'dark' })
+    expect(readDisplayPreferences(`other=1; ${jar.cookie}`)).toMatchObject({ colorScheme: 'dark' })
     expect(
       readDisplayPreferences('ezacto_scheme="><script>alert(1)</script>'),
-    ).toEqual({ colorScheme: 'system' })
+    ).toMatchObject({ colorScheme: 'system' })
 
     store.write(null)
     expect(store.read()).toBeNull()

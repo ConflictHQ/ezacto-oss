@@ -517,6 +517,86 @@ describe('S-1 through S-5 application shell', () => {
     expect(hostile).not.toContain('<script>alert(1)')
   })
 
+  it('[unit] lays out one header in the layout chosen, from the first byte', () => {
+    // Sidebar or top bar is the same header: one set of links, one current
+    // mark, one timer chip and one search, laid out by the stylesheet from the
+    // root's attribute. The server renders that attribute from the person's
+    // cookie, so the page never paints in one layout and jumps to the other.
+    const root = (html: string): string => /<html[^>]*>/u.exec(html)?.[0] ?? ''
+    const sidebar = renderAppShell({ environment: 'test', release: 'abc', activeSection: 'Invoices' })
+    expect(root(sidebar)).toContain(' data-ez-nav="sidebar" data-ez-sidebar="expanded"')
+    expect(sidebar.match(/<header class="topbar"/gu)).toHaveLength(1)
+    expect(sidebar.match(/<nav class="primary-nav"/gu)).toHaveLength(1)
+    expect(sidebar.match(/data-timer-chip/gu)).toHaveLength(1)
+    expect(sidebar).toContain(
+      'data-sidebar-toggle aria-controls="ez-app-nav" aria-pressed="false" aria-label="Collapse sidebar"',
+    )
+
+    // Every section carries its mark and keeps its name as text: the label is
+    // what a narrowed sidebar hides from sight, never from a screen reader.
+    const nav = /<nav class="primary-nav"[^>]*>(.*?)<\/nav>/su.exec(sidebar)?.[1] ?? ''
+    for (const section of ['Time', 'Expenses', 'Projects', 'Clients', 'Invoices', 'Reports']) {
+      expect(nav).toMatch(
+        new RegExp(`<svg class="ez-icon" data-icon="[a-z-]+"[^>]*aria-hidden="true"><[^]*?<span class="nav-label">${section}</span></a>`, 'u'),
+      )
+    }
+    // Only the section you are in is marked, and only once in the header.
+    expect(nav.match(/aria-current="page"/gu)).toHaveLength(1)
+    expect(nav).toMatch(/<a href="\/invoices"[^>]*aria-current="page"><svg[^>]*data-icon="document"/u)
+
+    const topbar = renderAppShell({
+      environment: 'test',
+      release: 'abc',
+      navLayout: 'topbar',
+      sidebar: 'collapsed',
+    })
+    expect(root(topbar)).toContain(' data-ez-nav="topbar" data-ez-sidebar="collapsed"')
+    expect(topbar).toContain('data-sidebar-toggle aria-controls="ez-app-nav" aria-pressed="true"')
+    expect(topbar).toContain('data-nav-layout-choice="topbar" aria-pressed="true"')
+    expect(topbar).toContain('data-nav-layout-choice="sidebar" aria-pressed="false"')
+
+    // Resolved, not trusted: both land in attributes.
+    const hostile = renderAppShell({
+      environment: 'test',
+      release: 'abc',
+      navLayout: '"><script>' as never,
+      sidebar: '"><script>' as never,
+    })
+    expect(root(hostile)).toContain(' data-ez-nav="sidebar" data-ez-sidebar="expanded"')
+  })
+
+  it('[e2e] keeps the sidebar a desktop layout, and folds both layouts into one drawer below it', () => {
+    // Every sidebar rule lives inside the one min-width query (or the paper
+    // block, which takes the sidebar's column back), so below 900px the header
+    // is the bar's own narrow bands whatever was chosen -- and both layouts
+    // reach the same Menu drawer the same way.
+    const css = webAssets.stylesheet.replace(/\/\*[\s\S]*?\*\//gu, '')
+    const blockAt = (start: number): readonly [number, number] => {
+      let depth = 0
+      for (let index = css.indexOf('{', start); index < css.length; index += 1) {
+        if (css[index] === '{') depth += 1
+        if (css[index] === '}' && (depth -= 1) === 0) return [start, index]
+      }
+      throw new Error('unbalanced stylesheet')
+    }
+    const allowed = [
+      blockAt(css.indexOf('@media (min-width: 900px) {')),
+      blockAt(css.indexOf('@media print {')),
+    ]
+    const uses = [...css.matchAll(/\[data-ez-nav='sidebar'\]/gu)].map((match) => match.index)
+    expect(uses.length).toBeGreaterThan(10)
+    for (const at of uses) {
+      expect(
+        allowed.some(([from, to]) => at > from && at < to),
+        css.slice(at, at + 80),
+      ).toBe(true)
+    }
+    // The drawer is the Menu dialog below 900px: full height, from the left.
+    expect(css).toMatch(
+      /@media \(max-width: 899px\) \{\s*\.menu-dialog \{[^}]*inset: 0 auto 0 0;[^}]*height: 100%;/u,
+    )
+  })
+
   it('[e2e] gives the top bar a layout for every width between phone and full', () => {
     // The bar's contents come to 1325px on one row, and for a long time the only
     // breakpoint in the stylesheet was 720px. Everything between -- most laptops,

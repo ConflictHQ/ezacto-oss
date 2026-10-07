@@ -4744,6 +4744,252 @@ dialog h2,
     margin-left: auto;
   }
 }
+
+/*
+ * Navigation: one header, two layouts (the 2026-10 reskin).
+ *
+ * Everything above lays the header out as the bar across the top. Someone who
+ * keeps the sidebar -- the default -- gets the same elements down the left,
+ * from 900px up; below that neither layout fits, and both fold into the Menu
+ * drawer through the bar's own narrow bands, which is why every rule here is
+ * inside the one media query. Nothing here reorders an element, so the order
+ * a keyboard walks the header in is the order it is read in, in both layouts.
+ */
+:root {
+  --ez-sidebar-width: 248px;
+  --ez-sidebar-width-collapsed: 72px;
+}
+.brand-glyph,
+.nav-collapse,
+.command-trigger-label,
+.primary-nav .ez-icon,
+.identity-settings .ez-icon,
+.identity-signout .ez-icon {
+  display: none;
+}
+@media (min-width: 900px) {
+  [data-ez-nav='sidebar'] .authenticated-shell {
+    padding-left: var(--ez-sidebar-width);
+  }
+  [data-ez-nav='sidebar'] .topbar {
+    position: fixed;
+    z-index: 30;
+    inset: 0 auto 0 0;
+    width: var(--ez-sidebar-width);
+    min-height: 0;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto auto auto 1fr;
+    align-items: start;
+    gap: 8px;
+    padding: 12px 10px;
+    overflow-y: auto;
+    border-right: 1px solid var(--ez-border);
+    background: var(--ez-surface);
+    color: var(--ez-ink);
+  }
+  /* The brand keeps its band. The mark an operator uploads for a dark ground
+     is drawn on it, and on the light sidebar that mark would disappear. */
+  [data-ez-nav='sidebar'] .brand {
+    grid-column: 1 / -1;
+    min-height: 52px;
+    margin: 0 0 4px;
+    padding: 0 52px 0 16px;
+    place-items: center start;
+    border-radius: calc(var(--ez-radius) * 1.5);
+    background: var(--ez-band);
+    color: var(--ez-band-ink);
+  }
+  [data-ez-nav='sidebar'] .nav-collapse {
+    position: absolute;
+    top: 22px;
+    right: 20px;
+    display: grid;
+    width: 32px;
+    height: 32px;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--ez-radius);
+    background: transparent;
+    color: var(--ez-band-ink);
+  }
+  [data-ez-nav='sidebar'] .primary-nav {
+    grid-column: 1 / -1;
+    display: grid;
+    gap: 2px;
+  }
+  [data-ez-nav='sidebar'] .primary-nav a {
+    grid-template-columns: auto minmax(0, 1fr);
+    place-items: center start;
+    gap: 12px;
+    min-height: 44px;
+    padding: 0 6px;
+    border-radius: calc(var(--ez-radius) + 2px);
+    color: var(--ez-ink);
+    font-weight: 600;
+  }
+  [data-ez-nav='sidebar'] .primary-nav .ez-icon {
+    display: block;
+    box-sizing: content-box;
+    width: 18px;
+    height: 18px;
+    padding: 6px;
+    border-radius: var(--ez-radius);
+    color: var(--ez-muted);
+  }
+  [data-ez-nav='sidebar'] .primary-nav a:hover,
+  [data-ez-nav='sidebar'] .primary-nav a:focus-visible {
+    background: var(--ez-surface-2);
+  }
+  /* The section you are in: its row on the nested grey and its mark on a tile
+     of the action blue. aria-current is what draws it, so what the eye sees
+     and what a screen reader hears are the one fact. */
+  [data-ez-nav='sidebar'] .primary-nav a[aria-current='page'] {
+    background: var(--ez-surface-2);
+    color: var(--ez-ink);
+  }
+  [data-ez-nav='sidebar'] .primary-nav a[aria-current='page'] .ez-icon {
+    background: var(--ez-action);
+    color: var(--ez-action-fg);
+  }
+  [data-ez-nav='sidebar'] .timer-chip,
+  [data-ez-nav='sidebar'] .money-toggle,
+  [data-ez-nav='sidebar'] .command-trigger,
+  [data-ez-nav='sidebar'] .menu-trigger,
+  [data-ez-nav='sidebar'] .account-identity {
+    background: var(--ez-ground);
+  }
+  [data-ez-nav='sidebar'] .timer-chip {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: none;
+    min-height: 40px;
+    margin: 8px 0 0;
+  }
+  [data-ez-nav='sidebar'] .timer-chip [data-timer-elapsed] {
+    margin-left: auto;
+  }
+  [data-ez-nav='sidebar'] .money-toggle {
+    grid-column: 1;
+  }
+  [data-ez-nav='sidebar'] .command-trigger {
+    grid-column: 2;
+    display: inline-flex;
+    justify-content: flex-start;
+    width: 100%;
+  }
+  [data-ez-nav='sidebar'] .command-trigger-label {
+    display: inline;
+    margin-right: auto;
+  }
+  [data-ez-nav='sidebar'] .menu-trigger {
+    grid-column: 3;
+    display: block;
+  }
+  [data-ez-nav='sidebar'] .account {
+    grid-column: 1 / -1;
+    align-self: end;
+  }
+  [data-ez-nav='sidebar'] .account-identity {
+    flex-wrap: wrap;
+    padding: 8px;
+  }
+  /* The name takes the first row beside the avatar, and the two account
+     controls share the second, so neither the name nor a control is squeezed
+     to an ellipsis in a column this narrow. */
+  [data-ez-nav='sidebar'] .identity-text {
+    display: grid;
+    flex: 1 1 calc(100% - 48px);
+  }
+  [data-ez-nav='sidebar'] .identity-settings,
+  [data-ez-nav='sidebar'] .identity-signout {
+    flex: 1 1 40%;
+    text-align: center;
+  }
+
+  /* Narrowed to its icons. Every label stays in the document and out of
+     sight, so no control changes its name when the sidebar changes width. */
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .authenticated-shell {
+    padding-left: var(--ez-sidebar-width-collapsed);
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .topbar {
+    width: var(--ez-sidebar-width-collapsed);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(7, auto) 1fr;
+    justify-items: center;
+    padding: 12px;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .brand {
+    width: 48px;
+    min-height: 48px;
+    padding: 0;
+    place-items: center;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .brand-wordmark {
+    display: none;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .brand-glyph {
+    display: grid;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .nav-collapse {
+    position: static;
+    color: var(--ez-muted);
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .nav-collapse:hover,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .nav-collapse:focus-visible {
+    background: var(--ez-surface-2);
+    color: var(--ez-ink);
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .primary-nav a {
+    grid-template-columns: auto;
+    place-items: center;
+    padding: 0 6px;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .timer-chip {
+    width: auto;
+    padding: 0 10px;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .money-toggle,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .command-trigger,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .menu-trigger {
+    grid-column: 1;
+    width: 48px;
+    justify-content: center;
+    padding: 0;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .account-identity {
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-settings,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-signout {
+    display: grid;
+    flex: none;
+    width: 36px;
+    min-height: 36px;
+    place-items: center;
+    padding: 0;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-settings .ez-icon,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-signout .ez-icon {
+    display: block;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .nav-label,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .timer-chip [data-timer-label],
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .timer-chip [data-timer-elapsed],
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .command-trigger > span,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-text,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-action-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
 .primary-action:disabled,
 button[data-auth-action]:disabled {
   box-shadow: none;
@@ -5730,6 +5976,71 @@ dialog textarea {
   box-shadow: inset 3px 0 0 var(--ez-data);
   font-weight: 600;
 }
+
+/*
+ * The Menu's own navigation carries the section marks too, and the layout
+ * switch sits under it, where somebody looking at the navigation would look
+ * for a way to move it.
+ */
+.menu-dialog nav a {
+  gap: 12px;
+}
+.menu-dialog nav .ez-icon {
+  color: var(--ez-muted);
+}
+.menu-layout {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--ez-border);
+}
+.menu-layout-label {
+  margin-right: auto;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.menu-layout button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.menu-layout button[aria-pressed='true'] {
+  border-color: var(--ez-data);
+  background: var(--ez-orange-tint);
+}
+/*
+ * Below 900px the Menu is the drawer, for both layouts: it slides in from the
+ * left, where the sidebar would be, and takes the full height. It is a modal
+ * dialog, so the page behind it is inert and Tab cannot leave it; Escape and
+ * the close button both hand focus back to the Menu button.
+ */
+@media (max-width: 899px) {
+  .menu-dialog {
+    inset: 0 auto 0 0;
+    width: min(340px, 88vw);
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    margin: 0;
+    border-width: 0 1px 0 0;
+    border-radius: 0;
+  }
+}
+@media (max-width: 899px) and (prefers-reduced-motion: no-preference) {
+  .menu-dialog[open] {
+    animation: ez-drawer-in 180ms ease-out;
+  }
+}
+@keyframes ez-drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
 .document-shell {
   min-height: 100vh;
   background: var(--ez-ground);
@@ -6069,7 +6380,12 @@ dialog textarea {
   .brand {
     margin-right: 0;
   }
+  /* It takes the width the row has left rather than its content's: the bar
+     wraps before anything shrinks, so at 375px a chip sized to its label pushed
+     Menu onto a line of its own. The label is what gives, and it ellipsizes. */
   .timer-chip {
+    flex: 1 1 0;
+    min-width: 0;
     margin-left: auto;
     max-width: min(56vw, 250px);
   }
@@ -6615,6 +6931,9 @@ dialog textarea {
   .session-check-overlay,
   dialog {
     display: none !important;
+  }
+  [data-ez-nav='sidebar'] .authenticated-shell {
+    padding-left: 0 !important;
   }
   /*
    * The invoice's own working surfaces. The document is what is being printed;
