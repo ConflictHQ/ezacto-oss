@@ -300,6 +300,21 @@ describe('D16 theme token contract', () => {
     expect(unedged).toEqual([])
   })
 
+  it('[unit] asks only for font weights the font request carries', async () => {
+    // The request names its weights, and a weight between them is drawn in the
+    // nearest one it has: the brand asked for 800 and was drawn at 900. Ask
+    // for a weight the request carries, or add it to the request.
+    const stylesheet = await readFile(resolve(root, 'src', 'shell', 'shell.css'), 'utf8')
+    const requested = new Set(
+      /wght@([\d;]+)/u.exec(themeManifest.precision.fontStylesheet)![1]!.split(';').map(Number),
+    )
+    const used = [
+      ...stylesheet.matchAll(/(?:font-weight|font|--ez-[a-z-]+-weight):\s*(\d{3})\b/gu),
+    ].map(([, weight]) => Number(weight))
+    expect(used.length).toBeGreaterThan(50)
+    expect([...new Set(used)].filter((weight) => !requested.has(weight))).toEqual([])
+  })
+
   it('[unit] gives every page surface exactly one measure', async () => {
     // `page--grid` and `page--document` replaced nine hand-written max-width
     // caps, and were then applied to nothing -- so settings forms ran the full

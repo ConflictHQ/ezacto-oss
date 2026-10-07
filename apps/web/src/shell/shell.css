@@ -3584,7 +3584,9 @@ a {
   display: grid;
   place-items: center;
   color: var(--ez-band-ink);
-  font: 800 19px/1 var(--ez-font-display);
+  /* 900, the heaviest weight the font request carries: an 800 here was drawn
+     at 900 anyway, by a browser told a weight it had not been given. */
+  font: 900 19px/1 var(--ez-font-display);
   letter-spacing: -0.03em;
   text-decoration: none;
   margin-right: 12px;
