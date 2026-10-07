@@ -1,4 +1,5 @@
 import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { isDemoDeployment } from '../demo.js'
 import { markMoney, moneyText } from '../money-display.js'
 import {
   type Attachment,
@@ -613,6 +614,13 @@ export const createInvoicePaymentController = (
   const attachmentStatus = required<HTMLElement>('[data-invoice-attachment-status]')
   const attachmentList = required<HTMLUListElement>('[data-invoice-attachments]')
   const attachmentReadonly = required<HTMLElement>('[data-invoice-attachment-readonly]')
+  // The public demo takes no files (issue 931): the form is withheld and the
+  // note says why, for every profile.
+  const attachmentDemo = required<HTMLElement>('[data-invoice-attachment-demo]')
+  const demo = isDemoDeployment()
+  // And it delivers no email: a send is recorded and stopped there, so the
+  // dialog says so before anyone types a client's address into it.
+  required<HTMLElement>('[data-invoice-composer-demo]').hidden = !demo
 
   let activationGeneration = 0
   let requestGeneration = 0
@@ -1034,9 +1042,10 @@ export const createInvoicePaymentController = (
     const request = sendToMe
       ? api.sendInvoiceEmailPreview!(selected.id, input, session.signal).then((sent) => {
           if (current() !== session) return
-          composerPreviewResult.textContent = `A preview went to ${sent.to
-            .map(({ email }) => email)
-            .join(', ')} only, stamped PREVIEW. Nothing was sent to the client.`
+          const to = sent.to.map(({ email }) => email).join(', ')
+          composerPreviewResult.textContent = demo
+            ? `A preview for ${to} was recorded, stamped PREVIEW. The public demo delivers no email, so nothing went to anyone.`
+            : `A preview went to ${to} only, stamped PREVIEW. Nothing was sent to the client.`
         })
       : api.previewInvoiceEmail!(selected.id, input, session.signal).then((preview) => {
           if (current() !== session) return
@@ -1539,8 +1548,9 @@ export const createInvoicePaymentController = (
       status.textContent = options.headlineMessage ?? ''
       workflowStatus.textContent = options.successMessage ?? ''
       const canWrite = invoiceIdentityCanWrite(session.identity)
-      attachmentForm.hidden = !canWrite || api.uploadInvoiceAttachment === undefined
-      attachmentReadonly.hidden = canWrite || api.uploadInvoiceAttachment === undefined
+      attachmentForm.hidden = demo || !canWrite || api.uploadInvoiceAttachment === undefined
+      attachmentReadonly.hidden = demo || canWrite || api.uploadInvoiceAttachment === undefined
+      attachmentDemo.hidden = !demo || api.uploadInvoiceAttachment === undefined
       attachmentSubmit.disabled = false
       void loadAttachments(session, invoiceId!)
       void loadQuickBooks(session, invoiceId!)
@@ -2168,7 +2178,9 @@ export const createInvoicePaymentController = (
           // under the heading. Written to the Payments status line it was off
           // screen, and a send that worked looked like a click that did nothing.
           headlineMessage: delivering
-            ? `Sent. The email is queued and goes out within a minute or two; Settings › Deliveries shows it.${reminderNote}`
+            ? demo
+              ? `Sent. The public demo records the email and delivers none; Settings › Deliveries shows it.${reminderNote}`
+              : `Sent. The email is queued and goes out within a minute or two; Settings › Deliveries shows it.${reminderNote}`
             : `Marked sent. No email was delivered.${reminderNote}`,
         })
         if (!loaded && current() === session && refreshRequired) {

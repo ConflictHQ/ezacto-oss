@@ -1,3 +1,5 @@
+import { demoUnavailable } from '../demo.js'
+
 export const renderPaymentRuns = (): string => `
 <section data-payment-runs hidden class="payment-runs">
   <p data-run-status role="status" aria-live="polite"></p>
@@ -13,7 +15,8 @@ export const renderPaymentRuns = (): string => `
       <span data-run-timezone></span>
     </div>
     <div data-run-selection></div>
-    <button type="submit" class="primary-action">Review selected payments</button>
+    <button type="submit" class="primary-action" data-run-submit>Review selected payments</button>
+    <p class="hint" data-run-demo hidden>${demoUnavailable('Sending payments')}</p>
   </form>
   <section data-run-review hidden aria-label="Confirm payment run">
     <h3>Confirm payment run</h3><p data-run-review-summary></p>

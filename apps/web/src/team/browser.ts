@@ -1,4 +1,5 @@
 import { renderDataTable } from '../components/data-table.js'
+import { demoUnavailable, isDemoDeployment } from '../demo.js'
 import { markMoney } from '../money-display.js'
 import {
   payoutFailure,
@@ -1186,9 +1187,15 @@ export const createTeamDirectoryController = (
     const read = api.getWisePayoutDestination
     payoutTab.hidden = !mayDestineFor(active, userId) || read === undefined
     if (read === undefined || payoutTab.hidden) return
-    payoutStatus.textContent = 'Loading payout destination…'
     payoutCurrent.hidden = true
     payoutForm.hidden = true
+    // The public demo pays nobody (issue 931). It has no Wise to ask, so the
+    // read could only fail; the panel says why instead, and offers no form.
+    if (isDemoDeployment()) {
+      payoutStatus.textContent = demoUnavailable('Setting where someone is paid')
+      return
+    }
+    payoutStatus.textContent = 'Loading payout destination…'
     try {
       const state = await read(userId, active.signal)
       if (currentSession() !== active) return

@@ -1,4 +1,5 @@
 import { renderDataTable } from '../components/data-table.js'
+import { isDemoDeployment } from '../demo.js'
 import { moneyText } from '../money-display.js'
 import { icon } from '../components/icons.js'
 import { createPeriodControl } from '../components/period.js'
@@ -220,6 +221,10 @@ export const createExpenseWorkflowController = (
   const lockMessage = required<HTMLElement>('[data-expense-lock-message]')
   const attachmentForm = required<HTMLFormElement>('[data-expense-attachment-form]')
   const attachmentSubmit = required<HTMLButtonElement>('[data-expense-attachment-submit]')
+  // The public demo takes no files (issue 931): the upload stays in view,
+  // disabled, with the note saying why.
+  const demo = isDemoDeployment()
+  required<HTMLElement>('[data-expense-attachment-demo]').hidden = !demo
   const attachmentStatus = required<HTMLElement>('[data-expense-attachment-status]')
   const attachmentList = required<HTMLUListElement>('[data-expense-attachments]')
   const moduleNotices = [...document.querySelectorAll<HTMLElement>('[data-expense-module-unavailable]')]
@@ -335,9 +340,9 @@ export const createExpenseWorkflowController = (
     }
     editSubmit.hidden = currentExpense !== null && !expenseIsEditable(currentExpense)
     for (const field of [...attachmentForm.elements]) {
-      if (field instanceof HTMLInputElement) field.disabled = !hasDetail || mutationPending
+      if (field instanceof HTMLInputElement) field.disabled = demo || !hasDetail || mutationPending
     }
-    attachmentSubmit.disabled = !hasDetail || mutationPending
+    attachmentSubmit.disabled = demo || !hasDetail || mutationPending
   }
 
   const clearPrivatePresentation = (): void => {

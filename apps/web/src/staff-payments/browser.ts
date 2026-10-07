@@ -13,6 +13,7 @@ import {
   type StaffPaymentRow,
 } from '@ezacto/core'
 import { renderDataTable, type DataTableSort } from '../components/data-table.js'
+import { isDemoDeployment } from '../demo.js'
 import { moneyText } from '../money-display.js'
 import {
   hasPaymentActivity,
@@ -82,6 +83,12 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   const providerForms = [...page.querySelectorAll<HTMLFormElement>('[data-payment-provider-form]')]
   const providerSettings = element<HTMLElement>(page, '[data-payment-provider-settings]')
   const providerHistory = element<HTMLElement>(page, '[data-payment-provider-history]')
+  // Which provider pays a person is not the public demo's to choose (issue
+  // 931): the forms are withheld there, with the note in their place.
+  const demo = isDemoDeployment()
+  for (const note of page.querySelectorAll<HTMLElement>('[data-payment-provider-demo]')) {
+    note.hidden = !demo
+  }
   const input = (name: string): HTMLInputElement =>
     form.elements.namedItem(name) as HTMLInputElement
   let signal: AbortSignal | null = null
@@ -158,7 +165,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     const preferenceForm = providerForms.find(
       (item) => item.dataset.paymentProviderForm === 'person',
     )!
-    preferenceForm.hidden = api.configureStaffPaymentProvider === undefined
+    preferenceForm.hidden = demo || api.configureStaffPaymentProvider === undefined
     preferenceForm.reset()
     element<HTMLElement & { value: string }>(preferenceForm, '[name=provider]').value =
       row.provider_override ?? ''
@@ -414,7 +421,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   }
   const paint = (): void => {
     if (report === null) return
-    providerSettings.hidden = api.configureStaffPaymentProvider === undefined
+    providerSettings.hidden = demo || api.configureStaffPaymentProvider === undefined
     const organizationForm = providerForms.find(
       (item) => item.dataset.paymentProviderForm === 'organization',
     )!

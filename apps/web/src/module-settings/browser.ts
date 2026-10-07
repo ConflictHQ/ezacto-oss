@@ -6,6 +6,7 @@ import {
   type Whoami,
 } from '@conflict-hq/ezacto-client'
 import { renderDataTable } from '../components/data-table.js'
+import { DEMO_UNAVAILABLE, isDemoDeployment } from '../demo.js'
 import { invoiceAddressLines } from '../invoice-addresses.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
@@ -401,6 +402,23 @@ export const createModuleSettingsController = (
   const invoiceDefaultsNotes = required<HTMLTextAreaElement>('[data-invoice-defaults-notes]')
   const invoiceDefaultsSubmit = required<HTMLButtonElement>('[data-invoice-defaults-submit]')
   const invoiceDefaultsResult = required<HTMLElement>('[data-invoice-defaults-result]')
+  // The public demo (issue 931). The company information and default values
+  // are what every invoice tells a client to pay into, and its marks are files
+  // in storage the nightly rebuild never empties, so both are read-only there
+  // and say so. The sending defaults below them stay the demo's to change.
+  const demo = isDemoDeployment()
+  const invoiceDefaultsDemo = required<HTMLElement>('[data-invoice-defaults-demo]')
+  const brandDemo = required<HTMLElement>('[data-settings-brand-demo]')
+  invoiceDefaultsDemo.hidden = !demo
+  brandDemo.hidden = !demo
+  for (const field of [
+    invoiceDefaultsName,
+    invoiceDefaultsAddress,
+    invoiceDefaultsSubject,
+    invoiceDefaultsNotes,
+  ]) {
+    field.disabled = demo
+  }
   // Sending: what an invoice's email carries unless the invoice says otherwise.
   const sendingParts = [
     ...document.querySelectorAll<HTMLElement>('[data-invoice-defaults-sending]'),
@@ -608,17 +626,20 @@ export const createModuleSettingsController = (
     let defaultsSaved = false
     let attachmentsSaved = false
     try {
-      const saved = await api.updateInvoiceDefaults(
-        {
-          company_name: invoiceDefaultsName.value,
-          company_address: text(invoiceDefaultsAddress.value),
-          subject: text(invoiceDefaultsSubject.value),
-          notes: text(invoiceDefaultsNotes.value),
-        },
-        active.signal,
-      )
+      // Read-only on the demo, so only the halves below are written there.
+      if (!demo) {
+        const saved = await api.updateInvoiceDefaults(
+          {
+            company_name: invoiceDefaultsName.value,
+            company_address: text(invoiceDefaultsAddress.value),
+            subject: text(invoiceDefaultsSubject.value),
+            notes: text(invoiceDefaultsNotes.value),
+          },
+          active.signal,
+        )
+        active.present(() => showInvoiceDefaults(saved))
+      }
       defaultsSaved = true
-      active.present(() => showInvoiceDefaults(saved))
       // The two halves are two endpoints. Sending is written second and only
       // where it changed, so a refusal there leaves the first half saved and
       // says so rather than reading as though nothing was.
@@ -847,7 +868,7 @@ export const createModuleSettingsController = (
         const input = document.createElement('input')
         input.type = 'file'
         input.accept = brandAssetAccept
-        input.disabled = brandBusy
+        input.disabled = brandBusy || demo
         input.addEventListener('change', () => {
           const file = input.files?.[0]
           input.value = ''
@@ -1427,6 +1448,12 @@ export const createModuleSettingsController = (
   }
 
   const loadQuickBooks = async (identity: Whoami, active: ActiveSession): Promise<void> => {
+    // The demo connects to no provider at all, so there is no connection to
+    // read -- and asking would read as a failure to retry.
+    if (demo) {
+      quickBooksStatus.textContent = DEMO_UNAVAILABLE
+      return
+    }
     if (identity.profile !== 'administrator') {
       quickBooksStatus.textContent =
         'Connecting an accounting system is an administrator action.'

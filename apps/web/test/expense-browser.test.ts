@@ -95,7 +95,11 @@ const deferred = <Value>() => {
   return { promise, resolve, reject }
 }
 
-const writeDocument = (view: 'expense-list' | 'expense-detail', pathname: string): void => {
+const writeDocument = (
+  view: 'expense-list' | 'expense-detail',
+  pathname: string,
+  demo = false,
+): void => {
   window.history.replaceState(null, '', pathname)
   document.open()
   document.write(
@@ -104,6 +108,7 @@ const writeDocument = (view: 'expense-list' | 'expense-detail', pathname: string
       release: 'expense-browser-test',
       activeSection: 'Expenses',
       view,
+      demo,
     })
       .replace(/ {2}<link[^>]+(?:fonts\.googleapis|fonts\.gstatic|\/assets\/ezacto\.css)[^>]*>\n/gu, '')
       .replace('  <script type="module" src="/assets/ezacto.js"></script>\n', ''),
@@ -351,6 +356,34 @@ describe('Expenses V1 browser controller', () => {
     expect(createWorkflowExpense.mock.calls[1]![0]).not.toHaveProperty('total_cost_cents')
   })
 
+  it('[security] on the public demo, offers the receipt upload disabled and says why', async () => {
+    // Issue 931: the Worker refuses every upload on the demo. The receipt
+    // section stays in view, disabled, so what is missing is not a mystery.
+    writeDocument('expense-detail', '/expenses/8', true)
+    const uploadWorkflowExpenseAttachment = vi.fn<
+      ExpenseWorkflowApi['uploadWorkflowExpenseAttachment']
+    >(async () => receipt)
+    await createExpenseWorkflowController({
+      ...catalogs(),
+      getWorkflowExpense: vi.fn(async () => baseExpense),
+      updateWorkflowExpense: vi.fn(async (_id, patch) => ({ ...baseExpense, ...patch })),
+      listWorkflowExpenseAttachments: vi.fn(async () => []),
+      uploadWorkflowExpenseAttachment,
+    }).activate(identity, new AbortController().signal, () => false)
+
+    expect(document.querySelector<HTMLButtonElement>('[data-expense-attachment-submit]')!.disabled).toBe(
+      true,
+    )
+    expect(
+      document.querySelector<HTMLInputElement>('[data-expense-attachment-form] input[name="file"]')!
+        .disabled,
+    ).toBe(true)
+    const note = document.querySelector<HTMLElement>('[data-expense-attachment-demo]')!
+    expect(note.hidden).toBe(false)
+    expect(note.textContent).toBe('Uploading a receipt: not available on the public demo.')
+    expect(uploadWorkflowExpenseAttachment).not.toHaveBeenCalled()
+  })
+
   it('[browser] edits submitted detail with notes and uploads a receipt through the attachment API', async () => {
     writeDocument('expense-detail', '/expenses/8')
     const updateWorkflowExpense = vi.fn(async (_id, patch) => ({ ...baseExpense, ...patch }))
@@ -374,6 +407,7 @@ describe('Expenses V1 browser controller', () => {
     expect((document.querySelector('[data-expense-edit-form] [name="notes"]') as HTMLTextAreaElement).value).toContain('Client kickoff')
     expect(document.querySelector('[data-expense-edit-result]')?.textContent).toContain('Submitted expenses remain editable')
     expect(document.querySelector<HTMLButtonElement>('[data-expense-attachment-submit]')?.disabled).toBe(false)
+    expect(document.querySelector<HTMLElement>('[data-expense-attachment-demo]')!.hidden).toBe(true)
 
     const editForm = document.querySelector<HTMLFormElement>('[data-expense-edit-form]')!
     ;(editForm.elements.namedItem('notes') as HTMLTextAreaElement).value = 'Updated submitted receipt note'

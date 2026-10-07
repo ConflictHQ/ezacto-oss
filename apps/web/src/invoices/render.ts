@@ -1,3 +1,4 @@
+import { demoUnavailable } from '../demo.js'
 import { invoiceOverflowTransitions } from './model.js'
 
 export const renderInvoicePaymentSection = (): string => `
@@ -67,6 +68,7 @@ export const renderInvoiceAttachmentSection = (): string => `
           <button type="submit" data-invoice-attachment-submit data-auth-action disabled>Upload</button>
         </form>
         <p class="hint" data-invoice-attachment-readonly hidden>You have read-only invoice access. Uploading requires the invoices:write scope.</p>
+        <p class="hint" data-invoice-attachment-demo hidden>${demoUnavailable('Uploading a file')}</p>
         <p class="form-result" data-invoice-attachment-status role="status" aria-live="polite"></p>
         <ul data-invoice-attachments></ul>
       </section>`
@@ -124,6 +126,7 @@ export const renderInvoiceComposerDialog = (): string => `
           <label class="invoice-composer-check"><input name="deliver" data-invoice-composer-deliver-toggle type="checkbox" aria-describedby="invoice-deliver-hint"> Also deliver by email</label>
           <p class="hint" id="invoice-deliver-hint">One email from the verified organization sender, To and Cc as listed, with the subject and message above and the attachments chosen below.</p>
           <p class="hint" data-invoice-composer-delivery-unavailable hidden></p>
+          <p class="hint" data-invoice-composer-demo hidden>This is the public demo: email is recorded here, and never delivered to anyone.</p>
           <p class="invoice-composer-no-email" data-invoice-composer-no-email hidden>Nothing will be emailed — this only records the invoice as sent.</p>
           <fieldset class="invoice-composer-attachments" data-invoice-composer-attachments>
             <legend>Attach to the email</legend>

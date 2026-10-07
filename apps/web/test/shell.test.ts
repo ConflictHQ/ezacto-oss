@@ -461,6 +461,20 @@ describe('S-1 through S-5 application shell', () => {
     expect(html).toContain('data-auth-action disabled')
   })
 
+  it('[unit] marks the page as the public demo only when told to, and on the root element', () => {
+    // Issue 931: what the demo refuses reads this mark to say so up front.
+    const root = (html: string): string => /<html[^>]*>/u.exec(html)?.[0] ?? ''
+    expect(root(renderAppShell({ environment: 'dev', release: 'abc', demo: true }))).toContain(
+      ' data-demo-deployment',
+    )
+    for (const html of [
+      renderAppShell({ environment: 'dev', release: 'abc' }),
+      renderAppShell({ environment: 'prod', release: 'abc', demo: false }),
+    ]) {
+      expect(html).not.toContain('data-demo-deployment')
+    }
+  })
+
   it('[e2e] gives the top bar a layout for every width between phone and full', () => {
     // The bar's contents come to 1325px on one row, and for a long time the only
     // breakpoint in the stylesheet was 720px. Everything between -- most laptops,

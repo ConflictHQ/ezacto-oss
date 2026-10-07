@@ -8,6 +8,7 @@ import type {
 } from "@ezacto/core";
 import { moneyText } from "../money-display.js";
 import { renderDataTable } from "../components/data-table.js";
+import { isDemoDeployment } from "../demo.js";
 import { staffPaymentAmount, staffPaymentMoney } from "./model.js";
 import {
   canPayNow,
@@ -91,6 +92,13 @@ export const createPaymentRunsController = (
   const reportSection = el<HTMLElement>(page, "[data-payments-report]");
   const reportMode = location.pathname === "/payments/report";
   const form = el<HTMLFormElement>(section, "[data-run-form]");
+  // The public demo sends no money (issue 931). Choosing amounts still works,
+  // so the form stays; only the step that would quote and send is withheld,
+  // with the note in its place. Hidden rather than disabled, because every
+  // busy state in this page re-enables its buttons when it ends.
+  const demo = isDemoDeployment();
+  el<HTMLButtonElement>(section, "[data-run-submit]").hidden = demo;
+  el<HTMLElement>(section, "[data-run-demo]").hidden = !demo;
   const approvalForm = el<HTMLFormElement>(section, "[data-run-approval]");
   const review = el<HTMLElement>(section, "[data-run-review]");
   const status = el<HTMLElement>(section, "[data-run-status]");
@@ -504,6 +512,8 @@ export const createPaymentRunsController = (
   });
   form.addEventListener("submit", (event) => {
     event.preventDefault();
+    // An Enter key still submits a form whose button is hidden.
+    if (demo) return;
     void action(async () => {
       if (!snapshot || !api.previewPaymentRun) return;
       const selectedLedger = snapshot;

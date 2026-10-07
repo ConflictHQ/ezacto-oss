@@ -106,6 +106,53 @@ describe('monthly payment register', () => {
     expect(document.querySelector('[data-payment-history]')?.textContent).toBe('')
     expect(document.querySelector<HTMLElement>('[data-staff-payment-content]')!.hidden).toBe(true)
   })
+  it('on the public demo, withholds the payment provider choice and says why', async () => {
+    // Issue 931: which provider pays a person is refused on the demo, so the
+    // two forms that choose it give way to the note.
+    document.documentElement.setAttribute('data-demo-deployment', '')
+    try {
+      const configure = vi.fn(async () => undefined)
+      const controller = createStaffPaymentsController({
+        getStaffPaymentReport: vi.fn(async () => report()),
+        recordStaffPaymentEvent: vi.fn(async () => undefined),
+        configureStaffPaymentProvider: configure,
+      })
+      await controller.activate({ profile: 'administrator' }, new AbortController().signal)
+      document.querySelector<HTMLButtonElement>('[data-payment-list] tbody button')!.click()
+      expect(
+        document.querySelector<HTMLElement>('[data-payment-provider-form="person"]')!.hidden,
+      ).toBe(true)
+      expect(document.querySelector<HTMLElement>('[data-payment-provider-settings]')!.hidden).toBe(
+        true,
+      )
+      const notes = [...document.querySelectorAll<HTMLElement>('[data-payment-provider-demo]')]
+      expect(notes).toHaveLength(2)
+      expect(notes.every((note) => !note.hidden)).toBe(true)
+      expect(notes[0]!.textContent).toBe(
+        'Choosing a payment provider: not available on the public demo.',
+      )
+    } finally {
+      document.documentElement.removeAttribute('data-demo-deployment')
+    }
+
+    // Anywhere else the forms are there and the notes are not.
+    document.body.innerHTML = renderStaffPayments('staff-payments')
+    const controller = createStaffPaymentsController({
+      getStaffPaymentReport: vi.fn(async () => report()),
+      recordStaffPaymentEvent: vi.fn(async () => undefined),
+      configureStaffPaymentProvider: vi.fn(async () => undefined),
+    })
+    await controller.activate({ profile: 'administrator' }, new AbortController().signal)
+    document.querySelector<HTMLButtonElement>('[data-payment-list] tbody button')!.click()
+    expect(
+      document.querySelector<HTMLElement>('[data-payment-provider-form="person"]')!.hidden,
+    ).toBe(false)
+    expect(
+      [...document.querySelectorAll<HTMLElement>('[data-payment-provider-demo]')].every(
+        (note) => note.hidden,
+      ),
+    ).toBe(true)
+  })
   it('settles only explicitly selected people with unspecified historical amounts', async () => {
     const read = vi.fn(async () => report([]))
     const save = vi.fn<(command: StaffPaymentCommand, signal?: AbortSignal) => Promise<void>>(

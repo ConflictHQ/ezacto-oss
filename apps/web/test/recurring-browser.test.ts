@@ -138,6 +138,7 @@ const page = <Resource>(data: readonly Resource[], nextCursor: string | null = n
 const writeDocument = (
   path = '/invoices/recurring',
   view: 'invoice-recurring' | 'invoice-recurring-editor' = 'invoice-recurring',
+  demo = false,
 ): void => {
   window.history.replaceState(null, '', path)
   document.open()
@@ -148,6 +149,7 @@ const writeDocument = (
       activeSection: 'Invoices',
       view,
       tabs: invoiceTabs('invoice-recurring'),
+      demo,
     })
       .replace(
         / {2}<link[^>]+(?:fonts\.googleapis|fonts\.gstatic|\/assets\/ezacto\.css)[^>]*>\n/gu,
@@ -196,8 +198,9 @@ const openEditor = async (
   path = '/invoices/recurring/new',
   signal = new AbortController().signal,
   who = identity(),
+  demo = false,
 ): Promise<void> => {
-  writeDocument(path, 'invoice-recurring-editor')
+  writeDocument(path, 'invoice-recurring-editor', demo)
   // Signed in, as the shell leaves the page once it has a session: focus
   // cannot land inside an inert, hidden shell.
   const shell = document.querySelector<HTMLElement>('[data-authenticated-shell]')!
@@ -1261,6 +1264,22 @@ describe('A definition’s purchase order and standing files', () => {
     expect(row(42).querySelector('[data-recurring-attachment-clear-through]')).toBeNull()
     expect(control<HTMLElement>('[data-recurring-attachments-unsaved]').hidden).toBe(true)
     expect(control<HTMLElement>('[data-recurring-attachment-upload]').hidden).toBe(false)
+    expect(control<HTMLElement>('[data-recurring-attachments-demo]').hidden).toBe(true)
+  })
+
+  it('[security] on the public demo, lists the standing files and withholds the upload, saying why', async () => {
+    // Issue 931: the Worker refuses every upload on the demo.
+    const api = attachmentApi({
+      listRecurringInvoiceAttachments: vi.fn(async () => [standing(41, 'po-fy2027.pdf', null)]),
+    })
+    await openEditor(api, '/invoices/recurring/3/edit', undefined, undefined, true)
+
+    await vi.waitFor(() => expect(throughLabel(41)).toBe('Every invoice'))
+    expect(control<HTMLElement>('[data-recurring-attachment-upload]').hidden).toBe(true)
+    const note = control<HTMLElement>('[data-recurring-attachments-demo]')
+    expect(note.hidden).toBe(false)
+    expect(note.textContent).toBe('Uploading a file: not available on the public demo.')
+    expect(api.uploadRecurringInvoiceAttachment).not.toHaveBeenCalled()
   })
 
   it('[browser] asks for the definition to be saved before it takes files', async () => {

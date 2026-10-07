@@ -270,14 +270,32 @@ tolerable is that nothing done to it survives the night.
 | --- | --- |
 | Brand | **Folding Forks** — an invented firm; none of it is anyone's real book. The sign-in page and the brand tagline are where it says so |
 | Sign-in | `admin@ezacto.io` / `folding-forks-admin`, `user@ezacto.io` / `folding-forks-user` |
-| Data | 20 people, 8 clients, 16 projects, three years of hours, expenses and invoices — all invented, all `@example.com` (RFC 2606, so demo mail can never reach a real person) |
-| Rebuild | `0 3 * * *` empties and reseeds; the every-minute cron bills the backlog ten client-months at a time |
+| Data | 20 people, 8 clients, 16 projects, three years of hours, expenses and invoices — all invented |
+| Mail | Composed, logged and shown in each invoice's history as on any instance, then ended `suppressed`: none of it is handed to Mailgun or SES, whoever it is addressed to |
+| Rebuild | `0 3 * * *` empties and reseeds, then makes the deployment's own Mailgun address the default sender; the every-minute cron bills the backlog ten client-months at a time |
 
 Two switches, and both must agree: `DEMO_MODE=true` **and** `ENVIRONMENT` other
 than `prod`. `DEMO_MODE` is an operator's switch and `ENVIRONMENT` is the
 deployment's identity, so the flag copied into a production worker's vars — the
 way this goes wrong — publishes nothing and wipes nothing. Everything
 demo-shaped asks `demoDeployment()` in `entries/worker/src/app.ts`.
+
+Because anyone can sign in, the demo reaches nothing outside its own database
+(#931), whatever secrets the dev deployment carries:
+
+- **Mail** is suppressed at the one producer every mailer is built on, and the
+  queue consumer builds no transport on the demo at all.
+- **Providers** — QuickBooks, BILL, Wise, Stripe — are composed with no
+  credentials, so no mirror, payment link, payout or reconciliation can run.
+- **Routes** that would connect or configure a provider, mint a payment link,
+  quote or send a payout, change a sender identity, the invoice defaults
+  (company information and the notes that carry bank details) or an invoice's
+  payment options, or upload any file, answer `403 demo_disabled` — "Not
+  available on the public demo." The list is `entries/worker/src/demo-lockdown.ts`,
+  and the screens disable those controls with the same note.
+- **Storage** is never written: uploads meet a read-only store, invoice
+  documents are not staged for mail that is never fetched, and the demo is not
+  exported nightly into a bucket the rebuild never empties.
 
 The history is anchored to the day it is built, not to a fixed calendar, so the
 demo always shows a book of work running up to today.

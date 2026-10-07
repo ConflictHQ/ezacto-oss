@@ -25,6 +25,8 @@
  * below; this pane links to it.
  */
 
+import { demoUnavailable } from '../demo.js'
+
 export const renderRecurringPage = (view?: string): string => `
   <main class="app-content invoice-workspace recurring-workspace page--grid" data-invoice-recurring-page${view === 'invoice-recurring' ? '' : ' hidden'}>
     <header class="context-row">
@@ -263,6 +265,7 @@ export const renderRecurringEditorPage = (view?: string): string => `
         <h2 id="recurring-editor-attachments-heading">Attachments</h2>
         <p class="hint">Attached to every invoice this definition issues, until the date you set — a yearly purchase order covers its fiscal year.</p>
         <p class="hint" data-recurring-attachments-unsaved hidden>Save the definition first to attach files.</p>
+        <p class="hint" data-recurring-attachments-demo hidden>${demoUnavailable('Uploading a file')}</p>
         <div class="recurring-attachment-upload" data-recurring-attachment-upload hidden>
           <label>File to attach<input type="file" data-recurring-attachment-file></label>
           <button type="button" class="editor-secondary" data-recurring-attachment-submit>Upload</button>

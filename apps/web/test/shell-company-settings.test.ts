@@ -313,6 +313,100 @@ describe('company settings', () => {
     globalThis.location.hash = ''
   })
 
+  it('[security] on the public demo, keeps what invoices print read-only and still saves how they are sent', async () => {
+    // Issue 931. The notes are where an invoice tells a client which account
+    // to pay, so on the demo they are not a visitor's to change; the Worker
+    // refuses the write, and the form says so rather than failing on Save.
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company', demo: true })
+    globalThis.location.hash = '#invoices'
+    const defaults = {
+      company_name: 'Folding Forks',
+      company_address: '1 Example Way',
+      notes: 'Pay to account 000-000.',
+      subject: null,
+    }
+    const setOrganizationInvoiceDocuments = vi.fn(async (input: Record<string, unknown>) => ({
+      attach_pdf: false,
+      attach_files: true,
+      append_pdfs: false,
+      attach_journal: false as const,
+      journal_formats: ['pdf' as const],
+      ...input,
+    }))
+    const api: ShellApi = {
+      ...companyApi(),
+      getInvoiceDefaults: vi.fn(async () => defaults),
+      updateInvoiceDefaults: vi.fn(async () => defaults),
+      getOrganizationInvoiceDocuments: vi.fn(async () => ({
+        attach_pdf: false,
+        attach_files: true,
+        append_pdfs: false,
+        attach_journal: false as const,
+        journal_formats: ['pdf' as const],
+      })),
+      setOrganizationInvoiceDocuments,
+    }
+    await mountShell(api)
+
+    const form = document.querySelector<HTMLFormElement>('[data-invoice-defaults-form]')!
+    await vi.waitFor(() => expect(form.hidden).toBe(false))
+    const note = document.querySelector<HTMLElement>('[data-invoice-defaults-demo]')!
+    expect(note.hidden).toBe(false)
+    expect(note.textContent).toBe(
+      'Company information and default values: not available on the public demo.',
+    )
+    for (const selector of [
+      '[data-invoice-defaults-name]',
+      '[data-invoice-defaults-address]',
+      '[data-invoice-defaults-subject]',
+      '[data-invoice-defaults-notes]',
+    ]) {
+      expect(form.querySelector<HTMLInputElement>(selector)!.disabled).toBe(true)
+    }
+
+    form.querySelector<HTMLInputElement>('[data-invoice-defaults-attach-pdf]')!.click()
+    form.requestSubmit()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-defaults-result]')?.textContent).toBe('Saved.'),
+    )
+    expect(api.updateInvoiceDefaults).not.toHaveBeenCalled()
+    expect(setOrganizationInvoiceDocuments).toHaveBeenCalledWith(
+      { attach_pdf: true },
+      expect.any(AbortSignal),
+    )
+    globalThis.location.hash = ''
+  })
+
+  it('[security] on the public demo, says QuickBooks and uploaded marks are not available, and asks nothing', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company', demo: true })
+    globalThis.location.hash = '#integrations'
+    const api: ShellApi = {
+      ...companyApi(),
+      getQuickBooksConnection: vi.fn(async () => ({ configured: true, connection: null })),
+    }
+    await mountShell(api)
+
+    const status = document.querySelector<HTMLElement>('[data-settings-quickbooks-status]')!
+    await vi.waitFor(() => expect(status.textContent).toBe('Not available on the public demo.'))
+    // The demo composes no QuickBooks, so a read could only fail and offer a
+    // retry that fails again.
+    expect(api.getQuickBooksConnection).not.toHaveBeenCalled()
+    expect(document.querySelector<HTMLElement>('[data-settings-quickbooks-actions]')!.hidden).toBe(
+      true,
+    )
+
+    openSection('brand')
+    const brand = document.querySelector<HTMLElement>('[data-settings-brand-slots]')!
+    await vi.waitFor(() => expect(brand.hidden).toBe(false))
+    const pickers = [...brand.querySelectorAll<HTMLInputElement>('input[type="file"]')]
+    expect(pickers.length).toBeGreaterThan(0)
+    expect(pickers.every((picker) => picker.disabled)).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-settings-brand-demo]')!.hidden).toBe(false)
+    globalThis.location.hash = ''
+  })
+
   it('[browser] says which half of the invoice settings a failed save kept', async () => {
     stubModulesEndpoint()
     renderBrowserShell({ view: 'settings-company' })

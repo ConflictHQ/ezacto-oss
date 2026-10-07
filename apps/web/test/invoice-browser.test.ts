@@ -126,7 +126,7 @@ const deferred = <Value>() => {
  * number from test to test and read the invoice by id, so the id address is
  * the one that needs no lookup. The number addresses have tests of their own.
  */
-const renderDetail = (path = '/invoices/by-id/7'): void => {
+const renderDetail = (path = '/invoices/by-id/7', demo = false): void => {
   window.history.replaceState(null, '', path)
   document.open()
   document.write(
@@ -135,6 +135,7 @@ const renderDetail = (path = '/invoices/by-id/7'): void => {
       release: 'invoice-browser-test',
       activeSection: 'Invoices',
       view: 'invoice-detail',
+      demo,
     })
       .replace(/ {2}<link[^>]+>\n/gu, '')
       .replace('  <script type="module" src="/assets/ezacto.js"></script>\n', ''),
@@ -1438,8 +1439,8 @@ describe('the Send dialog attachments', () => {
    * in `calls` in the order it was made, which is what these tests are about:
    * the attachments are written before anything is sent, or not at all.
    */
-  const sending = (overrides: Partial<InvoicePaymentApi> = {}) => {
-    renderDetail()
+  const sending = (overrides: Partial<InvoicePaymentApi> = {}, demo = false) => {
+    renderDetail(undefined, demo)
     let current = invoice('SEND', {
       state: 'draft',
       sent_at: null,
@@ -1895,6 +1896,47 @@ describe('the Send dialog attachments', () => {
     )
     // Neither is a send: nothing was recorded, nothing was delivered.
     expect(calls).toEqual([])
+  })
+
+  it('[security] on the public demo, says its mail is recorded and never delivered, and takes no file', async () => {
+    // Issue 931. The Worker suppresses every message the demo sends and
+    // refuses every upload; the screen says both before anyone acts on it.
+    const sendInvoiceEmailPreview = vi.fn(async () => ({
+      to: [{ name: 'Ana Example', email: 'ana@example.com' }],
+    }))
+    const { api } = sending(
+      {
+        getInvoiceEmailDefaults: vi.fn(async () => defaults()),
+        previewInvoiceEmail: vi.fn(),
+        sendInvoiceEmailPreview,
+        uploadInvoiceAttachment: vi.fn(),
+      },
+      true,
+    )
+    await openWithDefaults(api)
+    expect(document.querySelector<HTMLElement>('[data-invoice-composer-demo]')!.hidden).toBe(false)
+    expect(document.querySelector<HTMLElement>('[data-invoice-attachment-form]')!.hidden).toBe(true)
+    const note = document.querySelector<HTMLElement>('[data-invoice-attachment-demo]')!
+    expect(note.hidden).toBe(false)
+    expect(note.textContent).toBe('Uploading a file: not available on the public demo.')
+
+    document.querySelector<HTMLButtonElement>('[data-invoice-composer-preview-send]')!.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-invoice-composer-preview-result]')?.textContent).toBe(
+        'A preview for ana@example.com was recorded, stamped PREVIEW. The public demo delivers no email, so nothing went to anyone.',
+      ),
+    )
+  })
+
+  it('[browser] keeps both notes out of view anywhere but the demo', async () => {
+    const { api } = sending({
+      getInvoiceEmailDefaults: vi.fn(async () => defaults()),
+      uploadInvoiceAttachment: vi.fn(),
+    })
+    await openWithDefaults(api)
+    expect(document.querySelector<HTMLElement>('[data-invoice-composer-demo]')!.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-invoice-attachment-demo]')!.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-invoice-attachment-form]')!.hidden).toBe(false)
   })
 
   it('[browser] says a preview needs email delivery where the instance has none', async () => {

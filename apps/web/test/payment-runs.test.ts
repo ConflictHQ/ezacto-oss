@@ -165,6 +165,7 @@ describe("payment run review", () => {
     const controller = createPaymentRunsController(api, reload);
     await controller.activate(new AbortController().signal);
     controller.ledger(ledger);
+    expect(document.querySelector<HTMLElement>("[data-run-demo]")!.hidden).toBe(true);
     const form = document.querySelector<HTMLFormElement>("[data-run-form]")!;
     const input = (name: string) =>
       form.elements.namedItem(name) as HTMLInputElement;
@@ -202,6 +203,35 @@ describe("payment run review", () => {
       }),
       expect.any(AbortSignal),
     );
+  });
+  it("on the public demo, withholds quoting and sending, and says why", async () => {
+    // Issue 931: the Worker refuses every payout step on the demo.
+    document.documentElement.setAttribute("data-demo-deployment", "");
+    try {
+      const api = {
+        getPaymentRunReport: vi.fn(async () => report),
+        previewPaymentRun: vi.fn(async () => run),
+        approvePaymentRun: vi.fn(async () => run),
+      };
+      const controller = createPaymentRunsController(api, async () => {});
+      await controller.activate(new AbortController().signal);
+      controller.ledger(ledger);
+      expect(
+        document.querySelector<HTMLButtonElement>("[data-run-submit]")!.hidden,
+      ).toBe(true);
+      const note = document.querySelector<HTMLElement>("[data-run-demo]")!;
+      expect(note.hidden).toBe(false);
+      expect(note.textContent).toBe(
+        "Sending payments: not available on the public demo.",
+      );
+      // Enter still submits a form whose button is hidden.
+      const form = document.querySelector<HTMLFormElement>("[data-run-form]")!;
+      (form.elements.namedItem("select-2") as HTMLInputElement).checked = true;
+      form.dispatchEvent(new SubmitEvent("submit", { cancelable: true }));
+      expect(api.previewPaymentRun).not.toHaveBeenCalled();
+    } finally {
+      document.documentElement.removeAttribute("data-demo-deployment");
+    }
   });
   it("keeps report totals separate by currency and exports the applied filters", () => {
     const data = {

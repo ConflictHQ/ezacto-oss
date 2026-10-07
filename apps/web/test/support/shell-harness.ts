@@ -420,6 +420,8 @@ export const renderBrowserShell = (
       | 'settings-company'
       | 'settings-user'
     sessionCookiePresent?: boolean
+    /** Served as the public demo (issue 931). */
+    demo?: boolean
   } = {},
 ): void => {
   const path =
@@ -452,6 +454,7 @@ export const renderBrowserShell = (
       ...(options.sessionCookiePresent === undefined
         ? {}
         : { sessionCookiePresent: options.sessionCookiePresent }),
+      ...(options.demo === undefined ? {} : { demo: options.demo }),
     })
       .replace(
         / {2}<link[^>]+(?:fonts\.googleapis|fonts\.gstatic|\/assets\/ezacto\.css)[^>]*>\n/gu,

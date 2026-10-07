@@ -63,6 +63,19 @@ describe('demo deployment', () => {
     }
   })
 
+  it('[unit] marks every page it serves as the demo, and no other deployment’s', async () => {
+    // Issue #931: the screens read this to say what the demo refuses before a
+    // click rather than after. Presentation only; the routes refuse either way.
+    for (const path of ['/', '/settings/company', '/invoices/INV-1']) {
+      expect(await (await app.request(path, {}, demo)).text()).toContain(' data-demo-deployment')
+      for (const env of [base, { ...demo, ENVIRONMENT: 'prod' }]) {
+        expect(await (await app.request(path, {}, env)).text()).not.toContain(
+          'data-demo-deployment',
+        )
+      }
+    }
+  })
+
   it('[unit] offers each published account with something to tell them apart', () => {
     // Two accounts rather than one, because what a demo is for is showing what
     // each profile can see. Identical descriptions would make the choice noise.

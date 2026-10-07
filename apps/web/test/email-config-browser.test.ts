@@ -83,7 +83,7 @@ const identity = (): Whoami => ({
   authentication: { kind: 'session' },
 })
 
-const writeDocument = (path = '/invoices/configure'): void => {
+const writeDocument = (path = '/invoices/configure', demo = false): void => {
   window.history.replaceState(null, '', path)
   document.open()
   document.write(
@@ -93,6 +93,7 @@ const writeDocument = (path = '/invoices/configure'): void => {
       activeSection: 'Invoices',
       view: 'settings-templates',
       tabs: invoiceTabs('settings-templates'),
+      demo,
     })
       .replace(
         / {2}<link[^>]+(?:fonts\.googleapis|fonts\.gstatic|\/assets\/ezacto\.css)[^>]*>\n/gu,
@@ -184,6 +185,40 @@ describe('Email configuration controller', () => {
       expect.any(String),
       expect.any(AbortSignal),
     )
+  })
+
+  it('[security] on the public demo, offers every sender action disabled and says why', async () => {
+    // Issue 931. The Worker refuses these on the demo; the screen says so
+    // before the click instead of after it.
+    writeDocument('/invoices/configure', true)
+    const api = baseApi()
+    await activate(api)
+
+    const actions = [
+      ...document.querySelectorAll<HTMLButtonElement>('[data-sender-list] button'),
+    ].filter((button) =>
+      ['Make default', 'Refresh evidence', 'Archive'].includes(button.textContent ?? ''),
+    )
+    expect(actions.map((button) => button.textContent).sort()).toEqual([
+      'Archive',
+      'Make default',
+      'Refresh evidence',
+      'Refresh evidence',
+    ])
+    expect(actions.every((button) => button.disabled)).toBe(true)
+    const note = document.querySelector<HTMLElement>('[data-sender-demo]')!
+    expect(note.hidden).toBe(false)
+    expect(note.textContent).toBe('Changing a sender identity: not available on the public demo.')
+
+    // And anywhere else, nothing changes.
+    writeDocument()
+    await activate(baseApi())
+    expect(document.querySelector<HTMLElement>('[data-sender-demo]')!.hidden).toBe(true)
+    expect(
+      [...document.querySelectorAll<HTMLButtonElement>('[data-sender-list] button')].some(
+        (button) => button.disabled,
+      ),
+    ).toBe(false)
   })
 
   it('[browser] does not offer to archive the address everything goes out as', async () => {

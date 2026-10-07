@@ -1,6 +1,7 @@
 import { EzactoApiError, type Attachment, type GeneralResource, type Whoami } from '@conflict-hq/ezacto-client'
 
 import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { isDemoDeployment } from '../demo.js'
 import { moneyText } from '../money-display.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
 import { localDate } from '../shell/model.js'
@@ -256,6 +257,10 @@ export const createProjectDirectoryController = (
   const assignmentList = required<HTMLUListElement>('[data-project-task-assignments]')
   const attachmentForm = required<HTMLFormElement>('[data-project-attachment-form]')
   const attachmentSubmit = required<HTMLButtonElement>('[data-project-attachment-submit]')
+  // The public demo takes no files (issue 931): the upload is withheld and the
+  // note says why, for anyone who could otherwise have used it.
+  const attachmentDemo = required<HTMLElement>('[data-project-attachment-demo]')
+  const demo = isDemoDeployment()
   const attachmentStatus = required<HTMLElement>('[data-project-attachment-status]')
   const attachmentList = required<HTMLUListElement>('[data-project-attachments]')
   const detailRetry = required<HTMLButtonElement>('[data-project-detail-retry]')
@@ -1385,7 +1390,8 @@ export const createProjectDirectoryController = (
       renderFacts()
       renderStaffing()
       renderAssignments()
-      attachmentForm.hidden = !active.capabilities.canWrite
+      attachmentForm.hidden = demo || !active.capabilities.canWrite
+      attachmentDemo.hidden = !demo || !active.capabilities.canWrite
       await loadAttachmentData(active, projectId)
     } catch (error) {
       active.presentFailure(error, () => {

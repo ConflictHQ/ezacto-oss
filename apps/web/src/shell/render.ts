@@ -119,6 +119,12 @@ export interface AppShellOptions {
    * any business doing so.
    */
   readonly demoAccounts?: readonly DemoSignInAccount[]
+  /**
+   * Whether this page is the public demo (issue 931). Marked on `<html>` so a
+   * control the demo refuses can say so before it is clicked rather than
+   * after. Presentation only: the Worker refuses those requests either way.
+   */
+  readonly demo?: boolean
   /** Presentation hint only. The browser still validates the session before enabling the app. */
   readonly sessionCookiePresent?: boolean
 }
@@ -445,7 +451,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const foldedNavigation = foldedSections.map(navLink).join('')
 
   return `<!doctype html>
-<html lang="en" data-ez-theme="${defaultTheme}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}">
+<html lang="en" data-ez-theme="${defaultTheme}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">

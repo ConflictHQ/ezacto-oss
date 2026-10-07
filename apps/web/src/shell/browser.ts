@@ -70,6 +70,7 @@ import {
 import { createEstimateWorkspaceController } from '../estimates/browser.js'
 import { createRetainerWorkspaceController } from '../retainers/browser.js'
 import { createModuleSettingsController } from '../module-settings/browser.js'
+import { demoUnavailable, isDemoDeployment } from '../demo.js'
 import {
   createInvoicePaymentController,
   invoiceMatchesSearch,
@@ -2083,6 +2084,13 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const result = required<HTMLElement>('[data-settings-payout-result]')
     const submit = required<HTMLButtonElement>('[data-settings-payout-submit]')
     section.hidden = false
+    // The public demo pays nobody (issue 931). It has no Wise to ask, so the
+    // read could only fail; it says why instead, and offers no form.
+    if (isDemoDeployment()) {
+      form.hidden = true
+      status.textContent = demoUnavailable('Setting where you are paid')
+      return
+    }
 
     const paint = (state: PayoutDestinationState): void => {
       unconfigured.hidden = state.configured

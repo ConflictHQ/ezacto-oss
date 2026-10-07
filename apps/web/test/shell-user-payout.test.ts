@@ -65,6 +65,20 @@ describe('your payout destination in your own settings', () => {
     )
   })
 
+  it('[security] on the public demo, asks Wise nothing and says why there is no form', async () => {
+    // Issue 931: the demo composes no Wise, so the read could only fail.
+    renderBrowserShell({ view: 'settings-user', demo: true })
+    const api = payoutApi()
+    await mountShell(api)
+
+    const status = document.querySelector<HTMLElement>('[data-settings-payout-status]')!
+    await vi.waitFor(() =>
+      expect(status.textContent).toBe('Setting where you are paid: not available on the public demo.'),
+    )
+    expect(form().hidden).toBe(true)
+    expect(api.getWisePayoutDestination).not.toHaveBeenCalled()
+  })
+
   it('[security] says a destination is set without printing the identifier', async () => {
     renderBrowserShell({ view: 'settings-user' })
     await mountShell(

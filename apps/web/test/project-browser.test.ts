@@ -142,7 +142,11 @@ const identity = (
   authentication: { kind: 'session' },
 })
 
-const writeDocument = (view: 'project-list' | 'project-detail', pathname: string): void => {
+const writeDocument = (
+  view: 'project-list' | 'project-detail',
+  pathname: string,
+  demo = false,
+): void => {
   window.history.replaceState(null, '', pathname)
   document.open()
   document.write(
@@ -151,6 +155,7 @@ const writeDocument = (view: 'project-list' | 'project-detail', pathname: string
       release: 'project-browser-test',
       activeSection: 'Projects',
       view,
+      demo,
     })
       .replace(/ {2}<link[^>]+(?:fonts\.googleapis|fonts\.gstatic|\/assets\/ezacto\.css)[^>]*>\n/gu, '')
       .replace('  <script type="module" src="/assets/ezacto.js"></script>\n', ''),
@@ -214,6 +219,36 @@ describe('Projects V1 browser controller', () => {
     expect(projectForm.elements.namedItem('notes')).toBeNull()
     expect(projectForm.elements.namedItem('hourly_rate_cents')).toBeNull()
     expect(api.updateDirectoryProject).not.toHaveBeenCalled()
+  })
+
+  it('[security] on the public demo, withholds the upload and says why, and lists the files it has', async () => {
+    // Issue 931: the Worker refuses every upload on the demo.
+    writeDocument('project-detail', '/projects/7', true)
+    const api = detailApi()
+    await createProjectDirectoryController(api).activate(
+      identity('administrator'),
+      new AbortController().signal,
+      () => false,
+    )
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-project-attachments] a')?.textContent).toBe('scope.txt'),
+    )
+    expect(document.querySelector<HTMLElement>('[data-project-attachment-form]')!.hidden).toBe(true)
+    const note = document.querySelector<HTMLElement>('[data-project-attachment-demo]')!
+    expect(note.hidden).toBe(false)
+    expect(note.textContent).toBe('Uploading a file: not available on the public demo.')
+
+    // Anywhere else the administrator gets the upload, and no note.
+    writeDocument('project-detail', '/projects/7')
+    await createProjectDirectoryController(detailApi()).activate(
+      identity('administrator'),
+      new AbortController().signal,
+      () => false,
+    )
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>('[data-project-attachment-form]')!.hidden).toBe(false),
+    )
+    expect(document.querySelector<HTMLElement>('[data-project-attachment-demo]')!.hidden).toBe(true)
   })
 
   it('[browser #485] shows who is staffed, and at which of the two rates', async () => {

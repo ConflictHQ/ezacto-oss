@@ -1,3 +1,4 @@
+import { demoUnavailable } from '../demo.js'
 import { renderPaymentRuns } from './runs-render.js'
 export const renderStaffPayments = (view?: string): string =>
   view === 'staff-payments'
@@ -50,6 +51,7 @@ export const renderStaffPayments = (view?: string): string =>
           <label>Reason for change<textarea name="note" required maxlength="2000"></textarea></label>
           <button type="submit">Save person preference</button>
         </form>
+        <p class="hint" data-payment-provider-demo hidden>${demoUnavailable('Choosing a payment provider')}</p>
         <form data-payment-entry-form>
           <label>Action<select name="kind"><option value="amount">Set amount owed</option><option value="payment">Record confirmed payment</option><option value="void">Void an incorrect payment record</option><option value="reopen">Reopen historical settlement</option><option value="note">Add a note</option></select></label>
           <label data-payment-field="amount">Amount<input name="amount" inputmode="decimal" placeholder="0.00"></label>
@@ -78,6 +80,7 @@ export const renderStaffPayments = (view?: string): string =>
       ${renderPaymentRuns()}
       <section id="payment-panel-settings" role="tabpanel" aria-labelledby="payment-tab-settings" data-payment-panel="settings" hidden>
         <h2>Payment settings</h2>
+      <p class="hint" data-payment-provider-demo hidden>${demoUnavailable('Choosing a payment provider')}</p>
       <details data-payment-provider-settings hidden class="staff-payment-opening">
         <summary>Payment provider settings</summary>
         <p>Choose the organization default. Each person can inherit it or use another provider. Payment receipts keep the provider actually used.</p>

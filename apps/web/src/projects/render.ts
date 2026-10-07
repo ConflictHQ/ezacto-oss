@@ -1,3 +1,5 @@
+import { demoUnavailable } from '../demo.js'
+
 export const renderProjectDirectoryPages = (view?: string): string => `
   <main class="app-content project-workspace page--grid" data-project-list-page${view === 'project-list' ? '' : ' hidden'}>
     <header class="context-row">
@@ -65,6 +67,7 @@ export const renderProjectDirectoryPages = (view?: string): string => `
           <button type="submit" data-project-attachment-submit>Upload</button>
           <p class="hint">One file, up to 25 MB.</p>
         </form>
+        <p class="hint" data-project-attachment-demo hidden>${demoUnavailable('Uploading a file')}</p>
         <p class="project-section-status" data-project-attachment-status role="status" aria-live="polite"></p>
         <ul data-project-attachments></ul>
       </section>

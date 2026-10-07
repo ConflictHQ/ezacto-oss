@@ -518,6 +518,9 @@ export const createApp = (
       // refuse independently. This only stops the page offering a way in that
       // would be turned away.
       passwordSignIn: live('password'),
+      // So the controls the demo refuses say so before they are clicked
+      // (#931). The same caveat: `demo-lockdown.ts` is what refuses them.
+      demo: demoDeployment(env),
     }
   }
 
