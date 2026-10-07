@@ -4808,10 +4808,15 @@ dialog h2,
  *
  *   >= 1700px  everything: the nav, search as a field, the account's name (1592)
  *   1520-1699  the account keeps only its avatar (1489)
- *   1440-1519  and the nav takes tighter padding (1425)
- *   1300-1439  and search is its magnifier alone (1281)
+ *   1300-1519  and the nav takes tighter padding, and search is its magnifier
+ *              alone (1281)
  *   721-1299   the nav folds into the Menu drawer that phone width already
  *              uses -- same links, same dialog (688)
+ *
+ * Search gives up its field at 1520 rather than at the 1440 the bar could
+ * carry it to. Between the two, the field took the room a running timer's
+ * chip needed, and at 1440 the chip said "Bro…": the timer's name is what the
+ * chip is for, and the magnifier still opens the same bar with the same keys.
  *
  * Each band has room to spare at the width it starts at, and the browser test
  * `[e2e:nav] fits the top bar at every width` measures the bar at each of them
@@ -4833,7 +4838,7 @@ dialog h2,
   }
 }
 /* Search keeps its name and its shortcut; it loses only the field around them. */
-@media (min-width: 721px) and (max-width: 1439px) {
+@media (min-width: 721px) and (max-width: 1519px) {
   .command-trigger {
     min-width: 36px;
     width: 36px;

@@ -424,14 +424,23 @@ test('[e2e:nav] fits the top bar at every width, at each band edge', async ({ pa
     await longestTimer(page)
     expect(await headerFaults(page), `${width}px`).toEqual([])
   }
-  // Search is a field where it fits and its magnifier where it does not, and
-  // keeps its name either way.
+  // Search is a field from 1520 and its magnifier below, and keeps its name
+  // either way.
   const search = page.locator('[data-app-nav] [data-command-trigger]')
-  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.setViewportSize({ width: 1520, height: 900 })
   await expect(search.locator('.command-trigger-label')).toBeVisible()
-  await page.setViewportSize({ width: 1439, height: 900 })
+  await page.setViewportSize({ width: 1519, height: 900 })
   await expect(search.locator('.command-trigger-label')).toBeHidden()
   await expect(page.getByRole('button', { name: 'Search and commands' })).toBeVisible()
+  // Which leaves a running timer its name at 1440. With the field there the
+  // chip had 37px of label, "Bro…"; without it, about 180.
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await pinHeaderFont(page)
+  await longestTimer(page)
+  const label = await page
+    .locator('[data-app-nav] [data-timer-label]')
+    .evaluate((element) => element.clientWidth)
+  expect(label).toBeGreaterThanOrEqual(140)
   await context.clearCookies({ name: 'ezacto_nav' })
 })
 

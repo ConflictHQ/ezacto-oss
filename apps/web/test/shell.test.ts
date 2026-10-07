@@ -632,7 +632,7 @@ describe('S-1 through S-5 application shell', () => {
       /@media \(min-width: 721px\) and \(max-width: 1699px\)[\s\S]*\.identity-text \{[\s\S]*display: none;/u,
     )
     expect(webAssets.stylesheet).toMatch(
-      /@media \(min-width: 721px\) and \(max-width: 1439px\)[\s\S]*\.command-trigger-label,\s*\.command-shortcut \{[\s\S]*display: none;/u,
+      /@media \(min-width: 721px\) and \(max-width: 1519px\)[\s\S]*\.command-trigger-label,\s*\.command-shortcut \{[\s\S]*display: none;/u,
     )
     // The drawer the nav folds into carries the same links, so nothing is lost.
     const html = renderAppShell({ environment: 'test', release: 'abcdef012345' })
