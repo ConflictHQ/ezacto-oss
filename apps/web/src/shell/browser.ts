@@ -171,6 +171,11 @@ interface GridHandlers {
   ): Promise<boolean>
   retry(cell: WeekGridCell, view: GridView): Promise<void>
   openEntry(cell: WeekGridCell, view: GridView): void
+  /**
+   * Issue 904: a week cell holding several entries cannot take one value, so
+   * it opens the day that lists them apart, on that date.
+   */
+  openDay(cell: WeekGridCell): void
   // Absent when the build has no restart endpoint; the row then shows no Start.
   restart?(entryId: number): Promise<void>
   removeRow(seed: WeekRowSeed): void
@@ -540,9 +545,13 @@ const cellInput = (
   input.placeholder = '0'
   if (state?.state === 'invalid') input.setAttribute('aria-invalid', 'true')
   const mode = modeForEntryDraft(cell.entries[0] ?? null, organizationMode)
-  input.disabled = cell.isConflict || cell.isLocked || cell.isRunning || mode === 'start_end'
+  input.disabled = cell.isLocked || cell.isRunning || mode === 'start_end'
+  // Read-only rather than disabled (issue 904): a cell holding several entries
+  // cannot take one value, but it is not broken either. It stays focusable and
+  // clickable, and both open the day that lists the entries apart.
+  input.readOnly = cell.isConflict
   if (cell.isConflict)
-    input.title = 'Multiple entries share this cell. Open Day view to edit them separately.'
+    input.title = `${cell.entries.length} entries share this cell. Open Day view to edit them separately.`
   if (cell.isLocked) input.title = cell.lockedReason ?? 'This entry is locked.'
   if (cell.isRunning) input.title = 'Stop the running timer before editing this cell.'
   if (mode === 'start_end') input.title = 'Open entry details to edit start and end times.'
@@ -611,9 +620,14 @@ const renderCellControl = (
     if ((current?.state === 'invalid' || current?.state === 'retry') && current.rawValue === input.value) return
     void handlers.commit(input, cell, view)
   })
+  if (cell.isConflict) input.addEventListener('click', () => handlers.openDay(cell))
   input.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return
     event.preventDefault()
+    if (cell.isConflict) {
+      handlers.openDay(cell)
+      return
+    }
     // Alt+Enter opens the cell rather than saving it (issue 753). The editor is
     // where a note is written and an entry removed, and until now nothing
     // reached it from the keyboard at all: the control that opens it is
@@ -643,10 +657,14 @@ const renderCellControl = (
       : currentNotes === null
         ? 'Add note'
         : 'Edit note'
-  note.ariaLabel = `${noteAction} for ${noteContext} on ${dayLabel(cell.date)}${minimumNoteLength > 0 && !cell.isLocked ? `; at least ${minimumNoteLength} characters required` : ''}`
-  note.title = cell.isLocked
-    ? (cell.lockedReason ?? noteAction)
-    : (currentNotes ?? (minimumNoteLength > 0 ? noteHint(minimumNoteLength) : cell.entries.length === 0 ? 'Add time' : 'Add note'))
+  note.ariaLabel = cell.isConflict
+    ? `Open Day view to edit the ${cell.entries.length} entries for ${noteContext} on ${dayLabel(cell.date)}`
+    : `${noteAction} for ${noteContext} on ${dayLabel(cell.date)}${minimumNoteLength > 0 && !cell.isLocked ? `; at least ${minimumNoteLength} characters required` : ''}`
+  note.title = cell.isConflict
+    ? `${cell.entries.length} entries share this cell. Open Day view to edit them separately.`
+    : cell.isLocked
+      ? (cell.lockedReason ?? noteAction)
+      : (currentNotes ?? (minimumNoteLength > 0 ? noteHint(minimumNoteLength) : cell.entries.length === 0 ? 'Add time' : 'Add note'))
   // A pencil rather than a bare glyph (issue 753). `+` and `•` beside a number read
   // as punctuation, and the account owner concluded from this screen that the
   // product could not edit a note or remove an entry -- when both have always
@@ -665,16 +683,21 @@ const renderCellControl = (
   // `Locked` and the only control that could say more was disabled. Locked with
   // nothing in it stays shut, because there is no entry to describe and the
   // route would refuse a new one anyway (issue 496).
+  // A cell holding several entries opens the day that lists them apart (issue
+  // 904), locked or not: it used to be disabled here, which left the cell with
+  // no way forward at all.
   note.disabled =
-    cell.entries.length > 1 ||
-    cell.isConflict ||
-    (cell.isLocked && cell.entries.length !== 1) ||
-    state?.state === 'saving'
-  note.addEventListener('click', () => handlers.openEntry(cell, view))
+    !cell.isConflict &&
+    ((cell.isLocked && cell.entries.length !== 1) || state?.state === 'saving')
+  note.addEventListener('click', () =>
+    cell.isConflict ? handlers.openDay(cell) : handlers.openEntry(cell, view),
+  )
   wrapper.append(note)
 
+  // What the cell holds, in words on the cell itself. "Split" said nothing a
+  // person could act on, and the explanation lived only in a tooltip.
   status.textContent = cell.isConflict
-    ? 'Split'
+    ? `${cell.entries.length} entries`
     : cell.isLocked
       ? 'Locked'
       : cell.isRunning
@@ -1168,6 +1191,21 @@ const focusCell = (target: FocusTarget | undefined): boolean => {
   return true
 }
 
+/**
+ * The Time strip's current tab, from the view on screen. Scoped to Time's own
+ * strip: this derives the current tab from the ?view= parameter, which no other
+ * section navigates by. Left on '.tabstrip a' it would strip aria-current off
+ * every tab in every other strip on load.
+ */
+const markTimeViewTab = (): void => {
+  for (const link of document.querySelectorAll<HTMLAnchorElement>('[data-time-views] a')) {
+    const linkView = new URL(link.href).searchParams.get('view') ?? 'week'
+    if (linkView === document.documentElement.dataset.timeView)
+      link.setAttribute('aria-current', 'page')
+    else link.removeAttribute('aria-current')
+  }
+}
+
 const visibleGridView = (): GridView =>
   document.documentElement.dataset.timeView === 'day' ||
   globalThis.matchMedia('(max-width: 720px)').matches
@@ -1522,15 +1560,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const requestedView = new URL(globalThis.location.href).searchParams.get('view')
   document.documentElement.dataset.timeView =
     requestedView === 'day' || requestedView === 'calendar' ? requestedView : 'week'
-  // Scoped to Time's own strip: this derives the current tab from the ?view=
-  // parameter, which no other section navigates by. Left on '.tabstrip a' it
-  // would strip aria-current off every tab in every other strip on load.
-  for (const link of document.querySelectorAll<HTMLAnchorElement>('[data-time-views] a')) {
-    const linkView = new URL(link.href).searchParams.get('view') ?? 'week'
-    if (linkView === document.documentElement.dataset.timeView)
-      link.setAttribute('aria-current', 'page')
-    else link.removeAttribute('aria-current')
-  }
+  markTimeViewTab()
   const cellStates = new Map<string, CellSaveState>()
   let within = initialWithin()
   /**
@@ -3198,6 +3228,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       commit: commitCell,
       retry: retryCell,
       openEntry,
+      openDay,
       startToday: startRowToday,
       removeRow: removeEmptyRow,
       stop: stopRowTimer,
@@ -5849,6 +5880,26 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     if (currentIdentity === null || index < 0 || index > 6 || index === selectedDay) return
     selectedDay = index
     render()
+  }
+  /**
+   * Issue 904: the Day view for a week cell's date, in place and on the same
+   * week, with focus on the first of the entries the cell was holding. The
+   * address says Day too, as the strip's own link would, so a reload stays.
+   */
+  const openDay = (cell: WeekGridCell): void => {
+    if (currentIdentity === null || grid === null) return
+    const index = grid.dates.indexOf(cell.date)
+    if (index < 0) return
+    selectedDay = index
+    document.documentElement.dataset.timeView = 'day'
+    const url = new URL(globalThis.location.href)
+    url.searchParams.set('view', 'day')
+    globalThis.history.replaceState(null, '', url)
+    markTimeViewTab()
+    render()
+    document
+      .querySelector<HTMLInputElement>(`[data-day-rows] input[data-cell-key^="${cell.key}:entry:"]`)
+      ?.focus()
   }
   const moveDay = (offset: number): void => {
     if (currentIdentity === null) return
