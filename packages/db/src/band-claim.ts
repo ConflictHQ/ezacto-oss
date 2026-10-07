@@ -162,10 +162,11 @@ export const bandClaimSelection = (
  *
  * It reads the invoice total the line triggers maintain, so it runs after the
  * lines. Every entry on the invoice counts, and so does every line: hours
- * billed past a ceiling are priced on the invoice at the same value they add
- * here, so what is left is the value of the covered hours less the fee. Never
- * below zero -- a band that charged more than the work it covered forwent
- * nothing, it was simply a good month.
+ * billed past a ceiling are priced on the invoice at the value they add here,
+ * to within the few cents a line differs by billing its hours to the
+ * hundredth (issue 923), so what is left is the value of the covered hours
+ * less the fee. Never below zero -- a band that charged more than the work it
+ * covered forwent nothing, it was simply a good month.
  *
  * `pending` holds the statement to the command writing the invoice.
  */
