@@ -414,6 +414,8 @@ const timeEntryOperations: ApiContractOperation[] = [
     path: "/api/v1/time-entries",
     operationId: "createTimeEntry",
     summary: "Create or start a time entry",
+    description:
+      "`started_time` with `ended_time` logs a stopped start/end entry in either organization mode, its `seconds` derived from the two times (an end before the start is past midnight); `seconds` beside them is 422 `mode_mismatch`. Without times the organization's `time_entry_mode` decides: in `duration`, `seconds` logs a stopped entry and leaving it out starts a timer; in `start_end`, leaving out `ended_time` starts a timer at the current local time and `seconds` is 422 `mode_mismatch`. A timer in a `duration` organization never carries times, so `started_time` without `ended_time` there is 422 `mode_mismatch`. Entries may overlap; each counts its own full duration.",
     tag: "time-entries",
     responseStatus: 201,
     responseSchema: "TimeEntryEnvelope",
@@ -429,7 +431,12 @@ const timeEntryOperations: ApiContractOperation[] = [
     responseStatus: 200,
     responseSchema: "TimeEntryEnvelope",
     ...(method === "patch"
-      ? { requestSchema: "TimeEntryPatch", requestRequired: true }
+      ? {
+          description:
+            "An entry keeps the shape it was created with, whatever the organization's mode: a start/end entry takes `started_time` and `ended_time` and re-derives `seconds`, a duration entry takes `seconds`, and the other is 422 `mode_mismatch`.",
+          requestSchema: "TimeEntryPatch",
+          requestRequired: true,
+        }
       : {}),
     parameters: [path("id")],
   })),
@@ -4721,9 +4728,20 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // will not let a locked timesheet be edited; here the entry that was
       // wrong is the thing to edit, so there is nothing for a typed negative
       // to offset.
-      seconds: { type: "integer", minimum: 0 },
-      started_time: { type: "string" },
-      ended_time: { type: "string" },
+      seconds: {
+        type: "integer",
+        minimum: 0,
+        description: "A duration entry's length. Not accepted with started_time or ended_time.",
+      },
+      started_time: {
+        type: "string",
+        description:
+          "Canonical 24-hour HH:MM. With ended_time, a stopped start/end entry in either organization mode.",
+      },
+      ended_time: {
+        type: "string",
+        description: "Canonical 24-hour HH:MM. Requires started_time and spent_date.",
+      },
       notes: nullable(stringSchema),
       budgeted: booleanSchema,
       external_ref: nullable({ type: "object", additionalProperties: true }),
