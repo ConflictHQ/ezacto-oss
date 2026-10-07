@@ -4783,6 +4783,14 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   required<HTMLButtonElement>('[data-menu-trigger]').addEventListener('click', () => {
     loadProfileTimezone()
     open(menuDialog)
+    // The first destination, not the close button showModal() lands on
+    // (issue 861). Gates hide links with `hidden`, which the stylesheet makes
+    // display:none and focus() then ignores, so it is the first link still
+    // showing. Were none showing, the close button would keep focus.
+    const firstLink = [...menuDialog.querySelectorAll<HTMLAnchorElement>('nav a')].find(
+      (link) => !link.hidden,
+    )
+    firstLink?.focus()
   })
   required<HTMLButtonElement>('[data-add-row-trigger]').addEventListener('click', () => {
     if (currentIdentity !== null) open(rowDialog)
@@ -4998,6 +5006,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const openCommandPalette = (): void => {
     open(commandDialog)
     renderPalette()
+    // showModal() focuses the first focusable thing in the dialog, which is
+    // the close button in its header, so ⌘K took a Tab before it took a
+    // keystroke (issue 861). The query is what the shortcut is for. Selecting
+    // what the last use left behind keeps what that Tab did: typing replaces it.
+    commandInput.focus()
+    commandInput.select()
   }
 
   const movePaletteHighlight = (step: number): void => {
