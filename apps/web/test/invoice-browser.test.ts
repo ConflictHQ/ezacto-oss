@@ -2,6 +2,7 @@
 
 import {
   EzactoApiError,
+  type Attachment,
   type Invoice,
   type InvoiceLine,
   type InvoicePayment,
@@ -192,6 +193,71 @@ const submit = (selector: string): void => {
 }
 
 describe('invoice payment controller', () => {
+  it('[browser] gives Send back once an upload settles, even if a side read repainted the controls during it', async () => {
+    // Issue 745. The detail page reads QuickBooks, reminders and attachments
+    // beside the invoice and repaints the controls as each answers. One that
+    // answers while an upload is in flight paints them locked -- correctly --
+    // and the upload has to repaint them when it settles, or Send stays
+    // disabled until the page is reloaded. A slow runner landed the read in
+    // that window and the browser suite timed out on a disabled Send.
+    renderDetail()
+    let rejectQuickBooks: (error: unknown) => void = () => undefined
+    const quickBooksRead = new Promise<never>((_resolve, reject) => {
+      rejectQuickBooks = reject
+    })
+    const upload = deferred<Attachment>()
+    const file: Attachment = {
+      id: 31,
+      name: 'scope.pdf',
+      content_hash: 'b'.repeat(64),
+      byte_size: 5,
+      content_type: 'application/pdf',
+      uploaded_by_user_id: 1,
+      created_at: timestamp,
+      updated_at: timestamp,
+    }
+    let attached: readonly Attachment[] = []
+    const api: Partial<InvoicePaymentApi> = {
+      getInvoice: vi.fn(async () => invoice('UPLOAD-1')),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+      listInvoiceAttachments: vi.fn(async () => attached),
+      getInvoiceQuickBooks: vi.fn(() => quickBooksRead),
+      uploadInvoiceAttachment: vi.fn(() => upload.promise),
+    }
+    const controller = createInvoicePaymentController(api)
+    await controller.activate(identity(1), new AbortController().signal, () => false)
+    const send = document.querySelector<HTMLButtonElement>('[data-invoice-send]')!
+    const status = document.querySelector<HTMLElement>('[data-invoice-attachment-status]')!
+    await vi.waitFor(() => expect(status.textContent).toBe('0 files attached.'))
+    expect(send.hidden).toBe(false)
+    expect(send.disabled).toBe(false)
+
+    const input = document.querySelector<HTMLInputElement>(
+      '[data-invoice-attachment-form] input[name="file"]',
+    )!
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: [new File(['%PDF-'], 'scope.pdf', { type: 'application/pdf' })],
+    })
+    submit('[data-invoice-attachment-form]')
+    await vi.waitFor(() => expect(api.uploadInvoiceAttachment).toHaveBeenCalledTimes(1))
+
+    // The side read answers mid-upload: a deployment without the QuickBooks
+    // routes, which repaints the controls while the upload holds them.
+    rejectQuickBooks(
+      new EzactoApiError(404, { error: { code: 'not_found', message: 'Not found', fields: [] } }, null),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(send.disabled).toBe(true)
+
+    attached = [file]
+    upload.resolve(file)
+    await vi.waitFor(() => expect(status.textContent).toBe('1 file attached.'))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(send.disabled).toBe(false)
+  })
+
   it('[security] rejects stale detail responses and clears private payment state on abort', async () => {
     renderDetail()
     const firstInvoice = deferred<Invoice>()
