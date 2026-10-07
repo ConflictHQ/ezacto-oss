@@ -126,11 +126,7 @@ const deferred = <Value>() => {
  * number from test to test and read the invoice by id, so the id address is
  * the one that needs no lookup. The number addresses have tests of their own.
  */
-const renderDetail = (
-  path = '/invoices/by-id/7',
-  demo = false,
-  demoMailDomains: readonly string[] = [],
-): void => {
+const renderDetail = (path = '/invoices/by-id/7', demo = false): void => {
   window.history.replaceState(null, '', path)
   document.open()
   document.write(
@@ -139,8 +135,9 @@ const renderDetail = (
       release: 'invoice-browser-test',
       activeSection: 'Invoices',
       view: 'invoice-detail',
+      // The demo's mail is always held to its allowlist, as the Worker serves it.
       demo,
-      demoMailDomains,
+      demoMailRestricted: demo,
     })
       .replace(/ {2}<link[^>]+>\n/gu, '')
       .replace('  <script type="module" src="/assets/ezacto.js"></script>\n', ''),
@@ -1444,12 +1441,8 @@ describe('the Send dialog attachments', () => {
    * in `calls` in the order it was made, which is what these tests are about:
    * the attachments are written before anything is sent, or not at all.
    */
-  const sending = (
-    overrides: Partial<InvoicePaymentApi> = {},
-    demo = false,
-    demoMailDomains: readonly string[] = [],
-  ) => {
-    renderDetail(undefined, demo, demoMailDomains)
+  const sending = (overrides: Partial<InvoicePaymentApi> = {}, demo = false) => {
+    renderDetail(undefined, demo)
     let current = invoice('SEND', {
       state: 'draft',
       sent_at: null,
@@ -1907,10 +1900,10 @@ describe('the Send dialog attachments', () => {
     expect(calls).toEqual([])
   })
 
-  it('[security] on the public demo, names the only domains its mail reaches, and takes no file', async () => {
+  it('[security] on the public demo, says its mail reaches only approved addresses, and takes no file', async () => {
     // Issue 931. The Worker delivers the demo's mail only to the domains the
-    // deployment lists and refuses every upload; the screen says both before
-    // anyone acts on it.
+    // deployment approves and refuses every upload; the screen says both
+    // before anyone acts on it -- and never which domains those are.
     const sendInvoiceEmailPreview = vi.fn(async () => ({
       to: [{ name: 'Ana Example', email: 'ana@example.com' }],
     }))
@@ -1922,13 +1915,12 @@ describe('the Send dialog attachments', () => {
         uploadInvoiceAttachment: vi.fn(),
       },
       true,
-      ['example.com', 'example.org'],
     )
     await openWithDefaults(api)
     const mail = document.querySelector<HTMLElement>('[data-invoice-composer-demo]')!
     expect(mail.hidden).toBe(false)
     expect(mail.textContent).toBe(
-      'On the public demo, email is only delivered to example.com and example.org.',
+      'On the public demo, email is only delivered to approved addresses.',
     )
     expect(document.querySelector<HTMLElement>('[data-invoice-attachment-form]')!.hidden).toBe(true)
     const note = document.querySelector<HTMLElement>('[data-invoice-attachment-demo]')!
@@ -1938,28 +1930,20 @@ describe('the Send dialog attachments', () => {
     document.querySelector<HTMLButtonElement>('[data-invoice-composer-preview-send]')!.click()
     await vi.waitFor(() =>
       expect(document.querySelector('[data-invoice-composer-preview-result]')?.textContent).toBe(
-        'A preview for ana@example.com, stamped PREVIEW, was recorded. On the public demo, email is only delivered to example.com and example.org. Nothing was sent to the client.',
+        'A preview for ana@example.com, stamped PREVIEW, was recorded. On the public demo, email is only delivered to approved addresses. Nothing was sent to the client.',
       ),
     )
   })
 
-  it('[security] on a demo deployed with no domain, says its mail reaches nobody', async () => {
-    const { api } = sending({ getInvoiceEmailDefaults: vi.fn(async () => defaults()) }, true)
-    await openWithDefaults(api)
-    expect(document.querySelector('[data-invoice-composer-demo]')!.textContent).toBe(
-      'On the public demo, email is not delivered to anyone.',
-    )
-  })
-
-  it('[security] on the public demo, a send says where its mail can have gone', async () => {
-    const { api, calls } = sending({}, true, ['example.com'])
+  it('[security] on the public demo, a send says its mail reaches only approved addresses', async () => {
+    const { api, calls } = sending({}, true)
     await openComposer(api)
     deliverTo('ap@example.test')
     submit('[data-invoice-composer-form]')
     await vi.waitFor(() => expect(calls).toEqual(['send', 'deliver']))
     await vi.waitFor(() =>
       expect(document.querySelector('[data-invoice-detail-status]')?.textContent).toContain(
-        'Sent. On the public demo, email is only delivered to example.com. Settings › Deliveries shows what went.',
+        'Sent. On the public demo, email is only delivered to approved addresses. Settings › Deliveries shows what went.',
       ),
     )
   })

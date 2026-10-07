@@ -289,10 +289,11 @@ carries:
   in `DEMO_MAIL_ALLOWED_DOMAINS`. The one producer every mailer is built on
   drops every other To and Cc address before the queue; a message left with
   nobody is not queued at all, and its log row ends `failed` with the reason
-  `demo_recipient_not_allowed` (the Deliveries screen spells it out, and the
-  email health figures leave it out, since no provider saw it). The queue
-  consumer applies the same list to anything already on the queue. The log
-  keeps every address a message was written to; only what goes is narrowed.
+  `demo_recipient_not_allowed` (the Deliveries screen says it was not
+  delivered, and the email health figures leave it out, since no provider saw
+  it). The queue consumer applies the same list to anything already on the
+  queue. The log keeps every address a message was written to; only what goes
+  is narrowed.
 - **Providers** — QuickBooks, BILL, Wise, Stripe — are composed with no
   credentials, so no mirror, payment link, payout or reconciliation can run.
 - **Routes** that would connect or configure a provider, mint a payment link,
@@ -324,6 +325,12 @@ of the same name (`vars.DEMO_MAIL_ALLOWED_DOMAINS` on the `dev` environment) and
 puts it on the Worker as a plain var. Nothing in the app can change it. Unset or
 empty on the demo, the demo emails nobody; on any deployment that is not the
 demo it is ignored.
+
+Nor does anything in the app show it. Anyone can open the demo, and a list a
+visitor could read off a page would tell them where the demo can send mail, so
+no page, script or API response names a domain from it: the screens say only
+that the demo emails "approved addresses", whatever the list holds — even when
+it is empty.
 
 The history is anchored to the day it is built, not to a fixed calendar, so the
 demo always shows a book of work running up to today.

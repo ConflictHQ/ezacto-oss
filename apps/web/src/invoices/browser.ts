@@ -1,5 +1,5 @@
 import { renderDataTable, type CellContent } from '../components/data-table.js'
-import { demoMailNote, isDemoDeployment } from '../demo.js'
+import { DEMO_MAIL_NOTE, isDemoDeployment, isDemoMailRestricted } from '../demo.js'
 import { markMoney, moneyText } from '../money-display.js'
 import {
   type Attachment,
@@ -618,11 +618,10 @@ export const createInvoicePaymentController = (
   // note says why, for every profile.
   const attachmentDemo = required<HTMLElement>('[data-invoice-attachment-demo]')
   const demo = isDemoDeployment()
-  // And its mail reaches only the domains the deployment lists, so the dialog
-  // names them before anyone types a client's address into it.
-  const composerDemo = required<HTMLElement>('[data-invoice-composer-demo]')
-  composerDemo.hidden = !demo
-  if (demo) composerDemo.textContent = demoMailNote()
+  // And its mail reaches only approved addresses, so the dialog says so
+  // before anyone types a client's address into it -- without saying which.
+  const mailRestricted = isDemoMailRestricted()
+  required<HTMLElement>('[data-invoice-composer-demo]').hidden = !mailRestricted
 
   let activationGeneration = 0
   let requestGeneration = 0
@@ -1045,8 +1044,8 @@ export const createInvoicePaymentController = (
       ? api.sendInvoiceEmailPreview!(selected.id, input, session.signal).then((sent) => {
           if (current() !== session) return
           const to = sent.to.map(({ email }) => email).join(', ')
-          composerPreviewResult.textContent = demo
-            ? `A preview for ${to}, stamped PREVIEW, was recorded. ${demoMailNote()} Nothing was sent to the client.`
+          composerPreviewResult.textContent = mailRestricted
+            ? `A preview for ${to}, stamped PREVIEW, was recorded. ${DEMO_MAIL_NOTE} Nothing was sent to the client.`
             : `A preview went to ${to} only, stamped PREVIEW. Nothing was sent to the client.`
         })
       : api.previewInvoiceEmail!(selected.id, input, session.signal).then((preview) => {
@@ -2180,8 +2179,8 @@ export const createInvoicePaymentController = (
           // under the heading. Written to the Payments status line it was off
           // screen, and a send that worked looked like a click that did nothing.
           headlineMessage: delivering
-            ? demo
-              ? `Sent. ${demoMailNote()} Settings › Deliveries shows what went.${reminderNote}`
+            ? mailRestricted
+              ? `Sent. ${DEMO_MAIL_NOTE} Settings › Deliveries shows what went.${reminderNote}`
               : `Sent. The email is queued and goes out within a minute or two; Settings › Deliveries shows it.${reminderNote}`
             : `Marked sent. No email was delivered.${reminderNote}`,
         })

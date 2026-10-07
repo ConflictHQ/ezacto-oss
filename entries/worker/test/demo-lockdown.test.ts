@@ -49,6 +49,9 @@ const cursorKey = 'A'.repeat(43)
 const bootstrapToken = `ezacto_${'A'.repeat(16)}_${'B'.repeat(43)}`
 const owner = { email: 'admin@demo.example.test', password: 'correct horse battery staple 🙂' }
 
+/** An approved domain nothing in this file writes to, to look for in responses. */
+const unmailedDomain = 'zq7-unmailed.example'
+
 /** Requests that leave this machine, which no demo test may make. */
 const outbound: string[] = []
 /** What an outbound call answers, where a production test wants one to succeed. */
@@ -123,8 +126,10 @@ const deploy = async (kind: 'demo' | 'prod'): Promise<Fixture> => {
     ENVIRONMENT: kind === 'demo' ? 'dev' : 'prod',
     DEMO_MODE: 'true',
     // Read only where the deployment is the demo. Set here for both, so the
-    // production fixture proves it is ignored there.
-    DEMO_MAIL_ALLOWED_DOMAINS: ' Allowed.Example, @other.example ',
+    // production fixture proves it is ignored there. Nothing here ever mails
+    // the second domain, so it can only reach a response by the configuration
+    // leaking into one.
+    DEMO_MAIL_ALLOWED_DOMAINS: ` Allowed.Example, @${unmailedDomain.toUpperCase()} `,
     RELEASE: 'demo-lockdown-test',
     BRAND_EMAIL_SENDER_NAME: 'Folding Forks',
     MAIL_FROM: 'Folding Forks <billing@demo.example.test>',
@@ -661,6 +666,76 @@ describe('the public demo (ENVIRONMENT=dev, DEMO_MODE=true)', () => {
     expect(nobody.message.ack).toHaveBeenCalledOnce()
     expect(allowed.message.ack).toHaveBeenCalledOnce()
   })
+
+  it('[security] names no approved domain in any page or response it serves', async () => {
+    // Anyone can open the demo. A page, script or response that named an
+    // approved domain would tell every visitor where the demo can send mail.
+    // Addresses somebody typed into the demo are the demo's own data; the
+    // domain looked for here is one nothing in this file ever writes, so it
+    // can only turn up by the deployment's configuration leaking.
+    const leaks: string[] = []
+    const inspect = async (label: string, response: Response): Promise<void> => {
+      const text = (await response.text()).toLowerCase()
+      if (text.includes(unmailedDomain)) leaks.push(label)
+      for (const [name, value] of response.headers) {
+        if (value.toLowerCase().includes(unmailedDomain)) leaks.push(`${label} (${name})`)
+      }
+    }
+
+    // Mail refused, mail previewed and account mail asked for, so the log and
+    // the invoice history have the demo's refusals in them to be read back.
+    await draftInvoice(fixture, 508)
+    await inspect(
+      'send',
+      await call(fixture, 'POST', '/api/v1/invoices/508/deliveries', {
+        body: {
+          expected_version: 0,
+          recipients: [{ name: 'Accounts', email: 'accounts@client.example' }],
+          confirmed: true,
+        },
+      }),
+    )
+    await fixture.services.outbox.drain()
+    await inspect(
+      'preview',
+      await call(fixture, 'POST', '/api/v1/invoices/508/deliveries/preview/send', {
+        body: { recipients: [{ name: 'Accounts', email: 'accounts@client.example' }] },
+      }),
+    )
+    await inspect(
+      'password reset request',
+      await fixture.app.request(
+        '/auth/password/forgot',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', origin: 'http://localhost' },
+          body: JSON.stringify({ email: owner.email }),
+        },
+        fixture.env,
+      ),
+    )
+    expect(
+      (await fixture.services.emailLog.list({ status: 'failed' })).some(
+        (record) => record.failureReason === 'demo_recipient_not_allowed',
+      ),
+    ).toBe(true)
+
+    // Every page, asset and read the Worker serves, its parameters filled with
+    // the invoice above where one is wanted. Several answer 404 for want of a
+    // real record, and are read all the same: an error is a response too.
+    const reads = new Set(
+      fixture.app.routes
+        .filter((route) => route.method === 'GET' && !route.path.includes('*'))
+        .map((route) => route.path),
+    )
+    expect(reads.size).toBeGreaterThan(50)
+    for (const path of reads) {
+      const filled = path.replace(/:id\b/gu, '508').replace(/:[A-Za-z]+/gu, '1')
+      await inspect(`GET ${filled}`, await call(fixture, 'GET', filled))
+    }
+    await inspect('GET /api/v1/invoices/508/email-defaults', await call(fixture, 'GET', '/api/v1/invoices/508/email-defaults'))
+    expect(leaks).toEqual([])
+  }, 120_000)
 })
 
 describe('the demo at night', () => {
