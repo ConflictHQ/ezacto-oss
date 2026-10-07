@@ -9,7 +9,12 @@ import {
   type RecurringFixedLinesConfigV1,
 } from './recurring-invoices.js'
 import { assertStaticRecurringAttachmentPolicy } from './attachments.js'
-import { bandClaimSelection, bandForegoneUpdate, type BandClaimCeiling } from './band-claim.js'
+import {
+  bandClaimEligibility,
+  bandClaimSelection,
+  bandClaimTerms,
+  bandForegoneUpdate,
+} from './band-claim.js'
 
 type ContainerDatabase = BetterSQLite3Database<typeof schema> & {
   $client: BetterSqlite3.Database
@@ -783,33 +788,13 @@ export const createRecurringInvoiceEngine = (
             )`,
         params: [invoiceId, commandId],
       }
-      // A ceiling is a quantity in one unit or the other, never both -- the
-      // schema refuses the ambiguous combinations, so reading one column and
-      // falling through to the next is enough to know which contract this is.
-      const ceiling: BandClaimCeiling | null =
-        definition.claimMode !== 'ceiling'
-          ? null
-          : definition.claimCeilingSeconds !== null
-            ? { unit: 'seconds', limit: definition.claimCeilingSeconds }
-            : definition.claimCeilingCents !== null
-              ? { unit: 'cents', limit: definition.claimCeilingCents }
-              : null
+      // The definition's terms and the eligibility rule are the ones the claim
+      // backfill reads too (issue 941), so a band filled in afterwards holds
+      // exactly what this would have given it.
+      const terms = bandClaimTerms(definition)
       const claimed = bandClaimSelection(
-        {
-          // What a band may take, before any ceiling narrows it.
-          // Under a fixed amount the client bought the period, so a band set to
-          // claim tracked time takes the non-billable hours too (#708): leaving
-          // them out makes the engagement look cheaper to deliver than it was.
-          text: `invoice_id IS NULL ${definition.claimScope === 'tracked' ? '' : 'AND billable = 1'}
-            AND timer_started_at IS NULL
-            AND NOT (started_time IS NOT NULL AND ended_time IS NULL)
-            AND spent_date <= ?
-            AND project_id IN (
-              SELECT CAST(member.value AS INTEGER) FROM json_each(?) member
-            )`,
-          params: [issueDate, definition.claimsProjectIds],
-        },
-        ceiling,
+        bandClaimEligibility(terms.scope, issueDate, definition.claimsProjectIds),
+        terms.ceiling,
       )
       statements.push({
         text: `UPDATE time_entries SET invoice_id = ?

@@ -30,6 +30,63 @@ export interface BandClaimCeiling {
 }
 
 /**
+ * The terms a band claims by, as its definition carries them: how much of the
+ * work it takes (#707) and whether non-billable hours count (#708).
+ */
+export interface BandClaimTerms {
+  readonly ceiling: BandClaimCeiling | null
+  /** `tracked` takes every hour; `billable`, what every band did before #708. */
+  readonly scope: 'billable' | 'tracked'
+}
+
+/**
+ * A definition's claim columns read as terms, once, for everything that
+ * claims on its behalf: the engine raising the next band and the backfill
+ * filling one raised too early (issue 941). A ceiling is a quantity in one
+ * unit or the other, never both -- the schema refuses the ambiguous
+ * combinations -- so reading one column and falling through to the next is
+ * enough to know which contract it is.
+ */
+export const bandClaimTerms = (definition: {
+  readonly claimMode: string | null
+  readonly claimCeilingSeconds: number | null
+  readonly claimCeilingCents: number | null
+  readonly claimScope: string | null
+}): BandClaimTerms => ({
+  ceiling:
+    definition.claimMode !== 'ceiling'
+      ? null
+      : definition.claimCeilingSeconds !== null
+        ? { unit: 'seconds', limit: definition.claimCeilingSeconds }
+        : definition.claimCeilingCents !== null
+          ? { unit: 'cents', limit: definition.claimCeilingCents }
+          : null,
+  scope: definition.claimScope === 'tracked' ? 'tracked' : 'billable',
+})
+
+/**
+ * What a band may take before any ceiling narrows it: still unbilled, on the
+ * projects it claims, not mid-timer, and spent on or before the invoice's
+ * issue date. Under a fixed amount the client bought the period, so a band set
+ * to claim tracked time takes the non-billable hours too (#708): leaving them
+ * out makes the engagement look cheaper to deliver than it was.
+ */
+export const bandClaimEligibility = (
+  scope: BandClaimTerms['scope'],
+  issueDate: string,
+  projectIdsJson: string,
+): BandClaimSql => ({
+  text: `invoice_id IS NULL ${scope === 'tracked' ? '' : 'AND billable = 1'}
+    AND timer_started_at IS NULL
+    AND NOT (started_time IS NOT NULL AND ended_time IS NULL)
+    AND spent_date <= ?
+    AND project_id IN (
+      SELECT CAST(member.value AS INTEGER) FROM json_each(?) member
+    )`,
+  params: [issueDate, projectIdsJson],
+})
+
+/**
  * The ids of the eligible entries a band claims, as a `SELECT id` over
  * `time_entries`. `eligible` is a predicate on unqualified `time_entries`
  * columns with its own parameters.
