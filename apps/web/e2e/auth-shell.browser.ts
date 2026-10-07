@@ -3685,3 +3685,73 @@ test('[e2e:timesheet-approval] submits and approves an expense-only week', async
     data: { approval_status: 'approved', is_locked: true, locked_reason_code: 'approved' },
   })
 })
+
+// #861. showModal() put focus on the first focusable element, which in the
+// command bar and the Menu is the close button, so ⌘K needed a Tab before it
+// took a keystroke. The dialog focusing steps, the trap and the return of
+// focus on Escape all belong to the browser, so they are checked in one.
+test('[e2e:keyboard #861] opens the command bar and the menu ready for the keyboard', async ({
+  page,
+}) => {
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/')
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  const logTime = page.locator('[data-time-log-time]')
+  await expect(logTime).toBeEnabled()
+
+  const commandDialog = page.locator('[data-command-dialog]')
+  const command = commandDialog.getByRole('combobox', { name: 'Command' })
+  await page.keyboard.press('ControlOrMeta+k')
+  await expect(commandDialog).toBeVisible()
+  await expect(command).toBeFocused()
+  await page.keyboard.type('profile')
+  await expect(command).toHaveValue('profile')
+  await expect(
+    commandDialog.locator('[data-command-option][aria-selected="true"]'),
+  ).toHaveText('Your settings')
+  await page.keyboard.press('Escape')
+  await expect(commandDialog).toBeHidden()
+
+  // Opened from the button, the query the last use left is selected, so
+  // typing replaces it; Escape hands focus back to the button.
+  await logTime.focus()
+  await page.keyboard.press('Enter')
+  await expect(command).toBeFocused()
+  await page.keyboard.type('receipts')
+  await expect(command).toHaveValue('receipts')
+  await page.keyboard.press('Escape')
+  await expect(commandDialog).toBeHidden()
+  await expect(logTime).toBeFocused()
+
+  const menuTrigger = page.locator('[data-menu-trigger]')
+  const menu = page.locator('[data-menu-dialog]')
+  const firstLink = menu.getByRole('link', { name: 'Time', exact: true })
+  await menuTrigger.focus()
+  await page.keyboard.press('Enter')
+  await expect(menu).toBeVisible()
+  await expect(firstLink).toBeFocused()
+  // Round the dialog more than once: Tab never reaches the page behind it.
+  // Between the last control and the first, focus may sit with the browser
+  // rather than any element, which is not an escape.
+  const landed: string[] = []
+  for (let press = 0; press < 30; press += 1) {
+    await page.keyboard.press('Tab')
+    landed.push(
+      await page.evaluate(() => {
+        const active = document.activeElement
+        if (active === null || active === document.body) return 'browser'
+        return document.querySelector('[data-menu-dialog]')?.contains(active) === true
+          ? 'dialog'
+          : active.outerHTML.slice(0, 80)
+      }),
+    )
+  }
+  expect(landed.filter((place) => place !== 'dialog' && place !== 'browser')).toEqual([])
+  expect(landed.filter((place) => place === 'dialog').length).toBeGreaterThan(20)
+  await firstLink.focus()
+  await page.keyboard.press('Escape')
+  await expect(menu).toBeHidden()
+  await expect(menuTrigger).toBeFocused()
+})

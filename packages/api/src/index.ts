@@ -232,6 +232,7 @@ export {
 } from './email-configuration.js'
 export {
   installOutboxRoutes,
+  type ActivityLogActor,
   type ActivityLogResource,
   type OutboxDeliveryResource,
   type OutboxDeliveryStatus,

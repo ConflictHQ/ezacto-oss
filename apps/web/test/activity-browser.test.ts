@@ -8,7 +8,7 @@ const row = (overrides: Partial<ActivityRow> = {}): ActivityRow => ({
   event_id: 'e-1',
   event_type: 'api_token.created',
   aggregate: { type: 'api_token', id: 7 },
-  payload: { actor: { type: 'user', id: 4 } },
+  actor: { type: 'user', id: 4, name: 'Robin Vale' },
   occurred_at: '2026-09-06T09:00:00.000Z',
   recorded_at: '2026-09-06T09:00:01.000Z',
   ...overrides,
@@ -37,18 +37,52 @@ describe('activity log surface', () => {
           event_id: 'e-2',
           event_type: 'backup.exported',
           aggregate: { type: 'backup_run', id: 12 },
-          payload: { actor: { type: 'system', id: null } },
+          actor: { type: 'system', id: null, name: null },
         }),
       ],
     }))
     await createActivityController({ listActivityLog }).activate(new AbortController().signal)
 
     expect(table()).toContain('Api token created')
-    expect(table()).toContain('User #4')
+    expect(table()).toContain('Robin Vale')
     expect(table()).toContain('Backup exported')
     expect(table()).toContain('System')
     expect(table()).not.toContain('User #null')
     expect(status()).toBe('2 entries.')
+  })
+
+  it('[unit] names who acted, keeps the id to hand, and falls back to the id (issue 862)', async () => {
+    // The log read as "User #30", which sends an administrator to the Team page
+    // to find out who that is. The server names the person now; the id stays
+    // on the cell's title, because two people can share a name and an audit
+    // has to be able to tell them apart. An id nobody carries any more -- a
+    // deleted contact, or a user unknown to this instance -- reads as the id,
+    // and an event that names nobody says so rather than guessing.
+    mount()
+    const listActivityLog = vi.fn(async () => ({
+      data: [
+        row({ event_id: 'e-user' }),
+        row({ event_id: 'e-contact', actor: { type: 'contact', id: 8, name: 'Jordan' } }),
+        row({ event_id: 'e-gone-user', actor: { type: 'user', id: 30, name: null } }),
+        row({ event_id: 'e-gone-contact', actor: { type: 'contact', id: 9, name: null } }),
+        row({ event_id: 'e-system', actor: { type: 'system', id: null, name: null } }),
+        row({ event_id: 'e-nobody', actor: null }),
+      ],
+    }))
+    await createActivityController({ listActivityLog }).activate(new AbortController().signal)
+
+    const who = (eventId: string) => {
+      const cell = document.querySelector<HTMLElement>(
+        `[data-row-key="${eventId}"] [data-column="who"]`,
+      )!
+      return { text: cell.textContent, title: cell.querySelector('[title]')?.getAttribute('title') ?? null }
+    }
+    expect(who('e-user')).toEqual({ text: 'Robin Vale', title: 'User #4' })
+    expect(who('e-contact')).toEqual({ text: 'Jordan', title: 'Contact #8' })
+    expect(who('e-gone-user')).toEqual({ text: 'User #30', title: null })
+    expect(who('e-gone-contact')).toEqual({ text: 'Contact #9', title: null })
+    expect(who('e-system')).toEqual({ text: 'System', title: null })
+    expect(who('e-nobody')).toEqual({ text: 'Unknown', title: null })
   })
 
   it('[browser] omits an untouched filter rather than sending it blank', async () => {

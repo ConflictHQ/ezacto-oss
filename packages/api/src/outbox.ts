@@ -5,6 +5,17 @@ import { ApiError, validationError } from './errors.js'
 
 export type OutboxDeliveryStatus = 'pending' | 'processing' | 'delivered' | 'failed'
 
+/**
+ * Who caused an event (issue 862). `type` and `id` are what the event
+ * recorded; `name` is resolved by the repository when the log is read, and is
+ * null for a system event and for an id no user or contact carries any more.
+ */
+export interface ActivityLogActor {
+  type: 'user' | 'contact' | 'system'
+  id: number | null
+  name: string | null
+}
+
 export interface ActivityLogResource {
   id: string
   aggregateType: string
@@ -15,6 +26,7 @@ export interface ActivityLogResource {
   occurredAt: string
   availableAt: string
   recordedAt: string
+  actor: ActivityLogActor | null
 }
 
 export interface OutboxDeliveryResource {
@@ -86,6 +98,8 @@ const requireAdministratorSession = <Bindings extends object>(
   }
 }
 
+// The actor sits beside the payload rather than inside it. The payload is the
+// event as recorded; a name looked up when the log is read is not part of it.
 const activityData = (record: ActivityLogResource) => ({
   event_id: record.id,
   event_type: record.eventType,
@@ -94,6 +108,10 @@ const activityData = (record: ActivityLogResource) => ({
     id: record.aggregateId,
     sequence: record.aggregateSequence,
   },
+  actor:
+    record.actor === null
+      ? null
+      : { type: record.actor.type, id: record.actor.id, name: record.actor.name },
   payload: record.payload,
   occurred_at: record.occurredAt,
   available_at: record.availableAt,
