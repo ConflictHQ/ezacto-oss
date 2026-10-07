@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { invoiceNumberIsAddressable } from '@ezacto/web'
+import { invoiceNumberIsAddressable, paletteDestinations } from '@ezacto/web'
 import {
   createApp,
   type AppEnv,
@@ -60,6 +60,7 @@ describe('worker entry', () => {
       '/settings/user',
       '/settings/company',
       '/settings/templates',
+      '/settings/deliveries',
     ]
     for (const path of paths) {
       const res = await app.request(path, {}, branded)
@@ -92,6 +93,37 @@ describe('worker entry', () => {
     const integrations = await app.request('/settings/integrations', {}, env)
     expect(integrations.status).toBe(301)
     expect(integrations.headers.get('location')).toBe('/settings/company#integrations')
+  })
+
+  it('[browser] serves Settings › Deliveries, the page its tab and the palette link to', async () => {
+    // The page shipped with issue 485 and both links pointed here, but no
+    // route served it, so the tab answered "That page does not exist".
+    const page = await app.request('/settings/deliveries', {}, env)
+    expect(page.status).toBe(200)
+    const html = await page.text()
+    expect(html).toContain('data-app-view="settings-deliveries"')
+    // The deliveries screen is the one showing, and the strip marks its tab.
+    expect(html).toContain('data-deliveries-page>')
+    expect(html).not.toContain('data-deliveries-page hidden')
+    expect(html).toContain('data-not-found-page hidden')
+    expect(html).toContain(
+      '<a href="/settings/deliveries" data-settings-deliveries-tab hidden aria-current="page">Deliveries</a>',
+    )
+  })
+
+  it('[unit] serves every page the shell links to, so no link lands on Not found', async () => {
+    // Deliveries was a link and a page with no route between them. Walk what
+    // the shell actually links to -- the nav, the Settings strip, the palette --
+    // rather than a list somebody has to remember to extend.
+    const html = await (await app.request('/', {}, env)).text()
+    const linked = [...html.matchAll(/href="(\/[^"#?]*)/gu)].map((match) => match[1]!)
+    const paths = [
+      ...new Set([...linked, ...paletteDestinations.map((destination) => destination.href)]),
+    ]
+    expect(paths).toContain('/settings/deliveries')
+    for (const path of paths) {
+      expect((await app.request(path, {}, env)).status, path).toBe(200)
+    }
   })
 
   it('[unit] marks no primary section on a page outside the primary nav', async () => {
