@@ -251,6 +251,9 @@ describe('the public demo (ENVIRONMENT=dev, DEMO_MODE=true)', () => {
     fixture = await deploy('demo')
     // What the nightly rebuild does after it empties the database.
     await expect(seedDemoSender(fixture.services, fixture.env)).resolves.toBe('seeded')
+    // Every invoice email carries its PDF: the case that would stage a file
+    // in the bucket for the message to name.
+    await fixture.services.invoiceDocumentPreference!.setOrganizationPreference('document', true)
   }, 60_000)
 
   afterAll(async () => fixture.miniflare.dispose())
@@ -346,12 +349,18 @@ describe('the public demo (ENVIRONMENT=dev, DEMO_MODE=true)', () => {
     const upload = await call(fixture, 'POST', '/api/v1/invoices/502/attachments', { form })
     expect(upload.status).toBe(403)
     expect(await errorCode(upload)).toBe('demo_disabled')
+    // A real PNG signature into a real slot, so that it is the demo that
+    // refuses this and not the image sniffer or the slot lookup.
     const logo = new FormData()
     logo.append(
       'file',
-      new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'logo.png', { type: 'image/png' }),
+      new File(
+        [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d])],
+        'logo.png',
+        { type: 'image/png' },
+      ),
     )
-    const brand = await call(fixture, 'POST', '/api/v1/settings/brand-assets/wordmark_light', {
+    const brand = await call(fixture, 'POST', '/api/v1/settings/brand-assets/wordmark-light', {
       form: logo,
     })
     expect(brand.status).toBe(403)
@@ -405,7 +414,10 @@ describe('the public demo (ENVIRONMENT=dev, DEMO_MODE=true)', () => {
   it('[api] suppresses the preview a sender emails to themselves', async () => {
     await draftInvoice(fixture, 504)
     const preview = await call(fixture, 'POST', '/api/v1/invoices/504/deliveries/preview/send', {
-      body: { recipients: [{ name: 'Accounts', email: 'accounts@client.example' }] },
+      body: {
+        recipients: [{ name: 'Accounts', email: 'accounts@client.example' }],
+        attach_pdf: true,
+      },
     })
     expect(preview.status).toBe(202)
     const { data } = (await preview.json()) as { data: { delivery_id: number } }
