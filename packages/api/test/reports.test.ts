@@ -2628,6 +2628,30 @@ for (const [runtime, factory] of factories) {
       expect(claimed.report.rows.map((row) => row.timeEntryId)).toEqual([111]);
       // Drill-through: the total opens onto the invoice that took the hours.
       expect(claimed.report.rows[0]!.invoiceId).toBe(301);
+      // Issue 939: and names it by the number printed on it.
+      expect(claimed.report.rows[0]!.invoiceNumber).toBe("INV-301");
+      expect(unclaimed.report.rows.map((row) => row.invoiceNumber)).toEqual([null, null]);
+    });
+
+    it("[api] names the claiming invoice by its number at entry grain only", async () => {
+      // Issue 939: the column showed the record id, which no invoice prints.
+      harness = await factory();
+      await seedDetailedDay(harness);
+      await harness.run(`UPDATE time_entries SET invoice_id = 301 WHERE id = 111`, []);
+      const entry = await harness.request(
+        "/reports/detailed-time?from=2026-08-10&to=2026-08-10&project_id=1&hours=claimed&grain=entry",
+      );
+      expect(entry.status).toBe(200);
+      const entryBody = (await entry.json()) as { data: { rows: Array<Record<string, unknown>> } };
+      expect(
+        entryBody.data.rows.map((row) => [row["time_entry_id"], row["invoice_id"], row["invoice_number"]]),
+      ).toEqual([[111, 301, "INV-301"]]);
+
+      const day = await harness.request(
+        "/reports/detailed-time?from=2026-08-10&to=2026-08-10&project_id=1&hours=claimed",
+      );
+      const dayBody = (await day.json()) as { data: { rows: Array<Record<string, unknown>> } };
+      expect(dayBody.data.rows[0]).not.toHaveProperty("invoice_number");
     });
 
     it("[api] serves the claimed split and refuses nothing it used to accept", async () => {
@@ -2896,6 +2920,7 @@ describe("detailed time serialization", () => {
         claimed: false,
         timeEntryId: 101,
         invoiceId: null,
+        invoiceNumber: null,
         notes: "wrote the thing",
         projectActive: true,
       },

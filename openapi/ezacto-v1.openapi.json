@@ -35412,6 +35412,16 @@
               }
             ]
           },
+          "invoice_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "notes": {
             "anyOf": [
               {

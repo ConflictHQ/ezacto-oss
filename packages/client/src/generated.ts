@@ -2387,6 +2387,7 @@ export type DetailedTimeRow = {
   "claimed": boolean;
   "time_entry_id"?: number;
   "invoice_id"?: number | null;
+  "invoice_number"?: string | null;
   "notes"?: string | null;
   "project_active"?: boolean;
 };

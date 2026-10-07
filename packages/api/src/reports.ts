@@ -437,6 +437,8 @@ export interface DetailedTimeRowRecord {
   /** Set at `entry` grain only. */
   timeEntryId: number | null;
   invoiceId: number | null;
+  /** The claiming invoice's number (issue 939); null wherever `invoiceId` is. */
+  invoiceNumber: string | null;
   notes: string | null;
   projectActive: boolean;
 }
@@ -1636,6 +1638,7 @@ const serializeDetailedTime = (
             time_entry_id: row.timeEntryId,
             notes: row.notes,
             invoice_id: row.invoiceId,
+            invoice_number: row.invoiceNumber,
             project_active: row.projectActive,
           }
         : {}),

@@ -7102,6 +7102,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // The invoice that claimed the entry, at `entry` grain. Null where
       // nothing has.
       invoice_id: nullable(integerSchema),
+      // That invoice's number, the one printed on it and in its address
+      // (/invoices/<number>), beside its internal id. Null where nothing has
+      // claimed the entry.
+      invoice_number: nullable(stringSchema),
       notes: nullable(stringSchema),
       project_active: booleanSchema,
     },
