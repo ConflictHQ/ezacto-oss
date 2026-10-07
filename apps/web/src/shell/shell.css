@@ -68,13 +68,22 @@
  */
 [data-text-size='small'] {
   zoom: 0.9;
+  --ez-zoom: 0.9;
 }
 [data-text-size='large'] {
   zoom: 1.125;
+  --ez-zoom: 1.125;
 }
 [data-text-size='larger'] {
   zoom: 1.25;
+  --ez-zoom: 1.25;
 }
+/*
+ * `zoom` scales viewport units with everything else, so under it a box that
+ * is 100vh tall is 90%, 112.5% or 125% of the window. Anything that has to be
+ * exactly the window divides by the zoom it is under: the sign-in page stopped
+ * 100px short of a 1000px window at the Small text size.
+ */
 
 /*
  * The icon set. Every icon is a 20px square drawn on a 20-unit grid in the
@@ -850,8 +859,8 @@
 }
 .report-saved-card p { flex: 1; margin: 0; color: var(--ez-muted); }
 [data-report-builder] {
-  width: min(720px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
+  width: min(720px, calc((100vw - 32px) / var(--ez-zoom, 1)));
+  max-height: calc((100vh - 32px) / var(--ez-zoom, 1));
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-surface);
@@ -1770,13 +1779,13 @@
   border-radius: var(--ez-radius);
 }
 .invoice-composer-dialog {
-  width: min(920px, calc(100vw - 32px));
+  width: min(920px, calc((100vw - 32px) / var(--ez-zoom, 1)));
 }
 /* The invoice dialogs share one frame: the title and the actions stay put in
    bands of their own while a long form scrolls between them, so Save is never
    below the fold. */
 :is(.invoice-payment-dialog, .invoice-transition-dialog, .invoice-composer-dialog) > form {
-  max-height: calc(100dvh - 48px);
+  max-height: calc((100dvh - 48px) / var(--ez-zoom, 1));
   padding: 0 24px;
   overflow-y: auto;
 }
@@ -1986,7 +1995,7 @@
 /* New invoice (one step, then the draft). A header and a footer band hold
    the title and the actions still while the body scrolls on a short screen. */
 .invoice-new-dialog {
-  width: min(600px, calc(100vw - 32px));
+  width: min(600px, calc((100vw - 32px) / var(--ez-zoom, 1)));
 }
 .invoice-new-dialog > form {
   gap: 0;
@@ -2002,7 +2011,7 @@
 .invoice-new-body {
   display: grid;
   gap: 20px;
-  max-height: min(64vh, 640px);
+  max-height: min(calc(64vh / var(--ez-zoom, 1)), 640px);
   padding: 20px 24px;
   overflow-y: auto;
 }
@@ -3479,8 +3488,18 @@ html {
 }
 body {
   margin: 0;
-  min-height: 100vh;
+  min-height: calc(100vh / var(--ez-zoom, 1));
   background: var(--ez-ground);
+}
+/* While the sign-in page is what is showing, the document wears its right
+   panel's ground, so whatever lies beyond the page -- a window taller than
+   the layout, a scroll bounced past its end -- reads as more of that panel
+   rather than as a white strip. */
+[data-auth-state='unknown'],
+[data-auth-state='signed-out'],
+[data-auth-state='unknown'] body,
+[data-auth-state='signed-out'] body {
+  background: var(--ez-surface);
 }
 /* The 14px base is the design's desk density, so it applies where there is a
    pointer. A phone keeps the browser's 16px: it zooms the page into any field
@@ -3854,7 +3873,7 @@ dialog h2,
   display: none;
 }
 .authenticated-shell {
-  min-height: 100vh;
+  min-height: calc(100vh / var(--ez-zoom, 1));
 }
 .session-check-overlay {
   position: fixed;
@@ -3893,8 +3912,8 @@ dialog h2,
   animation: auth-spin 900ms linear infinite;
 }
 .auth-gateway {
-  min-height: 100vh;
-  min-height: 100svh;
+  min-height: calc(100vh / var(--ez-zoom, 1));
+  min-height: calc(100dvh / var(--ez-zoom, 1));
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(380px, 0.85fr);
   overflow: hidden;
@@ -4141,9 +4160,23 @@ dialog h2,
   flex: 1;
   background: var(--ez-border);
 }
+/*
+ * One vertical rhythm for the form: 16px between field groups, 8px from a
+ * label to its field, 12px from the button to the line that reports on it.
+ * The fields sat in a wrapper with no layout of its own, so they stacked flush:
+ * the focused Email field's ring lay across the Password label, and "Your
+ * session ended" sat against the Sign in button.
+ */
+.password-entry {
+  display: grid;
+  gap: 16px;
+}
+.password-entry > .auth-result {
+  margin-top: -4px;
+}
 .sign-in-form label {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   color: var(--ez-muted);
   font-size: 13px;
 }
@@ -5760,7 +5793,7 @@ html[data-time-view="day"] .day-list {
   max-width: 44ch;
 }
 dialog {
-  width: min(640px, calc(100vw - 32px));
+  width: min(640px, calc((100vw - 32px) / var(--ez-zoom, 1)));
   padding: 0;
   border: 1px solid var(--ez-border);
   border-radius: calc(var(--ez-radius) * 2);
@@ -5860,8 +5893,8 @@ dialog textarea {
 @media (min-width: 721px) {
   .command-dialog,
   .menu-dialog {
-    margin-block: 10vh auto;
-    max-height: calc(90vh - 24px);
+    margin-block: calc(10vh / var(--ez-zoom, 1)) auto;
+    max-height: calc((90vh - 24px) / var(--ez-zoom, 1));
   }
 }
 /*
@@ -5872,7 +5905,7 @@ dialog textarea {
  * ones the bar already had.
  */
 .command-dialog {
-  width: min(600px, calc(100vw - 32px));
+  width: min(600px, calc((100vw - 32px) / var(--ez-zoom, 1)));
 }
 .command-dialog form {
   gap: 16px;
@@ -6111,7 +6144,7 @@ dialog textarea {
 @media (max-width: 899px) {
   .menu-dialog {
     inset: 0 auto 0 0;
-    width: min(340px, 88vw);
+    width: min(340px, calc(88vw / var(--ez-zoom, 1)));
     max-width: none;
     height: 100%;
     max-height: none;
@@ -6131,7 +6164,7 @@ dialog textarea {
   }
 }
 .document-shell {
-  min-height: 100vh;
+  min-height: calc(100vh / var(--ez-zoom, 1));
   background: var(--ez-ground);
   color: var(--ez-ink);
 }
@@ -6669,7 +6702,7 @@ dialog textarea {
     min-height: 58px;
   }
   dialog {
-    width: 100vw;
+    width: calc(100vw / var(--ez-zoom, 1));
     max-width: none;
     margin: auto 0 0;
     border-radius: var(--ez-radius) var(--ez-radius) 0 0;

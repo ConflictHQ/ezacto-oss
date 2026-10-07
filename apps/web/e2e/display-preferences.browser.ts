@@ -15,8 +15,17 @@ const lightGround = 'rgb(255, 255, 255)'
 const prefer = (context: BrowserContext, name: string, value: string): Promise<void> =>
   context.addCookies([{ name, value, url: origin }])
 
+/**
+ * The ground the page is painted on: the sign-in card while the sign-in page
+ * shows (the document itself wears the panel's surface there), the body once
+ * the app does.
+ */
 const groundOf = (page: Page): Promise<string> =>
-  page.evaluate(() => getComputedStyle(document.body).backgroundColor)
+  page.evaluate(() => {
+    const gateway = document.querySelector<HTMLElement>('[data-auth-gateway]')
+    const card = gateway !== null && !gateway.hidden ? gateway.querySelector('.auth-card') : null
+    return getComputedStyle(card ?? document.body).backgroundColor
+  })
 
 const bandOf = (page: Page): Promise<string> =>
   page.evaluate(
@@ -410,4 +419,35 @@ test('[e2e:nav] highlights the command bar row Enter acts on in the selected tin
   await expect(query).toHaveAttribute('aria-activedescendant', (await highlighted.getAttribute('id'))!)
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
+})
+
+test('[e2e:text-size] keeps the drawer and the command bar inside the window at the largest text', async ({
+  page,
+}) => {
+  // The text size is a `zoom`, which scales viewport units with everything
+  // else: at Larger the drawer was 412px wide on a 375px phone and the command
+  // bar ran 80px past the bottom of a 720px window.
+  await page.setViewportSize({ width: 375, height: 812 })
+  await page.goto('/')
+  await page.evaluate(() => localStorage.setItem('ezacto.text-size', 'larger'))
+  await page.goto('/')
+  await signIn(page)
+  await page.locator('[data-menu-trigger]').click()
+  const drawer = page.locator('[data-menu-dialog]')
+  await expect(drawer).toBeVisible()
+  await expect.poll(async () => (await box(page, '[data-menu-dialog]')).x).toBe(0)
+  const drawerBox = await box(page, '[data-menu-dialog]')
+  expect(drawerBox.x + drawerBox.width).toBeLessThanOrEqual(375)
+  await page.keyboard.press('Escape')
+
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.locator('[data-time-log-time]').click()
+  const command = page.locator('[data-command-dialog]')
+  await expect(command).toBeVisible()
+  await page.waitForTimeout(250)
+  const commandBox = await box(page, '[data-command-dialog]')
+  expect(commandBox.y + commandBox.height).toBeLessThanOrEqual(720)
+  expect(commandBox.x + commandBox.width).toBeLessThanOrEqual(1280)
+  await page.keyboard.press('Escape')
+  await page.evaluate(() => localStorage.removeItem('ezacto.text-size'))
 })
