@@ -4,6 +4,10 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig } from '@playwright/test'
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
+// The harness port, shared with browser-worker-harness.mjs through the
+// environment Playwright hands its web server.
+process.env.EZACTO_BROWSER_PORT ??= '4173'
+const origin = `http://127.0.0.1:${process.env.EZACTO_BROWSER_PORT}`
 process.env.EZACTO_BROWSER_FIXTURE_EMAIL ??= 'browser-owner@example.test'
 process.env.EZACTO_BROWSER_FIXTURE_PASSWORD ??= randomBytes(32).toString(
   'base64url',
@@ -55,7 +59,7 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   reporter: 'line',
   use: {
-    baseURL: 'http://127.0.0.1:4173',
+    baseURL: origin,
     browserName: 'chromium',
     headless: true,
     timezoneId: process.env.EZACTO_BROWSER_FIXTURE_TIME_ZONE,
@@ -68,7 +72,7 @@ export default defineConfig({
   webServer: {
     command: 'node apps/web/scripts/browser-worker-harness.mjs',
     cwd: repositoryRoot,
-    url: 'http://127.0.0.1:4173/healthz',
+    url: `${origin}/healthz`,
     reuseExistingServer: false,
     timeout: 120_000,
     stdout: 'pipe',

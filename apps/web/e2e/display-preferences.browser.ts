@@ -7,7 +7,7 @@ if (fixtureEmail === undefined || fixturePassword === undefined) {
   throw new Error('EZACTO_BROWSER_FIXTURE_EMAIL and EZACTO_BROWSER_FIXTURE_PASSWORD are required')
 }
 
-const origin = 'http://127.0.0.1:4173'
+const origin = `http://127.0.0.1:${process.env.EZACTO_BROWSER_PORT ?? '4173'}`
 // The two grounds, as the browser computes them: #0C111C and #FFFFFF.
 const darkGround = 'rgb(12, 17, 28)'
 const lightGround = 'rgb(255, 255, 255)'

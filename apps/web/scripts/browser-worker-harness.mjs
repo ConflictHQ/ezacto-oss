@@ -7,7 +7,12 @@ import { build } from 'esbuild'
 import { Miniflare, NoOpLog } from 'miniflare'
 
 const listenHost = '127.0.0.1'
-const listenPort = 4173
+// 4173 unless the run says otherwise, so a suite can run beside a harness
+// someone already has up on the usual port without either one stopping.
+const listenPort = Number(process.env.EZACTO_BROWSER_PORT ?? 4173)
+if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
+  throw new Error('EZACTO_BROWSER_PORT must be a TCP port')
+}
 const cursorSigningKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 const fixtureControlPath = '/__ezacto_browser_fixture__/start-end'
 const fixtureControlHeader = 'start-end-round-trip'
