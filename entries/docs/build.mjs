@@ -108,7 +108,7 @@ const layout = ({ title, description, path, body, sidebar = '' }) => `<!DOCTYPE 
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escape(title)} · ezacto developers</title>
+<title>${escape(title)} · eZacto, powered by CONFLICT</title>
 <meta name="description" content="${escape(description)}">
 <link rel="canonical" href="${site}${path}">
 <meta property="og:title" content="${escape(title)}">
@@ -120,7 +120,7 @@ const layout = ({ title, description, path, body, sidebar = '' }) => `<!DOCTYPE 
 </head>
 <body>
 <header><div class="bar">
-<a class="name" href="/">ezacto <span style="color:var(--muted);font-weight:400">developers</span></a>
+<a class="name" href="/">eZacto <span style="color:var(--muted);font-weight:400">powered by CONFLICT</span></a>
 <nav>${NAV.map(([href, label]) => `<a href="${href}"${path.startsWith(href) ? ' aria-current="page"' : ''}>${label}</a>`).join('')}</nav>
 <nav class="ext"><a href="https://github.com/ConflictHQ/ezacto-oss">GitHub</a><a href="https://ezacto.io/">Demo</a><a href="https://ezacto.com/">ezacto.com</a></nav>
 </div></header>
@@ -128,7 +128,7 @@ const layout = ({ title, description, path, body, sidebar = '' }) => `<!DOCTYPE 
 <aside>${sidebar}</aside>
 <article>${body}</article>
 </main>
-<footer>ezacto is free software under the GNU AGPL v3, copyright CONFLICT LLC. This site is built from the repository at every release.</footer>
+<footer>eZacto is free software under the GNU AGPL v3, copyright CONFLICT LLC. This site is built from the repository at every release. Built with <a href="https://calliope.ai/">Calliope AI</a> and <a href="https://boilerworks.ai/">Boilerworks</a>.</footer>
 </body>
 </html>
 `
@@ -307,7 +307,7 @@ const build = async () => {
   const intro = readme.split(/\n## /)[0].replace(/^# .*\n+/, '')
   const licence = readme.match(/\n## Licence\n([\s\S]*?)(?=\n## |\s*$)/)?.[1] ?? ''
   const home = layout({
-    title: 'ezacto developers',
+    title: 'Developer docs',
     description: 'Self-host, integrate with, and contribute to ezacto: guides, the v1 API reference and the ez CLI.',
     path: '/',
     body: `<h1>Build on ezacto</h1>${renderMarkdown(intro, 'README.md')}
@@ -340,7 +340,7 @@ const build = async () => {
   )
   await writeFile(
     join(out, 'llms.txt'),
-    `# ezacto developers\n\n> Guides, API reference and CLI for ezacto, the open-source time tracking and invoicing app (GNU AGPL v3, CONFLICT LLC).\n\n## Guides\n\n${GUIDES.map(
+    `# eZacto, powered by CONFLICT\n\n> Guides, API reference and CLI for ezacto, the open-source time tracking and invoicing app (GNU AGPL v3, CONFLICT LLC).\n\n## Guides\n\n${GUIDES.map(
       ([slug, , title]) => `- [${title}](${site}/docs/${slug}/)`,
     ).join('\n')}\n\n## Reference\n\n- [API reference](${site}/api/): every v1 path, from the OpenAPI contract\n- [OpenAPI document](${site}/openapi/v1.json)\n- [ez CLI](${site}/cli/)\n\n## Source\n\n- [ezacto](https://github.com/ConflictHQ/ezacto-oss)\n- [ezacto-portal](https://github.com/ConflictHQ/ezacto-portal-oss)\n`,
   )
