@@ -1323,6 +1323,20 @@
 .invoice-list {
   margin-top: 24px;
 }
+/*
+ * A date is read whole or not at all. The list's cells take whatever width
+ * the table's layout leaves them, and beside the sidebar at 1440px that cut
+ * every due date to "Oct 31, 20…". Issued and Due are held at the width of a
+ * date -- Due a little wider, for the bold date an overdue invoice leads with,
+ * and an ellipsis after it -- and the client's name, which is free text, gives
+ * way instead.
+ */
+.invoice-list .data-table [data-column='issued'] {
+  width: 9.5em;
+}
+.invoice-list .data-table [data-column='due-date'] {
+  width: 10.5em;
+}
 .invoice-state {
   width: fit-content;
   padding: 4px 8px;
@@ -5426,6 +5440,13 @@ button[data-auth-action]:disabled {
   z-index: 2;
   background: var(--ez-surface);
 }
+/* A project's name gives way rather than widening the grid. The cell is
+   nowrap, so its longest name was its minimum width: a 30-character project
+   pushed the whole week into a sideways scroll at any width. At zero, the
+   column's own width is the floor and the name ellipsizes into it. */
+.week-grid-table tbody th {
+  max-width: 0;
+}
 .week-grid-table tbody th strong,
 .week-grid-table tbody th span,
 .day-row-label strong,
@@ -5534,6 +5555,40 @@ button[data-auth-action]:disabled {
    it, so it reads as body text and takes `live-text` rather than `live`. */
 .week-cell[data-cell-state="running"] .cell-status {
   color: var(--ez-live-text);
+}
+/*
+ * Below 1470px the week is tightened rather than scrolled. The grid needed
+ * 1129px, and beside the 248px sidebar inside the page gutter a 1440px window
+ * leaves its card 1104px: the Total column sat under the card's edge on a
+ * 1440px laptop, and 1366 and 1280 lost two columns. A day keeps room for
+ * "23:59" and the note button, the total keeps room for a week's hours, and
+ * the label column keeps its width, so the grid needs 912px -- inside its card
+ * from a 1236px window beside the sidebar, 1050 beside the narrowed rail, and
+ * under 1000 with the top bar. Wider than that, the table spreads the
+ * difference across the columns as before. `[e2e:width-fit]` measures it.
+ */
+@media (max-width: 1469px) {
+  .week-grid-table {
+    min-width: 0;
+  }
+  .week-grid-table tbody td {
+    width: 88px;
+    min-width: 88px;
+  }
+  .week-grid-table tbody td.row-total {
+    width: 72px;
+    min-width: 72px;
+  }
+  .week-grid-table .row-total,
+  .week-grid-table tfoot td {
+    padding: 0 8px;
+  }
+  .week-grid-table .week-cell {
+    padding: 2px 2px 0;
+  }
+  .week-grid-table .week-cell input {
+    padding: 0 5px;
+  }
 }
 .week-hint {
   margin: 0 0 12px;
