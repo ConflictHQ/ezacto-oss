@@ -1306,8 +1306,10 @@ describe('invoice browse browser behavior', () => {
         confirmed: true,
       })
     }
-    expect(document.querySelector('[data-invoice-payment-status]')?.textContent).toContain(
-      'Invoice marked sent and the email queued for the confirmed recipients.',
+    // The result of a send lands under the heading, where the operator is
+    // looking -- not in the Payments status line further down the page.
+    expect(document.querySelector('[data-invoice-detail-status]')?.textContent).toContain(
+      'Sent. The email is queued and goes out within a minute or two',
     )
   })
 
