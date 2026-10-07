@@ -294,3 +294,75 @@ describe('command palette browser behavior', () => {
     }
   })
 })
+
+describe('where focus lands when the command bar and the menu open (issue 861)', () => {
+  // showModal() focuses the first focusable element in the dialog, and in both
+  // of these that was the close button in the header: ⌘K took a Tab before it
+  // took a keystroke. happy-dom runs no focusing steps of its own, so these
+  // read only what the shell itself does on open.
+  const commandDialog = (): HTMLDialogElement =>
+    document.querySelector<HTMLDialogElement>('[data-command-dialog]')!
+  const commandInput = (): HTMLInputElement =>
+    document.querySelector<HTMLInputElement>('[name="command"]')!
+  const pressCommandK = (): void => {
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true, cancelable: true }),
+    )
+  }
+
+  it('[unit] opening the command bar puts focus in the query, from the button and from ⌘K', async () => {
+    renderBrowserShell()
+    await mountShell(browserApi())
+
+    document.querySelector<HTMLButtonElement>('[data-command-trigger]')!.click()
+    expect(commandDialog().open).toBe(true)
+    expect(document.activeElement).toBe(commandInput())
+
+    commandDialog().close()
+    // Moved off the input first, or the shortcut would pass by finding focus
+    // where the button left it.
+    commandInput().blur()
+    expect(document.activeElement).not.toBe(commandInput())
+    pressCommandK()
+    expect(commandDialog().open).toBe(true)
+    expect(document.activeElement).toBe(commandInput())
+  })
+
+  it('[unit] selects what the last use left in the query, so typing replaces it', async () => {
+    // The Tab this replaces selected the field's text, so ⌘K-then-type wrote
+    // over an old query. Focusing alone would leave the caret after it and
+    // append, which reads as "nothing matches" for a query typed correctly.
+    renderBrowserShell()
+    await mountShell(browserApi())
+    pressCommandK()
+    edit(commandInput(), 'invo')
+    commandDialog().close()
+
+    pressCommandK()
+    expect(document.activeElement).toBe(commandInput())
+    expect([commandInput().selectionStart, commandInput().selectionEnd]).toEqual([0, 4])
+  })
+
+  it('[unit] opening the menu puts focus on its first link, past one a gate hides', async () => {
+    renderBrowserShell()
+    await mountShell(browserApi())
+    const menu = document.querySelector<HTMLDialogElement>('[data-menu-dialog]')!
+    const trigger = document.querySelector<HTMLButtonElement>('[data-menu-trigger]')!
+    const links = [...menu.querySelectorAll<HTMLAnchorElement>('nav a')]
+
+    trigger.click()
+    expect(menu.open).toBe(true)
+    expect(document.activeElement).toBe(links[0])
+    expect(links[0]!.textContent).toBe('Time')
+
+    // A gate hides a link with `hidden`, and focus() on a link that is not
+    // drawn goes nowhere, leaving the close button where showModal() put it.
+    menu.close()
+    links[0]!.hidden = true
+    trigger.click()
+    const firstShowing = links.find((link) => !link.hidden)
+    expect(firstShowing).toBeDefined()
+    expect(firstShowing).not.toBe(links[0])
+    expect(document.activeElement).toBe(firstShowing)
+  })
+})

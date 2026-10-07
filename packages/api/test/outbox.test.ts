@@ -14,10 +14,11 @@ const activity: ActivityLogResource = {
   aggregateType: 'invoice',
   aggregateId: 41,
   aggregateSequence: 3,
-  payload: { schema_version: 1, event_type: 'invoice.paid' },
+  payload: { schema_version: 1, event_type: 'invoice.paid', actor: { type: 'user', id: 4 } },
   occurredAt: '2026-09-02T12:00:00.000Z',
   availableAt: '2026-09-02T12:00:00.000Z',
   recordedAt: '2026-09-02T12:00:01.000Z',
+  actor: { type: 'user', id: 4, name: 'Robin Vale' },
 }
 
 const failedDelivery: OutboxDeliveryResource = {
@@ -123,7 +124,12 @@ describe('outbox observability API', () => {
           event_id: 'event-paid',
           event_type: 'invoice.paid',
           aggregate: { type: 'invoice', id: 41, sequence: 3 },
-          payload: { schema_version: 1, event_type: 'invoice.paid' },
+          actor: { type: 'user', id: 4, name: 'Robin Vale' },
+          payload: {
+            schema_version: 1,
+            event_type: 'invoice.paid',
+            actor: { type: 'user', id: 4 },
+          },
           occurred_at: '2026-09-02T12:00:00.000Z',
           available_at: '2026-09-02T12:00:00.000Z',
           recorded_at: '2026-09-02T12:00:01.000Z',
@@ -132,6 +138,46 @@ describe('outbox observability API', () => {
       links: { self: '/api/v1/activity-log' },
     })
     expect(monitor.listActivity).toHaveBeenCalledWith({ limit: 25 })
+  })
+
+  it('[api] names the actor beside the recorded payload, for the report audience only (issue 862)', async () => {
+    // The name rides next to the payload, never inside it: the payload is the
+    // event as recorded, and a name read today is not something it said. A
+    // system event and an actor the log cannot read stay nameless rather than
+    // borrowing anyone's name.
+    const exported: ActivityLogResource = {
+      ...activity,
+      id: 'event-exported',
+      eventType: 'backup.exported',
+      payload: { actor: { type: 'system', id: null } },
+      actor: { type: 'system', id: null, name: null },
+    }
+    const foreign: ActivityLogResource = {
+      ...activity,
+      id: 'event-foreign',
+      payload: {},
+      actor: null,
+    }
+    const listActivity = vi.fn(async () => [activity, exported, foreign])
+    const { app } = harness('executive_manager', { listActivity })
+    const response = await app.request('/api/v1/activity-log')
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      data: { event_id: string; actor: unknown; payload: Record<string, unknown> }[]
+    }
+    expect(body.data.map(({ event_id, actor }) => ({ event_id, actor }))).toEqual([
+      { event_id: 'event-paid', actor: { type: 'user', id: 4, name: 'Robin Vale' } },
+      { event_id: 'event-exported', actor: { type: 'system', id: null, name: null } },
+      { event_id: 'event-foreign', actor: null },
+    ])
+    expect(body.data[0]!.payload).toEqual(activity.payload)
+
+    // The names come out of the same gate as the log itself. A profile that
+    // may not read reports is refused before the repository is asked, so no
+    // name is looked up on its behalf.
+    const refused = harness('project_manager')
+    expect((await refused.app.request('/api/v1/activity-log')).status).toBe(403)
+    expect(refused.monitor.listActivity).not.toHaveBeenCalled()
   })
 
   it('[security] applies report scope/profile ceilings to the organization activity stream', async () => {

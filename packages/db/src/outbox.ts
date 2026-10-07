@@ -42,8 +42,23 @@ export interface OutboxDeliveryRecord {
   occurredAt: string
 }
 
+/**
+ * Who caused an event, as the log reads it back (issue 862). `type` and `id`
+ * are what the event recorded. `name` is looked up when the log is read, so it
+ * is the person's name now: null for a system event, which has nobody to name,
+ * and null for an id no user or contact carries any more, which a reader then
+ * sees as the id rather than as somebody else's name.
+ */
+export interface ActivityLogActor {
+  type: 'user' | 'contact' | 'system'
+  id: number | null
+  name: string | null
+}
+
 export interface ActivityLogRecord extends OutboxEventRecord {
   recordedAt: string
+  /** Null when the payload names no actor in a shape the log can read. */
+  actor: ActivityLogActor | null
 }
 
 export interface OutboxSubscriberContext {
@@ -129,6 +144,7 @@ interface OutboxDeliveryRow {
 
 interface ActivityLogRow extends OutboxEventRow {
   recordedAt: string
+  actorName: string | null
 }
 
 export interface OutboxServiceOptions {
@@ -224,6 +240,31 @@ const eventRecord = (row: OutboxEventRow): OutboxEventRecord => {
     occurredAt: row.occurredAt,
     availableAt: row.availableAt,
   }
+}
+
+/**
+ * The actor an event's payload names, with the name the read joined for it.
+ * Every writer records `actor: { type, id }`, and a system actor's id is null
+ * or absent, so a system event never takes a person's name. Anything else is
+ * not an actor this log can name and reads back as null rather than as a guess.
+ */
+const activityActor = (
+  payload: Readonly<Record<string, unknown>>,
+  name: string | null,
+): ActivityLogActor | null => {
+  const actor = payload.actor
+  if (typeof actor !== 'object' || actor === null) return null
+  const { type, id } = actor as { type?: unknown; id?: unknown }
+  if (type === 'system') return { type, id: null, name: null }
+  if (
+    (type === 'user' || type === 'contact') &&
+    typeof id === 'number' &&
+    Number.isSafeInteger(id) &&
+    id > 0
+  ) {
+    return { type, id, name }
+  }
+  return null
 }
 
 const deliveryRecord = (row: OutboxDeliveryRow): OutboxDeliveryRecord => ({
@@ -724,16 +765,37 @@ const createService = (
         conditions.push("json_extract(event.payload_json, '$.actor.id') = ?")
         params.push(input.actorId)
       }
+      // The actor's name is joined here, in the one read every surface uses, so
+      // the screen, the API and an export all name the same person (issue 862).
+      // A user is archived rather than deleted and keeps their name; a deleted
+      // contact joins nothing, and its id is all the log can say.
       const rows = await database.all<ActivityLogRow>(
-        `SELECT ${eventColumns}, activity.recorded_at AS recordedAt
+        `SELECT ${eventColumns}, activity.recorded_at AS recordedAt,
+           coalesce(
+             nullif(trim(person.first_name || ' ' || person.last_name), ''),
+             nullif(trim(contact.first_name || ' ' || coalesce(contact.last_name, '')), '')
+           ) AS actorName
          FROM activity_log activity
          JOIN event_outbox event ON event.id = activity.event_id
+         LEFT JOIN users person
+           ON json_extract(event.payload_json, '$.actor.type') = 'user'
+             AND person.id = json_extract(event.payload_json, '$.actor.id')
+         LEFT JOIN contacts contact
+           ON json_extract(event.payload_json, '$.actor.type') = 'contact'
+             AND contact.id = json_extract(event.payload_json, '$.actor.id')
          ${conditions.length === 0 ? '' : `WHERE ${conditions.join(' AND ')}`}
          ORDER BY activity.recorded_at DESC, activity.event_id DESC
          LIMIT ?`,
         [...params, limit],
       )
-      return rows.map((row) => ({ ...eventRecord(row), recordedAt: row.recordedAt }))
+      return rows.map((row) => {
+        const event = eventRecord(row)
+        return {
+          ...event,
+          recordedAt: row.recordedAt,
+          actor: activityActor(event.payload, row.actorName),
+        }
+      })
     },
 
     async listDeliveries(input = {}) {
