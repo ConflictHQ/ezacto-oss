@@ -651,6 +651,16 @@ export const createApp = (
               installInvoiceSendingRoutes(api, {
                 service: services.invoiceSending,
                 clock: () => systemClock.now().instant,
+                // The same mailer and senders the send itself is given above,
+                // so the dialog's "can this email leave" is the send's answer.
+                ...(services.organizationMailer === undefined
+                  ? {}
+                  : {
+                      delivery: {
+                        configuration: services.emailConfiguration,
+                        mailer: services.organizationMailer,
+                      },
+                    }),
               })
             }
             if (services.invoiceDocumentPreference !== undefined) {

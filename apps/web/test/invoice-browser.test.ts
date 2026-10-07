@@ -1528,7 +1528,8 @@ describe('the Send dialog attachments', () => {
     )!
     recipients.value = recipient
     recipients.dispatchEvent(new Event('input', { bubbles: true }))
-    box('[data-invoice-composer-deliver-toggle]').click()
+    // Delivering is what the dialog opens on; the confirmation is what it asks.
+    expect(box('[data-invoice-composer-deliver-toggle]').checked).toBe(true)
     box('[data-invoice-composer-confirm]').click()
   }
 
@@ -1536,19 +1537,24 @@ describe('the Send dialog attachments', () => {
     const { api, calls } = sending()
     await openComposer(api)
 
-    // Attachments go with the email, so they wait for it.
-    expect(box('[data-invoice-composer-attach-pdf]').disabled).toBe(true)
+    // The dialog opens delivering, so the attachments are on offer at once,
+    // each on the invoice's own answer.
+    const pdf = box('[data-invoice-composer-attach-pdf]')
+    expect(pdf.disabled).toBe(false)
+    expect(pdf.checked).toBe(false)
+    // They go with the email, so recording alone puts them away.
+    box('[data-invoice-composer-deliver-toggle]').click()
+    expect(pdf.disabled).toBe(true)
     expect(document.querySelector('[data-invoice-composer-attachments-status]')?.textContent).toBe(
       'Attachments go with the email, so they are chosen once it is to be delivered.',
     )
+    box('[data-invoice-composer-deliver-toggle]').click()
     // The file is staged, so attaching files is a choice on offer.
     expect(
       document.querySelector<HTMLElement>('[data-invoice-composer-attach-files-label]')?.hidden,
     ).toBe(false)
     deliverTo('Accounts Payable <ap@example.test>')
-    const pdf = box('[data-invoice-composer-attach-pdf]')
     expect(pdf.disabled).toBe(false)
-    expect(pdf.checked).toBe(false)
     pdf.click()
     const journal = box('[data-invoice-composer-attach-journal]')
     journal.click()
@@ -1672,6 +1678,7 @@ describe('the Send dialog attachments', () => {
     always_cc: [{ name: 'Finance', email: 'finance@example.com' }],
     sender: { name: 'Ana Example', email: 'ana@example.com' },
     send_me_a_copy: true,
+    delivery: { available: true, code: null, message: null },
     ...overrides,
   })
 
@@ -1729,7 +1736,6 @@ describe('the Send dialog attachments', () => {
       setInvoiceCopyToSelf,
     })
     await openWithDefaults(api)
-    box('[data-invoice-composer-deliver-toggle]').click()
     box('[data-invoice-composer-confirm]').click()
     const cc = field('[data-invoice-composer-cc]')
     cc.value = `${cc.value}\nFinance Team <finance@example.com>`
@@ -1794,7 +1800,6 @@ describe('the Send dialog attachments', () => {
   it('[reliability] refuses a variable an invoice email does not have, before anything is recorded', async () => {
     const { api, calls } = sending({ getInvoiceEmailDefaults: vi.fn(async () => defaults()) })
     await openWithDefaults(api)
-    box('[data-invoice-composer-deliver-toggle]').click()
     box('[data-invoice-composer-confirm]').click()
     document.querySelector<HTMLInputElement>('[data-invoice-composer-subject]')!.value =
       'Invoice %invoice_numbr%'
@@ -1842,7 +1847,6 @@ describe('the Send dialog attachments', () => {
       sendInvoiceEmailPreview,
     })
     await openWithDefaults(api)
-    box('[data-invoice-composer-deliver-toggle]').click()
     box('[data-invoice-composer-attach-pdf]').click()
     box('[data-invoice-composer-append]').click()
     document.querySelector<HTMLButtonElement>('[data-invoice-composer-preview]')!.click()
@@ -1913,7 +1917,6 @@ describe('the Send dialog attachments', () => {
       }),
     })
     await openWithDefaults(api)
-    box('[data-invoice-composer-deliver-toggle]').click()
     document.querySelector<HTMLButtonElement>('[data-invoice-composer-preview]')!.click()
     await vi.waitFor(() =>
       expect(document.querySelector('[data-invoice-composer-preview-result]')?.textContent).toBe(
@@ -1924,6 +1927,161 @@ describe('the Send dialog attachments', () => {
       true,
     )
     expect(calls).toEqual([])
+  })
+
+  const submitLabel = (): string | null | undefined =>
+    document.querySelector('[data-invoice-composer-submit]')?.textContent
+
+  const shown = (selector: string): boolean =>
+    document.querySelector<HTMLElement>(selector)?.hidden === false
+
+  it('[browser] emails the invoice when the operator confirms the recipients and presses the button', async () => {
+    // The reported send: the dialog's button pressed, and the invoice recorded
+    // as sent with no email -- delivery opened unticked and the button still
+    // said "Send invoice". Now the box opens ticked and the button says so.
+    const { api, calls } = sending({ getInvoiceEmailDefaults: vi.fn(async () => defaults()) })
+    await openWithDefaults(api)
+    expect(box('[data-invoice-composer-deliver-toggle]').checked).toBe(true)
+    expect(submitLabel()).toBe('Send and deliver')
+    expect(shown('[data-invoice-composer-no-email]')).toBe(false)
+    expect(shown('[data-invoice-composer-delivery-unavailable]')).toBe(false)
+    // The confirmation is still asked for, and still gates the email.
+    expect(shown('[data-invoice-composer-confirm-label]')).toBe(true)
+    submit('[data-invoice-composer-form]')
+    expect(document.querySelector('[data-invoice-composer-result]')?.textContent).toBe(
+      'Confirm the recipients before sending this invoice email.',
+    )
+    expect(calls).toEqual([])
+
+    box('[data-invoice-composer-confirm]').click()
+    submit('[data-invoice-composer-form]')
+    await vi.waitFor(() => expect(calls).toEqual(['send', 'deliver']))
+    expect(api.deliverInvoiceEmail).toHaveBeenCalledWith(
+      7,
+      expect.any(String),
+      expect.objectContaining({
+        recipients: [{ name: 'Accounts Payable', email: 'ap@northwind.example' }],
+        cc: [
+          { name: 'Pat Example', email: 'pat@northwind.example' },
+          { name: '', email: 'lee@northwind.example' },
+        ],
+        confirmed: true,
+      }),
+      expect.any(AbortSignal),
+    )
+  })
+
+  it('[browser] names recording alone on the button, and warns that nothing will be emailed', async () => {
+    const { api, calls } = sending({ getInvoiceEmailDefaults: vi.fn(async () => defaults()) })
+    await openWithDefaults(api)
+    box('[data-invoice-composer-deliver-toggle]').click()
+    expect(submitLabel()).toBe('Mark as sent (no email)')
+    expect(shown('[data-invoice-composer-no-email]')).toBe(true)
+    expect(document.querySelector('[data-invoice-composer-no-email]')?.textContent).toBe(
+      'Nothing will be emailed — this only records the invoice as sent.',
+    )
+    // No email, so no recipients to confirm.
+    expect(shown('[data-invoice-composer-confirm-label]')).toBe(false)
+
+    submit('[data-invoice-composer-form]')
+    await vi.waitFor(() => expect(calls).toEqual(['send']))
+    expect(api.deliverInvoiceEmail).not.toHaveBeenCalled()
+  })
+
+  it('[browser] opens recording alone, and says why, where the organization cannot send email', async () => {
+    const { api, calls } = sending({
+      getInvoiceEmailDefaults: vi.fn(async () =>
+        defaults({
+          delivery: {
+            available: false,
+            code: 'sender_identity_missing',
+            message: 'Configure and verify an organization sender before sending.',
+          },
+        }),
+      ),
+    })
+    await openWithDefaults(api)
+    expect(box('[data-invoice-composer-deliver-toggle]').checked).toBe(false)
+    expect(submitLabel()).toBe('Mark as sent (no email)')
+    expect(shown('[data-invoice-composer-no-email]')).toBe(true)
+    expect(shown('[data-invoice-composer-delivery-unavailable]')).toBe(true)
+    expect(document.querySelector('[data-invoice-composer-delivery-unavailable]')?.textContent).toBe(
+      'Email delivery is unavailable. Configure and verify an organization sender before sending.',
+    )
+    // Still the operator's to tick, with the reason left beside it.
+    box('[data-invoice-composer-deliver-toggle]').click()
+    expect(submitLabel()).toBe('Send and deliver')
+    expect(shown('[data-invoice-composer-no-email]')).toBe(false)
+    expect(shown('[data-invoice-composer-delivery-unavailable]')).toBe(true)
+    expect(calls).toEqual([])
+  })
+
+  it('[browser] opens recording alone where this build cannot deliver email at all', async () => {
+    const { api } = sending()
+    delete api.deliverInvoiceEmail
+    await openComposer(api)
+    expect(box('[data-invoice-composer-deliver-toggle]').checked).toBe(false)
+    expect(submitLabel()).toBe('Mark as sent (no email)')
+    expect(shown('[data-invoice-composer-no-email]')).toBe(true)
+  })
+
+  it('[browser] keeps the delivery box the operator set before the defaults arrived', async () => {
+    let answer: (value: InvoiceEmailDefaults) => void = () => undefined
+    const { api } = sending({
+      getInvoiceEmailDefaults: vi.fn(
+        () =>
+          new Promise<InvoiceEmailDefaults>((resolve) => {
+            answer = resolve
+          }),
+      ),
+    })
+    await openComposer(api)
+    const toggle = box('[data-invoice-composer-deliver-toggle]')
+    expect(toggle.checked).toBe(true)
+    // The email taken off before the server's answer lands: the answer says it
+    // could go, and the operator's choice still stands.
+    toggle.click()
+    answer(defaults())
+    await vi.waitFor(() =>
+      expect(field('[data-invoice-composer-recipients]').value).toBe(
+        'Accounts Payable <ap@northwind.example>',
+      ),
+    )
+    expect(toggle.checked).toBe(false)
+    expect(submitLabel()).toBe('Mark as sent (no email)')
+  })
+
+  it("[e2e:invoice-email] sends what the client's rules attach, with nothing ticked by hand", async () => {
+    // Delivery opening ticked is half of it. What goes with the email has to
+    // be what the client's sending rules choose, without anybody touching it.
+    const { api, calls } = sending({
+      getInvoiceEmailDefaults: vi.fn(async () => defaults()),
+      getInvoiceDocumentPreference: vi.fn(async () =>
+        preference({
+          client_attach_pdf: true,
+          effective: true,
+          client_append_pdfs: true,
+          effective_append_pdfs: true,
+        }),
+      ),
+    })
+    await openWithDefaults(api)
+    const pdf = box('[data-invoice-composer-attach-pdf]')
+    expect(pdf.checked).toBe(true)
+    expect(pdf.disabled).toBe(false)
+    expect(box('[data-invoice-composer-append]').checked).toBe(true)
+    box('[data-invoice-composer-confirm]').click()
+    submit('[data-invoice-composer-form]')
+    // Nothing differs from what the invoice does anyway, so nothing is saved
+    // over the client's rules.
+    await vi.waitFor(() => expect(calls).toEqual(['send', 'deliver']))
+    expect(api.setInvoiceDocumentPreference).not.toHaveBeenCalled()
+    expect(api.transitionInvoice).toHaveBeenCalledWith(
+      7,
+      expect.any(String),
+      expect.objectContaining({ command: 'send', attach_pdf: true }),
+      expect.any(AbortSignal),
+    )
   })
 
   it('[browser] offers no attachments where the build has no route for them', async () => {

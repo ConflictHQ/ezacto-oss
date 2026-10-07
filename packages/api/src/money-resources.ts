@@ -18,7 +18,11 @@ import {
   type SenderBoundQueuedMailer,
   type EmailAttachmentRef,
 } from "@ezacto/mailer";
-import type { EmailConfigurationService } from "./email-configuration.js";
+import type {
+  EmailConfigurationService,
+  SenderEvidenceConfigurationRecord,
+  SenderIdentityConfigurationRecord,
+} from "./email-configuration.js";
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import { requireApiScope } from "./auth.js";
 import type { ApiContext, UserPrincipal } from "./context.js";
@@ -2872,6 +2876,88 @@ interface ComposedDelivery {
   readonly pdfAttached: boolean;
 }
 
+/** The refusal for a deployment that composes no organization mail at all. */
+const deliveryUnavailable = (): ApiError =>
+  new ApiError({
+    status: 503,
+    code: "email_delivery_unavailable",
+    message: "Invoice email delivery is not configured.",
+  });
+
+/** The sender an email that names none leaves from: the default, unless archived. */
+const defaultSender = (
+  senders: readonly SenderIdentityConfigurationRecord[],
+): SenderIdentityConfigurationRecord | null =>
+  senders.find((candidate) => candidate.isDefault && candidate.archivedAt === null) ?? null;
+
+/**
+ * The sender, once it is one an invoice email may leave from: there is one,
+ * the provider has vouched for it, and the mailer accepts it. Otherwise the
+ * refusal a send meets. The send and the Send dialog's readiness both ask
+ * here, so the dialog cannot offer an email the send would then refuse.
+ */
+const usableSender = async (
+  mailer: Pick<SenderBoundQueuedMailer, "assertAvailable">,
+  sender: SenderIdentityConfigurationRecord | null,
+): Promise<SenderIdentityConfigurationRecord & { evidence: SenderEvidenceConfigurationRecord }> => {
+  if (sender === null || sender.evidence === null) {
+    throw new ApiError({
+      status: 409,
+      code: "sender_identity_missing",
+      message: "Configure and verify an organization sender before sending.",
+    });
+  }
+  try {
+    await mailer.assertAvailable(sender.id);
+  } catch (error) {
+    if (error instanceof SenderIdentityUnavailableError) {
+      throw new ApiError({ status: 409, code: error.code, message: error.message });
+    }
+    throw error;
+  }
+  return { ...sender, evidence: sender.evidence };
+};
+
+/** What the readiness read needs: the senders, and the mailer that would send. */
+export interface InvoiceEmailReadinessPorts {
+  readonly configuration: Pick<EmailConfigurationService, "listSenderIdentities">;
+  readonly mailer: Pick<SenderBoundQueuedMailer, "assertAvailable">;
+}
+
+/**
+ * Whether an invoice email could leave right now. `code` and `message` are the
+ * refusal a send would meet, and both are null when it would not meet one.
+ */
+export interface InvoiceEmailReadiness {
+  readonly available: boolean;
+  readonly code: string | null;
+  readonly message: string | null;
+}
+
+/**
+ * The questions a send that names no sender asks -- is there a mail transport,
+ * a default sender the provider vouched for, a mailer that accepts it -- asked
+ * without sending anything. The Send dialog opens on the answer: delivering by
+ * email whenever it can, and saying why not when it cannot.
+ */
+export const invoiceEmailReadiness = async (
+  ports: InvoiceEmailReadinessPorts | undefined,
+): Promise<InvoiceEmailReadiness> => {
+  try {
+    if (ports === undefined) throw deliveryUnavailable();
+    await usableSender(
+      ports.mailer,
+      defaultSender(await ports.configuration.listSenderIdentities()),
+    );
+    return { available: true, code: null, message: null };
+  } catch (error) {
+    // A refusal is the answer. Anything else is a failure to find it out, and
+    // says so rather than reading as "email is off".
+    if (!(error instanceof ApiError)) throw error;
+    return { available: false, code: error.code, message: error.message };
+  }
+};
+
 const composeDelivery = async (
   options: ResolvedMoneyResourceRouteOptions,
   principal: UserPrincipal,
@@ -2879,13 +2965,7 @@ const composeDelivery = async (
   request: DeliveryRequest,
   pdfAttached: (invoiceId: number) => Promise<boolean>,
 ): Promise<ComposedDelivery> => {
-  if (options.invoiceDelivery === undefined) {
-    throw new ApiError({
-      status: 503,
-      code: "email_delivery_unavailable",
-      message: "Invoice email delivery is not configured.",
-    });
-  }
+  if (options.invoiceDelivery === undefined) throw deliveryUnavailable();
   const delivery = options.invoiceDelivery;
   const configuration = delivery.configuration;
   const [invoice, template, author, senderList, alwaysCc, copy] = await Promise.all([
@@ -2909,26 +2989,12 @@ const composeDelivery = async (
       message: "The acting user is no longer available.",
     });
   }
-  const sender =
+  const sender = await usableSender(
+    delivery.mailer,
     request.senderIdentityId === undefined
-      ? (senderList.find((candidate) => candidate.isDefault && candidate.archivedAt === null) ??
-        null)
-      : await configuration.getSenderIdentity(request.senderIdentityId);
-  if (sender === null || sender.evidence === null) {
-    throw new ApiError({
-      status: 409,
-      code: "sender_identity_missing",
-      message: "Configure and verify an organization sender before sending.",
-    });
-  }
-  try {
-    await delivery.mailer.assertAvailable(sender.id);
-  } catch (error) {
-    if (error instanceof SenderIdentityUnavailableError) {
-      throw new ApiError({ status: 409, code: error.code, message: error.message });
-    }
-    throw error;
-  }
+      ? defaultSender(senderList)
+      : await configuration.getSenderIdentity(request.senderIdentityId),
+  );
   // Copied on the actual email -- the same message the client reads -- rather
   // than sent a second one: the sender sees exactly what went.
   const self =

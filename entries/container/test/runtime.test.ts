@@ -353,6 +353,12 @@ describe('container runtime composition', () => {
        VALUES (801, ?, 'CONTAINER-801', 'USD', '2026-09-01', '2026-09-30',
          'draft', 2500, 2500, ?, ?)`,
     ).run(client.id, invoiceAt, invoiceAt)
+    // What the Send dialog opens on: the SMTP sender above is now the default
+    // and vouched for, so the email can leave and the dialog opens delivering.
+    const opening = await data<{ delivery: unknown }>(
+      await request('/api/v1/invoices/801/email-defaults', { headers: { cookie } }),
+    )
+    expect(opening.delivery).toEqual({ available: true, code: null, message: null })
     const deliveryRequest = authenticated({
       expected_version: 0,
       recipients: [{ name: 'Client', email: 'client@example.net' }],

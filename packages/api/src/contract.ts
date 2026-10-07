@@ -1712,7 +1712,8 @@ const invoiceDocumentPreferenceOperations: ApiContractOperation[] = [
     method: "get",
     path: "/api/v1/invoices/:id/email-defaults",
     operationId: "getInvoiceEmailDefaults",
-    summary: "What the Send dialog opens on for this invoice: subject, message, To, Cc and copies",
+    summary:
+      "What the Send dialog opens on for this invoice: subject, message, To, Cc, copies, and whether email can be delivered",
     tag: "money",
     responseStatus: 200,
     responseSchema: "InvoiceEmailDefaultsEnvelope",
@@ -6288,6 +6289,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           "always_cc",
           "sender",
           "send_me_a_copy",
+          "delivery",
         ],
         properties: {
           invoice_id: integerSchema,
@@ -6310,6 +6312,19 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
             additionalProperties: false,
           },
           send_me_a_copy: booleanSchema,
+          // Whether the email can leave now: a mail transport, and a default
+          // sender the provider vouched for. Where it cannot, the code and
+          // message a send would be refused with; both null where it can.
+          delivery: {
+            type: "object",
+            required: ["available", "code", "message"],
+            properties: {
+              available: booleanSchema,
+              code: nullable(stringSchema),
+              message: nullable(stringSchema),
+            },
+            additionalProperties: false,
+          },
         },
         additionalProperties: false,
       },
