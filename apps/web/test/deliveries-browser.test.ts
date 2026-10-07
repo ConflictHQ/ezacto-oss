@@ -176,8 +176,17 @@ describe('what was sent (#485)', () => {
       ...document.querySelectorAll('[data-email-log-status-filter] option'),
     ].map((option) => option.getAttribute('value'))
     // The first draft offered three of the five, so a bounced message was
-    // unreachable through a control that looked complete.
-    expect(options).toEqual(['', 'queued', 'sent', 'failed', 'bounced', 'complained'])
+    // unreachable through a control that looked complete. Suppressed is the
+    // demo's mail (issue 931), and has to be findable for the same reason.
+    expect(options).toEqual([
+      '',
+      'queued',
+      'sent',
+      'failed',
+      'bounced',
+      'complained',
+      'suppressed',
+    ])
   })
 })
 

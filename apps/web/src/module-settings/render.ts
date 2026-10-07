@@ -381,6 +381,7 @@ export const renderDeliveriesPage = (view?: string): string => `
             <option value="failed">Failed</option>
             <option value="bounced">Bounced</option>
             <option value="complained">Complained</option>
+            <option value="suppressed">Suppressed</option>
           </select>
         </label>
       </div>

@@ -22,7 +22,17 @@ import { renderDataTable } from '../components/data-table.js'
  * ones, so a bounced message was unreachable through a control that looked
  * complete.
  */
-export type EmailLogStatus = 'queued' | 'sent' | 'failed' | 'bounced' | 'complained'
+/**
+ * `suppressed` is the public demo's mail (issue 931): recorded as sent would
+ * have been, and never handed to a provider.
+ */
+export type EmailLogStatus =
+  | 'queued'
+  | 'sent'
+  | 'failed'
+  | 'bounced'
+  | 'complained'
+  | 'suppressed'
 export type OutboxStatus = 'pending' | 'processing' | 'delivered' | 'failed'
 
 /** Matches the generated client rather than the field names in the document. */
