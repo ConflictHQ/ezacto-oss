@@ -1,6 +1,7 @@
 import { ApiError, type BrandAssetSurface } from '@ezacto/api'
 import { createD1BrandAssetStore } from '@ezacto/db/d1'
-import type { AppEnv, WorkerEnv } from './app.js'
+import { demoDeployment, type AppEnv, type WorkerEnv } from './app.js'
+import { demoRefusal } from './demo-lockdown.js'
 
 /**
  * The Worker's brand-mark storage (#489): metadata in D1, bytes in the same R2
@@ -48,6 +49,9 @@ export const workerBrandAssetSurface: BrandAssetSurface<AppEnv> = {
   },
 
   write: async (env, input) => {
+    // The demo's upload route is refused before it gets here (#931); this is
+    // the same refusal for anything else that reaches the bucket this way.
+    if (demoDeployment(env)) throw demoRefusal()
     const database = bindings(env).DB
     const bucket = bindings(env).ATTACHMENTS
     if (database === undefined || bucket === undefined) unavailable()

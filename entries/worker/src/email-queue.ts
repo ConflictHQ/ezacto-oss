@@ -58,10 +58,33 @@ export const consumeCloudflareEmailBatch = async (
   )
 }
 
+/**
+ * The public demo's consumer (#931): it takes no provider, so it has nothing
+ * to send with. The demo's producer never puts a job on the queue at all --
+ * this is for whatever was already there when a deployment became the demo,
+ * and for anything a future path manages to enqueue regardless.
+ *
+ * A message still queued is suppressed; one that already ended, however it
+ * ended, is only acknowledged. A message under a live provider lease makes the
+ * batch throw, so the queue offers it again once the lease has run out.
+ */
+export const suppressCloudflareEmailBatch = async (
+  batch: MessageBatch<QueuedEmailJob>,
+  log: EmailLogStore,
+): Promise<void> => {
+  await Promise.all(
+    batch.messages.map(async (message) => {
+      const current = await log.get(message.body.deliveryId)
+      if (current?.status === 'queued') await log.markSuppressed(current.id)
+      message.ack()
+    }),
+  )
+}
+
 export { createQueuedAuthMailer } from '@ezacto/api'
 
 export const createWorkerDeploymentAuthMailer = (
-  queue: Queue<QueuedEmailJob>,
+  queue: EmailQueue,
   log: EmailLogStore,
   from: string,
   templates: {
@@ -71,10 +94,7 @@ export const createWorkerDeploymentAuthMailer = (
   appOrigin: string,
 ): AuthMailer =>
   createQueuedAuthMailer(
-    createDeploymentSenderQueuedMailer(
-      from,
-      createQueuedMailer(log, createCloudflareEmailQueue(queue)),
-    ),
+    createDeploymentSenderQueuedMailer(from, createQueuedMailer(log, queue)),
     templates,
     organizationName,
     appOrigin,
@@ -82,27 +102,20 @@ export const createWorkerDeploymentAuthMailer = (
 
 /** The staff sign-in email on the same queue as the other deployment mail. */
 export const createWorkerStaffMagicLinkMailer = (
-  queue: Queue<QueuedEmailJob>,
+  queue: EmailQueue,
   log: EmailLogStore,
   from: string,
   organizationName: () => Promise<string>,
 ): StaffMagicLinkMailer =>
   createQueuedStaffMagicLinkMailer(
-    createDeploymentSenderQueuedMailer(
-      from,
-      createQueuedMailer(log, createCloudflareEmailQueue(queue)),
-    ),
+    createDeploymentSenderQueuedMailer(from, createQueuedMailer(log, queue)),
     organizationName,
   )
 
 export const createWorkerOrganizationMailer = (
-  queue: Queue<QueuedEmailJob>,
+  queue: EmailQueue,
   log: EmailLogStore,
   provider: string,
   identities: SenderIdentityResolver,
 ): SenderBoundQueuedMailer =>
-  createSenderBoundQueuedMailer(
-    identities,
-    createQueuedMailer(log, createCloudflareEmailQueue(queue)),
-    provider,
-  )
+  createSenderBoundQueuedMailer(identities, createQueuedMailer(log, queue), provider)
