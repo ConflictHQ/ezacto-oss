@@ -1461,7 +1461,7 @@ for (const [runtime, factory] of factories) {
       // To the signed-in user alone: no client address, no copy list.
       expect(message.to).toEqual([{ email: "original@example.test", name: "Original Sender" }]);
       expect(message.cc).toBeUndefined();
-      expect(message.subject).toBe("[PREVIEW] Invoice #INV-DRAFT from Sanitized Organization");
+      expect(message.subject).toBe("[PREVIEW] Invoice #INV-DRAFT from Sanitized Organization (preview, not sent to the client)");
       expect(message.text.split("\n").slice(0, 4)).toEqual([
         "==== PREVIEW ====",
         "Not sent to the client.",

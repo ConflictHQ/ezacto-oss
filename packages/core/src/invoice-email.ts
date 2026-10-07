@@ -402,7 +402,10 @@ const addressList = (people: readonly { readonly name: string; readonly email: s
  * The invoice email, stamped as a preview for the person about to send it.
  *
  * The same subject and body the client would get -- composed by the same code
- * -- with a stamp no one can mistake: "[PREVIEW]" ahead of the subject, a
+ * -- with a stamp no one can mistake: "[PREVIEW]" ahead of the subject and a
+ * suffix behind it (mail clients ignore a bracketed prefix when threading, so
+ * without the suffix the real email joined the preview's thread and wore its
+ * subject), a
  * banner above the body saying it was not sent to the client and naming who it
  * would go to, in both parts. The HTML part exists only to carry the banner at
  * a size a skimming eye stops on; under it is the plain-text body the client
@@ -419,7 +422,7 @@ export const invoiceEmailPreview = (
   const audience = `This email would go to: To ${addressList(input.to)}; Cc ${addressList(input.cc)}`;
   const banner = "==== PREVIEW ====";
   return {
-    subject: `[PREVIEW] ${input.subject}`,
+    subject: `[PREVIEW] ${input.subject} (preview, not sent to the client)`,
     text: [banner, "Not sent to the client.", audience, banner, "", input.text].join("\n"),
     html: [
       '<div style="margin:0 0 24px;padding:20px 24px;border:4px solid #B42318;background:#FEF3F2;color:#B42318;font-family:Arial,Helvetica,sans-serif">',

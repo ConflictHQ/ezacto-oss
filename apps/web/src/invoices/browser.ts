@@ -1436,7 +1436,12 @@ export const createInvoicePaymentController = (
 
   const loadDetail = async (
     session: ActiveSession,
-    options: { readonly hideDocument: boolean; readonly successMessage?: string },
+    options: {
+      readonly hideDocument: boolean
+      readonly successMessage?: string
+      /** A result the operator is waiting on, shown under the heading rather than in Payments. */
+      readonly headlineMessage?: string
+    },
   ): Promise<boolean> => {
     // The address names the invoice until it has loaded. From then on the page
     // is that invoice, and a refresh reads it by id rather than looking its
@@ -1531,7 +1536,7 @@ export const createInvoicePaymentController = (
       })
       refreshRequired = false
       article.hidden = false
-      status.textContent = ''
+      status.textContent = options.headlineMessage ?? ''
       workflowStatus.textContent = options.successMessage ?? ''
       const canWrite = invoiceIdentityCanWrite(session.identity)
       attachmentForm.hidden = !canWrite || api.uploadInvoiceAttachment === undefined
@@ -2159,9 +2164,12 @@ export const createInvoicePaymentController = (
             : ` Planned reminder date saved for ${dateLabel(sendReminderOn)}.`
         const loaded = await loadDetail(session, {
           hideDocument: false,
-          successMessage: delivering
-            ? `Invoice marked sent and the email queued for the confirmed recipients.${reminderNote}`
-            : `Invoice marked sent. No email was delivered.${reminderNote}`,
+          // The send is what the operator is watching for, so its result goes
+          // under the heading. Written to the Payments status line it was off
+          // screen, and a send that worked looked like a click that did nothing.
+          headlineMessage: delivering
+            ? `Sent. The email is queued and goes out within a minute or two; Settings › Deliveries shows it.${reminderNote}`
+            : `Marked sent. No email was delivered.${reminderNote}`,
         })
         if (!loaded && current() === session && refreshRequired) {
           workflowStatus.textContent =
