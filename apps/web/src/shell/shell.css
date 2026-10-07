@@ -3744,7 +3744,7 @@ a {
   box-shadow: none;
 }
 .app-content {
-  padding: 28px 32px 48px;
+  padding: 28px clamp(24px, 3vw, 56px) 48px;
 }
 .context-row {
   display: flex;
@@ -5028,10 +5028,8 @@ button[data-auth-action]:disabled {
   color: var(--ez-ink);
 }
 .week-surface {
-  margin-inline: -32px;
   border: 1px solid var(--ez-border);
-  border-inline: 0;
-  border-radius: var(--ez-radius);
+  border-radius: calc(var(--ez-radius) * 1.5);
   overflow: hidden;
 }
 .week-toolbar {
@@ -5040,7 +5038,7 @@ button[data-auth-action]:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 10px 32px;
+  padding: 10px 20px;
   background: var(--ez-surface);
   border-bottom: 1px solid var(--ez-border);
 }
@@ -5049,7 +5047,7 @@ button[data-auth-action]:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 12px 32px;
+  padding: 12px 20px;
   border-bottom: 1px solid var(--ez-border);
   background: var(--ez-status-bg);
 }
@@ -5314,7 +5312,7 @@ button[data-auth-action]:disabled {
   position: sticky;
   left: 0;
   z-index: 1;
-  padding: 0 16px 0 32px;
+  padding: 0 16px 0 20px;
   background: var(--ez-ground);
   text-align: left;
 }
@@ -5366,7 +5364,7 @@ button[data-auth-action]:disabled {
   font-weight: 600;
 }
 .week-grid-table .grid-empty {
-  padding: 24px 32px;
+  padding: 24px 20px;
   color: var(--ez-muted);
   text-align: center;
 }
@@ -5433,6 +5431,7 @@ button[data-auth-action]:disabled {
 }
 .week-hint {
   margin: 0 0 12px;
+  padding: 8px 20px 0;
   color: var(--ez-muted);
   font-size: 12px;
   line-height: 1.6;
