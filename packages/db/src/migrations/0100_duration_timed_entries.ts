@@ -12,7 +12,11 @@
  * Only the insert trigger stood in the way, so only it is replaced:
  *
  * - The `start_end` clause is 0002's, character for character. A start/end
- *   organization behaves exactly as before.
+ *   organization accepts and refuses exactly the rows it did. Recreating the
+ *   trigger does move it ahead of the other insert guards, which SQLite in
+ *   practice fires newest first, so a row that breaks this rule *and* another
+ *   one now reports this rule; the repository checks the shape first and never
+ *   writes one.
  * - The `duration` clause no longer refuses times. It refuses only a *running*
  *   start/end row -- a `started_time` with no `ended_time`. A running entry in a
  *   duration organization stays a duration timer (`timer_started_at`), which is
