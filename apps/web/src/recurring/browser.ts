@@ -3,6 +3,7 @@ import { isDemoDeployment } from '../demo.js'
 import { markMoney, moneyText } from '../money-display.js'
 import { invoicePagePath } from '../invoices/model.js'
 import { leavePageNotice, takePageNotice } from '../page-notice.js'
+import { canReadCostReports } from '../reports/model.js'
 import {
   EzactoApiError,
   type Attachment,
@@ -22,6 +23,7 @@ import {
   recurringBlankLine,
   recurringCadenceLabel,
   recurringClientLabel,
+  recurringCostRatio,
   recurringCurrency,
   recurringDefinitionInput,
   recurringDueLabel,
@@ -263,6 +265,9 @@ export const createRecurringWorkspaceController = (
   const deleteResult = required<HTMLElement>('[data-recurring-delete-result]')
   const deleteSubmit = required<HTMLButtonElement>('[data-recurring-delete-submit]')
   const purchaseOrderRow = required<HTMLElement>('[data-recurring-purchase-order-row]')
+  const costRow = required<HTMLElement>('[data-recurring-cost-row]')
+  const costFact = required<HTMLElement>('[data-recurring-cost]')
+  const costWarning = required<HTMLElement>('[data-recurring-cost-warning]')
   const filesSection = required<HTMLElement>('[data-recurring-files]')
   const filesStatus = required<HTMLElement>('[data-recurring-files-status]')
   const filesList = required<HTMLElement>('[data-recurring-files-list]')
@@ -713,6 +718,58 @@ export const createRecurringWorkspaceController = (
     }
   }
 
+  /**
+   * A band's cost against what it charged (issue 940), so its `Warn above`
+   * line is something a person can see crossed. Read after the definition, as
+   * its files are: the figure comes from a report the terms above do not need,
+   * and cost is the administrator's to read, so anyone else sees no row at all
+   * rather than a refusal.
+   */
+  const loadCostRatio = async (
+    session: ActiveSession,
+    definition: Readonly<RecurringInvoice>,
+    generation: number,
+  ): Promise<void> => {
+    costRow.hidden = true
+    costWarning.hidden = true
+    costWarning.textContent = ''
+    delete costFact.dataset['outcome']
+    if (
+      (definition.claims_project_ids ?? []).length === 0 ||
+      api.getBandedMonthReport === undefined ||
+      !canReadCostReports(session.identity)
+    ) {
+      return
+    }
+    costRow.hidden = false
+    costFact.textContent = 'Loading…'
+    // A year back, which holds the last period any monthly or quarterly band
+    // has billed.
+    const to = now().slice(0, 10)
+    const from = new Date(Date.parse(`${to}T00:00:00.000Z`) - 365 * 86_400_000)
+      .toISOString()
+      .slice(0, 10)
+    try {
+      const report = await api.getBandedMonthReport(from, to, session.signal)
+      if (current() !== session || generation !== detailGeneration) return
+      const ratio = recurringCostRatio(definition, report.rows)
+      if (ratio === null) {
+        costRow.hidden = true
+        return
+      }
+      costFact.textContent = ratio.text
+      costFact.dataset['outcome'] = ratio.over ? 'over' : 'within'
+      if (ratio.warning !== null) {
+        costWarning.textContent = ratio.warning
+        costWarning.hidden = false
+      }
+    } catch (error) {
+      if (current() !== session || generation !== detailGeneration) return
+      if (session.onSessionFailure(error)) return
+      costFact.textContent = messageFor(error)
+    }
+  }
+
   const loadDetail = async (): Promise<void> => {
     const session = current()
     const id = selection
@@ -739,6 +796,7 @@ export const createRecurringWorkspaceController = (
       if (current() !== session || generation !== detailGeneration) return
       renderDetail(definition)
       void loadFiles(session, definition.id, generation)
+      void loadCostRatio(session, definition, generation)
     } catch (error) {
       if (current() !== session || generation !== detailGeneration) return
       if (session.onSessionFailure(error)) return
