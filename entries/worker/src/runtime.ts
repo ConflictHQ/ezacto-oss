@@ -42,6 +42,7 @@ import {
   createMagicLinkService,
   createD1TwoFactorStore,
   backfillBandClaims,
+  requestAccountDeletion,
   createRecurringInvoiceEngine,
   createD1ReminderScheduler,
   captureActivityEvent,
@@ -141,6 +142,7 @@ import {
 import {
   createCloudflareEmailQueue,
   createWorkerDeploymentAuthMailer,
+  createWorkerAccountDeletionMailer,
   createWorkerOrganizationMailer,
   createWorkerStaffMagicLinkMailer,
 } from "./email-queue.js";
@@ -692,6 +694,15 @@ export const createRuntimeServices = async (
           mailFrom,
           organizationName,
         );
+  const accountDeletionMailer =
+    !emailQueueReady || mailFrom === undefined
+      ? undefined
+      : createWorkerAccountDeletionMailer(
+          emailQueue!,
+          emailLog,
+          mailFrom,
+          organizationName,
+        );
   const organizationMailer =
     !emailTransportReady
       ? undefined
@@ -1034,6 +1045,13 @@ export const createRuntimeServices = async (
       updateInvoiceCopy: async (userId, copy, occurredAt) => {
         await setInvoiceSenderCopy(drizzle, userId, copy, occurredAt);
       },
+      // Records the ask and names who decides; changes nothing about the account.
+      requestDeletion: (input) =>
+        requestAccountDeletion(drizzle, {
+          userId: input.userId,
+          occurredAt: input.occurredAt,
+          captureId: input.requestId,
+        }),
     },
     isExpensesModuleEnabled: async () => {
       const row = await database
@@ -1284,6 +1302,7 @@ export const createRuntimeServices = async (
           },
         }),
     ...(deploymentAuthMailer === undefined ? {} : { deploymentAuthMailer }),
+    ...(accountDeletionMailer === undefined ? {} : { accountDeletionMailer }),
     ...(organizationMailer === undefined ? {} : { organizationMailer }),
     ...(env.ATTACHMENTS === undefined
       ? {}

@@ -35,6 +35,8 @@ export const ACTIVITY_EVENT_AGGREGATES = {
   'api_token.revoked': 'api_token',
   'backup.exported': 'backup_run',
   'backup.restored': 'backup_restore',
+  // A person asking for their own account to be deleted (account-deletion.ts).
+  'account.deletion_requested': 'user_account',
 } as const
 
 export type ActivityEventType = keyof typeof ACTIVITY_EVENT_AGGREGATES
