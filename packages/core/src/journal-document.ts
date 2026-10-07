@@ -8,6 +8,7 @@ import {
   type PdfPage,
 } from "./pdf.js";
 import { plainLines, wrapRuns, wrapText } from "./pdf-text.js";
+import { hoursToTheHundredth } from "./reports.js";
 
 /**
  * The work behind an invoice, as a document (issues 626, 647).
@@ -95,10 +96,11 @@ export const journalTimeframe = (start: string | null, end: string | null): stri
  * Rounded to a hundredth of an hour, which is how the product already shows
  * decimal time. Each row is rounded on its own and a total is rounded from the
  * summed seconds: summing the rounded rows would drift from the invoice by a
- * few minutes across a long list.
+ * few minutes across a long list. The rounding is the invoice line's own
+ * (`hoursToTheHundredth`), so a person's hours here read as their line does.
  */
 export const journalDecimalHours = (seconds: number): string =>
-  (Math.round((seconds / 3600) * 100) / 100).toFixed(2);
+  hoursToTheHundredth(seconds).toFixed(2);
 
 const hours = (seconds: number, format: JournalTimeFormat): string => {
   if (format === "hours_minutes") {
