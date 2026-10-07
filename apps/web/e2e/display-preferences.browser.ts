@@ -321,6 +321,17 @@ const headerFaults = (page: Page) =>
     return faults
   })
 
+/**
+ * Every section an administrator sees. The shell is shown before it knows what
+ * the session may open, and reveals Approvals, the directory, Invoices and
+ * Payments as each answer lands, so for a few frames after sign-in the nav is
+ * shorter and narrower than it settles at. Measured in that window, the bar has
+ * room it will not have, and two boxes read a frame apart can disagree by a
+ * whole row.
+ */
+const everySection = (page: Page) =>
+  expect(page.locator('[data-app-nav] .primary-nav a:visible')).toHaveCount(8)
+
 /** Arial, which CI's Liberation Sans matches metric for metric, so a width means the same on both. */
 const pinHeaderFont = (page: Page) =>
   page.evaluate(() => {
@@ -344,6 +355,7 @@ test('[e2e:nav] fits the top bar at every width, at each band edge', async ({ pa
   await page.setViewportSize({ width: 1920, height: 900 })
   await page.goto('/')
   await signIn(page)
+  await everySection(page)
   for (const width of [1920, 1700, 1699, 1520, 1519, 1440, 1439, 1300, 1299, 1140, 900, 721]) {
     await page.setViewportSize({ width, height: 900 })
     await pinHeaderFont(page)
@@ -369,14 +381,24 @@ test('[e2e:nav] gives search a row of its own in the sidebar, ring and all', asy
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/')
   await signIn(page)
+  await everySection(page)
   await pinHeaderFont(page)
   await longestTimer(page)
   expect(await headerFaults(page)).toEqual([])
 
   const search = page.locator('[data-app-nav] [data-command-trigger]')
-  const searchBox = await box(page, '[data-app-nav] [data-command-trigger]')
-  const money = await box(page, '[data-money-toggle]')
-  const menu = await box(page, '[data-menu-trigger]')
+  // All three from one layout, so a late reflow cannot put them a row apart.
+  const { searchBox, money, menu } = await page.evaluate(() => {
+    const rect = (selector: string) => {
+      const { x, y, width, height } = document.querySelector(selector)!.getBoundingClientRect()
+      return { x, y, width, height }
+    }
+    return {
+      searchBox: rect('[data-app-nav] [data-command-trigger]'),
+      money: rect('[data-money-toggle]'),
+      menu: rect('[data-menu-trigger]'),
+    }
+  })
   // The column's whole width, less its 10px padding each side, and $ and Menu
   // together on the row under it.
   expect(searchBox.width).toBeCloseTo(248 - 1 - 20, 0)
