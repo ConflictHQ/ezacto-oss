@@ -2072,6 +2072,19 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   // The dialog now also carries the delivery confirmation, whose label mentions
   // recipients too, so the fields are addressed by their own data attributes.
   await expect(composer).toContainText('Also deliver by email')
+  // Delivery opens on whether the email can leave. This worker has no mail
+  // transport, so the opening read says it cannot: the box is off, the button
+  // says the submit only records, and the dialog says why.
+  await expect(
+    composer.getByRole('button', { name: 'Mark as sent (no email)', exact: true }),
+  ).toBeVisible()
+  await expect(composer.getByLabel('Also deliver by email')).not.toBeChecked()
+  await expect(composer.locator('[data-invoice-composer-no-email]')).toHaveText(
+    'Nothing will be emailed — this only records the invoice as sent.',
+  )
+  await expect(composer.locator('[data-invoice-composer-delivery-unavailable]')).toHaveText(
+    'Email delivery is unavailable. Invoice email delivery is not configured.',
+  )
   await expect(composer.locator('[data-invoice-composer-confirm-label]')).toBeHidden()
   // The dialog opens on what the client and the template say; the To, Cc,
   // subject and message are then the operator's.
@@ -2097,6 +2110,10 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(attachPdf).toBeDisabled()
   await expect(attachPdf).not.toBeChecked()
   await composer.getByLabel('Also deliver by email').check()
+  await expect(
+    composer.getByRole('button', { name: 'Send and deliver', exact: true }),
+  ).toBeVisible()
+  await expect(composer.locator('[data-invoice-composer-no-email]')).toBeHidden()
   await expect(attachPdf).toBeEnabled()
   await attachPdf.check()
   await composer.locator('[data-invoice-composer-confirm]').check()
@@ -2255,6 +2272,19 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   )
   await expect(generatedRow).toBeVisible()
   await expect(generatedRow).toContainText('$75.00')
+
+  // Settings > Deliveries is where "did that invoice reach the client" is
+  // answered. Its tab linked to a path no route served; it is a page now.
+  await page.goto('/settings/deliveries')
+  const deliveries = page.locator('[data-deliveries-page]')
+  await expect(deliveries).toBeVisible()
+  await expect(deliveries.getByRole('heading', { name: 'Deliveries', level: 1 })).toBeVisible()
+  await expect(page.locator('[data-not-found-page]')).toBeHidden()
+  // The email above was refused before anything was logged -- this worker has
+  // no mail transport -- and the table says so rather than failing to load.
+  await expect(deliveries.locator('[data-email-log-list]')).toContainText(
+    'No email matches this filter.',
+  )
 })
 
 test('[e2e:invoice-banded] raises a flat fee covering tracked time, up to a limit, through the real worker and D1', async ({

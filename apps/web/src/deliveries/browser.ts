@@ -35,6 +35,8 @@ export interface EmailLogRow {
   readonly id: number
   /** A list, not a string: a message can be addressed to more than one person. */
   readonly to: readonly EmailRecipientRef[]
+  /** Everyone copied: an invoice's Cc is part of who it reached. */
+  readonly cc: readonly EmailRecipientRef[]
   readonly subject: string
   readonly template: string
   readonly status: EmailLogStatus
@@ -126,6 +128,13 @@ export const createDeliveriesController = (api: DeliveriesApi): DeliveriesContro
             // Every addressee. Showing the first alone would make a message
             // that went to two people look like it went to one.
             render: (row) => row.to.map((recipient) => recipient.email).join(', '),
+          },
+          {
+            key: 'cc',
+            label: 'Cc',
+            // The log carries the copies too. Showing To alone made an invoice
+            // copied to a client's accounts payable look like it never reached them.
+            render: (row) => row.cc.map((recipient) => recipient.email).join(', '),
           },
           {
             key: 'what',

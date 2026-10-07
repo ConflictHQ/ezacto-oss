@@ -27,6 +27,7 @@ import type { Context, Hono } from 'hono'
 import { requireSessionPrincipal } from './auth.js'
 import type { ApiContext } from './context.js'
 import { ApiError, validationError, type FieldError } from './errors.js'
+import { invoiceEmailReadiness, type InvoiceEmailReadinessPorts } from './money-resources.js'
 
 export type JournalLevelPreference = 'detailed' | 'summary' | false
 
@@ -95,6 +96,13 @@ export interface InvoiceSendingService {
 export interface InvoiceSendingRouteOptions {
   readonly service: InvoiceSendingService
   readonly clock?: () => string
+  /**
+   * The mail the invoice email would leave through, so the dialog's defaults
+   * can say whether it can leave at all. Absent where the deployment composes
+   * no organization mail, which the dialog is told as the refusal a send
+   * would meet.
+   */
+  readonly delivery?: InvoiceEmailReadinessPorts
 }
 
 /**
@@ -277,12 +285,18 @@ export const installInvoiceSendingRoutes = <Bindings extends object>(
   /**
    * Everything the Send dialog opens on for one invoice, in one read, so it
    * never shows a To from one moment and a Cc from another.
+   *
+   * Including whether the email can leave. The dialog used to open with
+   * delivery unticked whatever the answer, so pressing its button recorded
+   * the invoice as sent and emailed nobody. It now opens delivering whenever
+   * delivery can happen.
    */
   api.get('/invoices/:id/email-defaults', async (context) => {
     const userId = assertMoneyWriter(context)
     const invoiceId = positiveId(context, 'invoice')
     const defaults = await options.service.emailDefaults(invoiceId, userId)
     if (defaults === null) throw notFound('invoice')
+    const delivery = await invoiceEmailReadiness(options.delivery)
     return context.json(
       {
         data: {
@@ -299,6 +313,11 @@ export const installInvoiceSendingRoutes = <Bindings extends object>(
           always_cc: addressData(defaults.alwaysCc),
           sender: { name: defaults.sender.name, email: defaults.sender.email },
           send_me_a_copy: defaults.sendMeACopy,
+          delivery: {
+            available: delivery.available,
+            code: delivery.code,
+            message: delivery.message,
+          },
         },
       },
       200,

@@ -651,6 +651,16 @@ export const createApp = (
               installInvoiceSendingRoutes(api, {
                 service: services.invoiceSending,
                 clock: () => systemClock.now().instant,
+                // The same mailer and senders the send itself is given above,
+                // so the dialog's "can this email leave" is the send's answer.
+                ...(services.organizationMailer === undefined
+                  ? {}
+                  : {
+                      delivery: {
+                        configuration: services.emailConfiguration,
+                        mailer: services.organizationMailer,
+                      },
+                    }),
               })
             }
             if (services.invoiceDocumentPreference !== undefined) {
@@ -1585,6 +1595,31 @@ export const createApp = (
             ...(await shellChrome(context.env)),
             activeSection: 'Settings',
             view: 'settings-activity',
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      // The page shipped (issue 485) and the Settings strip and the palette
+      // linked here, but no route served it, so the link answered "That page
+      // does not exist".
+      app.get('/settings/deliveries', async (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            ...(await shellChrome(context.env)),
+            activeSection: 'Settings',
+            view: 'settings-deliveries',
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),

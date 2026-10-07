@@ -1793,6 +1793,17 @@
   width: auto;
   min-height: auto;
 }
+/* Recording the invoice as sent without emailing it is allowed, and it is the
+   exception: said in the amber the shell uses for a warning, not in a hint's
+   grey, so it is not mistaken for the send. */
+.invoice-composer-no-email {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-amber);
+  border-radius: var(--ez-radius);
+  background: var(--ez-amber-bg);
+  font-size: 13px;
+}
 /* What goes with the email. Grouped under the delivery switch because it
    only means anything once the email is being sent, and greyed until then. */
 .invoice-composer-attachments {

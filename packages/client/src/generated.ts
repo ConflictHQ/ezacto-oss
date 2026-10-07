@@ -1922,6 +1922,11 @@ export type InvoiceEmailDefaultsEnvelope = {
   "email": string | null;
 };
   "send_me_a_copy": boolean;
+  "delivery": {
+  "available": boolean;
+  "code": string | null;
+  "message": string | null;
+};
 };
 };
 

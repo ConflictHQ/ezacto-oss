@@ -19908,7 +19908,7 @@
     "/api/v1/invoices/{id}/email-defaults": {
       "get": {
         "operationId": "getInvoiceEmailDefaults",
-        "summary": "What the Send dialog opens on for this invoice: subject, message, To, Cc and copies",
+        "summary": "What the Send dialog opens on for this invoice: subject, message, To, Cc, copies, and whether email can be delivered",
         "tags": [
           "money"
         ],
@@ -32565,7 +32565,8 @@
               "recipients_source",
               "always_cc",
               "sender",
-              "send_me_a_copy"
+              "send_me_a_copy",
+              "delivery"
             ],
             "properties": {
               "invoice_id": {
@@ -32642,6 +32643,40 @@
               },
               "send_me_a_copy": {
                 "type": "boolean"
+              },
+              "delivery": {
+                "type": "object",
+                "required": [
+                  "available",
+                  "code",
+                  "message"
+                ],
+                "properties": {
+                  "available": {
+                    "type": "boolean"
+                  },
+                  "code": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "message": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
               }
             },
             "additionalProperties": false

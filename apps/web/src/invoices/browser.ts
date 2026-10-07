@@ -563,6 +563,10 @@ export const createInvoicePaymentController = (
   const composerDeliverToggle = required<HTMLInputElement>(
     '[data-invoice-composer-deliver-toggle]',
   )
+  const composerNoEmail = required<HTMLElement>('[data-invoice-composer-no-email]')
+  const composerDeliveryUnavailable = required<HTMLElement>(
+    '[data-invoice-composer-delivery-unavailable]',
+  )
   const composerOwed = required<HTMLElement>('[data-invoice-composer-owed]')
   const composerConfirmLabel = required<HTMLElement>('[data-invoice-composer-confirm-label]')
   const composerConfirm = required<HTMLInputElement>('[data-invoice-composer-confirm]')
@@ -649,6 +653,12 @@ export const createInvoicePaymentController = (
   let emailDefaults: InvoiceEmailDefaults | null = null
   let emailDefaultsLoading = false
   let emailDefaultsGeneration = 0
+  // Why the email cannot leave, as the server would refuse it; null while it
+  // can, or before that is known. Read with the defaults on every opening.
+  let deliveryRefusal: string | null = null
+  // Whether the operator has set the delivery box in this opening. Their
+  // choice stands; the server's answer only moves a box nobody has touched.
+  let deliveryChosen = false
   let previewPending = false
 
   const current = (): ActiveSession | null =>
@@ -715,14 +725,20 @@ export const createInvoicePaymentController = (
     composerConfirm.disabled = !delivering || mutationPending || refreshRequired
     // The button names the request this submit will make. With the send already
     // recorded there is no send left to offer, and unticking the email is an
-    // operator abandoning it rather than a second thing to record.
+    // operator abandoning it rather than a second thing to record. Recording
+    // alone used to be labelled "Send invoice" too, so a submit that emailed
+    // nobody read as a send.
     composerSubmit.textContent = owed
       ? delivering
         ? 'Retry the email'
         : 'Skip the email'
       : delivering
         ? 'Send and deliver'
-        : 'Send invoice'
+        : 'Mark as sent (no email)'
+    composerNoEmail.hidden = owed || delivering
+    composerDeliveryUnavailable.hidden = owed || deliveryRefusal === null
+    composerDeliveryUnavailable.textContent =
+      deliveryRefusal === null ? '' : `Email delivery is unavailable. ${deliveryRefusal}`.trim()
     const frozen = composerFrozen()
     composerRecipients.disabled = frozen
     composerCc.disabled = frozen
@@ -885,6 +901,14 @@ export const createInvoicePaymentController = (
         : `Also copied on every invoice email: ${loaded.always_cc.map(invoiceRecipientLine).join(', ')}.`
     composerAlwaysCc.hidden = loaded.always_cc.length === 0
     if (!fill) return
+    // The box opened delivering on the expectation that the email can leave.
+    // Where it cannot, it records alone and says why -- unless the operator
+    // has already set it, in which case their choice stands.
+    deliveryRefusal = loaded.delivery.available ? null : (loaded.delivery.message ?? '')
+    if (!deliveryChosen) {
+      composerDeliverToggle.checked =
+        loaded.delivery.available && api.deliverInvoiceEmail !== undefined
+    }
     if (composerRecipients.value === untouched.to) {
       composerRecipients.value = loaded.to.map(invoiceRecipientLine).join('\n')
     }
@@ -1629,6 +1653,8 @@ export const createInvoicePaymentController = (
     composerAlwaysCc.hidden = true
     composerCopyLabel.hidden = true
     composerRecipientsSource.textContent = ''
+    deliveryRefusal = null
+    deliveryChosen = false
     const today = localDate()
     if (owed !== null) {
       // The email the committed send confirmed, not whatever the reset left
@@ -1644,6 +1670,13 @@ export const createInvoicePaymentController = (
       composerReminderToggle.checked = false
       composerReminderDate.value = ''
     } else {
+      // Delivering is what Send means. The form reset used to leave it
+      // unticked, so pressing the dialog's button as it opened recorded the
+      // invoice as sent and emailed nobody. It opens ticked wherever this
+      // build can deliver; the defaults read below unticks it, and says why,
+      // where the organization cannot send. Recording alone is the deliberate
+      // choice, one click away and named on the button.
+      composerDeliverToggle.checked = api.deliverInvoiceEmail !== undefined
       composerReminderToggle.checked = invoice.due_date >= today
       composerReminderDate.value = invoice.due_date >= today ? invoice.due_date : ''
     }
@@ -1834,6 +1867,7 @@ export const createInvoicePaymentController = (
     syncReminder()
   })
   composerDeliverToggle.addEventListener('change', () => {
+    deliveryChosen = true
     syncComposer()
   })
   composerAttachJournal.addEventListener('change', () => {

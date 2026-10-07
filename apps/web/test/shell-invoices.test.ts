@@ -1251,13 +1251,18 @@ describe('invoice browse browser behavior', () => {
     const confirmLabel = document.querySelector<HTMLElement>(
       '[data-invoice-composer-confirm-label]',
     )!
-    // The confirmation only exists while the irreversible half is being asked for.
-    expect(confirmLabel.hidden).toBe(true)
-    deliverToggle.click()
+    // Delivering is what the dialog opens on, so the confirmation is asked for
+    // at once: it exists while the irreversible half is being asked for.
+    expect(deliverToggle.checked).toBe(true)
     expect(confirmLabel.hidden).toBe(false)
     expect(document.querySelector('[data-invoice-composer-submit]')?.textContent).toBe(
       'Send and deliver',
     )
+    // Taking the email off takes its confirmation with it.
+    deliverToggle.click()
+    expect(confirmLabel.hidden).toBe(true)
+    deliverToggle.click()
+    expect(confirmLabel.hidden).toBe(false)
 
     form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
     expect(document.querySelector('[data-invoice-composer-result]')?.textContent).toBe(
@@ -1376,7 +1381,6 @@ describe('invoice browse browser behavior', () => {
     )!
     recipients.value = 'Accounts Payable <AP@Example.Test>'
     recipients.dispatchEvent(new Event('input', { bubbles: true }))
-    document.querySelector<HTMLInputElement>('[data-invoice-composer-deliver-toggle]')!.click()
     document.querySelector<HTMLInputElement>('[data-invoice-composer-confirm]')!.click()
     form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
     // Settle on the controls coming back, not on any particular wording: what
@@ -1767,7 +1771,6 @@ describe('invoice browse browser behavior', () => {
     )!
     recipients.value = 'Accounts Payable <AP@Example.Test>'
     recipients.dispatchEvent(new Event('input', { bubbles: true }))
-    document.querySelector<HTMLInputElement>('[data-invoice-composer-deliver-toggle]')!.click()
     document.querySelector<HTMLInputElement>('[data-invoice-composer-confirm]')!.click()
     form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
     await vi.waitFor(() =>

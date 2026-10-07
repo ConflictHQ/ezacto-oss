@@ -19,6 +19,7 @@ import { renderDeliveriesPage } from '../src/module-settings/render.js'
 const email = (overrides: Partial<EmailLogRow> = {}): EmailLogRow => ({
   id: 1,
   to: [{ email: 'ap@kestrel.example.test' }],
+  cc: [],
   subject: 'Invoice 1315',
   template: 'invoice_sent',
   status: 'sent',
@@ -82,6 +83,39 @@ describe('what was sent (#485)', () => {
     )
     expect(text('[data-email-log-list]')).toContain('ap@kestrel.example.test')
     expect(text('[data-email-log-list]')).toContain('finance@kestrel.example.test')
+  })
+
+  it('[browser] lists who was copied beside who it was addressed to', async () => {
+    // An invoice email reaches its Cc as surely as its To. The log always
+    // carried the copies; the table showed To alone.
+    mount()
+    await activate(
+      api({
+        listEmailLog: vi.fn(async () => ({
+          data: [
+            email({
+              to: [{ email: 'ap@kestrel.example.test' }],
+              cc: [
+                { email: 'controller@kestrel.example.test', name: 'Controller' },
+                { email: 'owner@studio.example.test' },
+              ],
+            }),
+          ],
+        })),
+      }),
+    )
+    const headings = [...document.querySelectorAll('[data-email-log-list] th')].map(
+      (heading) => heading.textContent,
+    )
+    expect(headings).toEqual(expect.arrayContaining(['When', 'To', 'Cc', 'What', 'Status']))
+    const cells = [...document.querySelectorAll('[data-email-log-list] tbody td')].map(
+      (cell) => cell.textContent,
+    )
+    expect(cells).toContain('ap@kestrel.example.test')
+    expect(cells).toContain('controller@kestrel.example.test, owner@studio.example.test')
+    expect(cells).toContain('Invoice 1315')
+    expect(cells).toContain('Sent')
+    expect(cells).toContain('2026-09-13T09:00:00.000Z')
   })
 
   it('[browser] puts the reason in the row, so failures are not all alike', async () => {
