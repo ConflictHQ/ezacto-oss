@@ -1,6 +1,7 @@
 /** @vitest-environment happy-dom */
 
 import { describe, expect, it, vi } from 'vitest'
+import { commandShortcutModifier, type PlatformHints } from '../src/index.js'
 import {
   browserApi,
   defaultTheme,
@@ -364,5 +365,44 @@ describe('where focus lands when the command bar and the menu open (issue 861)',
     expect(firstShowing).toBeDefined()
     expect(firstShowing).not.toBe(links[0])
     expect(document.activeElement).toBe(firstShowing)
+  })
+})
+
+describe('the search trigger and its key chip (the 2026-10 reskin)', () => {
+  it('[unit] writes the command key on Apple platforms and Ctrl everywhere else', () => {
+    // Both chords open the bar on every platform; this decides only the label.
+    expect(commandShortcutModifier({ platform: 'MacIntel' })).toBe('⌘')
+    expect(commandShortcutModifier({ userAgentData: { platform: 'macOS' } })).toBe('⌘')
+    expect(
+      commandShortcutModifier({
+        platform: '',
+        userAgent: 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
+      }),
+    ).toBe('⌘')
+    expect(commandShortcutModifier({ platform: 'Win32' })).toBe('Ctrl ')
+    expect(commandShortcutModifier({ userAgentData: { platform: 'Linux' } })).toBe('Ctrl ')
+    expect(commandShortcutModifier({})).toBe('Ctrl ')
+  })
+
+  it('[browser] fills the chip from the browser it runs in, and opens the bar from it', async () => {
+    renderBrowserShell()
+    const slot = document.querySelector<HTMLElement>('[data-command-modifier]')!
+    // The server leaves it blank: it cannot see the keyboard.
+    expect(slot.textContent).toBe('')
+    await mountShell(browserApi())
+    expect(slot.textContent).toBe(
+      commandShortcutModifier(globalThis.navigator as Navigator & PlatformHints),
+    )
+    const trigger = document.querySelector<HTMLButtonElement>('[data-app-nav] [data-command-trigger]')!
+    expect(trigger.getAttribute('aria-label')).toBe('Search and commands')
+    expect(trigger.getAttribute('aria-keyshortcuts')).toBe('Meta+K Control+K')
+    trigger.click()
+    expect(document.querySelector<HTMLDialogElement>('[data-command-dialog]')!.open).toBe(true)
+    // The query keeps its role and its id inside the new wrapper.
+    const query = document.querySelector<HTMLInputElement>('#ez-command')!
+    expect(query.closest('.command-query')).not.toBeNull()
+    expect(query.getAttribute('role')).toBe('combobox')
+    expect(query.getAttribute('aria-controls')).toBe('ez-command-results')
+    expect(document.activeElement).toBe(query)
   })
 })

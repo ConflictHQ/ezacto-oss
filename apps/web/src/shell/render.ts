@@ -607,13 +607,20 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
       <span data-timer-elapsed>—</span>
     </button>
     <!--
+      Search looks like the field it opens (the 2026-10 reskin). The key chip's
+      modifier is filled in by the browser -- the command key on a Mac, Ctrl
+      elsewhere -- because the server cannot tell which keyboard is in front of
+      the page; both keys open the bar everywhere, so the name stays neutral
+      and aria-keyshortcuts states both.
+    -->
+    <button class="command-trigger" type="button" data-command-trigger data-auth-action disabled aria-haspopup="dialog" aria-label="Search and commands" aria-keyshortcuts="Meta+K Control+K">${iconMarkup('magnifier')}<span class="command-trigger-label" aria-hidden="true">Search…</span><kbd class="command-shortcut" aria-hidden="true"><span data-command-modifier></span>K</kbd></button>
+    <!--
       Masking is a display state, not a permission: the figures still arrive and
       the screens still total them, and this decides whether they are drawn. It
       renders pressed-out because shown is the default, and the browser sets it
       from storage before the first paint.
     -->
     <button class="money-toggle" type="button" data-money-toggle data-auth-action disabled aria-pressed="false" aria-label="Hide money amounts ($)" title="Hide money amounts ($)"><span aria-hidden="true">$</span></button>
-    <button class="command-trigger" type="button" data-command-trigger data-auth-action disabled aria-haspopup="dialog" aria-label="Search and commands (⌘K)">${iconMarkup('magnifier')}<span class="command-trigger-label" aria-hidden="true">Search</span><span aria-hidden="true">⌘K</span></button>
     <button class="menu-trigger" type="button" data-menu-trigger aria-label="Open navigation" aria-haspopup="dialog">Menu</button>
     <div class="account" data-auth-shell data-state="loading">
       <div class="account-identity" data-current-identity hidden>
@@ -1027,7 +1034,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
     <form data-command-form>
       <header><div><p class="eyebrow">Command bar</p><h2 id="command-title">Go or log time</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
       <label for="ez-command" class="visually-hidden">Command</label>
-      <input id="ez-command" name="command" autocomplete="off" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="ez-command-results" placeholder="Search, or log 2h northpeak devops" required>
+      <div class="command-query">${iconMarkup('magnifier')}<input id="ez-command" name="command" autocomplete="off" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="ez-command-results" placeholder="Search, or log 2h northpeak devops" required></div>
       <div class="command-results" id="ez-command-results" data-command-results role="listbox" aria-label="Destinations"></div>
       <p class="form-result" data-command-result role="status"></p>
       <!--

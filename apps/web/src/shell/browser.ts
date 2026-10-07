@@ -124,6 +124,7 @@ import {
 import { canManageTeammateTime, canProfileUseApiScope, isApiScope } from '@ezacto/core'
 import {
   canBrowseDirectories,
+  commandShortcutModifier,
   createSameOriginShellApi,
   hydratePendingTimesheetDetails,
   loadShellSnapshot,
@@ -142,6 +143,7 @@ import {
   weekRange,
   type DisplayTimeEntry,
   type PaletteDestination,
+  type PlatformHints,
   type ApprovalQueueFilters,
   type InvoiceJournalChoice,
   type ShellApi,
@@ -6439,6 +6441,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       if (chosen === undefined || !(colorSchemes as readonly string[]).includes(chosen)) return
       syncColorSchemeChoice(colorScheme.set(chosen as ColorScheme))
     })
+  }
+
+  // The search chip's modifier: the server renders it blank because it cannot
+  // see the keyboard, and it is filled here before the shell is shown.
+  const shortcutModifier = commandShortcutModifier(
+    globalThis.navigator as Navigator & PlatformHints,
+  )
+  for (const slot of document.querySelectorAll<HTMLElement>('[data-command-modifier]')) {
+    slot.textContent = shortcutModifier
   }
 
   // Sidebar or top bar, and how wide the sidebar is (the 2026-10 reskin). The

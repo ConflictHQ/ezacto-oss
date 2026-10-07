@@ -143,9 +143,10 @@ test('[e2e:nav] marks the section you are in, and lays the same header across th
   page,
   context,
 }) => {
-  // Explicit, so the spec means the same under EZACTO_BROWSER_NAV=topbar.
+  // Explicit, so the spec means the same under EZACTO_BROWSER_NAV=topbar. Wide
+  // enough that the top bar still shows its sections (they fold below 1300).
   await prefer(context, 'ezacto_nav', 'sidebar')
-  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.setViewportSize({ width: 1440, height: 800 })
   await page.goto('/invoices')
   await signIn(page)
 
@@ -168,7 +169,7 @@ test('[e2e:nav] marks the section you are in, and lays the same header across th
   await page.reload()
   await expect(page.locator('[data-authenticated-shell]:not([inert])')).toBeVisible()
   expect(await header.evaluate((element) => getComputedStyle(element).position)).toBe('static')
-  expect((await box(page, '[data-app-nav]')).width).toBe(1280)
+  expect((await box(page, '[data-app-nav]')).width).toBe(1440)
   await expect(invoices).toHaveAttribute('aria-current', 'page')
   await context.clearCookies({ name: 'ezacto_nav' })
 })
@@ -261,3 +262,152 @@ for (const layout of ['sidebar', 'topbar'] as const) {
     await context.clearCookies({ name: 'ezacto_nav' })
   })
 }
+
+/**
+ * Everything in the header that sticks out of it, or has text cut off inside a
+ * box that hides overflow -- except the timer chip's label, whose job is to
+ * ellipsize, and the labels kept for screen readers alone.
+ */
+const headerFaults = (page: Page) =>
+  page.evaluate(() => {
+    const header = document.querySelector<HTMLElement>('[data-app-nav]')!
+    const edge = header.getBoundingClientRect()
+    const faults: string[] = []
+    for (const element of header.querySelectorAll<HTMLElement>('*')) {
+      const box = element.getBoundingClientRect()
+      if (box.width === 0 || getComputedStyle(element).visibility === 'hidden') continue
+      // Inside a box clipped to nothing on purpose -- a label kept for screen
+      // readers -- nothing is drawn, so where it would have been is moot.
+      let forReaders = false
+      for (let node: HTMLElement | null = element; node !== null; node = node.parentElement) {
+        if (getComputedStyle(node).clipPath === 'inset(50%)') forReaders = true
+      }
+      if (forReaders) continue
+      const name = `${element.tagName.toLowerCase()}.${element.getAttribute('class') ?? ''}`
+      if (box.right > edge.right + 0.5 || box.left < edge.left - 0.5) {
+        faults.push(`outside ${name} ${Math.round(box.left)}-${Math.round(box.right)}`)
+      }
+      const clipping = getComputedStyle(element).overflow !== 'visible'
+      if (clipping && !element.matches('[data-timer-label]') && element.scrollWidth > element.clientWidth + 1) {
+        faults.push(`clipped ${name}`)
+      }
+    }
+    return faults
+  })
+
+/** Arial, which CI's Liberation Sans matches metric for metric, so a width means the same on both. */
+const pinHeaderFont = (page: Page) =>
+  page.evaluate(() => {
+    for (const element of document.querySelectorAll<HTMLElement>('[data-app-nav], [data-app-nav] *'))
+      element.style.fontFamily = 'Arial, sans-serif'
+  })
+
+/** The widest the chip ever gets: a running timer whose label runs past its 320px cap. */
+const longestTimer = (page: Page) =>
+  page.evaluate(() => {
+    const chip = document.querySelector<HTMLElement>('[data-timer-chip]')!
+    chip.dataset.state = 'running'
+    chip.querySelector('[data-timer-label]')!.textContent =
+      'Browser Acceptance Project / Browser Acceptance Task with a long name'
+    chip.querySelector('[data-timer-elapsed]')!.textContent = '12:34:56'
+  })
+
+test('[e2e:nav] fits the top bar at every width, at each band edge', async ({ page, context }) => {
+  // An administrator sees every section, so this is the widest the bar gets.
+  await prefer(context, 'ezacto_nav', 'topbar')
+  await page.setViewportSize({ width: 1920, height: 900 })
+  await page.goto('/')
+  await signIn(page)
+  for (const width of [1920, 1700, 1699, 1520, 1519, 1440, 1439, 1300, 1299, 1140, 900, 721]) {
+    await page.setViewportSize({ width, height: 900 })
+    await pinHeaderFont(page)
+    await longestTimer(page)
+    expect(await headerFaults(page), `${width}px`).toEqual([])
+  }
+  // Search is a field where it fits and its magnifier where it does not, and
+  // keeps its name either way.
+  const search = page.locator('[data-app-nav] [data-command-trigger]')
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await expect(search.locator('.command-trigger-label')).toBeVisible()
+  await page.setViewportSize({ width: 1439, height: 900 })
+  await expect(search.locator('.command-trigger-label')).toBeHidden()
+  await expect(page.getByRole('button', { name: 'Search and commands' })).toBeVisible()
+  await context.clearCookies({ name: 'ezacto_nav' })
+})
+
+test('[e2e:nav] gives search a row of its own in the sidebar, ring and all', async ({
+  page,
+  context,
+}) => {
+  await prefer(context, 'ezacto_nav', 'sidebar')
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/')
+  await signIn(page)
+  await pinHeaderFont(page)
+  await longestTimer(page)
+  expect(await headerFaults(page)).toEqual([])
+
+  const search = page.locator('[data-app-nav] [data-command-trigger]')
+  const searchBox = await box(page, '[data-app-nav] [data-command-trigger]')
+  const money = await box(page, '[data-money-toggle]')
+  const menu = await box(page, '[data-menu-trigger]')
+  // The column's whole width, less its 10px padding each side, and $ and Menu
+  // together on the row under it.
+  expect(searchBox.width).toBeCloseTo(248 - 1 - 20, 0)
+  expect(money.y).toBeGreaterThan(searchBox.y + searchBox.height - 1)
+  expect(Math.abs(money.y - menu.y)).toBeLessThan(1)
+  // The chip says which key: the command key on a Mac, Ctrl elsewhere.
+  const chip = (await search.locator('.command-shortcut').textContent())?.replace(/\s/gu, ' ')
+  expect(['⌘K', 'Ctrl K']).toContain(chip)
+
+  // The focus ring is drawn inside the column, not cut off by its edge.
+  await search.focus()
+  await page.keyboard.press('Shift+Tab')
+  await page.keyboard.press('Tab')
+  await expect(search).toBeFocused()
+  const ring = await search.evaluate((element) => {
+    const style = getComputedStyle(element)
+    const reach = Number.parseFloat(style.outlineWidth) + Number.parseFloat(style.outlineOffset)
+    const rect = element.getBoundingClientRect()
+    const column = element.closest('[data-app-nav]')!.getBoundingClientRect()
+    return {
+      style: style.outlineStyle,
+      left: rect.left - reach - column.left,
+      right: column.right - (rect.right + reach),
+    }
+  })
+  expect(ring.style).not.toBe('none')
+  expect(ring.left).toBeGreaterThanOrEqual(0)
+  expect(ring.right).toBeGreaterThanOrEqual(0)
+
+  // Narrowed to icons, search is its magnifier and keeps its name.
+  await page.getByRole('button', { name: 'Collapse sidebar' }).click()
+  await expect(page.getByRole('button', { name: 'Search and commands' })).toBeVisible()
+  expect((await box(page, '[data-app-nav] [data-command-trigger]')).width).toBe(48)
+  expect(await headerFaults(page)).toEqual([])
+  await page.getByRole('button', { name: 'Collapse sidebar' }).click()
+  await context.clearCookies({ name: 'ezacto_sidebar' })
+})
+
+test('[e2e:nav] highlights the command bar row Enter acts on in the selected tint', async ({
+  page,
+}) => {
+  await page.emulateMedia({ colorScheme: 'light' })
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.goto('/')
+  await signIn(page)
+  await page.keyboard.press('ControlOrMeta+k')
+  const dialog = page.locator('[data-command-dialog]')
+  const query = dialog.getByRole('combobox', { name: 'Command' })
+  await expect(query).toBeFocused()
+  await page.keyboard.type('inv')
+  const highlighted = dialog.locator('[data-command-option][aria-selected="true"]')
+  await expect(highlighted).toHaveText('Invoices')
+  // #EFF3FF, the selected tint, with the focus colour down its edge.
+  expect(await highlighted.evaluate((row) => getComputedStyle(row).backgroundColor)).toBe(
+    'rgb(239, 243, 255)',
+  )
+  await expect(query).toHaveAttribute('aria-activedescendant', (await highlighted.getAttribute('id'))!)
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+})

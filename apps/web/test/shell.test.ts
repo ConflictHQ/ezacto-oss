@@ -402,7 +402,17 @@ describe('S-1 through S-5 application shell', () => {
     // against the DOM the control actually produces.
     expect(html).toContain('data-day-previous data-auth-action disabled aria-label="Previous day"')
     expect(html).toContain('data-day-next data-auth-action disabled aria-label="Next day"')
-    expect(html).toContain('aria-label="Search and commands (⌘K)"')
+    // Neutral on the server: both chords open the bar everywhere, so the name
+    // promises neither and aria-keyshortcuts states both. The chip's modifier
+    // is the browser's to fill, because only it can see the keyboard.
+    expect(html).toContain(
+      'aria-label="Search and commands" aria-keyshortcuts="Meta+K Control+K"',
+    )
+    expect(html).toContain(
+      '<span class="command-trigger-label" aria-hidden="true">Search…</span>' +
+        '<kbd class="command-shortcut" aria-hidden="true"><span data-command-modifier></span>K</kbd>',
+    )
+    expect(html).not.toContain('⌘K')
   })
 
   it('[e2e:track-week] keeps the global timer in desktop and phone shell CSS', () => {
@@ -603,14 +613,21 @@ describe('S-1 through S-5 application shell', () => {
     // every tablet in landscape -- drew the account over itself and pushed the
     // page sideways. Each band below has to keep existing, and each has to leave
     // the bar less to carry than the width it starts at.
+    // The bands were re-measured in the 2026-10 reskin: the bar is eight
+    // sections, the brand's mark and a search field now, and the old bands
+    // overflowed. `[e2e:nav] fits the top bar at every width` measures them;
+    // these pin only that each band still exists.
     expect(webAssets.stylesheet).toMatch(
-      /@media \(min-width: 721px\) and \(max-width: 1139px\)[\s\S]*\.primary-nav \{[\s\S]*display: none;/u,
+      /@media \(min-width: 721px\) and \(max-width: 1299px\)[\s\S]*\.primary-nav \{[\s\S]*display: none;/u,
     )
     expect(webAssets.stylesheet).toMatch(
-      /@media \(min-width: 721px\) and \(max-width: 1139px\)[\s\S]*\.menu-trigger \{[\s\S]*display: block;/u,
+      /@media \(min-width: 721px\) and \(max-width: 1299px\)[\s\S]*\.menu-trigger \{[\s\S]*display: block;/u,
     )
     expect(webAssets.stylesheet).toMatch(
-      /@media \(min-width: 721px\) and \(max-width: 1339px\)[\s\S]*\.identity-text \{[\s\S]*display: none;/u,
+      /@media \(min-width: 721px\) and \(max-width: 1699px\)[\s\S]*\.identity-text \{[\s\S]*display: none;/u,
+    )
+    expect(webAssets.stylesheet).toMatch(
+      /@media \(min-width: 721px\) and \(max-width: 1439px\)[\s\S]*\.command-trigger-label,\s*\.command-shortcut \{[\s\S]*display: none;/u,
     )
     // The drawer the nav folds into carries the same links, so nothing is lost.
     const html = renderAppShell({ environment: 'test', release: 'abcdef012345' })

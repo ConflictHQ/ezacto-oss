@@ -3598,6 +3598,11 @@ a {
   margin-left: auto;
   padding: 0 12px;
   max-width: 320px;
+  /* Its automatic minimum is its whole label -- overflow on the label lets the
+     label ellipsize but does not lower the button's own min-content -- so it
+     never gave up a pixel and the bar overflowed past it instead. The floor
+     keeps the clock, the dot, a sliver of label and the elapsed time. */
+  min-width: 150px;
 }
 .timer-chip [data-timer-label] {
   overflow: hidden;
@@ -3627,6 +3632,40 @@ a {
   margin-left: 0;
   padding: 0 12px;
   font-family: var(--ez-font-body), sans-serif;
+}
+/*
+ * Search looks like the field it opens (the 2026-10 reskin): the magnifier,
+ * "Search…" in the secondary ink, and the key that opens it as a chip at the
+ * far end. It is still a button -- the field it resembles is the one in the
+ * command bar -- so its name is the button's own, not the placeholder.
+ */
+.command-trigger {
+  justify-content: flex-start;
+  min-width: 180px;
+  padding: 0 6px 0 10px;
+  background: var(--ez-ground);
+  color: var(--ez-muted);
+}
+.command-trigger-label {
+  margin-right: auto;
+  white-space: nowrap;
+}
+/* One chip style for every key the shell draws: the search trigger's, the
+   command bar's footer, and the one on its highlighted row. Secondary ink on
+   its own ground, so it reads the same on any row it sits on. */
+.command-shortcut,
+.command-keys kbd,
+.command-option[aria-selected='true']::after {
+  flex: none;
+  min-width: 26px;
+  padding: 1px 6px;
+  border: 1px solid var(--ez-border);
+  border-radius: calc(var(--ez-radius) - 2px);
+  background: var(--ez-ground);
+  color: var(--ez-muted);
+  font: 600 11px/1.6 var(--ez-font-body), sans-serif;
+  text-align: center;
+  white-space: nowrap;
 }
 /*
  * Kept at every width, unlike the command trigger the narrow bands shed. It is
@@ -4146,6 +4185,9 @@ dialog h2,
    --ez-band, so --ez-muted would be unreadable directly against it. */
 .account {
   align-self: center;
+  /* The bar's give is the timer chip's label, which ellipsizes by design; the
+     account is shown only in the bands with room for it, whole. */
+  flex-shrink: 0;
 }
 .account[data-state='loading'] {
   display: none;
@@ -4691,46 +4733,59 @@ dialog h2,
 }
 /*
  * Between the phone bar and the width the full bar actually needs, there was
- * nothing at all -- one breakpoint at 720px, and a top bar whose contents come
- * to 1325px laid out on one row. Everything from 721px to 1324px, which is to
- * say most laptops and every tablet in landscape, drew the account on top of
- * itself and pushed the page into a sideways scroll.
+ * nothing at all -- one breakpoint at 720px -- and the bands that closed that
+ * gap were measured when the bar was six sections in a narrower brand. With
+ * eight sections, the brand's mark and a search field, the whole bar needs
+ * about 1590px, and the old bands overflowed by 36px at 1340 and 77px at 1140
+ * (the 2026-10 reskin). The widths below are what the parts measure for an
+ * administrator, who sees every section, with a running timer's chip at its
+ * 150px floor:
  *
- * Two steps close it, and the widths are what the parts measure rather than
- * round numbers:
+ *   >= 1700px  everything: the nav, search as a field, the account's name (1592)
+ *   1520-1699  the account keeps only its avatar (1489)
+ *   1440-1519  and the nav takes tighter padding (1425)
+ *   1300-1439  and search is its magnifier alone (1281)
+ *   721-1299   the nav folds into the Menu drawer that phone width already
+ *              uses -- same links, same dialog (688)
  *
- *   >= 1340px  everything, as designed (needs 1325)
- *   1140-1339  the full nav on tighter padding; the search chip goes and the
- *              account keeps only its avatar (1075)
- *   721-1139   the nav folds into the Menu drawer that phone width already
- *              uses -- same links, same dialog (639)
- *
- * Each band has room to spare at the width it starts at, so the bar is never
- * asked to lay out in less space than it needs. The account gives up its name
- * below 1340 rather than truncating it: the profile and user number are
- * decoration, and Settings -- which stays -- is the page that states both.
+ * Each band has room to spare at the width it starts at, and the browser test
+ * `[e2e:nav] fits the top bar at every width` measures the bar at each of them
+ * with the longest timer label the chip will hold, so a band that stops fitting
+ * fails there rather than in a screenshot. The account gives up its name rather
+ * than truncating it: the profile and user number are decoration, and Settings
+ * -- which stays -- is the page that states both.
  */
 /* Phone is excluded: down there the account has a whole row to itself and the
    name fits, which is the one thing the 720px layout already got right. */
-@media (min-width: 721px) and (max-width: 1339px) {
-  .command-trigger {
-    display: none;
-  }
+@media (min-width: 721px) and (max-width: 1699px) {
   .identity-text {
     display: none;
   }
 }
-@media (min-width: 721px) and (max-width: 1139px) {
+@media (min-width: 1300px) and (max-width: 1519px) {
+  .primary-nav a {
+    padding: 0 10px;
+  }
+}
+/* Search keeps its name and its shortcut; it loses only the field around them. */
+@media (min-width: 721px) and (max-width: 1439px) {
+  .command-trigger {
+    min-width: 36px;
+    width: 36px;
+    justify-content: center;
+    padding: 0;
+  }
+  .command-trigger-label,
+  .command-shortcut {
+    display: none;
+  }
+}
+@media (min-width: 721px) and (max-width: 1299px) {
   .primary-nav {
     display: none;
   }
   .menu-trigger {
     display: block;
-  }
-}
-@media (min-width: 1140px) and (max-width: 1339px) {
-  .primary-nav a {
-    padding: 0 10px;
   }
 }
 
@@ -4771,7 +4826,6 @@ dialog h2,
 }
 .brand-glyph,
 .nav-collapse,
-.command-trigger-label,
 .primary-nav .ez-icon,
 .identity-settings .ez-icon,
 .identity-signout .ez-icon {
@@ -4788,8 +4842,8 @@ dialog h2,
     width: var(--ez-sidebar-width);
     min-height: 0;
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    grid-template-rows: auto auto auto auto 1fr;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto auto 1fr;
     align-items: start;
     gap: 8px;
     padding: 12px 10px;
@@ -4874,27 +4928,34 @@ dialog h2,
     grid-column: 1 / -1;
     width: 100%;
     max-width: none;
+    /* The top bar's floor is for a chip that shares a row; in the column it is
+       the column's width, and narrowed it is an icon. */
+    min-width: 0;
     min-height: 40px;
     margin: 8px 0 0;
   }
   [data-ez-nav='sidebar'] .timer-chip [data-timer-elapsed] {
     margin-left: auto;
   }
+  /* Search is a row of its own, the width of the column; $ and Menu share the
+     row under it. Squeezed between them, its label ran out of the button. */
+  [data-ez-nav='sidebar'] .command-trigger {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-width: 0;
+    min-height: 40px;
+    justify-content: flex-start;
+    padding: 0 6px 0 10px;
+  }
+  [data-ez-nav='sidebar'] .command-trigger-label,
+  [data-ez-nav='sidebar'] .command-shortcut {
+    display: inline-block;
+  }
   [data-ez-nav='sidebar'] .money-toggle {
     grid-column: 1;
   }
-  [data-ez-nav='sidebar'] .command-trigger {
-    grid-column: 2;
-    display: inline-flex;
-    justify-content: flex-start;
-    width: 100%;
-  }
-  [data-ez-nav='sidebar'] .command-trigger-label {
-    display: inline;
-    margin-right: auto;
-  }
   [data-ez-nav='sidebar'] .menu-trigger {
-    grid-column: 3;
+    grid-column: 2;
     display: block;
   }
   [data-ez-nav='sidebar'] .account {
@@ -4965,6 +5026,7 @@ dialog h2,
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .menu-trigger {
     grid-column: 1;
     width: 48px;
+    min-width: 0;
     justify-content: center;
     padding: 0;
   }
@@ -4990,6 +5052,7 @@ dialog h2,
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .timer-chip [data-timer-label],
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .timer-chip [data-timer-elapsed],
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .command-trigger > span,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .command-trigger > kbd,
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-text,
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-action-label {
     position: absolute;
@@ -5802,6 +5865,37 @@ dialog textarea {
   }
 }
 /*
+ * The command bar in the reskin's tokens (the 2026-10 reskin): a roomy query
+ * with the magnifier inside it, the groups under label-style headings, the
+ * highlighted row in the selected tint, and the keys as chips in the footer.
+ * Paint only -- the combobox, the listbox, their ids and every handler are the
+ * ones the bar already had.
+ */
+.command-dialog {
+  width: min(600px, calc(100vw - 32px));
+}
+.command-dialog form {
+  gap: 16px;
+}
+.command-query {
+  position: relative;
+}
+.command-query .ez-icon {
+  position: absolute;
+  top: 50%;
+  left: 16px;
+  transform: translateY(-50%);
+  color: var(--ez-muted);
+  pointer-events: none;
+}
+.command-query input {
+  min-height: 52px;
+  padding: 0 16px 0 46px;
+  border-radius: calc(var(--ez-radius) * 1.5);
+  background: var(--ez-ground);
+  font-size: 16px;
+}
+/*
  * The results run edge to edge between two rules rather than sitting in a
  * bordered box inside the dialog's own border (issue 859). The negative margin
  * is the form's padding, so the rows' text still lines up with the heading.
@@ -5822,15 +5916,14 @@ dialog textarea {
 }
 .command-group > .eyebrow {
   margin: 0;
-  padding: 6px 12px 2px;
-  font-size: 12px;
+  padding: 10px 12px 4px;
 }
 .command-option {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 12px;
   border-radius: var(--ez-radius);
   color: var(--ez-ink);
@@ -5840,12 +5933,11 @@ dialog textarea {
   background: var(--ez-surface-2);
 }
 /*
- * The row Enter acts on. It takes the tint the tables give the row under the
- * pointer, the focus colour as a bar down its edge -- it is the focus, by way
- * of aria-activedescendant -- and the key it answers to at its far end. Hover
- * is a different tint on purpose: the pointer does not move the highlight
- * here, so a hovered row and the highlighted row are two different rows that
- * two different actions reach.
+ * The row Enter acts on. It takes the selected tint, the focus colour as a bar
+ * down its edge -- it is the focus, by way of aria-activedescendant -- and the
+ * key it answers to at its far end. Hover is a different tint on purpose: the
+ * pointer does not move the highlight here, so a hovered row and the
+ * highlighted row are two different rows that two different actions reach.
  *
  * The key is generated content with empty alternative text, which keeps it
  * out of the option's accessible name: a reader hears the destination, not
@@ -5853,7 +5945,7 @@ dialog textarea {
  * and draws no key, which is the same row it drew before.
  */
 .command-option[aria-selected='true'] {
-  background: var(--ez-row-hover);
+  background: var(--ez-orange-tint);
   box-shadow: inset 3px 0 0 var(--ez-data);
 }
 .command-option[aria-selected='true']::after {
@@ -5893,18 +5985,6 @@ dialog textarea {
 }
 .command-keys span {
   white-space: nowrap;
-}
-.command-keys kbd,
-.command-option[aria-selected='true']::after {
-  flex: none;
-  padding: 1px 5px;
-  border: 1px solid var(--ez-border);
-  border-radius: 3px;
-  background: var(--ez-surface);
-  color: var(--ez-data);
-  font:
-    11px/1 var(--ez-font-mono),
-    monospace;
 }
 .command-keys kbd + kbd {
   margin-left: 2px;
