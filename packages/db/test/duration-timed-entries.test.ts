@@ -30,8 +30,7 @@ import {
 type Mode = 'duration' | 'start_end'
 /** What the adapters hand back: every store below takes it, the journal reader included. */
 type AdapterDatabase =
-  | ReturnType<typeof createContainerDatabase>
-  | ReturnType<typeof createD1Database>
+  ReturnType<typeof createContainerDatabase> | ReturnType<typeof createD1Database>
 
 interface TestDatabase {
   orm: AdapterDatabase
@@ -101,7 +100,11 @@ const t0 = '2026-09-01T08:00:00.000Z'
 const stamps = (count: number): string[] => Array.from({ length: count }, () => t0)
 
 /** An organization on UTC, so a boundary's date and time are its instant's. */
-const at = (instant: string) => ({ instant, date: instant.slice(0, 10), time: instant.slice(11, 16) })
+const at = (instant: string) => ({
+  instant,
+  date: instant.slice(0, 10),
+  time: instant.slice(11, 16),
+})
 
 const ada: TimeEntryActor = { userId: 1, profile: 'administrator' }
 const maya: TimeEntryActor = { userId: 2, profile: 'member' }
@@ -198,8 +201,6 @@ const insertRow = (
 const shapeRefusal = /time entry shape does not match organization mode/
 
 for (const [runtime, factory] of factories) {
-  const slow = runtime === 'D1' ? 30_000 : 20_000
-
   describe(`start/end entries in a duration organization (${runtime})`, () => {
     let database: TestDatabase | undefined
     const locks = new Set<string>()
@@ -296,18 +297,30 @@ for (const [runtime, factory] of factories) {
           started_time: null,
           ended_time: null,
         },
-        { id: 10, seconds: 1_800, timer_started_at: null, started_time: '09:00', ended_time: '09:30' },
+        {
+          id: 10,
+          seconds: 1_800,
+          timer_started_at: null,
+          started_time: '09:00',
+          ended_time: '09:30',
+        },
       ])
       // Re-running the ledger is a no-op.
       await db.migrate()
       expect(await db.rows(`SELECT count(*) AS count FROM time_entries`)).toEqual([{ count: 4 }])
-    }, slow)
+    }, 30_000)
 
     it('[unit] logs a stopped start/end entry in a duration organization, seconds derived and rounded', async () => {
       const { db, tracked } = await setup('duration')
       const seven = await tracked.createTimeEntry(
         maya,
-        { projectId: 1, taskId: 1, spentDate: '2026-09-14', startedTime: '09:00', endedTime: '09:07' },
+        {
+          projectId: 1,
+          taskId: 1,
+          spentDate: '2026-09-14',
+          startedTime: '09:00',
+          endedTime: '09:07',
+        },
         at('2026-09-14T12:00:00.000Z'),
       )
       expect(seven).toMatchObject({
@@ -325,7 +338,13 @@ for (const [runtime, factory] of factories) {
       // An end before the start is past midnight, as in a start/end organization.
       const overnight = await tracked.createTimeEntry(
         maya,
-        { projectId: 1, taskId: 2, spentDate: '2026-09-14', startedTime: '23:30', endedTime: '00:30' },
+        {
+          projectId: 1,
+          taskId: 2,
+          spentDate: '2026-09-14',
+          startedTime: '23:30',
+          endedTime: '00:30',
+        },
         at('2026-09-15T01:00:00.000Z'),
       )
       expect(overnight).toMatchObject({ seconds: 3_600, roundedSeconds: 3_600 })
@@ -361,7 +380,7 @@ for (const [runtime, factory] of factories) {
         seconds: 1_000,
         roundedSeconds: 1_800,
       })
-    }, slow)
+    }, 30_000)
 
     it('[unit] refuses the shapes a duration organization cannot hold and writes nothing', async () => {
       const { db, tracked } = await setup('duration')
@@ -376,12 +395,13 @@ for (const [runtime, factory] of factories) {
         create({ spentDate: '2026-09-14', seconds: 600, startedTime: '09:00', endedTime: '09:10' }),
       ).rejects.toMatchObject({ field: 'seconds', reasonCode: 'mode_mismatch' })
       // A start with no end would be a running start/end timer.
-      await expect(
-        create({ startedTime: '12:00' }),
-      ).rejects.toMatchObject({ field: 'started_time', reasonCode: 'mode_mismatch' })
-      await expect(
-        create({ spentDate: '2026-09-14', startedTime: '12:00' }),
-      ).rejects.toMatchObject({ field: 'started_time', reasonCode: 'mode_mismatch' })
+      await expect(create({ startedTime: '12:00' })).rejects.toMatchObject({
+        field: 'started_time',
+        reasonCode: 'mode_mismatch',
+      })
+      await expect(create({ spentDate: '2026-09-14', startedTime: '12:00' })).rejects.toMatchObject(
+        { field: 'started_time', reasonCode: 'mode_mismatch' },
+      )
       // ...even for an administrator naming a teammate: the shape is refused
       // before anything is said about whose timer it would be.
       await expect(
@@ -392,15 +412,17 @@ for (const [runtime, factory] of factories) {
         ),
       ).rejects.toMatchObject({ field: 'started_time', reasonCode: 'mode_mismatch' })
       // An end needs a start and a day.
-      await expect(
-        create({ spentDate: '2026-09-14', endedTime: '10:00' }),
-      ).rejects.toMatchObject({ field: 'started_time', reasonCode: 'required' })
-      await expect(
-        create({ startedTime: '09:00', endedTime: '10:00' }),
-      ).rejects.toMatchObject({ field: 'started_time', reasonCode: 'required' })
+      await expect(create({ spentDate: '2026-09-14', endedTime: '10:00' })).rejects.toMatchObject({
+        field: 'started_time',
+        reasonCode: 'required',
+      })
+      await expect(create({ startedTime: '09:00', endedTime: '10:00' })).rejects.toMatchObject({
+        field: 'started_time',
+        reasonCode: 'required',
+      })
       expect(await db.rows(`SELECT count(*) AS count FROM time_entries`)).toEqual([{ count: 0 }])
       expect(await db.rows(`SELECT count(*) AS count FROM event_outbox`)).toEqual([{ count: 0 }])
-    }, slow)
+    }, 30_000)
 
     it('[money] accepts overlapping entries, and every total counts each one in full', async () => {
       const { db, tracked } = await setup('duration')
@@ -416,12 +438,24 @@ for (const [runtime, factory] of factories) {
       )
       const first = await tracked.createTimeEntry(
         maya,
-        { projectId: 1, taskId: 1, spentDate: '2026-09-15', startedTime: '09:00', endedTime: '11:00' },
+        {
+          projectId: 1,
+          taskId: 1,
+          spentDate: '2026-09-15',
+          startedTime: '09:00',
+          endedTime: '11:00',
+        },
         boundary,
       )
       const second = await tracked.createTimeEntry(
         maya,
-        { projectId: 1, taskId: 1, spentDate: '2026-09-15', startedTime: '10:00', endedTime: '12:00' },
+        {
+          projectId: 1,
+          taskId: 1,
+          spentDate: '2026-09-15',
+          startedTime: '10:00',
+          endedTime: '12:00',
+        },
         boundary,
       )
       const fiveHours = 18_000
@@ -431,9 +465,27 @@ for (const [runtime, factory] of factories) {
            FROM time_entries WHERE user_id = 2 AND spent_date = '2026-09-15' ORDER BY id`,
         ),
       ).toEqual([
-        { id: duration.id, started_time: null, ended_time: null, seconds: 3_600, rounded_seconds: 3_600 },
-        { id: first.id, started_time: '09:00', ended_time: '11:00', seconds: 7_200, rounded_seconds: 7_200 },
-        { id: second.id, started_time: '10:00', ended_time: '12:00', seconds: 7_200, rounded_seconds: 7_200 },
+        {
+          id: duration.id,
+          started_time: null,
+          ended_time: null,
+          seconds: 3_600,
+          rounded_seconds: 3_600,
+        },
+        {
+          id: first.id,
+          started_time: '09:00',
+          ended_time: '11:00',
+          seconds: 7_200,
+          rounded_seconds: 7_200,
+        },
+        {
+          id: second.id,
+          started_time: '10:00',
+          ended_time: '12:00',
+          seconds: 7_200,
+          rounded_seconds: 7_200,
+        },
       ])
 
       const week = { from: '2026-09-14', to: '2026-09-20' }
@@ -471,14 +523,20 @@ for (const [runtime, factory] of factories) {
         '2026-09-18T12:00:00.000Z',
       )
       expect(submission).toMatchObject({ entryCount: 3, totalSeconds: fiveHours })
-    }, slow)
+    }, 30_000)
 
     it('[unit] edits each entry by its own shape, whatever the organization mode', async () => {
       const { tracked } = await setup('duration')
       const boundary = at('2026-09-15T18:00:00.000Z')
       const timed = await tracked.createTimeEntry(
         maya,
-        { projectId: 1, taskId: 1, spentDate: '2026-09-15', startedTime: '09:00', endedTime: '10:00' },
+        {
+          projectId: 1,
+          taskId: 1,
+          spentDate: '2026-09-15',
+          startedTime: '09:00',
+          endedTime: '10:00',
+        },
         boundary,
       )
       const duration = await tracked.createTimeEntry(
@@ -522,9 +580,14 @@ for (const [runtime, factory] of factories) {
         ),
       ).rejects.toMatchObject({ field: 'started_time', reasonCode: 'mode_mismatch' })
       expect(
-        await tracked.updateTimeEntry(maya, duration.id, { seconds: 2_700 }, at('2026-09-15T19:04:00.000Z')),
+        await tracked.updateTimeEntry(
+          maya,
+          duration.id,
+          { seconds: 2_700 },
+          at('2026-09-15T19:04:00.000Z'),
+        ),
       ).toMatchObject({ startedTime: null, seconds: 2_700, roundedSeconds: 2_700 })
-    }, slow)
+    }, 30_000)
 
     it('[unit] keeps the running timer a duration timer beside start/end entries', async () => {
       const { db, tracked } = await setup('duration')
@@ -541,7 +604,13 @@ for (const [runtime, factory] of factories) {
       // An interval logged across the running timer does not touch it.
       const interval = await tracked.createTimeEntry(
         maya,
-        { projectId: 1, taskId: 2, spentDate: '2026-09-16', startedTime: '08:30', endedTime: '09:15' },
+        {
+          projectId: 1,
+          taskId: 2,
+          spentDate: '2026-09-16',
+          startedTime: '08:30',
+          endedTime: '09:15',
+        },
         at('2026-09-16T09:20:00.000Z'),
       )
       expect(interval).toMatchObject({ seconds: 2_700, timerStartedAt: null })
@@ -596,7 +665,7 @@ for (const [runtime, factory] of factories) {
            WHERE timer_started_at IS NOT NULL OR (started_time IS NOT NULL AND ended_time IS NULL)`,
         ),
       ).toEqual([{ count: 0 }])
-    }, slow)
+    }, 30_000)
 
     it('[security] holds policy locks, approvals and invoices on start/end entries', async () => {
       const { db, tracked } = await setup('duration')
@@ -620,16 +689,29 @@ for (const [runtime, factory] of factories) {
       await expect(
         tracked.updateTimeEntry(maya, claimed.id, { endedTime: '11:00' }, boundary),
       ).rejects.toMatchObject({ code: 'tracked_mutation_locked', reasonCode: 'invoiced' })
-      await expect(
-        tracked.deleteTimeEntry(maya, claimed.id, boundary),
-      ).rejects.toMatchObject({ code: 'tracked_mutation_locked', reasonCode: 'invoiced' })
+      await expect(tracked.deleteTimeEntry(maya, claimed.id, boundary)).rejects.toMatchObject({
+        code: 'tracked_mutation_locked',
+        reasonCode: 'invoiced',
+      })
       await db.run(`UPDATE time_entries SET invoice_id = NULL WHERE id = ?`, claimed.id)
 
       // A submitted week takes a new interval into the submission...
       const approvals = createTimesheetApprovalRepository(db.orm)
-      const submission = await approvals.submit(2, '2026-09-14', '2026-09-20', '2026-09-18T12:01:00.000Z')
-      const joined = await tracked.createTimeEntry(maya, interval('2026-09-18', '13:00', '13:30'), boundary)
-      expect(joined).toMatchObject({ approvalStatus: 'submitted', timesheetSubmissionId: submission.id })
+      const submission = await approvals.submit(
+        2,
+        '2026-09-14',
+        '2026-09-20',
+        '2026-09-18T12:01:00.000Z',
+      )
+      const joined = await tracked.createTimeEntry(
+        maya,
+        interval('2026-09-18', '13:00', '13:30'),
+        boundary,
+      )
+      expect(joined).toMatchObject({
+        approvalStatus: 'submitted',
+        timesheetSubmissionId: submission.id,
+      })
       // ...and an approved one refuses it, and every edit to the ones inside.
       await approvals.approve(ada, submission.id, '2026-09-18T12:02:00.000Z')
       await expect(
@@ -641,7 +723,7 @@ for (const [runtime, factory] of factories) {
       expect(
         await db.rows(`SELECT count(*) AS count FROM time_entries WHERE spent_date = '2026-09-19'`),
       ).toEqual([{ count: 0 }])
-    }, slow)
+    }, 30_000)
 
     it('[unit] leaves a start_end organization exactly as it was', async () => {
       const { db, tracked } = await setup('start_end')
@@ -668,7 +750,13 @@ for (const [runtime, factory] of factories) {
       expect(stopped).toMatchObject({ endedTime: '09:20', seconds: 1_200, roundedSeconds: 1_800 })
       const interval = await tracked.createTimeEntry(
         maya,
-        { projectId: 1, taskId: 2, spentDate: '2026-09-14', startedTime: '13:00', endedTime: '13:05' },
+        {
+          projectId: 1,
+          taskId: 2,
+          spentDate: '2026-09-14',
+          startedTime: '13:00',
+          endedTime: '13:05',
+        },
         at('2026-09-14T14:00:00.000Z'),
       )
       expect(interval).toMatchObject({ seconds: 300, roundedSeconds: 900 })
@@ -684,7 +772,7 @@ for (const [runtime, factory] of factories) {
       expect(
         await db.rows(`SELECT id, seconds, started_time FROM time_entries WHERE id = 22`),
       ).toEqual([{ id: 22, seconds: -900, started_time: null }])
-    }, slow)
+    }, 30_000)
   })
 }
 
@@ -745,9 +833,12 @@ describe('the 0100 insert rule, shape by shape', () => {
     }
   }
 
-  it('[unit] admits only a duration organization\'s stopped intervals; start_end answers are unchanged', async () => {
+  it("[unit] admits only a duration organization's stopped intervals; start_end answers are unchanged", async () => {
     const stoppedIntervals = shapes
-      .filter((shape) => shape.timerStartedAt === null && shape.startedTime !== null && shape.endedTime !== null)
+      .filter(
+        (shape) =>
+          shape.timerStartedAt === null && shape.startedTime !== null && shape.endedTime !== null,
+      )
       .map(key)
     expect(stoppedIntervals).toHaveLength(2)
     const verdicts = (answered: Record<string, string>): Record<string, string> =>
@@ -771,8 +862,11 @@ describe('the 0100 insert rule, shape by shape', () => {
       ...Object.fromEntries(stoppedIntervals.map((shape) => [shape, 'accepted'])),
     })
     // The running interval a duration timer is not: refused by the rule itself.
-    expect(durationAfter[key({ seconds: 3_600, timerStartedAt: null, startedTime: '09:00', endedTime: null })])
-      .toMatch(shapeRefusal)
+    expect(
+      durationAfter[
+        key({ seconds: 3_600, timerStartedAt: null, startedTime: '09:00', endedTime: null })
+      ],
+    ).toMatch(shapeRefusal)
 
     // In a start/end organization not even a message moves.
     expect(await answers(true, 'start_end')).toEqual(await answers(false, 'start_end'))
