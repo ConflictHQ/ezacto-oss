@@ -62,13 +62,13 @@ describe('F12/DV-23 deployment brand seam', () => {
     expect(html).toContain('Sign in to Acme&lt;Corp')
   })
 
-  it('[unit] default brand emits ezacto when no override is given', () => {
+  it('[unit] default brand emits eZacto when no override is given', () => {
     const html = renderAppShell({
       environment: 'test',
       release: 'abc1234',
     })
-    expect(html).toContain('data-brand="ezacto"')
-    expect(html).toContain('Sign in to ezacto')
+    expect(html).toContain('data-brand="eZacto"')
+    expect(html).toContain('Sign in to eZacto')
     expect(html).toContain('Time, exactly.')
   })
 

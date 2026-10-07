@@ -288,7 +288,7 @@ const renderEditor = (path: string, hash: string): void => {
   document.close()
   // What the shell has done by the time the page activates: named the page and
   // let the signed-in shell take focus.
-  document.title = 'ezacto — Edit invoice'
+  document.title = 'eZacto — Edit invoice'
   const shell = document.querySelector<HTMLElement>('[data-authenticated-shell]')!
   shell.hidden = false
   shell.inert = false
@@ -369,7 +369,7 @@ describe('invoice edit page', () => {
     expect(globalThis.location.pathname).toBe('/invoices/INV-7/edit')
     expect(control<HTMLFormElement>('[data-invoice-edit-form]').hidden).toBe(false)
     expect(control('[data-invoice-edit-title]').textContent).toBe('Edit invoice INV-7')
-    expect(document.title).toBe('ezacto — Edit invoice INV-7')
+    expect(document.title).toBe('eZacto — Edit invoice INV-7')
     expect(control('[data-invoice-edit-client]').textContent).toBe('Northpeak')
     expect(api.listInvoiceClientProjects).toHaveBeenCalledWith(4, undefined, expect.any(AbortSignal))
     expect(control<HTMLInputElement>('[data-invoice-edit-subject]').value).toBe('August services')
@@ -831,7 +831,7 @@ describe('invoice edit page', () => {
     expect(rows()).toHaveLength(0)
     expect(control('[data-invoice-edit-client]').textContent).toBe('—')
     expect(control('[data-invoice-edit-status]').textContent).toBe('Sign in to edit this invoice.')
-    expect(document.title).toBe('ezacto — Edit invoice')
+    expect(document.title).toBe('eZacto — Edit invoice')
   })
 
   it('[e2e:phone-editor] keeps the line meta row to the project and the two taxes', () => {

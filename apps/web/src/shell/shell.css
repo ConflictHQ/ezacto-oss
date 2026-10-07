@@ -3533,9 +3533,8 @@ a {
   display: grid;
   place-items: center;
   color: var(--ez-band-ink);
-  font:
-    600 20px/1 var(--ez-font-mono),
-    monospace;
+  font: 800 19px/1 var(--ez-font-display);
+  letter-spacing: -0.03em;
   text-decoration: none;
   margin-right: 12px;
 }
@@ -3543,6 +3542,17 @@ a {
    pixel size: an operator uploads whatever their designer exported, and a
    2000px wordmark must not decide how tall the topbar is. Width follows so a
    wide lockup and a square glyph both keep their proportions. */
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.brand-logo {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  fill: currentColor;
+}
 .brand-mark {
   max-height: 32px;
   width: auto;

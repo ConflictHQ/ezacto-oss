@@ -691,7 +691,7 @@ describe('S-1 through S-5 application shell', () => {
     expect(unavailable).not.toContain('data-oidc-provider')
     expect(unavailable).not.toContain('data-oidc-entry')
     expect(unavailable).not.toContain('Single sign-on is not available')
-    expect(unavailable).toContain('Sign in to ezacto')
+    expect(unavailable).toContain('Sign in to eZacto')
     expect(webAssets.stylesheet).toMatch(/\.oidc-sign-in \{[\s\S]*min-height: 44px;/u)
     expect(webAssets.stylesheet).toMatch(/\.oidc-entry \{[\s\S]*display: grid;/u)
   })

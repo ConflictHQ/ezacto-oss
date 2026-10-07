@@ -15,13 +15,13 @@ export interface ReportBrand {
 }
 
 export const defaultBrand: DeploymentBrand = {
-  name: 'ezacto',
+  name: 'eZacto',
   tagline: 'Time, exactly.',
   description: 'Open-source time tracking and invoicing.',
 }
 
 export const defaultReportBrand: ReportBrand = {
-  name: 'ezacto',
+  name: 'eZacto',
 }
 
 export const resolveDeploymentBrand = (override?: Partial<DeploymentBrand>): DeploymentBrand => {

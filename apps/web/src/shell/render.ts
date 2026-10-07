@@ -10,7 +10,7 @@ import {
   resolveSidebarState,
   type SidebarState,
 } from '../nav-layout.js'
-import { type DeploymentBrand, resolveDeploymentBrand } from '../brand.js'
+import { type DeploymentBrand, defaultBrand, resolveDeploymentBrand } from '../brand.js'
 import { renderClientDirectoryPages } from '../clients/render.js'
 import { renderRoleAdminPage } from '../roles/render.js'
 import { renderProjectDirectoryPages } from '../projects/render.js'
@@ -289,9 +289,18 @@ const sameOriginMark = (source: string): boolean =>
  * text wordmark it has always rendered. `team/browser.ts` reached the same
  * conclusion about avatars for the same reason, and keeps its text underneath.
  */
+// The product's own mark, drawn only for the default brand: an operator who
+// renames the deployment without uploading a mark gets their name, not ours.
+const productLogo =
+  '<svg class="brand-logo" viewBox="0 0 60 60" aria-hidden="true" focusable="false">' +
+  '<path fill-rule="evenodd" clip-rule="evenodd" d="M20 0H40C53.3 0 60 6.7 60 20V40C60 53.3 53.3 60 40 60H20C6.7 60 0 53.3 0 40V20C0 6.7 6.7 0 20 0ZM13 25C14.3 23.7 15.7 23.7 17 25L26 34L43 14C44.3 12.7 46 12.7 48 14C50 15.3 50 17 48 19L30 41C28 43.7 26 44 24 42L12 31C10 29 10.3 27 13 25ZM27.5 8C27.5 6.3 28.3 5.5 30 5.5C31.7 5.5 32.5 6.3 32.5 8V12C32.5 13.7 31.7 14.5 30 14.5C28.3 14.5 27.5 13.7 27.5 12V8Z"/>' +
+  '</svg>'
+
 const wordmark = (source: string | undefined, brand: string): string =>
   source === undefined || source === '' || !sameOriginMark(source)
-    ? escapeHtml(brand)
+    ? brand === defaultBrand.name
+      ? `<span class="brand-lockup">${productLogo}<span class="brand-name">${escapeHtml(brand)}</span></span>`
+      : escapeHtml(brand)
     : `<img class="brand-mark" src="${escapeHtml(source)}" alt="${escapeHtml(brand)}">`
 
 export const renderEmptyState = (title: string, detail: string): string =>
@@ -588,7 +597,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
     width; below 900px both layouts fold into the Menu drawer.
   -->
   <header class="topbar" id="ez-app-nav" data-app-nav>
-    <a class="brand" href="/dashboard" aria-label="${escapeHtml(brand)} home" data-home-link><span class="brand-wordmark">${wordmark(b.wordmarkDark, brand)}</span><span class="brand-glyph">${iconMarkup('home')}</span></a>
+    <a class="brand" href="/dashboard" aria-label="${escapeHtml(brand)} home" data-home-link><span class="brand-wordmark">${wordmark(b.wordmarkDark, brand)}</span><span class="brand-glyph">${brand === defaultBrand.name && (b.wordmarkDark ?? '') === '' ? productLogo : iconMarkup('home')}</span></a>
     <button class="nav-collapse" type="button" data-sidebar-toggle aria-controls="ez-app-nav" aria-pressed="${sidebar === 'collapsed' ? 'true' : 'false'}" aria-label="Collapse sidebar">${iconMarkup('sidebar')}</button>
     <nav class="primary-nav" aria-label="Primary">${navigation}</nav>
     <button class="timer-chip" type="button" data-timer-chip data-state="loading" data-auth-action disabled aria-haspopup="dialog">

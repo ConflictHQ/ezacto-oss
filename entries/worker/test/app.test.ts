@@ -211,7 +211,7 @@ describe('worker entry', () => {
     expect(res.headers.get('content-type')).toContain('text/html')
 
     const html = await res.text()
-    expect(html).toContain('<title>ezacto — Sign in</title>')
+    expect(html).toContain('<title>eZacto — Sign in</title>')
     expect(html).toContain('abc1234')
     expect(html).toContain('data-auth-gateway data-state="checking"')
     expect(html).toContain('data-authenticated-shell hidden inert')
