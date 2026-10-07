@@ -283,27 +283,37 @@ const createStore = (
       )
     },
 
-    async markSuppressed(deliveryId) {
+    async markRefused(deliveryId, reason) {
+      // The column's own rule, checked here so a bad reason is this caller's
+      // error rather than a constraint failure from the database.
+      if (!/^[A-Za-z0-9_:]{1,128}$/u.test(reason)) {
+        throw new RangeError('email refusal reason must be 1-128 letters, digits, underscores or colons')
+      }
       const at = timestamp()
-      // A lease that has run out is no attempt at all; one that has not is a
-      // provider call in flight, and suppressing under it would race the send.
-      const suppressed = await database.first<EmailLogRow>(
+      // `provider_rejected` is the one failure the schema carries a reason on.
+      // The provider column is left as it is -- empty, for a message no
+      // provider was ever asked about -- which is what tells this apart. A lease
+      // that has run out is no attempt at all; one that has not is a provider
+      // call in flight, and refusing under it would race the send.
+      const refused = await database.first<EmailLogRow>(
         `UPDATE email_log
-         SET status = 'suppressed', active_attempt_id = NULL,
-           attempt_lease_expires_at = NULL, updated_at = ?
+         SET status = 'failed', failure_code = 'provider_rejected', failure_reason = ?,
+           active_attempt_id = NULL, attempt_lease_expires_at = NULL, updated_at = ?
          WHERE id = ? AND status = 'queued'
            AND (active_attempt_id IS NULL
              OR julianday(attempt_lease_expires_at) <= julianday(?))
          RETURNING ${columns}`,
-        [at, deliveryId, at],
+        [reason, at, deliveryId, at],
       )
-      if (suppressed !== null) return rowRecord(suppressed)
-      // Asked again for a message that already ended this way, which is every
+      if (refused !== null) return rowRecord(refused)
+      // Asked again for a message already refused this way, which is every
       // outbox retry of a persisted delivery: the answer is the same message.
       return rowRecord(
         await database.first<EmailLogRow>(
-          `SELECT ${columns} FROM email_log WHERE id = ? AND status = 'suppressed'`,
-          [deliveryId],
+          `SELECT ${columns} FROM email_log
+           WHERE id = ? AND status = 'failed' AND failure_code = 'provider_rejected'
+             AND failure_reason = ?`,
+          [deliveryId, reason],
         ),
       )
     },
@@ -341,8 +351,15 @@ const createStore = (
     },
 
     async countByStatus() {
+      // What a provider made of the mail, which is what these counts feed. A
+      // message refused before any provider saw it -- the public demo's mail
+      // to a domain it may not email (#931) -- says nothing about the sender's
+      // standing, so it is not a failure here. Every provider outcome names its
+      // provider, so outside the demo nothing matches and nothing changes.
       const rows = await database.all<{ status: string; count: number }>(
-        `SELECT status, count(*) AS count FROM email_log GROUP BY status`,
+        `SELECT status, count(*) AS count FROM email_log
+         WHERE NOT (status = 'failed' AND failure_code = 'provider_rejected' AND provider IS NULL)
+         GROUP BY status`,
         [],
       )
       const counts: Record<string, number> = {
@@ -351,7 +368,6 @@ const createStore = (
         bounced: 0,
         complained: 0,
         failed: 0,
-        suppressed: 0,
       }
       for (const row of rows) counts[row.status] = row.count
       return counts as Record<EmailDeliveryStatus, number>

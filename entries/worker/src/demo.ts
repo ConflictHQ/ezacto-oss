@@ -67,11 +67,12 @@ export const runDemoMaintenance = async (
  * every invoice email leaves from (#931).
  *
  * Sender identities are read-only on the demo and the nightly rebuild empties
- * them with everything else, so without this no visitor could send an invoice
- * at all -- and sending one, recorded and suppressed, is much of what the demo
- * is for. Nothing about it is invented: the address is the one the deployment
- * is configured to send from, attested by the same verifier a Verify click
- * runs, and none of it can be changed from the demo afterwards.
+ * them with everything else, so without this nobody could send an invoice from
+ * the demo at all -- not a visitor watching it go to the log, and not its
+ * operator testing invoice mail to an allowed domain before production. Nothing
+ * about it is invented: the address is the one the deployment is configured to
+ * send from, attested by the same verifier a Verify click runs, and none of it
+ * can be changed from the demo afterwards.
  *
  * Only where that verifier is Mailgun's, which reads the deployment's own
  * configuration and calls nobody. Verifying an SES identity is a call to AWS,

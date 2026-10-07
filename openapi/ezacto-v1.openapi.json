@@ -688,8 +688,7 @@
                 "sent",
                 "bounced",
                 "complained",
-                "failed",
-                "suppressed"
+                "failed"
               ]
             }
           },
@@ -24672,8 +24671,7 @@
               "sent",
               "bounced",
               "complained",
-              "failed",
-              "suppressed"
+              "failed"
             ]
           },
           "related_type": {

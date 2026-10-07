@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { createApp, demoDeployment, publishedDemoAccounts, type AppEnv } from '../src/app.js'
+import {
+  createApp,
+  demoDeployment,
+  demoMailDomains,
+  publishedDemoAccounts,
+  type AppEnv,
+} from '../src/app.js'
 import { runDemoMaintenance } from '../src/demo.js'
 import { demoAccounts } from '@ezacto/db/d1'
 
@@ -74,6 +80,39 @@ describe('demo deployment', () => {
         )
       }
     }
+  })
+
+  it('[security] reads the domains its mail may reach only where it is the demo', () => {
+    // Issue 931. Exact domains, lower case, each once; a stray `@` or space in
+    // the deployment variable is not a different domain.
+    expect(
+      demoMailDomains({
+        ...demo,
+        DEMO_MAIL_ALLOWED_DOMAINS: ' Example.COM, @example.org,,example.com ',
+      }),
+    ).toEqual(['example.com', 'example.org'])
+    // Unset or blank on the demo is no domain at all: it emails nobody.
+    expect(demoMailDomains(demo)).toEqual([])
+    expect(demoMailDomains({ ...demo, DEMO_MAIL_ALLOWED_DOMAINS: ' , ' })).toEqual([])
+    // Anywhere else the variable is not read, whatever it says.
+    for (const env of [base, { ...demo, ENVIRONMENT: 'prod' }]) {
+      expect(demoMailDomains({ ...env, DEMO_MAIL_ALLOWED_DOMAINS: 'example.com' })).toBeNull()
+    }
+  })
+
+  it('[unit] tells the demo\'s pages which domains its mail reaches, and no other deployment\'s', async () => {
+    const listed = { ...demo, DEMO_MAIL_ALLOWED_DOMAINS: 'example.com, example.org' }
+    expect(await (await app.request('/invoices/INV-1', {}, listed)).text()).toContain(
+      ' data-demo-mail-domains="example.com,example.org"',
+    )
+    expect(await (await app.request('/invoices/INV-1', {}, demo)).text()).toContain(
+      ' data-demo-mail-domains=""',
+    )
+    expect(
+      await (
+        await app.request('/invoices/INV-1', {}, { ...listed, ENVIRONMENT: 'prod' })
+      ).text(),
+    ).not.toContain('data-demo-mail-domains')
   })
 
   it('[unit] offers each published account with something to tell them apart', () => {

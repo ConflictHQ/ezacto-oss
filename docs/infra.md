@@ -271,7 +271,7 @@ tolerable is that nothing done to it survives the night.
 | Brand | **Folding Forks** — an invented firm; none of it is anyone's real book. The sign-in page and the brand tagline are where it says so |
 | Sign-in | `admin@ezacto.io` / `folding-forks-admin`, `user@ezacto.io` / `folding-forks-user` |
 | Data | 20 people, 8 clients, 16 projects, three years of hours, expenses and invoices — all invented |
-| Mail | Composed, logged and shown in each invoice's history as on any instance, then ended `suppressed`: none of it is handed to Mailgun or SES, whoever it is addressed to |
+| Mail | Sent through the real transport, but only to the domains in `DEMO_MAIL_ALLOWED_DOMAINS` (below); everything else is logged and ends `failed` without reaching a provider |
 | Rebuild | `0 3 * * *` empties and reseeds, then makes the deployment's own Mailgun address the default sender; the every-minute cron bills the backlog ten client-months at a time |
 
 Two switches, and both must agree: `DEMO_MODE=true` **and** `ENVIRONMENT` other
@@ -281,10 +281,18 @@ way this goes wrong — publishes nothing and wipes nothing. Everything
 demo-shaped asks `demoDeployment()` in `entries/worker/src/app.ts`.
 
 Because anyone can sign in, the demo reaches nothing outside its own database
-(#931), whatever secrets the dev deployment carries:
+except the mail its operator allows (#931), whatever secrets the dev deployment
+carries:
 
-- **Mail** is suppressed at the one producer every mailer is built on, and the
-  queue consumer builds no transport on the demo at all.
+- **Mail** goes out through the real transport, because the demo is where mail
+  is tested before production — but only to recipients at the domains listed
+  in `DEMO_MAIL_ALLOWED_DOMAINS`. The one producer every mailer is built on
+  drops every other To and Cc address before the queue; a message left with
+  nobody is not queued at all, and its log row ends `failed` with the reason
+  `demo_recipient_not_allowed` (the Deliveries screen spells it out, and the
+  email health figures leave it out, since no provider saw it). The queue
+  consumer applies the same list to anything already on the queue. The log
+  keeps every address a message was written to; only what goes is narrowed.
 - **Providers** — QuickBooks, BILL, Wise, Stripe — are composed with no
   credentials, so no mirror, payment link, payout or reconciliation can run.
 - **Routes** that would connect or configure a provider, mint a payment link,
@@ -293,9 +301,26 @@ Because anyone can sign in, the demo reaches nothing outside its own database
   payment options, or upload any file, answer `403 demo_disabled` — "Not
   available on the public demo." The list is `entries/worker/src/demo-lockdown.ts`,
   and the screens disable those controls with the same note.
-- **Storage** is never written: uploads meet a read-only store, invoice
-  documents are not staged for mail that is never fetched, and the demo is not
-  exported nightly into a bucket the rebuild never empties.
+- **Storage** takes no visitor's file: uploads meet a read-only store, and the
+  demo is not exported nightly into a bucket the rebuild never empties. Invoice
+  documents are still rendered and staged, because allowed mail carries them.
+
+### Which domains the demo may email
+
+`DEMO_MAIL_ALLOWED_DOMAINS` is a comma-separated list of recipient domains,
+matched exactly and case-insensitively — `example.com` admits
+`someone@example.com` and not `someone@mail.example.com`:
+
+```
+DEMO_MAIL_ALLOWED_DOMAINS=example.com,example.org
+```
+
+It is deployment configuration, not code, so it never appears in this
+repository: the deploy workflow reads it from the GitHub environment variable
+of the same name (`vars.DEMO_MAIL_ALLOWED_DOMAINS` on the `dev` environment) and
+puts it on the Worker as a plain var. Nothing in the app can change it. Unset or
+empty on the demo, the demo emails nobody; on any deployment that is not the
+demo it is ignored.
 
 The history is anchored to the day it is built, not to a fixed calendar, so the
 demo always shows a book of work running up to today.

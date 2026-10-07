@@ -21,7 +21,6 @@ const statuses = new Set<EmailDeliveryStatus>([
   'bounced',
   'complained',
   'failed',
-  'suppressed',
 ])
 
 const emailLogData = (record: EmailLogRecord) => ({

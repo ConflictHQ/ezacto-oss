@@ -1,11 +1,11 @@
 import * as Sentry from '@sentry/cloudflare'
 import type { QueuedEmailJob } from '@ezacto/mailer'
-import { createApp, demoDeployment, type WorkerEnv } from './app.js'
+import { createApp, demoDeployment, demoMailDomains, type WorkerEnv } from './app.js'
 import { isDataRequest } from './data-request.js'
 import { workerBrandAssetSurface } from './brand-assets.js'
 import { workerSignInMethodSurface } from './sign-in-methods.js'
 import { workerInstanceThemeSurface } from './instance-theme.js'
-import { consumeCloudflareEmailBatch, suppressCloudflareEmailBatch } from './email-queue.js'
+import { consumeCloudflareEmailBatch } from './email-queue.js'
 import { createAttachmentResolver } from './invoice-documents.js'
 import { runDemoMaintenance, seedDemoSender } from './demo.js'
 import { runNightlyExport } from './nightly-export.js'
@@ -154,13 +154,6 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
     }
   },
   async queue(batch, env) {
-    // The demo never constructs a transport here, so nothing that reaches its
-    // queue can be sent, whoever enqueued it (#931).
-    if (demoDeployment(env)) {
-      const services = await createRuntimeServices(env)
-      await suppressCloudflareEmailBatch(batch, services.emailLog)
-      return
-    }
     const provider = createWorkerMailProvider(env)
     if (provider === null) {
       throw new TypeError('no email provider is configured')
@@ -177,6 +170,9 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
       env.ATTACHMENTS === undefined
         ? undefined
         : createAttachmentResolver(createR2AttachmentObjectStore(env.ATTACHMENTS)),
+      // The demo's second net (#931): whoever enqueued a job, it reaches only
+      // the domains the demo may email. Absent everywhere else.
+      demoMailDomains(env) ?? undefined,
     )
   },
   async scheduled(controller, env) {

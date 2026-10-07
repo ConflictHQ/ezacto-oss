@@ -122,6 +122,9 @@ const deploy = async (kind: 'demo' | 'prod'): Promise<Fixture> => {
     APP_BASE_URL: 'https://demo.example.test',
     ENVIRONMENT: kind === 'demo' ? 'dev' : 'prod',
     DEMO_MODE: 'true',
+    // Read only where the deployment is the demo. Set here for both, so the
+    // production fixture proves it is ignored there.
+    DEMO_MAIL_ALLOWED_DOMAINS: ' Allowed.Example, @other.example ',
     RELEASE: 'demo-lockdown-test',
     BRAND_EMAIL_SENDER_NAME: 'Folding Forks',
     MAIL_FROM: 'Folding Forks <billing@demo.example.test>',
@@ -371,68 +374,132 @@ describe('the public demo (ENVIRONMENT=dev, DEMO_MODE=true)', () => {
     expect(rows?.count).toBe(0)
   })
 
-  it('[api] records an invoice email as suppressed and hands nothing to a transport', async () => {
+  it('[security] delivers an invoice email to the allowed recipients and nobody else', async () => {
     await draftInvoice(fixture, 503)
     const sent = await call(fixture, 'POST', '/api/v1/invoices/503/deliveries', {
       body: {
         expected_version: 0,
         recipients: [{ name: 'Accounts', email: 'accounts@client.example' }],
-        cc: [{ name: 'Finance', email: 'finance@client.example' }],
+        cc: [
+          { name: 'Owner', email: 'owner@Allowed.Example' },
+          { name: 'Finance', email: 'finance@client.example' },
+        ],
         confirmed: true,
       },
     })
     expect(sent.status).toBe(202)
     await fixture.services.outbox.drain()
 
+    // One job, carrying the allowed copy alone -- addressed To them, since
+    // nobody in To may be emailed -- and the invoice PDF it was sent with.
+    const job = fixture.jobs.find((queued) => queued.message.template.startsWith('invoice:'))!
+    expect(job.message.to).toEqual([{ email: 'owner@allowed.example', name: 'Owner' }])
+    expect(job.message).not.toHaveProperty('cc')
+    expect(job.attachments?.map((file) => file.contentType)).toContain('application/pdf')
+    // The log keeps what the sender asked for; only the queue was narrowed.
     const logged = (await fixture.services.emailLog.list()).filter(
       (record) => record.relatedType === 'invoice_message',
     )
     expect(logged).toEqual([
       expect.objectContaining({
-        status: 'suppressed',
-        provider: null,
-        providerMessageId: null,
-        attemptCount: 0,
+        status: 'queued',
         to: [{ email: 'accounts@client.example', name: 'Accounts' }],
-        cc: [{ email: 'finance@client.example', name: 'Finance' }],
       }),
     ])
-    // The invoice's history still shows the send, and what became of it.
+    // No pay link: Stripe was configured with a key and the invoice offers card
+    // payment, and neither Stripe nor BILL was asked for one.
     const messages = (await (await call(fixture, 'GET', '/api/v1/invoices/503/messages')).json()) as {
       data: { delivery_status: string; body: string | null }[]
     }
-    expect(messages.data.map((message) => message.delivery_status)).toEqual(['suppressed'])
-    // No pay link: Stripe was configured with a key and the invoice offers card
-    // payment, and neither Stripe nor BILL was asked for one.
     expect(messages.data[0]!.body ?? '').not.toMatch(/https?:\/\//u)
     expect(outbound).toEqual([])
-    expect(fixture.queueSend).not.toHaveBeenCalled()
-    // The document a delivery would carry is not staged in the bucket either.
-    expect(fixture.bucketPut).not.toHaveBeenCalled()
   }, 30_000)
 
-  it('[api] suppresses the preview a sender emails to themselves', async () => {
+  it('[security] hands nothing to a transport when nobody it is addressed to is allowed', async () => {
     await draftInvoice(fixture, 504)
-    const preview = await call(fixture, 'POST', '/api/v1/invoices/504/deliveries/preview/send', {
+    fixture.queueSend.mockClear()
+    const sent = await call(fixture, 'POST', '/api/v1/invoices/504/deliveries', {
       body: {
+        expected_version: 0,
         recipients: [{ name: 'Accounts', email: 'accounts@client.example' }],
-        attach_pdf: true,
+        cc: [{ name: 'Lookalike', email: 'a@mail.allowed.example' }],
+        confirmed: true,
       },
+    })
+    expect(sent.status).toBe(202)
+    await fixture.services.outbox.drain()
+
+    expect(fixture.queueSend).not.toHaveBeenCalled()
+    const logged = (await fixture.services.emailLog.list()).filter(
+      (record) => record.relatedType === 'invoice_message' && record.subject.includes('INV-504'),
+    )
+    expect(logged).toEqual([
+      expect.objectContaining({
+        status: 'failed',
+        provider: null,
+        failureCode: 'provider_rejected',
+        failureReason: 'demo_recipient_not_allowed',
+      }),
+    ])
+    // The invoice's history shows the send, and that it did not go.
+    const messages = (await (await call(fixture, 'GET', '/api/v1/invoices/504/messages')).json()) as {
+      data: { delivery_status: string }[]
+    }
+    expect(messages.data.map((message) => message.delivery_status)).toEqual(['failed'])
+    expect(outbound).toEqual([])
+  }, 30_000)
+
+  it('[security] sends nothing at all where the deployment lists no domain', async () => {
+    // The same demo, deployed without DEMO_MAIL_ALLOWED_DOMAINS: fail closed.
+    const env: WorkerEnv = { ...fixture.env, DEMO_MAIL_ALLOWED_DOMAINS: undefined }
+    const services = await createRuntimeServices(env)
+    const app = createApp(services, workerBrandAssetSurface, workerInstanceThemeSurface)
+    await draftInvoice(fixture, 505)
+    fixture.queueSend.mockClear()
+    const sent = await app.request(
+      '/api/v1/invoices/505/deliveries',
+      {
+        method: 'POST',
+        headers: {
+          origin: 'http://localhost',
+          cookie: fixture.cookie,
+          'idempotency-key': 'demo-lockdown-unlisted',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          expected_version: 0,
+          recipients: [{ name: 'Owner', email: 'owner@allowed.example' }],
+          confirmed: true,
+        }),
+      },
+      env,
+    )
+    expect(sent.status).toBe(202)
+    await services.outbox.drain()
+    expect(fixture.queueSend).not.toHaveBeenCalled()
+    const logged = (await services.emailLog.list()).filter((record) =>
+      record.subject.includes('INV-505'),
+    )
+    expect(logged.map((record) => record.failureReason)).toEqual(['demo_recipient_not_allowed'])
+  }, 30_000)
+
+  it('[security] holds every other mail path to the same list: a preview, a password reset', async () => {
+    // Both go to the demo administrator, whose domain is not on the list.
+    fixture.queueSend.mockClear()
+    await draftInvoice(fixture, 506)
+    const preview = await call(fixture, 'POST', '/api/v1/invoices/506/deliveries/preview/send', {
+      body: { recipients: [{ name: 'Owner', email: 'owner@allowed.example' }] },
     })
     expect(preview.status).toBe(202)
     const { data } = (await preview.json()) as { data: { delivery_id: number } }
     await expect(fixture.services.emailLog.get(data.delivery_id)).resolves.toMatchObject({
-      status: 'suppressed',
+      status: 'failed',
       relatedType: 'invoice_preview',
+      failureReason: 'demo_recipient_not_allowed',
       to: [{ email: owner.email, name: 'Demo Administrator' }],
     })
-    expect(outbound).toEqual([])
-    expect(fixture.queueSend).not.toHaveBeenCalled()
-    expect(fixture.bucketPut).not.toHaveBeenCalled()
-  }, 30_000)
 
-  it('[api] suppresses account mail: a password reset goes nowhere', async () => {
-    const response = await fixture.app.request(
+    const reset = await fixture.app.request(
       '/auth/password/forgot',
       {
         method: 'POST',
@@ -441,52 +508,95 @@ describe('the public demo (ENVIRONMENT=dev, DEMO_MODE=true)', () => {
       },
       fixture.env,
     )
-    expect(response.status).toBe(202)
-    const reset = (await fixture.services.emailLog.list()).filter((record) =>
+    expect(reset.status).toBe(202)
+    const resets = (await fixture.services.emailLog.list()).filter((record) =>
       record.template.startsWith('auth_password_reset'),
     )
-    expect(reset).toEqual([expect.objectContaining({ status: 'suppressed' })])
+    expect(resets).toEqual([
+      expect.objectContaining({ status: 'failed', failureReason: 'demo_recipient_not_allowed' }),
+    ])
     expect(fixture.queueSend).not.toHaveBeenCalled()
     expect(outbound).toEqual([])
+  }, 30_000)
+
+  it('[security] leaves refused mail out of the sending reputation', async () => {
+    // A message held back here, so the figures have one to leave out: no
+    // provider saw it, and it says nothing about how the sender's mail lands.
+    await draftInvoice(fixture, 507)
+    const preview = await call(fixture, 'POST', '/api/v1/invoices/507/deliveries/preview/send', {
+      body: { recipients: [{ name: 'Owner', email: 'owner@allowed.example' }] },
+    })
+    expect(preview.status).toBe(202)
+    const { data } = (await preview.json()) as { data: { delivery_id: number } }
+    await expect(fixture.services.emailLog.get(data.delivery_id)).resolves.toMatchObject({
+      status: 'failed',
+      failureReason: 'demo_recipient_not_allowed',
+    })
+
+    const health = await call(fixture, 'GET', '/api/v1/email-health')
+    expect(health.status).toBe(200)
+    expect(((await health.json()) as { data: { reputation: { failed: number } } }).data.reputation.failed).toBe(0)
   })
 
-  it('[integration] its queue consumer suppresses whatever reaches it and builds no transport', async () => {
-    // Enqueued before this deployment was the demo, say: on the queue already,
-    // where a provider would have picked it up.
-    const queued = await fixture.services.emailLog.createQueued({
-      from: { email: 'billing@demo.example.test' },
-      to: [{ email: 'someone@elsewhere.example' }],
-      template: 'invoice:1',
-      subject: 'Invoice INV-9',
-      text: 'An invoice from before.',
-    })
-    const message = {
-      body: {
-        schemaVersion: 1 as const,
-        deliveryId: queued.id,
+  it('[integration] its queue consumer holds whatever reaches it to the same list', async () => {
+    // On the queue already -- enqueued before this deployment was the demo,
+    // say -- where the producer never saw it.
+    const job = async (to: string): Promise<{ id: number; message: { body: QueuedEmailJob; attempts: number; ack: ReturnType<typeof vi.fn>; retry: ReturnType<typeof vi.fn> } }> => {
+      const message = {
+        from: { email: 'billing@demo.example.test' },
+        to: [{ email: to }],
+        cc: [{ email: 'finance@client.example' }],
+        template: 'invoice:1',
+        subject: `Invoice for ${to}`,
+        text: 'An invoice from before.',
+      }
+      const queued = await fixture.services.emailLog.createQueued(message)
+      return {
+        id: queued.id,
         message: {
-          from: { email: 'billing@demo.example.test' },
-          to: [{ email: 'someone@elsewhere.example' }],
-          template: 'invoice:1',
-          subject: 'Invoice INV-9',
-          text: 'An invoice from before.',
+          body: { schemaVersion: 1, deliveryId: queued.id, message },
+          attempts: 1,
+          ack: vi.fn(),
+          retry: vi.fn(),
         },
-      },
-      attempts: 1,
-      ack: vi.fn(),
-      retry: vi.fn(),
+      }
     }
+    const nobody = await job('someone@elsewhere.example')
+    const allowed = await job('ops@allowed.example')
+    const bodies: string[] = []
+    answer = (url) =>
+      url.host === 'api.mailgun.net'
+        ? Response.json({ id: '<allowed@demo.example.test>', message: 'Queued. Thank you.' })
+        : null
+    const recordBody = vi.spyOn(globalThis, 'fetch')
     await worker.queue!(
-      { messages: [message] } as unknown as MessageBatch<QueuedEmailJob>,
+      { messages: [nobody.message, allowed.message] } as unknown as MessageBatch<QueuedEmailJob>,
       fixture.env,
       executionContext,
     )
-    await expect(fixture.services.emailLog.get(queued.id)).resolves.toMatchObject({
-      status: 'suppressed',
+    for (const [request] of recordBody.mock.calls) {
+      if (request instanceof Request && new URL(request.url).host === 'api.mailgun.net') {
+        bodies.push(await request.clone().text())
+      }
+    }
+
+    await expect(fixture.services.emailLog.get(nobody.id)).resolves.toMatchObject({
+      status: 'failed',
+      failureReason: 'demo_recipient_not_allowed',
     })
-    expect(message.ack).toHaveBeenCalledOnce()
-    expect(message.retry).not.toHaveBeenCalled()
-    expect(outbound).toEqual([])
+    await expect(fixture.services.emailLog.get(allowed.id)).resolves.toMatchObject({
+      status: 'sent',
+      provider: 'mailgun',
+    })
+    // One call, for the allowed message, carrying the allowed address alone.
+    expect(outbound).toEqual(['api.mailgun.net/v3/demo.example.test/messages'])
+    expect(bodies).toHaveLength(1)
+    const sent = new URLSearchParams(bodies[0])
+    expect(sent.getAll('to').join(',')).toContain('ops@allowed.example')
+    expect(sent.getAll('cc')).toEqual([])
+    expect(bodies[0]).not.toContain('client.example')
+    expect(nobody.message.ack).toHaveBeenCalledOnce()
+    expect(allowed.message.ack).toHaveBeenCalledOnce()
   })
 })
 
@@ -612,12 +722,13 @@ describe('production with DEMO_MODE left on (ENVIRONMENT=prod)', () => {
     expect(options.status).toBe(200)
   })
 
-  it('[api] still sends invoice email through the queue, and asks Stripe for a link', async () => {
+  it('[api] still sends invoice email to everyone it names, and asks Stripe for a link', async () => {
     await draftInvoice(fixture, 602)
     const sent = await call(fixture, 'POST', '/api/v1/invoices/602/deliveries', {
       body: {
         expected_version: 0,
         recipients: [{ name: 'Accounts', email: 'accounts@client.example' }],
+        cc: [{ name: 'Owner', email: 'owner@allowed.example' }],
         confirmed: true,
       },
     })
@@ -626,9 +737,11 @@ describe('production with DEMO_MODE left on (ENVIRONMENT=prod)', () => {
     // here, so the send goes without one -- but it was asked.
     expect(outbound.some((call) => call.startsWith('api.stripe.com'))).toBe(true)
     await fixture.services.outbox.drain()
-    expect(fixture.jobs.map((job) => job.message.to)).toContainEqual([
-      { email: 'accounts@client.example', name: 'Accounts' },
-    ])
+    // DEMO_MAIL_ALLOWED_DOMAINS is set on this deployment too, and changes
+    // nothing: production is not the demo.
+    const job = fixture.jobs.find((queued) => queued.message.template.startsWith('invoice:'))!
+    expect(job.message.to).toEqual([{ email: 'accounts@client.example', name: 'Accounts' }])
+    expect(job.message.cc).toEqual([{ email: 'owner@allowed.example', name: 'Owner' }])
     const logged = (await fixture.services.emailLog.list()).filter(
       (record) => record.relatedType === 'invoice_message',
     )

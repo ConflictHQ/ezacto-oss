@@ -8,8 +8,8 @@ import { ApiError } from '@ezacto/api'
  * demo's own database: a payment or accounting provider, the identity the
  * operator's real mail is sent under, the details an invoice tells a client to
  * pay into, or object storage the nightly rebuild never empties. Mail is not
- * here. It is still sent, as far as anyone using the demo can tell, and
- * suppressed at the queue instead -- see `createSuppressingEmailQueue`.
+ * here: it is sent, and held at the queue to the domains the deployment lists
+ * -- see `demoMailDomains` and `createRecipientAllowlistQueue`.
  *
  * Declared rather than checked route by route, in the form `entry-surface.ts`
  * uses, so the list can be read in one place and `demo-lockdown.test.ts` can

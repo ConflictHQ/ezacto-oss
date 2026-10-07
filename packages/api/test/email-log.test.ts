@@ -111,13 +111,6 @@ describe('email log API', () => {
     })
   })
 
-  it('[api] filters on suppressed, the mail the demo records and never sends', async () => {
-    const { app, list } = harness('administrator')
-    const response = await app.request('/api/v1/email-log?status=suppressed')
-    expect(response.status).toBe(200)
-    expect(list).toHaveBeenCalledWith({ status: 'suppressed', limit: 100 })
-  })
-
   it('[api] validates status and page size before querying the log', async () => {
     const { app, list } = harness('administrator')
     expect((await app.request('/api/v1/email-log?status=delivered')).status).toBe(422)

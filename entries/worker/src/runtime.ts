@@ -109,14 +109,13 @@ import type {
   CloudflareAccessFetch,
   CloudflareAccessVerifier,
   CloudflareAccessVerifierConfig,
-  InvoiceDocumentPort,
 } from "@ezacto/api";
 import {
   MailgunMailer,
   SenderIdentityUnavailableError,
   SesMailer,
   configuredEmailSender,
-  createSuppressingEmailQueue,
+  createRecipientAllowlistQueue,
   type EmailQueue,
   type HttpEmailProvider,
   type MailgunOptions,
@@ -128,6 +127,7 @@ import {
   cloudflareAccessConfig,
   DEMO_API_TOKEN_MAX_LIFETIME_MS,
   demoDeployment,
+  demoMailDomains,
   type WorkerEnv,
 } from "./app.js";
 import {
@@ -575,19 +575,6 @@ export const providerCredentials = (env: WorkerEnv): ProviderCredentials =>
   demoDeployment(env) ? {} : env;
 
 /**
- * The demo's invoice documents (#931). Rendering one and previewing it are the
- * demo doing what it is for; staging one for delivery writes bytes to the
- * bucket for a message that is suppressed before anything could fetch them,
- * and the nightly rebuild empties the database but never the bucket. So the
- * demo stages nothing, and its suppressed mail names no file.
- */
-const withoutStagedDocuments = (port: InvoiceDocumentPort): InvoiceDocumentPort => ({
-  ...port,
-  prepare: async () => [],
-  stagePreview: async () => [],
-});
-
-/**
  * Object storage the demo reads and never writes (#931). The upload routes are
  * refused before they get here; this refuses with the same answer whatever
  * route reaches it, including one added after that list was written.
@@ -669,16 +656,21 @@ export const createRuntimeServices = async (
   const emailQueueReady =
     emailTransportReady && env.APP_BASE_URL !== undefined;
   // Where every message this deployment composes goes next, and so the one
-  // place the demo stops them (#931): composed, validated and logged as they
-  // are anywhere, then ended `suppressed` instead of being put on the queue a
-  // provider reads. Every mailer below is built on this, so a mail path added
-  // later is suppressed without anyone having to remember the demo.
+  // place the demo holds them to its allowlist (#931): composed, validated and
+  // logged as anywhere, then queued for the allowed recipients alone, or ended
+  // `failed` where none is allowed. Every mailer below is built on this, so a
+  // mail path added later is held to the list without anyone remembering it.
+  const mailDomains = demoMailDomains(env);
   const emailQueue: EmailQueue | undefined =
     env.EMAIL_QUEUE === undefined
       ? undefined
-      : demo
-        ? createSuppressingEmailQueue(emailLog)
-        : createCloudflareEmailQueue(env.EMAIL_QUEUE);
+      : mailDomains === null
+        ? createCloudflareEmailQueue(env.EMAIL_QUEUE)
+        : createRecipientAllowlistQueue(
+            createCloudflareEmailQueue(env.EMAIL_QUEUE),
+            emailLog,
+            mailDomains,
+          );
   const mailFrom = resolveMailFrom(env);
   const deploymentAuthMailer =
     !emailQueueReady || mailFrom === undefined
@@ -877,7 +869,7 @@ export const createRuntimeServices = async (
   // The document an invoice carries, composed where the storage is. Absent
   // without an attachments bucket, in which case the subscriber is given no
   // port and sends exactly what it sent before (issue 626).
-  const composedDocuments =
+  const invoiceDocuments =
     env.ATTACHMENTS === undefined
       ? undefined
       : createInvoiceDocumentPort({
@@ -897,10 +889,6 @@ export const createRuntimeServices = async (
             paymentUrl: invoicePaymentUrlForMail({ bill, stripe }),
           },
         });
-  const invoiceDocuments =
-    composedDocuments === undefined || !demo
-      ? composedDocuments
-      : withoutStagedDocuments(composedDocuments);
 
   // The thank-you an invoice sends when it settles (issue 545). Subscribes to
   // `invoice.paid`, which the reducer emits only when the payment status

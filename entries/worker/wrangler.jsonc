@@ -110,6 +110,9 @@
         // nightly cron empty the database. Both are refused outside a
         // non-production ENVIRONMENT whatever this says.
         "DEMO_MODE": "true",
+        // The recipient domains the demo may email are deliberately not here:
+        // the deploy workflow passes DEMO_MAIL_ALLOWED_DOMAINS from the GitHub
+        // environment. Unset, the demo emails nobody.
       },
       "d1_databases": [
         {

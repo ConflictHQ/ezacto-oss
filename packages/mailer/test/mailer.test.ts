@@ -8,9 +8,11 @@ import {
   InProcessEmailQueue,
   createDeploymentSenderQueuedMailer,
   createQueuedMailer,
+  createRecipientAllowlistQueue,
   createSenderBoundQueuedMailer,
-  createSuppressingEmailQueue,
   processQueuedEmail,
+  RECIPIENT_NOT_ALLOWED,
+  restrictRecipients,
   type EmailLogRecord,
   type EmailLogStore,
   type EmailMessage,
@@ -76,12 +78,14 @@ const store = (): EmailLogStore => {
     markQueueFailed: vi.fn(async () =>
       record({ status: 'failed', failureCode: 'queue_unavailable' }),
     ),
-    markSuppressed: vi.fn(async () => record({ status: 'suppressed' })),
+    markRefused: vi.fn(async (_id: number, reason: string) =>
+      record({ status: 'failed', failureCode: 'provider_rejected', failureReason: reason }),
+    ),
     markBounced: vi.fn(async () => record({ status: 'bounced' })),
     markComplained: vi.fn(async () => record({ status: 'complained' })),
     getByProviderMessageId: vi.fn(async () => record()),
     countByStatus: vi.fn(async () => ({
-      queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0, suppressed: 0,
+      queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0,
     })),
     list: vi.fn(async () => []),
   }
@@ -1095,43 +1099,84 @@ describe('cc', () => {
 })
 
 /**
- * The public demo's producer (#931). What it has to prove is narrow: a message
- * still goes through everything that validates and records it, and then ends
- * in the log rather than anywhere a consumer could pick it up.
+ * The public demo's mail (#931): delivered, but only to the domains its
+ * deployment lists. What has to hold is that nobody else is ever on what goes
+ * to the queue, and that a message with nobody left goes nowhere.
  */
-describe('suppressing queue', () => {
-  it('[unit] records the message and ends it suppressed, with nothing downstream', async () => {
-    const log = store()
-    const mailer = createQueuedMailer(log, createSuppressingEmailQueue(log))
-    const delivery = await mailer.enqueue(message)
+describe('recipient allowlist', () => {
+  const allowed = new Set(['allowed.example'])
+  const mixed: EmailMessage = {
+    ...message,
+    to: [{ email: 'payer@client.example' }, { email: 'Owner@Allowed.Example', name: 'Owner' }],
+    cc: [{ email: 'finance@client.example' }, { email: 'ops@allowed.example' }],
+  }
 
-    expect(log.createQueued).toHaveBeenCalledTimes(1)
-    expect(log.markSuppressed).toHaveBeenCalledWith(delivery.id)
-    // The steps a consumer would take, none of which has anything to act on.
-    expect(log.claimAttempt).not.toHaveBeenCalled()
-    expect(log.markSent).not.toHaveBeenCalled()
+  it('[security] keeps only the allowed recipients, matching the domain whole and in any case', () => {
+    expect(restrictRecipients(mixed, allowed)).toEqual({
+      ...mixed,
+      to: [{ email: 'Owner@Allowed.Example', name: 'Owner' }],
+      cc: [{ email: 'ops@allowed.example' }],
+    })
+    // A subdomain, or a domain that merely ends the same way, is another domain.
+    expect(
+      restrictRecipients(
+        { ...message, to: [{ email: 'a@mail.allowed.example' }, { email: 'b@notallowed.example' }] },
+        allowed,
+      ),
+    ).toBeNull()
+  })
+
+  it('[unit] addresses the copies when nobody in To may be emailed, and drops an empty Cc', () => {
+    expect(
+      restrictRecipients(
+        { ...message, to: [{ email: 'payer@client.example' }], cc: [{ email: 'ops@allowed.example' }] },
+        allowed,
+      ),
+    ).toEqual({ ...message, to: [{ email: 'ops@allowed.example' }] })
+    const onlyTo = restrictRecipients(
+      { ...message, to: [{ email: 'ops@allowed.example' }], cc: [{ email: 'payer@client.example' }] },
+      allowed,
+    )
+    expect(onlyTo).not.toHaveProperty('cc')
+  })
+
+  it('[security] queues the allowed recipients alone, and refuses a message with none', async () => {
+    const log = store()
+    const queue = { send: vi.fn(async () => undefined) }
+    const mailer = createQueuedMailer(
+      log,
+      createRecipientAllowlistQueue(queue, log, ['ALLOWED.example ']),
+    )
+
+    await mailer.enqueue(mixed)
+    expect(queue.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({
+          to: [{ email: 'owner@allowed.example', name: 'Owner' }],
+          cc: [{ email: 'ops@allowed.example' }],
+        }),
+      }),
+    )
+    // The log keeps what was asked; only the queue is narrowed.
+    expect(log.createQueued).toHaveBeenCalledWith(
+      expect.objectContaining({ to: expect.arrayContaining([{ email: 'payer@client.example' }]) }),
+    )
+
+    queue.send.mockClear()
+    const refused = await mailer.enqueue({ ...message, to: [{ email: 'payer@client.example' }] })
+    expect(queue.send).not.toHaveBeenCalled()
+    expect(log.markRefused).toHaveBeenCalledWith(refused.id, RECIPIENT_NOT_ALLOWED)
     expect(log.markQueueFailed).not.toHaveBeenCalled()
   })
 
-  it('[unit] still refuses a message the real queue would refuse, before logging it', async () => {
+  it('[security] with no domain listed, sends nothing to anyone', async () => {
     const log = store()
-    const mailer = createQueuedMailer(log, createSuppressingEmailQueue(log))
-    await expect(mailer.enqueue({ ...message, to: [] })).rejects.toThrow(
-      'to must contain between 1 and 100 recipients',
-    )
-    expect(log.createQueued).not.toHaveBeenCalled()
-    expect(log.markSuppressed).not.toHaveBeenCalled()
-  })
-
-  it('[unit] suppresses a persisted delivery each time the outbox re-enqueues it', async () => {
-    // The outbox retries by enqueueing the same delivery again, so the
-    // suppression has to be the same answer the second time, not a failure.
-    const log = store()
-    const queued = createQueuedMailer(log, createSuppressingEmailQueue(log))
-    await queued.enqueueExisting!(700, message)
-    await queued.enqueueExisting!(700, message)
-    expect(log.createQueued).not.toHaveBeenCalled()
-    expect(log.markSuppressed).toHaveBeenNthCalledWith(1, 700)
-    expect(log.markSuppressed).toHaveBeenNthCalledWith(2, 700)
+    const queue = { send: vi.fn(async () => undefined) }
+    const mailer = createQueuedMailer(log, createRecipientAllowlistQueue(queue, log, []))
+    await mailer.enqueue(mixed)
+    await mailer.enqueueExisting!(700, mixed)
+    expect(queue.send).not.toHaveBeenCalled()
+    expect(log.markRefused).toHaveBeenCalledTimes(2)
+    expect(log.markRefused).toHaveBeenLastCalledWith(700, RECIPIENT_NOT_ALLOWED)
   })
 })

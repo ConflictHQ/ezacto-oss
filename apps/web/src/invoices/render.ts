@@ -126,7 +126,7 @@ export const renderInvoiceComposerDialog = (): string => `
           <label class="invoice-composer-check"><input name="deliver" data-invoice-composer-deliver-toggle type="checkbox" aria-describedby="invoice-deliver-hint"> Also deliver by email</label>
           <p class="hint" id="invoice-deliver-hint">One email from the verified organization sender, To and Cc as listed, with the subject and message above and the attachments chosen below.</p>
           <p class="hint" data-invoice-composer-delivery-unavailable hidden></p>
-          <p class="hint" data-invoice-composer-demo hidden>This is the public demo: email is recorded here, and never delivered to anyone.</p>
+          <p class="hint" data-invoice-composer-demo hidden></p>
           <p class="invoice-composer-no-email" data-invoice-composer-no-email hidden>Nothing will be emailed — this only records the invoice as sent.</p>
           <fieldset class="invoice-composer-attachments" data-invoice-composer-attachments>
             <legend>Attach to the email</legend>

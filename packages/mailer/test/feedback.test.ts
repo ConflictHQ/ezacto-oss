@@ -42,7 +42,7 @@ const store = (): EmailLogStore => {
     markSent: vi.fn(async () => record()),
     markProviderFailed: vi.fn(async () => record({ status: 'failed' })),
     markQueueFailed: vi.fn(async () => record({ status: 'failed', failureCode: 'queue_unavailable' })),
-    markSuppressed: vi.fn(async () => record({ status: 'suppressed' })),
+    markRefused: vi.fn(async () => record({ status: 'failed', failureCode: 'provider_rejected' })),
     markBounced: vi.fn(async () => record({ status: 'bounced' })),
     markComplained: vi.fn(async () => record({ status: 'complained' })),
     getByProviderMessageId: vi.fn(async () => record()),
@@ -52,7 +52,6 @@ const store = (): EmailLogStore => {
       bounced: 30,
       complained: 5,
       failed: 15,
-      suppressed: 0,
     })),
     list: vi.fn(async () => []),
   }
@@ -146,8 +145,6 @@ describe('reputation snapshot', () => {
       bounced: 30,
       complained: 5,
       failed: 15,
-      // Never reached a provider, so never part of what a provider judges.
-      suppressed: 40,
     })
     // sent denominator = sent + bounced + complained = 985
     expect(snapshot.sent).toBe(985)
@@ -165,7 +162,6 @@ describe('reputation snapshot', () => {
       bounced: 0,
       complained: 0,
       failed: 3,
-      suppressed: 0,
     })
     expect(snapshot.sent).toBe(0)
     expect(snapshot.bounceRatePpm).toBe(0)
@@ -180,7 +176,6 @@ describe('reputation snapshot', () => {
       bounced: 0,
       complained: 0,
       failed: 0,
-      suppressed: 0,
     })
     expect(snapshot.sent).toBe(1000)
     expect(snapshot.bounceRatePpm).toBe(0)

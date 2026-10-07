@@ -1,4 +1,5 @@
 import { renderDataTable } from '../components/data-table.js'
+import { DEMO_RECIPIENT_NOT_ALLOWED, demoMailRefusal } from '../demo.js'
 
 /**
  * What was sent, and what became of it (issue 485).
@@ -22,17 +23,7 @@ import { renderDataTable } from '../components/data-table.js'
  * ones, so a bounced message was unreachable through a control that looked
  * complete.
  */
-/**
- * `suppressed` is the public demo's mail (issue 931): recorded as sent would
- * have been, and never handed to a provider.
- */
-export type EmailLogStatus =
-  | 'queued'
-  | 'sent'
-  | 'failed'
-  | 'bounced'
-  | 'complained'
-  | 'suppressed'
+export type EmailLogStatus = 'queued' | 'sent' | 'failed' | 'bounced' | 'complained'
 export type OutboxStatus = 'pending' | 'processing' | 'delivered' | 'failed'
 
 /** Matches the generated client rather than the field names in the document. */
@@ -103,6 +94,9 @@ export const deliveryLabel = (value: string): string =>
  * showing the status alone makes every failure look the same.
  */
 export const failureText = (code: string | null, reason: string | null): string => {
+  // The demo's own refusal names the domains it may email (issue 931):
+  // "provider_rejected" would blame a provider nobody asked.
+  if (reason === DEMO_RECIPIENT_NOT_ALLOWED) return demoMailRefusal()
   if (code === null && reason === null) return ''
   if (code === null) return reason ?? ''
   return reason === null ? code : `${code}: ${reason}`

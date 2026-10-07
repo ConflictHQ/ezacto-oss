@@ -125,6 +125,11 @@ export interface AppShellOptions {
    * after. Presentation only: the Worker refuses those requests either way.
    */
   readonly demo?: boolean
+  /**
+   * The only recipient domains the demo's mail reaches, so the Send dialog can
+   * say so. Read only with `demo`; an empty list is a demo that emails nobody.
+   */
+  readonly demoMailDomains?: readonly string[]
   /** Presentation hint only. The browser still validates the session before enabling the app. */
   readonly sessionCookiePresent?: boolean
 }
@@ -451,7 +456,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const foldedNavigation = foldedSections.map(navLink).join('')
 
   return `<!doctype html>
-<html lang="en" data-ez-theme="${defaultTheme}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}>
+<html lang="en" data-ez-theme="${defaultTheme}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ` data-demo-deployment data-demo-mail-domains="${escapeHtml((options.demoMailDomains ?? []).join(','))}"` : ''}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">

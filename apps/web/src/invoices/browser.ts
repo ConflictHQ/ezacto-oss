@@ -1,5 +1,5 @@
 import { renderDataTable, type CellContent } from '../components/data-table.js'
-import { isDemoDeployment } from '../demo.js'
+import { demoMailNote, isDemoDeployment } from '../demo.js'
 import { markMoney, moneyText } from '../money-display.js'
 import {
   type Attachment,
@@ -618,9 +618,11 @@ export const createInvoicePaymentController = (
   // note says why, for every profile.
   const attachmentDemo = required<HTMLElement>('[data-invoice-attachment-demo]')
   const demo = isDemoDeployment()
-  // And it delivers no email: a send is recorded and stopped there, so the
-  // dialog says so before anyone types a client's address into it.
-  required<HTMLElement>('[data-invoice-composer-demo]').hidden = !demo
+  // And its mail reaches only the domains the deployment lists, so the dialog
+  // names them before anyone types a client's address into it.
+  const composerDemo = required<HTMLElement>('[data-invoice-composer-demo]')
+  composerDemo.hidden = !demo
+  if (demo) composerDemo.textContent = demoMailNote()
 
   let activationGeneration = 0
   let requestGeneration = 0
@@ -1044,7 +1046,7 @@ export const createInvoicePaymentController = (
           if (current() !== session) return
           const to = sent.to.map(({ email }) => email).join(', ')
           composerPreviewResult.textContent = demo
-            ? `A preview for ${to} was recorded, stamped PREVIEW. The public demo delivers no email, so nothing went to anyone.`
+            ? `A preview for ${to}, stamped PREVIEW, was recorded. ${demoMailNote()} Nothing was sent to the client.`
             : `A preview went to ${to} only, stamped PREVIEW. Nothing was sent to the client.`
         })
       : api.previewInvoiceEmail!(selected.id, input, session.signal).then((preview) => {
@@ -2179,7 +2181,7 @@ export const createInvoicePaymentController = (
           // screen, and a send that worked looked like a click that did nothing.
           headlineMessage: delivering
             ? demo
-              ? `Sent. The public demo records the email and delivers none; Settings › Deliveries shows it.${reminderNote}`
+              ? `Sent. ${demoMailNote()} Settings › Deliveries shows what went.${reminderNote}`
               : `Sent. The email is queued and goes out within a minute or two; Settings › Deliveries shows it.${reminderNote}`
             : `Marked sent. No email was delivered.${reminderNote}`,
         })

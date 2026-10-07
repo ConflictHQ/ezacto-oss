@@ -408,27 +408,28 @@ for (const [runtime, factory] of factories) {
       ).rejects.toThrow(/sender metadata is invalid/i)
     })
 
-    // The public demo's ending for every message (#931): recorded, never handed
-    // to a provider, and the same answer however many times it is asked.
-    it('[unit] suppresses a queued message once, idempotently, and never one that went', async () => {
+    // The public demo's mail to a domain it may not email (#931): ended before
+    // any provider saw it, in the columns the schema already has.
+    it('[unit] refuses a queued message once, idempotently, and never one that went', async () => {
       const current = await setup()
       const queued = await current.store.createQueued(message)
       current.setNow('2026-08-28T20:00:01.000Z')
-      await expect(current.store.markSuppressed(queued.id)).resolves.toMatchObject({
+      await expect(
+        current.store.markRefused(queued.id, 'demo_recipient_not_allowed'),
+      ).resolves.toMatchObject({
         id: queued.id,
-        status: 'suppressed',
+        status: 'failed',
         provider: null,
-        providerMessageId: null,
+        failureCode: 'provider_rejected',
+        failureReason: 'demo_recipient_not_allowed',
         attemptCount: 0,
-        failureCode: null,
         updatedAt: '2026-08-28T20:00:01.000Z',
       })
       // The outbox re-enqueues a persisted delivery on every retry.
       current.setNow('2026-08-28T20:00:02.000Z')
-      await expect(current.store.markSuppressed(queued.id)).resolves.toMatchObject({
-        status: 'suppressed',
-        updatedAt: '2026-08-28T20:00:01.000Z',
-      })
+      await expect(
+        current.store.markRefused(queued.id, 'demo_recipient_not_allowed'),
+      ).resolves.toMatchObject({ status: 'failed', updatedAt: '2026-08-28T20:00:01.000Z' })
       // Terminal: nothing can claim it for a provider afterwards.
       await expect(
         current.store.claimAttempt(queued.id, 'http-provider', 'attempt-late', 30),
@@ -437,44 +438,57 @@ for (const [runtime, factory] of factories) {
       const delivered = await current.store.createQueued({ ...message, template: 'reset' })
       await current.store.claimAttempt(delivered.id, 'http-provider', 'attempt-one', 30)
       await current.store.markSent(delivered.id, 'http-provider', { messageId: 'm-1' }, 'attempt-one')
-      await expect(current.store.markSuppressed(delivered.id)).rejects.toThrow(
-        /did not match a queued log/u,
+      await expect(
+        current.store.markRefused(delivered.id, 'demo_recipient_not_allowed'),
+      ).rejects.toThrow(/did not match a queued log/u)
+      // The column's own vocabulary, said by the caller rather than the database.
+      await expect(current.store.markRefused(queued.id, 'not allowed.')).rejects.toThrow(
+        RangeError,
       )
-      await expect(current.store.markSuppressed(9_999)).rejects.toThrow(
-        /did not match a queued log/u,
-      )
-
-      expect(await current.store.list({ status: 'suppressed' })).toEqual([
-        expect.objectContaining({ id: queued.id, status: 'suppressed' }),
-      ])
-      await expect(current.store.countByStatus()).resolves.toEqual({
-        queued: 0,
-        sent: 1,
-        bounced: 0,
-        complained: 0,
-        failed: 0,
-        suppressed: 1,
-      })
     })
 
-    it('[concurrency] does not suppress under a live provider lease, only an expired one', async () => {
+    it('[concurrency] does not refuse under a live provider lease, only an expired one', async () => {
       const current = await setup()
       const queued = await current.store.createQueued(message)
       await current.store.claimAttempt(queued.id, 'http-provider', 'attempt-one', 30)
-      // A provider call in flight: suppressing now would race the send.
-      await expect(current.store.markSuppressed(queued.id)).rejects.toThrow(
-        /did not match a queued log/u,
-      )
-      current.setNow('2026-08-28T20:00:31.000Z')
-      await expect(current.store.markSuppressed(queued.id)).resolves.toMatchObject({
-        status: 'suppressed',
-        provider: 'http-provider',
-        attemptCount: 1,
-      })
-      // And the attempt that lost its lease cannot record a send over it.
       await expect(
-        current.store.markSent(queued.id, 'http-provider', { messageId: 'late' }, 'attempt-one'),
+        current.store.markRefused(queued.id, 'demo_recipient_not_allowed'),
       ).rejects.toThrow(/did not match a queued log/u)
+      current.setNow('2026-08-28T20:00:31.000Z')
+      await expect(
+        current.store.markRefused(queued.id, 'demo_recipient_not_allowed'),
+      ).resolves.toMatchObject({ status: 'failed', provider: 'http-provider' })
+    })
+
+    it('[unit] leaves out of the health counts only what no provider ever saw', async () => {
+      const current = await setup()
+      const refused = await current.store.createQueued(message)
+      await current.store.markRefused(refused.id, 'demo_recipient_not_allowed')
+      const rejected = await current.store.createQueued({ ...message, template: 'reset' })
+      await current.store.claimAttempt(rejected.id, 'http-provider', 'attempt-one', 30)
+      await current.store.markProviderFailed(
+        rejected.id,
+        'http-provider',
+        'provider_rejected',
+        'attempt-one',
+        'recipient_suppressed:BOUNCE',
+      )
+      const unqueued = await current.store.createQueued({ ...message, template: 'verify' })
+      await current.store.markQueueFailed(unqueued.id)
+
+      // The provider's rejection and the queue's failure count as they always
+      // did; the refusal is the only failure left out.
+      await expect(current.store.countByStatus()).resolves.toEqual({
+        queued: 0,
+        sent: 0,
+        bounced: 0,
+        complained: 0,
+        failed: 2,
+      })
+      // And the log still lists it, where an operator looks.
+      expect((await current.store.list({ status: 'failed' })).map((record) => record.id)).toContain(
+        refused.id,
+      )
     })
   })
 }
