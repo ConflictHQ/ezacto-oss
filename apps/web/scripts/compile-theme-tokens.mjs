@@ -67,10 +67,13 @@ const exactArray = (actual, expected, field) => {
 
 const cssName = (name) => name.replaceAll('_', '-')
 
+// 900 is the page title's weight. A family that stops short of it (IBM Plex
+// Mono ends at 700) is served what it has: Google Fonts drops a weight a family
+// does not carry rather than refusing the whole request.
 const fontStylesheet = (theme) => {
   const unique = [...new Set(fonts.map((font) => theme[font]))]
   const families = unique.map(
-    (font) => `family=${font.split(' ').join('+')}:wght@400;500;600;700`,
+    (font) => `family=${font.split(' ').join('+')}:wght@400;500;600;700;900`,
   )
   return `https://fonts.googleapis.com/css2?${families.join('&')}&display=swap`
 }

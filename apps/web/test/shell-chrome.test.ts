@@ -103,11 +103,11 @@ describe('level-2 signal', () => {
 
     const activeMode = window.getComputedStyle(week!)
     const idleMode = window.getComputedStyle(day!)
-    expect(activeMode.backgroundColor).toBe('#FDEDE3')
-    expect(activeMode.borderTopColor).toBe('#E8590C')
+    expect(activeMode.backgroundColor).toBe('#EFF3FF')
+    expect(activeMode.borderTopColor).toBe('#254FE8')
     expect(activeMode.boxShadow).toBe('none')
-    expect(idleMode.backgroundColor).not.toBe('#FDEDE3')
-    expect(idleMode.borderTopColor).toBe('#E3E5E8')
+    expect(idleMode.backgroundColor).not.toBe('#EFF3FF')
+    expect(idleMode.borderTopColor).toBe('#E5E7EB')
 
     // And the underline it gave up is still the mark of a level-2 tab.
     renderStyled({
@@ -123,7 +123,7 @@ describe('level-2 signal', () => {
     )!
     expect(overview.textContent).toBe('Overview')
     const currentTab = window.getComputedStyle(overview)
-    expect(currentTab.boxShadow).toBe('inset 0 -3px #E8590C')
-    expect(currentTab.backgroundColor).not.toBe('#FDEDE3')
+    expect(currentTab.boxShadow).toBe('inset 0 -3px #254FE8')
+    expect(currentTab.backgroundColor).not.toBe('#EFF3FF')
   })
 })

@@ -49,6 +49,41 @@ describe('the palette contract the instance is held to (#591)', () => {
         (error) => error.code === 'contrast',
       ),
     ).toBe(true)
+
+    // The tracker design's dark palette with every slot set: its ground,
+    // surface, line, ink and muted as drawn; the blue split into a darker fill
+    // under white and a lighter blue that is read, because the design's one
+    // dark blue clears 4.5:1 neither under white nor as words on the surface;
+    // and the rest derived to clear the same bars. It is what an operator
+    // pastes in for a dark instance, so it has to save as it stands.
+    const dark = {
+      ground: '#0C111C',
+      surface: '#131A27',
+      border: '#1E2635',
+      ink: '#F6F7F8',
+      muted: '#8A929E',
+      action: '#3D63F0',
+      action_fg: '#FFFFFF',
+      live: '#22C55E',
+      data: '#6B8CF7',
+      money: '#1F1A10',
+      status_bg: '#1E2635',
+      status_fg: '#A3ABB7',
+      ink_2: '#D1D5DB',
+      orange_tint: '#1A2547',
+      blue_light: '#2B4ACB',
+      red: '#F87171',
+      amber: '#FBBF24',
+      amber_bg: '#2A2110',
+      live_text: '#4ADE80',
+      surface_2: '#19212F',
+      row_hover: '#172036',
+    }
+    expect(Object.keys(dark).sort()).toEqual([...themeSlotNames].sort())
+    expect(readInstancePalette(dark, instancePaletteContract)).toEqual({
+      palette: dark,
+      errors: [],
+    })
   })
 })
 
