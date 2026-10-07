@@ -4019,12 +4019,25 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  ActivityLogActor: {
+    type: "object",
+    description:
+      "Who caused the event. type and id are what the event recorded; name is resolved when the log is read, so it is the person's current name. name is null for a system actor and for an id that no user or contact carries any more.",
+    required: ["type", "id", "name"],
+    properties: {
+      type: { type: "string", enum: ["user", "contact", "system"] },
+      id: nullable(integerSchema),
+      name: nullable(stringSchema),
+    },
+    additionalProperties: false,
+  },
   ActivityLog: {
     type: "object",
     required: [
       "event_id",
       "event_type",
       "aggregate",
+      "actor",
       "payload",
       "occurred_at",
       "available_at",
@@ -4034,6 +4047,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       event_id: stringSchema,
       event_type: stringSchema,
       aggregate: reference("OutboxAggregate"),
+      actor: nullable(reference("ActivityLogActor")),
       payload: { type: "object", additionalProperties: true },
       occurred_at: timestampSchema,
       available_at: timestampSchema,

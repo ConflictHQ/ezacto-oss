@@ -695,10 +695,17 @@ export type OutboxAggregate = {
   "sequence": number;
 };
 
+export type ActivityLogActor = {
+  "type": "user" | "contact" | "system";
+  "id": number | null;
+  "name": string | null;
+};
+
 export type ActivityLog = {
   "event_id": string;
   "event_type": string;
   "aggregate": OutboxAggregate;
+  "actor": ActivityLogActor | null;
   "payload": {
   [key: string]: unknown;
 };

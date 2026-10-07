@@ -1,10 +1,12 @@
-import { renderDataTable } from '../components/data-table.js'
+import type { ActivityLogActor } from '@conflict-hq/ezacto-client'
+import { renderDataTable, type CellContent } from '../components/data-table.js'
 
 export interface ActivityRow {
   readonly event_id: string
   readonly event_type: string
   readonly aggregate: { readonly type: string; readonly id: number }
-  readonly payload: Record<string, unknown>
+  /** Named by the server, so this page and an export agree (issue 862). */
+  readonly actor: ActivityLogActor | null
   readonly occurred_at: string
   readonly recorded_at: string
 }
@@ -37,14 +39,21 @@ const required = <ElementType extends Element>(selector: string): ElementType =>
  * did it: the nightly export is not something the administrator who configured
  * the schedule performed at three in the morning. So `system` is named as
  * itself rather than resolved to whoever set it up.
+ *
+ * Anyone else is named (issue 862), and keeps the id as the cell's title so
+ * two people who share a name can still be told apart. An id nobody carries
+ * any more, such as a deleted contact's, reads as the id: it is all the log
+ * still knows, and better than a blank.
  */
-const actorLabel = (payload: Record<string, unknown>): string => {
-  const actor = (payload.actor ?? {}) as { type?: unknown; id?: unknown }
-  if (actor.type === 'system') return 'System'
-  if (typeof actor.id === 'number') {
-    return actor.type === 'contact' ? `Contact #${actor.id}` : `User #${actor.id}`
-  }
-  return 'Unknown'
+const actorCell = (actor: ActivityLogActor | null): CellContent => {
+  if (actor?.type === 'system') return 'System'
+  if (actor === null || actor.id === null) return 'Unknown'
+  const reference = `${actor.type === 'contact' ? 'Contact' : 'User'} #${actor.id}`
+  if (actor.name === null) return reference
+  const name = document.createElement('span')
+  name.textContent = actor.name
+  name.title = reference
+  return name
 }
 
 /** `api_token.created` reads as "Api token created" without a lookup table to drift. */
@@ -78,7 +87,7 @@ export const createActivityController = (api: ActivityApi): ActivityController =
         columns: [
           { key: 'when', label: 'When', render: (row) => row.occurred_at },
           { key: 'event', label: 'Event', render: (row) => eventLabel(row.event_type) },
-          { key: 'who', label: 'Who', render: (row) => actorLabel(row.payload) },
+          { key: 'who', label: 'Who', render: (row) => actorCell(row.actor) },
           {
             key: 'subject',
             label: 'Subject',

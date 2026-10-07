@@ -335,6 +335,116 @@ for (const [runtime, factory] of factories) {
       expect(await ids({ from: '2026-09-04', to: '2026-09-05' })).toEqual(['a-2', 'a-1'])
     })
 
+    it('[unit] names who acted when the log is read, and keeps the id when nobody carries it (issue 862)', async () => {
+      // The payload records only `{ type, id }`, which is why the screen read
+      // "User #30". The name is joined when the log is read, from the table the
+      // actor's type names: user 8 and contact 8 are different people, and a
+      // contact's event must not borrow a teammate's name because the ids match.
+      database = await factory()
+      const createdAt = '2026-09-01T00:00:00.000Z'
+      for (const [id, first, last, active] of [
+        [3, 'Robin', 'Vale', 1],
+        [5, 'Sam', 'Quill', 0],
+        [8, 'Morgan', 'Hale', 1],
+      ] as const) {
+        await database.run(
+          `INSERT INTO users (
+            id, first_name, last_name, profile, manager_grants, is_active, created_at, updated_at
+          ) VALUES (?, ?, ?, 'member', '[]', ?, ?, ?)`,
+          id,
+          first,
+          last,
+          active,
+          createdAt,
+          createdAt,
+        )
+      }
+      await database.run(
+        `INSERT INTO clients (id, name, currency, created_at, updated_at)
+         VALUES (2, 'Lantern Test Client', 'USD', ?, ?)`,
+        createdAt,
+        createdAt,
+      )
+      for (const [id, first, last] of [
+        [8, 'Jordan', null],
+        [9, 'Casey', 'Reed'],
+      ] as const) {
+        await database.run(
+          `INSERT INTO contacts (id, client_id, first_name, last_name, created_at, updated_at)
+           VALUES (?, 2, ?, ?, ?, ?)`,
+          id,
+          first,
+          last,
+          createdAt,
+          createdAt,
+        )
+      }
+
+      const capture = async (
+        id: string,
+        eventType: 'auth.signed_in' | 'api_token.created' | 'backup.exported',
+        subjectId: number,
+        actor:
+          | { type: 'user' | 'contact'; id: number }
+          | { type: 'system' },
+      ) =>
+        captureActivityEvent(
+          database!.orm,
+          { eventType, subjectId, actor, occurredAt: signedInAt, captureId: id },
+          { createEventId: () => id },
+        )
+      await capture('n-1', 'auth.signed_in', 3, { type: 'user', id: 3 })
+      await capture('n-2', 'api_token.created', 4, { type: 'user', id: 5 })
+      await capture('n-3', 'auth.signed_in', 8, { type: 'contact', id: 8 })
+      await capture('n-4', 'auth.signed_in', 9, { type: 'contact', id: 9 })
+      await capture('n-5', 'auth.signed_in', 99, { type: 'user', id: 99 })
+      await capture('n-6', 'backup.exported', 12, { type: 'system' })
+      // Two shapes no capture writes but the log can hold: the CLI restore
+      // records a system actor with no id key at all, and a payload with no
+      // actor is somebody else's event that this log must still list.
+      for (const [id, aggregate, eventType, payload] of [
+        ['n-7', 'backup_restore', 'backup.restored', { actor: { type: 'system' } }],
+        ['n-8', 'backup_run', 'backup.exported', {}],
+      ] as const) {
+        await database.run(
+          `INSERT INTO event_outbox (
+            id, aggregate_type, aggregate_id, aggregate_sequence, event_type,
+            payload_json, occurred_at, available_at
+          ) VALUES (?, ?, 13, 1, ?, ?, ?, ?)`,
+          id,
+          aggregate,
+          eventType,
+          JSON.stringify({ schema_version: 1, event_id: id, event_type: eventType, ...payload }),
+          signedInAt,
+          signedInAt,
+        )
+      }
+      // Contacts are deleted outright; users are only ever archived.
+      await database.run('DELETE FROM contacts WHERE id = 9')
+
+      const service = database.outbox()
+      await service.drain()
+      const recorded = await service.listActivity()
+
+      expect(Object.fromEntries(recorded.map((entry) => [entry.id, entry.actor]))).toEqual({
+        'n-1': { type: 'user', id: 3, name: 'Robin Vale' },
+        // Deactivated, and still the person who did it.
+        'n-2': { type: 'user', id: 5, name: 'Sam Quill' },
+        'n-3': { type: 'contact', id: 8, name: 'Jordan' },
+        'n-4': { type: 'contact', id: 9, name: null },
+        'n-5': { type: 'user', id: 99, name: null },
+        'n-6': { type: 'system', id: null, name: null },
+        'n-7': { type: 'system', id: null, name: null },
+        'n-8': null,
+      })
+      // The name is read, not recorded: the stored payload is what the event
+      // said, and a later rename must not look like history being rewritten.
+      expect(recorded.find((entry) => entry.id === 'n-1')?.payload.actor).toEqual({
+        type: 'user',
+        id: 3,
+      })
+    })
+
     it('[unit] refuses a bound that is not a date the calendar has', async () => {
       // 2026-02-31 has the right shape and is not a day. Accepted, it would
       // match nothing and read as "no activity" rather than as a bad request.
