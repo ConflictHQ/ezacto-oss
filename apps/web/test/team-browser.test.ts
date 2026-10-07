@@ -802,6 +802,78 @@ describe('Team browser controller', () => {
     )
   })
 
+  it('[security] on the public demo, shows who is active and with what profile, and changes neither', async () => {
+    // Issue 931. Deactivating a published account, or changing its profile,
+    // keeps the next visitor out of it; the Worker refuses both on the demo.
+    writeDocument('team-person', true)
+    const updateTeamPerson = vi.fn<TeamDirectoryApi['updateTeamPerson']>(async () => receipt(4))
+    const controller = createTeamDirectoryController({
+      getTeamPerson: vi.fn(async () => person({ profile: 'member' })),
+      getTeamCatalog: vi.fn(async () => catalog),
+      updateTeamPerson,
+    })
+    await controller.activate(identity(), new AbortController().signal, () => false)
+
+    const radios = [
+      ...document.querySelectorAll<HTMLInputElement>('[data-team-profiles] input[type="radio"]'),
+    ]
+    expect(radios.find(({ checked }) => checked)?.value).toBe('member')
+    expect(radios.every(({ disabled }) => disabled)).toBe(true)
+    expect(document.querySelector<HTMLButtonElement>('[data-team-permissions-submit]')!.disabled).toBe(
+      true,
+    )
+    expect(document.querySelector('[data-team-permissions-result]')?.textContent).toBe(
+      'Changing a permission profile: not available on the public demo.',
+    )
+    const status = document.querySelector<HTMLButtonElement>('[data-team-status-action]')!
+    expect(status.textContent).toBe('Deactivate person')
+    expect(status.disabled).toBe(true)
+    expect(document.querySelector('[data-team-status-description]')?.textContent).toBe(
+      'Deactivating or reactivating a person: not available on the public demo.',
+    )
+    // The rest of the person is still the demo's to edit.
+    const info = document.querySelector<HTMLFormElement>('[data-team-info-form]')!
+    expect((info.elements.namedItem('telephone') as HTMLInputElement).disabled).toBe(false)
+    expect(updateTeamPerson).not.toHaveBeenCalled()
+  })
+
+  it('[security] on the public demo, offers no archive from the roster', async () => {
+    writeDocument('team-list', true)
+    const controller = createTeamDirectoryController({
+      listTeamPeople: vi.fn(async () =>
+        page([summary({ id: 2, first_name: 'Blake', last_name: 'Reed', is_owner: false })]),
+      ),
+      getTeamPerson: vi.fn(),
+      updateTeamPerson: vi.fn(),
+    })
+    await controller.activate(identity(), new AbortController().signal, () => false)
+
+    const row = document.querySelector<HTMLElement>('[data-team-list] [data-row-key="2"]')!
+    const archive = [...row.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Archive',
+    )!
+    expect(archive.disabled).toBe(true)
+  })
+
+  it('[browser] keeps archiving and profiles changeable anywhere but the demo', async () => {
+    writeDocument('team-person')
+    const controller = createTeamDirectoryController({
+      getTeamPerson: vi.fn(async () => person({ profile: 'member' })),
+      getTeamCatalog: vi.fn(async () => catalog),
+      updateTeamPerson: vi.fn(),
+    })
+    await controller.activate(identity(), new AbortController().signal, () => false)
+
+    const radios = [
+      ...document.querySelectorAll<HTMLInputElement>('[data-team-profiles] input[type="radio"]'),
+    ]
+    expect(radios.some(({ disabled }) => disabled)).toBe(false)
+    expect(document.querySelector<HTMLButtonElement>('[data-team-status-action]')!.disabled).toBe(
+      false,
+    )
+    expect(document.querySelector('[data-team-permissions-result]')?.textContent).toBe('')
+  })
+
   it('clears private person state on auth abort and ignores a late reload', async () => {
     writeDocument('team-person')
     let resolveLate: ((value: TeamPerson) => void) | null = null

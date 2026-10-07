@@ -302,9 +302,11 @@ carries:
   payment options, or upload any file, answer `403 demo_disabled` — "Not
   available on the public demo." So do the ones that would lock the next
   visitor out: a password reset, enrolling or removing a second factor,
-  switching a sign-in method, and adding, verifying or removing an SSO domain.
-  The list is `entries/worker/src/demo-lockdown.ts`, and the screens disable
-  those controls with the same note.
+  switching a sign-in method, adding, verifying or removing an SSO domain,
+  deactivating anyone, changing anyone's permission profile or sign-in
+  address, removing a user, and ending any session but your own (signing out
+  still works). The list is `entries/worker/src/demo-lockdown.ts`, and the
+  screens disable those controls with the same note.
 - **Storage** takes no visitor's file: uploads meet a read-only store, and the
   demo is not exported nightly into a bucket the rebuild never empties. Invoice
   documents are still rendered and staged, because allowed mail carries them.

@@ -118,6 +118,7 @@ import {
   type TimesheetApprovalService,
   type TimesheetLockPolicyService,
   type TeamRouteOptions,
+  type UserPrincipal,
   invoicePaymentUrlForSend,
 } from '@ezacto/api'
 import {
@@ -779,10 +780,17 @@ export const createApp = (
           // Absent only where a test calls the app without bindings, which is
           // no deployment and so not the demo.
           const env = context.env as AppEnv | undefined
+          // Whose session this is, for the one refusal that depends on it.
+          // Unset on `/auth`, which is reached before anyone signs in.
+          const principal = context.get('principal') as UserPrincipal | undefined
+          const actingSession =
+            principal?.authentication.kind === 'session'
+              ? principal.authentication.sessionId
+              : null
           if (
             env !== undefined &&
             demoDeployment(env) &&
-            (await demoRefuses(context.req.raw, context.req.path))
+            (await demoRefuses(context.req.raw, context.req.path, actingSession))
           ) {
             throw demoRefusal()
           }

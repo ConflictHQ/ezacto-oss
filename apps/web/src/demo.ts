@@ -5,10 +5,11 @@
  * Worker refuses everything there that would reach past the demo's database or
  * lock the next visitor out: provider connections, payment links and payouts,
  * the sender identity and the invoice defaults, file uploads, and the password,
- * second factor, sign-in methods and SSO domains. Its mail goes only to the
- * addresses the deployment approves. Those refusals are the control; this is
- * only how the screens say so. A control the demo refuses renders disabled or
- * withheld, with a note in its place, instead of failing after the click.
+ * second factor, sign-in methods, SSO domains, and who is active with what
+ * permission profile. Its mail goes only to the addresses the deployment
+ * approves. Those refusals are the control; this is only how the screens say
+ * so. A control the demo refuses renders disabled or withheld, with a note in
+ * its place, instead of failing after the click.
  *
  * The shell marks `<html>` when the Worker served the page as the demo, and
  * when its mail is held to an allowlist, which every module can read without
