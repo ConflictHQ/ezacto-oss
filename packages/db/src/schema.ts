@@ -2016,8 +2016,9 @@ export const emailLog = sqliteTable(
     providerMessageId: text('provider_message_id'),
     providerRequestId: text('provider_request_id'),
     providerLatencyMs: integer('provider_latency_ms'),
+    // Migration 0100: `suppressed` is the demo's recorded-and-never-sent mail.
     status: text('status', {
-      enum: ['queued', 'sent', 'bounced', 'complained', 'failed'],
+      enum: ['queued', 'sent', 'bounced', 'complained', 'failed', 'suppressed'],
     })
       .notNull()
       .default('queued'),

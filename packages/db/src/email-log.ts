@@ -283,6 +283,31 @@ const createStore = (
       )
     },
 
+    async markSuppressed(deliveryId) {
+      const at = timestamp()
+      // A lease that has run out is no attempt at all; one that has not is a
+      // provider call in flight, and suppressing under it would race the send.
+      const suppressed = await database.first<EmailLogRow>(
+        `UPDATE email_log
+         SET status = 'suppressed', active_attempt_id = NULL,
+           attempt_lease_expires_at = NULL, updated_at = ?
+         WHERE id = ? AND status = 'queued'
+           AND (active_attempt_id IS NULL
+             OR julianday(attempt_lease_expires_at) <= julianday(?))
+         RETURNING ${columns}`,
+        [at, deliveryId, at],
+      )
+      if (suppressed !== null) return rowRecord(suppressed)
+      // Asked again for a message that already ended this way, which is every
+      // outbox retry of a persisted delivery: the answer is the same message.
+      return rowRecord(
+        await database.first<EmailLogRow>(
+          `SELECT ${columns} FROM email_log WHERE id = ? AND status = 'suppressed'`,
+          [deliveryId],
+        ),
+      )
+    },
+
     async markBounced(deliveryId) {
       const at = timestamp()
       return rowRecord(
@@ -326,6 +351,7 @@ const createStore = (
         bounced: 0,
         complained: 0,
         failed: 0,
+        suppressed: 0,
       }
       for (const row of rows) counts[row.status] = row.count
       return counts as Record<EmailDeliveryStatus, number>

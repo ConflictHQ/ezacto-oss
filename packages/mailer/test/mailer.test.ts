@@ -9,6 +9,7 @@ import {
   createDeploymentSenderQueuedMailer,
   createQueuedMailer,
   createSenderBoundQueuedMailer,
+  createSuppressingEmailQueue,
   processQueuedEmail,
   type EmailLogRecord,
   type EmailLogStore,
@@ -75,11 +76,12 @@ const store = (): EmailLogStore => {
     markQueueFailed: vi.fn(async () =>
       record({ status: 'failed', failureCode: 'queue_unavailable' }),
     ),
+    markSuppressed: vi.fn(async () => record({ status: 'suppressed' })),
     markBounced: vi.fn(async () => record({ status: 'bounced' })),
     markComplained: vi.fn(async () => record({ status: 'complained' })),
     getByProviderMessageId: vi.fn(async () => record()),
     countByStatus: vi.fn(async () => ({
-      queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0,
+      queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0, suppressed: 0,
     })),
     list: vi.fn(async () => []),
   }
@@ -1089,5 +1091,47 @@ describe('cc', () => {
     ).rejects.toThrow('cc must not repeat a recipient already in to')
     expect(log.claimAttempt).not.toHaveBeenCalled()
     expect(provider.send).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * The public demo's producer (#931). What it has to prove is narrow: a message
+ * still goes through everything that validates and records it, and then ends
+ * in the log rather than anywhere a consumer could pick it up.
+ */
+describe('suppressing queue', () => {
+  it('[unit] records the message and ends it suppressed, with nothing downstream', async () => {
+    const log = store()
+    const mailer = createQueuedMailer(log, createSuppressingEmailQueue(log))
+    const delivery = await mailer.enqueue(message)
+
+    expect(log.createQueued).toHaveBeenCalledTimes(1)
+    expect(log.markSuppressed).toHaveBeenCalledWith(delivery.id)
+    // The steps a consumer would take, none of which has anything to act on.
+    expect(log.claimAttempt).not.toHaveBeenCalled()
+    expect(log.markSent).not.toHaveBeenCalled()
+    expect(log.markQueueFailed).not.toHaveBeenCalled()
+  })
+
+  it('[unit] still refuses a message the real queue would refuse, before logging it', async () => {
+    const log = store()
+    const mailer = createQueuedMailer(log, createSuppressingEmailQueue(log))
+    await expect(mailer.enqueue({ ...message, to: [] })).rejects.toThrow(
+      'to must contain between 1 and 100 recipients',
+    )
+    expect(log.createQueued).not.toHaveBeenCalled()
+    expect(log.markSuppressed).not.toHaveBeenCalled()
+  })
+
+  it('[unit] suppresses a persisted delivery each time the outbox re-enqueues it', async () => {
+    // The outbox retries by enqueueing the same delivery again, so the
+    // suppression has to be the same answer the second time, not a failure.
+    const log = store()
+    const queued = createQueuedMailer(log, createSuppressingEmailQueue(log))
+    await queued.enqueueExisting!(700, message)
+    await queued.enqueueExisting!(700, message)
+    expect(log.createQueued).not.toHaveBeenCalled()
+    expect(log.markSuppressed).toHaveBeenNthCalledWith(1, 700)
+    expect(log.markSuppressed).toHaveBeenNthCalledWith(2, 700)
   })
 })

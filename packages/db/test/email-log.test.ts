@@ -407,5 +407,74 @@ for (const [runtime, factory] of factories) {
         ),
       ).rejects.toThrow(/sender metadata is invalid/i)
     })
+
+    // The public demo's ending for every message (#931): recorded, never handed
+    // to a provider, and the same answer however many times it is asked.
+    it('[unit] suppresses a queued message once, idempotently, and never one that went', async () => {
+      const current = await setup()
+      const queued = await current.store.createQueued(message)
+      current.setNow('2026-08-28T20:00:01.000Z')
+      await expect(current.store.markSuppressed(queued.id)).resolves.toMatchObject({
+        id: queued.id,
+        status: 'suppressed',
+        provider: null,
+        providerMessageId: null,
+        attemptCount: 0,
+        failureCode: null,
+        updatedAt: '2026-08-28T20:00:01.000Z',
+      })
+      // The outbox re-enqueues a persisted delivery on every retry.
+      current.setNow('2026-08-28T20:00:02.000Z')
+      await expect(current.store.markSuppressed(queued.id)).resolves.toMatchObject({
+        status: 'suppressed',
+        updatedAt: '2026-08-28T20:00:01.000Z',
+      })
+      // Terminal: nothing can claim it for a provider afterwards.
+      await expect(
+        current.store.claimAttempt(queued.id, 'http-provider', 'attempt-late', 30),
+      ).resolves.toBeNull()
+
+      const delivered = await current.store.createQueued({ ...message, template: 'reset' })
+      await current.store.claimAttempt(delivered.id, 'http-provider', 'attempt-one', 30)
+      await current.store.markSent(delivered.id, 'http-provider', { messageId: 'm-1' }, 'attempt-one')
+      await expect(current.store.markSuppressed(delivered.id)).rejects.toThrow(
+        /did not match a queued log/u,
+      )
+      await expect(current.store.markSuppressed(9_999)).rejects.toThrow(
+        /did not match a queued log/u,
+      )
+
+      expect(await current.store.list({ status: 'suppressed' })).toEqual([
+        expect.objectContaining({ id: queued.id, status: 'suppressed' }),
+      ])
+      await expect(current.store.countByStatus()).resolves.toEqual({
+        queued: 0,
+        sent: 1,
+        bounced: 0,
+        complained: 0,
+        failed: 0,
+        suppressed: 1,
+      })
+    })
+
+    it('[concurrency] does not suppress under a live provider lease, only an expired one', async () => {
+      const current = await setup()
+      const queued = await current.store.createQueued(message)
+      await current.store.claimAttempt(queued.id, 'http-provider', 'attempt-one', 30)
+      // A provider call in flight: suppressing now would race the send.
+      await expect(current.store.markSuppressed(queued.id)).rejects.toThrow(
+        /did not match a queued log/u,
+      )
+      current.setNow('2026-08-28T20:00:31.000Z')
+      await expect(current.store.markSuppressed(queued.id)).resolves.toMatchObject({
+        status: 'suppressed',
+        provider: 'http-provider',
+        attemptCount: 1,
+      })
+      // And the attempt that lost its lease cannot record a send over it.
+      await expect(
+        current.store.markSent(queued.id, 'http-provider', { messageId: 'late' }, 'attempt-one'),
+      ).rejects.toThrow(/did not match a queued log/u)
+    })
   })
 }

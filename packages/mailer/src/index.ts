@@ -29,12 +29,18 @@ export {
   type SesSuppression,
 } from './ses.js'
 
+/**
+ * `suppressed` is a message recorded and deliberately never handed to a
+ * transport -- what the public demo does with all of its mail (#931). Terminal,
+ * like `failed`, but nothing refused it: nothing was asked.
+ */
 export type EmailDeliveryStatus =
   | 'queued'
   | 'sent'
   | 'bounced'
   | 'complained'
   | 'failed'
+  | 'suppressed'
 
 export interface EmailRecipient {
   email: string
@@ -162,6 +168,13 @@ export interface EmailLogStore {
     failureReason?: string,
   ): Promise<EmailLogRecord>
   markQueueFailed(deliveryId: number): Promise<EmailLogRecord>
+  /**
+   * Ends a queued message without delivering it. Idempotent: a message already
+   * suppressed is returned as it is, because the outbox re-enqueues a persisted
+   * delivery whenever it retries. Refuses a message a provider attempt holds
+   * the lease on, and any message already past `queued`.
+   */
+  markSuppressed(deliveryId: number): Promise<EmailLogRecord>
   markBounced(deliveryId: number): Promise<EmailLogRecord>
   markComplained(deliveryId: number): Promise<EmailLogRecord>
   getByProviderMessageId(providerMessageId: string): Promise<EmailLogRecord | null>
@@ -387,6 +400,24 @@ export const createQueuedMailer = (
       // The log remains queued: the outbox owns durable retry of this enqueue.
       throw new EmailQueueUnavailableError()
     }
+  },
+})
+
+/**
+ * A producer that delivers nothing: each job's log row is marked `suppressed`
+ * in place of being put anywhere a consumer could hand it to a provider.
+ *
+ * The public demo's mail goes here (#931). Everything upstream runs as it
+ * would anywhere -- the message is composed, validated and logged, the invoice
+ * history records the send -- and the one step that could reach a transport is
+ * the step that does not happen. A queue rather than a flag on each sender, so
+ * that a mail path added later is suppressed without anyone remembering to ask.
+ */
+export const createSuppressingEmailQueue = (
+  log: Pick<EmailLogStore, 'markSuppressed'>,
+): EmailQueue => ({
+  async send(job) {
+    await log.markSuppressed(job.deliveryId)
   },
 })
 

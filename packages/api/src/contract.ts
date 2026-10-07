@@ -2594,7 +2594,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     parameters: [
       query("status", {
         type: "string",
-        enum: ["queued", "sent", "bounced", "complained", "failed"],
+        enum: ["queued", "sent", "bounced", "complained", "failed", "suppressed"],
       }),
       query("per_page", { type: "integer", minimum: 1, maximum: 200 }),
     ],
@@ -3350,7 +3350,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       }),
       status: {
         type: "string",
-        enum: ["queued", "sent", "bounced", "complained", "failed"],
+        enum: ["queued", "sent", "bounced", "complained", "failed", "suppressed"],
       },
       related_type: nullable(stringSchema),
       related_id: nullable(integerSchema),

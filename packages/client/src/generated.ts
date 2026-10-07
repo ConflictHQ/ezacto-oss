@@ -374,7 +374,7 @@ export type EmailLog = {
   "provider_message_id": string | null;
   "provider_request_id": string | null;
   "provider_latency_ms": number | null;
-  "status": "queued" | "sent" | "bounced" | "complained" | "failed";
+  "status": "queued" | "sent" | "bounced" | "complained" | "failed" | "suppressed";
   "related_type": string | null;
   "related_id": number | null;
   "attempt_count": number;
@@ -3635,7 +3635,7 @@ export class EzactoClient {
     });
   }
 
-  async listEmailLog(args: { query?: { "status"?: "queued" | "sent" | "bounced" | "complained" | "failed"; "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<EmailLogPage> {
+  async listEmailLog(args: { query?: { "status"?: "queued" | "sent" | "bounced" | "complained" | "failed" | "suppressed"; "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<EmailLogPage> {
     const headers = new Headers(args.headers);
 
     return this.request<EmailLogPage>("GET", "/api/v1/email-log", {
