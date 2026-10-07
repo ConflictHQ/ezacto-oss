@@ -35,9 +35,21 @@ type Entry = {
   spentDate: string
   invoiceId: number | null
   timerStartedAt: string | null
+  startedTime: string | null
+  endedTime: string | null
   approvalStatus: string
   updatedAt: string
 }
+
+/**
+ * Running in either shape: a duration timer carries `timer_started_at`, a
+ * start/end one a start and no end yet (issue 945). Only the first was
+ * checked, so a running start/end entry could be claimed or moved mid-run.
+ */
+const isRunning = (entry: Entry): boolean =>
+  entry.timerStartedAt !== null || (entry.startedTime !== null && entry.endedTime === null)
+const stoppedSql = sql`timer_started_at IS NULL
+  AND NOT (started_time IS NOT NULL AND ended_time IS NULL)`
 
 const normalized = (input: ReportTimeActionInput) => {
   if (!/^[A-Za-z0-9_-]{1,128}$/u.test(input.commandId)) throw new RangeError('commandId is invalid')
@@ -86,13 +98,14 @@ export const executeReportTimeAction = async (
   const entries = await database.all<Entry>(sql`
     SELECT id, user_id AS "userId", project_id AS "projectId", task_id AS "taskId",
       spent_date AS "spentDate", invoice_id AS "invoiceId",
-      timer_started_at AS "timerStartedAt", approval_status AS "approvalStatus",
+      timer_started_at AS "timerStartedAt", started_time AS "startedTime",
+      ended_time AS "endedTime", approval_status AS "approvalStatus",
       updated_at AS "updatedAt"
     FROM time_entries WHERE id IN (${requested}) ORDER BY id`)
   const changed: number[] = []
 
   for (const entry of entries) {
-    if (entry.timerStartedAt !== null) continue
+    if (isRunning(entry)) continue
     if (input.action === 'mark_invoiced') {
       if (entry.invoiceId !== null) continue
       const eligible = await database.all<{ id: number }>(sql`
@@ -100,11 +113,13 @@ export const executeReportTimeAction = async (
         JOIN projects project ON project.id = entry.project_id
         JOIN invoices invoice ON invoice.id = ${input.invoiceId!}
         WHERE entry.id = ${entry.id} AND entry.invoice_id IS NULL AND entry.billable = 1
-          AND entry.timer_started_at IS NULL AND invoice.state = 'draft'
-          AND invoice.client_id = project.client_id`)
+          AND entry.timer_started_at IS NULL
+          AND NOT (entry.started_time IS NOT NULL AND entry.ended_time IS NULL)
+          AND invoice.state = 'draft' AND invoice.client_id = project.client_id`)
       if (eligible[0] === undefined) continue
       await database.run(sql`UPDATE time_entries SET invoice_id = ${input.invoiceId!}, updated_at = ${input.completedAt}
-        WHERE id = ${entry.id} AND invoice_id IS NULL AND updated_at = ${entry.updatedAt}`)
+        WHERE id = ${entry.id} AND invoice_id IS NULL AND ${stoppedSql}
+          AND updated_at = ${entry.updatedAt}`)
       changed.push(entry.id)
     } else if (input.action === 'mark_uninvoiced') {
       if (entry.invoiceId === null) continue
@@ -140,7 +155,7 @@ export const executeReportTimeAction = async (
         user_assignment_id = ${assignment.userAssignmentId}, task_assignment_id = ${assignment.taskAssignmentId},
         billable = ${assignment.billable}, billable_rate_cents = ${rates.billableRateCents},
         cost_rate_cents = ${rates.costRateCents}, updated_at = ${input.completedAt}
-        WHERE id = ${entry.id} AND invoice_id IS NULL AND timer_started_at IS NULL
+        WHERE id = ${entry.id} AND invoice_id IS NULL AND ${stoppedSql}
           AND approval_status = 'unsubmitted' AND updated_at = ${entry.updatedAt}`)
       changed.push(entry.id)
     }
