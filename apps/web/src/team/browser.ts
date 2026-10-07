@@ -172,6 +172,10 @@ export const createTeamDirectoryController = (
   const profiles = required<HTMLElement>('[data-team-profiles]')
   const ownerProfileNote = required<HTMLElement>('[data-team-owner-profile-note]')
   const permissionsResult = required<HTMLElement>('[data-team-permissions-result]')
+  // The public demo (issue 931). Whether someone is active, and the profile
+  // they hold, decide who can sign in to the accounts the demo publishes, so
+  // neither is a visitor's to change. The controls stay, disabled, with why.
+  const demo = isDemoDeployment()
   const notificationsForm = required<HTMLFormElement>('[data-team-notifications-form]')
   const notificationsResult = required<HTMLElement>('[data-team-notifications-result]')
   const slackStatus = required<HTMLElement>('[data-team-slack-status]')
@@ -577,7 +581,7 @@ export const createTeamDirectoryController = (
             ? [
                 {
                   label: value.is_active ? 'Archive' : 'Restore',
-                  disabled: rosterStatusPending,
+                  disabled: rosterStatusPending || demo,
                   onSelect: () => {
                     const active = currentSession()
                     if (active === null) return
@@ -1082,7 +1086,8 @@ export const createTeamDirectoryController = (
         input.name = 'profile'
         input.value = profile.value
         input.checked = value.profile === profile.value
-        input.disabled = value.is_owner || !active.capabilities.canChangeProfile || mutationPending
+        input.disabled =
+          demo || value.is_owner || !active.capabilities.canChangeProfile || mutationPending
         const copy = document.createElement('span')
         const title = document.createElement('strong')
         title.textContent = profile.label
@@ -1096,9 +1101,12 @@ export const createTeamDirectoryController = (
     ownerProfileNote.hidden = !value.is_owner
     const submit = required<HTMLButtonElement>('[data-team-permissions-submit]')
     submit.hidden = value.is_owner || !active.capabilities.canChangeProfile
-    submit.disabled = mutationPending || value.is_owner || !active.capabilities.canChangeProfile
+    submit.disabled =
+      demo || mutationPending || value.is_owner || !active.capabilities.canChangeProfile
     if (!value.is_owner && !active.capabilities.canChangeProfile) {
       permissionsResult.textContent = 'Only an administrator can change permission profiles.'
+    } else if (!value.is_owner && demo) {
+      permissionsResult.textContent = demoUnavailable('Changing a permission profile')
     }
   }
 
@@ -1147,7 +1155,8 @@ export const createTeamDirectoryController = (
     submit.hidden = !active.capabilities.canManagePeople
     submit.disabled = mutationPending || !active.capabilities.canManagePeople
     statusAction.hidden = value.is_owner || !active.capabilities.canManagePeople
-    statusAction.disabled = mutationPending || value.is_owner || !active.capabilities.canManagePeople
+    statusAction.disabled =
+      demo || mutationPending || value.is_owner || !active.capabilities.canManagePeople
   }
 
 
@@ -1284,9 +1293,11 @@ export const createTeamDirectoryController = (
     renderRelationOptions(departments, 'department_ids', catalog.departments, value.departments)
     statusDescription.textContent = value.is_owner
       ? 'The organization owner cannot be deactivated.'
-      : value.is_active
-        ? 'Deactivate access while preserving historical time and expenses.'
-        : 'This person is inactive and cannot track new work.'
+      : demo
+        ? demoUnavailable('Deactivating or reactivating a person')
+        : value.is_active
+          ? 'Deactivate access while preserving historical time and expenses.'
+          : 'This person is inactive and cannot track new work.'
     statusAction.textContent = value.is_active ? 'Deactivate person' : 'Reactivate person'
     statusAction.className = value.is_active ? 'danger-action' : ''
     syncInfoControls(active, value)

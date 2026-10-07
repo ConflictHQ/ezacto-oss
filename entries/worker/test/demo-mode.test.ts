@@ -100,19 +100,26 @@ describe('demo deployment', () => {
     }
   })
 
-  it('[unit] tells the demo\'s pages which domains its mail reaches, and no other deployment\'s', async () => {
-    const listed = { ...demo, DEMO_MAIL_ALLOWED_DOMAINS: 'example.com, example.org' }
-    expect(await (await app.request('/invoices/INV-1', {}, listed)).text()).toContain(
-      ' data-demo-mail-domains="example.com,example.org"',
-    )
-    expect(await (await app.request('/invoices/INV-1', {}, demo)).text()).toContain(
-      ' data-demo-mail-domains=""',
-    )
-    expect(
-      await (
-        await app.request('/invoices/INV-1', {}, { ...listed, ENVIRONMENT: 'prod' })
-      ).text(),
-    ).not.toContain('data-demo-mail-domains')
+  it('[security] tells the demo\'s pages that its mail is restricted, never to whom', async () => {
+    // Issue 931. A page that named the approved domains would tell every
+    // visitor where the demo can send; the screens need only the fact.
+    const listed = { ...demo, DEMO_MAIL_ALLOWED_DOMAINS: 'Zq7-Approved.example, @zq7-other.example' }
+    const named = (html: string): string[] =>
+      ['zq7-approved.example', 'zq7-other.example'].filter((domain) =>
+        html.toLowerCase().includes(domain),
+      )
+    for (const env of [listed, demo]) {
+      for (const path of ['/', '/invoices/INV-1', '/settings/company', '/settings/deliveries']) {
+        const html = await (await app.request(path, {}, env)).text()
+        expect(html).toContain(' data-demo-mail-restricted')
+        expect(named(html)).toEqual([])
+      }
+    }
+    const production = await (
+      await app.request('/invoices/INV-1', {}, { ...listed, ENVIRONMENT: 'prod' })
+    ).text()
+    expect(production).not.toContain('data-demo-mail-restricted')
+    expect(named(production)).toEqual([])
   })
 
   it('[unit] offers each published account with something to tell them apart', () => {

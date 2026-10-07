@@ -126,10 +126,11 @@ export interface AppShellOptions {
    */
   readonly demo?: boolean
   /**
-   * The only recipient domains the demo's mail reaches, so the Send dialog can
-   * say so. Read only with `demo`; an empty list is a demo that emails nobody.
+   * Whether this deployment holds its mail to an allowlist, so the Send dialog
+   * can say so. A flag and never the list: a page that named the approved
+   * domains would tell every visitor where the demo can send.
    */
-  readonly demoMailDomains?: readonly string[]
+  readonly demoMailRestricted?: boolean
   /** Presentation hint only. The browser still validates the session before enabling the app. */
   readonly sessionCookiePresent?: boolean
 }
@@ -456,7 +457,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const foldedNavigation = foldedSections.map(navLink).join('')
 
   return `<!doctype html>
-<html lang="en" data-ez-theme="${defaultTheme}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ` data-demo-deployment data-demo-mail-domains="${escapeHtml((options.demoMailDomains ?? []).join(','))}"` : ''}>
+<html lang="en" data-ez-theme="${defaultTheme}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">

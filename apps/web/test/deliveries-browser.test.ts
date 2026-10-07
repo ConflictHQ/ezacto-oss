@@ -267,27 +267,24 @@ describe('the failure column (#485)', () => {
     )
   })
 
-  it('[security] names the domains the public demo emails instead of blaming a provider (issue 931)', () => {
+  it('[security] says the public demo held a message back without blaming a provider or naming a domain (issue 931)', () => {
     // No provider saw a message the demo held back: "provider_rejected" alone
-    // would send whoever reads the row looking for one.
+    // would send whoever reads the row looking for one. And the demo never
+    // says which domains it emails, so the sentence is the same everywhere.
     const root = document.documentElement
     root.setAttribute('data-demo-deployment', '')
+    root.setAttribute('data-demo-mail-restricted', '')
     try {
-      root.setAttribute('data-demo-mail-domains', 'example.com,example.org')
       expect(failureText('provider_rejected', 'demo_recipient_not_allowed')).toBe(
-        'Not delivered: the public demo only emails example.com and example.org.',
-      )
-      root.setAttribute('data-demo-mail-domains', '')
-      expect(failureText('provider_rejected', 'demo_recipient_not_allowed')).toBe(
-        'Not delivered: the public demo emails nobody.',
+        'Not delivered: the public demo only emails approved addresses.',
       )
     } finally {
       root.removeAttribute('data-demo-deployment')
-      root.removeAttribute('data-demo-mail-domains')
+      root.removeAttribute('data-demo-mail-restricted')
     }
-    // A row that outlived the demo it was written on.
+    // A row that outlived the demo it was written on reads the same.
     expect(failureText('provider_rejected', 'demo_recipient_not_allowed')).toBe(
-      'Not delivered: the public demo did not email this address.',
+      'Not delivered: the public demo only emails approved addresses.',
     )
     // Any other rejection still reads as the provider's.
     expect(failureText('provider_rejected', 'demo_other')).toBe('provider_rejected: demo_other')

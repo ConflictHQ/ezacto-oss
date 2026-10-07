@@ -465,30 +465,20 @@ describe('S-1 through S-5 application shell', () => {
     // Issue 931: what the demo refuses reads this mark to say so up front.
     const root = (html: string): string => /<html[^>]*>/u.exec(html)?.[0] ?? ''
     expect(root(renderAppShell({ environment: 'dev', release: 'abc', demo: true }))).toContain(
-      ' data-demo-deployment data-demo-mail-domains=""',
+      ' data-demo-deployment',
     )
-    // With the only domains its mail reaches, for the Send dialog to name.
+    // And, as a flag, that its mail is held to an allowlist -- never the list.
     expect(
       root(
-        renderAppShell({
-          environment: 'dev',
-          release: 'abc',
-          demo: true,
-          demoMailDomains: ['example.com', 'example.org'],
-        }),
+        renderAppShell({ environment: 'dev', release: 'abc', demo: true, demoMailRestricted: true }),
       ),
-    ).toContain(' data-demo-mail-domains="example.com,example.org"')
+    ).toContain(' data-demo-deployment data-demo-mail-restricted>')
     for (const html of [
       renderAppShell({ environment: 'dev', release: 'abc' }),
-      renderAppShell({
-        environment: 'prod',
-        release: 'abc',
-        demo: false,
-        demoMailDomains: ['example.com'],
-      }),
+      renderAppShell({ environment: 'prod', release: 'abc', demo: false, demoMailRestricted: false }),
     ]) {
       expect(html).not.toContain('data-demo-deployment')
-      expect(html).not.toContain('data-demo-mail-domains')
+      expect(html).not.toContain('data-demo-mail-restricted')
     }
   })
 

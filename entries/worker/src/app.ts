@@ -118,6 +118,7 @@ import {
   type TimesheetApprovalService,
   type TimesheetLockPolicyService,
   type TeamRouteOptions,
+  type UserPrincipal,
   invoicePaymentUrlForSend,
 } from '@ezacto/api'
 import {
@@ -528,9 +529,10 @@ export const createApp = (
       // So the controls the demo refuses say so before they are clicked
       // (#931). The same caveat: `demo-lockdown.ts` is what refuses them.
       demo: demoDeployment(env),
-      // And so the Send dialog can say where demo mail goes. Not a secret:
-      // the note prints the same list to anyone using the demo.
-      ...(demoDeployment(env) ? { demoMailDomains: demoMailDomains(env) ?? [] } : {}),
+      // And whether its mail is held to an allowlist, so the Send dialog can
+      // say so. Never the list itself: anyone can open the demo, and a page
+      // that named the approved domains would say where it can send.
+      demoMailRestricted: demoMailDomains(env) !== null,
     }
   }
 
@@ -778,10 +780,17 @@ export const createApp = (
           // Absent only where a test calls the app without bindings, which is
           // no deployment and so not the demo.
           const env = context.env as AppEnv | undefined
+          // Whose session this is, for the one refusal that depends on it.
+          // Unset on `/auth`, which is reached before anyone signs in.
+          const principal = context.get('principal') as UserPrincipal | undefined
+          const actingSession =
+            principal?.authentication.kind === 'session'
+              ? principal.authentication.sessionId
+              : null
           if (
             env !== undefined &&
             demoDeployment(env) &&
-            (await demoRefuses(context.req.raw, context.req.path))
+            (await demoRefuses(context.req.raw, context.req.path, actingSession))
           ) {
             throw demoRefusal()
           }
@@ -2107,8 +2116,11 @@ export const demoDeployment = (env: AppEnv): boolean =>
  * and delivers only to the domains `DEMO_MAIL_ALLOWED_DOMAINS` lists. On the
  * demo an unset or empty list is no domain at all: it delivers nothing. Lower
  * case, a leading `@` dropped, each domain once.
+ *
+ * Server-side only. Nothing that reaches a browser may carry it -- a visitor
+ * who could read the list off the demo would know where it can send.
  */
-export const demoMailDomains = (env: AppEnv): readonly string[] | null => {
+export const demoMailDomains =(env: AppEnv): readonly string[] | null => {
   if (!demoDeployment(env)) return null
   return [
     ...new Set(

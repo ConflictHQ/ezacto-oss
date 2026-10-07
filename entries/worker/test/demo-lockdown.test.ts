@@ -5,9 +5,11 @@ import { createApp, type WorkerEnv } from '../src/app.js'
 import { workerBrandAssetSurface } from '../src/brand-assets.js'
 import { workerInstanceThemeSurface } from '../src/instance-theme.js'
 import {
+  DEMO_ACCOUNT_FIELD_ROUTES,
   DEMO_PAYMENT_OPTIONS_ROUTE,
   DEMO_REFUSAL_MESSAGE,
   DEMO_REFUSED_ROUTES,
+  DEMO_SESSION_REVOKE_ROUTE,
   demoRefuses,
 } from '../src/demo-lockdown.js'
 import { seedDemoSender } from '../src/demo.js'
@@ -48,6 +50,9 @@ const at = '2026-10-06T12:00:00.000Z'
 const cursorKey = 'A'.repeat(43)
 const bootstrapToken = `ezacto_${'A'.repeat(16)}_${'B'.repeat(43)}`
 const owner = { email: 'admin@demo.example.test', password: 'correct horse battery staple 🙂' }
+
+/** An approved domain nothing in this file writes to, to look for in responses. */
+const unmailedDomain = 'zq7-unmailed.example'
 
 /** Requests that leave this machine, which no demo test may make. */
 const outbound: string[] = []
@@ -123,8 +128,10 @@ const deploy = async (kind: 'demo' | 'prod'): Promise<Fixture> => {
     ENVIRONMENT: kind === 'demo' ? 'dev' : 'prod',
     DEMO_MODE: 'true',
     // Read only where the deployment is the demo. Set here for both, so the
-    // production fixture proves it is ignored there.
-    DEMO_MAIL_ALLOWED_DOMAINS: ' Allowed.Example, @other.example ',
+    // production fixture proves it is ignored there. Nothing here ever mails
+    // the second domain, so it can only reach a response by the configuration
+    // leaking into one.
+    DEMO_MAIL_ALLOWED_DOMAINS: ` Allowed.Example, @${unmailedDomain.toUpperCase()} `,
     RELEASE: 'demo-lockdown-test',
     BRAND_EMAIL_SENDER_NAME: 'Folding Forks',
     MAIL_FROM: 'Folding Forks <billing@demo.example.test>',
@@ -236,11 +243,44 @@ const errorCode = async (response: Response): Promise<string | null> => {
   return body.error?.code ?? null
 }
 
-/** Every refused route with its parameters filled in, in the request form a client sends. */
+/**
+ * Every refused route with its parameters filled in, in the request form a
+ * client sends. With an id no record has: production answers each of these
+ * too, and one of them removes a user.
+ */
 const refusedRequests = DEMO_REFUSED_ROUTES.map((route) => {
   const [method, path] = route.split(' ') as [string, string]
-  return { route, method: method.toUpperCase(), path: path.replace(/:[A-Za-z]+/gu, '1') }
+  return { route, method: method.toUpperCase(), path: path.replace(/:[A-Za-z]+/gu, '987654') }
 })
+
+/** Signs the demo's administrator in again: a second visitor, or a second tab. */
+const signInAgain = async (fixture: Fixture): Promise<string> => {
+  const signedIn = await fixture.app.request(
+    '/auth/sign-in',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'http://localhost' },
+      body: JSON.stringify(owner),
+    },
+    fixture.env,
+  )
+  expect(signedIn.status).toBe(200)
+  return signedIn.headers.get('set-cookie')!.split(';', 1)[0]!
+}
+
+/** A user who is not the owner, as a teammate the demo publishes would be. */
+const teammate = async (fixture: Fixture, email: string): Promise<number> => {
+  const created = await call(fixture, 'POST', '/api/v1/users', {
+    body: { first_name: 'Tea', last_name: 'Mate', email },
+  })
+  expect(created.status).toBe(201)
+  return ((await created.json()) as { data: { id: number } }).data.id
+}
+
+const personVersion = async (fixture: Fixture, id: number): Promise<number> =>
+  ((await (await call(fixture, 'GET', `/api/v1/team/people/${String(id)}`)).json()) as {
+    data: { version: number }
+  }).data.version
 
 const pdf = () =>
   new File([new TextEncoder().encode('%PDF-1.4 fixture purchase order')], 'po.pdf', {
@@ -435,6 +475,83 @@ describe('the public demo (ENVIRONMENT=dev, DEMO_MODE=true)', () => {
       fixture.env,
     )
     expect(signIn.status).toBe(200)
+  })
+
+  it('[security] refuses deactivating, demoting or repointing anyone, and no other edit of them', async () => {
+    // A teammate the front page publishes is one user: deactivated, demoted or
+    // given another sign-in address, it keeps the next visitor out until the
+    // nightly rebuild. Any user, so the demo keeps no list of whose is whose.
+    const id = await teammate(fixture, 'teammate@demo.example.test')
+    const person = `/api/v1/team/people/${String(id)}`
+    const user = `/api/v1/users/${String(id)}`
+    const version = await personVersion(fixture, id)
+    const attempts: readonly (readonly [string, string, unknown])[] = [
+      ['PATCH', person, { expected_version: version, is_active: false }],
+      ['PATCH', person, { expected_version: version, profile: 'administrator' }],
+      ['PATCH', user, { is_active: false }],
+      ['PATCH', user, { profile: 'administrator' }],
+      ['PATCH', user, { email: 'someone@visitor.example' }],
+      ['DELETE', user, undefined],
+    ]
+    for (const [method, path, body] of attempts) {
+      const response = await call(fixture, method, path, body === undefined ? {} : { body })
+      expect({ method, path, body, status: response.status, code: await errorCode(response) }).toEqual({
+        method,
+        path,
+        body,
+        status: 403,
+        code: 'demo_disabled',
+      })
+    }
+    const after = (await (await call(fixture, 'GET', user)).json()) as {
+      data: { is_active: boolean; profile: string; email: string }
+    }
+    expect(after.data).toMatchObject({
+      is_active: true,
+      profile: 'member',
+      email: 'teammate@demo.example.test',
+    })
+
+    // Everything else about a person is the demo's to change.
+    const renamed = await call(fixture, 'PATCH', person, {
+      body: { expected_version: version, timezone: 'America/Costa_Rica' },
+    })
+    expect(renamed.status).toBe(200)
+    const telephone = await call(fixture, 'PATCH', user, { body: { telephone: '555 0100' } })
+    expect(telephone.status).toBe(200)
+  })
+
+  it('[security] lets a visitor sign out, and sign nobody else out', async () => {
+    // Every visitor signed in as the administrator is the same user, and can
+    // list every one of its sessions -- the fixture's own included.
+    const second = await signInAgain(fixture)
+    const sessions = (await (
+      await call(fixture, 'GET', '/api/v1/sessions', { headers: { cookie: second } })
+    ).json()) as { data: { id: number; current: boolean; revoked_at: string | null }[] }
+    const others = sessions.data.filter((session) => !session.current && session.revoked_at === null)
+    expect(others.length).toBeGreaterThan(0)
+    for (const session of others) {
+      const ended = await call(fixture, 'DELETE', `/api/v1/sessions/${String(session.id)}`, {
+        headers: { cookie: second },
+      })
+      expect({ id: session.id, status: ended.status, code: await errorCode(ended) }).toEqual({
+        id: session.id,
+        status: 403,
+        code: 'demo_disabled',
+      })
+    }
+    // Whoever holds them is still signed in.
+    expect((await call(fixture, 'GET', '/api/v1/whoami')).status).toBe(200)
+
+    // Signing out is ending your own, which the demo needs.
+    const own = sessions.data.find((session) => session.current)!
+    const signedOut = await call(fixture, 'DELETE', `/api/v1/sessions/${String(own.id)}`, {
+      headers: { cookie: second },
+    })
+    expect(signedOut.status).toBe(200)
+    expect((await call(fixture, 'GET', '/api/v1/whoami', { headers: { cookie: second } })).status).toBe(
+      401,
+    )
   })
 
   it('[security] delivers an invoice email to the allowed recipients and nobody else', async () => {
@@ -661,6 +778,76 @@ describe('the public demo (ENVIRONMENT=dev, DEMO_MODE=true)', () => {
     expect(nobody.message.ack).toHaveBeenCalledOnce()
     expect(allowed.message.ack).toHaveBeenCalledOnce()
   })
+
+  it('[security] names no approved domain in any page or response it serves', async () => {
+    // Anyone can open the demo. A page, script or response that named an
+    // approved domain would tell every visitor where the demo can send mail.
+    // Addresses somebody typed into the demo are the demo's own data; the
+    // domain looked for here is one nothing in this file ever writes, so it
+    // can only turn up by the deployment's configuration leaking.
+    const leaks: string[] = []
+    const inspect = async (label: string, response: Response): Promise<void> => {
+      const text = (await response.text()).toLowerCase()
+      if (text.includes(unmailedDomain)) leaks.push(label)
+      for (const [name, value] of response.headers) {
+        if (value.toLowerCase().includes(unmailedDomain)) leaks.push(`${label} (${name})`)
+      }
+    }
+
+    // Mail refused, mail previewed and account mail asked for, so the log and
+    // the invoice history have the demo's refusals in them to be read back.
+    await draftInvoice(fixture, 508)
+    await inspect(
+      'send',
+      await call(fixture, 'POST', '/api/v1/invoices/508/deliveries', {
+        body: {
+          expected_version: 0,
+          recipients: [{ name: 'Accounts', email: 'accounts@client.example' }],
+          confirmed: true,
+        },
+      }),
+    )
+    await fixture.services.outbox.drain()
+    await inspect(
+      'preview',
+      await call(fixture, 'POST', '/api/v1/invoices/508/deliveries/preview/send', {
+        body: { recipients: [{ name: 'Accounts', email: 'accounts@client.example' }] },
+      }),
+    )
+    await inspect(
+      'password reset request',
+      await fixture.app.request(
+        '/auth/password/forgot',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', origin: 'http://localhost' },
+          body: JSON.stringify({ email: owner.email }),
+        },
+        fixture.env,
+      ),
+    )
+    expect(
+      (await fixture.services.emailLog.list({ status: 'failed' })).some(
+        (record) => record.failureReason === 'demo_recipient_not_allowed',
+      ),
+    ).toBe(true)
+
+    // Every page, asset and read the Worker serves, its parameters filled with
+    // the invoice above where one is wanted. Several answer 404 for want of a
+    // real record, and are read all the same: an error is a response too.
+    const reads = new Set(
+      fixture.app.routes
+        .filter((route) => route.method === 'GET' && !route.path.includes('*'))
+        .map((route) => route.path),
+    )
+    expect(reads.size).toBeGreaterThan(50)
+    for (const path of reads) {
+      const filled = path.replace(/:id\b/gu, '508').replace(/:[A-Za-z]+/gu, '1')
+      await inspect(`GET ${filled}`, await call(fixture, 'GET', filled))
+    }
+    await inspect('GET /api/v1/invoices/508/email-defaults', await call(fixture, 'GET', '/api/v1/invoices/508/email-defaults'))
+    expect(leaks).toEqual([])
+  }, 120_000)
 })
 
 describe('the demo at night', () => {
@@ -737,7 +924,14 @@ describe('production with DEMO_MODE left on (ENVIRONMENT=prod)', () => {
     // could. A route renamed without its entry here fails rather than quietly
     // coming back unguarded on the demo.
     const mounted = mountedApiRoutes(fixture.app.routes)
-    expect([...DEMO_REFUSED_ROUTES, DEMO_PAYMENT_OPTIONS_ROUTE].filter((route) => !mounted.has(route))).toEqual([])
+    expect(
+      [
+        ...DEMO_REFUSED_ROUTES,
+        DEMO_PAYMENT_OPTIONS_ROUTE,
+        ...Object.keys(DEMO_ACCOUNT_FIELD_ROUTES),
+        DEMO_SESSION_REVOKE_ROUTE,
+      ].filter((route) => !mounted.has(route)),
+    ).toEqual([])
   })
 
   it('[security] refuses none of them', async () => {
@@ -745,6 +939,29 @@ describe('production with DEMO_MODE left on (ENVIRONMENT=prod)', () => {
       const response = await call(fixture, method, path, method === 'GET' ? {} : { body: {} })
       expect({ route, code: await errorCode(response) }).not.toEqual({ route, code: 'demo_disabled' })
     }
+  })
+
+  it('[api] still lets an administrator deactivate a person and end another session', async () => {
+    const id = await teammate(fixture, 'teammate@prod.example.test')
+    const deactivated = await call(fixture, 'PATCH', `/api/v1/team/people/${String(id)}`, {
+      body: { expected_version: await personVersion(fixture, id), is_active: false },
+    })
+    expect(deactivated.status).toBe(200)
+    const promoted = await call(fixture, 'PATCH', `/api/v1/users/${String(id)}`, {
+      body: { profile: 'accounting' },
+    })
+    expect(promoted.status).toBe(200)
+
+    const second = await signInAgain(fixture)
+    const third = await signInAgain(fixture)
+    const thirdId = ((await (
+      await call(fixture, 'GET', '/api/v1/sessions', { headers: { cookie: third } })
+    ).json()) as { data: { id: number; current: boolean }[] }).data.find((session) => session.current)!.id
+    const ended = await call(fixture, 'DELETE', `/api/v1/sessions/${String(thirdId)}`, {
+      headers: { cookie: second },
+    })
+    expect(ended.status).toBe(200)
+    expect((await call(fixture, 'GET', '/api/v1/whoami', { headers: { cookie: third } })).status).toBe(401)
   })
 
   it('[api] still lets an administrator set the sender, the invoice defaults and the files', async () => {
@@ -865,24 +1082,27 @@ describe('demoRefuses', () => {
         ? {}
         : { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }),
     })
+  /** Signed in with session 12 unless a test says otherwise. */
+  const refuses = (made: Request, path: string, actingSession: string | null = '12') =>
+    demoRefuses(made, path, actingSession)
 
   it('[unit] matches a refused route by method and by whole segments', async () => {
-    expect(await demoRefuses(request('POST', '/'), '/api/v1/invoices/77/payment-link')).toBe(true)
-    expect(await demoRefuses(request('GET', '/'), '/api/v1/invoices/77/payment-link')).toBe(false)
-    expect(await demoRefuses(request('POST', '/'), '/api/v1/invoices/77/payment-links')).toBe(false)
-    expect(await demoRefuses(request('POST', '/'), '/api/v1/invoices/77/88/payment-link')).toBe(false)
-    expect(await demoRefuses(request('GET', '/'), '/api/v1/sender-identities')).toBe(false)
+    expect(await refuses(request('POST', '/'), '/api/v1/invoices/77/payment-link')).toBe(true)
+    expect(await refuses(request('GET', '/'), '/api/v1/invoices/77/payment-link')).toBe(false)
+    expect(await refuses(request('POST', '/'), '/api/v1/invoices/77/payment-links')).toBe(false)
+    expect(await refuses(request('POST', '/'), '/api/v1/invoices/77/88/payment-link')).toBe(false)
+    expect(await refuses(request('GET', '/'), '/api/v1/sender-identities')).toBe(false)
   })
 
   it('[unit] reads an invoice edit for payment_options without consuming it', async () => {
     const edit = request('PATCH', '/', { expected_version: 1, payment_options: [] })
-    expect(await demoRefuses(edit, '/api/v1/invoices/7')).toBe(true)
+    expect(await refuses(edit, '/api/v1/invoices/7')).toBe(true)
     // The route still reads the body it was sent.
     expect(await edit.json()).toEqual({ expected_version: 1, payment_options: [] })
     expect(
-      await demoRefuses(request('PATCH', '/', { expected_version: 1, subject: 'x' }), '/api/v1/invoices/7'),
+      await refuses(request('PATCH', '/', { expected_version: 1, subject: 'x' }), '/api/v1/invoices/7'),
     ).toBe(false)
-    expect(await demoRefuses(request('PATCH', '/', ['payment_options']), '/api/v1/invoices/7')).toBe(false)
+    expect(await refuses(request('PATCH', '/', ['payment_options']), '/api/v1/invoices/7')).toBe(false)
   })
 
   it('[unit] leaves a body past the route’s limit to the route', async () => {
@@ -890,6 +1110,40 @@ describe('demoRefuses', () => {
       payment_options: [],
       padding: 'x'.repeat(1024 * 1024),
     })
-    expect(await demoRefuses(huge, '/api/v1/invoices/7')).toBe(false)
+    expect(await refuses(huge, '/api/v1/invoices/7')).toBe(false)
+  })
+
+  it('[unit] refuses what would change who can sign in, and no other edit of a person', async () => {
+    for (const [path, body] of [
+      ['/api/v1/team/people/5', { expected_version: 1, is_active: false }],
+      ['/api/v1/team/people/5', { expected_version: 1, profile: 'member' }],
+      ['/api/v1/users/5', { is_active: false }],
+      ['/api/v1/users/5', { profile: 'administrator' }],
+      ['/api/v1/users/5', { email: 'someone@visitor.example' }],
+    ] as const) {
+      expect({ path, body, refused: await refuses(request('PATCH', '/', body), path) }).toEqual({
+        path,
+        body,
+        refused: true,
+      })
+    }
+    expect(await refuses(request('DELETE', '/'), '/api/v1/users/5')).toBe(true)
+    // A name, a timezone, a telephone: the demo working as a demo should.
+    expect(
+      await refuses(request('PATCH', '/', { expected_version: 1, timezone: 'UTC' }), '/api/v1/team/people/5'),
+    ).toBe(false)
+    expect(await refuses(request('PATCH', '/', { telephone: '555 0100' }), '/api/v1/users/5')).toBe(false)
+    // `email` is a user's sign-in address; a person edit has no such field.
+    expect(
+      await refuses(request('PATCH', '/', { expected_version: 1, email: 'x@y.example' }), '/api/v1/team/people/5'),
+    ).toBe(false)
+  })
+
+  it('[unit] lets a session end itself, and no other', async () => {
+    expect(await refuses(request('DELETE', '/'), '/api/v1/sessions/12', '12')).toBe(false)
+    expect(await refuses(request('DELETE', '/'), '/api/v1/sessions/13', '12')).toBe(true)
+    // An API token is no session at all, so it ends none of them.
+    expect(await refuses(request('DELETE', '/'), '/api/v1/sessions/12', null)).toBe(true)
+    expect(await refuses(request('GET', '/'), '/api/v1/sessions', '12')).toBe(false)
   })
 })

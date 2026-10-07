@@ -1,4 +1,4 @@
-import { ApiError } from '@ezacto/api'
+import { ApiError, DEFAULT_MAX_JSON_BODY_BYTES } from '@ezacto/api'
 
 /**
  * What the public demo refuses (#931).
@@ -88,8 +88,8 @@ export const DEMO_UPLOAD_ROUTES: readonly string[] = [
  * What would lock the next visitor out of the accounts the demo publishes, or
  * let one visitor decide who else gets in: a new password (the reset is the
  * only route that sets one), a second factor nobody else holds, a way of
- * signing in switched off, and SSO provisioning opened to a domain a visitor
- * controls.
+ * signing in switched off, SSO provisioning opened to a domain a visitor
+ * controls, and a user removed outright.
  */
 export const DEMO_ACCESS_ROUTES: readonly string[] = [
   'post /auth/password/reset',
@@ -100,6 +100,7 @@ export const DEMO_ACCESS_ROUTES: readonly string[] = [
   'post /api/v1/settings/sso-domains',
   'post /api/v1/settings/sso-domains/:id/verify',
   'delete /api/v1/settings/sso-domains/:id',
+  'delete /api/v1/users/:id',
 ]
 
 export const DEMO_REFUSED_ROUTES: readonly string[] = [
@@ -117,6 +118,27 @@ export const DEMO_REFUSED_ROUTES: readonly string[] = [
  * demo working as a demo should.
  */
 export const DEMO_PAYMENT_OPTIONS_ROUTE = 'patch /api/v1/invoices/:id'
+
+/**
+ * Whether someone is active, their permission profile, and the address a user
+ * signs in with are each set through an edit that also changes a name or a
+ * timezone -- so these are refused by the fields they carry. Any of them on an
+ * account the demo publishes keeps the next visitor out of it. On any other
+ * user they are the same switch, so the demo refuses them for every user
+ * rather than keep a list of whose account is whose.
+ */
+export const DEMO_ACCOUNT_FIELD_ROUTES: Readonly<Record<string, readonly string[]>> = {
+  'patch /api/v1/team/people/:id': ['is_active', 'profile'],
+  'patch /api/v1/users/:id': ['is_active', 'profile', 'email'],
+}
+
+/**
+ * Ending a session. The caller's own is signing out, which the demo needs; any
+ * other is a different visitor signed out of the account they share, because
+ * each account the demo publishes is one user, and every visitor signed in as
+ * it can list all of its sessions.
+ */
+export const DEMO_SESSION_REVOKE_ROUTE = 'delete /api/v1/sessions/:sessionId'
 
 interface CompiledRoute {
   readonly method: string
@@ -138,7 +160,16 @@ const compile = (route: string): CompiledRoute => {
 }
 
 const refused = DEMO_REFUSED_ROUTES.map(compile)
-const paymentOptionsRoute = compile(DEMO_PAYMENT_OPTIONS_ROUTE)
+const sessionRevokeRoute = compile(DEMO_SESSION_REVOKE_ROUTE)
+
+/** The edits refused by what they set rather than by where they are sent. */
+const fieldRoutes: readonly { readonly route: CompiledRoute; readonly fields: readonly string[] }[] = [
+  { route: compile(DEMO_PAYMENT_OPTIONS_ROUTE), fields: ['payment_options'] },
+  ...Object.entries(DEMO_ACCOUNT_FIELD_ROUTES).map(([route, fields]) => ({
+    route: compile(route),
+    fields,
+  })),
+]
 
 /** HEAD reaches a GET handler, so it has to meet the GET refusal too. */
 const routedMethod = (method: string): string => (method === 'HEAD' ? 'GET' : method)
@@ -146,16 +177,16 @@ const routedMethod = (method: string): string => (method === 'HEAD' ? 'GET' : me
 const matches = (route: CompiledRoute, method: string, path: string): boolean =>
   route.method === routedMethod(method) && route.pattern.test(path)
 
-/** The invoice edit route accepts a JSON body of up to this many bytes. */
-const MAX_INSPECTED_BYTES = 1024 * 1024
+/** Every edit listed above reads a JSON body of up to this many bytes. */
+const MAX_INSPECTED_BYTES = DEFAULT_MAX_JSON_BODY_BYTES
 
 /**
- * Whether an invoice edit sets `payment_options`. Read from a copy, so the
- * route still reads the body it was sent, and bounded the way the route is: a
- * body past its limit is refused there as too large, and reading further here
- * would spend the Worker's memory on a request that cannot succeed.
+ * Whether an edit sets any of `fields`. Read from a copy, so the route still
+ * reads the body it was sent, and bounded the way the route is: a body past
+ * its limit is refused there as too large, and reading further here would
+ * spend the Worker's memory on a request that cannot succeed.
  */
-const editsPaymentOptions = async (request: Request): Promise<boolean> => {
+const setsAnyOf = async (request: Request, fields: readonly string[]): Promise<boolean> => {
   const body = request.clone().body
   if (body === null) return false
   const reader = body.getReader()
@@ -193,12 +224,9 @@ const editsPaymentOptions = async (request: Request): Promise<boolean> => {
     // Not JSON, so not an edit the route will accept either.
     return false
   }
-  return (
-    typeof parsed === 'object' &&
-    parsed !== null &&
-    !Array.isArray(parsed) &&
-    Object.hasOwn(parsed, 'payment_options')
-  )
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return false
+  const edit: object = parsed
+  return fields.some((field) => Object.hasOwn(edit, field))
 }
 
 /**
@@ -208,9 +236,18 @@ const editsPaymentOptions = async (request: Request): Promise<boolean> => {
  * `path` must be the path the router matched on -- Hono's `context.req.path`,
  * which is percent-decoded -- and not the raw URL's. Matching the raw form would
  * let `/sender-identit%69es` past this check and into the handler the router
- * decodes it to.
+ * decodes it to. `actingSession` is the id of the session the request is
+ * signed in with, or null where it has none.
  */
-export const demoRefuses = async (request: Request, path: string): Promise<boolean> => {
+export const demoRefuses = async (
+  request: Request,
+  path: string,
+  actingSession: string | null,
+): Promise<boolean> => {
   if (refused.some((route) => matches(route, request.method, path))) return true
-  return matches(paymentOptionsRoute, request.method, path) && editsPaymentOptions(request)
+  if (matches(sessionRevokeRoute, request.method, path)) {
+    return path.slice(path.lastIndexOf('/') + 1) !== actingSession
+  }
+  const edit = fieldRoutes.find(({ route }) => matches(route, request.method, path))
+  return edit !== undefined && setsAnyOf(request, edit.fields)
 }
