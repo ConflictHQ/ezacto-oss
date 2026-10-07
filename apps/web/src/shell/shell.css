@@ -38,8 +38,9 @@
  * is 11px bold capitals, tracked open. Figures take tabular numerals in the
  * body family rather than a monospace face, so columns still align and a
  * number reads as part of the line it sits in. The shadows are mixed from
- * `ink` like every other shadow here, so a palette that moves the ink moves
- * them with it; the primary glow is the action colour's own.
+ * `shadow`, a colour of their own: mixed from `ink` they turned into a pale
+ * halo the moment a dark scheme made the ink light. The primary glow is the
+ * action colour's own.
  */
 :root {
   --ez-text-size: 14px;
@@ -50,11 +51,11 @@
   --ez-label-weight: 700;
   --ez-label-tracking: 0.06em;
   --ez-shadow-popover:
-    0 8px 32px color-mix(in srgb, var(--ez-ink) 14%, transparent),
-    0 2px 8px color-mix(in srgb, var(--ez-ink) 8%, transparent);
+    0 8px 32px color-mix(in srgb, var(--ez-shadow) 14%, transparent),
+    0 2px 8px color-mix(in srgb, var(--ez-shadow) 8%, transparent);
   --ez-shadow-menu:
-    0 4px 16px color-mix(in srgb, var(--ez-ink) 12%, transparent),
-    0 1px 4px color-mix(in srgb, var(--ez-ink) 6%, transparent);
+    0 4px 16px color-mix(in srgb, var(--ez-shadow) 12%, transparent),
+    0 1px 4px color-mix(in srgb, var(--ez-shadow) 6%, transparent);
   --ez-shadow-primary: 0 2px 8px color-mix(in srgb, var(--ez-action) 35%, transparent);
 }
 
@@ -1357,7 +1358,7 @@
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
-  box-shadow: 0 18px 48px color-mix(in srgb, var(--ez-ink) 8%, transparent);
+  box-shadow: 0 18px 48px color-mix(in srgb, var(--ez-shadow) 8%, transparent);
 }
 .invoice-document-heading {
   display: flex;
@@ -3525,13 +3526,13 @@ a {
   align-items: stretch;
   gap: 8px;
   padding: 0 24px;
-  background: var(--ez-ink);
-  color: var(--ez-ground);
+  background: var(--ez-band);
+  color: var(--ez-band-ink);
 }
 .brand {
   display: grid;
   place-items: center;
-  color: var(--ez-ground);
+  color: var(--ez-band-ink);
   font:
     600 20px/1 var(--ez-font-mono),
     monospace;
@@ -3561,7 +3562,7 @@ a {
   display: grid;
   place-items: center;
   padding: 0 14px;
-  color: var(--ez-ground);
+  color: var(--ez-band-ink);
   text-decoration: none;
   font-weight: 500;
 }
@@ -3813,7 +3814,7 @@ dialog h2,
   display: grid;
   place-items: center;
   padding: 24px;
-  background: color-mix(in srgb, var(--ez-ink) 24%, transparent);
+  background: color-mix(in srgb, var(--ez-shadow) 24%, transparent);
   backdrop-filter: blur(2px);
 }
 .session-check-card {
@@ -3826,7 +3827,7 @@ dialog h2,
   border: 1px solid var(--ez-border);
   border-radius: calc(var(--ez-radius) * 2);
   background: var(--ez-ground);
-  box-shadow: 0 20px 56px color-mix(in srgb, var(--ez-ink) 24%, transparent);
+  box-shadow: 0 20px 56px color-mix(in srgb, var(--ez-shadow) 24%, transparent);
   color: var(--ez-ink);
 }
 .session-check-card p {
@@ -3859,8 +3860,8 @@ dialog h2,
   justify-content: space-between;
   overflow: hidden;
   padding: clamp(32px, 5vw, 72px);
-  background: var(--ez-ink);
-  color: var(--ez-ground);
+  background: var(--ez-band);
+  color: var(--ez-band-ink);
 }
 .auth-splash::before {
   content: '';
@@ -3869,8 +3870,8 @@ dialog h2,
   inset: 0;
   opacity: 0.16;
   background-image:
-    linear-gradient(to right, var(--ez-ground) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--ez-ground) 1px, transparent 1px);
+    linear-gradient(to right, var(--ez-band-ink) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--ez-band-ink) 1px, transparent 1px);
   background-size: 72px 72px;
   mask-image: linear-gradient(145deg, black, transparent 78%);
 }
@@ -3889,7 +3890,7 @@ dialog h2,
 .auth-wordmark {
   width: fit-content;
   position: relative;
-  color: var(--ez-ground);
+  color: var(--ez-band-ink);
   font:
     600 clamp(22px, 2vw, 28px) / 1 var(--ez-font-mono),
     monospace;
@@ -3907,21 +3908,21 @@ dialog h2,
 .auth-splash-copy h1 {
   max-width: 9ch;
   margin: 12px 0 20px;
-  color: var(--ez-ground);
+  color: var(--ez-band-ink);
   font: 600 clamp(48px, 7vw, 96px) / 0.94 var(--ez-font-display), sans-serif;
   letter-spacing: -0.055em;
 }
 .auth-splash-copy > p:last-child {
   max-width: 48ch;
   margin: 0;
-  color: color-mix(in srgb, var(--ez-ground) 72%, transparent);
+  color: color-mix(in srgb, var(--ez-band-ink) 72%, transparent);
   font-size: clamp(16px, 1.4vw, 20px);
   line-height: 1.55;
 }
 .auth-splash-foot {
   position: relative;
   margin: 0;
-  color: color-mix(in srgb, var(--ez-ground) 58%, transparent);
+  color: color-mix(in srgb, var(--ez-band-ink) 58%, transparent);
   font: 12px/1.4 var(--ez-font-mono), monospace;
 }
 .auth-entry {
@@ -3942,7 +3943,7 @@ dialog h2,
   border: 1px solid var(--ez-border);
   border-radius: calc(var(--ez-radius) * 2);
   background: var(--ez-ground);
-  box-shadow: 0 24px 64px color-mix(in srgb, var(--ez-ink) 10%, transparent);
+  box-shadow: 0 24px 64px color-mix(in srgb, var(--ez-shadow) 10%, transparent);
 }
 .auth-checking {
   display: grid;
@@ -4132,7 +4133,7 @@ dialog h2,
 }
 /* The account control sits in the topbar's trailing corner, where an account
    control is looked for, and is a light pill like its siblings — the bar is
-   --ez-ink, so --ez-muted would be unreadable directly against it. */
+   --ez-band, so --ez-muted would be unreadable directly against it. */
 .account {
   align-self: center;
 }
@@ -4394,7 +4395,7 @@ dialog h2,
   border-radius: var(--ez-radius);
 }
 .brand-slot-preview[data-ground='dark'] {
-  background: var(--ez-ink);
+  background: var(--ez-band);
 }
 .brand-slot-preview[data-ground='dark'] .hint {
   color: var(--ez-blue-light);
@@ -5450,7 +5451,7 @@ dialog {
   box-shadow: var(--ez-shadow-popover);
 }
 dialog::backdrop {
-  background: color-mix(in srgb, var(--ez-ink) 48%, transparent);
+  background: color-mix(in srgb, var(--ez-shadow) 48%, transparent);
   backdrop-filter: blur(2px);
 }
 @media (prefers-reduced-motion: no-preference) {
@@ -6577,7 +6578,7 @@ dialog textarea {
  * Paper.
  *
  * Cmd-P on an invoice printed the application. The top bar came out as a white
- * band -- it is white text on --ez-ink, and a browser omits background-color
+ * band -- it is white text on --ez-band, and a browser omits background-color
  * when "Background graphics" is off, which is the default -- followed by the
  * primary nav, the section tabs, "Loading invoice…", every control the operator
  * uses to change the invoice, the internal message history, and the build
@@ -6929,7 +6930,7 @@ dialog textarea {
 }
 .recurring-confirm-dialog::backdrop,
 .report-confirm-dialog::backdrop {
-  background: color-mix(in srgb, var(--ez-ink) 45%, transparent);
+  background: color-mix(in srgb, var(--ez-shadow) 45%, transparent);
 }
 .recurring-confirm-dialog form,
 .report-confirm-dialog form {
@@ -7308,7 +7309,7 @@ dialog textarea {
   padding: 14px 20px;
   border-top: 1px solid var(--ez-border);
   background: var(--ez-surface);
-  box-shadow: 0 -10px 24px -18px color-mix(in srgb, var(--ez-ink) 45%, transparent);
+  box-shadow: 0 -10px 24px -18px color-mix(in srgb, var(--ez-shadow) 45%, transparent);
 }
 .editor-actions .form-result {
   flex: 1 1 280px;

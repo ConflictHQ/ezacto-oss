@@ -549,7 +549,10 @@ export const themeSlotCopy: readonly ThemeSlotCopy[] = [
   { slot: 'status_bg', label: 'Status background', group: 'Status' },
   { slot: 'surface_2', label: 'Nested panel', group: 'Surfaces', hint: 'A panel inside a card.' },
   { slot: 'orange_tint', label: 'Selected tint', group: 'Surfaces', hint: 'Behind a pressed toggle or the chosen view.' },
-  { slot: 'blue_light', label: 'Pale blue', group: 'Surfaces' },
+  { slot: 'blue_light', label: 'Pale blue', group: 'Surfaces', hint: 'The second text colour on the header band.' },
+  { slot: 'band', label: 'Header band', group: 'Surfaces', hint: 'The strip behind the top bar and the sign-in page.' },
+  { slot: 'band_ink', label: 'Text on the header band', group: 'Surfaces' },
+  { slot: 'shadow', label: 'Shadows', group: 'Surfaces', hint: 'What shadows and dimmed backdrops are mixed from.' },
   { slot: 'money', label: 'Money band', group: 'Surfaces', hint: 'The band behind the totals on an invoice.' },
   { slot: 'ink_2', label: 'Text on the money band', group: 'Surfaces', hint: 'The labels beside each total.' },
 ]

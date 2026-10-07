@@ -22,6 +22,9 @@ export const themeSlotNames = [
   'live_text',
   'surface_2',
   'row_hover',
+  'band',
+  'band_ink',
+  'shadow',
 ] as const
 
 export const themeFontNames = ['display', 'body', 'mono'] as const
@@ -33,6 +36,12 @@ export type ThemeName = keyof typeof generatedThemes
 export interface ThemeDefinition {
   label: string
   colors: Readonly<Record<ThemeSlot, string>>
+  /**
+   * The same slots in the theme's dark scheme. Optional because a deployment
+   * may inject a theme that has none; the built-in Precision always carries
+   * one, and the stylesheet only switches to it on the application root.
+   */
+  darkColors?: Readonly<Record<ThemeSlot, string>>
   fonts: Readonly<Record<ThemeFont, string>>
   radius: number
   fontStylesheet: string

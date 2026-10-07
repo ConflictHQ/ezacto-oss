@@ -939,7 +939,10 @@ const fixtureControl = async (request, response) => {
           .bind(91011, teammateId, teammateId, spentDate, timestamp, timestamp),
       ])
     }
-  } else if (action === 'payment-run-reset') {
+  } else if (action === 'payment-run-reset' || action === 'sign-in-rate-reset') {
+    // Clearing the sign-in limit is all either does. The second name is for a
+    // spec that signs in late in a run, after the rest of the suite has spent
+    // the limit, and has nothing to do with payment runs.
     await database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`).run()
   } else if (action === 'task-admin-cleanup') {
     await database.batch([

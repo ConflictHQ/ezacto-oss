@@ -137,6 +137,7 @@ import {
   instancePaletteContract,
   invoiceNumberIsAddressable,
   invoiceTabs,
+  readDisplayPreferences,
   renderAppShell,
   reportKindTabs,
   webAssets,
@@ -502,8 +503,13 @@ export const createApp = (
    * in here rather than leaving each page to call `configuredSignInProviders`
    * is what keeps twenty-six render sites from drifting apart on the question
    * of whether a method is live.
+   *
+   * And the person's display preferences, from their cookies: the scheme the
+   * page is painted in has to be in the first byte, or a dark page flashes
+   * white on every load. Every shell response is `no-store`, so a page that
+   * varies by cookie is never served to anyone else.
    */
-  const shellChrome = async (env: AppEnv) => {
+  const shellChrome = async (env: AppEnv, request: Request) => {
     const [brand, themed, enabled] = await Promise.all([
       shellBrand(env),
       instanceTheme === undefined
@@ -517,6 +523,7 @@ export const createApp = (
       enabled === null ||
       (enabled.find((state) => state.method === method)?.enabled ?? true)
     return {
+      ...readDisplayPreferences(request.headers.get('cookie')),
       brand,
       instanceTheme: themed !== null,
       signInProviders: configuredSignInProviders(env).filter((provider) =>
@@ -1109,7 +1116,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -1132,7 +1139,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Home',
             view: 'dashboard',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1154,7 +1161,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Invoices',
             view: 'invoice-generation',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1176,7 +1183,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Approvals',
             view: 'timesheet-approvals',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1198,7 +1205,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Invoices',
             view: 'invoice-list',
             tabs: invoiceTabs('invoice-list'),
@@ -1226,7 +1233,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Invoices',
             view: 'invoice-recurring',
             tabs: invoiceTabs('invoice-recurring'),
@@ -1253,7 +1260,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Invoices',
             view: 'invoice-recurring-editor',
             tabs: invoiceTabs('invoice-recurring'),
@@ -1284,7 +1291,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Invoices',
             view: 'invoice-recurring-editor',
             tabs: invoiceTabs('invoice-recurring'),
@@ -1307,7 +1314,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Invoices',
             view: 'invoice-retainers',
             tabs: invoiceTabs('invoice-retainers'),
@@ -1333,7 +1340,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Invoices',
             view: 'invoice-estimates',
             tabs: invoiceTabs('invoice-estimates'),
@@ -1363,7 +1370,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Clients',
             view: 'client-list',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1385,7 +1392,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Projects',
             view: 'project-list',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1407,7 +1414,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Team',
             view: 'team-list',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1429,7 +1436,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Tasks',
             view: 'task-list',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1451,7 +1458,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Payments',
             view: 'staff-payments',
             tabs: [
@@ -1478,7 +1485,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Reports',
             view: 'reports',
             tabs: reportKindTabs(context.req.query('report') ?? null),
@@ -1501,7 +1508,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Expenses',
             view: 'expense-list',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1523,7 +1530,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Expenses',
             view: 'expense-categories',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1548,7 +1555,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Settings',
             view: 'settings-user',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1569,7 +1576,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Settings',
             view: 'settings-company',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1591,7 +1598,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Settings',
             view: 'settings-templates',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1613,7 +1620,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Settings',
             view: 'settings-roles',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1635,7 +1642,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Settings',
             view: 'settings-activity',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1660,7 +1667,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Settings',
             view: 'settings-deliveries',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1699,7 +1706,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Expenses',
             view: 'expense-detail',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1729,7 +1736,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Projects',
             view: 'project-detail',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1759,7 +1766,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Team',
             view: 'team-person',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1789,7 +1796,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Clients',
             view: 'client-detail',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1823,7 +1830,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Invoices',
             view: 'invoice-detail',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1853,7 +1860,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Invoices',
             view: 'invoice-edit',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1883,7 +1890,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Invoices',
             view: 'invoice-detail',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1911,7 +1918,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Invoices',
             view: 'invoice-edit',
             demoAccounts: publishedDemoAccounts(context.env),
@@ -1944,7 +1951,7 @@ export const createApp = (
           renderAppShell({
             environment: context.env.ENVIRONMENT,
             release: context.env.RELEASE,
-            ...(await shellChrome(context.env)),
+            ...(await shellChrome(context.env, context.req.raw)),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
             view: 'not-found',

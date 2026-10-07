@@ -233,7 +233,7 @@ describe('#489 uploaded brand marks', () => {
         wordmarkLight: '/brand/wordmark-light/aaaa',
       },
     })
-    // The topbar and the sign-in splash are both painted --ez-ink, so both take
+    // The topbar and the sign-in splash are both painted --ez-band, so both take
     // the mark meant for a dark ground; the light-ground one belongs to the
     // document shell and must not appear here.
     expect(html).toContain('<img class="brand-mark" src="/brand/wordmark-dark/bbbb" alt="Acme">')

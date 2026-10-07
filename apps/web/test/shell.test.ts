@@ -482,6 +482,41 @@ describe('S-1 through S-5 application shell', () => {
     }
   })
 
+  it('[unit] paints the chosen scheme from the first byte, and marks an instance palette', () => {
+    // A scheme applied by a script arrives after the first paint, so a dark
+    // page flashed white on every load. The server renders it instead, from
+    // the person's cookie, onto the root -- and only the root: a document
+    // shell carries the light paper an invoice is printed on.
+    const root = (html: string): string => /<html[^>]*>/u.exec(html)?.[0] ?? ''
+    const meta = (html: string): string | undefined =>
+      /<meta name="color-scheme" content="([^"]*)">/u.exec(html)?.[1]
+
+    const system = renderAppShell({ environment: 'test', release: 'abc' })
+    expect(root(system)).toContain(' data-ez-scheme="system"')
+    expect(root(system)).not.toContain('data-ez-palette')
+    expect(meta(system)).toBe('light dark')
+    expect(system).not.toMatch(/data-document-shell[^>]*data-ez-scheme/u)
+
+    const dark = renderAppShell({ environment: 'test', release: 'abc', colorScheme: 'dark' })
+    expect(root(dark)).toContain(' data-ez-scheme="dark"')
+    expect(meta(dark)).toBe('dark')
+
+    // An instance with its own palette keeps it under System, so the canvas is
+    // light; the palette marker is what the stylesheet's system rule skips.
+    const themed = renderAppShell({ environment: 'test', release: 'abc', instanceTheme: true })
+    expect(root(themed)).toContain(' data-ez-palette="instance"')
+    expect(meta(themed)).toBe('light')
+
+    // The option is resolved, not trusted: it lands in an attribute.
+    const hostile = renderAppShell({
+      environment: 'test',
+      release: 'abc',
+      colorScheme: '"><script>alert(1)</script>' as never,
+    })
+    expect(root(hostile)).toContain(' data-ez-scheme="system"')
+    expect(hostile).not.toContain('<script>alert(1)')
+  })
+
   it('[e2e] gives the top bar a layout for every width between phone and full', () => {
     // The bar's contents come to 1325px on one row, and for a long time the only
     // breakpoint in the stylesheet was 720px. Everything between -- most laptops,

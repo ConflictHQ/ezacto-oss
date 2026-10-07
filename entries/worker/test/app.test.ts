@@ -126,6 +126,48 @@ describe('worker entry', () => {
     }
   })
 
+  it('[unit] renders the scheme from the cookie on every shell route, before any script runs', async () => {
+    // A scheme a script applies arrives after the first paint, and a dark page
+    // flashes white on every load. So the page is rendered in it. Every route
+    // goes through one place for this, and the walk is what proves no route was
+    // left out of that place.
+    const root = (html: string): string => /<html[^>]*>/u.exec(html)?.[0] ?? ''
+    const paths = [
+      '/',
+      '/dashboard',
+      '/approvals',
+      '/invoices',
+      '/invoices/1',
+      '/invoices/new',
+      '/reports',
+      '/settings/user',
+      '/settings/company',
+      '/team/1',
+      '/no-such-page',
+    ]
+    for (const path of paths) {
+      const response = await app.request(
+        path,
+        { headers: { cookie: 'unrelated=1; ezacto_scheme=dark' } },
+        env,
+      )
+      const html = await response.text()
+      expect(root(html), path).toContain(' data-ez-scheme="dark"')
+      expect(html, path).toContain('<meta name="color-scheme" content="dark">')
+      // It varies by cookie, so it must never be a page anyone else is served.
+      expect(response.headers.get('cache-control'), path).toBe('no-store')
+    }
+    const unset = await (await app.request('/', {}, env)).text()
+    expect(root(unset)).toContain(' data-ez-scheme="system"')
+    // A value off the list is a preference nobody can have; it never reaches
+    // the markup as itself.
+    const hostile = await (
+      await app.request('/', { headers: { cookie: 'ezacto_scheme="><script>x</script>' } }, env)
+    ).text()
+    expect(root(hostile)).toContain(' data-ez-scheme="system"')
+    expect(hostile).not.toContain('<script>x</script>')
+  })
+
   it('[unit] marks no primary section on a page outside the primary nav', async () => {
     // activeSection defaults to Time, so settings marked Time as the page you
     // were on.

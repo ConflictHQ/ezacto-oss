@@ -24,7 +24,15 @@ import {
   resolveSettingsSection,
 } from '../settings-sections.js'
 import { browserTextSizeStore, createTextSizeRuntime, type TextSize, textSizes } from '../text-size.js'
-import { browserThemeStore, createThemeRuntime } from '../theme-preference.js'
+import {
+  browserCookieStore,
+  browserThemeStore,
+  COLOR_SCHEME_COOKIE,
+  type ColorScheme,
+  colorSchemes,
+  createColorSchemeRuntime,
+  createThemeRuntime,
+} from '../theme-preference.js'
 import { renderDataTable } from '../components/data-table.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import {
@@ -6393,6 +6401,35 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       const chosen = button.dataset.themeChoice
       if (chosen === undefined || !Object.hasOwn(themeManifest, chosen)) return
       syncThemeChoice(theme.switchUserTheme(chosen as keyof typeof themeManifest).application)
+    })
+  }
+
+  // Light, dark, or the operating system's (the 2026-10 reskin). The server has
+  // already rendered the stored choice onto the root from the same cookie, so
+  // starting here changes nothing on screen; it only takes over once somebody
+  // picks, and a page is never painted in the wrong scheme and then corrected.
+  const colorScheme = createColorSchemeRuntime({
+    store: browserCookieStore(
+      document,
+      COLOR_SCHEME_COOKIE,
+      globalThis.location.protocol === 'https:',
+    ),
+    target: document.documentElement,
+    meta: document.querySelector<HTMLMetaElement>('meta[name="color-scheme"]'),
+  })
+  const syncColorSchemeChoice = (current: ColorScheme): void => {
+    for (const button of document.querySelectorAll<HTMLButtonElement>(
+      '[data-color-scheme-choice]',
+    )) {
+      button.setAttribute('aria-pressed', String(button.dataset.colorSchemeChoice === current))
+    }
+  }
+  syncColorSchemeChoice(colorScheme.start())
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-color-scheme-choice]')) {
+    button.addEventListener('click', () => {
+      const chosen = button.dataset.colorSchemeChoice
+      if (chosen === undefined || !(colorSchemes as readonly string[]).includes(chosen)) return
+      syncColorSchemeChoice(colorScheme.set(chosen as ColorScheme))
     })
   }
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-density-choice]')) {

@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
   assertThemeContrast,
+  browserCookieStore,
   checkThemeContrast,
+  COLOR_SCHEME_COOKIE,
+  colorSchemeMeta,
+  createColorSchemeRuntime,
   createThemeRuntime,
+  readCookie,
+  readDisplayPreferences,
+  resolveColorScheme,
   resolveThemes,
   themeManifest,
+  type ColorSchemeTarget,
   type ThemeAttributeTarget,
   type ThemeDefinition,
   type ThemePreferenceStore,
@@ -91,7 +99,8 @@ describe('D16 Precision preference policy', () => {
       { name: 'muted/surface text', minimum: 4.5, passes: true },
       { name: 'action/action-fg text', minimum: 4.5, passes: true },
       { name: 'live/ground indicator', minimum: 3, passes: true },
-      { name: 'blue-light/ink text', minimum: 4.5, passes: true },
+      { name: 'band-ink/band text', minimum: 4.5, passes: true },
+      { name: 'blue-light/band text', minimum: 4.5, passes: true },
       { name: 'ground/red button label', minimum: 4.5, passes: true },
       { name: 'live-text/ground text', minimum: 4.5, passes: true },
       { name: 'live-text/status-bg text', minimum: 4.5, passes: true },
@@ -116,6 +125,7 @@ describe('D16 Precision preference policy', () => {
       expect.closeTo(5.53, 2),
       expect.closeTo(6.25, 2),
       expect.closeTo(5.02, 2),
+      expect.closeTo(17.06, 2),
       expect.closeTo(11.44, 2),
       expect.closeTo(6.47, 2),
       expect.closeTo(5.02, 2),
@@ -138,3 +148,136 @@ describe('D16 Precision preference policy', () => {
     expect(() => assertThemeContrast(themeManifest.precision)).not.toThrow()
   })
 })
+
+describe('light, dark, or whatever the operating system says (the 2026-10 reskin)', () => {
+  class SchemeTarget implements ColorSchemeTarget {
+    readonly attributes = new Map<string, string>()
+
+    constructor(private readonly palette = false) {}
+
+    setAttribute(name: 'data-ez-scheme', value: string): void {
+      this.attributes.set(name, value)
+    }
+
+    hasAttribute(name: 'data-ez-palette'): boolean {
+      return name === 'data-ez-palette' && this.palette
+    }
+  }
+
+  class Meta {
+    content = ''
+
+    setAttribute(_name: 'content', value: string): void {
+      this.content = value
+    }
+  }
+
+  /** Enough of `document.cookie` to see what a store writes and reads back. */
+  class CookieJar {
+    readonly written: string[] = []
+    readonly #values = new Map<string, string>()
+
+    get cookie(): string {
+      return [...this.#values].map(([name, value]) => `${name}=${value}`).join('; ')
+    }
+
+    set cookie(assignment: string) {
+      this.written.push(assignment)
+      const [pair = ''] = assignment.split(';')
+      const separator = pair.indexOf('=')
+      const name = pair.slice(0, separator)
+      if (/max-age=0(?:;|$)/iu.test(assignment)) this.#values.delete(name)
+      else this.#values.set(name, pair.slice(separator + 1))
+    }
+  }
+
+  it('[unit] follows the system until somebody chooses, and forgets the choice for System', () => {
+    const store = new PreferenceStore(null)
+    const target = new SchemeTarget()
+    const meta = new Meta()
+    const runtime = createColorSchemeRuntime({ store, target, meta })
+
+    expect(runtime.start()).toBe('system')
+    expect(target.attributes.get('data-ez-scheme')).toBe('system')
+    // The OS picks, so the canvas may be either before the stylesheet arrives.
+    expect(meta.content).toBe('light dark')
+
+    expect(runtime.set('dark')).toBe('dark')
+    expect(store.value).toBe('dark')
+    expect(target.attributes.get('data-ez-scheme')).toBe('dark')
+    expect(meta.content).toBe('dark')
+
+    // System is the absence of a choice: storing the word would pin a person to
+    // whatever their OS said on the day they chose it.
+    expect(runtime.set('system')).toBe('system')
+    expect(store.value).toBeNull()
+    expect(target.attributes.get('data-ez-scheme')).toBe('system')
+  })
+
+  it('[unit] reads anything it does not recognise as System', () => {
+    expect(resolveColorScheme('dark')).toBe('dark')
+    expect(resolveColorScheme('light')).toBe('light')
+    for (const stored of [null, undefined, '', 'sepia', 'DARK', '"><script>']) {
+      expect(resolveColorScheme(stored)).toBe('system')
+    }
+  })
+
+  it('[unit] keeps an instance with its own palette on light under System', () => {
+    // The palette was checked against the light scheme, and an OS set to dark
+    // is not a request to stop wearing it; an explicit Dark still is.
+    expect(colorSchemeMeta('system', true)).toBe('light')
+    expect(colorSchemeMeta('dark', true)).toBe('dark')
+    const meta = new Meta()
+    createColorSchemeRuntime({
+      store: new PreferenceStore(null),
+      target: new SchemeTarget(true),
+      meta,
+    }).start()
+    expect(meta.content).toBe('light')
+  })
+
+  it('[security] round-trips the choice through a cookie the server reads back', () => {
+    const jar = new CookieJar()
+    const store = browserCookieStore(jar, COLOR_SCHEME_COOKIE, true)
+    store.write('dark')
+    expect(store.read()).toBe('dark')
+    expect(jar.written.at(-1)).toBe(
+      'ezacto_scheme=dark; Path=/; SameSite=Lax; Secure; Max-Age=31536000',
+    )
+    // What the server sees is the same header, and it resolves the value
+    // against the closed list before it reaches markup.
+    expect(readDisplayPreferences(`other=1; ${jar.cookie}`)).toEqual({ colorScheme: 'dark' })
+    expect(
+      readDisplayPreferences('ezacto_scheme="><script>alert(1)</script>'),
+    ).toEqual({ colorScheme: 'system' })
+
+    store.write(null)
+    expect(store.read()).toBeNull()
+    expect(jar.written.at(-1)).toBe('ezacto_scheme=; Path=/; SameSite=Lax; Secure; Max-Age=0')
+    // Plain http (a self-hosted box with no certificate) cannot set a Secure
+    // cookie at all, so the flag follows the page.
+    browserCookieStore(jar, COLOR_SCHEME_COOKIE, false).write('light')
+    expect(jar.written.at(-1)).not.toContain('Secure')
+  })
+
+  it('[unit] finds one cookie among many, and nothing that only starts with its name', () => {
+    expect(readCookie('a=1; ezacto_scheme=light; b=2', 'ezacto_scheme')).toBe('light')
+    expect(readCookie('ezacto_scheme_old=dark', 'ezacto_scheme')).toBeNull()
+    expect(readCookie(null, 'ezacto_scheme')).toBeNull()
+  })
+
+  it('[unit] never lets a cookie jar that throws break the shell', () => {
+    const hostile = {
+      get cookie(): string {
+        throw new Error('SecurityError')
+      },
+      set cookie(_value: string) {
+        throw new Error('SecurityError')
+      },
+    }
+    const store = browserCookieStore(hostile, COLOR_SCHEME_COOKIE, true)
+    expect(store.read()).toBeNull()
+    expect(() => store.write('dark')).not.toThrow()
+  })
+})
+

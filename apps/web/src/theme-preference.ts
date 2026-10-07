@@ -126,3 +126,126 @@ export const createThemeRuntime = <ThemeId extends string>(
     },
   }
 }
+
+/**
+ * Light or dark, and who decides (the 2026-10 reskin).
+ *
+ * The theme above is the family -- Precision -- and every family carries both
+ * schemes. Which one the application wears is a separate, per-person choice:
+ * `system` hands it to the operating system, `light` and `dark` override it.
+ * Documents are not part of this. An invoice is paper, and stays on the light
+ * scheme whatever the person reading it chose.
+ *
+ * The choice is written to `<html>` as `data-ez-scheme`, and the generated
+ * stylesheet does the rest: `system` is a `prefers-color-scheme` media query,
+ * so it needs no script at all. What must not wait for a script is an explicit
+ * choice, or a dark page would flash white on every load -- so it is stored in
+ * a cookie, which the server reads and renders onto the root before the first
+ * byte paints. The profile has nowhere to keep a display preference, and a
+ * cookie is the one store both the server and this module can read.
+ */
+export const colorSchemes = ['system', 'light', 'dark'] as const
+export type ColorScheme = (typeof colorSchemes)[number]
+
+export const DEFAULT_COLOR_SCHEME: ColorScheme = 'system'
+export const COLOR_SCHEME_COOKIE = 'ezacto_scheme'
+
+/** Anything unrecognised is the default rather than an error: it is a display preference. */
+export const resolveColorScheme = (stored: string | null | undefined): ColorScheme =>
+  stored === 'light' || stored === 'dark' ? stored : DEFAULT_COLOR_SCHEME
+
+/**
+ * What the browser should paint before the stylesheet has said anything: the
+ * canvas behind the page, and its own controls. `system` offers both, so the
+ * operating system picks; an explicit choice offers only itself, so a page
+ * someone set to light does not open on a dark canvas because their OS is.
+ * An instance with a palette of its own keeps it under `system`, so that case
+ * is light too.
+ */
+export const colorSchemeMeta = (scheme: ColorScheme, instancePalette: boolean): string =>
+  scheme === 'system' ? (instancePalette ? 'light' : 'light dark') : scheme
+
+export interface ColorSchemeTarget {
+  setAttribute(name: 'data-ez-scheme', value: string): void
+  hasAttribute(name: 'data-ez-palette'): boolean
+}
+
+export interface ColorSchemeMeta {
+  setAttribute(name: 'content', value: string): void
+}
+
+export interface ColorSchemeRuntime {
+  current(): ColorScheme
+  start(): ColorScheme
+  set(scheme: ColorScheme): ColorScheme
+}
+
+export const createColorSchemeRuntime = (options: {
+  readonly store: ThemePreferenceStore
+  readonly target: ColorSchemeTarget
+  readonly meta?: ColorSchemeMeta | null
+}): ColorSchemeRuntime => {
+  let scheme = resolveColorScheme(options.store.read())
+  const apply = (): ColorScheme => {
+    options.target.setAttribute('data-ez-scheme', scheme)
+    options.meta?.setAttribute(
+      'content',
+      colorSchemeMeta(scheme, options.target.hasAttribute('data-ez-palette')),
+    )
+    return scheme
+  }
+  return {
+    current: () => scheme,
+    start: apply,
+    set: (next) => {
+      scheme = next
+      // The default is the absence of a choice, so it clears the cookie rather
+      // than storing the word: an OS that changes its mind is then followed.
+      options.store.write(next === DEFAULT_COLOR_SCHEME ? null : next)
+      return apply()
+    },
+  }
+}
+
+/** One cookie out of a `Cookie` header, or `null`. Server and browser both read through this. */
+export const readCookie = (header: string | null | undefined, name: string): string | null => {
+  for (const part of (header ?? '').split(';')) {
+    const separator = part.indexOf('=')
+    if (separator < 0) continue
+    if (part.slice(0, separator).trim() === name) return part.slice(separator + 1).trim()
+  }
+  return null
+}
+
+/**
+ * A display preference kept in a first-party cookie, so the server can render
+ * it into the page. Not HttpOnly, because this module writes it; nothing in it
+ * is a secret, and the server validates the value against a closed list before
+ * a byte of it reaches markup. A year, because it is a preference and not a
+ * session. Like the storage-backed stores, a failure to read or write means the
+ * default, quietly: a sandboxed frame throws on `document.cookie`.
+ */
+export const browserCookieStore = (
+  jar: { cookie: string },
+  name: string,
+  secure: boolean,
+): ThemePreferenceStore => ({
+  read: () => {
+    try {
+      return readCookie(jar.cookie, name)
+    } catch {
+      return null
+    }
+  },
+  write: (value) => {
+    const attributes = `; Path=/; SameSite=Lax${secure ? '; Secure' : ''}`
+    try {
+      jar.cookie =
+        value === null
+          ? `${name}=${attributes}; Max-Age=0`
+          : `${name}=${value}${attributes}; Max-Age=31536000`
+    } catch {
+      // Preference lost in this browser; the shell still renders.
+    }
+  },
+})

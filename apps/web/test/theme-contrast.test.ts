@@ -7,6 +7,7 @@ import {
   cssCustomProperty,
   precisionContrastRequirements,
   themeManifest,
+  themeSchemes,
   webAssets,
 } from '../src/index.js'
 
@@ -80,7 +81,8 @@ describe('D16 theme AA contrast gate', () => {
       ['muted/surface text', 5.53],
       ['action/action-fg text', 6.25],
       ['live/ground indicator', 5.02],
-      ['blue-light/ink text', 11.44],
+      ['band-ink/band text', 17.06],
+      ['blue-light/band text', 11.44],
       ['ground/red button label', 6.47],
       ['live-text/ground text', 5.02],
       ['live-text/status-bg text', 4.58],
@@ -101,6 +103,58 @@ describe('D16 theme AA contrast gate', () => {
     ])
     expect(results.every((result) => result.passes)).toBe(true)
     expect(() => assertThemeContrast(themeManifest.precision)).not.toThrow()
+  })
+
+  it('[unit] holds the dark scheme to the same minimums, pair for pair', () => {
+    // The dark scheme paints the same rules, so it owes every pair the light one
+    // does -- not a lighter list for the scheme nobody looks at in review.
+    const schemes = themeSchemes(themeManifest.precision)
+    expect(schemes.map((entry) => entry.scheme)).toEqual(['light', 'dark'])
+    const dark = schemes[1]!.theme
+    const results = checkThemeContrast(dark)
+    expect(results.map((result) => [result.name, Number(result.ratio.toFixed(2))])).toEqual([
+      ['ink/ground text', 17.6],
+      ['muted/ground text', 6.01],
+      ['muted/surface text', 5.55],
+      ['action/action-fg text', 4.95],
+      ['live/ground indicator', 8.28],
+      ['band-ink/band text', 18.45],
+      ['blue-light/band text', 9.93],
+      ['ground/red button label', 6.82],
+      ['live-text/ground text', 10.83],
+      ['live-text/status-bg text', 9.04],
+      ['status-fg/status-bg text', 6.8],
+      ['data/surface text', 5.58],
+      ['red/ground text', 6.82],
+      ['red/surface text', 6.3],
+      ['red/status-bg text', 5.69],
+      ['amber/ground text', 11.31],
+      ['data/ground row action', 6.04],
+      ['ink/surface control label', 16.25],
+      ['ink/surface-2 text', 15.06],
+      ['ink/orange-tint pressed label', 13.99],
+      ['ink/row-hover text', 15.1],
+      ['data/row-hover row action', 5.18],
+      ['ink/money totals figure', 16.13],
+      ['ink-2/money totals label', 11.74],
+    ])
+    expect(results.every((result) => result.passes)).toBe(true)
+    expect(() => assertThemeContrast(dark)).not.toThrow()
+  })
+
+  it('[unit] keeps the bands dark in both schemes', () => {
+    // The point of `band`: the top bar and the sign-in splash were `ink`, which
+    // a dark scheme makes light, so they turned into white strips with dark
+    // text. A band that reads as light -- closer to white than to black -- is
+    // that regression, in either scheme. In dark it also sits below the ground,
+    // so the chrome stays the deepest layer the way it is in light.
+    for (const { scheme, theme } of themeSchemes(themeManifest.precision)) {
+      const { band, ground } = theme.colors
+      expect(contrastRatio(band, '#FFFFFF'), scheme).toBeGreaterThan(contrastRatio(band, '#000000'))
+      if (scheme === 'dark') {
+        expect(contrastRatio(band, '#FFFFFF')).toBeGreaterThan(contrastRatio(ground, '#FFFFFF'))
+      }
+    }
   })
 
   it('[unit] holds the hover tint to every colour the row keeps while hovered', () => {

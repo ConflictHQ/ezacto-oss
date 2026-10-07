@@ -3,6 +3,7 @@ import { shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
 import { iconMarkup } from '../components/icons.js'
 import { INSTANCE_THEME_STYLESHEET_PATH } from '../instance-theme.js'
 import { defaultTheme, themeManifest } from '../theme.js'
+import { type ColorScheme, colorSchemeMeta, resolveColorScheme } from '../theme-preference.js'
 import { type DeploymentBrand, resolveDeploymentBrand } from '../brand.js'
 import { renderClientDirectoryPages } from '../clients/render.js'
 import { renderRoleAdminPage } from '../roles/render.js'
@@ -50,6 +51,12 @@ export interface AppShellOptions {
    * empty costs every page load a request for nothing.
    */
   readonly instanceTheme?: boolean
+  /**
+   * The person's light/dark choice, read from their cookie by the server so the
+   * page is painted in it from the first byte (`readDisplayPreferences`).
+   * Absent means `system`, which the stylesheet resolves without a script.
+   */
+  readonly colorScheme?: ColorScheme
   readonly activeSection?:
     // 'Settings' matches no nav item on purpose. Without it the default lands
     // on 'Time', so the module settings page marked Time as the page you were
@@ -238,7 +245,7 @@ export const invoiceTabs = (view: AppShellOptions['view']): readonly ShellTab[] 
 /**
  * The mark, or the name set in it. Which of the two configured wordmarks a
  * surface asks for is decided by the ground it paints, not by the surface:
- * the topbar and the sign-in splash are `--ez-ink` and take the dark-ground
+ * the topbar and the sign-in splash are `--ez-band` and take the dark-ground
  * mark, the document shell is `--ez-ground` and takes the light-ground one.
  *
  * The name stays the alt text rather than being dropped, so a mark that fails
@@ -451,16 +458,21 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const passwordSignIn = options.passwordSignIn ?? true
   const resumeSession = options.sessionCookiePresent === true
   const shortRelease = options.release.slice(0, 7)
+  // Resolved again rather than trusted: it lands in an attribute, and the type
+  // is a promise the caller made, not one the value kept.
+  const colorScheme = resolveColorScheme(options.colorScheme)
+  const instancePalette = options.instanceTheme === true
   const navLink = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
     `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Payments' ? ' data-staff-payments-nav hidden' : ''}${section === 'Expenses' ? ' data-expenses-nav' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${section}</a>`
   const navigation = sections.map(navLink).join('')
   const foldedNavigation = foldedSections.map(navLink).join('')
 
   return `<!doctype html>
-<html lang="en" data-ez-theme="${defaultTheme}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
+<html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="${colorScheme}"${instancePalette ? ' data-ez-palette="instance"' : ''} data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="${colorSchemeMeta(colorScheme, instancePalette)}">
   <meta name="robots" content="noindex">
   <meta name="ezacto-environment" content="${escapeHtml(options.environment)}">
   <meta name="ezacto-release" content="${escapeHtml(options.release)}">
@@ -469,7 +481,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="${escapeHtml(themeManifest.precision.fontStylesheet)}">
 ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <link rel="stylesheet" href="/assets/ezacto.css">
-${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_PATH}">\n` : ''}  <script type="module" src="/assets/ezacto.js"></script>
+${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_PATH}">\n` : ''}  <script type="module" src="/assets/ezacto.js"></script>
 </head>
 <body>
   <section class="auth-gateway" data-auth-gateway data-state="checking" aria-label="${escapeHtml(brand)} sign in" aria-busy="true"${resumeSession ? ' hidden' : ''}>

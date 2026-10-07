@@ -30,10 +30,14 @@ export const precisionContrastRequirements: readonly ThemeContrastRequirement[] 
   // those is a non-text indicator on `ground`, which AA scores at 3:1. Where
   // the running state is said in words it takes `live_text`, held below.
   { name: 'live/ground indicator', foreground: 'live', background: 'ground', minimum: 3 },
-  // `blue_light` is the reading colour on an `ink` ground: the eyebrow on the
-  // sign-in splash and the hint on the brand control's dark preview tile. Both
-  // are words, so the pair owes the body-text bar.
-  { name: 'blue-light/ink text', foreground: 'blue_light', background: 'ink', minimum: 4.5 },
+  // `band` is the dark strip the chrome is painted on -- the top bar, the
+  // sign-in splash, the brand control's dark preview tile -- with `band_ink`
+  // written on it. It used to be `ink`, which a dark scheme turns light, so
+  // every band turned into a white strip with dark text the moment it did.
+  // `blue_light` is the second reading colour on it: the splash eyebrow and the
+  // preview tile's hint. All three are words, so they owe the body-text bar.
+  { name: 'band-ink/band text', foreground: 'band_ink', background: 'band', minimum: 4.5 },
+  { name: 'blue-light/band text', foreground: 'blue_light', background: 'band', minimum: 4.5 },
   // `.danger-action` fills a button with `red` and writes its label in
   // `ground` over the fill, so that label is body text and owes 4.5:1. Red is
   // the destructive colour everywhere else it appears, and the fill is that
@@ -176,6 +180,21 @@ export const contrastRatio = (first: string, second: string): number => {
   const darker = Math.min(luminance(first), luminance(second))
   return (lighter + 0.05) / (darker + 0.05)
 }
+
+/**
+ * Every scheme a theme wears, as a theme of its own, so the same requirements
+ * can be asked of each. A pair that reads in light and not in dark fails as
+ * surely as the reverse, and dark is the scheme nobody looks at in review.
+ */
+export const themeSchemes = (
+  theme: ThemeDefinition,
+): readonly { readonly scheme: 'light' | 'dark'; readonly theme: ThemeDefinition }[] =>
+  theme.darkColors === undefined
+    ? [{ scheme: 'light', theme }]
+    : [
+        { scheme: 'light', theme },
+        { scheme: 'dark', theme: { ...theme, colors: theme.darkColors } },
+      ]
 
 export const checkThemeContrast = (
   theme: ThemeDefinition,
