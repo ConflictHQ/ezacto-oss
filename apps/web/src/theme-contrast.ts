@@ -131,6 +131,28 @@ export const precisionContrastRequirements: readonly ThemeContrastRequirement[] 
     background: 'row_hover',
     minimum: 4.5,
   },
+  // The edge of a blue fill. Dim's slate is light enough that the action blue
+  // stands 2.7:1 off it, short of the 3:1 a control's boundary owes, and no
+  // blue can both carry a white label at 4.5:1 and clear that slate -- so in
+  // Dim the label stays white on the blue and the edge is drawn in `data`, the
+  // reading blue (`--ez-action-edge`): a 1px border round every primary button
+  // and an inset ring on the sidebar's tile for the section you are in. `data`
+  // already answers to `ground` and `surface` above. These are the other two
+  // grounds the edge stands on: the current section's row, which is
+  // `surface_2`, and the status band a Submit button sits in. In light and dark
+  // the edge is the fill itself.
+  {
+    name: 'data/surface-2 selected edge',
+    foreground: 'data',
+    background: 'surface_2',
+    minimum: 3,
+  },
+  {
+    name: 'data/status-bg action edge',
+    foreground: 'data',
+    background: 'status_bg',
+    minimum: 3,
+  },
   // The money band on an invoice, and the two inks that sit on it. Unlike the
   // row tint above, this fill does carry meaning -- it is what makes the totals
   // read as money rather than as one more list -- but the figures and their

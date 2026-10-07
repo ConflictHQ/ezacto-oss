@@ -98,6 +98,8 @@ describe('D16 theme AA contrast gate', () => {
       ['ink/orange-tint pressed label', 15.38],
       ['ink/row-hover text', 15.38],
       ['data/row-hover row action', 5.63],
+      ['data/surface-2 selected edge', 5.68],
+      ['data/status-bg action edge', 5.7],
       ['ink/money totals figure', 16.01],
       ['ink-2/money totals label', 9.68],
     ])
@@ -135,6 +137,8 @@ describe('D16 theme AA contrast gate', () => {
       ['ink/orange-tint pressed label', 13.99],
       ['ink/row-hover text', 15.1],
       ['data/row-hover row action', 5.18],
+      ['data/surface-2 selected edge', 5.17],
+      ['data/status-bg action edge', 5.04],
       ['ink/money totals figure', 16.13],
       ['ink-2/money totals label', 11.74],
     ])
@@ -168,6 +172,8 @@ describe('D16 theme AA contrast gate', () => {
       ['ink/orange-tint pressed label', 9.54],
       ['ink/row-hover text', 9.54],
       ['data/row-hover row action', 4.75],
+      ['data/surface-2 selected edge', 4.81],
+      ['data/status-bg action edge', 4.52],
       ['ink/money totals figure', 11.12],
       ['ink-2/money totals label', 8.98],
     ])

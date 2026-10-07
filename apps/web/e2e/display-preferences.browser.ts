@@ -134,6 +134,68 @@ test('[e2e:scheme] keeps an instance palette under System and gives way to an ex
   }
 })
 
+/** WCAG contrast between two colours as the browser computes them, `rgb(…)`. */
+const contrastOf = (first: string, second: string): number => {
+  const luminance = (color: string): number => {
+    const [red, green, blue] = (color.match(/\d+(?:\.\d+)?/gu) ?? []).slice(0, 3).map((part) => {
+      const channel = Number(part) / 255
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+    })
+    return 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!
+  }
+  const [lighter, darker] = [luminance(first), luminance(second)].sort((a, b) => b - a)
+  return (lighter! + 0.05) / (darker! + 0.05)
+}
+
+test('[e2e:scheme] edges every blue fill in Dim so it stands off the slate, label still white', async ({
+  page,
+  context,
+}) => {
+  // The action blue stands 2.7:1 off Dim's slate, short of the 3:1 a control's
+  // boundary owes. The fill keeps its blue and its white label; its edge is the
+  // reading blue -- a border on a button, an inset ring on the sidebar's tile.
+  await prefer(context, 'ezacto_nav', 'sidebar')
+  await prefer(context, 'ezacto_scheme', 'dim')
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/')
+  await signIn(page)
+  const dim = await page.evaluate(() => {
+    const button = getComputedStyle(document.querySelector<HTMLElement>('[data-time-log-time]')!)
+    const current = document.querySelector<HTMLElement>("[data-app-nav] .primary-nav a[aria-current='page']")!
+    const tile = getComputedStyle(current.querySelector<HTMLElement>('.ez-icon')!)
+    return {
+      ground: getComputedStyle(document.body).backgroundColor,
+      fill: button.backgroundColor,
+      edge: button.borderTopColor,
+      label: button.color,
+      row: getComputedStyle(current).backgroundColor,
+      tileFill: tile.backgroundColor,
+      ring: tile.boxShadow,
+    }
+  })
+  expect(dim.ground).toBe(dimGround)
+  expect(contrastOf(dim.fill, dim.ground)).toBeLessThan(3)
+  expect(contrastOf(dim.edge, dim.ground)).toBeGreaterThanOrEqual(3)
+  expect(dim.label).toBe('rgb(255, 255, 255)')
+  expect(dim.ring).toContain(dim.edge)
+  expect(dim.ring).toContain('inset')
+  expect(contrastOf(dim.edge, dim.row)).toBeGreaterThanOrEqual(3)
+  expect(dim.tileFill).toBe(dim.fill)
+
+  // Light and dark have no use for it: there the edge is the fill.
+  for (const scheme of ['light', 'dark']) {
+    await prefer(context, 'ezacto_scheme', scheme)
+    await page.goto('/')
+    await expect(page.locator('[data-time-log-time]')).toBeVisible()
+    const { fill, edge } = await page.evaluate(() => {
+      const button = getComputedStyle(document.querySelector<HTMLElement>('[data-time-log-time]')!)
+      return { fill: button.backgroundColor, edge: button.borderTopColor }
+    })
+    expect(edge, scheme).toBe(fill)
+  }
+  await context.clearCookies({ name: 'ezacto_scheme' })
+})
+
 test('[e2e:scheme] switches from the Theme picker and remembers it across a reload', async ({
   page,
   context,

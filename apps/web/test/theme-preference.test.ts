@@ -116,6 +116,8 @@ describe('D16 Precision preference policy', () => {
       { name: 'ink/orange-tint pressed label', minimum: 4.5, passes: true },
       { name: 'ink/row-hover text', minimum: 4.5, passes: true },
       { name: 'data/row-hover row action', minimum: 4.5, passes: true },
+      { name: 'data/surface-2 selected edge', minimum: 3, passes: true },
+      { name: 'data/status-bg action edge', minimum: 3, passes: true },
       { name: 'ink/money totals figure', minimum: 4.5, passes: true },
       { name: 'ink-2/money totals label', minimum: 4.5, passes: true },
     ])
@@ -142,6 +144,8 @@ describe('D16 Precision preference policy', () => {
       expect.closeTo(15.38, 2),
       expect.closeTo(15.38, 2),
       expect.closeTo(5.63, 2),
+      expect.closeTo(5.68, 2),
+      expect.closeTo(5.7, 2),
       expect.closeTo(16.01, 2),
       expect.closeTo(9.68, 2),
     ])

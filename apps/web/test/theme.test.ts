@@ -282,6 +282,24 @@ describe('D16 theme token contract', () => {
     expect(unspent).toEqual(awaitingAPurpose)
   })
 
+  it('[unit] draws the border of every blue fill in the action edge, which Dim redraws', async () => {
+    // Dim's slate stands the action blue only 2.7:1 off, short of the 3:1 a
+    // control's boundary owes, so a blue fill's border is `--ez-action-edge`:
+    // the fill itself in light and dark, the reading blue in Dim. A rule that
+    // fills with the action blue and borders itself in it too has no edge in
+    // Dim. `[e2e:scheme] edges every blue fill in Dim` measures the result.
+    const stylesheet = await readFile(resolve(root, 'src', 'shell', 'shell.css'), 'utf8')
+    expect(stylesheet).toMatch(/\[data-ez-scheme='dim'\] \{\s*--ez-action-edge: var\(--ez-data\);/u)
+    const unedged = [...stylesheet.matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
+      .filter(
+        ([, , body]) =>
+          /background: var\(--ez-action\);/u.test(body!) &&
+          /border(?:-color)?:[^;]*var\(--ez-action\)/u.test(body!),
+      )
+      .map(([, selector]) => selector!.trim())
+    expect(unedged).toEqual([])
+  })
+
   it('[unit] gives every page surface exactly one measure', async () => {
     // `page--grid` and `page--document` replaced nine hand-written max-width
     // caps, and were then applied to nothing -- so settings forms ran the full
