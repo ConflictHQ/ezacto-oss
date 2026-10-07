@@ -109,7 +109,7 @@ describe('D16 theme AA contrast gate', () => {
     // The dark scheme paints the same rules, so it owes every pair the light one
     // does -- not a lighter list for the scheme nobody looks at in review.
     const schemes = themeSchemes(themeManifest.precision)
-    expect(schemes.map((entry) => entry.scheme)).toEqual(['light', 'dark'])
+    expect(schemes.map((entry) => entry.scheme)).toEqual(['light', 'dark', 'dim'])
     const dark = schemes[1]!.theme
     const results = checkThemeContrast(dark)
     expect(results.map((result) => [result.name, Number(result.ratio.toFixed(2))])).toEqual([
@@ -142,7 +142,39 @@ describe('D16 theme AA contrast gate', () => {
     expect(() => assertThemeContrast(dark)).not.toThrow()
   })
 
-  it('[unit] keeps the bands dark in both schemes', () => {
+  it('[unit] holds the dim scheme to the same minimums, pair for pair', () => {
+    const dim = themeSchemes(themeManifest.precision).find((entry) => entry.scheme === 'dim')!.theme
+    const results = checkThemeContrast(dim)
+    expect(results.map((result) => [result.name, Number(result.ratio.toFixed(2))])).toEqual([
+      ['ink/ground text', 11.91],
+      ['muted/ground text', 6.61],
+      ['muted/surface text', 5.88],
+      ['action/action-fg text', 4.95],
+      ['live/ground indicator', 7.6],
+      ['band-ink/band text', 14.18],
+      ['blue-light/band text', 7.91],
+      ['ground/red button label', 6.97],
+      ['live-text/ground text', 9.43],
+      ['live-text/status-bg text', 7.19],
+      ['status-fg/status-bg text', 6.19],
+      ['data/surface text', 5.26],
+      ['red/ground text', 6.97],
+      ['red/surface text', 6.2],
+      ['red/status-bg text', 5.32],
+      ['amber/ground text', 9.18],
+      ['data/ground row action', 5.92],
+      ['ink/surface control label', 10.59],
+      ['ink/surface-2 text', 9.67],
+      ['ink/orange-tint pressed label', 9.54],
+      ['ink/row-hover text', 9.54],
+      ['data/row-hover row action', 4.75],
+      ['ink/money totals figure', 11.12],
+      ['ink-2/money totals label', 8.98],
+    ])
+    expect(results.every((result) => result.passes)).toBe(true)
+  })
+
+  it('[unit] keeps the bands dark in every scheme', () => {
     // The point of `band`: the top bar and the sign-in splash were `ink`, which
     // a dark scheme makes light, so they turned into white strips with dark
     // text. A band that reads as light -- closer to white than to black -- is
@@ -151,8 +183,10 @@ describe('D16 theme AA contrast gate', () => {
     for (const { scheme, theme } of themeSchemes(themeManifest.precision)) {
       const { band, ground } = theme.colors
       expect(contrastRatio(band, '#FFFFFF'), scheme).toBeGreaterThan(contrastRatio(band, '#000000'))
-      if (scheme === 'dark') {
-        expect(contrastRatio(band, '#FFFFFF')).toBeGreaterThan(contrastRatio(ground, '#FFFFFF'))
+      if (scheme !== 'light') {
+        expect(contrastRatio(band, '#FFFFFF'), scheme).toBeGreaterThan(
+          contrastRatio(ground, '#FFFFFF'),
+        )
       }
     }
   })

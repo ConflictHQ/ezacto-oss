@@ -511,6 +511,11 @@ describe('S-1 through S-5 application shell', () => {
     expect(root(dark)).toContain(' data-ez-scheme="dark"')
     expect(meta(dark)).toBe('dark')
 
+    // Dim is its own scheme on the root and a dark one to the browser's controls.
+    const dim = renderAppShell({ environment: 'test', release: 'abc', colorScheme: 'dim' })
+    expect(root(dim)).toContain(' data-ez-scheme="dim"')
+    expect(meta(dim)).toBe('dark')
+
     // An instance with its own palette keeps it under System, so the canvas is
     // light; the palette marker is what the stylesheet's system rule skips.
     const themed = renderAppShell({ environment: 'test', release: 'abc', instanceTheme: true })

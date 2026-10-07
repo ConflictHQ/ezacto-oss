@@ -54,12 +54,14 @@ describe('the palette contract the instance is held to (#591)', () => {
     // stands: every pair the contract asks of a palette, it clears. That keeps
     // the two from drifting -- a requirement added for the shell reaches the
     // dark scheme here as well as in the contrast gate.
-    const dark = themeManifest.precision.darkColors!
-    expect(Object.keys(dark).sort()).toEqual([...themeSlotNames].sort())
-    expect(readInstancePalette(dark, instancePaletteContract)).toEqual({
-      palette: dark,
-      errors: [],
-    })
+    // The same holds for Dim.
+    for (const scheme of [themeManifest.precision.darkColors!, themeManifest.precision.dimColors!]) {
+      expect(Object.keys(scheme).sort()).toEqual([...themeSlotNames].sort())
+      expect(readInstancePalette(scheme, instancePaletteContract)).toEqual({
+        palette: scheme,
+        errors: [],
+      })
+    }
   })
 })
 

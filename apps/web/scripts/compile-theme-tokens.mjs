@@ -19,8 +19,9 @@ const manifestPath = resolve(root, 'src', 'generated', 'theme-manifest.ts')
  * no comments and no structure to interpret. A file anything with a JSON parser
  * can consume without knowing what a slot is.
  *
- * A theme's dark scheme keeps that shape: it is emitted as a theme of its own,
- * `<name>_dark`, and `dark_themes` says which light theme it belongs to.
+ * A theme's other schemes keep that shape: each is emitted as a theme of its
+ * own, `<name>_dark` and `<name>_dim`, and `schemes` says which light theme
+ * they belong to.
  */
 const palettePath = resolve(root, 'generated', 'theme-palette.json')
 const check = process.argv.includes('--check')
@@ -52,6 +53,8 @@ const slots = [
   'shadow',
 ]
 const fonts = ['display', 'body', 'mono']
+// The schemes a theme carries beside its light one, each a full set of slots.
+const schemes = ['dark', 'dim']
 const scalars = ['radius']
 
 const fail = (message) => {
@@ -100,7 +103,7 @@ const compile = (source) => {
   if (rootDocument.default_theme !== name || name !== 'precision') {
     fail('precision must be the only OSS theme and the default')
   }
-  const allowed = new Set(['label', 'tier', 'dark', ...slots, ...fonts, ...scalars])
+  const allowed = new Set(['label', 'tier', ...schemes, ...slots, ...fonts, ...scalars])
   for (const key of Object.keys(theme)) {
     if (!allowed.has(key)) fail(`themes.${name}.${key} is not part of the slot contract`)
   }
@@ -112,14 +115,23 @@ const compile = (source) => {
     }
   }
   hexSlots(theme, `themes.${name}`)
-  // The dark scheme is colours only: type and radius are the theme's in either
-  // scheme. Every slot has to be there, because a dark scheme that left one out
-  // would paint the light value on a dark ground.
-  const dark = object(theme.dark, `themes.${name}.dark`)
-  for (const key of Object.keys(dark)) {
-    if (!slots.includes(key)) fail(`themes.${name}.dark.${key} is not part of the slot contract`)
-  }
-  hexSlots(dark, `themes.${name}.dark`)
+  // The other schemes are colours only: type and radius are the theme's in
+  // every scheme. Every slot has to be there, because a scheme that left one
+  // out would paint the light value on a dark ground.
+  const schemeColors = Object.fromEntries(
+    schemes.map((scheme) => {
+      const palette = object(theme[scheme], `themes.${name}.${scheme}`)
+      for (const key of Object.keys(palette)) {
+        if (!slots.includes(key)) {
+          fail(`themes.${name}.${scheme}.${key} is not part of the slot contract`)
+        }
+      }
+      hexSlots(palette, `themes.${name}.${scheme}`)
+      return [scheme, palette]
+    }),
+  )
+  const dark = schemeColors.dark
+  const dim = schemeColors.dim
   for (const font of fonts) {
     if (typeof theme[font] !== 'string' || !/^[A-Za-z0-9 ]{1,100}$/u.test(theme[font])) {
       fail(`themes.${name}.${font} must be a plain font-family name`)
@@ -135,16 +147,20 @@ const compile = (source) => {
   const slotDeclarations = (palette) =>
     slots.map((slot) => `  --ez-${cssName(slot)}: ${palette[slot]};`)
   const darkDeclarations = ['  color-scheme: dark;', ...slotDeclarations(dark)]
+  // Dim is a dark scheme to the browser -- its scrollbars and form controls --
+  // and its own slate to the stylesheet.
+  const dimDeclarations = ['  color-scheme: dark;', ...slotDeclarations(dim)]
   const selector = `[data-ez-theme=${JSON.stringify(name)}]`
   /*
    * Three blocks. The first is the light scheme, on the root and on anything
    * else wearing the theme -- which is how a document shell keeps the white
    * paper an invoice is printed on while the application around it is dark.
    *
-   * The other two are the dark scheme, chosen and inherited. `data-ez-scheme`
-   * is the person's choice, which the server renders on the root from their
-   * cookie, so it is there before the first paint; `system` hands the choice
-   * to the operating system. An instance with a palette of its own
+   * The rest are the other schemes. `data-ez-scheme` is the person's choice,
+   * which the server renders on the root from their cookie, so it is there
+   * before the first paint: `dark` and `dim` by name, and `system`, which hands
+   * the choice to the operating system -- light or dark only, since no
+   * operating system asks for dim. An instance with a palette of its own
    * (`data-ez-palette`) keeps that palette unless someone asks for dark
    * outright: the palette was checked against the light scheme, and an OS
    * setting is not a request to stop wearing it. The attribute names are
@@ -161,6 +177,9 @@ const compile = (source) => {
     `${selector}[data-ez-scheme="dark"] {`,
     ...darkDeclarations,
     '}',
+    `${selector}[data-ez-scheme="dim"] {`,
+    ...dimDeclarations,
+    '}',
     '@media (prefers-color-scheme: dark) {',
     `  ${selector}[data-ez-scheme="system"]:not([data-ez-palette]) {`,
     ...darkDeclarations.map((line) => `  ${line}`),
@@ -171,6 +190,7 @@ const compile = (source) => {
 
   const colors = Object.fromEntries(slots.map((slot) => [slot, theme[slot]]))
   const darkColors = Object.fromEntries(slots.map((slot) => [slot, dark[slot]]))
+  const dimColors = Object.fromEntries(slots.map((slot) => [slot, dim[slot]]))
   const themeFonts = Object.fromEntries(fonts.map((font) => [font, theme[font]]))
   const manifest = [
     '// Generated by scripts/compile-theme-tokens.mjs. Do not edit.',
@@ -180,6 +200,7 @@ const compile = (source) => {
     `    label: ${JSON.stringify(theme.label)},`,
     `    colors: ${JSON.stringify(colors, null, 2).replaceAll('\n', '\n    ')},`,
     `    darkColors: ${JSON.stringify(darkColors, null, 2).replaceAll('\n', '\n    ')},`,
+    `    dimColors: ${JSON.stringify(dimColors, null, 2).replaceAll('\n', '\n    ')},`,
     `    fonts: ${JSON.stringify(themeFonts, null, 2).replaceAll('\n', '\n    ')},`,
     `    radius: ${theme.radius},`,
     `    fontStylesheet: ${JSON.stringify(fontStylesheet(theme))},`,
@@ -209,13 +230,20 @@ const compile = (source) => {
     themes: Object.fromEntries(
       Object.entries(source.themes).flatMap(([name, theme]) => [
         [name, flat(theme, theme)],
-        ...(theme.dark === undefined ? [] : [[`${name}_dark`, flat(theme.dark, theme)]]),
+        ...schemes
+          .filter((scheme) => theme[scheme] !== undefined)
+          .map((scheme) => [`${name}_${scheme}`, flat(theme[scheme], theme)]),
       ]),
     ),
-    dark_themes: Object.fromEntries(
-      Object.entries(source.themes)
-        .filter(([, theme]) => theme.dark !== undefined)
-        .map(([name]) => [name, `${name}_dark`]),
+    schemes: Object.fromEntries(
+      Object.entries(source.themes).map(([name, theme]) => [
+        name,
+        Object.fromEntries(
+          schemes
+            .filter((scheme) => theme[scheme] !== undefined)
+            .map((scheme) => [scheme, `${name}_${scheme}`]),
+        ),
+      ]),
     ),
   }
 

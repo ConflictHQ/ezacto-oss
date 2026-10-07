@@ -188,13 +188,15 @@ export const contrastRatio = (first: string, second: string): number => {
  */
 export const themeSchemes = (
   theme: ThemeDefinition,
-): readonly { readonly scheme: 'light' | 'dark'; readonly theme: ThemeDefinition }[] =>
-  theme.darkColors === undefined
-    ? [{ scheme: 'light', theme }]
-    : [
-        { scheme: 'light', theme },
-        { scheme: 'dark', theme: { ...theme, colors: theme.darkColors } },
-      ]
+): readonly { readonly scheme: 'light' | 'dark' | 'dim'; readonly theme: ThemeDefinition }[] => [
+  { scheme: 'light', theme },
+  ...(theme.darkColors === undefined
+    ? []
+    : [{ scheme: 'dark' as const, theme: { ...theme, colors: theme.darkColors } }]),
+  ...(theme.dimColors === undefined
+    ? []
+    : [{ scheme: 'dim' as const, theme: { ...theme, colors: theme.dimColors } }]),
+]
 
 export const checkThemeContrast = (
   theme: ThemeDefinition,

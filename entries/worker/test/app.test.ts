@@ -164,6 +164,12 @@ describe('worker entry', () => {
     }
     const unset = await (await app.request('/', {}, env)).text()
     expect(root(unset)).toContain(' data-ez-scheme="system"')
+    // Dim is on the list too, and a dark scheme to the browser's controls.
+    const dim = await (
+      await app.request('/', { headers: { cookie: 'ezacto_scheme=dim' } }, env)
+    ).text()
+    expect(root(dim)).toContain(' data-ez-scheme="dim"')
+    expect(dim).toContain('<meta name="color-scheme" content="dark">')
     // A value off the list is a preference nobody can have; it never reaches
     // the markup as itself.
     const hostile = await (

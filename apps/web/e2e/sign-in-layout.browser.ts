@@ -40,7 +40,7 @@ test('[e2e:signin] fills the window at every text size and in every scheme, with
   // A 1000px window lost its bottom 100px to a white strip at the Small text
   // size: `zoom` scaled the layout's 100vh down with everything else.
   await page.setViewportSize({ width: 1860, height: 1000 })
-  for (const scheme of ['light', 'dark'] as const) {
+  for (const scheme of ['light', 'dim', 'dark'] as const) {
     await context.addCookies([{ name: 'ezacto_scheme', value: scheme, url: origin }])
     for (const size of [null, 'small', 'large', 'larger']) {
       await useTextSize(page, size)

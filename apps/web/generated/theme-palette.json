@@ -98,9 +98,42 @@
       "body": "Google Sans Flex",
       "mono": "IBM Plex Mono",
       "radius": 8
+    },
+    "precision_dim": {
+      "ground": "#2A303C",
+      "surface": "#313846",
+      "border": "#434C5C",
+      "ink": "#F1F3F6",
+      "muted": "#B0B8C3",
+      "action": "#3D63F0",
+      "action_fg": "#FFFFFF",
+      "live": "#4ADE80",
+      "data": "#93AAFC",
+      "money": "#3A3426",
+      "status_bg": "#3A4252",
+      "status_fg": "#C5CBD5",
+      "ink_2": "#D8DCE2",
+      "orange_tint": "#323E5C",
+      "blue_light": "#A5B4FC",
+      "red": "#FCA5A5",
+      "amber": "#FCD34D",
+      "amber_bg": "#463C22",
+      "live_text": "#86EFAC",
+      "surface_2": "#363E4D",
+      "row_hover": "#323E5C",
+      "band": "#1E232C",
+      "band_ink": "#F1F3F6",
+      "shadow": "#000000",
+      "display": "Google Sans Flex",
+      "body": "Google Sans Flex",
+      "mono": "IBM Plex Mono",
+      "radius": 8
     }
   },
-  "dark_themes": {
-    "precision": "precision_dark"
+  "schemes": {
+    "precision": {
+      "dark": "precision_dark",
+      "dim": "precision_dim"
+    }
   }
 }

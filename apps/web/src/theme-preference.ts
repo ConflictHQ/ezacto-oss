@@ -130,9 +130,10 @@ export const createThemeRuntime = <ThemeId extends string>(
 /**
  * Light or dark, and who decides (the 2026-10 reskin).
  *
- * The theme above is the family -- Precision -- and every family carries both
- * schemes. Which one the application wears is a separate, per-person choice:
- * `system` hands it to the operating system, `light` and `dark` override it.
+ * The theme above is the family -- Precision -- and it carries three schemes:
+ * light, a dim slate and dark. Which one the application wears is a separate,
+ * per-person choice: `system` hands it to the operating system, which only
+ * ever asks for light or dark; `light`, `dim` and `dark` override it.
  * Documents are not part of this. An invoice is paper, and stays on the light
  * scheme whatever the person reading it chose.
  *
@@ -144,7 +145,7 @@ export const createThemeRuntime = <ThemeId extends string>(
  * byte paints. The profile has nowhere to keep a display preference, and a
  * cookie is the one store both the server and this module can read.
  */
-export const colorSchemes = ['system', 'light', 'dark'] as const
+export const colorSchemes = ['system', 'light', 'dim', 'dark'] as const
 export type ColorScheme = (typeof colorSchemes)[number]
 
 export const DEFAULT_COLOR_SCHEME: ColorScheme = 'system'
@@ -152,7 +153,7 @@ export const COLOR_SCHEME_COOKIE = 'ezacto_scheme'
 
 /** Anything unrecognised is the default rather than an error: it is a display preference. */
 export const resolveColorScheme = (stored: string | null | undefined): ColorScheme =>
-  stored === 'light' || stored === 'dark' ? stored : DEFAULT_COLOR_SCHEME
+  stored === 'light' || stored === 'dim' || stored === 'dark' ? stored : DEFAULT_COLOR_SCHEME
 
 /**
  * What the browser should paint before the stylesheet has said anything: the
@@ -160,10 +161,16 @@ export const resolveColorScheme = (stored: string | null | undefined): ColorSche
  * operating system picks; an explicit choice offers only itself, so a page
  * someone set to light does not open on a dark canvas because their OS is.
  * An instance with a palette of its own keeps it under `system`, so that case
- * is light too.
+ * is light too. Dim is a dark scheme to the browser's own controls.
  */
 export const colorSchemeMeta = (scheme: ColorScheme, instancePalette: boolean): string =>
-  scheme === 'system' ? (instancePalette ? 'light' : 'light dark') : scheme
+  scheme === 'system'
+    ? instancePalette
+      ? 'light'
+      : 'light dark'
+    : scheme === 'dim'
+      ? 'dark'
+      : scheme
 
 export interface ColorSchemeTarget {
   setAttribute(name: 'data-ez-scheme', value: string): void

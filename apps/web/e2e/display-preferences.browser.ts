@@ -8,8 +8,9 @@ if (fixtureEmail === undefined || fixturePassword === undefined) {
 }
 
 const origin = `http://127.0.0.1:${process.env.EZACTO_BROWSER_PORT ?? '4173'}`
-// The two grounds, as the browser computes them: #0C111C and #FFFFFF.
+// The grounds, as the browser computes them: #0C111C, #2A303C and #FFFFFF.
 const darkGround = 'rgb(12, 17, 28)'
+const dimGround = 'rgb(42, 48, 60)'
 const lightGround = 'rgb(255, 255, 255)'
 
 const prefer = (context: BrowserContext, name: string, value: string): Promise<void> =>
@@ -82,6 +83,18 @@ test('[e2e:scheme] paints a chosen scheme without a script, so there is nothing 
   await page.emulateMedia({ colorScheme: 'dark' })
   await page.goto('/')
   expect(await groundOf(page)).toBe(lightGround)
+
+  // Dim the same way, under either operating system, with the browser's own
+  // controls told it is dark.
+  await prefer(context, 'ezacto_scheme', 'dim')
+  for (const system of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: system })
+    await page.goto('/')
+    expect(await groundOf(page)).toBe(dimGround)
+    expect(
+      await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme),
+    ).toBe('dark')
+  }
 })
 
 test('[e2e:scheme] keeps an instance palette under System and gives way to an explicit Dark', async ({
@@ -107,10 +120,14 @@ test('[e2e:scheme] keeps an instance palette under System and gives way to an ex
     await expect(page.locator('html')).toHaveAttribute('data-ez-palette', 'instance')
     expect(await groundOf(page)).toBe(lightGround)
 
-    // Asking for Dark outright is, and it gets the built-in dark scheme.
+    // Asking for Dark outright is, and it gets the built-in dark scheme. Dim
+    // behaves the same way.
     await prefer(context, 'ezacto_scheme', 'dark')
     await page.goto('/')
     expect(await groundOf(page)).toBe(darkGround)
+    await prefer(context, 'ezacto_scheme', 'dim')
+    await page.goto('/')
+    expect(await groundOf(page)).toBe(dimGround)
   } finally {
     await page.evaluate(() => fetch('/api/v1/settings/theme', { method: 'DELETE' }))
     await context.clearCookies({ name: 'ezacto_scheme' })

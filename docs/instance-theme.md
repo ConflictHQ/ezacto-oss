@@ -29,20 +29,21 @@ A saved palette applies on the next page load.
 Two tokens are declared but spend nothing in the stylesheet, so they are not
 offered — see issue 437, which is the open question of what they are for.
 
-## Light and dark
+## Light, dim and dark
 
-The built-in theme has a light and a dark scheme, and each person picks
-System, Light or Dark under **Settings → You → Theme**. System follows their
-computer. The choice is per browser and is kept in a cookie (`ezacto_scheme`),
-because the page has to be rendered in it before anything paints; the profile
-has nowhere to keep a display preference.
+The built-in theme has three schemes -- light, a dim slate, and dark -- and
+each person picks System, Light, Dim or Dark under **Settings → You → Theme**.
+System follows their computer, which only ever asks for light or dark. The
+choice is per browser and is kept in a cookie (`ezacto_scheme`), because the
+page has to be rendered in it before anything paints; the profile has nowhere
+to keep a display preference.
 
 An instance palette is the light scheme. Under System, everyone sees it,
-whatever their computer is set to; somebody who picks Dark outright sees the
-built-in dark scheme instead. The palette is checked against the light scheme
-and never mixed into the dark one, so nothing reaches the screen that the
-contrast rule has not passed. Documents a client receives are always the light
-scheme.
+whatever their computer is set to; somebody who picks Dim or Dark outright
+sees that built-in scheme instead. The palette is checked against the light
+scheme and never mixed into the others, so nothing reaches the screen that
+the contrast rule has not passed. Documents a client receives are always the
+light scheme.
 
 ## Readability is enforced, not advised
 

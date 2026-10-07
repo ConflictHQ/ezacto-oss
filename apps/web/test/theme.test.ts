@@ -88,6 +88,33 @@ describe('D16 theme token contract', () => {
         --ez-band-ink: #F6F7F8;
         --ez-shadow: #000000;
       }
+      [data-ez-theme="precision"][data-ez-scheme="dim"] {
+        color-scheme: dark;
+        --ez-ground: #2A303C;
+        --ez-surface: #313846;
+        --ez-border: #434C5C;
+        --ez-ink: #F1F3F6;
+        --ez-muted: #B0B8C3;
+        --ez-action: #3D63F0;
+        --ez-action-fg: #FFFFFF;
+        --ez-live: #4ADE80;
+        --ez-data: #93AAFC;
+        --ez-money: #3A3426;
+        --ez-status-bg: #3A4252;
+        --ez-status-fg: #C5CBD5;
+        --ez-ink-2: #D8DCE2;
+        --ez-orange-tint: #323E5C;
+        --ez-blue-light: #A5B4FC;
+        --ez-red: #FCA5A5;
+        --ez-amber: #FCD34D;
+        --ez-amber-bg: #463C22;
+        --ez-live-text: #86EFAC;
+        --ez-surface-2: #363E4D;
+        --ez-row-hover: #323E5C;
+        --ez-band: #1E232C;
+        --ez-band-ink: #F1F3F6;
+        --ez-shadow: #000000;
+      }
       @media (prefers-color-scheme: dark) {
         [data-ez-theme="precision"][data-ez-scheme="system"]:not([data-ez-palette]) {
           color-scheme: dark;
@@ -125,31 +152,37 @@ describe('D16 theme token contract', () => {
     // The dark scheme carries every slot, or a dark page would paint the light
     // value of whichever one it left out.
     expect(Object.keys(themeManifest.precision.darkColors ?? {})).toEqual([...themeSlotNames])
+    expect(Object.keys(themeManifest.precision.dimColors ?? {})).toEqual([...themeSlotNames])
     expect(Object.keys(themeManifest.precision.fonts)).toEqual([...themeFontNames])
     expect(themeSlotNames.map(cssCustomProperty)).toContain('--ez-action-fg')
     expect(slot('live')).toBe('var(--ez-live)')
   })
 
-  it('[unit] exports the dark scheme as a flat theme the other surfaces can read', async () => {
-    // Issue 666's export is slot name to value, one level deep, so the dark
-    // scheme is not nested inside its light theme there: it is a theme of its
-    // own, and `dark_themes` says which light theme it belongs to.
+  it('[unit] exports each scheme as a flat theme the other surfaces can read', async () => {
+    // Issue 666's export is slot name to value, one level deep, so a scheme is
+    // not nested inside its light theme there: each is a theme of its own, and
+    // `schemes` says which light theme it belongs to.
     const palette = JSON.parse(
       await readFile(resolve(root, 'generated', 'theme-palette.json'), 'utf8'),
     ) as {
       themes: Record<string, Record<string, unknown>>
-      dark_themes: Record<string, string>
+      schemes: Record<string, Record<string, string>>
     }
-    expect(palette.dark_themes).toEqual({ precision: 'precision_dark' })
-    expect(Object.keys(palette.themes)).toEqual(['precision', 'precision_dark'])
-    const dark = palette.themes.precision_dark!
-    expect(Object.keys(dark)).toEqual([...themeSlotNames, ...themeFontNames, 'radius'])
-    for (const slot of themeSlotNames) {
-      expect(dark[slot], slot).toBe(themeManifest.precision.darkColors?.[slot])
+    expect(palette.schemes).toEqual({
+      precision: { dark: 'precision_dark', dim: 'precision_dim' },
+    })
+    expect(Object.keys(palette.themes)).toEqual(['precision', 'precision_dark', 'precision_dim'])
+    for (const [scheme, colors] of [
+      ['precision_dark', themeManifest.precision.darkColors],
+      ['precision_dim', themeManifest.precision.dimColors],
+    ] as const) {
+      const flat = palette.themes[scheme]!
+      expect(Object.keys(flat)).toEqual([...themeSlotNames, ...themeFontNames, 'radius'])
+      for (const slot of themeSlotNames) expect(flat[slot], `${scheme}.${slot}`).toBe(colors?.[slot])
+      // Type and shape belong to the theme, whichever scheme it is in.
+      expect(flat.body).toBe(themeManifest.precision.fonts.body)
+      expect(flat.radius).toBe(themeManifest.precision.radius)
     }
-    // Type and shape belong to the theme, whichever scheme it is in.
-    expect(dark.body).toBe(themeManifest.precision.fonts.body)
-    expect(dark.radius).toBe(themeManifest.precision.radius)
   })
 
   it('[unit] carries the nested surface and the row-hover tint as contract slots', () => {

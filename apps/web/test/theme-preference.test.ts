@@ -216,6 +216,7 @@ describe('light, dark, or whatever the operating system says (the 2026-10 reskin
 
   it('[unit] reads anything it does not recognise as System', () => {
     expect(resolveColorScheme('dark')).toBe('dark')
+    expect(resolveColorScheme('dim')).toBe('dim')
     expect(resolveColorScheme('light')).toBe('light')
     for (const stored of [null, undefined, '', 'sepia', 'DARK', '"><script>']) {
       expect(resolveColorScheme(stored)).toBe('system')
@@ -227,6 +228,9 @@ describe('light, dark, or whatever the operating system says (the 2026-10 reskin
     // is not a request to stop wearing it; an explicit Dark still is.
     expect(colorSchemeMeta('system', true)).toBe('light')
     expect(colorSchemeMeta('dark', true)).toBe('dark')
+    // Dim is a dark scheme to the browser's own controls and scrollbars.
+    expect(colorSchemeMeta('dim', false)).toBe('dark')
+    expect(colorSchemeMeta('dim', true)).toBe('dark')
     const meta = new Meta()
     createColorSchemeRuntime({
       store: new PreferenceStore(null),

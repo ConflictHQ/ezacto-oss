@@ -57,6 +57,33 @@
   --ez-band-ink: #F6F7F8;
   --ez-shadow: #000000;
 }
+[data-ez-theme="precision"][data-ez-scheme="dim"] {
+  color-scheme: dark;
+  --ez-ground: #2A303C;
+  --ez-surface: #313846;
+  --ez-border: #434C5C;
+  --ez-ink: #F1F3F6;
+  --ez-muted: #B0B8C3;
+  --ez-action: #3D63F0;
+  --ez-action-fg: #FFFFFF;
+  --ez-live: #4ADE80;
+  --ez-data: #93AAFC;
+  --ez-money: #3A3426;
+  --ez-status-bg: #3A4252;
+  --ez-status-fg: #C5CBD5;
+  --ez-ink-2: #D8DCE2;
+  --ez-orange-tint: #323E5C;
+  --ez-blue-light: #A5B4FC;
+  --ez-red: #FCA5A5;
+  --ez-amber: #FCD34D;
+  --ez-amber-bg: #463C22;
+  --ez-live-text: #86EFAC;
+  --ez-surface-2: #363E4D;
+  --ez-row-hover: #323E5C;
+  --ez-band: #1E232C;
+  --ez-band-ink: #F1F3F6;
+  --ez-shadow: #000000;
+}
 @media (prefers-color-scheme: dark) {
   [data-ez-theme="precision"][data-ez-scheme="system"]:not([data-ez-palette]) {
     color-scheme: dark;

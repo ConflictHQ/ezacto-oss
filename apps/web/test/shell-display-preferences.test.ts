@@ -39,6 +39,14 @@ describe('light, dark, or the system in the browser (the 2026-10 reskin)', () =>
     expect(choice('dark').getAttribute('aria-pressed')).toBe('true')
     expect(choice('system').getAttribute('aria-pressed')).toBe('false')
 
+    // Dim sits between the two, and the browser's own controls go dark for it.
+    choice('dim').click()
+    expect(root.getAttribute('data-ez-scheme')).toBe('dim')
+    expect(meta.getAttribute('content')).toBe('dark')
+    expect(stored('ezacto_scheme')).toBe('dim')
+    expect(choice('dim').getAttribute('aria-pressed')).toBe('true')
+    expect(choice('dark').getAttribute('aria-pressed')).toBe('false')
+
     choice('system').click()
     expect(root.getAttribute('data-ez-scheme')).toBe('system')
     expect(meta.getAttribute('content')).toBe('light dark')
