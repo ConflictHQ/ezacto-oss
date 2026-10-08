@@ -625,13 +625,20 @@ describe("Worker D1 runtime composition", () => {
     ]);
 
     expect(replay).toEqual(created);
+    // 600 s and 900 s are 0.42 hours to the hundredth, billed at 100.00 as
+    // 42.00 (issue 923), where the two entries priced one at a time come to 41.67.
     expect(created.data).toMatchObject({
       client_id: 1,
       state: "draft",
-      amount_cents: 4_267,
-      due_amount_cents: 4_267,
+      amount_cents: 4_300,
+      due_amount_cents: 4_300,
       line_items: [
-        expect.objectContaining({ kind: "Service", amount_cents: 4_167 }),
+        expect.objectContaining({
+          kind: "Service",
+          quantity: 0.42,
+          unit_price_cents: 10_000,
+          amount_cents: 4_200,
+        }),
         expect.objectContaining({ kind: "Expense", amount_cents: 100 }),
       ],
     });
@@ -1185,6 +1192,85 @@ describe("Worker D1 runtime composition", () => {
          SET time_entry_mode = 'duration', time_format = 'decimal', clock = '12h'
          WHERE id = 1`,
       );
+    }
+  }, 20_000);
+
+  it("[e2e:track-week] keeps start/end entries beside durations in a duration organization, each counted in full", async () => {
+    // Issue 943: the calendar records intervals in a duration organization, and
+    // two of them may overlap. 09:00-11:00 and 10:00-12:00 beside an hour
+    // logged as a duration is five hours over a three-hour span; the grid, the
+    // report and the exported file all say five.
+    const client = new EzactoClient({
+      baseUrl: "https://worker.test",
+      token: bearer,
+      fetch: workerFetch,
+    });
+    const reader = new EzactoClient({
+      baseUrl: "https://worker.test",
+      token: projectBearer,
+      fetch: workerFetch,
+    });
+    const created: number[] = [];
+    try {
+      await expect(client.getTimeEntrySettings()).resolves.toMatchObject({
+        data: { time_entry_mode: "duration" },
+      });
+      for (const body of [
+        { spent_date: "2026-09-22", seconds: 3_600 },
+        { spent_date: "2026-09-22", started_time: "09:00", ended_time: "11:00" },
+        { spent_date: "2026-09-22", started_time: "10:00", ended_time: "12:00" },
+      ]) {
+        const entry = await client.createTimeEntry({
+          body: { project_id: 1, task_id: 1, ...body },
+        });
+        created.push(entry.data.id);
+        expect(entry.data).toMatchObject({ is_running: false, timer_started_at: null });
+      }
+      expect(
+        await database
+          .prepare(
+            `SELECT started_time, ended_time, seconds FROM time_entries
+             WHERE spent_date = '2026-09-22' ORDER BY id`,
+          )
+          .all(),
+      ).toMatchObject({
+        results: [
+          { started_time: null, ended_time: null, seconds: 3_600 },
+          { started_time: "09:00", ended_time: "11:00", seconds: 7_200 },
+          { started_time: "10:00", ended_time: "12:00", seconds: 7_200 },
+        ],
+      });
+
+      const grid = buildWeekGrid(
+        await loadShellSnapshot(
+          createShellApi(client),
+          new Date("2026-09-23T12:00:00.000Z"),
+        ),
+        "2026-09-23",
+      );
+      const tuesday = grid.dates.indexOf("2026-09-22");
+      expect(grid.dayTotals[tuesday]).toBe(18_000);
+      expect(grid.totalSeconds).toBe(18_000);
+      // Three entries share the cell, so the grid sends them to day view
+      // rather than overwriting one with a typed total.
+      expect(grid.rows[0]!.cells[tuesday]).toMatchObject({
+        totalSeconds: 18_000,
+        isConflict: true,
+      });
+
+      const range = { from: "2026-09-21", to: "2026-09-27" };
+      expect(
+        (await reader.getTimeReport({ query: range })).data.totals,
+      ).toMatchObject({ seconds: 18_000, rounded_seconds: 18_000, time_entry_count: 3 });
+      const csv = new TextDecoder().decode(
+        await reader.downloadDetailedTimeReport({
+          query: { ...range, format: "csv" },
+        }),
+      );
+      const lines = csv.trimEnd().split("\r\n");
+      expect(lines.at(-1)).toMatch(/^Total,.*,5\.00$/u);
+    } finally {
+      for (const id of created) await run(`DELETE FROM time_entries WHERE id = ?`, id);
     }
   }, 20_000);
 });

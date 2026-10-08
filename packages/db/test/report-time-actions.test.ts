@@ -53,6 +53,38 @@ describe('Detailed time confirmed actions', () => {
       .toEqual({ project_id: 2, task_id: 2, billable_rate_cents: null })
   })
 
+  it('[money] leaves a start/end entry that is still running alone (issue 945)', async () => {
+    // A running start/end entry has a start and no end, and no
+    // timer_started_at: the duration timer's mark was the only one checked,
+    // so this one could be claimed by an invoice or moved mid-run.
+    const database = await fixture()
+    sqlite!.exec(`
+      UPDATE organizations SET time_entry_mode = 'start_end';
+      INSERT INTO time_entries
+        (id, user_id, project_id, task_id, user_assignment_id, task_assignment_id, spent_date,
+         seconds, seconds_without_timer, rounded_seconds, started_time, ended_time, billable,
+         billable_rate_cents, cost_rate_cents, created_at, updated_at)
+        VALUES (11, 2, 1, 1, 1, 1, '2026-09-14', 0, 0, 0, '09:00', NULL, 1, 10000, NULL,
+          '${at}', '${at}');
+      INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date, created_at, updated_at)
+        VALUES (50, 1, '50', 'USD', '2026-09-14', '2026-09-14', '${at}', '${at}');
+    `)
+    await expect(
+      executeReportTimeAction(database, {
+        commandId: 'claim-running', actorUserId: 1, action: 'mark_invoiced',
+        entryIds: [10, 11], invoiceId: 50, completedAt: '2026-09-14T13:00:00.000Z',
+      }),
+    ).resolves.toMatchObject({ changedEntryIds: [10], ineligibleEntryIds: [11] })
+    await expect(
+      executeReportTimeAction(database, {
+        commandId: 'move-running', actorUserId: 1, action: 'move',
+        entryIds: [11], projectId: 2, taskId: 2, completedAt: '2026-09-14T13:00:00.000Z',
+      }),
+    ).resolves.toMatchObject({ changedEntryIds: [], ineligibleEntryIds: [11] })
+    expect(sqlite!.prepare('SELECT invoice_id, project_id, ended_time FROM time_entries WHERE id = 11').get())
+      .toEqual({ invoice_id: null, project_id: 1, ended_time: null })
+  })
+
   it('refuses reuse of a command id for different rows', async () => {
     const database = await fixture()
     const base = {

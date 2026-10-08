@@ -16,8 +16,10 @@ import {
   type SenderIdentityResolver,
 } from '@ezacto/mailer'
 import {
+  createQueuedAccountDeletionMailer,
   createQueuedAuthMailer,
   createQueuedStaffMagicLinkMailer,
+  type AccountDeletionMailer,
   type AuthMailer,
   type StaffMagicLinkMailer,
 } from '@ezacto/api'
@@ -103,6 +105,22 @@ export const createWorkerDeploymentAuthMailer = (
     templates,
     organizationName,
     appOrigin,
+  )
+
+/**
+ * The administrators' notice of an account deletion request, on the same
+ * queue and deployment sender as the other deployment mail. On the public
+ * demo that queue holds mail to the domains it lists, as it does all mail.
+ */
+export const createWorkerAccountDeletionMailer = (
+  queue: EmailQueue,
+  log: EmailLogStore,
+  from: string,
+  organizationName: () => Promise<string>,
+): AccountDeletionMailer =>
+  createQueuedAccountDeletionMailer(
+    createDeploymentSenderQueuedMailer(from, createQueuedMailer(log, queue)),
+    organizationName,
   )
 
 /** The staff sign-in email on the same queue as the other deployment mail. */

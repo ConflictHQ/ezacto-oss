@@ -61,11 +61,14 @@ export type StartTimeEntryInput = TimeEntryBaseInput
 
 export interface CreateStoppedTimeEntryInput extends TimeEntryBaseInput {
   spentDate: string
-  /** Required in duration mode; rejected in start/end mode. */
+  /** A duration entry's length: duration mode only, and never with times. */
   seconds?: number
-  /** Required in start/end mode; rejected in duration mode. */
+  /**
+   * A start/end entry's interval, with `endedTime`: required in start/end
+   * mode, and accepted in duration mode too (issue 943). Seconds derive from it.
+   */
   startedTime?: string
-  /** Required in start/end mode; rejected in duration mode. */
+  /** Required with `startedTime`. */
   endedTime?: string
   createdAt: string
   updatedAt: string
@@ -365,14 +368,17 @@ export const createStoppedTimeEntry = async (
   let seconds: number
   let startedTime: string | null = null
   let endedTime: string | null = null
-  if (settings.timeEntryMode === 'duration') {
+  if (
+    settings.timeEntryMode === 'duration' &&
+    input.startedTime === undefined &&
+    input.endedTime === undefined
+  ) {
     if (input.seconds === undefined) throw new Error('duration entries require seconds')
-    if (input.startedTime !== undefined || input.endedTime !== undefined) {
-      throw new Error('duration entries cannot contain start/end times')
-    }
     assertNonnegativeSeconds(input.seconds)
     seconds = input.seconds
   } else {
+    // A start/end entry, in either mode: a duration organization holds the
+    // intervals the calendar records beside its durations (issue 943).
     if (input.seconds !== undefined) throw new Error('start/end entries derive seconds')
     if (input.startedTime === undefined || input.endedTime === undefined) {
       throw new Error('stopped start/end entries require both canonical times')
@@ -557,6 +563,9 @@ export const restartTimeEntry = async (
     AND ${timeEntries.endedTime} IS ${entry.endedTime}
     AND ${timeEntries.updatedAt} = ${entry.updatedAt}
   `
+  // The organization's mode decides what a running timer looks like, not the
+  // entry's: in a duration organization a start/end entry (issue 943) restarts
+  // as a duration timer, its times cleared and its seconds carried on.
   let restarted: Record<string, unknown>
   try {
     restarted = await executeAtomicTrackedMutation(

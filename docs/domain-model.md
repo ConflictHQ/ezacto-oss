@@ -73,7 +73,7 @@ Harvest's `company` + the Preferences/Modules settings surface (UI inventory §3
 | `name` | text | |
 | `address` | text | Multiline. One address; the invoice-config and e-invoicing addresses reference it or override (see `invoice_config`). |
 | `week_start_day` | enum `saturday\|sunday\|monday` | |
-| `time_entry_mode` | enum `duration\|start_end` | = Harvest `wants_timestamp_timers` inverted naming. Org-wide, like Harvest. |
+| `time_entry_mode` | enum `duration\|start_end` | = Harvest `wants_timestamp_timers` inverted naming. Org-wide, like Harvest. Decides what a write without times means and the shape of a running timer; a `duration` org also holds stopped start/end entries, which the calendar records (issue 943). |
 | `time_format` | enum `decimal\|hours_minutes` | Display only. |
 | `clock` | enum `12h\|24h` | Display + compat-shim serialization only. |
 | `date_format` | text | One of Harvest's six patterns. |
@@ -223,7 +223,7 @@ reproduces Harvest's inconsistency.
 | `seconds_without_timer` | int | Non-null elapsed checkpoint for both tracking modes. While stopped it equals `seconds`; while running it is the accumulated duration before the current run. Live elapsed adds `(now − timer_started_at)` in duration mode or `(now − spent_date+started_time)` in start/end mode. |
 | `rounded_seconds` | int | **Stored, not computed at read** (§3.4). |
 | `timer_started_at` | timestamp nullable | Non-null ⇔ running (duration mode). |
-| `started_time`, `ended_time` | time nullable | Start/end mode. Canonical `HH:MM`. Running ⇔ `ended_time` null. |
+| `started_time`, `ended_time` | time nullable | Start/end entries: start/end mode, and stopped entries in a duration org. Canonical `HH:MM`. Running ⇔ `ended_time` null (start/end mode only). An entry keeps its shape: `started_time` null is a duration entry whatever the org's mode. |
 | `notes` | text | Org may require (`time_entry_notes_required`). |
 | `billable` | bool | Inherited from task_assignment at creation; never client-supplied on create (compat). |
 | `budgeted` | bool | Independent of billable. |
@@ -244,6 +244,10 @@ Timer semantics (hard compat requirement): creating an entry while omitting the
 terminating field (`hours`/`seconds` in duration mode, `ended_time` in start/end mode)
 **starts a running timer**. `stop`/`restart` are explicit operations. At most one
 running entry per user; starting a new one stops the previous (Harvest behavior).
+A write carrying `started_time` and `ended_time` is a stopped start/end entry in either
+mode, its seconds derived from the times; a duration org's timer never carries times.
+Entries may overlap and are never netted: every report, invoice and approval counts each
+entry's own full duration (issue 943).
 
 **Native-API deviation from Harvest:** writes to locked entries return `422` with a
 machine-readable reason. The compat shim reproduces Harvest's silent field-drop for
@@ -665,7 +669,7 @@ re-verifies the aggregate ones against imported data.
 8. Rate tables are append-only; `end_date` always equals next `start_date − 1` or null.
 9. Entry snapshots never change except via explicit reprice operations (which are logged).
 10. `retainer.balance = Σ ledger` in its single denomination and never negative unless `on_exhaustion = overflow` explicitly permits overdraw.
-11. Uninvoiced report totals ≡ what invoice generation would produce for the same filter, to the cent.
+11. Uninvoiced report totals ≡ what invoice generation would produce for the same filter: the same hours, entries and expenses exactly, and expense cents to the cent. Time cents may differ by a few cents a line, because a generated time line bills its hours to the hundredth times the rate, as Harvest does, where the report prices each entry on its own.
 12. Exactly one `user.is_owner`.
 13. Cross-org anything is impossible by construction (separate databases) — the test is that no code path accepts a database handle plus a foreign org id.
 14. `Σ time_entry.seconds` per (user, project, month) after import ≡ Harvest reports checksum for same grain (migration gate).

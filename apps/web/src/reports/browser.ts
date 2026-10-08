@@ -1723,9 +1723,15 @@ const detailedTimeCells = (
       // acts on, where a dash reads as a value that failed to load.
       claim.append(textElement('span', 'Not claimed', 'report-muted'))
     } else {
-      // The row carries the id and not the number, so the link goes by id.
+      // The number people quote, linked by it as every other report links an
+      // invoice (issue 939). The internal id was what this column used to show,
+      // and nobody can find an invoice by that.
+      const number = row.invoice_number ?? null
       claim.append(
-        linkElement(invoicePagePath({ id: row.invoice_id, number: null }), `#${row.invoice_id}`),
+        linkElement(
+          invoicePagePath({ id: row.invoice_id, number }),
+          number ?? `Invoice ${row.invoice_id}`,
+        ),
       )
     }
     cells.push(claim)

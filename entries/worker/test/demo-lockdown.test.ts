@@ -477,6 +477,52 @@ describe('the public demo (ENVIRONMENT=dev, DEMO_MODE=true)', () => {
     expect(signIn.status).toBe(200)
   })
 
+  it('[security] takes a deletion request from a published account and leaves the account as printed', async () => {
+    // App Review and Google Play sign in to this demo with the published
+    // password and ask, from the mobile app's Delete Account, to delete the
+    // account they are in. The request has to run end to end -- recorded, and
+    // answered -- without deleting or deactivating anything the next visitor
+    // signs in as.
+    fixture.queueSend.mockClear()
+    const asked = await call(fixture, 'POST', '/api/v1/profile/deletion-request', { body: {} })
+    expect(asked.status).toBe(202)
+    const { data } = (await asked.json()) as { data: { user_id: number; requested_at: string } }
+    expect(data.requested_at).toMatch(/^\d{4}-\d{2}-\d{2}T/u)
+
+    // Recorded where the administrators read who did what.
+    const recorded = await fixture.database
+      .prepare(
+        `SELECT aggregate_id AS userId FROM event_outbox
+         WHERE event_type = 'account.deletion_requested'`,
+      )
+      .all<{ userId: number }>()
+    expect(recorded.results).toEqual([{ userId: data.user_id }])
+
+    // The administrators' notice is held to the demo's list like all its mail:
+    // the published administrator's address is not on it.
+    expect(fixture.queueSend).not.toHaveBeenCalled()
+    const notice = (await fixture.services.emailLog.list()).filter((record) =>
+      record.subject.includes('asked to have their'),
+    )
+    expect(notice).toEqual([
+      expect.objectContaining({ status: 'failed', failureReason: 'demo_recipient_not_allowed' }),
+    ])
+    expect(outbound).toEqual([])
+
+    // Asking again answers with the first request, and the account is as
+    // printed: still active, and the published password still signs in.
+    const again = await call(fixture, 'POST', '/api/v1/profile/deletion-request', { body: {} })
+    expect(again.status).toBe(202)
+    expect(((await again.json()) as { data: { requested_at: string } }).data.requested_at).toBe(
+      data.requested_at,
+    )
+    const person = (await (await call(fixture, 'GET', `/api/v1/team/people/${String(data.user_id)}`)).json()) as {
+      data: { is_active: boolean }
+    }
+    expect(person.data.is_active).toBe(true)
+    await signInAgain(fixture)
+  })
+
   it('[security] refuses deactivating, demoting or repointing anyone, and no other edit of them', async () => {
     // A teammate the front page publishes is one user: deactivated, demoted or
     // given another sign-in address, it keeps the next visitor out until the
@@ -1027,6 +1073,23 @@ describe('production with DEMO_MODE left on (ENVIRONMENT=prod)', () => {
     )
     expect(logged.map((record) => record.status)).toEqual(['queued'])
   }, 30_000)
+
+  it('[api] tells the administrators of a deletion request, and changes nothing about the account', async () => {
+    fixture.queueSend.mockClear()
+    const asked = await call(fixture, 'POST', '/api/v1/profile/deletion-request', { body: {} })
+    expect(asked.status).toBe(202)
+    const { data } = (await asked.json()) as { data: { user_id: number } }
+    const notice = fixture.jobs.find((queued) =>
+      queued.message.template.startsWith('account_deletion_request:'),
+    )!
+    expect(notice.message.to).toEqual([{ email: owner.email }])
+    expect(notice.message.subject).toBe('Demo Administrator asked to have their Folding Forks account deleted')
+    expect(notice.message.text).toContain('Nothing has been deleted or deactivated.')
+    const person = (await (await call(fixture, 'GET', `/api/v1/team/people/${String(data.user_id)}`)).json()) as {
+      data: { is_active: boolean }
+    }
+    expect(person.data.is_active).toBe(true)
+  })
 
   it('[integration] its queue consumer still hands queued mail to the provider', async () => {
     const queued = await fixture.services.emailLog.createQueued({

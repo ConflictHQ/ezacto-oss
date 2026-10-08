@@ -455,6 +455,15 @@ export class DrizzleTrackedResourceRepository {
     return settings.timezone
   }
 
+  /**
+   * The boundary on the wall clock of the person whose entry it is: their own
+   * zone, then the organization's, as `#effectiveTimezone` decides the day a
+   * timer is filed on. The instant is untouched.
+   */
+  async #ownerBoundary(userId: number, boundary: TimeBoundary): Promise<TimeBoundary> {
+    return localBoundary(boundary, await this.#effectiveTimezone(userId, await this.#timeSettings()))
+  }
+
   async timeEntrySettings(): Promise<OrganizationTimeEntrySettings> {
     const settings = await this.#timeSettings()
     return {
@@ -948,15 +957,12 @@ export class DrizzleTrackedResourceRepository {
       ...(input.externalRef !== undefined ? { externalRef: input.externalRef } : {}),
       ...(input.calendarEventRef !== undefined ? { calendarEventRef: input.calendarEventRef } : {}),
     }
+    // Times make a start/end entry in either mode (issue 943): the calendar
+    // records an interval even where everything else records a duration. The
+    // organization's mode decides only what a request without times means.
+    const carriesTimes = input.startedTime !== undefined || input.endedTime !== undefined
     let created: TimeEntry
-    if (settings.timeEntryMode === 'duration') {
-      if (input.startedTime !== undefined || input.endedTime !== undefined) {
-        throw inputProblem(
-          'started_time',
-          'mode_mismatch',
-          'duration entries do not accept start/end times',
-        )
-      }
+    if (settings.timeEntryMode === 'duration' && !carriesTimes) {
       if (input.seconds === undefined) {
         if (onBehalf) throw timerForSomebodyElse()
         if (input.spentDate !== undefined && input.spentDate !== local.date) {
@@ -1014,6 +1020,17 @@ export class DrizzleTrackedResourceRepository {
         )
       }
       if (input.endedTime === undefined) {
+        // A running entry keeps the organization's shape (invariant 2), so a
+        // duration organization's timer is a duration timer. The trigger that
+        // stops a person's previous timer cannot measure between the two
+        // shapes: one is a UTC instant, the other a local wall-clock time.
+        if (settings.timeEntryMode === 'duration') {
+          throw inputProblem(
+            'started_time',
+            'mode_mismatch',
+            'a timer in a duration organization runs without times; send ended_time as well to log a stopped start/end entry',
+          )
+        }
         if (onBehalf) throw timerForSomebodyElse()
         if (input.spentDate !== undefined && input.spentDate !== local.date) {
           throw inputProblem(
@@ -1302,12 +1319,17 @@ export class DrizzleTrackedResourceRepository {
       throw inputProblem('time_entry', 'not_running', 'time entry is not running')
     }
     const policyLocked = await this.#policy.isLocked({ entityType: 'time_entry', entityId: id })
+    // A start/end timer started on its owner's wall clock, so it stops on it
+    // too (issue 945): measured against the UTC clock, a 09:00 timer stopped
+    // at 10:00 in a zone six hours west ran seven hours and ended at 16:00. The
+    // owner's zone, not the actor's, for the same reason the day is theirs.
+    const local = await this.#ownerBoundary(entry.userId, boundary)
     try {
       return this.#timeRecord(
         await stopTimeEntry(
           this.#database,
           id,
-          boundary,
+          local,
           policyLocked,
           onBehalfAudit(actor, entry.userId, { action: 'stop', before: entry }, boundary.instant),
         ),
@@ -1350,12 +1372,15 @@ export class DrizzleTrackedResourceRepository {
       this.#policy.isLocked({ entityType: 'time_entry', entityId: id }),
       this.#policy.isLocked({ entityType: 'running_time_entry_replacement', userId }),
     ])
+    // A start/end restart starts on the local date and time, as a new timer
+    // does (issue 945).
+    const local = await this.#ownerBoundary(userId, boundary)
     try {
       return this.#timeRecord(
         await restartTimeEntry(
           this.#database,
           id,
-          boundary,
+          local,
           policyLocked,
           runningEntryPolicyLocked,
         ),

@@ -1227,6 +1227,16 @@ export type ProfileEnvelope = {
   "links": Links;
 };
 
+export type AccountDeletionRequest = {
+  "user_id": number;
+  "requested_at": string;
+};
+
+export type AccountDeletionRequestEnvelope = {
+  "data": AccountDeletionRequest;
+  "links": Links;
+};
+
 export type TimeEntryOption = {
   "project_id": number;
   "task_id": number;
@@ -2387,6 +2397,7 @@ export type DetailedTimeRow = {
   "claimed": boolean;
   "time_entry_id"?: number;
   "invoice_id"?: number | null;
+  "invoice_number"?: string | null;
   "notes"?: string | null;
   "project_active"?: boolean;
 };
@@ -3865,6 +3876,15 @@ export class EzactoClient {
 
     return this.request<ProfileEnvelope>("PATCH", "/api/v1/profile", {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async requestAccountDeletion(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<AccountDeletionRequestEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountDeletionRequestEnvelope>("POST", "/api/v1/profile/deletion-request", {
       signal: args.signal,
       headers,
     });

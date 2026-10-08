@@ -414,6 +414,8 @@ const timeEntryOperations: ApiContractOperation[] = [
     path: "/api/v1/time-entries",
     operationId: "createTimeEntry",
     summary: "Create or start a time entry",
+    description:
+      "`started_time` with `ended_time` logs a stopped start/end entry in either organization mode, its `seconds` derived from the two times (an end before the start is past midnight); `seconds` beside them is 422 `mode_mismatch`. Without times the organization's `time_entry_mode` decides: in `duration`, `seconds` logs a stopped entry and leaving it out starts a timer; in `start_end`, leaving out `ended_time` starts a timer at the current local time and `seconds` is 422 `mode_mismatch`. A timer in a `duration` organization never carries times, so `started_time` without `ended_time` there is 422 `mode_mismatch`. Entries may overlap; each counts its own full duration.",
     tag: "time-entries",
     responseStatus: 201,
     responseSchema: "TimeEntryEnvelope",
@@ -429,7 +431,12 @@ const timeEntryOperations: ApiContractOperation[] = [
     responseStatus: 200,
     responseSchema: "TimeEntryEnvelope",
     ...(method === "patch"
-      ? { requestSchema: "TimeEntryPatch", requestRequired: true }
+      ? {
+          description:
+            "An entry keeps the shape it was created with, whatever the organization's mode: a start/end entry takes `started_time` and `ended_time` and re-derives `seconds`, a duration entry takes `seconds`, and the other is 422 `mode_mismatch`.",
+          requestSchema: "TimeEntryPatch",
+          requestRequired: true,
+        }
       : {}),
     parameters: [path("id")],
   })),
@@ -2867,6 +2874,20 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     requestSchema: "ProfilePatch",
     requestRequired: true,
   },
+  {
+    // Starting the deletion of one's own account from inside an app (App
+    // Store Guideline 5.1.1(v), Google Play's account deletion policy). A
+    // request, recorded and sent to the administrators, who decide: the
+    // account is the organization's, and nothing about it changes here.
+    // Asking again answers with the first request's time.
+    method: "post",
+    path: "/api/v1/profile/deletion-request",
+    operationId: "requestAccountDeletion",
+    summary: "Ask the administrators to delete the signed-in user's own account",
+    tag: "profile",
+    responseStatus: 202,
+    responseSchema: "AccountDeletionRequestEnvelope",
+  },
   ...generalOperations(),
   ...rateOperations(),
   ...timeEntryOperations,
@@ -4721,9 +4742,20 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // will not let a locked timesheet be edited; here the entry that was
       // wrong is the thing to edit, so there is nothing for a typed negative
       // to offset.
-      seconds: { type: "integer", minimum: 0 },
-      started_time: { type: "string" },
-      ended_time: { type: "string" },
+      seconds: {
+        type: "integer",
+        minimum: 0,
+        description: "A duration entry's length. Not accepted with started_time or ended_time.",
+      },
+      started_time: {
+        type: "string",
+        description:
+          "Canonical 24-hour HH:MM. With ended_time, a stopped start/end entry in either organization mode.",
+      },
+      ended_time: {
+        type: "string",
+        description: "Canonical 24-hour HH:MM. Requires started_time and spent_date.",
+      },
       notes: nullable(stringSchema),
       budgeted: booleanSchema,
       external_ref: nullable({ type: "object", additionalProperties: true }),
@@ -4812,6 +4844,17 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   ProfileEnvelope: envelope("Profile"),
+  AccountDeletionRequest: {
+    type: "object",
+    required: ["user_id", "requested_at"],
+    properties: {
+      user_id: integerSchema,
+      // When the person first asked. A later ask keeps it.
+      requested_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  AccountDeletionRequestEnvelope: envelope("AccountDeletionRequest"),
   TimeEntryOption: {
     type: "object",
     required: ["project_id", "task_id", "minimum_note_length"],
@@ -7102,6 +7145,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // The invoice that claimed the entry, at `entry` grain. Null where
       // nothing has.
       invoice_id: nullable(integerSchema),
+      // That invoice's number, the one printed on it and in its address
+      // (/invoices/<number>), beside its internal id. Null where nothing has
+      // claimed the entry.
+      invoice_number: nullable(stringSchema),
       notes: nullable(stringSchema),
       project_active: booleanSchema,
     },

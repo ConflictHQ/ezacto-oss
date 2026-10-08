@@ -2,7 +2,7 @@ import type { Hono } from 'hono'
 import type { ApiContext } from './context.js'
 import { requireApiScope } from './auth.js'
 import { readObjectBody, unknownFieldErrors } from './resources/support.js'
-import { validationError, type FieldError } from './errors.js'
+import { ApiError, validationError, type FieldError } from './errors.js'
 
 /**
  * Self-service profile. A signed-in user setting their own preferences, with no
@@ -24,11 +24,38 @@ export interface ProfileRepositoryPort {
   /** Absent where the deployment does not send invoice email. */
   readInvoiceCopy?(userId: number): Promise<boolean | null>
   updateInvoiceCopy?(userId: number, copy: boolean, occurredAt: string): Promise<void>
+  /**
+   * Records that the signed-in person asked for their account to be deleted,
+   * and names the administrators who decide. Deletes and deactivates nothing.
+   */
+  requestDeletion?(input: {
+    userId: number
+    occurredAt: string
+    requestId: string
+  }): Promise<AccountDeletionRequest>
+}
+
+/** What a deletion request recorded, and who it goes to. */
+export interface AccountDeletionRequest {
+  /** When the person first asked; asking again keeps it. */
+  readonly requestedAt: string
+  /** False for a retry of a request already recorded, which tells nobody again. */
+  readonly recorded: boolean
+  readonly person: { readonly name: string; readonly email: string | null }
+  /** Every active administrator's primary address. */
+  readonly administrators: readonly string[]
+}
+
+/** Tells the administrators who asked to have their account deleted, and when. */
+export interface AccountDeletionMailer {
+  notify(request: AccountDeletionRequest): Promise<void>
 }
 
 export interface ProfileRouteOptions {
   repository: ProfileRepositoryPort
   clock: () => string
+  /** Absent where the deployment sends no mail; the request is still recorded. */
+  deletionMailer?: AccountDeletionMailer
 }
 
 const ALLOWED_FIELDS: ReadonlySet<string> = new Set(['timezone', 'invoice_copy_to_self'])
@@ -81,6 +108,49 @@ export const installProfileRoutes = <Bindings extends object>(
         links: { self: '/api/v1/profile' },
       },
       200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  /**
+   * Asking for one's own account to be deleted, from inside an app (App Store
+   * Guideline 5.1.1(v), Google Play's account deletion policy).
+   *
+   * A request, not a deletion: an account on an instance is its
+   * organization's, and what goes and what is kept is that organization's
+   * retention decision. The request is recorded and the administrators are
+   * told; nothing about the account changes. That is also why the public demo
+   * needs no refusal here: its published accounts survive every reviewer who
+   * asks, and the reviewer still sees the whole flow.
+   *
+   * 202 rather than 201: something was set in motion, and it is somebody
+   * else's to finish. Asking again answers with the first request's time.
+   */
+  api.post('/profile/deletion-request', async (context) => {
+    requireApiScope(context, 'time_entries:write')
+    const principal = context.get('principal')
+    if (options.repository.requestDeletion === undefined) {
+      throw new ApiError({
+        status: 503,
+        code: 'service_unavailable',
+        message: 'Account deletion requests are not available in this deployment.',
+      })
+    }
+    const request = await options.repository.requestDeletion({
+      userId: principal.userId,
+      occurredAt: options.clock(),
+      requestId: context.get('requestId'),
+    })
+    // Each new ask is mailed; a retry of the same request is not mailed twice.
+    if (request.recorded && request.administrators.length > 0) {
+      await options.deletionMailer?.notify(request)
+    }
+    return context.json(
+      {
+        data: { user_id: principal.userId, requested_at: request.requestedAt },
+        links: { self: '/api/v1/profile/deletion-request' },
+      },
+      202,
       { 'cache-control': 'no-store' },
     )
   })
