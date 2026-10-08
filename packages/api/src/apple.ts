@@ -39,10 +39,13 @@ export type AppleFetch = (url: string, init: RequestInit) => Promise<Response>
  * Deployment configuration for native Sign in with Apple.
  *
  * `clientId` is the audience an identity token must carry: the iOS bundle
- * identifier the app ships under, and optionally a web Services ID beside it.
- * One value or several, separated by whitespace or commas -- a token is
- * accepted when its `aud` is any of them, which is how one Apple team serves an
- * app and a website at once.
+ * identifier the app ships under. One value or several, separated by
+ * whitespace or commas -- a token is accepted when its `aud` is any of them.
+ *
+ * The website's Services ID does not belong here. The browser flow
+ * (`apple-web.ts`) verifies its tokens against that ID itself, bound to a
+ * nonce; this route checks no nonce, so listing the Services ID here would let
+ * a token lifted from the browser flow sign in without one (issue 768).
  */
 export interface AppleProviderConfig {
   clientId: string
@@ -70,11 +73,30 @@ export interface AppleAssertion {
   /** The verified address from the token; Apple issues one for every sign-in. */
   email: string
   emailVerified: boolean
+  /**
+   * Whether the address is one of Apple's private relay addresses (Hide My
+   * Email). It still verifies and still links, but it matches no account a
+   * person made under their own address, which is worth saying when it fails.
+   */
+  isPrivateEmail: boolean
+}
+
+/** Claims a caller requires on top of the signature, issuer and audience. */
+export interface AppleTokenExpectations {
+  /**
+   * The exact `nonce` claim the token must carry. The browser flow binds every
+   * token to the transaction that asked for it this way; the native route has
+   * no transaction and passes nothing.
+   */
+  nonce?: string
 }
 
 export interface AppleIdentityTokenVerifier {
   /** Returns null for every malformed, unverifiable, expired, or unavailable token. */
-  verify(identityToken: string): Promise<AppleAssertion | null>
+  verify(
+    identityToken: string,
+    expected?: AppleTokenExpectations,
+  ): Promise<AppleAssertion | null>
 }
 
 export interface AppleIdentityResolver {
@@ -98,11 +120,18 @@ export interface AppleRouteOptions<Bindings extends object> {
    */
   verifier?: AppleIdentityTokenVerifier
   /**
-   * Issue 761. Apple draws no button on the sign-in card -- the app holds the
-   * platform prompt -- but it is a way in, so an operator switching it off has
-   * to stop the route rather than a control that was never there.
+   * Issue 761. This route has no button on the sign-in card -- the app holds
+   * the platform prompt -- but it is a way in, so an operator switching it off
+   * has to stop the route rather than a control that was never there.
    */
   policy?: SignInMethodPolicy
+  /**
+   * Where an identity matches nobody and may not provision anyone, the user to
+   * sign in as instead, or null to refuse as usual. Only the public demo sets
+   * it (issue 768), with an account whose password it already prints; see
+   * `demoAppleAccount` in the Worker entry.
+   */
+  fallbackAccount?(bindings: Bindings): Promise<number | null>
 }
 
 const appleError = (
@@ -212,6 +241,24 @@ const appleEmail = (payload: JWTPayload): string | null => {
 const appleEmailVerified = (payload: JWTPayload): boolean =>
   payload.email_verified === true || payload.email_verified === 'true'
 
+/** Apple's relay domain, for a token that says nothing either way. */
+const PRIVATE_RELAY_DOMAIN = '@privaterelay.appleid.com'
+
+const applePrivateEmail = (payload: JWTPayload, email: string): boolean =>
+  payload.is_private_email === true ||
+  payload.is_private_email === 'true' ||
+  email.endsWith(PRIVATE_RELAY_DOMAIN)
+
+/** Length-independent comparison, so a wrong nonce costs the same as a right one. */
+const sameText = (left: string, right: string): boolean => {
+  let difference = left.length ^ right.length
+  const length = Math.max(left.length, right.length)
+  for (let index = 0; index < length; index += 1) {
+    difference |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0)
+  }
+  return difference === 0
+}
+
 /**
  * A verifier backed by Apple's published JWKS. The remote key set caches
  * successful keys and throttles unknown-key refreshes while still reloading
@@ -233,7 +280,7 @@ export const createAppleIdentityTokenVerifier = (
   })
 
   return {
-    verify: async (identityToken) => {
+    verify: async (identityToken, expected = {}) => {
       if (
         typeof identityToken !== 'string' ||
         identityToken.length < 1 ||
@@ -272,9 +319,20 @@ export const createAppleIdentityTokenVerifier = (
         ) {
           return null
         }
+        if (
+          expected.nonce !== undefined &&
+          (typeof payload.nonce !== 'string' || !sameText(payload.nonce, expected.nonce))
+        ) {
+          return null
+        }
         const email = appleEmail(payload)
         if (email === null) return null
-        return { subject: sub, email, emailVerified: appleEmailVerified(payload) }
+        return {
+          subject: sub,
+          email,
+          emailVerified: appleEmailVerified(payload),
+          isPrivateEmail: applePrivateEmail(payload, email),
+        }
       } catch {
         return null
       }
@@ -433,18 +491,28 @@ export const installAppleRoutes = <Bindings extends object>(
     }
     // An assertion that matched nobody and came from a domain this instance has
     // not proven it owns gets no account -- the same rule the OIDC providers
-    // enforce, so an arbitrary Apple ID cannot provision itself a user.
+    // enforce, so an arbitrary Apple ID cannot provision itself a user. The
+    // demo's fallback creates nobody either: it names an account that exists.
+    let userId: number
     if (identity.status === 'provisioning_not_permitted') {
-      throw appleError(
-        403,
-        'provisioning_not_permitted',
-        'This Apple account is not on a domain this instance provisions from.',
-      )
-    }
-    if (identity.status === 'disabled') {
+      const fallback =
+        options.fallbackAccount === undefined
+          ? null
+          : await options.fallbackAccount(context.env)
+      if (fallback === null) {
+        throw appleError(
+          403,
+          'provisioning_not_permitted',
+          'This Apple account is not on a domain this instance provisions from.',
+        )
+      }
+      userId = fallback
+    } else if (identity.status === 'disabled') {
       throw appleError(403, 'account_disabled', 'This ezacto user is disabled.')
+    } else {
+      userId = identity.userId
     }
-    const session = await options.sessions.issue(identity.userId)
+    const session = await options.sessions.issue(userId)
     context.header('set-cookie', session.setCookie, { append: true })
     setResponseHeaders(context)
     return context.json({ data: { ok: true } }, 200, {

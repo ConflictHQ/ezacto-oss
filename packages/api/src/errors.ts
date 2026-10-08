@@ -133,7 +133,8 @@ const payloadTooLarge = (maxBytes: number): ApiError =>
     message: `Request body exceeds the ${maxBytes}-byte limit.`,
   })
 
-const readLimitedBody = async (
+/** The raw bytes of a body, refused with 413 past `maxBytes` rather than buffered. */
+export const readLimitedBody = async (
   body: ReadableStream<Uint8Array> | null,
   maxBytes: number,
 ): Promise<Uint8Array> => {
