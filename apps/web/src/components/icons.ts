@@ -54,6 +54,7 @@ export type IconName =
   | 'sidebar'
   | 'sign-out'
   | 'sliders'
+  | 'sort'
 
 /**
  * The chevron is drawn once, pointing right, and turned by CSS. Four separate
@@ -194,6 +195,14 @@ const iconGeometry: Readonly<Record<IconName, readonly IconShape[]>> = {
     { element: 'path', attributes: { d: 'M3.25 6.25h3M9.75 6.25h7M3.25 13.75h7M13.75 13.75h3' } },
     { element: 'circle', attributes: { cx: '8', cy: '6.25', r: '1.75' } },
     { element: 'circle', attributes: { cx: '12', cy: '13.75', r: '1.75' } },
+  ],
+  // A sortable column's mark (issue 852): both carets on a column that is not
+  // sorted, and the stylesheet quiets the one a sorted column is not running,
+  // keyed by the header's own aria-sort -- so the mark cannot disagree with
+  // what a reader is told.
+  sort: [
+    { element: 'path', attributes: { d: 'm6.5 8.25 3.5-3.5 3.5 3.5', 'data-part': 'ascending' } },
+    { element: 'path', attributes: { d: 'm6.5 11.75 3.5 3.5 3.5-3.5', 'data-part': 'descending' } },
   ],
 }
 
