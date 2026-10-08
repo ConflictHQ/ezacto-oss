@@ -3,6 +3,7 @@
 import {
   EzactoApiError,
   type Attachment,
+  type BandedMonthRow,
   type GeneralResource,
   type RecurringInvoice,
   type Whoami,
@@ -1487,5 +1488,113 @@ describe('A definition’s purchase order and standing files', () => {
     session.abort()
     expect(control<HTMLElement>('[data-recurring-attachments]').children).toHaveLength(0)
     expect(control<HTMLElement>('[data-recurring-editor-attachments]').hidden).toBe(true)
+  })
+})
+
+/**
+ * Issue 940: the band's `Warn above` had no visible effect, because no screen
+ * showed the ratio it is read against. The detail now shows the latest billed
+ * period's ratio, and says in words when it is at or over the warning.
+ */
+describe('a band\'s cost ratio on its detail', () => {
+  const banded: RecurringInvoice = {
+    ...managed,
+    id: 6,
+    subject_template: 'Banded team',
+    claims_project_ids: [7],
+    cost_alert_basis_points: 8_000,
+  }
+  const bandRow = (fields: Partial<BandedMonthRow> = {}): BandedMonthRow => ({
+    period_start: '2026-08-02',
+    period_end: '2026-09-01',
+    project_id: 7,
+    project_name: 'Ingest rebuild',
+    client_id: 4,
+    client_name: 'Northpeak',
+    currency: 'EUR',
+    rounded_seconds: 36_000,
+    billable_value_cents: 900_000,
+    cost_value_cents: 591_500,
+    entries_without_billable_rate: 0,
+    entries_without_cost_rate: 0,
+    claimed_in_other_currency: 0,
+    billed_cents: 650_000,
+    foregone_cents: 250_000,
+    cost_ratio_basis_points: 9_100,
+    cost_alert_basis_points: 8_000,
+    cost_ratio_state: 'over',
+    ...fields,
+  })
+  const bandApi = (rows: readonly BandedMonthRow[]) =>
+    baseApi({
+      listRecurringInvoices: vi.fn(async () => page([banded, managed])),
+      getRecurringInvoice: vi.fn(async (id: number) =>
+        [banded, managed].find((candidate) => candidate.id === id)!,
+      ),
+      getBandedMonthReport: vi.fn(async () => ({ rows })),
+    })
+
+  it('[browser] shows the ratio and warns when the band is over its line', async () => {
+    writeDocument()
+    const api = bandApi([bandRow()])
+    await activate(api)
+    await openDefinition(api, 6)
+
+    // A year back from the controller's today, which holds the last billed
+    // period of any monthly or quarterly band.
+    expect(api.getBandedMonthReport).toHaveBeenCalledWith(
+      '2025-10-01',
+      '2026-10-01',
+      expect.any(AbortSignal),
+    )
+    await vi.waitFor(() =>
+      expect(control<HTMLElement>('[data-recurring-cost]').textContent).toBe(
+        '2026-08-02 – 2026-09-01: 91% of what it charged, at or over the 80% warning',
+      ),
+    )
+    expect(control<HTMLElement>('[data-recurring-cost-row]').hidden).toBe(false)
+    expect(control<HTMLElement>('[data-recurring-cost]').dataset['outcome']).toBe('over')
+    const warning = control<HTMLElement>('[data-recurring-cost-warning]')
+    expect(warning.hidden).toBe(false)
+    expect(warning.textContent).toBe(
+      'Delivering 2026-08-02 – 2026-09-01 cost 91% of what this band charged, at or over its 80% warning.',
+    )
+  })
+
+  it('[browser] shows the ratio with no warning while it is under the line', async () => {
+    writeDocument()
+    const api = bandApi([bandRow({ cost_ratio_basis_points: 6_500, cost_ratio_state: 'within' })])
+    await activate(api)
+    await openDefinition(api, 6)
+
+    await vi.waitFor(() =>
+      expect(control<HTMLElement>('[data-recurring-cost]').textContent).toContain(
+        '65% of what it charged, under the 80% warning',
+      ),
+    )
+    expect(control<HTMLElement>('[data-recurring-cost-warning]').hidden).toBe(true)
+  })
+
+  it('[browser] has no cost row on a definition that is not a band', async () => {
+    writeDocument()
+    const api = bandApi([bandRow()])
+    await activate(api)
+    await openDefinition(api, 1)
+
+    expect(control<HTMLElement>('[data-recurring-cost-row]').hidden).toBe(true)
+    expect(control<HTMLElement>('[data-recurring-cost-warning]').hidden).toBe(true)
+    expect(api.getBandedMonthReport).not.toHaveBeenCalled()
+  })
+
+  it('[security] asks nothing of the cost report for a viewer who may not read cost', async () => {
+    // Cost is the administrator's alone. Accounting reads the definition and
+    // never sees a row it would only be refused.
+    writeDocument()
+    const api = bandApi([bandRow()])
+    await activate(api, new AbortController().signal, identity('accounting'))
+    await openDefinition(api, 6)
+
+    expect(control<HTMLElement>('[data-recurring-cost-row]').hidden).toBe(true)
+    expect(api.getBandedMonthReport).not.toHaveBeenCalled()
   })
 })

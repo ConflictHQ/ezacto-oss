@@ -72,7 +72,9 @@ export const renderRecurringPage = (view?: string): string => `
           <div><dt>Bills</dt><dd data-recurring-basis>—</dd></div>
           <div><dt>Amount</dt><dd data-recurring-amount>—</dd></div>
           <div data-recurring-retainer-row hidden><dt>Draws from</dt><dd data-recurring-retainer>—</dd></div>
+          <div data-recurring-cost-row hidden><dt>Cost ratio</dt><dd data-recurring-cost>—</dd></div>
         </dl>
+        <p class="report-warning" data-recurring-cost-warning role="status" hidden></p>
         <section class="recurring-issue" aria-labelledby="recurring-issue-heading">
           <h3 id="recurring-issue-heading">Issue this period</h3>
           <p class="hint" data-recurring-issue-hint>Raises the invoice this definition is due for and moves the cadence on. Nothing is sent to the client.</p>

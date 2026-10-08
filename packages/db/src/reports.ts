@@ -572,6 +572,11 @@ export interface DetailedTimeRowRecord {
   timeEntryId: number | null
   /** The invoice that claimed the entry, at `entry` grain; null at `day`. */
   invoiceId: number | null
+  /**
+   * That invoice's number, the one printed on it and the one people quote
+   * (issue 939); null wherever `invoiceId` is.
+   */
+  invoiceNumber: string | null
   /** The entry's notes at `entry` grain; null at `day` grain. */
   notes: string | null
   projectActive: boolean
@@ -2865,6 +2870,7 @@ interface DetailedTimeQueryRow {
   roundedSeconds: number
   billable: number
   invoiceId: number | null
+  invoiceNumber: string | null
   projectActive: number
   billableRateCents: number | null
   timeEntryId: number
@@ -2976,6 +2982,7 @@ const detailedTimeReport = async (
       upper(coalesce(project.billing_currency, client.currency)) AS "currency",
       entry.seconds AS "seconds", entry.rounded_seconds AS "roundedSeconds",
       entry.billable AS "billable", entry.invoice_id AS "invoiceId",
+      claim.number AS "invoiceNumber",
       project.is_active AS "projectActive",
       entry.billable_rate_cents AS "billableRateCents"
     FROM time_entries entry
@@ -2983,6 +2990,7 @@ const detailedTimeReport = async (
     JOIN clients client ON client.id = project.client_id
     JOIN tasks task ON task.id = entry.task_id
     JOIN users person ON person.id = entry.user_id
+    LEFT JOIN invoices claim ON claim.id = entry.invoice_id
     WHERE entry.spent_date BETWEEN ${filter.from} AND ${filter.to}
       AND ${detailedTimeHoursFilter(hours)}
       AND ${filter.includeFixedFee === false ? sql`project.billing_method <> 'fixed_fee'` : sql`1`}
@@ -3076,6 +3084,7 @@ const detailedTimeReport = async (
       claimed: row.invoiceId !== null,
       timeEntryId: grain === 'entry' ? row.timeEntryId : null,
       invoiceId: grain === 'entry' ? row.invoiceId : null,
+      invoiceNumber: grain === 'entry' ? row.invoiceNumber : null,
       notes:
         grain !== 'entry'
           ? null

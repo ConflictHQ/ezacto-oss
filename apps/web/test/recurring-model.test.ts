@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type {
+  BandedMonthRow,
   EzactoClient,
   GeneralResource,
   RecurringInvoice,
@@ -15,6 +16,7 @@ import {
   recurringBlankLine,
   recurringCadenceLabel,
   recurringClientLabel,
+  recurringCostRatio,
   recurringCurrency,
   recurringDayLabel,
   recurringDefinitionInput,
@@ -886,6 +888,136 @@ describe('a definition’s standing files, bound to the generated client', () =>
     expect(generated.removeRecurringInvoiceAttachment).toHaveBeenCalledWith({
       recurringInvoiceId: 3,
       attachmentId: 41,
+      signal,
+    })
+  })
+})
+
+/**
+ * Issue 940: a band computes its cost ratio and takes a `Warn above` line, and
+ * until now no screen showed either, so the setting did nothing anyone could
+ * see.
+ */
+describe('a band\'s cost ratio', () => {
+  const band = definition({ claims_project_ids: [7] })
+  const row = (fields: Partial<BandedMonthRow> = {}): BandedMonthRow => ({
+    period_start: '2026-08-02',
+    period_end: '2026-09-01',
+    project_id: 7,
+    project_name: 'Ingest rebuild',
+    client_id: 4,
+    client_name: 'Northpeak',
+    currency: 'EUR',
+    rounded_seconds: 36_000,
+    billable_value_cents: 900_000,
+    cost_value_cents: 455_000,
+    entries_without_billable_rate: 0,
+    entries_without_cost_rate: 0,
+    claimed_in_other_currency: 0,
+    billed_cents: 650_000,
+    foregone_cents: 250_000,
+    cost_ratio_basis_points: 7_000,
+    cost_alert_basis_points: 8_000,
+    cost_ratio_state: 'within',
+    ...fields,
+  })
+
+  it('[unit] has nothing to say about a definition that claims no projects', () => {
+    expect(recurringCostRatio(definition({ claims_project_ids: null }), [row()])).toBeNull()
+    expect(recurringCostRatio(definition({ claims_project_ids: [] }), [row()])).toBeNull()
+  })
+
+  it('[unit] reads the ratio against the warning it is under', () => {
+    expect(recurringCostRatio(band, [row()])).toEqual({
+      text: '2026-08-02 – 2026-09-01: 70% of what it charged, under the 80% warning',
+      over: false,
+      warning: null,
+    })
+  })
+
+  it('[unit] says so in words when a period is at or over the warning', () => {
+    expect(
+      recurringCostRatio(band, [
+        row({ cost_ratio_basis_points: 8_125, cost_ratio_state: 'over' }),
+      ]),
+    ).toEqual({
+      text: '2026-08-02 – 2026-09-01: 81.25% of what it charged, at or over the 80% warning',
+      over: true,
+      warning:
+        'Delivering 2026-08-02 – 2026-09-01 cost 81.25% of what this band charged, at or over its 80% warning.',
+    })
+  })
+
+  it('[unit] reads the latest period a band has billed, not the one still running', () => {
+    const running = row({
+      period_start: '2026-09-02',
+      period_end: '2026-10-01',
+      billed_cents: null,
+      cost_ratio_basis_points: null,
+      cost_ratio_state: 'unbilled',
+    })
+    const older = row({ period_start: '2026-07-02', period_end: '2026-08-01' })
+    const latestBilled = row({ cost_ratio_basis_points: 9_000, cost_ratio_state: 'over' })
+    const ratio = recurringCostRatio(band, [older, running, latestBilled])
+    expect(ratio?.text).toBe('2026-08-02 – 2026-09-01: 90% of what it charged, at or over the 80% warning')
+    expect(ratio?.over).toBe(true)
+    // Nothing billed yet at all: the latest period says why there is no ratio.
+    expect(recurringCostRatio(band, [running])?.text).toBe(
+      '2026-09-02 – 2026-10-01: no ratio yet, nothing has billed this period',
+    )
+  })
+
+  it('[unit] gives no ratio over cost it cannot price, and says how much is missing', () => {
+    expect(
+      recurringCostRatio(band, [
+        row({
+          cost_value_cents: null,
+          entries_without_cost_rate: 3,
+          cost_ratio_basis_points: null,
+          cost_ratio_state: 'unpriced',
+        }),
+      ]),
+    ).toEqual({
+      text: '2026-08-02 – 2026-09-01: no ratio, 3 entries have no cost rate',
+      over: false,
+      warning: null,
+    })
+  })
+
+  it('[unit] names each project of a band that claims several, and only its own', () => {
+    const several = definition({ claims_project_ids: [7, 8] })
+    const ratio = recurringCostRatio(several, [
+      row({ project_id: 8, project_name: 'Data platform', cost_ratio_basis_points: 9_500, cost_ratio_state: 'over' }),
+      row(),
+      // Banded time on a project this definition does not claim is another band's.
+      row({ project_id: 9, project_name: 'Elsewhere', cost_ratio_basis_points: 20_000, cost_ratio_state: 'over' }),
+    ])
+    expect(ratio).toEqual({
+      text:
+        '2026-08-02 – 2026-09-01: Data platform: 95% of what it charged, at or over the 80% warning; ' +
+        'Ingest rebuild: 70% of what it charged, under the 80% warning',
+      over: true,
+      warning:
+        'Delivering Data platform in 2026-08-02 – 2026-09-01 cost 95% of what this band charged, at or over its 80% warning.',
+    })
+  })
+
+  it('[unit] says when the band has tracked nothing in the window', () => {
+    expect(recurringCostRatio(band, [])).toEqual({
+      text: 'No banded time in the last year',
+      over: false,
+      warning: null,
+    })
+  })
+
+  it('[unit] reads the report through the shell API the screen is given', async () => {
+    const report = { from: '2025-10-01', to: '2026-10-01', rows: [row()] }
+    const generated = { getBandedMonthReport: vi.fn(async () => ({ data: report, links: {} })) }
+    const api = createShellApi(generated as unknown as EzactoClient)
+    const signal = new AbortController().signal
+    expect(await api.getBandedMonthReport!('2025-10-01', '2026-10-01', signal)).toEqual(report)
+    expect(generated.getBandedMonthReport).toHaveBeenCalledWith({
+      query: { from: '2025-10-01', to: '2026-10-01' },
       signal,
     })
   })

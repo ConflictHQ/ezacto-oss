@@ -21,6 +21,7 @@
 
 import type {
   Attachment,
+  BandedMonthRow,
   GeneralResource,
   RecurringAmountConfig,
   RecurringFixedLine,
@@ -115,6 +116,17 @@ export interface RecurringWorkspaceApi {
     attachmentId: number,
     signal?: AbortSignal,
   ): Promise<void>
+  /**
+   * What each banded period cost to deliver against what it charged
+   * (`/reports/banded-months`), which a band's detail reads its cost ratio
+   * from (issue 940). Cost is the administrator's to see, so the screen asks
+   * only for a viewer who may read it.
+   */
+  getBandedMonthReport?(
+    from: string,
+    to: string,
+    signal?: AbortSignal,
+  ): Promise<{ readonly rows: readonly BandedMonthRow[] }>
 }
 
 export type RecurringDueState = 'overdue' | 'due' | 'scheduled'
@@ -798,6 +810,87 @@ const costAlertBasisPoints = (raw: string): number => {
 export const recurringPercentInput = (basisPoints: number): string => {
   const percent = basisPoints / 100
   return Number.isInteger(percent) ? String(percent) : percent.toFixed(2)
+}
+
+/** What a band's detail says about its cost against what it charged (issue 940). */
+export interface RecurringCostRatio {
+  /** The fact beside Amount: the period, then each claimed project's ratio. */
+  readonly text: string
+  /** Whether any project's ratio is at or over its warning. */
+  readonly over: boolean
+  /** Said in a sentence of its own when `over`, so it is not a colour alone. */
+  readonly warning: string | null
+}
+
+/**
+ * A band's cost ratio, from the banded months report, for the projects the
+ * definition claims.
+ *
+ * The period is the latest one an invoice has billed: the one in progress has
+ * no denominator yet, and "no ratio" for it would hide the last real answer.
+ * Only when nothing in the window was ever billed does the latest period stand
+ * in, to say so. The warning is the definition's own `Warn above`, or the
+ * organization's where it has none -- the report resolves that, so the figure
+ * and the line it is read against cannot come from two places.
+ *
+ * Null for a definition that claims no projects: it is not a band and has no
+ * ratio to show.
+ */
+export const recurringCostRatio = (
+  definition: Readonly<Pick<RecurringInvoice, 'claims_project_ids'>>,
+  rows: readonly BandedMonthRow[],
+): RecurringCostRatio | null => {
+  const claimed = new Set(definition.claims_project_ids ?? [])
+  if (claimed.size === 0) return null
+  const banded = rows.filter((row) => claimed.has(row.project_id))
+  if (banded.length === 0) {
+    return { text: 'No banded time in the last year', over: false, warning: null }
+  }
+  const latest = (candidates: readonly BandedMonthRow[]): string | null =>
+    candidates.reduce<string | null>(
+      (end, row) => (end === null || row.period_end > end ? row.period_end : end),
+      null,
+    )
+  const periodEnd =
+    latest(banded.filter((row) => row.cost_ratio_state !== 'unbilled')) ?? latest(banded)!
+  const period = banded
+    .filter((row) => row.period_end === periodEnd)
+    .sort((left, right) => left.project_name.localeCompare(right.project_name, 'en'))
+  const percent = (basisPoints: number): string => `${recurringPercentInput(basisPoints)}%`
+  const named = period.length > 1
+  const lines = period.map((row) => {
+    const prefix = named ? `${row.project_name}: ` : ''
+    switch (row.cost_ratio_state) {
+      case 'over':
+      case 'within':
+        return `${prefix}${percent(row.cost_ratio_basis_points!)} of what it charged, ${
+          row.cost_ratio_state === 'over' ? 'at or over' : 'under'
+        } the ${percent(row.cost_alert_basis_points)} warning`
+      case 'unpriced':
+        return `${prefix}no ratio, ${row.entries_without_cost_rate === 1 ? '1 entry has' : `${row.entries_without_cost_rate} entries have`} no cost rate`
+      case 'unbilled':
+        return `${prefix}no ratio yet, nothing has billed this period`
+    }
+  })
+  const span = `${period[0]!.period_start} – ${periodEnd}`
+  const over = period.filter((row) => row.cost_ratio_state === 'over')
+  return {
+    text: `${span}: ${lines.join('; ')}`,
+    over: over.length > 0,
+    warning:
+      over.length === 0
+        ? null
+        : over
+            .map(
+              (row) =>
+                `Delivering ${named ? `${row.project_name} in ` : ''}${span} cost ${percent(
+                  row.cost_ratio_basis_points!,
+                )} of what this band charged, at or over its ${percent(
+                  row.cost_alert_basis_points,
+                )} warning.`,
+            )
+            .join(' '),
+  }
 }
 
 /**

@@ -1861,6 +1861,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     }),
   getRecurringInvoice: async (id, signal) =>
     (await client.getRecurringInvoice({ id, ...withSignal(signal) })).data,
+  getBandedMonthReport: async (from, to, signal) =>
+    (await client.getBandedMonthReport({ query: { from, to }, ...withSignal(signal) })).data,
   generateRecurringInvoice: async (id, idempotencyKey, signal) =>
     (
       await client.generateRecurringInvoice({

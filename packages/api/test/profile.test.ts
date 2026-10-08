@@ -4,6 +4,8 @@ import {
   createApiApp,
   createApiSessionService,
   installProfileRoutes,
+  type AccountDeletionMailer,
+  type AccountDeletionRequest,
   type ProfileRepositoryPort,
   type SessionMetadata,
   type SessionStorePort,
@@ -23,7 +25,13 @@ const session: SessionMetadata = {
 const issuedToken = `ezacto_session_abcdefghijklmnop_${'A'.repeat(43)}`
 const at = '2026-09-14T00:00:00.000Z'
 
-const createHarness = (stored: string | null = 'UTC') => {
+const createHarness = (
+  stored: string | null = 'UTC',
+  deletion: {
+    requestDeletion?: ProfileRepositoryPort['requestDeletion']
+    deletionMailer?: AccountDeletionMailer
+  } = {},
+) => {
   const store: SessionStorePort = {
     issue: vi.fn(async () => ({ token: issuedToken, session })),
     authenticate: vi.fn(async (presented) =>
@@ -52,8 +60,17 @@ const createHarness = (stored: string | null = 'UTC') => {
     authentication: { sessions },
     installApi: (api) =>
       installProfileRoutes(api, {
-        repository: { readTimezone, updateTimezone },
+        repository: {
+          readTimezone,
+          updateTimezone,
+          ...(deletion.requestDeletion === undefined
+            ? {}
+            : { requestDeletion: deletion.requestDeletion }),
+        },
         clock: () => at,
+        ...(deletion.deletionMailer === undefined
+          ? {}
+          : { deletionMailer: deletion.deletionMailer }),
       }),
   })
   const cookie = `${SESSION_COOKIE_NAME}=${issuedToken}`
@@ -193,5 +210,95 @@ describe('being copied on the invoice emails you send', () => {
     const { app, updateInvoiceCopy, cookie } = copyHarness()
     expect((await patch(app, { invoice_copy_to_self: 'yes' }, cookie)).status).toBe(422)
     expect(updateInvoiceCopy).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Asking for one's own account to be deleted, from the mobile app. The app is
+ * reviewed against App Store Guideline 5.1.1(v) and Google Play's account
+ * deletion policy: a person who can create an account in it must be able to
+ * start its deletion from it.
+ */
+describe('asking for your own account to be deleted', () => {
+  const recorded = (overrides: Partial<AccountDeletionRequest> = {}): AccountDeletionRequest => ({
+    requestedAt: '2026-09-01T09:30:00.000Z',
+    recorded: true,
+    person: { name: 'Pat Example', email: 'pat@example.test' },
+    administrators: ['admin@example.test'],
+    ...overrides,
+  })
+  const ask = (app: ReturnType<typeof createHarness>['app'], cookie?: string) =>
+    app.request('/api/v1/profile/deletion-request', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(cookie ? { cookie, origin: 'http://localhost' } : {}),
+      },
+      body: '{}',
+    })
+
+  it('[api] records the request for the signed-in person and tells the administrators', async () => {
+    const requestDeletion = vi.fn<NonNullable<ProfileRepositoryPort['requestDeletion']>>(
+      async () => recorded(),
+    )
+    const notify = vi.fn<AccountDeletionMailer['notify']>(async () => undefined)
+    const { app, cookie } = createHarness('UTC', { requestDeletion, deletionMailer: { notify } })
+
+    const response = await ask(app, cookie)
+    expect(response.status).toBe(202)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    // The first request's time, which a later ask keeps.
+    expect(await response.json()).toEqual({
+      data: { user_id: 7, requested_at: '2026-09-01T09:30:00.000Z' },
+      links: { self: '/api/v1/profile/deletion-request' },
+    })
+    expect(requestDeletion).toHaveBeenCalledWith({
+      userId: 7,
+      occurredAt: at,
+      requestId: expect.any(String),
+    })
+    expect(notify).toHaveBeenCalledWith(recorded())
+  })
+
+  it('[api] tells nobody twice for a retry of a request already recorded', async () => {
+    const notify = vi.fn<AccountDeletionMailer['notify']>(async () => undefined)
+    const { app, cookie } = createHarness('UTC', {
+      requestDeletion: async () => recorded({ recorded: false }),
+      deletionMailer: { notify },
+    })
+    expect((await ask(app, cookie)).status).toBe(202)
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('[api] still records the request where there is no administrator address or no mail', async () => {
+    const notify = vi.fn<AccountDeletionMailer['notify']>(async () => undefined)
+    const unaddressed = createHarness('UTC', {
+      requestDeletion: async () => recorded({ administrators: [] }),
+      deletionMailer: { notify },
+    })
+    expect((await ask(unaddressed.app, unaddressed.cookie)).status).toBe(202)
+    expect(notify).not.toHaveBeenCalled()
+
+    const unmailed = createHarness('UTC', { requestDeletion: async () => recorded() })
+    expect((await ask(unmailed.app, unmailed.cookie)).status).toBe(202)
+  })
+
+  it('[api] says so where the deployment cannot record one, rather than pretending', async () => {
+    const { app, cookie } = createHarness()
+    const response = await ask(app, cookie)
+    // A 503, which every client reads as "not here, not now". The body of a
+    // 5xx names nothing, by design of the error handler.
+    expect(response.status).toBe(503)
+  })
+
+  it('[security] requires a signed-in person', async () => {
+    const requestDeletion = vi.fn<NonNullable<ProfileRepositoryPort['requestDeletion']>>(
+      async () => recorded(),
+    )
+    const { app } = createHarness('UTC', { requestDeletion })
+    const response = await ask(app)
+    expect(response.status).toBeGreaterThanOrEqual(401)
+    expect(response.status).toBeLessThan(404)
+    expect(requestDeletion).not.toHaveBeenCalled()
   })
 })

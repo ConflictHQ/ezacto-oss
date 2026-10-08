@@ -397,6 +397,7 @@ export {
 } from './recurring-invoice-engine.js'
 export { backfillBandClaims } from './band-claim-backfill.js'
 export { captureActivityEvent } from './activity-log.js'
+export { requestAccountDeletion } from './account-deletion.js'
 export { createD1ReminderScheduler } from './reminders.js'
 
 // The QuickBooks store is type-only against better-sqlite3, so it is safe to

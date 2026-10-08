@@ -1369,6 +1369,93 @@ describe('week-grid browser behavior', () => {
     expect(document.querySelector('[data-row-result]')?.textContent).toContain('already on this week')
   })
 
+  describe('a week cell two entries share (issue 904)', () => {
+    // Two sessions on one task on one day is ordinary, not a conflict. The cell
+    // used to be a disabled input labelled "Split" with its only explanation in
+    // a tooltip, and nothing on it led to the Day view that edits them apart.
+    const twoSessions = async (): Promise<HTMLElement> => {
+      renderBrowserShell()
+      window.history.replaceState(null, '', '/?week=2026-08-28')
+      const api = browserApi()
+      api.entries.splice(
+        0,
+        api.entries.length,
+        timeEntry(1, {
+          project_id: 1,
+          task_id: 1,
+          spent_date: '2026-08-26',
+          seconds: 7_200,
+          notes: 'Morning session',
+        }),
+        timeEntry(2, {
+          project_id: 1,
+          task_id: 1,
+          spent_date: '2026-08-26',
+          seconds: 7_200,
+          notes: 'Afternoon session',
+        }),
+      )
+      await mountShell(api)
+      return document.querySelector<HTMLElement>(
+        '[data-week-grid] .week-cell[data-cell-key="1:1:2026-08-26"]',
+      )!
+    }
+
+    const expectDayOpened = (): void => {
+      expect(document.documentElement.dataset.timeView).toBe('day')
+      expect(new URL(globalThis.location.href).searchParams.get('view')).toBe('day')
+      expect(new URL(globalThis.location.href).searchParams.get('week')).toBe('2026-08-28')
+      expect(document.querySelector('[data-day-label]')?.textContent).toBe('Wednesday, Aug 26')
+      const rows = [...document.querySelectorAll<HTMLElement>('[data-day-rows] .day-row')]
+      expect(rows.map((row) => row.querySelector('[data-entry-note]')?.textContent)).toEqual([
+        'Morning session',
+        'Afternoon session',
+      ])
+      // Ready to edit the first of the two, each with its own value.
+      expect(document.activeElement).toBe(rows[0]!.querySelector('input'))
+      expect(rows.map((row) => row.querySelector('input')?.value)).toEqual(['2', '2'])
+      expect(
+        document.querySelector('[data-time-views] a[aria-current="page"]')?.textContent,
+      ).toBe('Day')
+    }
+
+    it('[browser] says what the cell holds and stays reachable', async () => {
+      const cell = await twoSessions()
+
+      expect(cell.dataset.cellState).toBe('conflict')
+      expect(cell.querySelector('.cell-status')?.textContent).toBe('2 entries')
+      const input = cell.querySelector<HTMLInputElement>('input')!
+      expect(input.disabled).toBe(false)
+      expect(input.readOnly).toBe(true)
+      expect(input.value).toBe('4')
+      const open = cell.querySelector<HTMLButtonElement>('.cell-note')!
+      expect(open.disabled).toBe(false)
+      expect(open.ariaLabel).toBe(
+        'Open Day view to edit the 2 entries for Northpeak / Development on Wednesday, Aug 26',
+      )
+      // The totals still count both sessions.
+      expect(document.querySelector('[data-week-total]')?.textContent).toBe('4')
+    })
+
+    it('[browser] opens the day that lists them apart from the cell button', async () => {
+      const cell = await twoSessions()
+      cell.querySelector<HTMLButtonElement>('.cell-note')!.click()
+      expectDayOpened()
+    })
+
+    it('[browser] opens the same day from a click or Enter on the cell itself', async () => {
+      const clicked = await twoSessions()
+      clicked.querySelector<HTMLInputElement>('input')!.click()
+      expectDayOpened()
+
+      const keyed = await twoSessions()
+      const input = keyed.querySelector<HTMLInputElement>('input')!
+      input.focus()
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      expectDayOpened()
+    })
+  })
+
   it.each([
     ['locked', { spent_date: '2026-08-24', is_locked: true }],
     ['running', { spent_date: '2026-08-24', is_running: true, timer_started_at: timestamp }],

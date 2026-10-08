@@ -392,14 +392,15 @@ for (const [runtime, factory] of factories) {
 
       const invoice = await generator(database).generate(command('correction-entry'))
 
-      // 1800s at 100.01/h is 5000.5 -> 5001 cents; -900s is -2500.25 -> -2500.
-      // The Design line carries both, so it is the difference, not two lines.
+      // 1800s and -900s net to 900s, a quarter of an hour, and the line bills
+      // those hours at the rate: 0.25 x 100.01 = 25.0025 -> 2500 cents (issue
+      // 923; priced entry by entry it would be 5001 - 2500 = 2501).
       // The correction does not earn a line of its own: exactly one Design line,
       // carrying the difference. The other two are Review and the expense group,
       // unchanged.
       const design = invoice.line_items.filter((line) => line.description?.includes('Design'))
       expect(design).toHaveLength(1)
-      expect(design[0]!.amount_cents).toBe(2501)
+      expect(design[0]).toMatchObject({ quantity: 0.25, unit_price_cents: 10_001, amount_cents: 2500 })
       expect(invoice.line_items).toHaveLength(3)
       expect(
         await database.rows(
@@ -436,6 +437,10 @@ for (const [runtime, factory] of factories) {
     })
 
     it('[unit] [inv-11] reconciles every client report currency to generated invoices', async () => {
+      // Hours, entries and expenses reconcile exactly. Time cents reconcile to
+      // the lines: a generated line bills its hours to the hundredth times the
+      // rate, which can differ by a few cents from the report pricing each
+      // entry on its own (issue 923).
       const database = await setup()
       await database.run(
         `INSERT INTO projects (
@@ -503,12 +508,46 @@ for (const [runtime, factory] of factories) {
           totalCents: 7_834,
         }),
       ])
+      const billed = await database.rows<{
+        currency: string
+        seconds: number
+        entries: number
+        expenseCents: number
+      }>(
+        `SELECT invoice.currency AS currency,
+           (SELECT coalesce(sum(rounded_seconds), 0) FROM time_entries
+             WHERE invoice_id = invoice.id) AS seconds,
+           (SELECT count(*) FROM time_entries WHERE invoice_id = invoice.id) AS entries,
+           (SELECT coalesce(sum(amount_cents), 0) FROM invoice_line_items
+             WHERE invoice_id = invoice.id AND kind = 'Expense') AS expenseCents
+         FROM invoices invoice ORDER BY invoice.currency`,
+      )
+      expect(billed).toEqual(
+        report.totals.map((total) => ({
+          currency: total.currency,
+          seconds: total.roundedSeconds,
+          entries: total.timeEntryCount,
+          expenseCents: total.expenseCents,
+        })),
+      )
+      // EUR: 1200 s is 0.33 h, and 0.33 x 90.01 = 29.70, where the entry
+      // priced alone is 30.00. USD: 0.50 x 100.01 + 0.25 x 100.00 = 75.01.
       expect(
         new Map([
           [eurInvoice.currency, eurInvoice.amount_cents],
           [usdInvoice.currency, usdInvoice.amount_cents],
         ]),
-      ).toEqual(new Map(report.totals.map((total) => [total.currency, total.totalCents])))
+      ).toEqual(
+        new Map([
+          ['EUR', 2_970 + 222],
+          ['USD', 7_501 + 333],
+        ]),
+      )
+      for (const line of [...eurInvoice.line_items, ...usdInvoice.line_items]) {
+        expect(calculateInvoiceLineAmountCents(line.quantity, line.unit_price_cents)).toBe(
+          line.amount_cents,
+        )
+      }
     })
 
     it('[unit] lets one different command win the same filter and rolls the loser back', async () => {
@@ -714,6 +753,93 @@ for (const [runtime, factory] of factories) {
         message: 'expense cents must be a non-negative safe integer',
       })
       expect(await database.rows('SELECT count(*) AS count FROM invoices')).toEqual([{ count: 0 }])
+    })
+
+    // Issue 923. 37.2067 hours in two entries at a whole-dollar rate: priced one
+    // entry at a time they come to 3,534.64, which no 37.2067 × 95.00 line
+    // reproduces, so the line fell back to 1 × 3,534.64. Harvest bills it as
+    // 37.21 × 95.00, and so does every grouping now.
+    for (const timeSummaryType of ['people', 'task', 'project'] as const) {
+      it(`[money] bills ${timeSummaryType} lines as hours to the hundredth times the rate`, async () => {
+        const database = await setup()
+        await database.run(
+          `UPDATE time_entries SET task_id = 1, task_assignment_id = 1, seconds = 66972,
+             seconds_without_timer = 66972, rounded_seconds = 66972, billable_rate_cents = 9500`,
+        )
+        const invoice = await generator(database).generate({
+          commandId: `rounded-${timeSummaryType}`,
+          principal,
+          request: { ...request, timeSummaryType, expenseSummaryType: null },
+        })
+
+        expect(
+          invoice.line_items.map(({ quantity, unit_price_cents, amount_cents }) => ({
+            quantity,
+            unit_price_cents,
+            amount_cents,
+          })),
+        ).toEqual([{ quantity: 37.21, unit_price_cents: 9_500, amount_cents: 353_495 }])
+        expect(invoice.amount_cents).toBe(353_495)
+        expect(
+          await database.rows(`SELECT quantity, unit_price_cents AS unitPriceCents FROM invoice_line_items`),
+        ).toEqual([{ quantity: 37.21, unitPriceCents: 9_500 }])
+      })
+    }
+
+    it('[money] rounds hours a single entry leaves at a long fraction', async () => {
+      // 4471 seconds is 1.241944... hours, which the line used to print as is.
+      const database = await setup()
+      await database.run(
+        `UPDATE time_entries SET seconds = 4471, seconds_without_timer = 4471,
+           rounded_seconds = 4471 WHERE id = 1`,
+      )
+      await database.run(
+        `UPDATE time_entries SET seconds = 1000, seconds_without_timer = 1000,
+           rounded_seconds = 1000, billable_rate_cents = 12000 WHERE id = 2`,
+      )
+      const invoice = await generator(database).generate({
+        commandId: 'rounded-detailed',
+        principal,
+        request: { ...request, timeSummaryType: 'detailed', expenseSummaryType: null },
+      })
+
+      expect(
+        invoice.line_items.map(({ quantity, unit_price_cents, amount_cents }) => ({
+          quantity,
+          unit_price_cents,
+          amount_cents,
+        })),
+      ).toEqual([
+        { quantity: 1.24, unit_price_cents: 10_001, amount_cents: 12_401 },
+        { quantity: 0.28, unit_price_cents: 12_000, amount_cents: 3_360 },
+      ])
+      expect(invoice.amount_cents).toBe(15_761)
+    })
+
+    it('[money] bills a group that mixes rates at its rounded hours, never 1 × total', async () => {
+      // One person at two rates (the rate changed mid-month): 4471 s at 100.01
+      // and 900 s at 100.00, 5371 s in all, so 1.49 hours. The entries price
+      // to 149.21; the line keeps as close to that as one quantity and one
+      // price can, 1.49 × 100.14.
+      const database = await setup()
+      await database.run(
+        `UPDATE time_entries SET seconds = 4471, seconds_without_timer = 4471,
+           rounded_seconds = 4471 WHERE id = 1`,
+      )
+      const invoice = await generator(database).generate({
+        commandId: 'rounded-mixed-rates',
+        principal,
+        request: { ...request, timeSummaryType: 'people', expenseSummaryType: null },
+      })
+
+      expect(invoice.line_items).toEqual([
+        expect.objectContaining({ quantity: 1.49, unit_price_cents: 10_014, amount_cents: 14_921 }),
+      ])
+      for (const line of invoice.line_items) {
+        expect(calculateInvoiceLineAmountCents(line.quantity, line.unit_price_cents)).toBe(
+          line.amount_cents,
+        )
+      }
     })
 
     it('[unit] groups both time and expenses by person', async () => {
@@ -1015,7 +1141,10 @@ for (const [runtime, factory] of factories) {
         request: { ...request, timeSummaryType: 'detailed', expenseSummaryType: null },
       })
       expect(invoice.line_items).toHaveLength(101)
-      expect(invoice.amount_cents).toBe(10_100)
+      // A minute is 0.0166... hours, billed as 0.02 x 60.00 = 1.20 a line, as
+      // Harvest prints it (issue 923), where the entry priced alone is 1.00.
+      expect(invoice.line_items.every((line) => line.quantity === 0.02)).toBe(true)
+      expect(invoice.amount_cents).toBe(12_120)
       expect(
         await database.rows('SELECT count(*) AS count FROM time_entries WHERE invoice_id = ?', invoice.id),
       ).toEqual([{ count: 101 }])

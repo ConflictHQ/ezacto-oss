@@ -26,6 +26,7 @@ import {
   createContainerSsoProvisioningDomainStore,
   createContainerTwoFactorStore,
   backfillBandClaims,
+  requestAccountDeletion,
   createRecurringInvoiceEngine,
   createContainerReminderScheduler,
   captureActivityEvent,
@@ -101,6 +102,7 @@ import {
   createInvoiceThankYouSubscriber,
   thankYouInvoiceFromDeliveryContext,
   createPortalSessionService,
+  createQueuedAccountDeletionMailer,
   createQueuedAuthMailer,
   createQueuedStaffMagicLinkMailer,
   type AttachmentRouteOptions,
@@ -689,6 +691,13 @@ export const createContainerRuntime = async (
         updateInvoiceCopy: async (userId, copy, occurredAt) => {
           await setInvoiceSenderCopy(drizzle, userId, copy, occurredAt)
         },
+        // Records the ask and names who decides; changes nothing about the account.
+        requestDeletion: (input) =>
+          requestAccountDeletion(drizzle, {
+            userId: input.userId,
+            occurredAt: input.occurredAt,
+            captureId: input.requestId,
+          }),
       },
       isExpensesModuleEnabled: async () => {
         const row = database
@@ -924,6 +933,11 @@ export const createContainerRuntime = async (
               codeKey: config.magicLinkSigningKey,
             },
           }),
+      // The container always has a mailer, so administrators always hear of it.
+      accountDeletionMailer: createQueuedAccountDeletionMailer(
+        createDeploymentSenderQueuedMailer(config.smtp.from, queuedMailer),
+        organizationName,
+      ),
       deploymentAuthMailer: createQueuedAuthMailer(
         createDeploymentSenderQueuedMailer(
           config.smtp.from,

@@ -18,6 +18,18 @@ runs:
     - name: install
       shell: bash
       run: |
+        # npm ci runs `node-gyp rebuild` for better-sqlite3 -- it ships a
+        # binding.gyp, and the lockfile does not carry its "gypfile": false --
+        # and node-gyp first downloads Node's headers from nodejs.org, only for
+        # the build to find the bundled prebuild and compile nothing. A reset
+        # on that download failed whole verify jobs before any test ran
+        # (issue 745). The Node setup-node just installed carries the same
+        # headers, so point node-gyp at them and the install never needs
+        # nodejs.org.
+        node_prefix="$(dirname "$(dirname "$(command -v node)")")"
+        if [ -f "$node_prefix/include/node/common.gypi" ]; then
+          export npm_config_nodedir="$node_prefix"
+        fi
         if [ -f package-lock.json ]; then npm ci; else npm install; fi
     - name: install Chromium for browser acceptance
       if: inputs.playwright == 'true'

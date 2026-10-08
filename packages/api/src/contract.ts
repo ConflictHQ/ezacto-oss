@@ -2867,6 +2867,20 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     requestSchema: "ProfilePatch",
     requestRequired: true,
   },
+  {
+    // Starting the deletion of one's own account from inside an app (App
+    // Store Guideline 5.1.1(v), Google Play's account deletion policy). A
+    // request, recorded and sent to the administrators, who decide: the
+    // account is the organization's, and nothing about it changes here.
+    // Asking again answers with the first request's time.
+    method: "post",
+    path: "/api/v1/profile/deletion-request",
+    operationId: "requestAccountDeletion",
+    summary: "Ask the administrators to delete the signed-in user's own account",
+    tag: "profile",
+    responseStatus: 202,
+    responseSchema: "AccountDeletionRequestEnvelope",
+  },
   ...generalOperations(),
   ...rateOperations(),
   ...timeEntryOperations,
@@ -4812,6 +4826,17 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   ProfileEnvelope: envelope("Profile"),
+  AccountDeletionRequest: {
+    type: "object",
+    required: ["user_id", "requested_at"],
+    properties: {
+      user_id: integerSchema,
+      // When the person first asked. A later ask keeps it.
+      requested_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  AccountDeletionRequestEnvelope: envelope("AccountDeletionRequest"),
   TimeEntryOption: {
     type: "object",
     required: ["project_id", "task_id", "minimum_note_length"],
@@ -7102,6 +7127,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // The invoice that claimed the entry, at `entry` grain. Null where
       // nothing has.
       invoice_id: nullable(integerSchema),
+      // That invoice's number, the one printed on it and in its address
+      // (/invoices/<number>), beside its internal id. Null where nothing has
+      // claimed the entry.
+      invoice_number: nullable(stringSchema),
       notes: nullable(stringSchema),
       project_active: booleanSchema,
     },
