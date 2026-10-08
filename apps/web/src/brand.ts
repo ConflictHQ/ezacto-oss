@@ -15,13 +15,13 @@ export interface ReportBrand {
 }
 
 export const defaultBrand: DeploymentBrand = {
-  name: 'ezacto',
+  name: 'eZacto',
   tagline: 'Time, exactly.',
   description: 'Open-source time tracking and invoicing.',
 }
 
 export const defaultReportBrand: ReportBrand = {
-  name: 'ezacto',
+  name: 'eZacto',
 }
 
 export const resolveDeploymentBrand = (override?: Partial<DeploymentBrand>): DeploymentBrand => {
@@ -70,7 +70,7 @@ export const brandFromEnv = (env: Record<string, string | undefined>): Partial<D
  *
  * `wordmark_light` is the mark for a light ground and `wordmark_dark` the mark
  * for a dark one. That is the ground, not the ink — the app topbar and the
- * sign-in splash are both painted `--ez-ink`, so they take `wordmark_dark`,
+ * sign-in splash are both painted `--ez-band`, so they take `wordmark_dark`,
  * and the document shell an invoice is read on is `--ez-ground`, so it takes
  * `wordmark_light`. Named for the ink instead, an operator uploads a
  * dark-on-transparent mark to the slot that draws on near-black and it

@@ -238,7 +238,7 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
   })
 
   await page.goto('/')
-  await expect(page).toHaveTitle('ezacto — Sign in')
+  await expect(page).toHaveTitle('eZacto — Sign in')
   await expect(page.locator('meta[name="ezacto-release"]')).toHaveAttribute(
     'content',
     'browser-cookie-e2e',
@@ -290,7 +290,7 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
   const signOut = page.getByRole('button', { name: 'Sign out' })
   await expect(authGateway).toBeHidden()
   await expect(authenticatedShell).toBeVisible()
-  await expect(page).toHaveTitle('ezacto — Time')
+  await expect(page).toHaveTitle('eZacto — Time')
   await expect(identity).toContainText('User #7')
   await expect(identity).toContainText('administrator')
   await expect(page.locator('[data-team-nav]:not([hidden])')).toHaveCount(0)
@@ -313,7 +313,7 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
   await expect(email).toBeFocused()
   await expect(authGateway).toBeVisible()
   await expect(authenticatedShell).toBeHidden()
-  await expect(page).toHaveTitle('ezacto — Sign in')
+  await expect(page).toHaveTitle('eZacto — Sign in')
   expect(revoked).toBe(true)
   await expect(page.locator('[data-auth-action]:not([disabled])')).toHaveCount(0)
   await expectNoPageOverflow(page)
@@ -1614,7 +1614,7 @@ test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget report
 
   const reports = page.locator('[data-reports-page]')
   await expect(reports).toBeVisible()
-  await expect(page).toHaveTitle('ezacto — Reports')
+  await expect(page).toHaveTitle('eZacto — Reports')
   await expect(reports.getByRole('heading', { name: 'Uninvoiced work' })).toBeVisible()
   await expect(reports.locator('.report-currency-card')).toContainText('USD')
   const uninvoicedTotal = await page.evaluate(async () => {
@@ -1720,7 +1720,7 @@ test('[e2e:expense-categories] [e2e:expense-receipt] manages category availabili
 
   const workspace = page.locator('[data-expense-categories-page]')
   await expect(workspace).toBeVisible()
-  await expect(page).toHaveTitle('ezacto — Expense categories')
+  await expect(page).toHaveTitle('eZacto — Expense categories')
   const createCategory = page.locator('[data-expense-category-create-form]')
   await createCategory.getByLabel('Name', { exact: true }).fill('Browser UI Mileage')
   await createCategory.getByLabel('Entry method').selectOption('unit')
@@ -1930,7 +1930,7 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/invoices/new')
 
-  await expect(page).toHaveTitle('ezacto — Sign in')
+  await expect(page).toHaveTitle('eZacto — Sign in')
   await expect(page.locator('[data-invoice-new-dialog]')).toBeHidden()
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
   await page.getByLabel('Password').fill(fixturePassword)
@@ -1939,7 +1939,7 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   // One step, as in Harvest: /invoices/new is the list with the dialog open.
   const wizard = page.locator('[data-invoice-new-dialog]')
   await expect(wizard).toBeVisible()
-  await expect(page).toHaveTitle('ezacto — New invoice')
+  await expect(page).toHaveTitle('eZacto — New invoice')
   await expect(wizard.getByRole('heading', { name: 'New invoice' })).toBeVisible()
   await expect(page.locator('[data-invoice-list-page]')).toBeVisible()
   await expect(wizard.getByLabel('Client')).toHaveValue('1')
@@ -2811,7 +2811,7 @@ test('[e2e:recurring-editor] creates and edits a definition on its own page thro
   await expectPhoneControl(newLink)
   await newLink.click()
   await expect(page).toHaveURL(/\/invoices\/recurring\/new$/u)
-  await expect(page).toHaveTitle('ezacto — New recurring invoice')
+  await expect(page).toHaveTitle('eZacto — New recurring invoice')
   const editor = page.locator('[data-recurring-editor-form]')
   await expect(editor).toBeVisible()
   await expect(page.getByRole('heading', { name: 'New recurring invoice' })).toBeVisible()
@@ -3270,7 +3270,7 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
   await expect(page.locator('[data-day-rows] input[data-cell-key]')).toBeEnabled()
 
   await page.goto('/approvals')
-  await expect(page).toHaveTitle('ezacto — Approvals')
+  await expect(page).toHaveTitle('eZacto — Approvals')
   const card = page.locator('[data-approval-queue] [data-submission-id]')
   await expect(card).toContainText('Browser Owner')
   // The queue totals one hour through the same formatter the week grid uses, so

@@ -122,6 +122,6 @@ describe('worker brand assets (#489)', () => {
     expect(page.status).toBe(200)
     const html = await page.text()
     expect(html).not.toContain('brand-mark')
-    expect(html).toContain('data-brand="ezacto"')
+    expect(html).toContain('data-brand="eZacto"')
   })
 })

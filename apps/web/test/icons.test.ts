@@ -15,17 +15,32 @@ const attributeMap = (element: Element): Record<string, string> =>
   Object.fromEntries([...element.attributes].map((attribute) => [attribute.name, attribute.value]))
 
 describe('icon set', () => {
-  it('[unit] carries the nine icons the design system names', () => {
+  it('[unit] carries the icons the design system names', () => {
+    // The nine row and control marks, and the navigation's: one per section so
+    // a collapsed sidebar reads by its icons, and the sidebar's own controls.
     expect(iconNames).toEqual([
+      'banknote',
       'calendar',
+      'card',
+      'chart',
+      'check',
       'chevron',
       'clock',
+      'document',
       'eye',
       'eye-off',
+      'folder',
+      'home',
+      'list',
       'magnifier',
       'overflow',
       'padlock',
       'paperclip',
+      'people',
+      'person',
+      'sidebar',
+      'sign-out',
+      'sliders',
     ])
   })
 

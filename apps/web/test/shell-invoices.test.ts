@@ -1031,7 +1031,7 @@ describe('invoice browse browser behavior', () => {
 
     const documentShell = document.querySelector<HTMLElement>('[data-invoice-document]')!
     expect(documentShell.hidden).toBe(false)
-    expect(document.title).toBe('ezacto — Invoice INV-7')
+    expect(document.title).toBe('eZacto — Invoice INV-7')
     expect(documentShell.textContent).toContain('August services')
     expect(documentShell.textContent).toContain('Implementation')
     expect(documentShell.textContent).toContain('$75.00')
@@ -2127,6 +2127,6 @@ describe('invoice browse browser behavior', () => {
 
     expect(document.querySelector<HTMLElement>('[data-auth-gateway]')?.hidden).toBe(false)
     expect(document.querySelector<HTMLElement>('[data-authenticated-shell]')?.hidden).toBe(true)
-    expect(document.title).toBe('ezacto — Sign in')
+    expect(document.title).toBe('eZacto — Sign in')
   })
 })

@@ -7,6 +7,7 @@ import {
   cssCustomProperty,
   precisionContrastRequirements,
   themeManifest,
+  themeSchemes,
   webAssets,
 } from '../src/index.js'
 
@@ -47,32 +48,16 @@ const liveTextRules: readonly {
   foreground: ThemeSlot
   background: ThemeSlot
 }[] = [
-  // `.auth-splash` paints `background: var(--ez-ink)`.
-  { selector: '.auth-splash-copy .eyebrow', foreground: 'live', background: 'ink' },
-  // The `$` toggle when money is hidden. Its base rule paints
-  // `background: var(--ez-surface)`; the border keeps the live hue as an
-  // indicator and only the label is certified here.
+  // `.invoice-state` paints `background: var(--ez-status-bg)`, and the paid
+  // tone keeps that band rather than mixing a tint of its own.
   {
-    selector: ".money-toggle[aria-pressed='true']",
-    foreground: 'live_text',
-    background: 'surface',
-  },
-  // `.timesheet-status` paints `background: var(--ez-status-bg)`.
-  {
-    selector: '.timesheet-status [data-timesheet-rejection-reason]',
+    selector: ".invoice-state[data-tone='paid']",
     foreground: 'live_text',
     background: 'status_bg',
   },
   // `.week-cell` paints `background: var(--ez-ground)`.
   {
     selector: '.week-cell[data-cell-state="running"] .cell-status',
-    foreground: 'live_text',
-    background: 'ground',
-  },
-  {
-    selector:
-      '.week-cell[data-cell-state="retry"] .cell-status, ' +
-      '.week-cell[data-cell-state="conflict"] .cell-status',
     foreground: 'live_text',
     background: 'ground',
   },
@@ -91,26 +76,125 @@ describe('D16 theme AA contrast gate', () => {
   it('[unit] holds the shipped precision palette to its stated minimums', () => {
     const results = checkThemeContrast(themeManifest.precision)
     expect(results.map((result) => [result.name, Number(result.ratio.toFixed(2))])).toEqual([
-      ['ink/ground text', 18.11],
-      ['action/action-fg text', 5.43],
-      ['live/ground indicator', 3.58],
-      ['live/ink text', 5.06],
-      ['ground/live-text button label', 5.26],
-      ['live-text/ground text', 5.26],
-      ['live-text/status-bg text', 4.63],
-      ['live-text/surface text', 4.86],
-      ['red/ground text', 5.46],
-      ['red/surface text', 5.04],
-      ['data/ground row action', 5.74],
-      ['ink/surface control label', 16.74],
-      ['ink/surface-2 text', 15.43],
-      ['ink/row-hover text', 15.17],
-      ['data/row-hover row action', 4.81],
-      ['ink/money totals figure', 17],
-      ['ink-2/money totals label', 10.24],
+      ['ink/ground text', 17.06],
+      ['muted/ground text', 5.78],
+      ['muted/surface text', 5.53],
+      ['action/action-fg text', 6.25],
+      ['live/ground indicator', 5.02],
+      ['band-ink/band text', 17.06],
+      ['blue-light/band text', 11.44],
+      ['ground/red button label', 6.47],
+      ['live-text/ground text', 5.02],
+      ['live-text/status-bg text', 4.58],
+      ['status-fg/status-bg text', 5.27],
+      ['data/surface text', 5.98],
+      ['red/ground text', 6.47],
+      ['red/surface text', 6.19],
+      ['red/status-bg text', 5.91],
+      ['amber/ground text', 5.02],
+      ['data/ground row action', 6.25],
+      ['ink/surface control label', 16.32],
+      ['ink/surface-2 text', 15.5],
+      ['ink/orange-tint pressed label', 15.38],
+      ['ink/row-hover text', 15.38],
+      ['data/row-hover row action', 5.63],
+      ['data/surface-2 selected edge', 5.68],
+      ['data/status-bg action edge', 5.7],
+      ['ink/money totals figure', 16.01],
+      ['ink-2/money totals label', 9.68],
     ])
     expect(results.every((result) => result.passes)).toBe(true)
     expect(() => assertThemeContrast(themeManifest.precision)).not.toThrow()
+  })
+
+  it('[unit] holds the dark scheme to the same minimums, pair for pair', () => {
+    // The dark scheme paints the same rules, so it owes every pair the light one
+    // does -- not a lighter list for the scheme nobody looks at in review.
+    const schemes = themeSchemes(themeManifest.precision)
+    expect(schemes.map((entry) => entry.scheme)).toEqual(['light', 'dark', 'dim'])
+    const dark = schemes[1]!.theme
+    const results = checkThemeContrast(dark)
+    expect(results.map((result) => [result.name, Number(result.ratio.toFixed(2))])).toEqual([
+      ['ink/ground text', 17.6],
+      ['muted/ground text', 6.01],
+      ['muted/surface text', 5.55],
+      ['action/action-fg text', 4.95],
+      ['live/ground indicator', 8.28],
+      ['band-ink/band text', 18.45],
+      ['blue-light/band text', 9.93],
+      ['ground/red button label', 6.82],
+      ['live-text/ground text', 10.83],
+      ['live-text/status-bg text', 9.04],
+      ['status-fg/status-bg text', 6.8],
+      ['data/surface text', 5.58],
+      ['red/ground text', 6.82],
+      ['red/surface text', 6.3],
+      ['red/status-bg text', 5.69],
+      ['amber/ground text', 11.31],
+      ['data/ground row action', 6.04],
+      ['ink/surface control label', 16.25],
+      ['ink/surface-2 text', 15.06],
+      ['ink/orange-tint pressed label', 13.99],
+      ['ink/row-hover text', 15.1],
+      ['data/row-hover row action', 5.18],
+      ['data/surface-2 selected edge', 5.17],
+      ['data/status-bg action edge', 5.04],
+      ['ink/money totals figure', 16.13],
+      ['ink-2/money totals label', 11.74],
+    ])
+    expect(results.every((result) => result.passes)).toBe(true)
+    expect(() => assertThemeContrast(dark)).not.toThrow()
+  })
+
+  it('[unit] holds the dim scheme to the same minimums, pair for pair', () => {
+    const dim = themeSchemes(themeManifest.precision).find((entry) => entry.scheme === 'dim')!.theme
+    const results = checkThemeContrast(dim)
+    expect(results.map((result) => [result.name, Number(result.ratio.toFixed(2))])).toEqual([
+      ['ink/ground text', 11.91],
+      ['muted/ground text', 6.61],
+      ['muted/surface text', 5.88],
+      ['action/action-fg text', 4.95],
+      ['live/ground indicator', 7.6],
+      ['band-ink/band text', 14.18],
+      ['blue-light/band text', 7.91],
+      ['ground/red button label', 6.97],
+      ['live-text/ground text', 9.43],
+      ['live-text/status-bg text', 7.19],
+      ['status-fg/status-bg text', 6.19],
+      ['data/surface text', 5.26],
+      ['red/ground text', 6.97],
+      ['red/surface text', 6.2],
+      ['red/status-bg text', 5.32],
+      ['amber/ground text', 9.18],
+      ['data/ground row action', 5.92],
+      ['ink/surface control label', 10.59],
+      ['ink/surface-2 text', 9.67],
+      ['ink/orange-tint pressed label', 9.54],
+      ['ink/row-hover text', 9.54],
+      ['data/row-hover row action', 4.75],
+      ['data/surface-2 selected edge', 4.81],
+      ['data/status-bg action edge', 4.52],
+      ['ink/money totals figure', 11.12],
+      ['ink-2/money totals label', 8.98],
+    ])
+    expect(results.every((result) => result.passes)).toBe(true)
+  })
+
+  it('[unit] keeps the bands dark in every scheme', () => {
+    // The point of `band`: the top bar and the sign-in splash were `ink`, which
+    // a dark scheme makes light, so they turned into white strips with dark
+    // text. A band that reads as light -- closer to white than to black -- is
+    // that regression, in either scheme. In dark it also sits below the ground,
+    // so the chrome stays the deepest layer the way it is in light.
+    for (const { scheme, theme } of themeSchemes(themeManifest.precision)) {
+      const { band, ground } = theme.colors
+      expect(contrastRatio(band, '#FFFFFF'), scheme).toBeGreaterThan(contrastRatio(band, '#000000'))
+      if (scheme !== 'light') {
+        expect(contrastRatio(band, '#FFFFFF'), scheme).toBeGreaterThan(
+          contrastRatio(ground, '#FFFFFF'),
+        )
+      }
+    }
   })
 
   it('[unit] holds the hover tint to every colour the row keeps while hovered', () => {
@@ -145,21 +229,24 @@ describe('D16 theme AA contrast gate', () => {
   it('[unit] carries the threshold per requirement, not one bar for everything', () => {
     // AA is 4.5:1 for body text but 3:1 for large text and non-text
     // indicators, so the bar is data on each requirement. `live` is why that
-    // matters and also why one row is not enough: it is the timer marker on
-    // `ground`, where 3:1 is the honest bar, and it is the splash eyebrow on
-    // `ink`, where the bar is 4.5:1. Both roles, both rows.
+    // matters: it is only ever the timer's dot, border and inset rule on
+    // `ground`, where 3:1 is the honest bar, and the words it would need are
+    // `live_text`'s.
     const live = precisionContrastRequirements.filter(
       (requirement) => requirement.foreground === 'live',
     )
     expect(live.map((requirement) => [requirement.background, requirement.minimum])).toEqual([
       ['ground', 3],
-      ['ink', 4.5],
     ])
 
-    const [asIndicator] = checkThemeContrast(themeManifest.precision, [
+    // The design's own running green, #16A34A, is the case the split exists
+    // for: bright enough to mark a running row, too light to be read as words.
+    // The shipped green clears both bars; this one clears only the first.
+    const designGreen = withColors({ live: '#16A34A' })
+    const [asIndicator] = checkThemeContrast(designGreen, [
       { name: 'live/ground', foreground: 'live', background: 'ground', minimum: 3 },
     ])
-    const [asBodyText] = checkThemeContrast(themeManifest.precision, [
+    const [asBodyText] = checkThemeContrast(designGreen, [
       { name: 'live/ground', foreground: 'live', background: 'ground', minimum: 4.5 },
     ])
     expect(asIndicator?.passes).toBe(true)
@@ -203,6 +290,17 @@ describe('D16 theme AA contrast gate', () => {
         rule.selector,
       ).toBeGreaterThanOrEqual(4.5)
     }
+  })
+
+  it('[unit] keeps the action colour a fill and writes blue words in data', () => {
+    // `action` and `data` are the same blue in the shipped theme, which is
+    // exactly what makes one easy to reach for in place of the other. They
+    // part in a dark palette: a fill under white text has to be a darker blue
+    // than one that is read on a near-black ground. So `action` fills and
+    // `data` is the blue that is read, and a text rule in `action` -- right
+    // here, unreadable on the first dark instance -- fails now.
+    expect(selectorsPaintingTextWith('action', '.x { color: var(--ez-action); }')).toEqual(['.x'])
+    expect(selectorsPaintingTextWith('action')).toEqual([])
   })
 })
 

@@ -2423,3 +2423,28 @@ export const createSameOriginShellApi = (): ShellApi => ({
     }
   },
 })
+
+/**
+ * What the search chip writes before the K (the 2026-10 reskin): the command
+ * key on Apple platforms, Ctrl everywhere else. Both chords open the bar on
+ * every platform -- the handler takes either modifier -- so this decides only
+ * what the chip says, and getting it wrong costs a label, never a shortcut.
+ *
+ * Read from what the browser says about itself: `userAgentData.platform` where
+ * it exists, the older `platform` string, then the user agent. An iPad asking
+ * for the desktop site reports itself as a Mac, which is the right answer for
+ * a keyboard attached to one.
+ */
+export interface PlatformHints {
+  readonly platform?: string
+  readonly userAgent?: string
+  readonly userAgentData?: { readonly platform?: string } | undefined
+}
+
+export const commandShortcutModifier = (hints: PlatformHints): '⌘' | 'Ctrl ' => {
+  const platform = `${hints.userAgentData?.platform ?? ''} ${hints.platform ?? ''}`
+  const apple =
+    /mac|iphone|ipad|ipod/iu.test(platform) ||
+    /mac os x|iphone|ipad|ipod/iu.test(hints.userAgent ?? '')
+  return apple ? '⌘' : 'Ctrl '
+}

@@ -19,12 +19,29 @@ import {
 } from '@conflict-hq/ezacto-client'
 import { browserDensityStore, createDensityRuntime, type Density } from '../density.js'
 import {
+  createNavLayoutRuntime,
+  createSidebarRuntime,
+  NAV_LAYOUT_COOKIE,
+  type NavLayout,
+  navLayouts,
+  SIDEBAR_COOKIE,
+  type SidebarState,
+} from '../nav-layout.js'
+import {
   DEFAULT_COMPANY_SETTINGS_SECTION,
   applySettingsSection,
   resolveSettingsSection,
 } from '../settings-sections.js'
 import { browserTextSizeStore, createTextSizeRuntime, type TextSize, textSizes } from '../text-size.js'
-import { browserThemeStore, createThemeRuntime } from '../theme-preference.js'
+import {
+  browserCookieStore,
+  browserThemeStore,
+  COLOR_SCHEME_COOKIE,
+  type ColorScheme,
+  colorSchemes,
+  createColorSchemeRuntime,
+  createThemeRuntime,
+} from '../theme-preference.js'
 import { renderDataTable } from '../components/data-table.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import {
@@ -107,6 +124,7 @@ import {
 import { canManageTeammateTime, canProfileUseApiScope, isApiScope } from '@ezacto/core'
 import {
   canBrowseDirectories,
+  commandShortcutModifier,
   createSameOriginShellApi,
   hydratePendingTimesheetDetails,
   loadShellSnapshot,
@@ -125,6 +143,7 @@ import {
   weekRange,
   type DisplayTimeEntry,
   type PaletteDestination,
+  type PlatformHints,
   type ApprovalQueueFilters,
   type InvoiceJournalChoice,
   type ShellApi,
@@ -6446,6 +6465,82 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       syncThemeChoice(theme.switchUserTheme(chosen as keyof typeof themeManifest).application)
     })
   }
+
+  // Light, dark, or the operating system's (the 2026-10 reskin). The server has
+  // already rendered the stored choice onto the root from the same cookie, so
+  // starting here changes nothing on screen; it only takes over once somebody
+  // picks, and a page is never painted in the wrong scheme and then corrected.
+  // Secure on https only: a self-hosted box served over plain http cannot set
+  // a Secure cookie at all, and would lose every choice on reload.
+  const secureCookies = globalThis.location.protocol === 'https:'
+  const colorScheme = createColorSchemeRuntime({
+    store: browserCookieStore(document, COLOR_SCHEME_COOKIE, secureCookies),
+    target: document.documentElement,
+    meta: document.querySelector<HTMLMetaElement>('meta[name="color-scheme"]'),
+  })
+  const syncColorSchemeChoice = (current: ColorScheme): void => {
+    for (const button of document.querySelectorAll<HTMLButtonElement>(
+      '[data-color-scheme-choice]',
+    )) {
+      button.setAttribute('aria-pressed', String(button.dataset.colorSchemeChoice === current))
+    }
+  }
+  syncColorSchemeChoice(colorScheme.start())
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-color-scheme-choice]')) {
+    button.addEventListener('click', () => {
+      const chosen = button.dataset.colorSchemeChoice
+      if (chosen === undefined || !(colorSchemes as readonly string[]).includes(chosen)) return
+      syncColorSchemeChoice(colorScheme.set(chosen as ColorScheme))
+    })
+  }
+
+  // The search chip's modifier: the server renders it blank because it cannot
+  // see the keyboard, and it is filled here before the shell is shown.
+  const shortcutModifier = commandShortcutModifier(
+    globalThis.navigator as Navigator & PlatformHints,
+  )
+  for (const slot of document.querySelectorAll<HTMLElement>('[data-command-modifier]')) {
+    slot.textContent = shortcutModifier
+  }
+
+  // Sidebar or top bar, and how wide the sidebar is (the 2026-10 reskin). The
+  // server rendered both onto the root from the same cookies, so starting here
+  // moves nothing on screen; they only take over once somebody picks. Both
+  // layouts are the one header, so switching is an attribute and not a
+  // rebuild: the links, the timer chip and every handler stay where they are.
+  const navLayout = createNavLayoutRuntime({
+    store: browserCookieStore(document, NAV_LAYOUT_COOKIE, secureCookies),
+    target: document.documentElement,
+  })
+  const syncNavLayoutChoice = (current: NavLayout): void => {
+    for (const button of document.querySelectorAll<HTMLButtonElement>(
+      '[data-nav-layout-choice]',
+    )) {
+      button.setAttribute('aria-pressed', String(button.dataset.navLayoutChoice === current))
+    }
+  }
+  syncNavLayoutChoice(navLayout.start())
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-nav-layout-choice]')) {
+    button.addEventListener('click', () => {
+      const chosen = button.dataset.navLayoutChoice
+      if (chosen === undefined || !(navLayouts as readonly string[]).includes(chosen)) return
+      syncNavLayoutChoice(navLayout.set(chosen as NavLayout))
+    })
+  }
+  const sidebarState = createSidebarRuntime({
+    store: browserCookieStore(document, SIDEBAR_COOKIE, secureCookies),
+    target: document.documentElement,
+  })
+  const sidebarToggle = document.querySelector<HTMLButtonElement>('[data-sidebar-toggle]')
+  const syncSidebarToggle = (current: SidebarState): void => {
+    sidebarToggle?.setAttribute('aria-pressed', String(current === 'collapsed'))
+  }
+  syncSidebarToggle(sidebarState.start())
+  sidebarToggle?.addEventListener('click', () => {
+    syncSidebarToggle(
+      sidebarState.set(sidebarState.current() === 'collapsed' ? 'expanded' : 'collapsed'),
+    )
+  })
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-density-choice]')) {
     button.addEventListener('click', () => {
       const chosen = button.dataset.densityChoice

@@ -62,13 +62,13 @@ describe('F12/DV-23 deployment brand seam', () => {
     expect(html).toContain('Sign in to Acme&lt;Corp')
   })
 
-  it('[unit] default brand emits ezacto when no override is given', () => {
+  it('[unit] default brand emits eZacto when no override is given', () => {
     const html = renderAppShell({
       environment: 'test',
       release: 'abc1234',
     })
-    expect(html).toContain('data-brand="ezacto"')
-    expect(html).toContain('Sign in to ezacto')
+    expect(html).toContain('data-brand="eZacto"')
+    expect(html).toContain('Sign in to eZacto')
     expect(html).toContain('Time, exactly.')
   })
 
@@ -233,7 +233,7 @@ describe('#489 uploaded brand marks', () => {
         wordmarkLight: '/brand/wordmark-light/aaaa',
       },
     })
-    // The topbar and the sign-in splash are both painted --ez-ink, so both take
+    // The topbar and the sign-in splash are both painted --ez-band, so both take
     // the mark meant for a dark ground; the light-ground one belongs to the
     // document shell and must not appear here.
     expect(html).toContain('<img class="brand-mark" src="/brand/wordmark-dark/bbbb" alt="Acme">')

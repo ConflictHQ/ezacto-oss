@@ -33,6 +33,51 @@
 }
 
 /*
+ * The tracker design's type and elevation (the 2026-10 reskin). Body copy is
+ * 14px; a page title is 20px at the family's heaviest cut, set tight; a label
+ * is 11px bold capitals, tracked open. Figures take tabular numerals in the
+ * body family rather than a monospace face, so columns still align and a
+ * number reads as part of the line it sits in. The shadows are mixed from
+ * `shadow`, a colour of their own: mixed from `ink` they turned into a pale
+ * halo the moment a dark scheme made the ink light. The primary glow is the
+ * action colour's own.
+ */
+:root {
+  --ez-text-size: 14px;
+  --ez-title-size: 20px;
+  --ez-title-weight: 900;
+  --ez-title-tracking: -0.04em;
+  --ez-label-size: 11px;
+  --ez-label-weight: 700;
+  --ez-label-tracking: 0.06em;
+  --ez-shadow-popover:
+    0 8px 32px color-mix(in srgb, var(--ez-shadow) 14%, transparent),
+    0 2px 8px color-mix(in srgb, var(--ez-shadow) 8%, transparent);
+  --ez-shadow-menu:
+    0 4px 16px color-mix(in srgb, var(--ez-shadow) 12%, transparent),
+    0 1px 4px color-mix(in srgb, var(--ez-shadow) 6%, transparent);
+  --ez-shadow-primary: 0 2px 8px color-mix(in srgb, var(--ez-action) 35%, transparent);
+}
+/*
+ * The edge of a blue fill: every primary button, and the sidebar's tile for
+ * the section you are in. It is the fill itself, except in Dim, whose slate is
+ * light enough that the action blue stands only 2.7:1 off it, short of the 3:1
+ * a control's boundary owes -- and no blue can both carry a white label at
+ * 4.5:1 and clear that slate. So in Dim the label stays white on the blue and
+ * the edge is `data`, the reading blue, which the contrast gate holds to 3:1
+ * or better on every ground a fill sits on. Declared wherever a theme is, so a
+ * document on white paper inside a dim page takes its edges from its own
+ * palette.
+ */
+:root,
+[data-ez-theme] {
+  --ez-action-edge: var(--ez-action);
+}
+[data-ez-scheme='dim'] {
+  --ez-action-edge: var(--ez-data);
+}
+
+/*
  * Text size (issue 800). Every size below is a pixel literal, so the honest way
  * to scale the type is to scale the whole shell: `zoom` does that without
  * touching the literals, keeps layout math intact, and leaves the browser's own
@@ -41,13 +86,22 @@
  */
 [data-text-size='small'] {
   zoom: 0.9;
+  --ez-zoom: 0.9;
 }
 [data-text-size='large'] {
   zoom: 1.125;
+  --ez-zoom: 1.125;
 }
 [data-text-size='larger'] {
   zoom: 1.25;
+  --ez-zoom: 1.25;
 }
+/*
+ * `zoom` scales viewport units with everything else, so under it a box that
+ * is 100vh tall is 90%, 112.5% or 125% of the window. Anything that has to be
+ * exactly the window divides by the zoom it is under: the sign-in page stopped
+ * 100px short of a 1000px window at the Small text size.
+ */
 
 /*
  * The icon set. Every icon is a 20px square drawn on a 20-unit grid in the
@@ -186,7 +240,7 @@
 }
 /*
  * A 140px floor cannot hold these numbers. They are set in
- * `clamp(28px, 3.2vw, 46px)` monospace, so the figure grows with the viewport
+ * `clamp(28px, 3.2vw, 46px)` tabular figures, so the figure grows with the viewport
  * while the track floor does not, and `328.25h` overran into the column beside
  * it -- the strip read `328.25h284.5h`, two figures printed over one another.
  *
@@ -231,7 +285,7 @@
    at body size they are five labels you have to stop and parse. */
 .team-summary strong {
   overflow-wrap: anywhere;
-  font: 600 clamp(28px, 3.2vw, 46px)/1.05 var(--ez-font-mono), monospace;
+  font: 600 clamp(28px, 3.2vw, 46px)/1.05 var(--ez-font-body), sans-serif;
   font-variant-numeric: tabular-nums;
 }
 
@@ -823,8 +877,8 @@
 }
 .report-saved-card p { flex: 1; margin: 0; color: var(--ez-muted); }
 [data-report-builder] {
-  width: min(720px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
+  width: min(720px, calc((100vw - 32px) / var(--ez-zoom, 1)));
+  max-height: calc((100vh - 32px) / var(--ez-zoom, 1));
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-surface);
@@ -850,7 +904,7 @@
 .report-result-heading p {
   margin: 0;
   color: var(--ez-muted);
-  font: 12px/1.4 var(--ez-font-mono), monospace;
+  font: 12px/1.4 var(--ez-font-body), sans-serif;
 }
 .report-currency-grid,
 .report-budget-list,
@@ -888,7 +942,8 @@
   margin: 0;
 }
 .report-currency-card > header strong {
-  font: 600 20px/1.2 var(--ez-font-mono), monospace;
+  font: 600 20px/1.2 var(--ez-font-body), sans-serif;
+  font-variant-numeric: tabular-nums;
 }
 .report-budget-card > header span,
 .report-client-node > header p {
@@ -913,9 +968,10 @@
 .report-facts dt,
 .report-metadata dt {
   color: var(--ez-muted);
-  font-size: 11px;
+  font-size: var(--ez-label-size);
+  font-weight: var(--ez-label-weight);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--ez-label-tracking);
 }
 .report-facts dd,
 .report-metadata dd {
@@ -1077,7 +1133,7 @@
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
-  box-shadow: 0 14px 36px color-mix(in srgb, var(--ez-ink) 14%, transparent);
+  box-shadow: var(--ez-shadow-menu);
 }
 .report-export-notes {
   display: grid;
@@ -1090,7 +1146,8 @@
 .report-export-notes legend {
   padding: 4px 0 2px;
   color: var(--ez-muted);
-  font: 600 11px/1.2 var(--ez-font-mono), monospace;
+  font: var(--ez-label-weight) var(--ez-label-size) / 1.2 var(--ez-font-body), sans-serif;
+  letter-spacing: var(--ez-label-tracking);
   text-transform: uppercase;
 }
 .report-export-notes label {
@@ -1162,7 +1219,7 @@
    they are four labels you have to stop and parse. */
 .report-summary strong {
   overflow-wrap: anywhere;
-  font: 600 clamp(22px, 2.4vw, 34px) / 1.05 var(--ez-font-mono), monospace;
+  font: 600 clamp(22px, 2.4vw, 34px) / 1.05 var(--ez-font-body), sans-serif;
   font-variant-numeric: tabular-nums;
 }
 /* The swatch ties each figure to its segment in the bar below, so the split is
@@ -1221,7 +1278,7 @@
 }
 .report-subtabs a[aria-current='page'] {
   color: var(--ez-ink);
-  box-shadow: inset 0 -3px var(--ez-live);
+  box-shadow: inset 0 -3px var(--ez-data);
 }
 
 /* The bar column carries no number, so it takes whatever width is left after
@@ -1254,11 +1311,11 @@
 .report-group-row th {
   background: var(--ez-ground);
   color: var(--ez-muted);
-  font-size: 11px;
-  font-weight: 700;
+  font-size: var(--ez-label-size);
+  font-weight: var(--ez-label-weight);
   text-align: left;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--ez-label-tracking);
 }
 .report-time-table tfoot th,
 .report-time-table tfoot td {
@@ -1284,29 +1341,45 @@
 .invoice-list {
   margin-top: 24px;
 }
+/*
+ * A date is read whole or not at all. The list's cells take whatever width
+ * the table's layout leaves them, and beside the sidebar at 1440px that cut
+ * every due date to "Oct 31, 20…". Issued and Due are held at the width of a
+ * date -- Due a little wider, for the bold date an overdue invoice leads with,
+ * and an ellipsis after it -- and the client's name, which is free text, gives
+ * way instead.
+ */
+.invoice-list .data-table [data-column='issued'] {
+  width: 9.5em;
+}
+.invoice-list .data-table [data-column='due-date'] {
+  width: 10.5em;
+}
 .invoice-state {
   width: fit-content;
   padding: 4px 8px;
   border-radius: 999px;
   background: var(--ez-status-bg);
   color: var(--ez-status-fg);
-  font: 600 11px/1.2 var(--ez-font-mono), monospace;
+  font: 600 11px/1.2 var(--ez-font-body), sans-serif;
   text-transform: uppercase;
 }
 /* The four states someone scans the list for, each in a theme slot rather
    than a literal so every theme keeps its own contrast. The tint is the ink
-   mixed into the ground, so the word still carries the meaning either way. */
+   mixed into the ground, so the word still carries the meaning either way.
+   Paid is the exception: it is the green the running timer is said in, on the
+   pill's own band, because green mixed into the ground the way the others are
+   would sit below 4.5:1. */
 .invoice-state[data-tone='sent'] {
-  background: color-mix(in srgb, var(--ez-action) 10%, var(--ez-ground));
-  color: var(--ez-action);
+  background: color-mix(in srgb, var(--ez-data) 10%, var(--ez-ground));
+  color: var(--ez-data);
 }
 .invoice-state[data-tone='late'] {
   background: color-mix(in srgb, var(--ez-red) 12%, var(--ez-ground));
   color: var(--ez-red);
 }
 .invoice-state[data-tone='paid'] {
-  background: color-mix(in srgb, var(--ez-data) 12%, var(--ez-ground));
-  color: var(--ez-data);
+  color: var(--ez-live-text);
 }
 .invoice-past-due {
   color: var(--ez-status-fg);
@@ -1326,7 +1399,7 @@
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
-  box-shadow: 0 18px 48px color-mix(in srgb, var(--ez-ink) 8%, transparent);
+  box-shadow: 0 18px 48px color-mix(in srgb, var(--ez-shadow) 8%, transparent);
 }
 .invoice-document-heading {
   display: flex;
@@ -1387,7 +1460,7 @@
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
-  box-shadow: 0 14px 36px color-mix(in srgb, var(--ez-ink) 14%, transparent);
+  box-shadow: var(--ez-shadow-menu);
 }
 /* The header's own buttons are filled ink blocks. A menu row is not a control
    of that weight, so it drops the fill and reads as a list of verbs. */
@@ -1558,7 +1631,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
 }
 .invoice-totals dd {
-  font-family: var(--ez-font-mono), monospace;
+  font-family: var(--ez-font-body), sans-serif;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -1738,13 +1811,13 @@
   border-radius: var(--ez-radius);
 }
 .invoice-composer-dialog {
-  width: min(920px, calc(100vw - 32px));
+  width: min(920px, calc((100vw - 32px) / var(--ez-zoom, 1)));
 }
 /* The invoice dialogs share one frame: the title and the actions stay put in
    bands of their own while a long form scrolls between them, so Save is never
    below the fold. */
 :is(.invoice-payment-dialog, .invoice-transition-dialog, .invoice-composer-dialog) > form {
-  max-height: calc(100dvh - 48px);
+  max-height: calc((100dvh - 48px) / var(--ez-zoom, 1));
   padding: 0 24px;
   overflow-y: auto;
 }
@@ -1954,7 +2027,7 @@
 /* New invoice (one step, then the draft). A header and a footer band hold
    the title and the actions still while the body scrolls on a short screen. */
 .invoice-new-dialog {
-  width: min(600px, calc(100vw - 32px));
+  width: min(600px, calc((100vw - 32px) / var(--ez-zoom, 1)));
 }
 .invoice-new-dialog > form {
   gap: 0;
@@ -1970,7 +2043,7 @@
 .invoice-new-body {
   display: grid;
   gap: 20px;
-  max-height: min(64vh, 640px);
+  max-height: min(calc(64vh / var(--ez-zoom, 1)), 640px);
   padding: 20px 24px;
   overflow-y: auto;
 }
@@ -2017,7 +2090,7 @@
   background: var(--ez-ground);
 }
 .invoice-new-dialog > form > footer .primary-action {
-  border-color: var(--ez-action);
+  border-color: var(--ez-action-edge);
   background: var(--ez-action);
   color: var(--ez-action-fg);
 }
@@ -2185,7 +2258,8 @@
   margin: 0;
   padding: 8px 12px 2px;
   color: var(--ez-muted);
-  font: 600 11px/1.2 var(--ez-font-mono), monospace;
+  font: var(--ez-label-weight) var(--ez-label-size) / 1.2 var(--ez-font-body), sans-serif;
+  letter-spacing: var(--ez-label-tracking);
   text-transform: uppercase;
 }
 /* The period control's arrows and fields keep a phone-sized tap target here,
@@ -2395,7 +2469,7 @@
   border-radius: 999px;
   background: var(--ez-status-bg);
   color: var(--ez-status-fg);
-  font: 600 11px/1.2 var(--ez-font-mono), monospace;
+  font: 600 11px/1.2 var(--ez-font-body), sans-serif;
   text-transform: uppercase;
 }
 /*
@@ -2422,18 +2496,18 @@
  * the contacts who receive nothing were the boldest. print-color-adjust would
  * force the fill back in Chromium, but it would still be leaning on colour, and
  * a greyscale printer or a colourblind operator would be no better off. So the
- * emphasis is carried in ink instead: a doubled border and the dark action
- * colour, both of which are painted whatever the print settings say. The tint
- * only reinforces it on screen, and is weak enough (10% over the ground) that
- * the action ink still clears 4.5:1 against it. Trading a pixel of padding for
- * the extra border width keeps the pill the same box as its siblings.
+ * emphasis is carried in ink instead: a doubled border and the blue ink,
+ * both of which are painted whatever the print settings say. The tint only
+ * reinforces it on screen, and is weak enough (10% over the ground) that the
+ * blue still clears 4.5:1 against it. Trading a pixel of padding for the
+ * extra border width keeps the pill the same box as its siblings.
  */
 .client-recipient-pill[data-recipient-status='recipient'] {
   padding: 3px 7px;
   border-width: 2px;
   border-color: var(--ez-action);
-  background-color: color-mix(in srgb, var(--ez-action) 10%, var(--ez-ground));
-  color: var(--ez-action);
+  background-color: color-mix(in srgb, var(--ez-data) 10%, var(--ez-ground));
+  color: var(--ez-data);
 }
 .client-recipient-pill[data-recipient-status='cc'] {
   border-color: var(--ez-data);
@@ -2654,7 +2728,7 @@
   border-radius: 999px;
   background: var(--ez-status-bg);
   color: var(--ez-status-fg);
-  font: 600 11px/1.2 var(--ez-font-mono), monospace;
+  font: 600 11px/1.2 var(--ez-font-body), sans-serif;
   text-transform: uppercase;
 }
 .project-list-empty,
@@ -2781,7 +2855,7 @@
 }
 .expense-module-unavailable {
   margin: 24px 0;
-  border-inline-start: 3px solid var(--ez-live);
+  border-inline-start: 3px solid var(--ez-amber);
 }
 .expense-module-unavailable h2,
 .expense-module-unavailable p {
@@ -2958,7 +3032,7 @@
   border-radius: 999px;
   background: var(--ez-status-bg);
   color: var(--ez-status-fg);
-  font: 600 11px/1.2 var(--ez-font-mono), monospace;
+  font: 600 11px/1.2 var(--ez-font-body), sans-serif;
   text-transform: uppercase;
 }
 .expense-detail {
@@ -3016,13 +3090,13 @@
   justify-content: flex-end;
 }
 /* A filled button, so its label is body text over the fill and owes 4.5:1 — not
-   the 3:1 an indicator owes. `live` gives white only 3.58:1; `live-text` is the
-   same hue stepped down until it clears, at 5.26:1. The destructive weight here
-   is carried by the fill being the loudest thing on the row, not by the fill
-   being the brightest orange available. */
+   the 3:1 an indicator owes. The fill is the red every other destructive verb
+   is written in, and the gate holds its label to the text ratio. The
+   destructive weight is carried by the fill being the loudest thing on the
+   row. */
 .danger-action {
-  border-color: var(--ez-live-text) !important;
-  background: var(--ez-live-text) !important;
+  border-color: var(--ez-red) !important;
+  background: var(--ez-red) !important;
   color: var(--ez-ground) !important;
 }
 
@@ -3061,7 +3135,7 @@
   color: var(--ez-muted);
 }
 .approval-totals {
-  font-family: var(--ez-font-mono), monospace;
+  font-family: var(--ez-font-body), sans-serif;
   font-variant-numeric: tabular-nums;
 }
 .approval-entry-list {
@@ -3086,8 +3160,9 @@
 .approval-entry-header span {
   flex: 0 0 auto;
   color: var(--ez-muted);
-  font-family: var(--ez-font-mono), monospace;
+  font-family: var(--ez-font-body), sans-serif;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .approval-card .approval-entry-note {
   margin-top: 8px;
@@ -3119,7 +3194,7 @@
 .approval-bulk button {
   min-height: 44px;
   padding: 0 16px;
-  border: 1px solid var(--ez-action);
+  border: 1px solid var(--ez-action-edge);
   border-radius: var(--ez-radius);
   background: var(--ez-action);
   color: var(--ez-action-fg);
@@ -3138,7 +3213,7 @@
   color: var(--ez-ink);
 }
 .approval-actions .primary-action {
-  border-color: var(--ez-action);
+  border-color: var(--ez-action-edge);
   background: var(--ez-action);
   color: var(--ez-action-fg);
 }
@@ -3167,7 +3242,7 @@
 .approval-filters .filter-apply {
   min-height: 36px;
   padding: 0 16px;
-  border: 1px solid var(--ez-action);
+  border: 1px solid var(--ez-action-edge);
   border-radius: var(--ez-radius);
   background: var(--ez-action);
   color: var(--ez-action-fg);
@@ -3445,8 +3520,32 @@ html {
 }
 body {
   margin: 0;
-  min-height: 100vh;
+  min-height: calc(100vh / var(--ez-zoom, 1));
   background: var(--ez-ground);
+}
+/* While the sign-in page is what is showing, the document wears its right
+   panel's ground, so whatever lies beyond the page -- a window taller than
+   the layout, a scroll bounced past its end -- reads as more of that panel
+   rather than as a white strip. */
+[data-auth-state='unknown'],
+[data-auth-state='signed-out'],
+[data-auth-state='unknown'] body,
+[data-auth-state='signed-out'] body {
+  background: var(--ez-surface);
+}
+/* The 14px base is the design's desk density, so it applies where there is a
+   pointer. A phone keeps the browser's 16px: it zooms the page into any field
+   set smaller than that the moment the field takes focus. */
+@media (pointer: fine) {
+  body {
+    font-size: var(--ez-text-size);
+  }
+}
+/* `strong` is `bolder` by default, and bolder than bold is the Black cut the
+   page titles load. Emphasis stops at bold, the weight it always rendered at. */
+b,
+strong {
+  font-weight: 700;
 }
 button,
 input,
@@ -3478,16 +3577,17 @@ a {
   align-items: stretch;
   gap: 8px;
   padding: 0 24px;
-  background: var(--ez-ink);
-  color: var(--ez-ground);
+  background: var(--ez-band);
+  color: var(--ez-band-ink);
 }
 .brand {
   display: grid;
   place-items: center;
-  color: var(--ez-ground);
-  font:
-    600 20px/1 var(--ez-font-mono),
-    monospace;
+  color: var(--ez-band-ink);
+  /* 900, the heaviest weight the font request carries: an 800 here was drawn
+     at 900 anyway, by a browser told a weight it had not been given. */
+  font: 900 19px/1 var(--ez-font-display);
+  letter-spacing: -0.03em;
   text-decoration: none;
   margin-right: 12px;
 }
@@ -3495,6 +3595,17 @@ a {
    pixel size: an operator uploads whatever their designer exported, and a
    2000px wordmark must not decide how tall the topbar is. Width follows so a
    wide lockup and a square glyph both keep their proportions. */
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.brand-logo {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  fill: currentColor;
+}
 .brand-mark {
   max-height: 32px;
   width: auto;
@@ -3514,7 +3625,7 @@ a {
   display: grid;
   place-items: center;
   padding: 0 14px;
-  color: var(--ez-ground);
+  color: var(--ez-band-ink);
   text-decoration: none;
   font-weight: 500;
 }
@@ -3540,6 +3651,11 @@ a {
   margin-left: auto;
   padding: 0 12px;
   max-width: 320px;
+  /* Its automatic minimum is its whole label -- overflow on the label lets the
+     label ellipsize but does not lower the button's own min-content -- so it
+     never gave up a pixel and the bar overflowed past it instead. The floor
+     keeps the clock, the dot, a sliver of label and the elapsed time. */
+  min-width: 150px;
 }
 .timer-chip [data-timer-label] {
   overflow: hidden;
@@ -3547,7 +3663,7 @@ a {
   white-space: nowrap;
 }
 .timer-chip [data-timer-elapsed] {
-  font-family: var(--ez-font-mono), monospace;
+  font-family: var(--ez-font-body), sans-serif;
   font-variant-numeric: tabular-nums;
 }
 .live-dot {
@@ -3568,7 +3684,41 @@ a {
 .menu-trigger {
   margin-left: 0;
   padding: 0 12px;
-  font-family: var(--ez-font-mono), monospace;
+  font-family: var(--ez-font-body), sans-serif;
+}
+/*
+ * Search looks like the field it opens (the 2026-10 reskin): the magnifier,
+ * "Search…" in the secondary ink, and the key that opens it as a chip at the
+ * far end. It is still a button -- the field it resembles is the one in the
+ * command bar -- so its name is the button's own, not the placeholder.
+ */
+.command-trigger {
+  justify-content: flex-start;
+  min-width: 180px;
+  padding: 0 6px 0 10px;
+  background: var(--ez-ground);
+  color: var(--ez-muted);
+}
+.command-trigger-label {
+  margin-right: auto;
+  white-space: nowrap;
+}
+/* One chip style for every key the shell draws: the search trigger's, the
+   command bar's footer, and the one on its highlighted row. Secondary ink on
+   its own ground, so it reads the same on any row it sits on. */
+.command-shortcut,
+.command-keys kbd,
+.command-option[aria-selected='true']::after {
+  flex: none;
+  min-width: 26px;
+  padding: 1px 6px;
+  border: 1px solid var(--ez-border);
+  border-radius: calc(var(--ez-radius) - 2px);
+  background: var(--ez-ground);
+  color: var(--ez-muted);
+  font: 600 11px/1.6 var(--ez-font-body), sans-serif;
+  text-align: center;
+  white-space: nowrap;
 }
 /*
  * Kept at every width, unlike the command trigger the narrow bands shed. It is
@@ -3584,12 +3734,11 @@ a {
  * figures on screen are the real ones.
  */
 .money-toggle[aria-pressed='true'] {
-  /* The border carries the live hue, which is certified as an indicator at 3:1.
-     The label cannot: `live` fails AA as text, and `live_text` is the variant
-     that exists for exactly the two places the colour has to be read rather
-     than noticed. */
-  border-color: var(--ez-live);
-  color: var(--ez-live-text);
+  /* Pressed is a selected state, so it wears the selected colour: a blue
+     border, and a blue label the gate holds to 4.5:1 on the button's own
+     surface. */
+  border-color: var(--ez-data);
+  color: var(--ez-data);
 }
 /*
  * Masking, and why it is masking rather than hiding.
@@ -3652,14 +3801,14 @@ a {
 }
 .tabstrip a[aria-current="page"] {
   color: var(--ez-ink);
-  box-shadow: inset 0 -3px var(--ez-live);
+  box-shadow: inset 0 -3px var(--ez-data);
 }
 /*
  * Week and Day are view modes of one screen, not sections of the app. They wore
  * the level-2 underline only because they were the one strip in the shell; now
  * that Invoices and Reports have real level-2 tabs, that underline has to mean
  * exactly one thing, so the view modes take §6's segmented control instead --
- * a joined group, orange tint and an orange border on the mode you are in. The
+ * a joined group, the selected tint and a blue border on the mode you are in. The
  * strip stays a strip: same nav, same links, same aria-current, different paint.
  */
 .tabstrip.view-switch {
@@ -3690,14 +3839,14 @@ a {
   color: var(--ez-ink);
 }
 .tabstrip.view-switch a[aria-current="page"] {
-  /* Above its neighbour, so the shared edge is the orange one. */
+  /* Above its neighbour, so the shared edge is the blue one. */
   position: relative;
   background: var(--ez-orange-tint);
-  border-color: var(--ez-live);
+  border-color: var(--ez-data);
   box-shadow: none;
 }
 .app-content {
-  padding: 28px 32px 48px;
+  padding: 28px clamp(24px, 3vw, 56px) 48px;
 }
 .context-row {
   display: flex;
@@ -3714,8 +3863,10 @@ dialog h2,
   font-family: var(--ez-font-display), sans-serif;
 }
 .context-row h1 {
-  font-size: clamp(32px, 4vw, 40px);
-  line-height: 1.1;
+  font-size: var(--ez-title-size);
+  font-weight: var(--ez-title-weight);
+  letter-spacing: var(--ez-title-tracking);
+  line-height: 1.2;
 }
 /* Used by render.ts for table-header and control labels that must reach a
    screen reader without occupying layout. It had no definition, so those
@@ -3735,15 +3886,18 @@ dialog h2,
   margin: 0 0 4px;
   color: var(--ez-muted);
   font:
-    500 13px/1.4 var(--ez-font-mono),
-    monospace;
+    var(--ez-label-weight) var(--ez-label-size) / 1.4 var(--ez-font-body),
+    sans-serif;
+  letter-spacing: var(--ez-label-tracking);
+  text-transform: uppercase;
 }
 .primary-action {
   min-height: 36px;
   padding: 0 16px;
-  border: 1px solid var(--ez-action);
+  border: 1px solid var(--ez-action-edge);
   border-radius: var(--ez-radius);
   background: var(--ez-action);
+  box-shadow: var(--ez-shadow-primary);
   color: var(--ez-action-fg);
   font-weight: 600;
 }
@@ -3753,7 +3907,7 @@ dialog h2,
   display: none;
 }
 .authenticated-shell {
-  min-height: 100vh;
+  min-height: calc(100vh / var(--ez-zoom, 1));
 }
 .session-check-overlay {
   position: fixed;
@@ -3762,7 +3916,7 @@ dialog h2,
   display: grid;
   place-items: center;
   padding: 24px;
-  background: color-mix(in srgb, var(--ez-ink) 24%, transparent);
+  background: color-mix(in srgb, var(--ez-shadow) 24%, transparent);
   backdrop-filter: blur(2px);
 }
 .session-check-card {
@@ -3775,12 +3929,12 @@ dialog h2,
   border: 1px solid var(--ez-border);
   border-radius: calc(var(--ez-radius) * 2);
   background: var(--ez-ground);
-  box-shadow: 0 20px 56px color-mix(in srgb, var(--ez-ink) 24%, transparent);
+  box-shadow: 0 20px 56px color-mix(in srgb, var(--ez-shadow) 24%, transparent);
   color: var(--ez-ink);
 }
 .session-check-card p {
   margin: 0;
-  font: 500 14px/1.4 var(--ez-font-mono), monospace;
+  font: 500 14px/1.4 var(--ez-font-body), sans-serif;
 }
 .session-check-spinner {
   width: 24px;
@@ -3792,8 +3946,8 @@ dialog h2,
   animation: auth-spin 900ms linear infinite;
 }
 .auth-gateway {
-  min-height: 100vh;
-  min-height: 100svh;
+  min-height: calc(100vh / var(--ez-zoom, 1));
+  min-height: calc(100dvh / var(--ez-zoom, 1));
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(380px, 0.85fr);
   overflow: hidden;
@@ -3808,8 +3962,8 @@ dialog h2,
   justify-content: space-between;
   overflow: hidden;
   padding: clamp(32px, 5vw, 72px);
-  background: var(--ez-ink);
-  color: var(--ez-ground);
+  background: var(--ez-band);
+  color: var(--ez-band-ink);
 }
 .auth-splash::before {
   content: '';
@@ -3818,8 +3972,8 @@ dialog h2,
   inset: 0;
   opacity: 0.16;
   background-image:
-    linear-gradient(to right, var(--ez-ground) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--ez-ground) 1px, transparent 1px);
+    linear-gradient(to right, var(--ez-band-ink) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--ez-band-ink) 1px, transparent 1px);
   background-size: 72px 72px;
   mask-image: linear-gradient(145deg, black, transparent 78%);
 }
@@ -3831,14 +3985,14 @@ dialog h2,
   aspect-ratio: 1;
   right: clamp(-160px, -10vw, -48px);
   bottom: clamp(-190px, -14vw, -80px);
-  border: clamp(36px, 5vw, 72px) solid var(--ez-live);
+  border: clamp(36px, 5vw, 72px) solid var(--ez-action);
   border-radius: 50%;
   opacity: 0.9;
 }
 .auth-wordmark {
   width: fit-content;
   position: relative;
-  color: var(--ez-ground);
+  color: var(--ez-band-ink);
   font:
     600 clamp(22px, 2vw, 28px) / 1 var(--ez-font-mono),
     monospace;
@@ -3851,26 +4005,26 @@ dialog h2,
   margin-block: clamp(64px, 15vh, 180px);
 }
 .auth-splash-copy .eyebrow {
-  color: var(--ez-live);
+  color: var(--ez-blue-light);
 }
 .auth-splash-copy h1 {
   max-width: 9ch;
   margin: 12px 0 20px;
-  color: var(--ez-ground);
+  color: var(--ez-band-ink);
   font: 600 clamp(48px, 7vw, 96px) / 0.94 var(--ez-font-display), sans-serif;
   letter-spacing: -0.055em;
 }
 .auth-splash-copy > p:last-child {
   max-width: 48ch;
   margin: 0;
-  color: color-mix(in srgb, var(--ez-ground) 72%, transparent);
+  color: color-mix(in srgb, var(--ez-band-ink) 72%, transparent);
   font-size: clamp(16px, 1.4vw, 20px);
   line-height: 1.55;
 }
 .auth-splash-foot {
   position: relative;
   margin: 0;
-  color: color-mix(in srgb, var(--ez-ground) 58%, transparent);
+  color: color-mix(in srgb, var(--ez-band-ink) 58%, transparent);
   font: 12px/1.4 var(--ez-font-mono), monospace;
 }
 .auth-entry {
@@ -3891,7 +4045,7 @@ dialog h2,
   border: 1px solid var(--ez-border);
   border-radius: calc(var(--ez-radius) * 2);
   background: var(--ez-ground);
-  box-shadow: 0 24px 64px color-mix(in srgb, var(--ez-ink) 10%, transparent);
+  box-shadow: 0 24px 64px color-mix(in srgb, var(--ez-shadow) 10%, transparent);
 }
 .auth-checking {
   display: grid;
@@ -3992,8 +4146,8 @@ dialog h2,
   cursor: pointer;
 }
 .demo-account-fill:hover {
-  border-color: var(--ez-action);
-  color: var(--ez-action);
+  border-color: var(--ez-data);
+  color: var(--ez-data);
 }
 .auth-heading h2 {
   margin: 0 0 8px;
@@ -4040,9 +4194,23 @@ dialog h2,
   flex: 1;
   background: var(--ez-border);
 }
+/*
+ * One vertical rhythm for the form: 16px between field groups, 8px from a
+ * label to its field, 12px from the button to the line that reports on it.
+ * The fields sat in a wrapper with no layout of its own, so they stacked flush:
+ * the focused Email field's ring lay across the Password label, and "Your
+ * session ended" sat against the Sign in button.
+ */
+.password-entry {
+  display: grid;
+  gap: 16px;
+}
+.password-entry > .auth-result {
+  margin-top: -4px;
+}
 .sign-in-form label {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   color: var(--ez-muted);
   font-size: 13px;
 }
@@ -4081,9 +4249,12 @@ dialog h2,
 }
 /* The account control sits in the topbar's trailing corner, where an account
    control is looked for, and is a light pill like its siblings — the bar is
-   --ez-ink, so --ez-muted would be unreadable directly against it. */
+   --ez-band, so --ez-muted would be unreadable directly against it. */
 .account {
   align-self: center;
+  /* The bar's give is the timer chip's label, which ellipsizes by design; the
+     account is shown only in the bands with room for it, whole. */
+  flex-shrink: 0;
 }
 .account[data-state='loading'] {
   display: none;
@@ -4140,8 +4311,8 @@ dialog h2,
 .identity-meta {
   color: var(--ez-muted);
   font:
-    500 12px/1.3 var(--ez-font-mono),
-    monospace;
+    500 12px/1.3 var(--ez-font-body),
+    sans-serif;
 }
 /* Settings sits beside Sign out because that is where a person looks for their
    own account, and it is the only route into either half. */
@@ -4158,8 +4329,8 @@ dialog h2,
 }
 
 .identity-settings:hover {
-  border-color: var(--ez-action);
-  color: var(--ez-action);
+  border-color: var(--ez-data);
+  color: var(--ez-data);
 }
 
 .settings-tabs {
@@ -4343,7 +4514,7 @@ dialog h2,
   border-radius: var(--ez-radius);
 }
 .brand-slot-preview[data-ground='dark'] {
-  background: var(--ez-ink);
+  background: var(--ez-band);
 }
 .brand-slot-preview[data-ground='dark'] .hint {
   color: var(--ez-blue-light);
@@ -4629,46 +4800,64 @@ dialog h2,
 }
 /*
  * Between the phone bar and the width the full bar actually needs, there was
- * nothing at all -- one breakpoint at 720px, and a top bar whose contents come
- * to 1325px laid out on one row. Everything from 721px to 1324px, which is to
- * say most laptops and every tablet in landscape, drew the account on top of
- * itself and pushed the page into a sideways scroll.
+ * nothing at all -- one breakpoint at 720px -- and the bands that closed that
+ * gap were measured when the bar was six sections in a narrower brand. With
+ * eight sections, the brand's mark and a search field, the whole bar needs
+ * about 1590px, and the old bands overflowed by 36px at 1340 and 77px at 1140
+ * (the 2026-10 reskin). The widths below are what the parts measure for an
+ * administrator, who sees every section, with a running timer's chip at its
+ * 150px floor:
  *
- * Two steps close it, and the widths are what the parts measure rather than
- * round numbers:
+ *   >= 1700px  everything: the nav, search as a field, the account's name (1592)
+ *   1520-1699  the account keeps only its avatar (1489)
+ *   1300-1519  and the nav takes tighter padding, and search is its magnifier
+ *              alone (1281)
+ *   721-1299   the nav folds into the Menu drawer that phone width already
+ *              uses -- same links, same dialog (688)
  *
- *   >= 1340px  everything, as designed (needs 1325)
- *   1140-1339  the full nav on tighter padding; the search chip goes and the
- *              account keeps only its avatar (1075)
- *   721-1139   the nav folds into the Menu drawer that phone width already
- *              uses -- same links, same dialog (639)
+ * Search gives up its field at 1520 rather than at the 1440 the bar could
+ * carry it to. Between the two, the field took the room a running timer's
+ * chip needed, and at 1440 the chip said "Bro…": the timer's name is what the
+ * chip is for, and the magnifier still opens the same bar with the same keys.
  *
- * Each band has room to spare at the width it starts at, so the bar is never
- * asked to lay out in less space than it needs. The account gives up its name
- * below 1340 rather than truncating it: the profile and user number are
- * decoration, and Settings -- which stays -- is the page that states both.
+ * Each band has room to spare at the width it starts at, and the browser test
+ * `[e2e:nav] fits the top bar at every width` measures the bar at each of them
+ * with the longest timer label the chip will hold, so a band that stops fitting
+ * fails there rather than in a screenshot. The account gives up its name rather
+ * than truncating it: the profile and user number are decoration, and Settings
+ * -- which stays -- is the page that states both.
  */
 /* Phone is excluded: down there the account has a whole row to itself and the
    name fits, which is the one thing the 720px layout already got right. */
-@media (min-width: 721px) and (max-width: 1339px) {
-  .command-trigger {
-    display: none;
-  }
+@media (min-width: 721px) and (max-width: 1699px) {
   .identity-text {
     display: none;
   }
 }
-@media (min-width: 721px) and (max-width: 1139px) {
+@media (min-width: 1300px) and (max-width: 1519px) {
+  .primary-nav a {
+    padding: 0 10px;
+  }
+}
+/* Search keeps its name and its shortcut; it loses only the field around them. */
+@media (min-width: 721px) and (max-width: 1519px) {
+  .command-trigger {
+    min-width: 36px;
+    width: 36px;
+    justify-content: center;
+    padding: 0;
+  }
+  .command-trigger-label,
+  .command-shortcut {
+    display: none;
+  }
+}
+@media (min-width: 721px) and (max-width: 1299px) {
   .primary-nav {
     display: none;
   }
   .menu-trigger {
     display: block;
-  }
-}
-@media (min-width: 1140px) and (max-width: 1339px) {
-  .primary-nav a {
-    padding: 0 10px;
   }
 }
 
@@ -4692,8 +4881,264 @@ dialog h2,
     margin-left: auto;
   }
 }
+
+/*
+ * Navigation: one header, two layouts (the 2026-10 reskin).
+ *
+ * Everything above lays the header out as the bar across the top. Someone who
+ * keeps the sidebar -- the default -- gets the same elements down the left,
+ * from 900px up; below that neither layout fits, and both fold into the Menu
+ * drawer through the bar's own narrow bands, which is why every rule here is
+ * inside the one media query. Nothing here reorders an element, so the order
+ * a keyboard walks the header in is the order it is read in, in both layouts.
+ */
+:root {
+  --ez-sidebar-width: 248px;
+  --ez-sidebar-width-collapsed: 72px;
+}
+.brand-glyph,
+.nav-collapse,
+.primary-nav .ez-icon,
+.identity-settings .ez-icon,
+.identity-signout .ez-icon {
+  display: none;
+}
+@media (min-width: 900px) {
+  [data-ez-nav='sidebar'] .authenticated-shell {
+    padding-left: var(--ez-sidebar-width);
+  }
+  [data-ez-nav='sidebar'] .topbar {
+    position: fixed;
+    z-index: 30;
+    inset: 0 auto 0 0;
+    width: var(--ez-sidebar-width);
+    min-height: 0;
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto auto 1fr;
+    align-items: start;
+    gap: 8px;
+    padding: 12px 10px;
+    overflow-y: auto;
+    border-right: 1px solid var(--ez-border);
+    background: var(--ez-surface);
+    color: var(--ez-ink);
+  }
+  /* The brand keeps its band. The mark an operator uploads for a dark ground
+     is drawn on it, and on the light sidebar that mark would disappear. */
+  [data-ez-nav='sidebar'] .brand {
+    grid-column: 1 / -1;
+    min-height: 52px;
+    margin: 0 0 4px;
+    padding: 0 52px 0 16px;
+    place-items: center start;
+    border-radius: calc(var(--ez-radius) * 1.5);
+    background: var(--ez-band);
+    color: var(--ez-band-ink);
+  }
+  [data-ez-nav='sidebar'] .nav-collapse {
+    position: absolute;
+    top: 22px;
+    right: 20px;
+    display: grid;
+    width: 32px;
+    height: 32px;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--ez-radius);
+    background: transparent;
+    color: var(--ez-band-ink);
+  }
+  [data-ez-nav='sidebar'] .primary-nav {
+    grid-column: 1 / -1;
+    display: grid;
+    gap: 2px;
+  }
+  [data-ez-nav='sidebar'] .primary-nav a {
+    grid-template-columns: auto minmax(0, 1fr);
+    place-items: center start;
+    gap: 12px;
+    min-height: 44px;
+    padding: 0 6px;
+    border-radius: calc(var(--ez-radius) + 2px);
+    color: var(--ez-ink);
+    font-weight: 600;
+  }
+  [data-ez-nav='sidebar'] .primary-nav .ez-icon {
+    display: block;
+    box-sizing: content-box;
+    width: 18px;
+    height: 18px;
+    padding: 6px;
+    border-radius: var(--ez-radius);
+    color: var(--ez-muted);
+  }
+  [data-ez-nav='sidebar'] .primary-nav a:hover,
+  [data-ez-nav='sidebar'] .primary-nav a:focus-visible {
+    background: var(--ez-surface-2);
+  }
+  /* The section you are in: its row on the nested grey and its mark on a tile
+     of the action blue. aria-current is what draws it, so what the eye sees
+     and what a screen reader hears are the one fact. */
+  [data-ez-nav='sidebar'] .primary-nav a[aria-current='page'] {
+    background: var(--ez-surface-2);
+    color: var(--ez-ink);
+  }
+  [data-ez-nav='sidebar'] .primary-nav a[aria-current='page'] .ez-icon {
+    background: var(--ez-action);
+    box-shadow: inset 0 0 0 1px var(--ez-action-edge);
+    color: var(--ez-action-fg);
+  }
+  [data-ez-nav='sidebar'] .timer-chip,
+  [data-ez-nav='sidebar'] .money-toggle,
+  [data-ez-nav='sidebar'] .command-trigger,
+  [data-ez-nav='sidebar'] .menu-trigger,
+  [data-ez-nav='sidebar'] .account-identity {
+    background: var(--ez-ground);
+  }
+  [data-ez-nav='sidebar'] .timer-chip {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: none;
+    /* The top bar's floor is for a chip that shares a row; in the column it is
+       the column's width, and narrowed it is an icon. */
+    min-width: 0;
+    min-height: 40px;
+    margin: 8px 0 0;
+  }
+  [data-ez-nav='sidebar'] .timer-chip [data-timer-elapsed] {
+    margin-left: auto;
+  }
+  /* Search is a row of its own, the width of the column; $ and Menu share the
+     row under it. Squeezed between them, its label ran out of the button. */
+  [data-ez-nav='sidebar'] .command-trigger {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-width: 0;
+    min-height: 40px;
+    justify-content: flex-start;
+    padding: 0 6px 0 10px;
+  }
+  [data-ez-nav='sidebar'] .command-trigger-label,
+  [data-ez-nav='sidebar'] .command-shortcut {
+    display: inline-block;
+  }
+  [data-ez-nav='sidebar'] .money-toggle {
+    grid-column: 1;
+  }
+  [data-ez-nav='sidebar'] .menu-trigger {
+    grid-column: 2;
+    display: block;
+  }
+  [data-ez-nav='sidebar'] .account {
+    grid-column: 1 / -1;
+    align-self: end;
+  }
+  [data-ez-nav='sidebar'] .account-identity {
+    flex-wrap: wrap;
+    padding: 8px;
+  }
+  /* The name takes the first row beside the avatar, and the two account
+     controls share the second, so neither the name nor a control is squeezed
+     to an ellipsis in a column this narrow. */
+  [data-ez-nav='sidebar'] .identity-text {
+    display: grid;
+    flex: 1 1 calc(100% - 48px);
+  }
+  [data-ez-nav='sidebar'] .identity-settings,
+  [data-ez-nav='sidebar'] .identity-signout {
+    flex: 1 1 40%;
+    text-align: center;
+  }
+
+  /* Narrowed to its icons. Every label stays in the document and out of
+     sight, so no control changes its name when the sidebar changes width. */
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .authenticated-shell {
+    padding-left: var(--ez-sidebar-width-collapsed);
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .topbar {
+    width: var(--ez-sidebar-width-collapsed);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(7, auto) 1fr;
+    justify-items: center;
+    padding: 12px;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .brand {
+    width: 48px;
+    min-height: 48px;
+    padding: 0;
+    place-items: center;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .brand-wordmark {
+    display: none;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .brand-glyph {
+    display: grid;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .nav-collapse {
+    position: static;
+    color: var(--ez-muted);
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .nav-collapse:hover,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .nav-collapse:focus-visible {
+    background: var(--ez-surface-2);
+    color: var(--ez-ink);
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .primary-nav a {
+    grid-template-columns: auto;
+    place-items: center;
+    padding: 0 6px;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .timer-chip {
+    width: auto;
+    padding: 0 10px;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .money-toggle,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .command-trigger,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .menu-trigger {
+    grid-column: 1;
+    width: 48px;
+    min-width: 0;
+    justify-content: center;
+    padding: 0;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .account-identity {
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-settings,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-signout {
+    display: grid;
+    flex: none;
+    width: 36px;
+    min-height: 36px;
+    place-items: center;
+    padding: 0;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-settings .ez-icon,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-signout .ez-icon {
+    display: block;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .nav-label,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .timer-chip [data-timer-label],
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .timer-chip [data-timer-elapsed],
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .command-trigger > span,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .command-trigger > kbd,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-text,
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-action-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
 .primary-action:disabled,
 button[data-auth-action]:disabled {
+  box-shadow: none;
   cursor: not-allowed;
   opacity: 0.55;
 }
@@ -4729,10 +5174,8 @@ button[data-auth-action]:disabled {
   color: var(--ez-ink);
 }
 .week-surface {
-  margin-inline: -32px;
   border: 1px solid var(--ez-border);
-  border-inline: 0;
-  border-radius: var(--ez-radius);
+  border-radius: calc(var(--ez-radius) * 1.5);
   overflow: hidden;
 }
 .week-toolbar {
@@ -4741,7 +5184,7 @@ button[data-auth-action]:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 10px 32px;
+  padding: 10px 20px;
   background: var(--ez-surface);
   border-bottom: 1px solid var(--ez-border);
 }
@@ -4750,7 +5193,7 @@ button[data-auth-action]:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 12px 32px;
+  padding: 12px 20px;
   border-bottom: 1px solid var(--ez-border);
   background: var(--ez-status-bg);
 }
@@ -4760,12 +5203,11 @@ button[data-auth-action]:disabled {
 .timesheet-status p {
   margin: 4px 0 0;
 }
-/* The reason an approver typed is prose to be read, not a state marker, and it
-   sits on the status band's tint. `live` clears only the 3:1 non-text bar
-   against that tint, so the reading colour is `live-text`: the same hue taken
-   down to where it clears the 4.5:1 body-text bar. */
+/* The reason an approver typed is prose about a refusal, and it sits on the
+   status band's tint. It is written in red, which the gate holds to the 4.5:1
+   body-text bar on that band. */
 .timesheet-status [data-timesheet-rejection-reason] {
-  color: var(--ez-live-text);
+  color: var(--ez-red);
   white-space: pre-wrap;
 }
 .timesheet-status button {
@@ -4806,7 +5248,7 @@ button[data-auth-action]:disabled {
   font-weight: 600;
 }
 .week-surface [data-week-total] {
-  font-family: var(--ez-font-mono), monospace;
+  font-family: var(--ez-font-body), sans-serif;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
@@ -4827,7 +5269,7 @@ button[data-auth-action]:disabled {
   color: var(--ez-ink);
 }
 .week-actions [data-add-row-trigger] {
-  border-color: var(--ez-action);
+  border-color: var(--ez-action-edge);
   background: var(--ez-action);
   color: var(--ez-action-fg);
   font-weight: 600;
@@ -4885,13 +5327,13 @@ button[data-auth-action]:disabled {
 }
 
 .day-totals li > button:focus-visible {
-  outline: 2px solid var(--ez-live);
+  outline: 2px solid var(--ez-data);
   outline-offset: -2px;
 }
 
 .day-totals li[data-today] {
   background: var(--ez-surface);
-  box-shadow: inset 0 -3px var(--ez-live);
+  box-shadow: inset 0 -3px var(--ez-data);
 }
 
 .day-totals li[data-selected] {
@@ -4904,7 +5346,7 @@ button[data-auth-action]:disabled {
 }
 
 .day-totals strong {
-  font: 700 20px/1.2 var(--ez-font-mono), monospace;
+  font: 700 20px/1.2 var(--ez-font-body), sans-serif;
   font-variant-numeric: tabular-nums;
 }
 
@@ -4925,8 +5367,8 @@ button[data-auth-action]:disabled {
 }
 
 .day-row-start:hover:not(:disabled) {
-  border-color: var(--ez-action);
-  color: var(--ez-action);
+  border-color: var(--ez-data);
+  color: var(--ez-data);
 }
 
 /* The row label is a sticky header cell in a dense grid, so Start sits inline
@@ -4951,8 +5393,8 @@ button[data-auth-action]:disabled {
 }
 
 .grid-row-start:hover:not(:disabled) {
-  border-color: var(--ez-action);
-  color: var(--ez-action);
+  border-color: var(--ez-data);
+  color: var(--ez-data);
 }
 
 @media (hover: none) {
@@ -5016,13 +5458,20 @@ button[data-auth-action]:disabled {
   position: sticky;
   left: 0;
   z-index: 1;
-  padding: 0 16px 0 32px;
+  padding: 0 16px 0 20px;
   background: var(--ez-ground);
   text-align: left;
 }
 .week-grid-table thead th:first-child {
   z-index: 2;
   background: var(--ez-surface);
+}
+/* A project's name gives way rather than widening the grid. The cell is
+   nowrap, so its longest name was its minimum width: a 30-character project
+   pushed the whole week into a sideways scroll at any width. At zero, the
+   column's own width is the floor and the name ellipsizes into it. */
+.week-grid-table tbody th {
+  max-width: 0;
 }
 .week-grid-table tbody th strong,
 .week-grid-table tbody th span,
@@ -5056,7 +5505,7 @@ button[data-auth-action]:disabled {
 .week-grid-table tfoot td {
   padding: 0 12px;
   color: var(--ez-muted);
-  font-family: var(--ez-font-mono), monospace;
+  font-family: var(--ez-font-body), sans-serif;
   text-align: right;
 }
 .week-grid-table tfoot th,
@@ -5068,7 +5517,7 @@ button[data-auth-action]:disabled {
   font-weight: 600;
 }
 .week-grid-table .grid-empty {
-  padding: 24px 32px;
+  padding: 24px 20px;
   color: var(--ez-muted);
   text-align: center;
 }
@@ -5085,7 +5534,7 @@ button[data-auth-action]:disabled {
    header; a tinted column reads at a glance without adding a line to a table
    whose whole discipline is hairlines. */
 .week-grid-table th[data-today] {
-  box-shadow: inset 0 -3px var(--ez-live);
+  box-shadow: inset 0 -3px var(--ez-data);
 }
 
 .week-grid-table td[data-today],
@@ -5103,7 +5552,7 @@ button[data-auth-action]:disabled {
   border-radius: var(--ez-radius);
   background: transparent;
   color: var(--ez-ink);
-  font-family: var(--ez-font-mono), monospace;
+  font-family: var(--ez-font-body), sans-serif;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -5126,15 +5575,50 @@ button[data-auth-action]:disabled {
 }
 .week-cell[data-cell-state="retry"] input,
 .week-cell[data-cell-state="conflict"] input {
-  border-color: var(--ez-live);
+  border-color: var(--ez-red);
 }
 /* The inset rule beside the input is the indicator; this is the word next to
    it, so it reads as body text and takes `live-text` rather than `live`. */
 .week-cell[data-cell-state="running"] .cell-status {
   color: var(--ez-live-text);
 }
+/*
+ * Below 1470px the week is tightened rather than scrolled. The grid needed
+ * 1129px, and beside the 248px sidebar inside the page gutter a 1440px window
+ * leaves its card 1104px: the Total column sat under the card's edge on a
+ * 1440px laptop, and 1366 and 1280 lost two columns. A day keeps room for
+ * "23:59" and the note button, the total keeps room for a week's hours, and
+ * the label column keeps its width, so the grid needs 912px -- inside its card
+ * from a 1236px window beside the sidebar, 1050 beside the narrowed rail, and
+ * under 1000 with the top bar. Wider than that, the table spreads the
+ * difference across the columns as before. `[e2e:width-fit]` measures it.
+ */
+@media (max-width: 1469px) {
+  .week-grid-table {
+    min-width: 0;
+  }
+  .week-grid-table tbody td {
+    width: 88px;
+    min-width: 88px;
+  }
+  .week-grid-table tbody td.row-total {
+    width: 72px;
+    min-width: 72px;
+  }
+  .week-grid-table .row-total,
+  .week-grid-table tfoot td {
+    padding: 0 8px;
+  }
+  .week-grid-table .week-cell {
+    padding: 2px 2px 0;
+  }
+  .week-grid-table .week-cell input {
+    padding: 0 5px;
+  }
+}
 .week-hint {
   margin: 0 0 12px;
+  padding: 8px 20px 0;
   color: var(--ez-muted);
   font-size: 12px;
   line-height: 1.6;
@@ -5235,8 +5719,8 @@ button[data-auth-action]:disabled {
   overflow: hidden;
   color: var(--ez-muted);
   font:
-    10px/1.2 var(--ez-font-mono),
-    monospace;
+    10px/1.2 var(--ez-font-body),
+    sans-serif;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5252,7 +5736,7 @@ button[data-auth-action]:disabled {
 }
 .week-cell[data-cell-state="retry"] .cell-status,
 .week-cell[data-cell-state="conflict"] .cell-status {
-  color: var(--ez-live-text);
+  color: var(--ez-red);
 }
 .cell-retry {
   grid-column: 2;
@@ -5390,18 +5874,16 @@ html[data-time-view="day"] .day-list {
   max-width: 44ch;
 }
 dialog {
-  width: min(640px, calc(100vw - 32px));
+  width: min(640px, calc((100vw - 32px) / var(--ez-zoom, 1)));
   padding: 0;
   border: 1px solid var(--ez-border);
   border-radius: calc(var(--ez-radius) * 2);
   background: var(--ez-ground);
   color: var(--ez-ink);
-  box-shadow:
-    0 1px 2px color-mix(in srgb, var(--ez-ink) 8%, transparent),
-    0 24px 56px -12px color-mix(in srgb, var(--ez-ink) 32%, transparent);
+  box-shadow: var(--ez-shadow-popover);
 }
 dialog::backdrop {
-  background: color-mix(in srgb, var(--ez-ink) 48%, transparent);
+  background: color-mix(in srgb, var(--ez-shadow) 48%, transparent);
   backdrop-filter: blur(2px);
 }
 @media (prefers-reduced-motion: no-preference) {
@@ -5492,9 +5974,40 @@ dialog textarea {
 @media (min-width: 721px) {
   .command-dialog,
   .menu-dialog {
-    margin-block: 10vh auto;
-    max-height: calc(90vh - 24px);
+    margin-block: calc(10vh / var(--ez-zoom, 1)) auto;
+    max-height: calc((90vh - 24px) / var(--ez-zoom, 1));
   }
+}
+/*
+ * The command bar in the reskin's tokens (the 2026-10 reskin): a roomy query
+ * with the magnifier inside it, the groups under label-style headings, the
+ * highlighted row in the selected tint, and the keys as chips in the footer.
+ * Paint only -- the combobox, the listbox, their ids and every handler are the
+ * ones the bar already had.
+ */
+.command-dialog {
+  width: min(600px, calc((100vw - 32px) / var(--ez-zoom, 1)));
+}
+.command-dialog form {
+  gap: 16px;
+}
+.command-query {
+  position: relative;
+}
+.command-query .ez-icon {
+  position: absolute;
+  top: 50%;
+  left: 16px;
+  transform: translateY(-50%);
+  color: var(--ez-muted);
+  pointer-events: none;
+}
+.command-query input {
+  min-height: 52px;
+  padding: 0 16px 0 46px;
+  border-radius: calc(var(--ez-radius) * 1.5);
+  background: var(--ez-ground);
+  font-size: 16px;
 }
 /*
  * The results run edge to edge between two rules rather than sitting in a
@@ -5517,15 +6030,14 @@ dialog textarea {
 }
 .command-group > .eyebrow {
   margin: 0;
-  padding: 6px 12px 2px;
-  font-size: 12px;
+  padding: 10px 12px 4px;
 }
 .command-option {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 12px;
   border-radius: var(--ez-radius);
   color: var(--ez-ink);
@@ -5535,12 +6047,11 @@ dialog textarea {
   background: var(--ez-surface-2);
 }
 /*
- * The row Enter acts on. It takes the tint the tables give the row under the
- * pointer, the focus colour as a bar down its edge -- it is the focus, by way
- * of aria-activedescendant -- and the key it answers to at its far end. Hover
- * is a different tint on purpose: the pointer does not move the highlight
- * here, so a hovered row and the highlighted row are two different rows that
- * two different actions reach.
+ * The row Enter acts on. It takes the selected tint, the focus colour as a bar
+ * down its edge -- it is the focus, by way of aria-activedescendant -- and the
+ * key it answers to at its far end. Hover is a different tint on purpose: the
+ * pointer does not move the highlight here, so a hovered row and the
+ * highlighted row are two different rows that two different actions reach.
  *
  * The key is generated content with empty alternative text, which keeps it
  * out of the option's accessible name: a reader hears the destination, not
@@ -5548,7 +6059,7 @@ dialog textarea {
  * and draws no key, which is the same row it drew before.
  */
 .command-option[aria-selected='true'] {
-  background: var(--ez-row-hover);
+  background: var(--ez-orange-tint);
   box-shadow: inset 3px 0 0 var(--ez-data);
 }
 .command-option[aria-selected='true']::after {
@@ -5588,18 +6099,6 @@ dialog textarea {
 }
 .command-keys span {
   white-space: nowrap;
-}
-.command-keys kbd,
-.command-option[aria-selected='true']::after {
-  flex: none;
-  padding: 1px 5px;
-  border: 1px solid var(--ez-border);
-  border-radius: 3px;
-  background: var(--ez-surface);
-  color: var(--ez-data);
-  font:
-    11px/1 var(--ez-font-mono),
-    monospace;
 }
 .command-keys kbd + kbd {
   margin-left: 2px;
@@ -5677,11 +6176,76 @@ dialog textarea {
 }
 .menu-dialog nav a[aria-current="page"] {
   background: var(--ez-status-bg);
-  box-shadow: inset 3px 0 0 var(--ez-live);
+  box-shadow: inset 3px 0 0 var(--ez-data);
   font-weight: 600;
 }
+
+/*
+ * The Menu's own navigation carries the section marks too, and the layout
+ * switch sits under it, where somebody looking at the navigation would look
+ * for a way to move it.
+ */
+.menu-dialog nav a {
+  gap: 12px;
+}
+.menu-dialog nav .ez-icon {
+  color: var(--ez-muted);
+}
+.menu-layout {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--ez-border);
+}
+.menu-layout-label {
+  margin-right: auto;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.menu-layout button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.menu-layout button[aria-pressed='true'] {
+  border-color: var(--ez-data);
+  background: var(--ez-orange-tint);
+}
+/*
+ * Below 900px the Menu is the drawer, for both layouts: it slides in from the
+ * left, where the sidebar would be, and takes the full height. It is a modal
+ * dialog, so the page behind it is inert and Tab cannot leave it; Escape and
+ * the close button both hand focus back to the Menu button.
+ */
+@media (max-width: 899px) {
+  .menu-dialog {
+    inset: 0 auto 0 0;
+    width: min(340px, calc(88vw / var(--ez-zoom, 1)));
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    margin: 0;
+    border-width: 0 1px 0 0;
+    border-radius: 0;
+  }
+}
+@media (max-width: 899px) and (prefers-reduced-motion: no-preference) {
+  .menu-dialog[open] {
+    animation: ez-drawer-in 180ms ease-out;
+  }
+}
+@keyframes ez-drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
 .document-shell {
-  min-height: 100vh;
+  min-height: calc(100vh / var(--ez-zoom, 1));
   background: var(--ez-ground);
   color: var(--ez-ink);
 }
@@ -5905,7 +6469,7 @@ dialog textarea {
   justify-content: flex-end;
 }
 .expense-category-filter button[aria-pressed='true'] {
-  border-color: var(--ez-live);
+  border-color: var(--ez-data);
   background: var(--ez-status-bg);
 }
 .expense-category-empty {
@@ -6019,7 +6583,12 @@ dialog textarea {
   .brand {
     margin-right: 0;
   }
+  /* It takes the width the row has left rather than its content's: the bar
+     wraps before anything shrinks, so at 375px a chip sized to its label pushed
+     Menu onto a line of its own. The label is what gives, and it ellipsizes. */
   .timer-chip {
+    flex: 1 1 0;
+    min-width: 0;
     margin-left: auto;
     max-width: min(56vw, 250px);
   }
@@ -6034,9 +6603,6 @@ dialog textarea {
   }
   .context-row {
     align-items: center;
-  }
-  .context-row h1 {
-    font-size: 32px;
   }
   .reports-workspace .context-row {
     align-items: stretch;
@@ -6217,7 +6783,7 @@ dialog textarea {
     min-height: 58px;
   }
   dialog {
-    width: 100vw;
+    width: calc(100vw / var(--ez-zoom, 1));
     max-width: none;
     margin: auto 0 0;
     border-radius: var(--ez-radius) var(--ez-radius) 0 0;
@@ -6422,7 +6988,7 @@ dialog textarea {
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
-  box-shadow: 0 8px 24px rgb(20 22 26 / 12%);
+  box-shadow: var(--ez-shadow-menu);
   text-align: left;
 }
 
@@ -6487,8 +7053,8 @@ dialog textarea {
 .dashboard-card h2 {
   margin: 0;
   color: var(--ez-muted);
-  font: 600 12px/1.3 var(--ez-font-body), sans-serif;
-  letter-spacing: 0.04em;
+  font: var(--ez-label-weight) var(--ez-label-size) / 1.3 var(--ez-font-body), sans-serif;
+  letter-spacing: var(--ez-label-tracking);
   text-transform: uppercase;
 }
 
@@ -6496,7 +7062,7 @@ dialog textarea {
    labels you have to stop and parse. */
 .dashboard-figure {
   overflow-wrap: anywhere;
-  font: 600 clamp(28px, 3.2vw, 46px)/1.05 var(--ez-font-mono), monospace;
+  font: 600 clamp(28px, 3.2vw, 46px)/1.05 var(--ez-font-body), sans-serif;
   font-variant-numeric: tabular-nums;
 }
 
@@ -6531,7 +7097,7 @@ dialog textarea {
  * Paper.
  *
  * Cmd-P on an invoice printed the application. The top bar came out as a white
- * band -- it is white text on --ez-ink, and a browser omits background-color
+ * band -- it is white text on --ez-band, and a browser omits background-color
  * when "Background graphics" is off, which is the default -- followed by the
  * primary nav, the section tabs, "Loading invoice…", every control the operator
  * uses to change the invoice, the internal message history, and the build
@@ -6568,6 +7134,9 @@ dialog textarea {
   .session-check-overlay,
   dialog {
     display: none !important;
+  }
+  [data-ez-nav='sidebar'] .authenticated-shell {
+    padding-left: 0 !important;
   }
   /*
    * The invoice's own working surfaces. The document is what is being printed;
@@ -6694,9 +7263,9 @@ dialog textarea {
   color: var(--ez-ink);
 }
 /* The same pressed affordance the Week/Day segmented control already ships:
-   orange-tint fill under an orange border, ink text on top of it. */
+   the selected tint under a blue border, ink text on top of it. */
 .retainer-toolbar button[aria-pressed='true'] {
-  border-color: var(--ez-live);
+  border-color: var(--ez-data);
   background: var(--ez-orange-tint);
 }
 .retainer-detail-heading {
@@ -6875,15 +7444,15 @@ dialog textarea {
   min-height: 44px;
 }
 /* Past due is an invitation, not an alarm: it is the row you came to act on.
-   So it is marked by the live accent the timer uses rather than by an error
-   colour, and the word carries the meaning either way. */
+   So it is marked in the warning amber rather than in the error red, and the
+   word carries the meaning either way. */
 .invoice-state[data-recurring-due='overdue'] {
-  border-color: var(--ez-live);
-  background: var(--ez-orange-tint);
+  border-color: var(--ez-amber);
+  background: var(--ez-amber-bg);
 }
 .recurring-confirm-dialog::backdrop,
 .report-confirm-dialog::backdrop {
-  background: color-mix(in srgb, var(--ez-ink) 45%, transparent);
+  background: color-mix(in srgb, var(--ez-shadow) 45%, transparent);
 }
 .recurring-confirm-dialog form,
 .report-confirm-dialog form {
@@ -7262,7 +7831,7 @@ dialog textarea {
   padding: 14px 20px;
   border-top: 1px solid var(--ez-border);
   background: var(--ez-surface);
-  box-shadow: 0 -10px 24px -18px color-mix(in srgb, var(--ez-ink) 45%, transparent);
+  box-shadow: 0 -10px 24px -18px color-mix(in srgb, var(--ez-shadow) 45%, transparent);
 }
 .editor-actions .form-result {
   flex: 1 1 280px;
@@ -7318,8 +7887,8 @@ dialog textarea {
   padding: 0 6px;
   color: var(--ez-muted);
   font:
-    500 12px/1.4 var(--ez-font-mono),
-    monospace;
+    500 12px/1.4 var(--ez-font-body),
+    sans-serif;
 }
 .line-editor-number {
   display: none;
@@ -7501,8 +8070,8 @@ dialog textarea {
     min-height: 44px;
     color: var(--ez-muted);
     font:
-      500 12px/1 var(--ez-font-mono),
-      monospace;
+      500 12px/1 var(--ez-font-body),
+      sans-serif;
   }
   .line-editor-amount {
     gap: 0;
@@ -7724,7 +8293,7 @@ dialog textarea {
   cursor: pointer;
 }
 .settings-density-choice button[aria-pressed='true'] {
-  border-color: var(--ez-live);
+  border-color: var(--ez-data);
   background: var(--ez-orange-tint);
 }
 

@@ -1,9 +1,16 @@
 import { renderStaffPayments } from '../staff-payments/render.js'
 import { shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
-import { iconMarkup } from '../components/icons.js'
+import { iconMarkup, type IconName } from '../components/icons.js'
 import { INSTANCE_THEME_STYLESHEET_PATH } from '../instance-theme.js'
 import { defaultTheme, themeManifest } from '../theme.js'
-import { type DeploymentBrand, resolveDeploymentBrand } from '../brand.js'
+import { type ColorScheme, colorSchemeMeta, resolveColorScheme } from '../theme-preference.js'
+import {
+  type NavLayout,
+  resolveNavLayout,
+  resolveSidebarState,
+  type SidebarState,
+} from '../nav-layout.js'
+import { type DeploymentBrand, defaultBrand, resolveDeploymentBrand } from '../brand.js'
 import { renderClientDirectoryPages } from '../clients/render.js'
 import { renderRoleAdminPage } from '../roles/render.js'
 import { renderProjectDirectoryPages } from '../projects/render.js'
@@ -50,6 +57,19 @@ export interface AppShellOptions {
    * empty costs every page load a request for nothing.
    */
   readonly instanceTheme?: boolean
+  /**
+   * The person's light/dark choice, read from their cookie by the server so the
+   * page is painted in it from the first byte (`readDisplayPreferences`).
+   * Absent means `system`, which the stylesheet resolves without a script.
+   */
+  readonly colorScheme?: ColorScheme
+  /**
+   * Sidebar or top bar, and whether the sidebar is narrowed to its icons --
+   * read from the person's cookies like `colorScheme`, so the page is laid out
+   * once, in the layout they chose. Absent means a full-width sidebar.
+   */
+  readonly navLayout?: NavLayout
+  readonly sidebar?: SidebarState
   readonly activeSection?:
     // 'Settings' matches no nav item on purpose. Without it the default lands
     // on 'Time', so the module settings page marked Time as the page you were
@@ -238,7 +258,7 @@ export const invoiceTabs = (view: AppShellOptions['view']): readonly ShellTab[] 
 /**
  * The mark, or the name set in it. Which of the two configured wordmarks a
  * surface asks for is decided by the ground it paints, not by the surface:
- * the topbar and the sign-in splash are `--ez-ink` and take the dark-ground
+ * the topbar and the sign-in splash are `--ez-band` and take the dark-ground
  * mark, the document shell is `--ez-ground` and takes the light-ground one.
  *
  * The name stays the alt text rather than being dropped, so a mark that fails
@@ -269,9 +289,18 @@ const sameOriginMark = (source: string): boolean =>
  * text wordmark it has always rendered. `team/browser.ts` reached the same
  * conclusion about avatars for the same reason, and keeps its text underneath.
  */
+// The product's own mark, drawn only for the default brand: an operator who
+// renames the deployment without uploading a mark gets their name, not ours.
+const productLogo =
+  '<svg class="brand-logo" viewBox="0 0 60 60" aria-hidden="true" focusable="false">' +
+  '<path fill-rule="evenodd" clip-rule="evenodd" d="M20 0H40C53.3 0 60 6.7 60 20V40C60 53.3 53.3 60 40 60H20C6.7 60 0 53.3 0 40V20C0 6.7 6.7 0 20 0ZM13 25C14.3 23.7 15.7 23.7 17 25L26 34L43 14C44.3 12.7 46 12.7 48 14C50 15.3 50 17 48 19L30 41C28 43.7 26 44 24 42L12 31C10 29 10.3 27 13 25ZM27.5 8C27.5 6.3 28.3 5.5 30 5.5C31.7 5.5 32.5 6.3 32.5 8V12C32.5 13.7 31.7 14.5 30 14.5C28.3 14.5 27.5 13.7 27.5 12V8Z"/>' +
+  '</svg>'
+
 const wordmark = (source: string | undefined, brand: string): string =>
   source === undefined || source === '' || !sameOriginMark(source)
-    ? escapeHtml(brand)
+    ? brand === defaultBrand.name
+      ? `<span class="brand-lockup">${productLogo}<span class="brand-name">${escapeHtml(brand)}</span></span>`
+      : escapeHtml(brand)
     : `<img class="brand-mark" src="${escapeHtml(source)}" alt="${escapeHtml(brand)}">`
 
 export const renderEmptyState = (title: string, detail: string): string =>
@@ -340,6 +369,27 @@ const directorySections: ReadonlySet<string> = new Set(['Projects', 'Tasks', 'Cl
  * them out of the palette too, leaving a URL as the only way back.
  */
 const foldedSections = ['Home', 'Tasks', 'Team'] as const
+
+/**
+ * Each section's mark (the 2026-10 reskin). A collapsed sidebar is read by
+ * these alone, so every section has one; the label stays in the link, hidden
+ * from sight but not from a screen reader, so the link's name never changes.
+ */
+const sectionIcons: Readonly<
+  Record<(typeof sections)[number] | (typeof foldedSections)[number], IconName>
+> = {
+  Time: 'clock',
+  Approvals: 'check',
+  Expenses: 'card',
+  Projects: 'folder',
+  Clients: 'person',
+  Invoices: 'document',
+  Payments: 'banknote',
+  Reports: 'chart',
+  Home: 'home',
+  Tasks: 'list',
+  Team: 'people',
+}
 
 const hrefFor = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
   section === 'Home'
@@ -451,16 +501,23 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const passwordSignIn = options.passwordSignIn ?? true
   const resumeSession = options.sessionCookiePresent === true
   const shortRelease = options.release.slice(0, 7)
+  // Resolved again rather than trusted: it lands in an attribute, and the type
+  // is a promise the caller made, not one the value kept.
+  const colorScheme = resolveColorScheme(options.colorScheme)
+  const instancePalette = options.instanceTheme === true
+  const navLayout = resolveNavLayout(options.navLayout)
+  const sidebar = resolveSidebarState(options.sidebar)
   const navLink = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
-    `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Payments' ? ' data-staff-payments-nav hidden' : ''}${section === 'Expenses' ? ' data-expenses-nav' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${section}</a>`
+    `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Payments' ? ' data-staff-payments-nav hidden' : ''}${section === 'Expenses' ? ' data-expenses-nav' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${iconMarkup(sectionIcons[section])}<span class="nav-label">${section}</span></a>`
   const navigation = sections.map(navLink).join('')
   const foldedNavigation = foldedSections.map(navLink).join('')
 
   return `<!doctype html>
-<html lang="en" data-ez-theme="${defaultTheme}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
+<html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="${colorScheme}"${instancePalette ? ' data-ez-palette="instance"' : ''} data-ez-nav="${navLayout}" data-ez-sidebar="${sidebar}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="${colorSchemeMeta(colorScheme, instancePalette)}">
   <meta name="robots" content="noindex">
   <meta name="ezacto-environment" content="${escapeHtml(options.environment)}">
   <meta name="ezacto-release" content="${escapeHtml(options.release)}">
@@ -469,7 +526,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="${escapeHtml(themeManifest.precision.fontStylesheet)}">
 ${b.favicon ? `  <link rel="icon" href="${escapeHtml(b.favicon)}">\n` : ''}  <link rel="stylesheet" href="/assets/ezacto.css">
-${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_PATH}">\n` : ''}  <script type="module" src="/assets/ezacto.js"></script>
+${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_PATH}">\n` : ''}  <script type="module" src="/assets/ezacto.js"></script>
 </head>
 <body>
   <section class="auth-gateway" data-auth-gateway data-state="checking" aria-label="${escapeHtml(brand)} sign in" aria-busy="true"${resumeSession ? ' hidden' : ''}>
@@ -533,8 +590,15 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
     </div>
   </aside>
   <div class="authenticated-shell" data-authenticated-shell${resumeSession ? '' : ' hidden'} inert aria-busy="true">
-  <header class="topbar">
-    <a class="brand" href="/dashboard" aria-label="${escapeHtml(brand)} home" data-home-link>${wordmark(b.wordmarkDark, brand)}</a>
+  <!--
+    One header, two layouts (the 2026-10 reskin): the stylesheet lays these
+    same elements down the left or across the top, from data-ez-nav on the
+    root. The collapse toggle only shows in the sidebar, and only at desktop
+    width; below 900px both layouts fold into the Menu drawer.
+  -->
+  <header class="topbar" id="ez-app-nav" data-app-nav>
+    <a class="brand" href="/dashboard" aria-label="${escapeHtml(brand)} home" data-home-link><span class="brand-wordmark">${wordmark(b.wordmarkDark, brand)}</span><span class="brand-glyph">${brand === defaultBrand.name && (b.wordmarkDark ?? '') === '' ? productLogo : iconMarkup('home')}</span></a>
+    <button class="nav-collapse" type="button" data-sidebar-toggle aria-controls="ez-app-nav" aria-pressed="${sidebar === 'collapsed' ? 'true' : 'false'}" aria-label="Collapse sidebar">${iconMarkup('sidebar')}</button>
     <nav class="primary-nav" aria-label="Primary">${navigation}</nav>
     <button class="timer-chip" type="button" data-timer-chip data-state="loading" data-auth-action disabled aria-haspopup="dialog">
       ${iconMarkup('clock')}
@@ -543,13 +607,20 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
       <span data-timer-elapsed>—</span>
     </button>
     <!--
+      Search looks like the field it opens (the 2026-10 reskin). The key chip's
+      modifier is filled in by the browser -- the command key on a Mac, Ctrl
+      elsewhere -- because the server cannot tell which keyboard is in front of
+      the page; both keys open the bar everywhere, so the name stays neutral
+      and aria-keyshortcuts states both.
+    -->
+    <button class="command-trigger" type="button" data-command-trigger data-auth-action disabled aria-haspopup="dialog" aria-label="Search and commands" aria-keyshortcuts="Meta+K Control+K">${iconMarkup('magnifier')}<span class="command-trigger-label" aria-hidden="true">Search…</span><kbd class="command-shortcut" aria-hidden="true"><span data-command-modifier></span>K</kbd></button>
+    <!--
       Masking is a display state, not a permission: the figures still arrive and
       the screens still total them, and this decides whether they are drawn. It
       renders pressed-out because shown is the default, and the browser sets it
       from storage before the first paint.
     -->
     <button class="money-toggle" type="button" data-money-toggle data-auth-action disabled aria-pressed="false" aria-label="Hide money amounts ($)" title="Hide money amounts ($)"><span aria-hidden="true">$</span></button>
-    <button class="command-trigger" type="button" data-command-trigger data-auth-action disabled aria-haspopup="dialog" aria-label="Search and commands (⌘K)">${iconMarkup('magnifier')}<span aria-hidden="true">⌘K</span></button>
     <button class="menu-trigger" type="button" data-menu-trigger aria-label="Open navigation" aria-haspopup="dialog">Menu</button>
     <div class="account" data-auth-shell data-state="loading">
       <div class="account-identity" data-current-identity hidden>
@@ -558,8 +629,8 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
           <span class="visually-hidden">Signed in as </span><span class="identity-name" data-current-profile>—</span>
           <span class="identity-meta">User #<span data-current-user-id>—</span></span>
         </span>
-        <a class="identity-settings" href="/settings/user" data-settings-link>Settings</a>
-        <button type="button" class="identity-signout" data-logout>Sign out</button>
+        <a class="identity-settings" href="/settings/user" data-settings-link>${iconMarkup('sliders')}<span class="identity-action-label">Settings</span></a>
+        <button type="button" class="identity-signout" data-logout>${iconMarkup('sign-out')}<span class="identity-action-label">Sign out</span></button>
         <p class="auth-result visually-hidden" data-logout-result role="status" aria-live="polite"></p>
       </div>
     </div>
@@ -963,7 +1034,7 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
     <form data-command-form>
       <header><div><p class="eyebrow">Command bar</p><h2 id="command-title">Go or log time</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
       <label for="ez-command" class="visually-hidden">Command</label>
-      <input id="ez-command" name="command" autocomplete="off" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="ez-command-results" placeholder="Search, or log 2h northpeak devops" required>
+      <div class="command-query">${iconMarkup('magnifier')}<input id="ez-command" name="command" autocomplete="off" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="ez-command-results" placeholder="Search, or log 2h northpeak devops" required></div>
       <div class="command-results" id="ez-command-results" data-command-results role="listbox" aria-label="Destinations"></div>
       <p class="form-result" data-command-result role="status"></p>
       <!--
@@ -1001,6 +1072,15 @@ ${options.instanceTheme === true ? `  <link rel="stylesheet" href="${INSTANCE_TH
     <header><div><p class="eyebrow">Menu</p><h2 id="menu-title">Navigate</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
     <nav aria-label="Mobile primary">${navigation}</nav>
     <nav class="secondary-nav" data-secondary-nav aria-label="More">${foldedNavigation}</nav>
+    <!--
+      The layout switch, where the navigation is (the 2026-10 reskin). Settings
+      carries the same pair beside the theme; both write one cookie.
+    -->
+    <div class="menu-layout" role="group" aria-label="Navigation">
+      <span class="menu-layout-label" aria-hidden="true">Navigation</span>
+      <button type="button" data-nav-layout-choice="sidebar" aria-pressed="${navLayout === 'sidebar' ? 'true' : 'false'}">Sidebar</button>
+      <button type="button" data-nav-layout-choice="topbar" aria-pressed="${navLayout === 'topbar' ? 'true' : 'false'}">Top bar</button>
+    </div>
     <!--
       The dialog's footer (issue 859). The form is the footer rather than being
       wrapped in one: the stylesheet gives it the band, and the browser code

@@ -402,7 +402,17 @@ describe('S-1 through S-5 application shell', () => {
     // against the DOM the control actually produces.
     expect(html).toContain('data-day-previous data-auth-action disabled aria-label="Previous day"')
     expect(html).toContain('data-day-next data-auth-action disabled aria-label="Next day"')
-    expect(html).toContain('aria-label="Search and commands (⌘K)"')
+    // Neutral on the server: both chords open the bar everywhere, so the name
+    // promises neither and aria-keyshortcuts states both. The chip's modifier
+    // is the browser's to fill, because only it can see the keyboard.
+    expect(html).toContain(
+      'aria-label="Search and commands" aria-keyshortcuts="Meta+K Control+K"',
+    )
+    expect(html).toContain(
+      '<span class="command-trigger-label" aria-hidden="true">Search…</span>' +
+        '<kbd class="command-shortcut" aria-hidden="true"><span data-command-modifier></span>K</kbd>',
+    )
+    expect(html).not.toContain('⌘K')
   })
 
   it('[e2e:track-week] keeps the global timer in desktop and phone shell CSS', () => {
@@ -482,20 +492,147 @@ describe('S-1 through S-5 application shell', () => {
     }
   })
 
+  it('[unit] paints the chosen scheme from the first byte, and marks an instance palette', () => {
+    // A scheme applied by a script arrives after the first paint, so a dark
+    // page flashed white on every load. The server renders it instead, from
+    // the person's cookie, onto the root -- and only the root: a document
+    // shell carries the light paper an invoice is printed on.
+    const root = (html: string): string => /<html[^>]*>/u.exec(html)?.[0] ?? ''
+    const meta = (html: string): string | undefined =>
+      /<meta name="color-scheme" content="([^"]*)">/u.exec(html)?.[1]
+
+    const system = renderAppShell({ environment: 'test', release: 'abc' })
+    expect(root(system)).toContain(' data-ez-scheme="system"')
+    expect(root(system)).not.toContain('data-ez-palette')
+    expect(meta(system)).toBe('light dark')
+    expect(system).not.toMatch(/data-document-shell[^>]*data-ez-scheme/u)
+
+    const dark = renderAppShell({ environment: 'test', release: 'abc', colorScheme: 'dark' })
+    expect(root(dark)).toContain(' data-ez-scheme="dark"')
+    expect(meta(dark)).toBe('dark')
+
+    // Dim is its own scheme on the root and a dark one to the browser's controls.
+    const dim = renderAppShell({ environment: 'test', release: 'abc', colorScheme: 'dim' })
+    expect(root(dim)).toContain(' data-ez-scheme="dim"')
+    expect(meta(dim)).toBe('dark')
+
+    // An instance with its own palette keeps it under System, so the canvas is
+    // light; the palette marker is what the stylesheet's system rule skips.
+    const themed = renderAppShell({ environment: 'test', release: 'abc', instanceTheme: true })
+    expect(root(themed)).toContain(' data-ez-palette="instance"')
+    expect(meta(themed)).toBe('light')
+
+    // The option is resolved, not trusted: it lands in an attribute.
+    const hostile = renderAppShell({
+      environment: 'test',
+      release: 'abc',
+      colorScheme: '"><script>alert(1)</script>' as never,
+    })
+    expect(root(hostile)).toContain(' data-ez-scheme="system"')
+    expect(hostile).not.toContain('<script>alert(1)')
+  })
+
+  it('[unit] lays out one header in the layout chosen, from the first byte', () => {
+    // Sidebar or top bar is the same header: one set of links, one current
+    // mark, one timer chip and one search, laid out by the stylesheet from the
+    // root's attribute. The server renders that attribute from the person's
+    // cookie, so the page never paints in one layout and jumps to the other.
+    const root = (html: string): string => /<html[^>]*>/u.exec(html)?.[0] ?? ''
+    const sidebar = renderAppShell({ environment: 'test', release: 'abc', activeSection: 'Invoices' })
+    expect(root(sidebar)).toContain(' data-ez-nav="sidebar" data-ez-sidebar="expanded"')
+    expect(sidebar.match(/<header class="topbar"/gu)).toHaveLength(1)
+    expect(sidebar.match(/<nav class="primary-nav"/gu)).toHaveLength(1)
+    expect(sidebar.match(/data-timer-chip/gu)).toHaveLength(1)
+    expect(sidebar).toContain(
+      'data-sidebar-toggle aria-controls="ez-app-nav" aria-pressed="false" aria-label="Collapse sidebar"',
+    )
+
+    // Every section carries its mark and keeps its name as text: the label is
+    // what a narrowed sidebar hides from sight, never from a screen reader.
+    const nav = /<nav class="primary-nav"[^>]*>(.*?)<\/nav>/su.exec(sidebar)?.[1] ?? ''
+    for (const section of ['Time', 'Expenses', 'Projects', 'Clients', 'Invoices', 'Reports']) {
+      expect(nav).toMatch(
+        new RegExp(`<svg class="ez-icon" data-icon="[a-z-]+"[^>]*aria-hidden="true"><[^]*?<span class="nav-label">${section}</span></a>`, 'u'),
+      )
+    }
+    // Only the section you are in is marked, and only once in the header.
+    expect(nav.match(/aria-current="page"/gu)).toHaveLength(1)
+    expect(nav).toMatch(/<a href="\/invoices"[^>]*aria-current="page"><svg[^>]*data-icon="document"/u)
+
+    const topbar = renderAppShell({
+      environment: 'test',
+      release: 'abc',
+      navLayout: 'topbar',
+      sidebar: 'collapsed',
+    })
+    expect(root(topbar)).toContain(' data-ez-nav="topbar" data-ez-sidebar="collapsed"')
+    expect(topbar).toContain('data-sidebar-toggle aria-controls="ez-app-nav" aria-pressed="true"')
+    expect(topbar).toContain('data-nav-layout-choice="topbar" aria-pressed="true"')
+    expect(topbar).toContain('data-nav-layout-choice="sidebar" aria-pressed="false"')
+
+    // Resolved, not trusted: both land in attributes.
+    const hostile = renderAppShell({
+      environment: 'test',
+      release: 'abc',
+      navLayout: '"><script>' as never,
+      sidebar: '"><script>' as never,
+    })
+    expect(root(hostile)).toContain(' data-ez-nav="sidebar" data-ez-sidebar="expanded"')
+  })
+
+  it('[e2e] keeps the sidebar a desktop layout, and folds both layouts into one drawer below it', () => {
+    // Every sidebar rule lives inside the one min-width query (or the paper
+    // block, which takes the sidebar's column back), so below 900px the header
+    // is the bar's own narrow bands whatever was chosen -- and both layouts
+    // reach the same Menu drawer the same way.
+    const css = webAssets.stylesheet.replace(/\/\*[\s\S]*?\*\//gu, '')
+    const blockAt = (start: number): readonly [number, number] => {
+      let depth = 0
+      for (let index = css.indexOf('{', start); index < css.length; index += 1) {
+        if (css[index] === '{') depth += 1
+        if (css[index] === '}' && (depth -= 1) === 0) return [start, index]
+      }
+      throw new Error('unbalanced stylesheet')
+    }
+    const allowed = [
+      blockAt(css.indexOf('@media (min-width: 900px) {')),
+      blockAt(css.indexOf('@media print {')),
+    ]
+    const uses = [...css.matchAll(/\[data-ez-nav='sidebar'\]/gu)].map((match) => match.index)
+    expect(uses.length).toBeGreaterThan(10)
+    for (const at of uses) {
+      expect(
+        allowed.some(([from, to]) => at > from && at < to),
+        css.slice(at, at + 80),
+      ).toBe(true)
+    }
+    // The drawer is the Menu dialog below 900px: full height, from the left.
+    expect(css).toMatch(
+      /@media \(max-width: 899px\) \{\s*\.menu-dialog \{[^}]*inset: 0 auto 0 0;[^}]*height: 100%;/u,
+    )
+  })
+
   it('[e2e] gives the top bar a layout for every width between phone and full', () => {
     // The bar's contents come to 1325px on one row, and for a long time the only
     // breakpoint in the stylesheet was 720px. Everything between -- most laptops,
     // every tablet in landscape -- drew the account over itself and pushed the
     // page sideways. Each band below has to keep existing, and each has to leave
     // the bar less to carry than the width it starts at.
+    // The bands were re-measured in the 2026-10 reskin: the bar is eight
+    // sections, the brand's mark and a search field now, and the old bands
+    // overflowed. `[e2e:nav] fits the top bar at every width` measures them;
+    // these pin only that each band still exists.
     expect(webAssets.stylesheet).toMatch(
-      /@media \(min-width: 721px\) and \(max-width: 1139px\)[\s\S]*\.primary-nav \{[\s\S]*display: none;/u,
+      /@media \(min-width: 721px\) and \(max-width: 1299px\)[\s\S]*\.primary-nav \{[\s\S]*display: none;/u,
     )
     expect(webAssets.stylesheet).toMatch(
-      /@media \(min-width: 721px\) and \(max-width: 1139px\)[\s\S]*\.menu-trigger \{[\s\S]*display: block;/u,
+      /@media \(min-width: 721px\) and \(max-width: 1299px\)[\s\S]*\.menu-trigger \{[\s\S]*display: block;/u,
     )
     expect(webAssets.stylesheet).toMatch(
-      /@media \(min-width: 721px\) and \(max-width: 1339px\)[\s\S]*\.identity-text \{[\s\S]*display: none;/u,
+      /@media \(min-width: 721px\) and \(max-width: 1699px\)[\s\S]*\.identity-text \{[\s\S]*display: none;/u,
+    )
+    expect(webAssets.stylesheet).toMatch(
+      /@media \(min-width: 721px\) and \(max-width: 1519px\)[\s\S]*\.command-trigger-label,\s*\.command-shortcut \{[\s\S]*display: none;/u,
     )
     // The drawer the nav folds into carries the same links, so nothing is lost.
     const html = renderAppShell({ environment: 'test', release: 'abcdef012345' })
@@ -576,7 +713,7 @@ describe('S-1 through S-5 application shell', () => {
     expect(unavailable).not.toContain('data-oidc-provider')
     expect(unavailable).not.toContain('data-oidc-entry')
     expect(unavailable).not.toContain('Single sign-on is not available')
-    expect(unavailable).toContain('Sign in to ezacto')
+    expect(unavailable).toContain('Sign in to eZacto')
     expect(webAssets.stylesheet).toMatch(/\.oidc-sign-in \{[\s\S]*min-height: 44px;/u)
     expect(webAssets.stylesheet).toMatch(/\.oidc-entry \{[\s\S]*display: grid;/u)
   })

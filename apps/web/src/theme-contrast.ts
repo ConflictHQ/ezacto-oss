@@ -14,38 +14,38 @@ export interface ThemeContrastResult extends ThemeContrastRequirement {
 
 export const precisionContrastRequirements: readonly ThemeContrastRequirement[] = [
   { name: 'ink/ground text', foreground: 'ink', background: 'ground', minimum: 4.5 },
+  // `muted` is the secondary text: hints, captions, eyebrows and column
+  // headers, on the page and on the cards that sit on it. It is the most used
+  // text colour after `ink`, and the one a lighter grey most tempts.
+  { name: 'muted/ground text', foreground: 'muted', background: 'ground', minimum: 4.5 },
+  { name: 'muted/surface text', foreground: 'muted', background: 'surface', minimum: 4.5 },
   {
     name: 'action/action-fg text',
     foreground: 'action',
     background: 'action_fg',
     minimum: 4.5,
   },
-  // `live` is used in two roles, so it answers to two bars and both are listed.
-  // As the timer/now marker it is only ever a border, a dot or an inset rule on
-  // `ground`, which AA scores as non-text at 3:1. As the auth splash eyebrow it
-  // is prose, and it is prose on the `ink` splash rather than on a light
-  // surface, so there it owes the 4.5:1 body-text bar and clears it. Carrying
-  // only the lenient row would certify a usage the gate never measured.
+  // `live` is the running timer and nothing else: the dot and border on the
+  // timer chip, and the inset rule beside a running row or cell. Every one of
+  // those is a non-text indicator on `ground`, which AA scores at 3:1. Where
+  // the running state is said in words it takes `live_text`, held below.
   { name: 'live/ground indicator', foreground: 'live', background: 'ground', minimum: 3 },
-  { name: 'live/ink text', foreground: 'live', background: 'ink', minimum: 4.5 },
-  // `.danger-action` fills a button with the live family and writes its label
-  // over the fill, so that label is body text and owes 4.5:1 — the indicator
-  // row above does not cover it. `live` gave white only 3.58:1, which is why
-  // the button now fills with `live_text` instead. Listing the pair means the
-  // gate would catch a return to the brighter fill rather than reasoning about
-  // it after the fact.
-  {
-    name: 'ground/live-text button label',
-    foreground: 'ground',
-    background: 'live_text',
-    minimum: 4.5,
-  },
-  // `live_text` exists for the two places the live colour has to be read as
-  // words on a light surface: the rejected timesheet's reason on `status_bg`,
-  // and the week-grid cell status on `ground`. It is not a new brand colour —
-  // it is `live` at its own hue and saturation with the value stepped down
-  // until the darker of those two surfaces clears 4.5:1, which 85% of `live`
-  // still misses at 4.19:1 and 80% makes at 4.63:1.
+  // `band` is the dark strip the chrome is painted on -- the top bar, the
+  // sign-in splash, the brand control's dark preview tile -- with `band_ink`
+  // written on it. It used to be `ink`, which a dark scheme turns light, so
+  // every band turned into a white strip with dark text the moment it did.
+  // `blue_light` is the second reading colour on it: the splash eyebrow and the
+  // preview tile's hint. All three are words, so they owe the body-text bar.
+  { name: 'band-ink/band text', foreground: 'band_ink', background: 'band', minimum: 4.5 },
+  { name: 'blue-light/band text', foreground: 'blue_light', background: 'band', minimum: 4.5 },
+  // `.danger-action` fills a button with `red` and writes its label in
+  // `ground` over the fill, so that label is body text and owes 4.5:1. Red is
+  // the destructive colour everywhere else it appears, and the fill is that
+  // same red rather than a louder one.
+  { name: 'ground/red button label', foreground: 'ground', background: 'red', minimum: 4.5 },
+  // `live_text` is the running state said in words -- the week-grid cell
+  // status on `ground` -- and the paid invoice pill, which writes it on the
+  // pill's `status_bg`. Green is the design's settled colour for both.
   {
     name: 'live-text/ground text',
     foreground: 'live_text',
@@ -58,17 +58,19 @@ export const precisionContrastRequirements: readonly ThemeContrastRequirement[] 
     background: 'status_bg',
     minimum: 4.5,
   },
-  // The `$` toggle's label while money is hidden. Its button paints
-  // `background: var(--ez-surface)`, a third surface for `live_text` beyond the
-  // two above, and the label is read rather than noticed -- so it owes the text
-  // ratio and not the indicator one. The border keeps `live` itself, which is
-  // certified as an indicator.
+  // Every status pill and band writes its word in `status_fg` on `status_bg`
+  // unless a tone overrides it -- a draft invoice, a project's state, the
+  // timesheet band's label.
   {
-    name: 'live-text/surface text',
-    foreground: 'live_text',
-    background: 'surface',
+    name: 'status-fg/status-bg text',
+    foreground: 'status_fg',
+    background: 'status_bg',
     minimum: 4.5,
   },
+  // The `$` toggle's label while money is hidden. Pressed is a selected state,
+  // so it takes the selected colour, `data`, on the button's own `surface`, and
+  // the label is read rather than noticed -- so it owes the text ratio.
+  { name: 'data/surface text', foreground: 'data', background: 'surface', minimum: 4.5 },
   // The invoice header's destructive verbs -- cancel and write off -- are red
   // text on the document ground and on the surface the menu row hovers to.
   // They are words, not an indicator, so both owe the 4.5:1 body-text bar. The
@@ -76,6 +78,13 @@ export const precisionContrastRequirements: readonly ThemeContrastRequirement[] 
   // brighter red is caught here instead of in review.
   { name: 'red/ground text', foreground: 'red', background: 'ground', minimum: 4.5 },
   { name: 'red/surface text', foreground: 'red', background: 'surface', minimum: 4.5 },
+  // The reason an approver gave for rejecting a timesheet, written on the
+  // status band. It is prose about a refusal, so it is red and owes 4.5:1.
+  { name: 'red/status-bg text', foreground: 'red', background: 'status_bg', minimum: 4.5 },
+  // A template save that lost to someone else's newer version says so in
+  // amber, the warning that is not yet an error. The amber this replaced gave
+  // that sentence under 2:1, and nothing here measured it.
+  { name: 'amber/ground text', foreground: 'amber', background: 'ground', minimum: 4.5 },
   // An icon is a non-text graphic and AA asks 3:1 of it — but only while
   // something else names the control. The overflow mark in a table row and the
   // magnifier on the command trigger are the whole label of the control they
@@ -84,34 +93,65 @@ export const precisionContrastRequirements: readonly ThemeContrastRequirement[] 
   { name: 'data/ground row action', foreground: 'data', background: 'ground', minimum: 4.5 },
   { name: 'ink/surface control label', foreground: 'ink', background: 'surface', minimum: 4.5 },
   // `surface_2` is the nested surface: a toolbar inside a workspace, a summary
-  // band inside a list. It is not a new colour but `surface`'s own step off
-  // `ground` taken a second time -- #FFFFFF, then -10/-9/-8, then -10/-9/-8
-  // again -- so a panel inside a card reads as one more rung of one ramp. Text
-  // in it is `ink`, exactly as on every other surface, and owes the same 4.5:1.
+  // band inside a list. It is not a new colour but the next rung of the grey
+  // ramp `surface` already stands on -- #FFFFFF, #F9FAFB, #F3F4F6, about six
+  // steps apart -- so a panel inside a card reads as one more rung of one ramp.
+  // Text in it is `ink`, exactly as on every other surface, and owes 4.5:1.
   { name: 'ink/surface-2 text', foreground: 'ink', background: 'surface_2', minimum: 4.5 },
+  // A pressed toggle and the chosen segment of a view switch are filled with
+  // `orange_tint`. The slot keeps its name, because stored instance palettes
+  // are keyed by it; its job is now the selected tint, and the label on it is
+  // `ink`.
+  {
+    name: 'ink/orange-tint pressed label',
+    foreground: 'ink',
+    background: 'orange_tint',
+    minimum: 4.5,
+  },
   // Hovering a table row repaints the row, so the tint has to answer for every
   // colour the row was already carrying, not just its cell text. Two do: `ink`
   // on the cells, and `data` on the row actions the hover reveals -- the same
   // pair the `data/ground row action` row above measures against the unhovered
   // ground. One row each, so a later change to the tint is caught in both.
   //
-  // The tint is #E1ECFB, read from the legacy roster where the hovered row
-  // samples uniformly at rgb(225, 236, 251) against #FFFFFF unhovered:
-  // hsl(215, 76%, 93%), a high-lightness tint of the same blue as the billable
-  // bar. It is reached by pointer or by keyboard focus and by nothing else --
-  // `data-row` goes on every body row unconditionally, and the only rules
-  // selecting on it are `:hover` and `:focus-within`. That is worth keeping
-  // true rather than incidental, because `print-color-adjust` is set nowhere
-  // in this stylesheet: a background fill is not guaranteed to reach paper, so
-  // a row tint that meant "overdue" or "selected" would print as nothing and
-  // the state would be lost. This one means "the pointer is here", which paper
-  // has no use for.
+  // The tint is #EFF3FF, the tracker design's pale blue (its running-timer
+  // band uses it): a high-lightness tint of the brand blue that `data` and the
+  // billable bar are drawn in. It is reached by pointer or by keyboard focus
+  // and by nothing else -- `data-row` goes on every body row unconditionally,
+  // and the only rules selecting on it are `:hover` and `:focus-within`. That
+  // is worth keeping true rather than incidental, because
+  // `print-color-adjust` is set nowhere in this stylesheet: a background fill
+  // is not guaranteed to reach paper, so a row tint that meant "overdue" or
+  // "selected" would print as nothing and the state would be lost. This one
+  // means "the pointer is here", which paper has no use for.
   { name: 'ink/row-hover text', foreground: 'ink', background: 'row_hover', minimum: 4.5 },
   {
     name: 'data/row-hover row action',
     foreground: 'data',
     background: 'row_hover',
     minimum: 4.5,
+  },
+  // The edge of a blue fill. Dim's slate is light enough that the action blue
+  // stands 2.7:1 off it, short of the 3:1 a control's boundary owes, and no
+  // blue can both carry a white label at 4.5:1 and clear that slate -- so in
+  // Dim the label stays white on the blue and the edge is drawn in `data`, the
+  // reading blue (`--ez-action-edge`): a 1px border round every primary button
+  // and an inset ring on the sidebar's tile for the section you are in. `data`
+  // already answers to `ground` and `surface` above. These are the other two
+  // grounds the edge stands on: the current section's row, which is
+  // `surface_2`, and the status band a Submit button sits in. In light and dark
+  // the edge is the fill itself.
+  {
+    name: 'data/surface-2 selected edge',
+    foreground: 'data',
+    background: 'surface_2',
+    minimum: 3,
+  },
+  {
+    name: 'data/status-bg action edge',
+    foreground: 'data',
+    background: 'status_bg',
+    minimum: 3,
   },
   // The money band on an invoice, and the two inks that sit on it. Unlike the
   // row tint above, this fill does carry meaning -- it is what makes the totals
@@ -162,6 +202,23 @@ export const contrastRatio = (first: string, second: string): number => {
   const darker = Math.min(luminance(first), luminance(second))
   return (lighter + 0.05) / (darker + 0.05)
 }
+
+/**
+ * Every scheme a theme wears, as a theme of its own, so the same requirements
+ * can be asked of each. A pair that reads in light and not in dark fails as
+ * surely as the reverse, and dark is the scheme nobody looks at in review.
+ */
+export const themeSchemes = (
+  theme: ThemeDefinition,
+): readonly { readonly scheme: 'light' | 'dark' | 'dim'; readonly theme: ThemeDefinition }[] => [
+  { scheme: 'light', theme },
+  ...(theme.darkColors === undefined
+    ? []
+    : [{ scheme: 'dark' as const, theme: { ...theme, colors: theme.darkColors } }]),
+  ...(theme.dimColors === undefined
+    ? []
+    : [{ scheme: 'dim' as const, theme: { ...theme, colors: theme.dimColors } }]),
+]
 
 export const checkThemeContrast = (
   theme: ThemeDefinition,

@@ -18,6 +18,10 @@ const manifestPath = resolve(root, 'src', 'generated', 'theme-manifest.ts')
  * So this is the boring shape on purpose: slot name to value, one level deep,
  * no comments and no structure to interpret. A file anything with a JSON parser
  * can consume without knowing what a slot is.
+ *
+ * A theme's other schemes keep that shape: each is emitted as a theme of its
+ * own, `<name>_dark` and `<name>_dim`, and `schemes` says which light theme
+ * they belong to.
  */
 const palettePath = resolve(root, 'generated', 'theme-palette.json')
 const check = process.argv.includes('--check')
@@ -44,8 +48,13 @@ const slots = [
   'live_text',
   'surface_2',
   'row_hover',
+  'band',
+  'band_ink',
+  'shadow',
 ]
 const fonts = ['display', 'body', 'mono']
+// The schemes a theme carries beside its light one, each a full set of slots.
+const schemes = ['dark', 'dim']
 const scalars = ['radius']
 
 const fail = (message) => {
@@ -67,10 +76,13 @@ const exactArray = (actual, expected, field) => {
 
 const cssName = (name) => name.replaceAll('_', '-')
 
+// 900 is the page title's weight. A family that stops short of it (IBM Plex
+// Mono ends at 700) is served what it has: Google Fonts drops a weight a family
+// does not carry rather than refusing the whole request.
 const fontStylesheet = (theme) => {
   const unique = [...new Set(fonts.map((font) => theme[font]))]
   const families = unique.map(
-    (font) => `family=${font.split(' ').join('+')}:wght@400;500;600;700`,
+    (font) => `family=${font.split(' ').join('+')}:wght@400;500;600;700;900`,
   )
   return `https://fonts.googleapis.com/css2?${families.join('&')}&display=swap`
 }
@@ -91,15 +103,35 @@ const compile = (source) => {
   if (rootDocument.default_theme !== name || name !== 'precision') {
     fail('precision must be the only OSS theme and the default')
   }
-  const allowed = new Set(['label', 'tier', ...slots, ...fonts, ...scalars])
+  const allowed = new Set(['label', 'tier', ...schemes, ...slots, ...fonts, ...scalars])
   for (const key of Object.keys(theme)) {
     if (!allowed.has(key)) fail(`themes.${name}.${key} is not part of the slot contract`)
   }
-  for (const slot of slots) {
-    if (typeof theme[slot] !== 'string' || !/^#[0-9A-F]{6}$/u.test(theme[slot])) {
-      fail(`themes.${name}.${slot} must be an uppercase six-digit hex color`)
+  const hexSlots = (palette, field) => {
+    for (const slot of slots) {
+      if (typeof palette[slot] !== 'string' || !/^#[0-9A-F]{6}$/u.test(palette[slot])) {
+        fail(`${field}.${slot} must be an uppercase six-digit hex color`)
+      }
     }
   }
+  hexSlots(theme, `themes.${name}`)
+  // The other schemes are colours only: type and radius are the theme's in
+  // every scheme. Every slot has to be there, because a scheme that left one
+  // out would paint the light value on a dark ground.
+  const schemeColors = Object.fromEntries(
+    schemes.map((scheme) => {
+      const palette = object(theme[scheme], `themes.${name}.${scheme}`)
+      for (const key of Object.keys(palette)) {
+        if (!slots.includes(key)) {
+          fail(`themes.${name}.${scheme}.${key} is not part of the slot contract`)
+        }
+      }
+      hexSlots(palette, `themes.${name}.${scheme}`)
+      return [scheme, palette]
+    }),
+  )
+  const dark = schemeColors.dark
+  const dim = schemeColors.dim
   for (const font of fonts) {
     if (typeof theme[font] !== 'string' || !/^[A-Za-z0-9 ]{1,100}$/u.test(theme[font])) {
       fail(`themes.${name}.${font} must be a plain font-family name`)
@@ -112,20 +144,53 @@ const compile = (source) => {
     fail(`themes.${name}.label must be a non-empty string`)
   }
 
-  const declarations = [
-    ...slots.map((slot) => `  --ez-${cssName(slot)}: ${theme[slot]};`),
-    ...fonts.map((font) => `  --ez-font-${font}: ${JSON.stringify(theme[font])};`),
-    `  --ez-radius: ${theme.radius}px;`,
-  ]
+  const slotDeclarations = (palette) =>
+    slots.map((slot) => `  --ez-${cssName(slot)}: ${palette[slot]};`)
+  const darkDeclarations = ['  color-scheme: dark;', ...slotDeclarations(dark)]
+  // Dim is a dark scheme to the browser -- its scrollbars and form controls --
+  // and its own slate to the stylesheet.
+  const dimDeclarations = ['  color-scheme: dark;', ...slotDeclarations(dim)]
+  const selector = `[data-ez-theme=${JSON.stringify(name)}]`
+  /*
+   * Three blocks. The first is the light scheme, on the root and on anything
+   * else wearing the theme -- which is how a document shell keeps the white
+   * paper an invoice is printed on while the application around it is dark.
+   *
+   * The rest are the other schemes. `data-ez-scheme` is the person's choice,
+   * which the server renders on the root from their cookie, so it is there
+   * before the first paint: `dark` and `dim` by name, and `system`, which hands
+   * the choice to the operating system -- light or dark only, since no
+   * operating system asks for dim. An instance with a palette of its own
+   * (`data-ez-palette`) keeps that palette unless someone asks for dark
+   * outright: the palette was checked against the light scheme, and an OS
+   * setting is not a request to stop wearing it. The attribute names are
+   * `src/theme-preference.ts`'s, and the renderer writes them.
+   */
   const css = [
     '/* Generated by scripts/compile-theme-tokens.mjs. Do not edit. */',
-    `:root, [data-ez-theme=${JSON.stringify(name)}] {`,
-    ...declarations,
+    `:root, ${selector} {`,
+    '  color-scheme: light;',
+    ...slotDeclarations(theme),
+    ...fonts.map((font) => `  --ez-font-${font}: ${JSON.stringify(theme[font])};`),
+    `  --ez-radius: ${theme.radius}px;`,
+    '}',
+    `${selector}[data-ez-scheme="dark"] {`,
+    ...darkDeclarations,
+    '}',
+    `${selector}[data-ez-scheme="dim"] {`,
+    ...dimDeclarations,
+    '}',
+    '@media (prefers-color-scheme: dark) {',
+    `  ${selector}[data-ez-scheme="system"]:not([data-ez-palette]) {`,
+    ...darkDeclarations.map((line) => `  ${line}`),
+    '  }',
     '}',
     '',
   ].join('\n')
 
   const colors = Object.fromEntries(slots.map((slot) => [slot, theme[slot]]))
+  const darkColors = Object.fromEntries(slots.map((slot) => [slot, dark[slot]]))
+  const dimColors = Object.fromEntries(slots.map((slot) => [slot, dim[slot]]))
   const themeFonts = Object.fromEntries(fonts.map((font) => [font, theme[font]]))
   const manifest = [
     '// Generated by scripts/compile-theme-tokens.mjs. Do not edit.',
@@ -134,6 +199,8 @@ const compile = (source) => {
     `  ${JSON.stringify(name)}: {`,
     `    label: ${JSON.stringify(theme.label)},`,
     `    colors: ${JSON.stringify(colors, null, 2).replaceAll('\n', '\n    ')},`,
+    `    darkColors: ${JSON.stringify(darkColors, null, 2).replaceAll('\n', '\n    ')},`,
+    `    dimColors: ${JSON.stringify(dimColors, null, 2).replaceAll('\n', '\n    ')},`,
     `    fonts: ${JSON.stringify(themeFonts, null, 2).replaceAll('\n', '\n    ')},`,
     `    radius: ${theme.radius},`,
     `    fontStylesheet: ${JSON.stringify(fontStylesheet(theme))},`,
@@ -150,16 +217,31 @@ const compile = (source) => {
    * mean nothing to a stylesheet. Everything else is carried as written, so a
    * consumer comparing its own hex against this is comparing like with like.
    */
+  const flat = (colours, theme) =>
+    Object.fromEntries([
+      ...slots.map((slot) => [slot, colours[slot]]),
+      ...[...fonts, ...scalars].map((key) => [key, theme[key]]),
+    ])
   const palette = {
     $generated: 'apps/web/scripts/compile-theme-tokens.mjs -- do not edit',
     $source: 'apps/web/theme-tokens.json',
     default_theme: source.default_theme,
     contract: { slots, fonts, scalars },
     themes: Object.fromEntries(
+      Object.entries(source.themes).flatMap(([name, theme]) => [
+        [name, flat(theme, theme)],
+        ...schemes
+          .filter((scheme) => theme[scheme] !== undefined)
+          .map((scheme) => [`${name}_${scheme}`, flat(theme[scheme], theme)]),
+      ]),
+    ),
+    schemes: Object.fromEntries(
       Object.entries(source.themes).map(([name, theme]) => [
         name,
         Object.fromEntries(
-          [...slots, ...fonts, ...scalars].map((key) => [key, theme[key]]),
+          schemes
+            .filter((scheme) => theme[scheme] !== undefined)
+            .map((scheme) => [scheme, `${name}_${scheme}`]),
         ),
       ]),
     ),

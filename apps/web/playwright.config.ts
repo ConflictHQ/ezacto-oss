@@ -4,12 +4,41 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig } from '@playwright/test'
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
+// The harness port, shared with browser-worker-harness.mjs through the
+// environment Playwright hands its web server.
+process.env.EZACTO_BROWSER_PORT ??= '4173'
+const origin = `http://127.0.0.1:${process.env.EZACTO_BROWSER_PORT}`
 process.env.EZACTO_BROWSER_FIXTURE_EMAIL ??= 'browser-owner@example.test'
 process.env.EZACTO_BROWSER_FIXTURE_PASSWORD ??= randomBytes(32).toString(
   'base64url',
 )
 process.env.EZACTO_BROWSER_FIXTURE_INSTANT ??= '2026-08-31T01:00:00.000Z'
 process.env.EZACTO_BROWSER_FIXTURE_TIME_ZONE ??= 'America/Costa_Rica'
+
+// The navigation is a sidebar by default and a top bar on request, by a cookie
+// (the 2026-10 reskin). EZACTO_BROWSER_NAV=topbar starts every spec with that
+// cookie set, so the whole suite -- written against the top bar -- can be run
+// against it as well as against the sidebar.
+const topbarCookie =
+  process.env.EZACTO_BROWSER_NAV === 'topbar'
+    ? {
+        storageState: {
+          cookies: [
+            {
+              name: 'ezacto_nav',
+              value: 'topbar',
+              domain: '127.0.0.1',
+              path: '/',
+              expires: -1,
+              httpOnly: false,
+              secure: false,
+              sameSite: 'Lax' as const,
+            },
+          ],
+          origins: [],
+        },
+      }
+    : {}
 
 export default defineConfig({
   testDir: './e2e',
@@ -30,7 +59,7 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   reporter: 'line',
   use: {
-    baseURL: 'http://127.0.0.1:4173',
+    baseURL: origin,
     browserName: 'chromium',
     headless: true,
     timezoneId: process.env.EZACTO_BROWSER_FIXTURE_TIME_ZONE,
@@ -38,11 +67,12 @@ export default defineConfig({
     // Authentication acceptance uses a generated password. Keep it out of
     // retained traces as well as URLs, browser storage, and console output.
     trace: 'off',
+    ...topbarCookie,
   },
   webServer: {
     command: 'node apps/web/scripts/browser-worker-harness.mjs',
     cwd: repositoryRoot,
-    url: 'http://127.0.0.1:4173/healthz',
+    url: `${origin}/healthz`,
     reuseExistingServer: false,
     timeout: 120_000,
     stdout: 'pipe',

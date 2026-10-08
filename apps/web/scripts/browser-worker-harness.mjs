@@ -7,7 +7,12 @@ import { build } from 'esbuild'
 import { Miniflare, NoOpLog } from 'miniflare'
 
 const listenHost = '127.0.0.1'
-const listenPort = 4173
+// 4173 unless the run says otherwise, so a suite can run beside a harness
+// someone already has up on the usual port without either one stopping.
+const listenPort = Number(process.env.EZACTO_BROWSER_PORT ?? 4173)
+if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
+  throw new Error('EZACTO_BROWSER_PORT must be a TCP port')
+}
 const cursorSigningKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 const fixtureControlPath = '/__ezacto_browser_fixture__/start-end'
 const fixtureControlHeader = 'start-end-round-trip'
@@ -939,7 +944,10 @@ const fixtureControl = async (request, response) => {
           .bind(91011, teammateId, teammateId, spentDate, timestamp, timestamp),
       ])
     }
-  } else if (action === 'payment-run-reset') {
+  } else if (action === 'payment-run-reset' || action === 'sign-in-rate-reset') {
+    // Clearing the sign-in limit is all either does. The second name is for a
+    // spec that signs in late in a run, after the rest of the suite has spent
+    // the limit, and has nothing to do with payment runs.
     await database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`).run()
   } else if (action === 'task-admin-cleanup') {
     await database.batch([

@@ -75,11 +75,16 @@ describe('worker entry', () => {
     const home = await (await app.request('/dashboard', {}, env)).text()
     expect(home).toContain('data-app-view="dashboard"')
     expect(home).toContain('data-dashboard-page')
-    expect(home).toContain('<a href="/dashboard" aria-current="page">Home</a>')
+    // A section link is its mark and its label; the label is the name.
+    expect(home).toMatch(
+      /<a href="\/dashboard" aria-current="page"><svg[^>]*>(?:(?!<\/a>)[^])*<span class="nav-label">Home<\/span><\/a>/u,
+    )
 
     const time = await (await app.request('/', {}, env)).text()
     expect(time).toContain('data-app-view="time"')
-    expect(time).toContain('<a href="/" aria-current="page">Time</a>')
+    expect(time).toMatch(
+      /<a href="\/" aria-current="page"><svg[^>]*>(?:(?!<\/a>)[^])*<span class="nav-label">Time<\/span><\/a>/u,
+    )
   })
 
   it('[unit] keeps the URL settings shipped under', async () => {
@@ -126,6 +131,73 @@ describe('worker entry', () => {
     }
   })
 
+  it('[unit] renders the scheme from the cookie on every shell route, before any script runs', async () => {
+    // A scheme a script applies arrives after the first paint, and a dark page
+    // flashes white on every load. So the page is rendered in it. Every route
+    // goes through one place for this, and the walk is what proves no route was
+    // left out of that place.
+    const root = (html: string): string => /<html[^>]*>/u.exec(html)?.[0] ?? ''
+    const paths = [
+      '/',
+      '/dashboard',
+      '/approvals',
+      '/invoices',
+      '/invoices/1',
+      '/invoices/new',
+      '/reports',
+      '/settings/user',
+      '/settings/company',
+      '/team/1',
+      '/no-such-page',
+    ]
+    for (const path of paths) {
+      const response = await app.request(
+        path,
+        { headers: { cookie: 'unrelated=1; ezacto_scheme=dark' } },
+        env,
+      )
+      const html = await response.text()
+      expect(root(html), path).toContain(' data-ez-scheme="dark"')
+      expect(html, path).toContain('<meta name="color-scheme" content="dark">')
+      // It varies by cookie, so it must never be a page anyone else is served.
+      expect(response.headers.get('cache-control'), path).toBe('no-store')
+    }
+    const unset = await (await app.request('/', {}, env)).text()
+    expect(root(unset)).toContain(' data-ez-scheme="system"')
+    // Dim is on the list too, and a dark scheme to the browser's controls.
+    const dim = await (
+      await app.request('/', { headers: { cookie: 'ezacto_scheme=dim' } }, env)
+    ).text()
+    expect(root(dim)).toContain(' data-ez-scheme="dim"')
+    expect(dim).toContain('<meta name="color-scheme" content="dark">')
+    // A value off the list is a preference nobody can have; it never reaches
+    // the markup as itself.
+    const hostile = await (
+      await app.request('/', { headers: { cookie: 'ezacto_scheme="><script>x</script>' } }, env)
+    ).text()
+    expect(root(hostile)).toContain(' data-ez-scheme="system"')
+    expect(hostile).not.toContain('<script>x</script>')
+  })
+
+  it('[unit] lays the header out in the layout the cookies chose, on every shell route', async () => {
+    // The same header is a sidebar or a top bar by an attribute on the root,
+    // rendered from the person's cookies so the page never jumps from one to
+    // the other after it paints.
+    const root = (html: string): string => /<html[^>]*>/u.exec(html)?.[0] ?? ''
+    for (const path of ['/', '/invoices', '/settings/user', '/no-such-page']) {
+      const chosen = await (
+        await app.request(
+          path,
+          { headers: { cookie: 'ezacto_nav=topbar; ezacto_sidebar=collapsed' } },
+          env,
+        )
+      ).text()
+      expect(root(chosen), path).toContain(' data-ez-nav="topbar" data-ez-sidebar="collapsed"')
+      const unset = await (await app.request(path, {}, env)).text()
+      expect(root(unset), path).toContain(' data-ez-nav="sidebar" data-ez-sidebar="expanded"')
+    }
+  })
+
   it('[unit] marks no primary section on a page outside the primary nav', async () => {
     // activeSection defaults to Time, so settings marked Time as the page you
     // were on.
@@ -133,7 +205,7 @@ describe('worker entry', () => {
     expect(html).toContain('data-app-view="settings-company"')
     // The Week/Day strip marks itself; what must not be marked is a primary
     // section, and Time is the one the default would have claimed.
-    expect(html).not.toContain('<a href="/" aria-current="page">Time</a>')
+    expect(html).not.toMatch(/<a href="\/" aria-current="page"><svg/u)
     const nav = /<nav class="primary-nav"[^>]*>(.*?)<\/nav>/su.exec(html)?.[1] ?? ''
     expect(nav).not.toContain('aria-current')
   })
@@ -145,7 +217,7 @@ describe('worker entry', () => {
     expect(res.headers.get('content-type')).toContain('text/html')
 
     const html = await res.text()
-    expect(html).toContain('<title>ezacto — Sign in</title>')
+    expect(html).toContain('<title>eZacto — Sign in</title>')
     expect(html).toContain('abc1234')
     expect(html).toContain('data-auth-gateway data-state="checking"')
     expect(html).toContain('data-authenticated-shell hidden inert')

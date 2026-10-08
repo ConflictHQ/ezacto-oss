@@ -148,7 +148,8 @@ export const renderModuleSettingsPage = (view?: string): string => `
     </section>
     <section class="settings-section" data-settings-section="appearance" aria-labelledby="settings-appearance-title">
       <header><h2 id="settings-appearance-title">Appearance</h2>
-      <p>The colours this instance wears, for everyone who uses it. Leave them alone and it looks the way it shipped. Every palette is checked for readability before it is saved &mdash; a colour that would leave text unreadable against what sits behind it is refused, and the message says which one and why.</p></header>
+      <p>The colours this instance wears, for everyone who uses it. Leave them alone and it looks the way it shipped. Every palette is checked for readability before it is saved &mdash; a colour that would leave text unreadable against what sits behind it is refused, and the message says which one and why.</p>
+      <p>These are the light theme, and they are what everyone sees by default, whatever their computer is set to. Somebody who picks Dim or Dark in their own settings sees that built-in theme instead.</p></header>
       <p class="form-result" data-settings-theme-status role="status" aria-live="polite">Loading appearance&hellip;</p>
       <div class="settings-theme" data-settings-theme-slots hidden></div>
       <div class="settings-form" data-settings-theme-actions hidden>
@@ -269,6 +270,24 @@ export const renderModuleSettingsPage = (view?: string): string => `
           <div class="client-confirm-actions"><button type="submit" value="close">Done</button></div>
         </form>
       </dialog>
+    </section>
+    <section class="settings-density" aria-labelledby="settings-scheme-heading">
+      <h2 id="settings-scheme-heading">Theme</h2>
+      <p class="hint">Light, a dim slate, dark, or whatever this computer is set to. Yours and this browser's, like row density; invoices and the other documents your clients receive stay on white paper. If this instance has colours of its own, System keeps them, and Dim and Dark switch to the built-in themes.</p>
+      <div class="settings-density-choice" role="group" aria-label="Theme">
+        <button type="button" data-color-scheme-choice="system" aria-pressed="true">System</button>
+        <button type="button" data-color-scheme-choice="light" aria-pressed="false">Light</button>
+        <button type="button" data-color-scheme-choice="dim" aria-pressed="false">Dim</button>
+        <button type="button" data-color-scheme-choice="dark" aria-pressed="false">Dark</button>
+      </div>
+    </section>
+    <section class="settings-density" aria-labelledby="settings-nav-heading">
+      <h2 id="settings-nav-heading">Navigation</h2>
+      <p class="hint">A sidebar down the left, or a bar across the top. Yours and this browser's, like the theme. On a narrow screen both fold into the same menu.</p>
+      <div class="settings-density-choice" role="group" aria-label="Navigation">
+        <button type="button" data-nav-layout-choice="sidebar" aria-pressed="true">Sidebar</button>
+        <button type="button" data-nav-layout-choice="topbar" aria-pressed="false">Top bar</button>
+      </div>
     </section>
     <section class="settings-density" aria-labelledby="settings-density-heading">
       <h2 id="settings-density-heading">Row density</h2>

@@ -6,7 +6,7 @@ import { readInstancePalette } from '@ezacto/core'
 import { instancePaletteContract } from '../src/instance-theme.js'
 import { themeSlotCopy, themeSlotGroups } from '../src/module-settings/model.js'
 import { renderAppShell } from '../src/shell/render.js'
-import { cssCustomProperty, themeSlotNames } from '../src/theme.js'
+import { cssCustomProperty, themeManifest, themeSlotNames } from '../src/theme.js'
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 
@@ -49,6 +49,19 @@ describe('the palette contract the instance is held to (#591)', () => {
         (error) => error.code === 'contrast',
       ),
     ).toBe(true)
+
+    // The built-in dark scheme, offered as an operator palette, saves as it
+    // stands: every pair the contract asks of a palette, it clears. That keeps
+    // the two from drifting -- a requirement added for the shell reaches the
+    // dark scheme here as well as in the contrast gate.
+    // The same holds for Dim.
+    for (const scheme of [themeManifest.precision.darkColors!, themeManifest.precision.dimColors!]) {
+      expect(Object.keys(scheme).sort()).toEqual([...themeSlotNames].sort())
+      expect(readInstancePalette(scheme, instancePaletteContract)).toEqual({
+        palette: scheme,
+        errors: [],
+      })
+    }
   })
 })
 
