@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config'
+import { defineConfig } from "vitest/config";
 
 /**
  * `maxWorkers` is set here because the flag CI passes cannot reach vitest.
@@ -28,7 +28,9 @@ import { defineConfig } from 'vitest/config'
  */
 export default defineConfig({
   test: {
-    setupFiles: ['./test/setup-browser-storage.ts'],
-    ...(process.env['CI'] === undefined ? {} : { maxWorkers: 2, testTimeout: 15_000 }),
+    setupFiles: ["./test/setup-browser-storage.ts"],
+    ...(process.env["CI"] === undefined
+      ? {}
+      : { maxWorkers: 2, testTimeout: 15_000 }),
   },
-})
+});
