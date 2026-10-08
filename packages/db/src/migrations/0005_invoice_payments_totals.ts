@@ -57,6 +57,15 @@ const tax2BaseDiscount = roundRate(tax2Base, 'invoice.discount_rate_ppm')
 const tax = roundRate(`(${taxBase} - ${taxBaseDiscount})`, 'invoice.tax_rate_ppm')
 const tax2 = roundRate(`(${tax2Base} - ${tax2BaseDiscount})`, 'invoice.tax2_rate_ppm')
 
+/**
+ * The discount-first parallel-tax expressions, over a `line_bases` row and an
+ * `invoice` row. Exported so a later migration that recomputes one invoice at a
+ * time (0101) rounds with this text, not a retyped copy of it. Exporting them
+ * does not change any statement above or below, so this migration's checksum
+ * is unaffected.
+ */
+export const invoiceFinancialComponents = { discount, tax, tax2 } as const
+
 const recomputeInvoice = (invoiceId: string) => `UPDATE invoices
     SET (discount_amount_cents, tax_amount_cents, tax2_amount_cents,
       amount_cents, due_amount_cents) = (

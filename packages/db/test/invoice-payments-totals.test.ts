@@ -21,6 +21,7 @@ import { projectsTimeMigration } from '../src/migrations/0002_projects_time.js'
 import { rateResolverMigration } from '../src/migrations/0003_rate_resolver.js'
 import { invoiceFoundationMigration } from '../src/migrations/0004_invoice_foundation.js'
 import { invoicePaymentsTotalsMigration } from '../src/migrations/0005_invoice_payments_totals.js'
+import { invoiceTotalsPerInvoiceMigration } from '../src/migrations/0101_invoice_totals_per_invoice.js'
 import type { InvoicePaymentOption } from '../src/schema.js'
 
 type OperationDatabase = Parameters<typeof recordInvoicePayment>[0]
@@ -139,7 +140,22 @@ const installThrough0004 = async (database: TestDatabase): Promise<void> => {
 
 // D21's raw-trigger unit cases install their owning migration exactly. On the
 // latest schema, mutations go through the D22 operation tests below instead.
-const installThrough0005 = async (database: TestDatabase): Promise<void> => {
+//
+// 0101 recreates 0005's totals triggers so that each recomputes one invoice
+// rather than the whole organization (issue 950). Every raw-trigger case runs
+// a second time with 0101's text installed on top, which holds the replacement
+// to exactly the invariants the original is held to. That pass records no
+// ledger row for 0101, because 0006-0100 are absent; none of those cases
+// migrates again.
+const totalsTriggerSets = [
+  { label: '', totals: [] as readonly string[] },
+  { label: ', 0101 totals triggers', totals: invoiceTotalsPerInvoiceMigration },
+] as const
+
+const installThrough0005 = async (
+  database: TestDatabase,
+  totals: readonly string[] = [],
+): Promise<void> => {
   await installThrough0004(database)
   for (const statement of invoicePaymentsTotalsMigration) await database.run(statement)
   await database.run(
@@ -147,6 +163,7 @@ const installThrough0005 = async (database: TestDatabase): Promise<void> => {
     '0005_invoice_payments_totals',
     timestamp,
   )
+  for (const statement of totals) await database.run(statement)
 }
 
 const installBaseFixture = async (database: TestDatabase): Promise<void> => {
@@ -224,13 +241,16 @@ describe('invoice payment package surface', () => {
   })
 })
 
-for (const [runtime, factory] of factories) {
-  describe(`invoice payments and totals (${runtime})`, () => {
+for (const [runtime, factory] of factories) for (const { label, totals } of totalsTriggerSets) {
+  // Cases that migrate, from empty or from 0004, carry whatever triggers the
+  // ledger installs; they do not depend on the raw install, so they run once.
+  const migrating = it.runIf(totals.length === 0)
+  describe(`invoice payments and totals (${runtime}${label})`, () => {
     let database: TestDatabase | undefined
 
     afterEach(async () => database?.close())
 
-    it('[unit] creates the exact physical money foundation and reruns idempotently', async () => {
+    migrating('[unit] creates the exact physical money foundation and reruns idempotently', async () => {
       database = await factory()
       const db = database
       expect(
@@ -439,7 +459,7 @@ for (const [runtime, factory] of factories) {
       expect(await db.rows(`PRAGMA foreign_key_check`)).toEqual([])
     })
 
-    it('[unit] upgrades populated 0004 rows in place and backfills authoritative totals', async () => {
+    migrating('[unit] upgrades populated 0004 rows in place and backfills authoritative totals', async () => {
       database = await factory(false)
       const db = database
       await installThrough0004(db)
@@ -476,7 +496,7 @@ for (const [runtime, factory] of factories) {
     it('[unit] [inv-04] applies exact discount-first parallel taxes and recomputes every mutation', async () => {
       database = await factory(false)
       const db = database
-      await installThrough0005(db)
+      await installThrough0005(db, totals)
       await installBaseFixture(db)
       await db.run(
         `INSERT INTO invoices
@@ -610,7 +630,7 @@ for (const [runtime, factory] of factories) {
     it('[unit] keeps source observations atomic, strictly newer, bounded, and separate', async () => {
       database = await factory(false)
       const db = database
-      await installThrough0005(db)
+      await installThrough0005(db, totals)
       await installBaseFixture(db)
       const fixture = JSON.parse(
         await readFile(new URL('fixtures/harvest-invoice.json', import.meta.url), 'utf8'),
@@ -765,7 +785,7 @@ for (const [runtime, factory] of factories) {
       ).rejects.toThrow(/requires an import identity/)
     })
 
-    it('[unit] generates transfer references at the operation boundary and rejects Bill.com', async () => {
+    migrating('[unit] generates transfer references at the operation boundary and rejects Bill.com', async () => {
       database = await factory()
       const db = database
       await installBaseFixture(db)
@@ -864,7 +884,7 @@ for (const [runtime, factory] of factories) {
       ).toEqual([{ version: 3, ledger: 3, outbox: 3 }])
     })
 
-    it('[unit] confirms only an exact suggestion and reverses it on payment deletion', async () => {
+    migrating('[unit] confirms only an exact suggestion and reverses it on payment deletion', async () => {
       database = await factory()
       const db = database
       await installBaseFixture(db)
@@ -1119,7 +1139,7 @@ for (const [runtime, factory] of factories) {
     it('[unit] preserves Harvest recorder, gateway, transaction, and dual-date evidence', async () => {
       database = await factory(false)
       const db = database
-      await installThrough0005(db)
+      await installThrough0005(db, totals)
       await installBaseFixture(db)
       const fixture = JSON.parse(
         await readFile(new URL('fixtures/harvest-invoice-payment.json', import.meta.url), 'utf8'),
@@ -1225,7 +1245,7 @@ for (const [runtime, factory] of factories) {
     it('[unit] rejects identity replacement, malformed shapes, and aggregate overflow', async () => {
       database = await factory(false)
       const db = database
-      await installThrough0005(db)
+      await installThrough0005(db, totals)
       await installBaseFixture(db)
       await db.run(
         `INSERT INTO payment_provider_accounts
@@ -1529,7 +1549,7 @@ for (const [runtime, factory] of factories) {
     it('[unit] rolls back late failures in line, payment, and confirmation mutations', async () => {
       database = await factory(false)
       const db = database
-      await installThrough0005(db)
+      await installThrough0005(db, totals)
       await installBaseFixture(db)
       await db.run(
         `INSERT INTO invoice_line_items
@@ -1618,7 +1638,7 @@ for (const [runtime, factory] of factories) {
     it('[unit] defeats outer IGNORE and FAIL policies for overflowing derived results', async () => {
       database = await factory(false)
       const db = database
-      await installThrough0005(db)
+      await installThrough0005(db, totals)
       await installBaseFixture(db)
       for (const [offset, policy] of ['IGNORE', 'FAIL'].entries()) {
         const lineInvoiceId = 20 + offset
@@ -1723,7 +1743,7 @@ for (const [runtime, factory] of factories) {
       }
     })
 
-    it('[unit] rejects unsafe legacy line aggregates without floating point', async () => {
+    migrating('[unit] rejects unsafe legacy line aggregates without floating point', async () => {
       database = await factory(false)
       const db = database
       await installThrough0004(db)
@@ -1753,7 +1773,7 @@ for (const [runtime, factory] of factories) {
       ).toContainEqual({ id: '0005_invoice_payments_totals' })
     })
 
-    it('[unit] rolls back a final-trigger conflict after every ALTER and retries cleanly', async () => {
+    migrating('[unit] rolls back a final-trigger conflict after every ALTER and retries cleanly', async () => {
       database = await factory(false)
       const db = database
       await installThrough0004(db)
