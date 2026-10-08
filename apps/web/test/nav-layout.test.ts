@@ -72,17 +72,22 @@ describe('where the navigation sits (the 2026-10 reskin)', () => {
     expect(root.attributes.get('data-ez-sidebar')).toBe('expanded')
   })
 
-  it('[security] reads all three display cookies, and never one of them as itself', () => {
+  it('[security] reads all four display cookies, and never one of them as itself', () => {
     expect(
-      readDisplayPreferences('ezacto_nav=topbar; ezacto_sidebar=collapsed; ezacto_scheme=dark'),
-    ).toEqual({ colorScheme: 'dark', navLayout: 'topbar', sidebar: 'collapsed' })
+      readDisplayPreferences(
+        'ezacto_nav=topbar; ezacto_sidebar=collapsed; ezacto_scheme=dark; ezacto_time_layout=day',
+      ),
+    ).toEqual({ colorScheme: 'dark', navLayout: 'topbar', sidebar: 'collapsed', timeLayout: 'day' })
     expect(readDisplayPreferences(null)).toEqual({
       colorScheme: 'system',
       navLayout: 'sidebar',
       sidebar: 'expanded',
+      timeLayout: 'week',
     })
     expect(
-      readDisplayPreferences('ezacto_nav="><script>; ezacto_sidebar=\'onload=x'),
-    ).toEqual({ colorScheme: 'system', navLayout: 'sidebar', sidebar: 'expanded' })
+      readDisplayPreferences(
+        'ezacto_nav="><script>; ezacto_sidebar=\'onload=x; ezacto_time_layout="><img src=x>',
+      ),
+    ).toEqual({ colorScheme: 'system', navLayout: 'sidebar', sidebar: 'expanded', timeLayout: 'week' })
   })
 })

@@ -2,7 +2,12 @@ import type { TimeEntry } from '@conflict-hq/ezacto-client'
 
 export type TimeEntryMode = 'duration' | 'start_end'
 export type OrganizationClock = '12h' | '24h'
-export type EntryEditorContext = 'week-cell' | 'day' | 'quick-add' | 'edit' | 'timer'
+/**
+ * Where the editor was opened from. `calendar` is a new entry drawn on the
+ * calendar (issue 943): it opens with its times already set and the note
+ * waiting, and Enter in the note saves it.
+ */
+export type EntryEditorContext = 'week-cell' | 'day' | 'quick-add' | 'edit' | 'timer' | 'calendar'
 
 export interface TimeEntrySettings {
   readonly time_entry_mode: TimeEntryMode
