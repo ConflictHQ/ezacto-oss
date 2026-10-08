@@ -121,6 +121,8 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
       notes: 'notes',
       billingCurrency: 'billing_currency',
       timeEntryNotesMinimumLength: 'time_entry_notes_minimum_length',
+      timeRoundingMode: 'time_rounding_mode',
+      timeRoundingMinutes: 'time_rounding_minutes',
     },
     booleans: new Set([
       'isActive',
@@ -371,7 +373,8 @@ const translate = (error: unknown): never => {
     lower.includes('must be a valid date') ||
     lower.includes('derived') ||
     lower.includes('retain an active administrator') ||
-    lower.includes('owner cannot be deactivated')
+    lower.includes('owner cannot be deactivated') ||
+    lower.includes('time rounding must be')
   ) {
     throw new GeneralResourceError('invalid_input', message)
   }

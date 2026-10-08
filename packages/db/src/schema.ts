@@ -125,11 +125,22 @@ export const organizations = sqliteTable(
       .$type<Array<{ name: string; email: string }>>()
       .notNull()
       .default([]),
+    /**
+     * The single rounding enum before issue 949. Still in the table -- dropping
+     * it would mean a rebuild -- and read by nothing: migration 0101 copied it
+     * into the two columns below.
+     */
     timeRounding: text('time_rounding', {
       enum: ['none', 'nearest_6', 'nearest_15', 'nearest_30', 'up_6', 'up_15', 'up_30'],
     })
       .notNull()
       .default('none'),
+    // Migration 0101 (issue 949): how time is rounded unless a project says
+    // otherwise. Validated by triggers, not CHECKs.
+    timeRoundingMode: text('time_rounding_mode', { enum: ['exact', 'up', 'down', 'nearest'] })
+      .notNull()
+      .default('exact'),
+    timeRoundingMinutes: integer('time_rounding_minutes').notNull().default(15),
     modules: text('modules', { mode: 'json' }).$type<Record<string, boolean>>().notNull(),
     require2fa: integer('require_2fa', { mode: 'boolean' }).notNull().default(false),
     requireSso: integer('require_sso', { mode: 'boolean' }).notNull().default(false),
@@ -914,6 +925,10 @@ export const projects = sqliteTable(
     notes: text('notes'),
     billingCurrency: text('billing_currency'),
     timeEntryNotesMinimumLength: integer('time_entry_notes_minimum_length'),
+    // Migration 0101 (issue 949): this project's own rounding, or both null for
+    // the organization's.
+    timeRoundingMode: text('time_rounding_mode', { enum: ['exact', 'up', 'down', 'nearest'] }),
+    timeRoundingMinutes: integer('time_rounding_minutes'),
     ...timestamps,
   },
   (table) => [
