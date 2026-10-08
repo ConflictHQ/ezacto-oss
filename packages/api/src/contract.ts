@@ -6337,6 +6337,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           "client_id",
           "company_name",
           "client_name",
+          "time_zone",
           "template_version",
           "subject",
           "message",
@@ -6353,6 +6354,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           client_id: integerSchema,
           company_name: stringSchema,
           client_name: stringSchema,
+          // The organization's zone, which `%send_weekday%` is read in.
+          time_zone: stringSchema,
           template_version: integerSchema,
           subject: stringSchema,
           message: stringSchema,

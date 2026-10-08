@@ -1927,6 +1927,7 @@ export type InvoiceEmailDefaultsEnvelope = {
   "client_id": number;
   "company_name": string;
   "client_name": string;
+  "time_zone": string;
   "template_version": number;
   "subject": string;
   "message": string;
