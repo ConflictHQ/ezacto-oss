@@ -138,6 +138,27 @@ export const readUserTimezone = async (
   return row?.timezone ?? null
 }
 
+/**
+ * The signed-in person's own name and primary address, for the identity card
+ * (the app showed "User #1" because nothing gave the shell a name). The primary
+ * address is the live one: invalidated addresses never count.
+ */
+export const readUserIdentity = async (
+  database: Database,
+  userId: number,
+): Promise<{ firstName: string; lastName: string; email: string | null } | null> => {
+  const [row] = await database.select().from(users).where(eq(users.id, userId)).limit(1)
+  if (row === undefined) return null
+  const [primary] = await database
+    .select()
+    .from(userEmails)
+    .where(
+      sql`${userEmails.userId} = ${userId} and ${userEmails.isPrimary} = 1 and ${userEmails.invalidatedAt} is null`,
+    )
+    .limit(1)
+  return { firstName: row.firstName, lastName: row.lastName, email: primary?.address ?? null }
+}
+
 export const updateUserTimezone = async (
   database: Database,
   userId: number,

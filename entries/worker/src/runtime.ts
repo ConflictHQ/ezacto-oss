@@ -8,6 +8,7 @@ import {
   enrollInstanceOwnerPasswordD1,
   createApiTokenStore,
   createD1Database,
+  readUserIdentity,
   readUserTimezone,
   updateUserTimezone,
   createD1IdentityStore,
@@ -1037,6 +1038,7 @@ export const createRuntimeServices = async (
     ),
     profile: {
       readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
+      readIdentity: async (userId) => await readUserIdentity(drizzle, userId),
       updateTimezone: async (userId, timezone, occurredAt) => {
         await updateUserTimezone(drizzle, userId, timezone, occurredAt);
       },

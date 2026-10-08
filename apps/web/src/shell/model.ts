@@ -237,7 +237,13 @@ export interface ShellApi
     signal?: AbortSignal,
   ): Promise<TimesheetSubmission>
   /** The signed-in user's own timezone, for the self-service control (issue 757). */
-  getProfile?(signal?: AbortSignal): Promise<{ user_id: number; timezone: string }>
+  getProfile?(signal?: AbortSignal): Promise<{
+    user_id: number
+    timezone: string
+    first_name?: string
+    last_name?: string
+    email?: string | null
+  }>
   updateProfile?(
     timezone: string,
     signal?: AbortSignal,

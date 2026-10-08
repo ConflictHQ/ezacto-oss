@@ -20,6 +20,10 @@ export interface ProfileRepositoryPort {
    * organization zone is what actually decides their day until they choose.
    */
   readTimezone(userId: number): Promise<string | null>
+  /** The person's own name and primary address; absent where not composed. */
+  readIdentity?(
+    userId: number,
+  ): Promise<{ firstName: string; lastName: string; email: string | null } | null>
   updateTimezone(userId: number, timezone: string, occurredAt: string): Promise<void>
   /** Absent where the deployment does not send invoice email. */
   readInvoiceCopy?(userId: number): Promise<boolean | null>
@@ -90,8 +94,16 @@ export const installProfileRoutes = <Bindings extends object>(
 ): void => {
   const profileData = async (userId: number, timezone: string | null) => {
     const copy = (await options.repository.readInvoiceCopy?.(userId)) ?? null
+    const identity = (await options.repository.readIdentity?.(userId)) ?? null
     return {
       user_id: userId,
+      ...(identity === null
+        ? {}
+        : {
+            first_name: identity.firstName,
+            last_name: identity.lastName,
+            email: identity.email,
+          }),
       timezone: timezone ?? 'UTC',
       // On unless the person turned it off; absent where nothing sends invoices.
       ...(copy === null ? {} : { invoice_copy_to_self: copy }),

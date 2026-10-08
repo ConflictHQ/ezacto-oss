@@ -28747,6 +28747,22 @@
             "type": "integer",
             "minimum": 1
           },
+          "first_name": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "timezone": {
             "type": "string",
             "minLength": 1

@@ -371,6 +371,26 @@ const directorySections: ReadonlySet<string> = new Set(['Projects', 'Tasks', 'Cl
 const foldedSections = ['Home', 'Tasks', 'Team'] as const
 
 /**
+ * One line under each destination in the Menu's cards, so the Menu reads as a
+ * map of the product rather than a second copy of the sidebar.
+ */
+const sectionHints: Readonly<
+  Record<(typeof sections)[number] | (typeof foldedSections)[number], string>
+> = {
+  Time: 'Your week, timers and entries',
+  Approvals: 'Timesheets waiting on you',
+  Expenses: 'Receipts and reimbursements',
+  Projects: 'Budgets, tasks and progress',
+  Clients: 'Contacts and client history',
+  Invoices: 'Drafts, sent and paid',
+  Payments: 'Staff and contractor payouts',
+  Reports: 'Hours, money and exports',
+  Home: 'Today at a glance',
+  Tasks: 'The task list projects draw on',
+  Team: 'People, roles and rates',
+}
+
+/**
  * Each section's mark (the 2026-10 reskin). A collapsed sidebar is read by
  * these alone, so every section has one; the label stays in the link, hidden
  * from sight but not from a screen reader, so the link's name never changes.
@@ -510,7 +530,19 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const navLink = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
     `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Payments' ? ' data-staff-payments-nav hidden' : ''}${section === 'Expenses' ? ' data-expenses-nav' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${iconMarkup(sectionIcons[section])}<span class="nav-label">${section}</span></a>`
   const navigation = sections.map(navLink).join('')
-  const foldedNavigation = foldedSections.map(navLink).join('')
+  // The Menu's cards are their own component: the sidebar's links shrink to
+  // marks when it is collapsed, and the Menu must never inherit that. Same
+  // gates and same current-page mark as the links, so permissions and the
+  // command bar read them exactly as before.
+  const menuCard = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
+    navLink(section)
+      .replace('<a ', `<a class="menu-card" aria-describedby="menu-hint-${section.toLowerCase()}" `)
+      .replace(
+        `<span class="nav-label">${section}</span>`,
+        `<span class="menu-card-text"><span class="menu-card-title">${section}</span><span class="menu-card-hint" id="menu-hint-${section.toLowerCase()}" aria-hidden="true">${sectionHints[section]}</span></span>`,
+      )
+  const menuNavigation = sections.map(menuCard).join('')
+  const menuFoldedNavigation = foldedSections.map(menuCard).join('')
 
   return `<!doctype html>
 <html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="${colorScheme}"${instancePalette ? ' data-ez-palette="instance"' : ''} data-ez-nav="${navLayout}" data-ez-sidebar="${sidebar}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
@@ -626,8 +658,9 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
       <div class="account-identity" data-current-identity hidden>
         <svg class="identity-avatar" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8.5" r="3.25"/><path d="M5.75 19a6.25 6.25 0 0 1 12.5 0"/></svg>
         <span class="identity-text">
-          <span class="visually-hidden">Signed in as </span><span class="identity-name" data-current-profile>—</span>
-          <span class="identity-meta">User #<span data-current-user-id>—</span></span>
+          <span class="visually-hidden">Signed in as </span><span class="identity-name" data-current-name hidden></span>
+          <span class="identity-meta identity-role" data-current-profile>—</span>
+          <span class="visually-hidden">User <span data-current-user-id>—</span></span>
         </span>
         <a class="identity-settings" href="/settings/user" data-settings-link>${iconMarkup('sliders')}<span class="identity-action-label">Settings</span></a>
         <button type="button" class="identity-signout" data-logout>${iconMarkup('sign-out')}<span class="identity-action-label">Sign out</span></button>
@@ -1070,8 +1103,14 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   </dialog>
   <dialog class="menu-dialog" data-menu-dialog aria-labelledby="menu-title">
     <header><div><p class="eyebrow">Menu</p><h2 id="menu-title">Navigate</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
-    <nav aria-label="Mobile primary">${navigation}</nav>
-    <nav class="secondary-nav" data-secondary-nav aria-label="More">${foldedNavigation}</nav>
+    <section class="menu-group" aria-labelledby="menu-work-title">
+      <h3 class="menu-group-title" id="menu-work-title">Work</h3>
+      <nav class="menu-grid" aria-label="Mobile primary">${menuNavigation}</nav>
+    </section>
+    <section class="menu-group" aria-labelledby="menu-more-title">
+      <h3 class="menu-group-title" id="menu-more-title">Set up</h3>
+      <nav class="menu-grid secondary-nav" data-secondary-nav aria-label="More">${menuFoldedNavigation}</nav>
+    </section>
     <!--
       The layout switch, where the navigation is (the 2026-10 reskin). Settings
       carries the same pair beside the theme; both write one cookie.

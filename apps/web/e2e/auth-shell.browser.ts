@@ -227,7 +227,15 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
       return
     }
     if (path === '/api/v1/profile') {
-      await fulfillJson(route, { data: { user_id: 1, timezone: 'UTC' } })
+      await fulfillJson(route, {
+        data: {
+          user_id: 1,
+          first_name: 'Robin',
+          last_name: 'Vale',
+          email: 'robin@example.test',
+          timezone: 'UTC',
+        },
+      })
       return
     }
     if (path === '/api/v1/timesheet-submissions') {
@@ -291,7 +299,9 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
   await expect(authGateway).toBeHidden()
   await expect(authenticatedShell).toBeVisible()
   await expect(page).toHaveTitle('eZacto — Time')
-  await expect(identity).toContainText('User #7')
+  // The card leads with the person's name from the profile, the role under it.
+  await expect(page.locator('[data-current-name]')).toHaveText('Robin Vale')
+  await expect(identity).not.toContainText('User #')
   await expect(identity).toContainText('administrator')
   await expect(page.locator('[data-team-nav]:not([hidden])')).toHaveCount(0)
   await expectPhoneControl(signOut)
@@ -760,7 +770,9 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   const identity = page.locator('[data-current-identity]')
   await expect(authGateway).toBeHidden()
   await expect(authenticatedShell).toBeVisible()
-  await expect(identity).toContainText('User #1')
+  // The real worker's profile names the fixture owner.
+  await expect(page.locator('[data-current-name]')).toHaveText('Browser Owner')
+  await expect(identity).not.toContainText('User #')
   await expect(identity).toContainText('administrator')
   await expect(page.locator('[data-day-rows]')).toContainText('Browser Acceptance Project')
   await expect(page.locator('[data-day-rows]')).toContainText('Browser Acceptance Task')
