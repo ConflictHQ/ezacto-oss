@@ -1236,12 +1236,11 @@ describe('week-grid browser behavior', () => {
     )
   })
 
-  it('[e2e:track-week] adds and focuses a row with explicit duplicate and invalid outcomes', async () => {
+  // Keep each outcome within the normal test budget: parsing the full shell is
+  // expensive on CI, and a second parse plus all outcomes exceeded five seconds.
+  it('[e2e:track-week] adds, focuses and persists a row', async () => {
     renderBrowserShell()
-    window.history.replaceState(null, '', '/?week=2026-08-28')
-    const api = browserApi()
-
-    await mountShell(api)
+    await mountShell(browserApi())
     const openAddRow = (): void => {
       document.querySelector<HTMLButtonElement>('[data-add-row-trigger]')!.click()
     }
@@ -1266,12 +1265,22 @@ describe('week-grid browser behavior', () => {
     expect(document.activeElement).toBe(added)
     expect(document.querySelector('[data-session-message]')?.textContent).toContain('row added')
 
-    renderBrowserShell({ preserveStorage: true })
-    window.history.replaceState(null, '', '/?week=2026-08-28')
-    await mountShell(api)
-    expect(
-      document.querySelector('[data-week-grid] input[data-cell-key="2:2:2026-08-24"]'),
-    ).not.toBeNull()
+    expect(JSON.parse(globalThis.localStorage.getItem('ezacto:user:1:week-rows:2026-08-24')!)).toEqual([{ projectId: 2, taskId: 2 }])
+  })
+
+  it('[e2e:track-week] restores a saved row and reports a duplicate without adding another', async () => {
+    renderBrowserShell()
+    globalThis.localStorage.setItem('ezacto:user:1:week-rows:2026-08-24', JSON.stringify([{ projectId: 2, taskId: 2 }]))
+    await mountShell(browserApi())
+    expect(document.querySelectorAll('[data-week-grid] input[data-cell-key="2:2:2026-08-24"]')).toHaveLength(1)
+    const openAddRow = (): void => {
+      document.querySelector<HTMLButtonElement>('[data-add-row-trigger]')!.click()
+    }
+    const submitRow = (): void => {
+      document
+        .querySelector<HTMLFormElement>('[data-row-form]')!
+        .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    }
 
     openAddRow()
     document.querySelector<HTMLSelectElement>('[data-row-project]')!.value = '2'
@@ -1287,6 +1296,22 @@ describe('week-grid browser behavior', () => {
     expect(document.querySelector('[data-row-result]')?.textContent).toContain(
       'already on this week',
     )
+
+    expect(document.querySelectorAll('[data-week-grid] input[data-cell-key="2:2:2026-08-24"]')).toHaveLength(1)
+  })
+
+  it('[e2e:track-week] rejects an invalid row without changing saved rows', async () => {
+    renderBrowserShell()
+    globalThis.localStorage.setItem('ezacto:user:1:week-rows:2026-08-24', JSON.stringify([{ projectId: 2, taskId: 2 }]))
+    await mountShell(browserApi())
+    const openAddRow = (): void => {
+      document.querySelector<HTMLButtonElement>('[data-add-row-trigger]')!.click()
+    }
+    const submitRow = (): void => {
+      document
+        .querySelector<HTMLFormElement>('[data-row-form]')!
+        .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    }
 
     openAddRow()
     const storageKey = 'ezacto:user:1:week-rows:2026-08-24'
