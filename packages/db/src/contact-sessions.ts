@@ -8,6 +8,7 @@
 
 import { outsideClaim } from './idempotency.js'
 import type BetterSqlite3 from 'better-sqlite3'
+import { assertLastSeenInterval, LAST_SEEN_INTERVAL_MS } from './sessions.js'
 
 export const CONTACT_SESSION_IDLE_TTL_MS = 24 * 60 * 60 * 1_000
 export const CONTACT_SESSION_ABSOLUTE_TTL_MS = 7 * 24 * 60 * 60 * 1_000
@@ -43,6 +44,8 @@ export interface ContactSessionStoreOptions {
   now?: () => string
   idleTtlMs?: number
   absoluteTtlMs?: number
+  /** As for staff sessions: last-seen is written only once it is this old (#951). */
+  touchIntervalMs?: number
 }
 
 interface Operation {
@@ -155,10 +158,12 @@ const createContactSessionStore = (
     now = () => new Date().toISOString(),
     idleTtlMs = CONTACT_SESSION_IDLE_TTL_MS,
     absoluteTtlMs = CONTACT_SESSION_ABSOLUTE_TTL_MS,
+    touchIntervalMs = LAST_SEEN_INTERVAL_MS,
   }: ContactSessionStoreOptions = {},
 ): ContactSessionStore => {
   positiveTtl(idleTtlMs, 'idleTtlMs')
   positiveTtl(absoluteTtlMs, 'absoluteTtlMs')
+  assertLastSeenInterval(touchIntervalMs, idleTtlMs)
 
   return {
     issue: async (contactId, clientId) => {
@@ -222,6 +227,7 @@ const createContactSessionStore = (
       const timestamp = now()
       assertCanonicalTimestamp(timestamp)
       const requestedIdleExpiry = futureTimestamp(timestamp, idleTtlMs)
+      const touchBefore = futureTimestamp(timestamp, -touchIntervalMs)
       const rows = await database.atomic([
         {
           query: `UPDATE contact_sessions SET
@@ -241,6 +247,7 @@ const createContactSessionStore = (
             WHERE selector = ? AND secret_hash = ? AND revoked_at IS NULL
               AND julianday(idle_expires_at) > julianday(?)
               AND julianday(absolute_expires_at) > julianday(?)
+              AND julianday(last_seen_at) <= julianday(?)
             RETURNING ${rowColumns()}`,
           bindings: [
             timestamp,
@@ -254,10 +261,22 @@ const createContactSessionStore = (
             prepared.secretHash,
             timestamp,
             timestamp,
+            touchBefore,
           ],
         },
+        // The same session read without writing, for an authentication the
+        // UPDATE declined because last-seen is recent: a live session answers
+        // the same either way, and only a stale one costs a write.
+        {
+          query: `SELECT ${rowColumns()} FROM contact_sessions
+            WHERE selector = ? AND secret_hash = ? AND revoked_at IS NULL
+              AND julianday(idle_expires_at) > julianday(?)
+              AND julianday(absolute_expires_at) > julianday(?)
+            LIMIT 1`,
+          bindings: [prepared.selector, prepared.secretHash, timestamp, timestamp],
+        },
       ])
-      const row = rows[0]?.[0] as unknown as SessionRow | undefined
+      const row = (rows[0]?.[0] ?? rows[1]?.[0]) as unknown as SessionRow | undefined
       if (row === undefined) return null
       return {
         contactId: row.contactId,

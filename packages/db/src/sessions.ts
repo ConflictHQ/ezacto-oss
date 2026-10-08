@@ -4,6 +4,46 @@ import type { ResolvedUserIdentity, UserProfile } from '@ezacto/core'
 
 export const SESSION_IDLE_TTL_MS = 24 * 60 * 60 * 1_000
 export const SESSION_ABSOLUTE_TTL_MS = 30 * 24 * 60 * 60 * 1_000
+/**
+ * How stale a credential's last-seen time may grow before a request writes it
+ * again (#951). Recording every request made every page view a database write:
+ * a needless one on D1 and the container, and a whole-file commit on hosted
+ * storage. Five minutes keeps "last seen" useful and the idle window honest.
+ */
+export const LAST_SEEN_INTERVAL_MS = 5 * 60 * 1_000
+/** The ceiling an operator may configure, so an idle window cannot erode by more. */
+export const LAST_SEEN_INTERVAL_MAX_MS = 60 * 60 * 1_000
+
+/**
+ * Reads `LAST_SEEN_INTERVAL_SECONDS` for either runtime. Unset or blank is the
+ * default; anything else must be a whole number of seconds from 0 (write on
+ * every request, the old behaviour) to an hour. A malformed value is refused
+ * rather than defaulted, as the other deployment settings are, because an
+ * operator who set one meant something by it.
+ */
+export const lastSeenIntervalFromSeconds = (value: string | undefined): number => {
+  if (value === undefined || value.trim() === '') return LAST_SEEN_INTERVAL_MS
+  const trimmed = value.trim()
+  const milliseconds = /^[0-9]{1,4}$/u.test(trimmed) ? Number(trimmed) * 1_000 : Number.NaN
+  if (!(milliseconds <= LAST_SEEN_INTERVAL_MAX_MS)) {
+    throw new TypeError(
+      'LAST_SEEN_INTERVAL_SECONDS must be a whole number of seconds from 0 to 3600',
+    )
+  }
+  return milliseconds
+}
+
+/**
+ * Validates an interval against the idle window it must stay inside. An
+ * interval as long as the idle window would let an active session idle out
+ * between two writes.
+ */
+export const assertLastSeenInterval = (intervalMs: number, idleTtlMs: number): number => {
+  if (!Number.isSafeInteger(intervalMs) || intervalMs < 0 || intervalMs >= idleTtlMs) {
+    throw new RangeError('touchIntervalMs must be a non-negative safe integer below idleTtlMs')
+  }
+  return intervalMs
+}
 
 export type SessionRevocationReason =
   'user_revoked' | 'privilege_change' | 'password_reset' | 'user_disabled'
@@ -52,6 +92,14 @@ export interface SessionStoreOptions {
   now?: () => string
   idleTtlMs?: number
   absoluteTtlMs?: number
+  /**
+   * An authentication writes `last_seen_at` (and moves the idle expiry with it)
+   * only once the stored value is at least this old; inside the interval it is
+   * a read. Zero writes on every request. The idle rule is unchanged -- a
+   * session still expires `idleTtlMs` after the last *recorded* activity, never
+   * later -- so the most an idle window can shrink is this interval.
+   */
+  touchIntervalMs?: number
 }
 
 interface Operation {
@@ -210,10 +258,12 @@ const createSessionStore = (
     now = () => new Date().toISOString(),
     idleTtlMs = SESSION_IDLE_TTL_MS,
     absoluteTtlMs = SESSION_ABSOLUTE_TTL_MS,
+    touchIntervalMs = LAST_SEEN_INTERVAL_MS,
   }: SessionStoreOptions = {},
 ): SessionStore => {
   positiveTtl(idleTtlMs, 'idleTtlMs')
   positiveTtl(absoluteTtlMs, 'absoluteTtlMs')
+  assertLastSeenInterval(touchIntervalMs, idleTtlMs)
 
   const issue = async (
     userId: number,
@@ -293,6 +343,9 @@ const createSessionStore = (
     const timestamp = now()
     assertCanonicalTimestamp(timestamp)
     const requestedIdleExpiry = futureTimestamp(timestamp, idleTtlMs)
+    // Last-seen at or before this instant is stale enough to record again;
+    // anything newer makes this authentication a read (#951).
+    const touchBefore = futureTimestamp(timestamp, -touchIntervalMs)
     const rows = await database.atomic([
       {
         query: `UPDATE sessions SET
@@ -312,6 +365,7 @@ const createSessionStore = (
           WHERE selector = ? AND secret_hash = ? AND revoked_at IS NULL
             AND julianday(idle_expires_at) > julianday(?)
             AND julianday(absolute_expires_at) > julianday(?)
+            AND julianday(last_seen_at) <= julianday(?)
             AND EXISTS (
               SELECT 1 FROM users user WHERE user.id = sessions.user_id
                 AND user.is_active = 1
@@ -331,6 +385,7 @@ const createSessionStore = (
           prepared.secretHash,
           timestamp,
           timestamp,
+          touchBefore,
         ],
       },
       {
@@ -361,6 +416,24 @@ const createSessionStore = (
 
     const candidate = rows[1]?.[0] as unknown as CandidateRow | undefined
     if (candidate === undefined) return null
+    // Live, unchanged, and seen recently enough that the write above declined
+    // it: the same answer the touch would have given, with nothing written.
+    // The SELECT read the session, the user and their equality in one
+    // statement, so this is as current as the conditional UPDATE would be.
+    if (
+      candidate.isActive === 1 &&
+      candidate.currentProfile === candidate.profileSnapshot &&
+      candidate.currentManagerGrants === candidate.managerGrantsSnapshot
+    ) {
+      return {
+        principal: principal(
+          candidate.userId,
+          candidate.profileSnapshot,
+          candidate.managerGrantsSnapshot,
+        ),
+        session: metadata(candidate),
+      }
+    }
     if (candidate.isActive !== 1) {
       await database.atomic([
         {
