@@ -86,6 +86,21 @@ describe('calendar placement', () => {
     expect(days[0]!.blocks[0]!.minutes).toBeGreaterThan(0)
   })
 
+  it('[unit] totals a day by each entry in full, overlapping intervals included', () => {
+    // Issue 943: a duration organization holds intervals beside its durations,
+    // and two clients in the same hour is a real day. 09:00-11:00 and
+    // 10:00-12:00 beside an hour logged as a duration is five hours of work
+    // over a three-hour span, and the day says five in either mode.
+    const mixed = [
+      entry({ id: 1, seconds: 3_600 }),
+      entry({ id: 2, started_time: '09:00', ended_time: '11:00', seconds: 7_200 }),
+      entry({ id: 3, started_time: '10:00', ended_time: '12:00', seconds: 7_200 }),
+    ]
+    for (const mode of ['duration', 'start_end'] as const) {
+      expect(calendarWeek(week, mixed, mode)[0]!.totalSeconds).toBe(18_000)
+    }
+  })
+
   it('[unit] says what the axis measures, because it is not the same in both modes', () => {
     expect(calendarAxisLabel('start_end')).toBe('Time of day')
     expect(calendarAxisLabel('duration')).toBe('Hours worked')

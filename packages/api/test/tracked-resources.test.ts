@@ -1230,6 +1230,118 @@ for (const [runtime, factory] of factories) {
       })
     })
 
+    it('[api] logs start/end entries in a duration organization beside its durations (issue 943)', async () => {
+      const test = await setup()
+      const post = (body: Record<string, unknown>) =>
+        test.request(
+          '/api/v1/time-entries',
+          jsonRequest('POST', { project_id: 1, task_id: 1, ...body }),
+        )
+      const refused = async (response: Response, field: string, code: string) => {
+        expect(response.status).toBe(422)
+        expect(await response.json()).toMatchObject({ error: { fields: [{ field, code }] } })
+      }
+      interface Entry {
+        id: number
+        started_time: string | null
+        ended_time: string | null
+        seconds: number
+        rounded_seconds: number
+        timer_started_at: string | null
+        is_running: boolean
+      }
+      expect(await data(await test.request('/api/v1/time-entry-settings'))).toMatchObject({
+        time_entry_mode: 'duration',
+      })
+
+      const timedResponse = await post({
+        spent_date: '2026-08-27',
+        started_time: '09:00',
+        ended_time: '10:01',
+      })
+      expect(timedResponse.status).toBe(201)
+      const timed = await data<Entry>(timedResponse)
+      expect(timed).toMatchObject({
+        started_time: '09:00',
+        ended_time: '10:01',
+        seconds: 3_660,
+        // The organization rounds up to six minutes, for intervals as for durations.
+        rounded_seconds: 3_960,
+        timer_started_at: null,
+        is_running: false,
+      })
+      // Overlapping it is not refused, and neither is a duration beside both.
+      const overlapping = await post({
+        spent_date: '2026-08-27',
+        started_time: '09:30',
+        ended_time: '10:30',
+      })
+      expect(overlapping.status).toBe(201)
+      const duration = await post({ spent_date: '2026-08-27', seconds: 1_800 })
+      expect(duration.status).toBe(201)
+      expect(await data<Entry>(duration)).toMatchObject({
+        started_time: null,
+        ended_time: null,
+        seconds: 1_800,
+      })
+
+      await refused(
+        await post({
+          spent_date: '2026-08-27',
+          seconds: 600,
+          started_time: '11:00',
+          ended_time: '11:10',
+        }),
+        'seconds',
+        'mode_mismatch',
+      )
+      await refused(await post({ started_time: '09:00' }), 'started_time', 'mode_mismatch')
+      await refused(
+        await post({ spent_date: '2026-08-27', ended_time: '11:00' }),
+        'started_time',
+        'required',
+      )
+
+      // Without times, the timer is the duration timer it always was.
+      const timer = await post({})
+      expect(timer.status).toBe(201)
+      expect(await data<Entry>(timer)).toMatchObject({
+        is_running: true,
+        timer_started_at: '2026-08-28T09:00:00.000Z',
+        started_time: null,
+      })
+
+      const day = (await (
+        await test.request('/api/v1/time-entries?spent_date=2026-08-27')
+      ).json()) as { data: Entry[] }
+      expect(day.data.map(({ started_time, seconds }) => [started_time, seconds])).toEqual([
+        ['09:00', 3_660],
+        ['09:30', 3_600],
+        [null, 1_800],
+      ])
+
+      // Each entry is edited by its own shape.
+      await refused(
+        await test.request(
+          `/api/v1/time-entries/${timed.id}`,
+          jsonRequest('PATCH', { seconds: 600 }),
+        ),
+        'seconds',
+        'mode_mismatch',
+      )
+      const resized = await test.request(
+        `/api/v1/time-entries/${timed.id}`,
+        jsonRequest('PATCH', { ended_time: '09:45' }),
+      )
+      expect(resized.status).toBe(200)
+      expect(await data<Entry>(resized)).toMatchObject({
+        started_time: '09:00',
+        ended_time: '09:45',
+        seconds: 2_700,
+        rounded_seconds: 2_880,
+      })
+    }, slowRuntimeTimeout)
+
     it('[api] supports combined time filters, signed cursors, updates, deletes, and row boundaries', async () => {
       const test = await setup()
       const ids: number[] = []

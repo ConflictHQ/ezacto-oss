@@ -957,15 +957,12 @@ export class DrizzleTrackedResourceRepository {
       ...(input.externalRef !== undefined ? { externalRef: input.externalRef } : {}),
       ...(input.calendarEventRef !== undefined ? { calendarEventRef: input.calendarEventRef } : {}),
     }
+    // Times make a start/end entry in either mode (issue 943): the calendar
+    // records an interval even where everything else records a duration. The
+    // organization's mode decides only what a request without times means.
+    const carriesTimes = input.startedTime !== undefined || input.endedTime !== undefined
     let created: TimeEntry
-    if (settings.timeEntryMode === 'duration') {
-      if (input.startedTime !== undefined || input.endedTime !== undefined) {
-        throw inputProblem(
-          'started_time',
-          'mode_mismatch',
-          'duration entries do not accept start/end times',
-        )
-      }
+    if (settings.timeEntryMode === 'duration' && !carriesTimes) {
       if (input.seconds === undefined) {
         if (onBehalf) throw timerForSomebodyElse()
         if (input.spentDate !== undefined && input.spentDate !== local.date) {
@@ -1023,6 +1020,17 @@ export class DrizzleTrackedResourceRepository {
         )
       }
       if (input.endedTime === undefined) {
+        // A running entry keeps the organization's shape (invariant 2), so a
+        // duration organization's timer is a duration timer. The trigger that
+        // stops a person's previous timer cannot measure between the two
+        // shapes: one is a UTC instant, the other a local wall-clock time.
+        if (settings.timeEntryMode === 'duration') {
+          throw inputProblem(
+            'started_time',
+            'mode_mismatch',
+            'a timer in a duration organization runs without times; send ended_time as well to log a stopped start/end entry',
+          )
+        }
         if (onBehalf) throw timerForSomebodyElse()
         if (input.spentDate !== undefined && input.spentDate !== local.date) {
           throw inputProblem(
