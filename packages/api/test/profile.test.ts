@@ -318,7 +318,7 @@ describe('the signed-in person on their profile', () => {
     const { app, cookie } = createHarness('UTC', { readIdentity })
     const res = await get(app, cookie)
     expect(res.status).toBe(200)
-    expect((await res.json()).data).toEqual({
+    expect(((await res.json()) as { data: unknown }).data).toEqual({
       user_id: 7,
       first_name: 'Ada',
       last_name: 'Quill',
@@ -331,7 +331,7 @@ describe('the signed-in person on their profile', () => {
 
   it('[api] leaves the fields out where the deployment has no reader', async () => {
     const { app, cookie } = createHarness('UTC')
-    const data = (await (await get(app, cookie)).json()).data
+    const data = ((await (await get(app, cookie)).json()) as { data: unknown }).data
     expect(data).toEqual({ user_id: 7, timezone: 'UTC' })
   })
 })
