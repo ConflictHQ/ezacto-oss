@@ -30,6 +30,7 @@ export { createGeneralResourceRepository } from './general-resources.js'
 export {
   listClientAncestors,
   listClientDescendants,
+  readUserIdentity,
   readUserTimezone,
   updateUserTimezone,
   type ClientHierarchyNode,

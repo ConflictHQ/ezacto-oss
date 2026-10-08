@@ -30,6 +30,7 @@ const createHarness = (
   deletion: {
     requestDeletion?: ProfileRepositoryPort['requestDeletion']
     deletionMailer?: AccountDeletionMailer
+    readIdentity?: ProfileRepositoryPort['readIdentity']
   } = {},
 ) => {
   const store: SessionStorePort = {
@@ -63,6 +64,7 @@ const createHarness = (
         repository: {
           readTimezone,
           updateTimezone,
+          ...(deletion.readIdentity === undefined ? {} : { readIdentity: deletion.readIdentity }),
           ...(deletion.requestDeletion === undefined
             ? {}
             : { requestDeletion: deletion.requestDeletion }),
@@ -300,5 +302,36 @@ describe('asking for your own account to be deleted', () => {
     expect(response.status).toBeGreaterThanOrEqual(401)
     expect(response.status).toBeLessThan(404)
     expect(requestDeletion).not.toHaveBeenCalled()
+  })
+})
+
+describe('the signed-in person on their profile', () => {
+  const get = (app: ReturnType<typeof createHarness>['app'], cookie: string) =>
+    app.request('/api/v1/profile', { headers: { cookie } })
+
+  it('[api] carries the name and primary address, so the shell can show who is signed in', async () => {
+    const readIdentity = vi.fn<NonNullable<ProfileRepositoryPort['readIdentity']>>(async () => ({
+      firstName: 'Ada',
+      lastName: 'Quill',
+      email: 'ada@example.test',
+    }))
+    const { app, cookie } = createHarness('UTC', { readIdentity })
+    const res = await get(app, cookie)
+    expect(res.status).toBe(200)
+    expect((await res.json()).data).toEqual({
+      user_id: 7,
+      first_name: 'Ada',
+      last_name: 'Quill',
+      email: 'ada@example.test',
+      timezone: 'UTC',
+    })
+    // Only ever the caller's own record.
+    expect(readIdentity).toHaveBeenCalledWith(7)
+  })
+
+  it('[api] leaves the fields out where the deployment has no reader', async () => {
+    const { app, cookie } = createHarness('UTC')
+    const data = (await (await get(app, cookie)).json()).data
+    expect(data).toEqual({ user_id: 7, timezone: 'UTC' })
   })
 })

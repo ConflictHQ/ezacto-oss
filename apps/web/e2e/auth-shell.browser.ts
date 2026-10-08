@@ -291,7 +291,10 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
   await expect(authGateway).toBeHidden()
   await expect(authenticatedShell).toBeVisible()
   await expect(page).toHaveTitle('eZacto — Time')
-  await expect(identity).toContainText('User #7')
+  // The card leads with the person's name from the profile, the role under it.
+  await expect(page.locator('[data-current-name]')).toBeVisible()
+  await expect(page.locator('[data-current-name]')).not.toHaveText('')
+  await expect(identity).not.toContainText('User #')
   await expect(identity).toContainText('administrator')
   await expect(page.locator('[data-team-nav]:not([hidden])')).toHaveCount(0)
   await expectPhoneControl(signOut)

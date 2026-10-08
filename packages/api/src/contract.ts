@@ -4827,6 +4827,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     required: ["user_id", "timezone"],
     properties: {
       user_id: integerSchema,
+      // The person's own name and primary address, for the identity card.
+      // Absent where the deployment does not compose the reader.
+      first_name: stringSchema,
+      last_name: stringSchema,
+      email: nullable(stringSchema),
       timezone: { type: "string", minLength: 1 },
       // Whether this person is copied on the invoice emails they send. Absent
       // where the deployment sends no invoice email.
