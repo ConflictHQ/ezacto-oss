@@ -455,6 +455,15 @@ export class DrizzleTrackedResourceRepository {
     return settings.timezone
   }
 
+  /**
+   * The boundary on the wall clock of the person whose entry it is: their own
+   * zone, then the organization's, as `#effectiveTimezone` decides the day a
+   * timer is filed on. The instant is untouched.
+   */
+  async #ownerBoundary(userId: number, boundary: TimeBoundary): Promise<TimeBoundary> {
+    return localBoundary(boundary, await this.#effectiveTimezone(userId, await this.#timeSettings()))
+  }
+
   async timeEntrySettings(): Promise<OrganizationTimeEntrySettings> {
     const settings = await this.#timeSettings()
     return {
@@ -1310,12 +1319,17 @@ export class DrizzleTrackedResourceRepository {
       throw inputProblem('time_entry', 'not_running', 'time entry is not running')
     }
     const policyLocked = await this.#policy.isLocked({ entityType: 'time_entry', entityId: id })
+    // A start/end timer started on its owner's wall clock, so it stops on it
+    // too (issue 945): measured against the UTC clock, a 09:00 timer stopped
+    // at 10:00 in a zone six hours west ran seven hours and ended at 16:00. The
+    // owner's zone, not the actor's, for the same reason the day is theirs.
+    const local = await this.#ownerBoundary(entry.userId, boundary)
     try {
       return this.#timeRecord(
         await stopTimeEntry(
           this.#database,
           id,
-          boundary,
+          local,
           policyLocked,
           onBehalfAudit(actor, entry.userId, { action: 'stop', before: entry }, boundary.instant),
         ),
@@ -1358,12 +1372,15 @@ export class DrizzleTrackedResourceRepository {
       this.#policy.isLocked({ entityType: 'time_entry', entityId: id }),
       this.#policy.isLocked({ entityType: 'running_time_entry_replacement', userId }),
     ])
+    // A start/end restart starts on the local date and time, as a new timer
+    // does (issue 945).
+    const local = await this.#ownerBoundary(userId, boundary)
     try {
       return this.#timeRecord(
         await restartTimeEntry(
           this.#database,
           id,
-          boundary,
+          local,
           policyLocked,
           runningEntryPolicyLocked,
         ),

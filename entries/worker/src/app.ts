@@ -105,6 +105,7 @@ import {
   type OidcTransactionStorePort,
   type OidcAppCodeStorePort,
   type StaffMagicLinkMailer,
+  type AccountDeletionMailer,
   type BandClaimBackfillPort,
   type StaffMagicLinkStorePort,
   type StaffUserDirectory,
@@ -358,6 +359,8 @@ export interface RuntimeServices {
   }
   /** Deployment-brand sender for all authentication mail. */
   deploymentAuthMailer?: AuthMailer
+  /** Tells the administrators of an account deletion request; absent without mail. */
+  accountDeletionMailer?: AccountDeletionMailer
   attachments?: AttachmentRouteOptions
   /** Portal magic-link authentication for contacts. */
   portalAuth?: MagicLinkRouteOptions
@@ -562,6 +565,9 @@ export const createApp = (
             installProfileRoutes(api, {
               repository: services.profile,
               clock: () => systemClock.now().instant,
+              ...(services.accountDeletionMailer === undefined
+                ? {}
+                : { deletionMailer: services.accountDeletionMailer }),
             })
             installEmailLogRoutes(api, services.emailLog)
             installEmailHealthRoutes(api, services.emailLog)

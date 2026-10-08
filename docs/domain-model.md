@@ -669,7 +669,7 @@ re-verifies the aggregate ones against imported data.
 8. Rate tables are append-only; `end_date` always equals next `start_date − 1` or null.
 9. Entry snapshots never change except via explicit reprice operations (which are logged).
 10. `retainer.balance = Σ ledger` in its single denomination and never negative unless `on_exhaustion = overflow` explicitly permits overdraw.
-11. Uninvoiced report totals ≡ what invoice generation would produce for the same filter, to the cent.
+11. Uninvoiced report totals ≡ what invoice generation would produce for the same filter: the same hours, entries and expenses exactly, and expense cents to the cent. Time cents may differ by a few cents a line, because a generated time line bills its hours to the hundredth times the rate, as Harvest does, where the report prices each entry on its own.
 12. Exactly one `user.is_owner`.
 13. Cross-org anything is impossible by construction (separate databases) — the test is that no code path accepts a database handle plus a foreign org id.
 14. `Σ time_entry.seconds` per (user, project, month) after import ≡ Harvest reports checksum for same grain (migration gate).

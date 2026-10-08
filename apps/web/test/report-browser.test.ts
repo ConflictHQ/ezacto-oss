@@ -2305,6 +2305,43 @@ describe('Reports Stage 1 browser controller', () => {
     session.abort()
   })
 
+  it('[browser] names the invoice that claimed an entry by its number, not its id', async () => {
+    // Issue 939: the column printed "#412", the record id, which appears on no
+    // invoice anybody holds. The number is what people quote and what the
+    // invoice's own address is built from.
+    writeDocument(
+      '/reports?report=detailed-time&from=2026-08-01&to=2026-08-31&invoice_state=invoiced&grain=entry',
+    )
+    const getDetailedTimeReport = vi.fn(async () =>
+      detailedTimeReport({
+        invoice_state: 'invoiced',
+        grain: 'entry',
+        rows: [
+          detailedTimeRow({
+            time_entry_id: 101,
+            claimed: true,
+            invoice_id: 412,
+            invoice_number: '2077',
+            project_active: true,
+          }),
+        ],
+      }),
+    )
+    const session = new AbortController()
+    await createReportsController(baseApi({ getDetailedTimeReport })).activate(
+      identity('accounting'),
+      session.signal,
+      () => false,
+    )
+
+    const results = document.querySelector('[data-report-results]')!
+    const link = results.querySelector<HTMLAnchorElement>('a[href="/invoices/2077"]')
+    expect(link?.textContent).toBe('2077')
+    expect(results.querySelector('a[href^="/invoices/by-id/"]')).toBeNull()
+    expect(results.textContent).not.toContain('412')
+    session.abort()
+  })
+
   it('[e2e] opens the entries behind a total, grouped by whether they were claimed', async () => {
     writeDocument('/reports?report=detailed-time&from=2026-08-01&to=2026-08-31')
     const getDetailedTimeReport = vi.fn(
@@ -2322,6 +2359,7 @@ describe('Reports Stage 1 browser controller', () => {
                   claimed: true,
                   time_entry_id: 111,
                   invoice_id: 301,
+                  invoice_number: '1907',
                   notes: 'wrote the thing',
                 }),
                 detailedTimeRow({
@@ -2373,8 +2411,8 @@ describe('Reports Stage 1 browser controller', () => {
     )
     expect(bands).toEqual(['Claimed by an invoice', 'Not claimed yet'])
     expect(table.textContent).toContain('wrote the thing')
-    // An entry's claim names the invoice by id alone, so the link goes by id.
-    expect(table.querySelector('a[href="/invoices/by-id/301"]')?.textContent).toBe('#301')
+    // An entry's claim names the invoice by its number, and links by it.
+    expect(table.querySelector('a[href="/invoices/1907"]')?.textContent).toBe('1907')
     expect(table.textContent).toContain('Not claimed')
     session.abort()
   })

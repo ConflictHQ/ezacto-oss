@@ -1,5 +1,6 @@
 import {
   calculateInvoiceLineAmountCents,
+  hoursToTheHundredth,
   invoiceDueDate,
   reportNoteIsClientVisible,
   trackedAmountCents,
@@ -815,6 +816,11 @@ const requestManifest = (request: NormalizedRequest, content: GenerationContent)
         }),
   })
 
+/**
+ * An expense line keeps its exact total: units times a price where that comes
+ * out to the cent, else one of the whole amount. Expenses are amounts, not
+ * hours, so nothing here rounds them; time lines are priced by `timeLines`.
+ */
 const exactLinePrice = (
   amountCents: number,
   preferredQuantity: number,
@@ -995,7 +1001,19 @@ const groupExpenses = (
   return [...groups.values()]
 }
 
-/** Tracked time priced at each entry's own rate, one line per group. */
+/**
+ * Tracked time, one line per group, written the way Harvest writes it: the
+ * group's hours to the hundredth times its rate, and the amount computed from
+ * those two (issue 923). That can differ by a few cents from pricing each
+ * entry on its own; the line is what the client reads and checks, so the line
+ * is what is billed. The hours are `hoursToTheHundredth`, the figure the work
+ * journal prints for the same entries.
+ *
+ * A group at one rate bills at that rate. One that mixes rates -- a task
+ * several people worked at their own rates -- bills at its per-entry total
+ * over the rounded hours, to the cent, which is as close to the entries as one
+ * quantity and one price can come. Hours that round to nothing bill nothing.
+ */
 const timeLines = (
   entries: readonly UninvoicedTimeCandidateRow[],
   summary: InvoiceGenerationTimeSummary,
@@ -1006,30 +1024,31 @@ const timeLines = (
       group.entries.map((entry) => entry.roundedSeconds),
       'time duration',
     )
-    const amountCents = checkedSignedSum(
-      group.entries.map((entry) =>
-        trackedAmountCents(
-          entry.roundedSeconds,
-          entry.billableRateCents ?? invalid(`time entry ${entry.id} has no billable rate`),
-        ),
-      ),
-      'time line amount',
+    const rates = group.entries.map(
+      (entry) => entry.billableRateCents ?? invalid(`time entry ${entry.id} has no billable rate`),
     )
-    const rates = new Set(group.entries.map((entry) => entry.billableRateCents))
-    const quantity = roundedSeconds / 3_600
-    const pricing = exactLinePrice(
-      amountCents,
-      quantity,
-      rates.size === 1
-        ? (group.entries[0]!.billableRateCents ?? 0)
-        : Math.round(amountCents / quantity),
-    )
+    const quantity = hoursToTheHundredth(roundedSeconds)
+    let unitPriceCents = rates[0]!
+    if (quantity !== 0 && rates.some((rate) => rate !== unitPriceCents)) {
+      const entriesCents = checkedSignedSum(
+        group.entries.map((entry, index) => trackedAmountCents(entry.roundedSeconds, rates[index]!)),
+        'time line amount',
+      )
+      unitPriceCents = Math.round(entriesCents / quantity)
+    }
+    let amountCents: number
+    try {
+      amountCents = calculateInvoiceLineAmountCents(quantity, unitPriceCents)
+    } catch (error) {
+      if (error instanceof RangeError) return invalid('time line amount exceeds the invoice cents limit')
+      throw error
+    }
     return {
       kind: 'Service',
       description: group.description,
-      quantity: pricing.quantity,
-      unitPriceCents: pricing.unitPriceCents,
-      amountCents,
+      quantity,
+      unitPriceCents,
+      amountCents: checkedSignedSum([amountCents], 'time line amount'),
       projectId: group.projectId,
     }
   })
@@ -1669,21 +1688,31 @@ const trackedContent = async (
   // placeholder would print as a 1970 period on the invoice and its subject.
   const periodStart = request.from ?? earliestDate([...timeEntries, ...expenses])!
   const context = await lineContext(database, periodStart, request.to)
+  const expenseDraft =
+    request.expenseSummaryType === null
+      ? []
+      : expenseLines(expenses, request.expenseSummaryType, context)
+  // Expenses are billed to the cent the preview shows. Time is not: its lines
+  // bill rounded hours times the rate (see `timeLines`), which the preview's
+  // per-entry pricing can differ from by a few cents a line.
+  if (
+    checkedSum(
+      expenseDraft.map((line) => line.amountCents),
+      'expense amount',
+    ) !== currencyTotal.expenseCents
+  ) {
+    throw new Error('invoice generation lines diverged from the canonical uninvoiced preview')
+  }
   const lines = await numberedLines(commandId, [
     ...(request.timeSummaryType === null
       ? []
       : timeLines(timeEntries, request.timeSummaryType, context)),
-    ...(request.expenseSummaryType === null
-      ? []
-      : expenseLines(expenses, request.expenseSummaryType, context)),
+    ...expenseDraft,
   ])
   const amountCents = checkedSum(
     lines.map((line) => line.amountCents),
     'invoice amount',
   )
-  if (amountCents !== currencyTotal.totalCents) {
-    throw new Error('invoice generation lines diverged from the canonical uninvoiced preview')
-  }
   return {
     client,
     header: {

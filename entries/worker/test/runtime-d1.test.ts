@@ -625,13 +625,20 @@ describe("Worker D1 runtime composition", () => {
     ]);
 
     expect(replay).toEqual(created);
+    // 600 s and 900 s are 0.42 hours to the hundredth, billed at 100.00 as
+    // 42.00 (issue 923), where the two entries priced one at a time come to 41.67.
     expect(created.data).toMatchObject({
       client_id: 1,
       state: "draft",
-      amount_cents: 4_267,
-      due_amount_cents: 4_267,
+      amount_cents: 4_300,
+      due_amount_cents: 4_300,
       line_items: [
-        expect.objectContaining({ kind: "Service", amount_cents: 4_167 }),
+        expect.objectContaining({
+          kind: "Service",
+          quantity: 0.42,
+          unit_price_cents: 10_000,
+          amount_cents: 4_200,
+        }),
         expect.objectContaining({ kind: "Expense", amount_cents: 100 }),
       ],
     });

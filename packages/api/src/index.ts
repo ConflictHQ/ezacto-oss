@@ -344,6 +344,7 @@ export {
   type OidcTransactionStorePort,
 } from './oidc.js'
 export { createQueuedStaffMagicLinkMailer } from './staff-magic-link-email.js'
+export { createQueuedAccountDeletionMailer } from './account-deletion-email.js'
 export {
   installStaffMagicLinkRoutes,
   STAFF_MAGIC_LINK_TTL_MS,
@@ -362,6 +363,8 @@ export * from './resources/index.js'
 export { serializeMany, serializeOne, type Serializer } from './serializer.js'
 export {
   installProfileRoutes,
+  type AccountDeletionMailer,
+  type AccountDeletionRequest,
   type ProfileRepositoryPort,
   type ProfileRouteOptions,
 } from './profile.js'

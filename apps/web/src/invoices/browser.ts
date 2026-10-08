@@ -2608,6 +2608,11 @@ export const createInvoicePaymentController = (
     mutationPending = true
     attachmentSubmit.disabled = true
     attachmentStatus.textContent = 'Uploading file…'
+    // Painted locked now and unlocked when it settles, like every other
+    // mutation here. The reads loaded beside the invoice repaint the controls
+    // whenever they answer; one answering mid-upload locks Send, and without
+    // the repaint below nothing would give it back (issue 745).
+    syncControls()
     const invoiceId = invoice.id
     void api.uploadInvoiceAttachment(invoiceId, attachmentCommandId, body, session.signal)
       .then(async () => {
@@ -2625,6 +2630,7 @@ export const createInvoicePaymentController = (
         if (current() === session) {
           mutationPending = false
           attachmentSubmit.disabled = false
+          syncControls()
         }
       })
   })
