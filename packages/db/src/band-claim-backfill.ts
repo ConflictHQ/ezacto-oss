@@ -12,9 +12,13 @@
  *
  * The eligibility predicate here is the one `recurring.generate` applies: still
  * unbilled, on the named projects, not mid-timer, spent on or before the
- * invoice's issue date. A second implementation of "what a band claims" would
- * be a second answer, and the whole point is that a backfilled invoice ends up
- * holding what a live generation would have given it.
+ * invoice's issue date. So are the definition's terms -- its ceiling and
+ * whether it counts non-billable hours -- read from the definition by the same
+ * function the engine reads them with (issue 941). A second implementation of
+ * "what a band claims" would be a second answer, and the whole point is that a
+ * backfilled invoice ends up holding what a live generation would have given
+ * it. Without a definition there are no terms to read, and the band takes
+ * every billable hour, as every band did before it could carry any.
  *
  * ## Which invoices are named, not inferred
  *
@@ -33,13 +37,21 @@
  */
 
 import { sql } from 'drizzle-orm'
+import type BetterSqlite3 from 'better-sqlite3'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
+import {
+  bandClaimEligibility,
+  bandClaimSelection,
+  bandClaimTerms,
+  type BandClaimSql,
+  type BandClaimTerms,
+} from './band-claim.js'
 
 type Database =
-  | BetterSQLite3Database<typeof schema>
-  | DrizzleD1Database<typeof schema>
+  | (BetterSQLite3Database<typeof schema> & { $client: BetterSqlite3.Database })
+  | (DrizzleD1Database<typeof schema> & { $client: D1Database })
 
 export interface BandClaimBackfillInput {
   /** The invoices to fill, in any order; they are applied oldest issue first. */
@@ -49,7 +61,10 @@ export interface BandClaimBackfillInput {
   readonly actorUserId: number
   readonly runId: string
   readonly occurredAt: string
-  /** The definition the band belongs to, recorded on each row where known. */
+  /**
+   * The definition the band belongs to, recorded on each row where known, and
+   * the terms -- ceiling and claim scope -- the backfill claims by.
+   */
   readonly recurringInvoiceId?: number | null
   /**
    * Default. A run that writes nothing is the one somebody reads before
@@ -87,6 +102,7 @@ export interface BandClaimBackfillReport {
 interface CandidateRow {
   id: number
   seconds: number
+  billable: number
   billableRateCents: number | null
 }
 
@@ -114,6 +130,36 @@ const assertPositive = (value: number, label: string): void => {
 const entryValueCents = (seconds: number, rateCents: number | null): number =>
   rateCents === null ? 0 : Math.round((seconds * rateCents) / 3600)
 
+/** The band-claim rules are SQL text and parameters; run them as written. */
+const all = async <T>(database: Database, statement: BandClaimSql): Promise<T[]> => {
+  const client = database.$client
+  if ('batch' in client) {
+    return (
+      await client
+        .prepare(statement.text)
+        .bind(...statement.params)
+        .all<T>()
+    ).results
+  }
+  return client.prepare(statement.text).all(...statement.params) as T[]
+}
+
+const definitionTerms = async (
+  database: Database,
+  recurringInvoiceId: number | null | undefined,
+): Promise<BandClaimTerms> => {
+  if (recurringInvoiceId === undefined || recurringInvoiceId === null) {
+    return { ceiling: null, scope: 'billable' }
+  }
+  const [definition] = await database.all<Parameters<typeof bandClaimTerms>[0]>(sql`
+    SELECT claim_mode AS "claimMode", claim_ceiling_seconds AS "claimCeilingSeconds",
+      claim_ceiling_cents AS "claimCeilingCents", claim_scope AS "claimScope"
+    FROM recurring_invoices WHERE id = ${recurringInvoiceId}
+  `)
+  if (definition === undefined) throw new TypeError('the named definition must exist')
+  return bandClaimTerms(definition)
+}
+
 export const backfillBandClaims = async (
   database: Database,
   input: Readonly<BandClaimBackfillInput>,
@@ -129,6 +175,7 @@ export const backfillBandClaims = async (
   assertPositive(input.actorUserId, 'actor user id')
   const apply = input.apply === true
   const projects = JSON.stringify([...new Set(input.projectIds)])
+  const terms = await definitionTerms(database, input.recurringInvoiceId)
 
   const invoices = await database.all<InvoiceRow>(sql`
     SELECT id, number, issue_date AS "issueDate", state, amount_cents AS "amountCents"
@@ -154,20 +201,26 @@ export const backfillBandClaims = async (
   const taken = new Set<number>()
 
   for (const invoice of invoices) {
-    const candidates = await database.all<CandidateRow>(sql`
-      SELECT id, coalesce(rounded_seconds, seconds) AS "seconds",
-        billable_rate_cents AS "billableRateCents"
-      FROM time_entries
-      WHERE invoice_id IS NULL AND billable = 1
-        AND timer_started_at IS NULL
-        AND NOT (started_time IS NOT NULL AND ended_time IS NULL)
-        AND spent_date <= ${invoice.issueDate}
-        AND project_id IN (
-          SELECT CAST(member.value AS INTEGER) FROM json_each(${projects}) member
-        )
-      ORDER BY spent_date, id
-    `)
-    const claimed = candidates.filter((entry) => !taken.has(entry.id))
+    // The engine's selection, ceiling and all. What an earlier invoice in this
+    // run took is out of reach before the ceiling counts, exactly as it would
+    // be once written, so a rehearsal measures each ceiling against what is
+    // really left for it.
+    const eligible = bandClaimEligibility(terms.scope, invoice.issueDate, projects)
+    const selection = bandClaimSelection(
+      {
+        text: `${eligible.text}
+          AND id NOT IN (SELECT CAST(member.value AS INTEGER) FROM json_each(?) member)`,
+        params: [...eligible.params, JSON.stringify([...taken])],
+      },
+      terms.ceiling,
+    )
+    const claimed = await all<CandidateRow>(database, {
+      text: `SELECT id, coalesce(rounded_seconds, seconds) AS "seconds", billable,
+          billable_rate_cents AS "billableRateCents"
+        FROM time_entries WHERE id IN (${selection.text})
+        ORDER BY spent_date, id`,
+      params: selection.params,
+    })
     for (const entry of claimed) taken.add(entry.id)
 
     let seconds = 0
@@ -175,7 +228,9 @@ export const backfillBandClaims = async (
     let entriesWithoutBillableRate = 0
     for (const entry of claimed) {
       seconds += entry.seconds
-      if (entry.billableRateCents === null) entriesWithoutBillableRate += 1
+      // A non-billable hour is worth nothing at list by definition, which is a
+      // fact rather than a gap, so only a billable one with no rate is missing.
+      if (entry.billable === 1 && entry.billableRateCents === null) entriesWithoutBillableRate += 1
       billableValueCents += entryValueCents(entry.seconds, entry.billableRateCents)
     }
     report.invoices.push({
@@ -224,11 +279,13 @@ export const backfillBandClaims = async (
     `)
   }
 
+  // Counted in the band's own scope: a band that takes non-billable hours
+  // leaves them over as surely as billable ones.
   const remaining = await database.all<{ entries: number; seconds: number }>(sql`
     SELECT count(*) AS "entries",
       coalesce(sum(coalesce(rounded_seconds, seconds)), 0) AS "seconds"
     FROM time_entries
-    WHERE invoice_id IS NULL AND billable = 1
+    WHERE invoice_id IS NULL AND (billable = 1 OR ${terms.scope} = 'tracked')
       AND project_id IN (
         SELECT CAST(member.value AS INTEGER) FROM json_each(${projects}) member
       )

@@ -331,7 +331,14 @@ for (const [runtime, factory] of factories) {
       expect(await store.listRecurringInvoiceAttachments(1)).toEqual([recurring])
       expect(await store.listEstimateAttachments(1)).toEqual([estimate])
       expect(await store.listExpenseAttachments(152975211)).toEqual([expense])
-      expect(await store.listProjectAttachments(1)).toEqual([project, racedFirst, racedSecond])
+      // Which of the two concurrent creates commits first is the race's to
+      // decide, and on D1 the two interleave statement by statement, so either
+      // can take the lower id. The listing's own order is created_at, then id
+      // (issue 745: asserting call order here failed two deploys).
+      expect(await store.listProjectAttachments(1)).toEqual([
+        project,
+        ...[racedFirst, racedSecond].sort((left, right) => left.id - right.id),
+      ])
       expect(await store.getExpenseAttachment(152975211, invoice.id)).toBeNull()
       expect(await store.getInvoiceAttachment(1, expense.id)).toBeNull()
 

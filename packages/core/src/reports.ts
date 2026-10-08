@@ -36,6 +36,24 @@ export const trackedAmountCents = (roundedSeconds: number, hourlyRateCents: numb
   return checkedCents(roundedSeconds < 0 ? -cents : cents, 'tracked amount')
 }
 
+/**
+ * Seconds as hours to the hundredth: the quantity a generated invoice line
+ * bills, and the figure the work journal prints for the same hours, from this
+ * one function so the two cannot disagree. Harvest bills a line as these hours
+ * times the rate, never as the unrounded hours.
+ *
+ * Integer arithmetic throughout, rounding half away from zero like every
+ * figure here, so a correction's negative hours round as their positive twin
+ * does. A hundredth of an hour is 36 seconds.
+ */
+export const hoursToTheHundredth = (seconds: number): number => {
+  assertSafeInteger(seconds, 'seconds')
+  const shifted = Math.abs(seconds) + 18
+  const hundredths = (shifted - (shifted % 36)) / 36
+  if (hundredths === 0) return 0
+  return (seconds < 0 ? -hundredths : hundredths) / 100
+}
+
 export interface UninvoicedTimeCandidate {
   id: number
   currency: string
@@ -79,8 +97,11 @@ const checkedAdd = (left: number, right: number, field: string): number => {
 }
 
 /**
- * The generation preview is the invariant-11 seam: invoice generation consumes
- * these exact per-currency totals instead of independently re-pricing rows.
+ * The generation preview is the invariant-11 seam: what invoice generation
+ * would bill for the same rows. Hours, entry counts and expenses match a
+ * generated draft exactly; time cents are each entry priced on its own, which a
+ * draft's lines -- hours to the hundredth times the rate -- can differ from by
+ * a few cents a line.
  */
 export const uninvoicedGenerationPreview = (input: {
   timeEntries: readonly Readonly<UninvoicedTimeCandidate>[]
