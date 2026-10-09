@@ -113,8 +113,9 @@ BILL's sandbox is free, standalone, and nothing in it touches the real book.
 Sandbox keys do not work in production and production needs a separate account
 at `bill.com/signup` (choose *Accounts Payable & Receivable*). Check BILL's current account terms directly before choosing a production plan.
 
-Point `BILL_ENVIRONMENT=sandbox` at it and send a test invoice before letting
-this near a real client.
+For the container, select `BILL_ENVIRONMENT=sandbox` and verify a disposable
+test invoice. For the Worker, first address the deployment caveat below; the
+stock workflow does not deliver that setting.
 
 ## What it will not do
 
