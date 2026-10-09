@@ -5,13 +5,14 @@ import type { AppleWebCustodyStore } from '@ezacto/core'
 
 const env = (demo = false): AppEnv => ({ ENVIRONMENT: demo ? 'demo' : 'prod', RELEASE: 'test',
   APP_BASE_URL: demo ? 'https://ezacto.io' : 'https://app.example.com', ...(demo ? { DEMO_MODE: 'true' } : {}),
-  APPLE_WEB_ENABLED: 'true', APPLE_WEB_SERVICES_ID: demo ? 'com.ezacto.web.demo' : 'com.ezacto.web',
+  APPLE_WEB_ENABLED: 'true', APPLE_WEB_SERVICES_ID: 'com.ezacto.web',
   APPLE_WEB_CAPABILITY_KEYS: JSON.stringify({ k1: 'A'.repeat(43) }), APPLE_WEB_ACTIVE_KEY_ID: 'k1', APPLE_WEB_ROUTING_SECRET: 'A'.repeat(43),
 })
 describe('Apple web deployment configuration', () => {
   it.each([false, true])('accepts only the complete approved deployment: demo=%s', demo => {
     const config = env(demo)
     expect(appleWebConfiguration(config)?.site).toBe(demo ? 'demo' : 'team')
+    expect(appleWebConfiguration(config)?.servicesId).toBe('com.ezacto.web')
     expect(configuredSignInProviders(config)).toContain('apple')
   })
   it.each([

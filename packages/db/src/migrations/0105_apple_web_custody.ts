@@ -7,7 +7,7 @@ export const appleWebCustodyMigration = [
     user_id INTEGER REFERENCES users(id) ON DELETE RESTRICT,
     service_issuer TEXT NOT NULL CHECK(service_issuer = 'https://apple-auth.ezacto.com'),
     instance_origin TEXT NOT NULL,
-    client_id TEXT NOT NULL CHECK(client_id IN ('com.ezacto.web', 'com.ezacto.web.demo')),
+    client_id TEXT NOT NULL CHECK(client_id = 'com.ezacto.web'),
     grant_id TEXT NOT NULL,
     generation INTEGER NOT NULL CHECK(generation > 0),
     sealed_capability TEXT CHECK(sealed_capability IS NULL OR json_valid(sealed_capability)),
@@ -16,8 +16,8 @@ export const appleWebCustodyMigration = [
     status TEXT NOT NULL CHECK(status IN ('active', 'pending', 'revoked', 'manual_required')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    CHECK((client_id = 'com.ezacto.web' AND instance_origin = 'https://app.example.com') OR
-          (client_id = 'com.ezacto.web.demo' AND instance_origin = 'https://ezacto.io' AND user_id IS NULL))
+    CHECK(instance_origin = 'https://app.example.com' OR
+          (instance_origin = 'https://ezacto.io' AND user_id IS NULL))
   ) STRICT`,
   `CREATE UNIQUE INDEX apple_web_current_subject ON apple_web_connections(subject_digest, service_issuer, instance_origin, client_id) WHERE status != 'revoked'`,
   `CREATE INDEX apple_web_user ON apple_web_connections(user_id) WHERE user_id IS NOT NULL`,

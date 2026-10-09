@@ -31,8 +31,8 @@ const positive = (value: unknown): value is number => typeof value === 'number' 
 const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
 export function assertAppleWebCustodyConfig(config: AppleWebCustodyConfig): void {
-  const expected = config.site === 'team' ? ['com.ezacto.web', 'https://app.example.com'] : ['com.ezacto.web.demo', 'https://ezacto.io']
-  if (!['team', 'demo'].includes(config.site) || config.servicesId !== expected[0] || config.redirectOrigin !== expected[1]) throw new TypeError('Apple web deployment is not approved')
+  const expectedOrigin = config.site === 'team' ? 'https://app.example.com' : 'https://ezacto.io'
+  if (!['team', 'demo'].includes(config.site) || config.servicesId !== 'com.ezacto.web' || config.redirectOrigin !== expectedOrigin) throw new TypeError('Apple web deployment is not approved')
   if (!/^[A-Za-z0-9_-]{43}$/.test(config.routingSecret) || decode(config.routingSecret).length !== 32 || encode(decode(config.routingSecret)) !== config.routingSecret ||
     Object.keys(config.encryptionKeys).length < 1 || Object.keys(config.encryptionKeys).length > 8 ||
     config.encryptionKeys[config.activeKeyId] === undefined) throw new TypeError('Apple web custody keys are invalid')

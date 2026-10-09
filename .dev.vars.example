@@ -19,7 +19,7 @@ OIDC_GOOGLE_CLIENT_SECRET=
 # canonical HTTPS origin (no trailing slash, path, query or credentials).
 # Current native sign-in requires an origin-bound lifecycle receipt from
 # https://apple-auth.ezacto.com. No Apple OAuth key or service capability belongs
-# on the OSS server. Web Services IDs use a separate browser flow.
+# on the OSS server. The web Services ID uses a separate browser flow.
 # See docs/apple-credential-lifecycle.md. Leaving this empty disables sign-in;
 # proof-only cleanup remains available when APP_BASE_URL is configured.
 APPLE_CLIENT_ID=

@@ -93,7 +93,7 @@ export const deploySecretPayload = (environment) => {
   if (appleWebValues.some(value => value !== null) && appleWebValues.some(value => value === null)) throw new TypeError('Apple web custody configuration must be supplied together')
   if (appleWebEnabled === 'true' && appleWebClientId === null) throw new TypeError('Apple web custody is required before enabling sign-in')
   if (appleWebKeys !== null) {
-    if (!['com.ezacto.web', 'com.ezacto.web.demo'].includes(appleWebClientId)) throw new TypeError('Apple web Services ID is not approved')
+    if (appleWebClientId !== 'com.ezacto.web') throw new TypeError('Apple web Services ID is not approved')
     let keys
     try { keys = JSON.parse(appleWebKeys) } catch { throw new TypeError('Apple web custody key set is invalid') }
     if (keys === null || typeof keys !== 'object' || Array.isArray(keys) || Object.keys(keys).length < 1 || Object.keys(keys).length > 8 || keys[appleWebActiveKey] === undefined) throw new TypeError('Apple web custody key set is invalid')

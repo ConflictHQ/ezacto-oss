@@ -8,13 +8,13 @@ Services ID.
 | Site | Services ID | Website domain | Exact return URL |
 | --- | --- | --- | --- |
 | Team | `com.ezacto.web` | `app.example.com` | `https://app.example.com/auth/apple/callback` |
-| Public demo | `com.ezacto.web.demo` | `ezacto.io` | `https://ezacto.io/auth/apple/callback` |
+| Public demo | `com.ezacto.web` | `ezacto.io` | `https://ezacto.io/auth/apple/callback` |
 
 ## Apple portal setup
 
-Under Team `H9G2335LXV`, associate both Services IDs with the existing primary
-App ID `com.ezacto.app`. Register each domain and exact HTTPS return URL under
-that Services ID's Sign in with Apple web configuration. Use a Sign in with
+Under Team `H9G2335LXV`, associate the shared Services ID `com.ezacto.web` with
+the existing primary App ID `com.ezacto.app`. Register each domain and exact HTTPS return URL under
+the shared Services ID's Sign in with Apple web configuration. Use a Sign in with
 Apple key for the primary app, never an App Store Connect API key. The central
 service alone receives the Apple key ID/private key and mints short-lived ES256
 client secrets. No Apple private key, refresh token or client secret belongs in
@@ -25,11 +25,24 @@ https://developer.apple.com/help/account/capabilities/configure-sign-in-with-app
 Server code exchange requirement:
 https://developer.apple.com/documentation/signinwithapple/verifying-a-user .
 
-The two Services IDs separate token audiences. They do not isolate Apple's
-revocation effects. Before enabling mixed native/web production, disposable
-Apple accounts must establish subject correspondence for the primary native
-app and both Services IDs. Never join subjects by guessed correspondence or
-email. Fixture tests establish our checks, not Apple's grouping behavior.
+Both websites use the same production Services ID; exact site origins and
+callbacks remain independently bound to each challenge and signed receipt.
+This does not isolate Apple's revocation effects. Before enabling mixed
+native/web production, disposable Apple accounts must establish subject correspondence for the primary native
+app and the web Services ID on both sites. Never join subjects by guessed
+correspondence or email. Fixture tests establish our checks, not Apple's grouping behavior.
+
+## Independent self-hosted deployments
+
+The shared first-party Services ID and credential service support only the two
+sites listed above. Independent self-hosted operators need their own Apple
+Developer App ID, Services ID and Sign in with Apple key, together with an
+integration that supports their deployment. This implementation deliberately
+rejects arbitrary operator audiences and origins: setting a custom ID or key
+in these settings does not enable self-hosted Apple web sign-in. Shared identity
+support for other deployments requires a separate explicit design and review.
+Hosted-by-us tenant routing belongs to the hosted platform. The bundled native
+mobile app continues to use the separate first-party `com.ezacto.app` audience.
 
 ## Application configuration
 
@@ -120,7 +133,7 @@ the website and App Store privacy disclosures before enablement.
 
 ## Acceptance before enablement
 
-- Confirm the exact two Services IDs, associated primary app, domains and return URLs in Apple Developer.
+- Confirm the shared Services ID, associated primary app, both domains and exact return URLs in Apple Developer.
 - Deploy the reviewed native and web lifecycle service, publish its credential-retention inventory and update App Store privacy answers.
 - Deploy this server's encrypted capability repository and aggregate native/web account-closure integration; provision separate custody and routing keys.
 - Verify disposable accounts across native, team web and demo web: actual exchange, subject correspondence, explicit disconnect, provider-wide impact and request-bound recovery after losing browser state.
