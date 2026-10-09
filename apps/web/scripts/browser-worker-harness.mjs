@@ -720,8 +720,8 @@ const fixtureControl = async (request, response) => {
      * `$28,450.00` -- measured, not guessed. `invoice-generation-seed` already
      * owns this shape, so this follows it.
      *
-     * Ids sit above 9000 so nothing an earlier spec creates through the API can
-     * collide with them, and the cleanup below is keyed on the same range.
+     * Ids 9001–9008 belong to this roster. Other browser fixtures use higher
+     * ranges, including retained closure history, so cleanup owns only these ids.
      */
     const rosterTargets = {
       // 315h, 328.25h, 284.5h, 43.75h -- the strip's own figures, in seconds.
@@ -890,10 +890,10 @@ const fixtureControl = async (request, response) => {
     }
   } else if (action === 'team-summary-cleanup') {
     await database.batch([
-      database.prepare('DELETE FROM time_entries WHERE user_id >= 9000'),
-      database.prepare('DELETE FROM user_assignments WHERE user_id >= 9000'),
-      database.prepare('DELETE FROM user_emails WHERE user_id >= 9000'),
-      database.prepare('DELETE FROM users WHERE id >= 9000'),
+      database.prepare('DELETE FROM time_entries WHERE user_id BETWEEN 9001 AND 9008'),
+      database.prepare('DELETE FROM user_assignments WHERE user_id BETWEEN 9001 AND 9008'),
+      database.prepare('DELETE FROM user_emails WHERE user_id BETWEEN 9001 AND 9008'),
+      database.prepare('DELETE FROM users WHERE id BETWEEN 9001 AND 9008'),
       database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
     ])
   } else if (action === 'teammate-time-seed' || action === 'teammate-time-cleanup') {
