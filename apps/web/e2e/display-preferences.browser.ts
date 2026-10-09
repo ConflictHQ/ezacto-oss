@@ -42,7 +42,7 @@ const signIn = async (page: Page): Promise<void> => {
   })
   expect(reset.status()).toBe(204)
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.locator('[data-sign-in-form]').getByLabel('Password').fill(fixturePassword)
+  await page.locator('[data-sign-in-form]').getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.locator('[data-authenticated-shell]:not([inert])')).toBeVisible()
 }
