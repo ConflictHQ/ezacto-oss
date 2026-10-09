@@ -1,3 +1,4 @@
+import type { AccountDeletionStore } from '@ezacto/core'
 import type { PaymentRunsService } from '@ezacto/core'
 import { installPaymentRunRoutes } from '@ezacto/api'
 import { installStaffPaymentRoutes } from '@ezacto/api'
@@ -305,6 +306,7 @@ export interface RuntimeServices {
   isExpensesModuleEnabled(): Promise<boolean>
   moduleSettings: ModuleSettingsService
   /** Which ways in are switched on (issue 761). */
+  accountDeletionRequests?: AccountDeletionStore
   accountRetention?: AccountRetentionService
   signInMethods: SignInMethodService
   /** The domains SSO may provision a user for, and their DNS challenges (#270). */
@@ -574,6 +576,7 @@ export const createApp = (
             installSessionRoutes(api, services.sessions)
             installProfileRoutes(api, {
               repository: services.profile,
+              ...(services.accountDeletionRequests === undefined ? {} : { deletionStore: services.accountDeletionRequests }),
               clock: () => systemClock.now().instant,
               ...(services.accountDeletionMailer === undefined
                 ? {}

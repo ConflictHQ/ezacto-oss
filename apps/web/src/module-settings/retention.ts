@@ -1,3 +1,4 @@
+import { renderDeletionRequests } from './deletion-requests-render.js'
 import {
   PRIVACY_FRAMEWORK_CATALOG,
   PRIVACY_REFERENCE_REVIEWED_ON,
@@ -93,6 +94,7 @@ export const renderRetentionSection = (): string => `
       </fieldset>
     </form>
     <p data-retention-result role="status" aria-live="polite"></p>
+    ${renderDeletionRequests()}
   </section>`;
 
 type Active = SessionPresenter & {

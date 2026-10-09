@@ -78,6 +78,60 @@ instances start with **no published policy**, with no inferred retention choice.
   version in the same insert. A stale version returns 409; malformed policy 422.
 - The shared public demo refuses policy publication.
 
+## Deletion requests and operator queue
+
+Both runtimes store requests in `account_deletion_requests` independently of email.
+In **Settings → Company → Erasure and retention**, administrators can inspect the
+queue, read the captured disclosure, record progress and any required user action,
+and retry unavailable or failed administrator notification. These actions do not
+close access or erase personal information. Completion is not a dropdown choice;
+actual fulfilment remains a separate operation tracked by #972.
+
+- `POST /api/v1/profile/deletion-request` accepts optional
+  `expected_policy_version` (the reviewed version, or `null` when unpublished).
+  A version changed before the write returns 409. Retrying an existing request
+  returns its original snapshot; submitting again cannot replace its terms.
+- Older clients can submit an empty JSON object or no body. The server captures
+  the policy but sets `policy_reviewed: false`. This is not consent or evidence
+  that the client displayed the policy. New clients should always submit the
+  reviewed version. An unpublished policy does not block a request or limit user rights.
+- `GET /api/v1/profile/deletion-request` returns the authenticated user's request,
+  or `data: null`. Read/write scopes are `time_entries:read`/`time_entries:write`.
+  There is no route for a requester to look up somebody else's request by ID.
+- Administrator session routes: `GET /api/v1/admin/deletion-requests` (50 rows,
+  follow `links.next`), `GET`/`PATCH /api/v1/admin/deletion-requests/:id`, and
+  `POST /api/v1/admin/deletion-requests/:id/notification` to retry notification.
+  Updates require `expected_version`, a progress status, user-visible `message`,
+  and nullable `expected_completion_at`. Database authority/version checks and
+  normal same-origin protection apply. An action-required status needs a message.
+- States: `pending`, `in_progress`, `action_required`, `completed`. The first
+  three describe handling only. Completion requires a separate fulfilment path
+  with an actual timestamp and confirmation; this queue cannot assert it.
+- `response_target_at` comes from the immutable policy's initial-response target.
+  It is **not** a completion deadline. An operator may separately communicate
+  `expected_completion_at`; neither setting changes applicable legal deadlines.
+- `notification` records pending/sending/queued/failed/unavailable. Queued is not
+  delivered. `notification_delivery_id` links to the existing email log; later
+  failed/bounced/complained deliveries show failed. Failed/bounced messages can
+  be retried after fixing delivery. Complaints remain subject to suppression.
+  A claim prevents concurrent attempts; an interrupted sending attempt may be
+  retried after 15 minutes. A crash between enqueue and recording its outcome
+  can produce a duplicate notice on retry; it cannot duplicate the request.
+- Migration `0102_account_deletion_requests` imports earlier activity-only asks
+  using their first request time and no invented historical policy. Their email
+  outcome is unknown (`unavailable`); an administrator can retry it.
+
+Request records store an existing user ID, not copied names or contact addresses.
+Names and primary addresses used for mail are read from the existing directory.
+Request snapshots/progress history document how a right was handled; restrict
+access to the requester and active administrators, and keep messages free of
+unnecessary personal details. Email logs/queues contain recipients and must be
+included in the operator's own retention assessment. There is no built-in expiry
+for request history or mail logs: document the actual evidence-retention period
+and starting event under your audit/security category, review it when closure is
+completed, and remove records when that purpose ends. Do not promise automatic
+expiry from a review interval. Retention-review automation is tracked by #973.
+
 ## Legal references and applicability
 
 References reviewed 2026-10-09. These are configuration guidance, not a legal

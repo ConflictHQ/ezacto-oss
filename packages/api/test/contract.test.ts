@@ -166,6 +166,15 @@ const documentedApp = () =>
     installApi: (api) => {
       installSessionRoutes(api, sessions);
       installProfileRoutes(api, {
+        deletionStore: {
+          request: async () => { throw new Error("Contract fixture does not create requests"); },
+          readOwn: async () => null, list: async () => [],
+          readAdmin: async () => { throw new Error("Contract fixture has no requests"); },
+          update: async () => { throw new Error("Contract fixture does not update requests"); },
+          claimNotification: async () => false, finishNotification: async () => undefined,
+          notificationRecipients: async () => ({ person: { name: "", email: null }, administrators: [] }),
+        },
+
         repository: profileRepository,
         clock: () => "2026-01-01T00:00:00.000Z",
       });
