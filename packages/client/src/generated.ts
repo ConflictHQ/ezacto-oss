@@ -1297,6 +1297,56 @@ export type AppleCleanupStatusEnvelope = {
 };
 };
 
+export type RetentionReview = {
+  "request_id": string;
+  "area": string;
+  "kind": "retained_category" | "downstream";
+  "original_reason": string;
+  "original_period": string;
+  "decision": "pending" | "retain" | "removed" | "not_applicable" | "failed" | "release_hold";
+  "basis": string;
+  "release_condition": string;
+  "evidence": string;
+  "next_review_at": string | null;
+  "hold_active": boolean;
+  "version": number;
+  "reviewed_at": string | null;
+  "actor_user_id": number | null;
+};
+
+export type RetentionReviewListEnvelope = {
+  "data": Array<RetentionReview>;
+};
+
+export type RetentionReviewEnvelope = {
+  "data": RetentionReview;
+};
+
+export type RetentionReviewInput = {
+  "expected_version": number;
+  "decision": "retain" | "removed" | "not_applicable" | "failed" | "release_hold";
+  "basis": string;
+  "release_condition": string;
+  "evidence": string;
+  "next_review_at": string | null;
+  "acknowledged": true;
+};
+
+export type DeletionCompletionInput = {
+  "expected_request_version": number;
+  "expected_reviews": {
+  [key: string]: number;
+};
+  "acknowledged": true;
+};
+
+export type DeletionCompletionEnvelope = {
+  "data": {
+  "completed_at": string;
+  "confirmation": string;
+};
+};
+
 export type AccountClosureInput = {
   "expected_version": number;
   "expected_policy_version": number;
@@ -5985,6 +6035,45 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<AccountDeletionTrackingEnvelope>("POST", "/account-deletion/requests/:id/status".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listDueRetentionReviews(args: { query?: { "after"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<RetentionReviewListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<RetentionReviewListEnvelope>("GET", "/api/v1/admin/retention-reviews", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async readRetentionReviews(args: { "id": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<RetentionReviewListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<RetentionReviewListEnvelope>("GET", "/api/v1/admin/deletion-requests/:id/retention-reviews".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async recordRetentionReview(args: { "id": string; "area": string; body: RetentionReviewInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<RetentionReviewEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<RetentionReviewEnvelope>("PATCH", "/api/v1/admin/deletion-requests/:id/retention-reviews/:area".replace(":id", encodeURIComponent(String(args["id"]))).replace(":area", encodeURIComponent(String(args["area"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async completeReviewedDeletionRequest(args: { "id": string; body: DeletionCompletionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<DeletionCompletionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<DeletionCompletionEnvelope>("POST", "/api/v1/admin/deletion-requests/:id/completion".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
       signal: args.signal,
       headers,

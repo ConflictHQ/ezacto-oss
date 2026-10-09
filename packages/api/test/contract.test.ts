@@ -40,6 +40,7 @@ import {
   installReportRoutes,
   installProfileRoutes,
   installAccountClosureRoutes,
+  installAccountRetentionReviewRoutes,
   installAppleRoutes,
   installAppleLifecycleRoutes,
   installAccountDeletionStatusRoutes,
@@ -179,6 +180,7 @@ const documentedApp = () =>
     },
     installApi: (api) => {
       installSessionRoutes(api, sessions);
+      installAccountRetentionReviewRoutes(api,{store:profileRepository,clock:()=>"2026-10-09T00:00:00.000Z"});
       installAccountClosureRoutes(api, {
         store: { preview: unavailable, close: unavailable },
         clock: () => "2026-01-01T00:00:00.000Z",

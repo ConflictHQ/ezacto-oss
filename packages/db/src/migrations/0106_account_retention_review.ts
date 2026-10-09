@@ -22,6 +22,7 @@ const seed = (
     )
     .join('\n')}`
 export const accountRetentionReviewMigration = [
+  `CREATE TABLE IF NOT EXISTS account_restore_quarantine(id INTEGER PRIMARY KEY CHECK(id=1),quarantined INTEGER NOT NULL CHECK(quarantined IN (0,1)),source_digest TEXT,evidence TEXT,updated_at TEXT NOT NULL) STRICT`,
   `CREATE TABLE account_retention_obligations (
     request_id TEXT NOT NULL REFERENCES account_closures(request_id) ON DELETE RESTRICT,
     area TEXT NOT NULL CHECK(area IN ('time_and_worker_attribution','billing_and_payments','audit_and_security','legal_hold',${areas.map((x) => `'${x}'`).join(',')})),

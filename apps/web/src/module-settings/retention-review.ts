@@ -26,6 +26,7 @@ export function createRetentionReviewController(
   const queue = section.querySelector<HTMLElement>(
     "[data-retention-due-list]",
   )!;
+  let queueAfter:string|null=null;
   let session: Active | null = null,
     request: AccountDeletionRecord | null = null,
     revision = 0,
@@ -278,6 +279,7 @@ export function createRetentionReviewController(
     busy = false;
     content.replaceChildren();
     queue.replaceChildren();
+    queueAfter=null;due.textContent="Show due and overdue reviews";
     status.textContent = "";
     reference.textContent = selected
       ? `Request ${selected.id} · ${selected.status.replaceAll("_", " ")}`
@@ -306,7 +308,7 @@ export function createRetentionReviewController(
     status.textContent = "Loading due reviews…";
     void call<{ data: RetentionObligation[] }>(
       active,
-      "/api/v1/admin/retention-reviews",
+      `/api/v1/admin/retention-reviews${queueAfter?`?after=${encodeURIComponent(queueAfter)}`:""}`,
     )
       .then((result) =>
         active.present(() => {
@@ -341,6 +343,9 @@ export function createRetentionReviewController(
             item.append(button);
             queue.append(item);
           }
+          const last=result.data.at(-1);
+          queueAfter=result.data.length===100&&last?`${last.request_id}/${last.area}`:null;
+          due.textContent=queueAfter?"Show next due reviews":"Refresh due reviews";
           status.textContent = result.data.length
             ? "Due and overdue obligations remain actionable, including after request completion."
             : "No due reviews were found.";

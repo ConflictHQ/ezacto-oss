@@ -3936,3 +3936,11 @@ export const appleIdentityChannels = sqliteTable('apple_identity_channels', {
   subjectHash:text('subject_hash').notNull(),userId:integer('user_id').notNull().references(()=>users.id,{onDelete:'restrict'}),
   channel:text('channel',{enum:['native','web']}).notNull(),knownFromFirstLink:integer('known_from_first_link',{mode:'boolean'}).notNull(),
 },table=>[primaryKey({columns:[table.subjectHash,table.userId,table.channel]})])
+
+export const accountRetentionObligations = sqliteTable('account_retention_obligations', {
+  requestId:text('request_id').notNull().references(()=>accountClosures.requestId,{onDelete:'restrict'}),area:text('area').notNull(),kind:text('kind').notNull(),
+  originalReason:text('original_reason').notNull(),originalPeriod:text('original_period').notNull(),decision:text('decision').notNull(),basis:text('basis').notNull(),releaseCondition:text('release_condition').notNull(),evidence:text('evidence').notNull(),nextReviewAt:text('next_review_at'),holdActive:integer('hold_active',{mode:'boolean'}).notNull(),version:integer('version').notNull(),reviewedAt:text('reviewed_at'),actorUserId:integer('actor_user_id').references(()=>users.id,{onDelete:'restrict'}),
+},table=>[primaryKey({columns:[table.requestId,table.area]})])
+export const accountRetentionReviewEvents = sqliteTable('account_retention_review_events', {
+  requestId:text('request_id').notNull(),area:text('area').notNull(),version:integer('version').notNull(),decision:text('decision').notNull(),basis:text('basis').notNull(),releaseCondition:text('release_condition').notNull(),evidence:text('evidence').notNull(),nextReviewAt:text('next_review_at'),holdActive:integer('hold_active',{mode:'boolean'}).notNull(),occurredAt:text('occurred_at').notNull(),actorUserId:integer('actor_user_id').notNull().references(()=>users.id,{onDelete:'restrict'}),
+},table=>[primaryKey({columns:[table.requestId,table.area,table.version]}),foreignKey({columns:[table.requestId,table.area],foreignColumns:[accountRetentionObligations.requestId,accountRetentionObligations.area]}).onDelete('restrict')])

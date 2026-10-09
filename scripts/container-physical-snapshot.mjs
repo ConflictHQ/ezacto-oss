@@ -554,6 +554,8 @@ const restore = async ({ bundle, volume, image }) => {
     restoreHelper,
   ]);
   await verifyRestoredVolume({ bundle, volume, image, expected: metadata });
+  await docker(["run","--rm","--user","1000:1000","--mount",`type=volume,source=${volume},target=/data`,"--entrypoint","node",image,"entries/container/dist/privacy-restore.js","quarantine","--database","/data/db.sqlite"]);
+  process.stdout.write("Restored database is quarantined. Replay current closure evidence and verify downstream cleanup before releasing it for service.\n");
 };
 
 const optionsFor = (args) => {

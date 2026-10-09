@@ -234,6 +234,7 @@ export const prepareContainerDatabase = (
   database.pragma('busy_timeout = 5000')
   database.pragma('wal_autocheckpoint = 1000')
   migrateContainer(database)
+  if(database.prepare('SELECT 1 FROM account_restore_quarantine WHERE id=1 AND quarantined=1').get())throw new Error('Restored privacy evidence must be reconciled before this instance serves traffic.')
 
   assertPragma(database, 'journal_mode', 'wal')
   assertPragma(database, 'synchronous', 2)
