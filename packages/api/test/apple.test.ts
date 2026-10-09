@@ -50,6 +50,7 @@ interface TokenChanges {
   issuedAt?: number
   expiresAt?: number
   kid?: string
+  nonce?: string
 }
 
 const identityToken = async (
@@ -64,6 +65,7 @@ const identityToken = async (
   if (changes.isPrivateEmail !== undefined) {
     payload.is_private_email = changes.isPrivateEmail
   }
+  if (changes.nonce !== undefined) payload.nonce = changes.nonce
   // Apple's identity-token header carries alg and kid but no typ; the verifier
   // must not require one.
   return new SignJWT(payload)
@@ -87,6 +89,27 @@ const jwksFetch = (keys: () => readonly JWK[]) => {
 }
 
 describe('Apple identity token verification', () => {
+  it('[security] binds a verified token to the requested nonce and web audience', async () => {
+    const key = await signingKey('nonce-key')
+    const remote = jwksFetch(() => [key.jwk])
+    const verifier = createAppleIdentityTokenVerifier({ clientId: 'com.ezacto.web', fetch: remote.fetch, now: () => fixedNow })
+    const nonce = 'a'.repeat(64)
+    const token = await identityToken(key, { audience: 'com.ezacto.web', nonce })
+    await expect(verifier.verify(token, { nonce })).resolves.toMatchObject({ subject })
+    await expect(verifier.verify(token, { nonce: 'b'.repeat(64) })).resolves.toBeNull()
+    await expect(verifier.verify(await identityToken(key, { audience: 'com.ezacto.web' }), { nonce })).resolves.toBeNull()
+    await expect(verifier.verify(await identityToken(key, { nonce }), { nonce })).resolves.toBeNull()
+  })
+
+  it('[unit] reports private relay email from claims or its verified domain', async () => {
+    const key = await signingKey('relay-key')
+    const remote = jwksFetch(() => [key.jwk])
+    const verifier = createAppleIdentityTokenVerifier({ clientId, fetch: remote.fetch, now: () => fixedNow })
+    for (const changes of [{ isPrivateEmail: true }, { isPrivateEmail: 'true' }, { email: 'relay@privaterelay.appleid.com' }]) {
+      await expect(verifier.verify(await identityToken(key, changes))).resolves.toMatchObject({ isPrivateEmail: true })
+    }
+  })
+
   it.each([
     { clientId: '' },
     { clientId: '   ' },
@@ -115,6 +138,7 @@ describe('Apple identity token verification', () => {
       subject,
       email: 'ada@example.test',
       emailVerified: true,
+      isPrivateEmail: false,
     })
     await expect(verifier.verify(token)).resolves.toMatchObject({ subject })
     expect(remote.calls).toHaveLength(1)

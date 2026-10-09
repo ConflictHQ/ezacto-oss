@@ -78,7 +78,7 @@ export interface AppleAssertion {
    * Email). It still verifies and still links, but it matches no account a
    * person made under their own address, which is worth saying when it fails.
    */
-  isPrivateEmail: boolean
+  isPrivateEmail?: boolean
 }
 
 /** Claims a caller requires on top of the signature, issuer and audience. */
@@ -125,13 +125,7 @@ export interface AppleRouteOptions<Bindings extends object> {
    * has to stop the route rather than a control that was never there.
    */
   policy?: SignInMethodPolicy
-  /**
-   * Where an identity matches nobody and may not provision anyone, the user to
-   * sign in as instead, or null to refuse as usual. Only the public demo sets
-   * it (issue 768), with an account whose password it already prints; see
-   * `demoAppleAccount` in the Worker entry.
-   */
-  fallbackAccount?(bindings: Bindings): Promise<number | null>
+
 }
 
 const appleError = (
@@ -249,7 +243,7 @@ const applePrivateEmail = (payload: JWTPayload, email: string): boolean =>
   payload.is_private_email === 'true' ||
   email.endsWith(PRIVATE_RELAY_DOMAIN)
 
-/** Length-independent comparison, so a wrong nonce costs the same as a right one. */
+/** Compare every position instead of returning at the first different character. */
 const sameText = (left: string, right: string): boolean => {
   let difference = left.length ^ right.length
   const length = Math.max(left.length, right.length)
@@ -489,30 +483,19 @@ export const installAppleRoutes = <Bindings extends object>(
       }
       throw error
     }
-    // An assertion that matched nobody and came from a domain this instance has
-    // not proven it owns gets no account -- the same rule the OIDC providers
-    // enforce, so an arbitrary Apple ID cannot provision itself a user. The
-    // demo's fallback creates nobody either: it names an account that exists.
-    let userId: number
+    // Keep native membership behavior unchanged; the web demo has a separate
+    // route that bypasses identity resolution altogether.
     if (identity.status === 'provisioning_not_permitted') {
-      const fallback =
-        options.fallbackAccount === undefined
-          ? null
-          : await options.fallbackAccount(context.env)
-      if (fallback === null) {
-        throw appleError(
-          403,
-          'provisioning_not_permitted',
-          'This Apple account is not on a domain this instance provisions from.',
-        )
-      }
-      userId = fallback
-    } else if (identity.status === 'disabled') {
-      throw appleError(403, 'account_disabled', 'This ezacto user is disabled.')
-    } else {
-      userId = identity.userId
+      throw appleError(
+        403,
+        'provisioning_not_permitted',
+        'This Apple account is not on a domain this instance provisions from.',
+      )
     }
-    const session = await options.sessions.issue(userId)
+    if (identity.status === 'disabled') {
+      throw appleError(403, 'account_disabled', 'This ezacto user is disabled.')
+    }
+    const session = await options.sessions.issue(identity.userId)
     context.header('set-cookie', session.setCookie, { append: true })
     setResponseHeaders(context)
     return context.json({ data: { ok: true } }, 200, {

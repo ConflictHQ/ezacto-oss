@@ -51,6 +51,10 @@ export const UNDOCUMENTED_ROUTES: readonly string[] = [
   // surface to document, out of the document too. Always mounted; answers 404
   // until a deployment sets APPLE_CLIENT_ID.
   'post /auth/apple',
+  'get /auth/apple/start',
+  'post /auth/apple/callback',
+  'get /auth/apple/disconnect',
+  'post /auth/apple/disconnect',
 ]
 
 /**

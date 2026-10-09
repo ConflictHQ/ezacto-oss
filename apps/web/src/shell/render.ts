@@ -1,6 +1,6 @@
 import { renderStaffPayments } from '../staff-payments/render.js'
 import { PASSWORD_MIN_CODE_POINTS, PASSWORD_MAX_CODE_POINTS } from '@ezacto/core'
-import { googleSignInIcon, shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
+import { appleSignInIcon, googleSignInIcon, shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
 import { iconMarkup, type IconName } from '../components/icons.js'
 import { INSTANCE_THEME_STYLESHEET_PATH } from '../instance-theme.js'
 import { defaultTheme, themeManifest } from '../theme.js'
@@ -156,7 +156,7 @@ export interface AppShellOptions {
   readonly sessionCookiePresent?: boolean
 }
 
-export type SignInProvider = 'google' | 'github'
+export type SignInProvider = 'google' | 'github' | 'apple'
 
 export interface DemoSignInAccount {
   /** What the account is, e.g. "Administrator". */
@@ -438,6 +438,11 @@ const providerSignIn = (
       `<a class="oidc-sign-in" data-oidc-provider="github" href="${safePath('/auth/github')}">Continue with GitHub</a>`,
     )
   }
+  if (providers.includes('apple')) {
+    links.push(
+      `<a class="oidc-sign-in" data-oidc-provider="apple" href="/auth/apple/start"><img src="${appleSignInIcon}" alt="" width="40" height="40">Continue with Apple</a>`,
+    )
+  }
   if (links.length === 0) return ''
   return (
     `<div class="oidc-entry" data-oidc-entry>` +
@@ -585,6 +590,8 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
             <p>Use your account to continue to your workspace.</p>
           </div>
           ${providerSignIn(options.signInProviders ?? [], passwordSignIn)}
+          ${(options.signInProviders ?? []).includes('apple') ? `<p class="apple-authorization-note">${options.demo === true ? 'Apple opens the shared sample workspace. It does not create a workspace account or link your identity to sample data. ' : ''}The Ezacto Apple sign-in service securely retains your Apple authorization. Signing out does not revoke it. <a href="/auth/apple/disconnect">Disconnect Apple</a> to withdraw authorization; this may also affect the iPhone app and other Ezacto sites.</p>` : ''}
+          <p class="auth-result" data-apple-sign-in-result role="status" aria-live="polite"></p>
           <div class="password-entry" data-password-entry${passwordSignIn ? '' : ' hidden'}>
             <label for="ez-sign-in-email">Email
               <input id="ez-sign-in-email" name="email" type="email" inputmode="email" autocomplete="username" required>
@@ -682,6 +689,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <span class="visually-hidden">User <span data-current-user-id>—</span></span>
         </span>
         <a class="identity-settings" href="/settings/user" data-settings-link>${iconMarkup('sliders')}<span class="identity-action-label">Settings</span></a>
+        ${(options.signInProviders ?? []).includes('apple') ? '<a class="identity-settings" href="/auth/apple/disconnect">Disconnect Apple</a>' : ''}
         <button type="button" class="identity-signout" data-logout>${iconMarkup('sign-out')}<span class="identity-action-label">Sign out</span></button>
         <p class="auth-result visually-hidden" data-logout-result role="status" aria-live="polite"></p>
       </div>
@@ -1200,3 +1208,28 @@ export const webAssets = {
   stylesheet: shellStylesheet,
   javascript: shellJavascript,
 } as const
+
+/** Standalone confirmation: no workspace session authorizes Apple revocation. */
+export const renderAppleDisconnect = (options: {
+  connected: boolean
+  unavailable: boolean
+  disconnected?: boolean
+}): string => `<!doctype html>
+<html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="light">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>Disconnect Apple — Ezacto</title>
+<link rel="stylesheet" href="/assets/ezacto.css"></head>
+<body><main class="apple-disconnect"><div class="auth-card">
+<div class="auth-heading"><p class="eyebrow">Apple authorization</p><h1>Disconnect Apple</h1></div>
+<p>Ezacto securely retains your Apple authorization in its sign-in service. Signing out of a workspace does not revoke it.</p>
+<p>Disconnecting withdraws that authorization from Apple. It may also affect Sign in with Apple in the Ezacto iPhone app and other Ezacto sites linked to the same Apple app. Your workspace and its records are not deleted.</p>
+${options.unavailable ? '<p class="auth-result" role="alert">Apple authorization could not be checked or disconnected. No successful disconnection has been confirmed. Please try again.</p>' : ''}
+${options.disconnected === true ? '<p role="status">Your Apple authorization has been disconnected. Your workspace records have not been deleted.</p>' : options.connected ? `<form class="sign-in-form" method="post" action="/auth/apple/disconnect">
+<label class="apple-disconnect-confirm"><input type="checkbox" name="confirm" value="disconnect" required> I understand this may affect my Apple sign-in across Ezacto apps and sites.</label>
+<button class="primary-action" type="submit">Disconnect Apple</button></form>` : `<p>This browser does not have a verified Apple connection. Continue with Apple to recover access to your authorization, then return here to confirm disconnection. This does not create a workspace account or sign you in to a workspace.</p><a class="oidc-sign-in" data-oidc-provider="apple" href="/auth/apple/start?intent=disconnect"><img src="${appleSignInIcon}" alt="" width="40" height="40">Continue with Apple</a>
+<form class="sign-in-form" method="get" action="/auth/apple/start">
+<input type="hidden" name="intent" value="disconnect">
+<label>Pending deletion request reference<input name="cleanup_request" pattern="[A-Za-z0-9_-]{8,128}" maxlength="128" required autocomplete="off"></label>
+<p>If you have already requested account deletion, use its request reference to finish Apple cleanup for that same request.</p>
+<button type="submit">Recover this deletion request with Apple</button></form>`}
+<p><a href="/">Return to Ezacto</a></p></div></main></body></html>`

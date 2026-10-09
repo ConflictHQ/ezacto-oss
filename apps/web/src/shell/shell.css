@@ -8572,3 +8572,22 @@ dialog textarea {
 .staff-payments .payment-tabs button[aria-selected='true'] { border-bottom-color: var(--ez-action); color: var(--ez-ink); font-weight: 700; }
 .staff-payments [role='tabpanel'] { padding-block: 20px; }
 .staff-payments .primary-action { background: var(--ez-action); color: var(--ez-action-fg); }
+
+.oidc-sign-in[data-oidc-provider="apple"] {
+  background: var(--ez-apple-sign-in-background);
+  color: var(--ez-apple-sign-in-foreground);
+  border-color: var(--ez-apple-sign-in-foreground);
+  padding: 0 12px 0 2px;
+  min-height: 44px;
+  font-size: 16px;
+  font-weight: 500;
+}
+.oidc-sign-in[data-oidc-provider="apple"] img {
+  flex: 0 0 40px;
+  object-fit: contain;
+}
+.apple-authorization-note { color: var(--ez-muted); font-size: 13px; line-height: 1.5; }
+.apple-disconnect { max-width: 640px; margin: 48px auto; padding: 24px; }
+.apple-disconnect .auth-card { max-width: none; }
+.apple-disconnect-confirm { display: flex; gap: 12px; align-items: start; }
+.apple-disconnect-confirm input { width: auto; flex: 0 0 auto; }

@@ -79,10 +79,30 @@ export const deploySecretPayload = (environment) => {
     )
   }
   // Native Sign in with Apple. A single value -- the expected audience of the
-  // identity token the app posts (its bundle id, optionally a web Services ID
-  // beside it). No secret pair: the token is signed by Apple, not by us.
+  // identity token the app posts (its bundle ID only). Web has a separate
+  // Services ID and central code exchange; never add a web audience here.
   // Rendered explicitly so removing it clears the Worker on the next deploy.
   const appleClientId = optionalCredential(environment.APPLE_CLIENT_ID)
+  const appleWebEnabled = optionalCredential(environment.APPLE_WEB_ENABLED)
+  if (appleWebEnabled !== null && !['true', 'false'].includes(appleWebEnabled)) throw new TypeError('APPLE_WEB_ENABLED must be true or false')
+  const appleWebClientId = optionalCredential(environment.APPLE_WEB_SERVICES_ID)
+  const appleWebKeys = optionalCredential(environment.APPLE_WEB_CAPABILITY_KEYS)
+  const appleWebActiveKey = optionalCredential(environment.APPLE_WEB_ACTIVE_KEY_ID)
+  const appleWebRouting = optionalSigningKey(environment.APPLE_WEB_ROUTING_SECRET, 'APPLE_WEB_ROUTING_SECRET')
+  const appleWebValues = [appleWebClientId, appleWebKeys, appleWebActiveKey, appleWebRouting]
+  if (appleWebValues.some(value => value !== null) && appleWebValues.some(value => value === null)) throw new TypeError('Apple web custody configuration must be supplied together')
+  if (appleWebEnabled === 'true' && appleWebClientId === null) throw new TypeError('Apple web custody is required before enabling sign-in')
+  if (appleWebKeys !== null) {
+    if (!['com.ezacto.web', 'com.ezacto.web.demo'].includes(appleWebClientId)) throw new TypeError('Apple web Services ID is not approved')
+    let keys
+    try { keys = JSON.parse(appleWebKeys) } catch { throw new TypeError('Apple web custody key set is invalid') }
+    if (keys === null || typeof keys !== 'object' || Array.isArray(keys) || Object.keys(keys).length < 1 || Object.keys(keys).length > 8 || keys[appleWebActiveKey] === undefined) throw new TypeError('Apple web custody key set is invalid')
+    for (const [id, value] of Object.entries(keys)) {
+      if (!/^[A-Za-z0-9_-]{1,32}$/.test(id)) throw new TypeError('Apple web custody key ID is invalid')
+      canonicalSigningKey(value, 'APPLE_WEB_CAPABILITY_KEYS')
+    }
+  }
+
   const accessKeyId = optionalSesCredential(
     environment.AWS_ACCESS_KEY_ID,
     'AWS_ACCESS_KEY_ID',
@@ -170,6 +190,11 @@ export const deploySecretPayload = (environment) => {
     OIDC_GOOGLE_CLIENT_ID: clientId,
     OIDC_GOOGLE_CLIENT_SECRET: clientSecret,
     APPLE_CLIENT_ID: appleClientId,
+    APPLE_WEB_ENABLED: appleWebEnabled,
+    APPLE_WEB_SERVICES_ID: appleWebClientId,
+    APPLE_WEB_CAPABILITY_KEYS: appleWebKeys,
+    APPLE_WEB_ACTIVE_KEY_ID: appleWebActiveKey,
+    APPLE_WEB_ROUTING_SECRET: appleWebRouting,
     AWS_ACCESS_KEY_ID: accessKeyId,
     AWS_SECRET_ACCESS_KEY: secretAccessKey,
     AWS_SESSION_TOKEN: sessionToken,
