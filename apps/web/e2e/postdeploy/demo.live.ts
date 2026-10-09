@@ -73,7 +73,7 @@ test('deployed demo signs in, navigates, persists a client and signs out', async
       if (clientId !== undefined) {
         // Delete only the id returned by this run, after verifying its unique marker.
         try {
-          const cleanup = await cleanupClient(page.request, clientId, uniqueName, timing => cleanupTimings.push(timing))
+          const cleanup = await cleanupClient(page, clientId, uniqueName, timing => cleanupTimings.push(timing))
           expect(cleanup).toEqual({ read: 200, deleted: 204 })
         } catch (error) {
           // A cleanup stall must not replace the assertion that sent us here.

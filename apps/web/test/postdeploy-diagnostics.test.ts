@@ -1,9 +1,14 @@
 import { EventEmitter } from 'node:events'
-import type { APIRequestContext, Page, Request, TestInfo } from '@playwright/test'
-import { describe, expect, it, vi } from 'vitest'
+import type { Page, Request, TestInfo } from '@playwright/test'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanupClient, requestDiagnostics } from '../e2e/postdeploy/diagnostics.js'
 
 describe('deployed acceptance diagnostics', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  const browserPage = () => {
+    vi.stubGlobal('location', { origin: 'https://ezacto.io' })
+    return { evaluate: async (fn: (arg: unknown) => unknown, arg: unknown) => fn(arg) } as unknown as Page
+  }
   it('retains request timing and a correlation ray without credentials, queries or response headers', async () => {
     const page = new EventEmitter()
     const attach = requestDiagnostics(page as unknown as Page)
@@ -41,38 +46,53 @@ describe('deployed acceptance diagnostics', () => {
   })
 
   it('never deletes a client whose current name differs from this run’s unique marker', async () => {
-    const remove = vi.fn()
-    const request = {
-      get: vi.fn(async () => ({
-        ok: () => true,
-        status: () => 200,
-        json: async () => ({ data: { name: 'Unrelated client' } }),
-      })),
-      delete: remove,
-    } as unknown as APIRequestContext
+    const fetch = vi.fn().mockResolvedValue(Response.json({ data: { name: 'Unrelated client' } }))
+    vi.stubGlobal('fetch', fetch)
     const record = vi.fn()
-    expect(await cleanupClient(request, 123, 'Deployment E2E unique-marker', record)).toEqual({
-      read: 200,
-      deleted: 0,
+    expect(await cleanupClient(browserPage(), 123, 'Deployment E2E unique-marker', record)).toEqual({
+      read: 200, deleted: 0,
     })
-    expect(remove).not.toHaveBeenCalled()
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch.mock.calls[0]).toEqual(['/api/v1/clients/123', {
+      credentials: 'same-origin', redirect: 'error', signal: expect.any(AbortSignal),
+    }])
     expect(record.mock.calls.map(([event]) => event.stage)).toEqual(['read_started', 'read_completed'])
+  })
+
+  it('deletes the verified run fixture using the current same-origin browser session', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(Response.json({ data: { name: 'Deployment E2E unique-marker' } }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetch)
+    const record = vi.fn()
+    expect(await cleanupClient(browserPage(), 123, 'Deployment E2E unique-marker', record))
+      .toEqual({ read: 200, deleted: 204 })
+    expect(fetch.mock.calls[1]).toEqual(['/api/v1/clients/123', {
+      method: 'DELETE', credentials: 'same-origin', redirect: 'error', signal: expect.any(AbortSignal),
+    }])
+    expect(record.mock.calls.map(([event]) => event.stage)).toEqual([
+      'read_started', 'read_completed', 'marker_verified', 'delete_started', 'delete_completed',
+    ])
+  })
+
+  it('refuses cleanup from another site before making a request', async () => {
+    const page = browserPage()
+    vi.stubGlobal('location', { origin: 'https://other.example' })
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    await expect(cleanupClient(page, 123, 'Deployment E2E unique-marker', () => {}))
+      .rejects.toThrow('refused an unexpected origin')
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   it.each(['lookup', 'deletion'] as const)('redacts transport credentials when cleanup fails during %s', async (phase) => {
     const secret = 'private-session-cookie-from-transport-call-log'
     const transportError = new Error(`Request failed\nCall log:\n - cookie: ${secret}`)
-    const request = {
-      get: phase === 'lookup'
-        ? vi.fn().mockRejectedValue(transportError)
-        : vi.fn(async () => ({
-            ok: () => true,
-            status: () => 200,
-            json: async () => ({ data: { name: 'Deployment E2E unique-marker' } }),
-          })),
-      delete: vi.fn().mockRejectedValue(transportError),
-    } as unknown as APIRequestContext
-    const error: unknown = await cleanupClient(request, 123, 'Deployment E2E unique-marker', () => {})
+    const fetch = vi.fn()
+    if (phase === 'deletion') fetch.mockResolvedValueOnce(Response.json({ data: { name: 'Deployment E2E unique-marker' } }))
+    fetch.mockRejectedValueOnce(transportError)
+    vi.stubGlobal('fetch', fetch)
+    const error: unknown = await cleanupClient(browserPage(), 123, 'Deployment E2E unique-marker', () => {})
       .catch((failure: unknown) => failure)
     expect(error).toBeInstanceOf(Error)
     expect((error as Error).message).toBe(`Deployment test cleanup could not finish client ${phase}.`)

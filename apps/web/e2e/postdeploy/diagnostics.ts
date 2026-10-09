@@ -1,4 +1,4 @@
-import type { APIRequestContext, Page, Request, TestInfo } from '@playwright/test'
+import type { Page, Request, TestInfo } from '@playwright/test'
 
 type Timing = {
   method: string
@@ -56,35 +56,47 @@ export const requestDiagnostics = (page: Page) => {
   }
 }
 
-/** Use the browser's cookie jar, with a bounded request independent of page JS. */
+/** Bounded same-origin cleanup; APIRequestContext embeds cookies in failed report steps. */
 export const cleanupClient = async (
-  request: APIRequestContext,
+  page: Page,
   id: number,
   name: string,
   record: (timing: CleanupTiming) => void,
 ) => {
-  const start = Date.now()
-  let phase = 'client lookup'
-  try {
-    record({ stage: 'read_started', elapsedMs: 0 })
-    const current = await request.get(`/api/v1/clients/${id}`, { timeout: 10_000 })
-    record({ stage: 'read_completed', elapsedMs: Date.now() - start, status: current.status() })
-    if (!current.ok()) return { read: current.status(), deleted: 0 }
-    phase = 'client marker verification'
-    const body = await current.json() as { data: { name: string } }
-    if (body.data.name !== name) return { read: current.status(), deleted: 0 }
-    record({ stage: 'marker_verified', elapsedMs: Date.now() - start })
-    phase = 'client deletion'
-    record({ stage: 'delete_started', elapsedMs: Date.now() - start })
-    const deleted = await request.delete(`/api/v1/clients/${id}`, {
-      timeout: 10_000,
-      headers: { origin: 'https://ezacto.io' },
-    })
-    record({ stage: 'delete_completed', elapsedMs: Date.now() - start, status: deleted.status() })
-    return { read: current.status(), deleted: deleted.status() }
-  } catch {
-    // Playwright transport errors include a Call log with request headers.
-    // Keep only our own stage; the separate timing artifact carries statuses.
-    throw new Error(`Deployment test cleanup could not finish ${phase}.`)
-  }
+  const result = await page.evaluate(async ({ id, name }) => {
+    const timings: CleanupTiming[] = []
+    const start = Date.now()
+    let phase = 'client lookup'
+    try {
+      if (location.origin !== 'https://ezacto.io' || !Number.isSafeInteger(id) || id <= 0) {
+        return { timings, error: 'Deployment test cleanup refused an unexpected origin or client id.' }
+      }
+      timings.push({ stage: 'read_started', elapsedMs: 0 })
+      const current = await fetch(`/api/v1/clients/${id}`, {
+        credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(10_000),
+      })
+      timings.push({ stage: 'read_completed', elapsedMs: Date.now() - start, status: current.status })
+      if (!current.ok) return { timings, cleanup: { read: current.status, deleted: 0 } }
+      phase = 'client marker verification'
+      const body = await current.json() as { data: { name: string } }
+      if (body.data.name !== name) return { timings, cleanup: { read: current.status, deleted: 0 } }
+      timings.push({ stage: 'marker_verified', elapsedMs: Date.now() - start })
+      phase = 'client deletion'
+      timings.push({ stage: 'delete_started', elapsedMs: Date.now() - start })
+      const deleted = await fetch(`/api/v1/clients/${id}`, {
+        method: 'DELETE', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(10_000),
+      })
+      timings.push({ stage: 'delete_completed', elapsedMs: Date.now() - start, status: deleted.status })
+      return { timings, cleanup: { read: current.status, deleted: deleted.status } }
+    } catch {
+      // Never return browser errors, response bodies or credentials to the reporter.
+      return { timings, error: `Deployment test cleanup could not finish ${phase}.` }
+    }
+  }, { id, name }).catch(() => ({
+    timings: [] as CleanupTiming[],
+    error: 'Deployment test cleanup could not access the current browser session.',
+  }))
+  result.timings.forEach(record)
+  if (result.error !== undefined) throw new Error(result.error)
+  return result.cleanup
 }
