@@ -1,26 +1,27 @@
 # Sign in with Apple: operator setup
 
-Apple sign-in has two distinct deployment paths. The current OSS endpoint accepts native-app identity tokens at `POST /auth/apple`. Browser Sign in with Apple is being developed separately; registering a Services ID alone does not enable a browser button on an arbitrary self-hosted instance.
+Apple sign-in has two distinct deployment paths. The OSS endpoint accepts the official native app's Apple identity token and an independently verified credential-custody receipt at `POST /auth/apple`. Browser Sign in with Apple is being developed separately; registering a Services ID alone does not enable a browser button on an arbitrary self-hosted instance.
 
 ## What is available
 
 | Path | Current operator contract |
 | --- | --- |
-| Native app → OSS instance | Configure `APPLE_CLIENT_ID`, then enable Apple in the instance's sign-in policy |
+| Native app → OSS instance | Use the official app, configure `APPLE_CLIENT_ID=com.ezacto.app` and a canonical HTTPS `APP_BASE_URL`, then enable Apple in the instance's sign-in policy |
 | Browser sign-in on first-party websites | Separate rollout with a central credential service; not part of the current released setup described here |
 | Browser sign-in on an independent domain | Requires an integration supporting the operator's audience and domain; the pending first-party implementation does not accept arbitrary domains |
 
-This status describes the OSS endpoint contract as audited on 2026-10-09, not a promise that every mobile build is compatible. Match the mobile and server releases before enabling Apple login. Newer lifecycle-enabled mobile builds require a positive Apple lifecycle capability before opening the native prompt. After Apple authorization, they require a signed binding receipt before completing workspace sign-in; their compatible OSS server integration is still pending. Deploying the central native credential service alone does not satisfy that server gate. An `APPLE_CLIENT_ID`-only endpoint cannot be assumed sufficient for the latest mobile candidate. Do not copy unreleased `APPLE_WEB_*` settings into a deployed version and assume it supports them.
+This server source supports native lifecycle protocol version 1. Match the mobile and deployed server releases before enabling Apple login: the app checks `GET /auth/apple/native-capabilities` for `{available:true,lifecycle_version:1}` before opening the native prompt. It then obtains a signed, instance-bound custody receipt alongside the Apple identity token. Older identity-token-only clients or servers do not satisfy this contract; deploying the central service alone does not upgrade an older instance. See [credential lifecycle and recovery](apple-credential-lifecycle.md). Browser integration remains a separate release and deployment boundary.
 
 ## Native setup
 
-1. Identify the native application used by your users. If you build your own app, use an Apple Developer account and an explicit App ID with Sign in with Apple enabled; add the capability to the native app. Follow [Apple's capability instructions](https://developer.apple.com/documentation/xcode/configuring-sign-in-with-apple).
-2. Set `APPLE_CLIENT_ID` to that app's exact bundle identifier. The bundled eZacto app uses `com.ezacto.app`. Treat this as an audience allowlist, not as a secret or a login credential. Keep web Services IDs out of the native audience configuration.
-3. Deploy using the [credential deployment guide](integrations.md). The container reads the same variable. Keep the normal instance URL and administrator recovery method configured.
-4. Open **Settings → Company → Ways in** as an administrator. Confirm Apple is configured and enabled. The native application owns the Apple prompt; the current browser login screen has no Apple button.
-5. Use a controlled Apple account through the native app, pointing it at this instance. Check the resulting eZacto user and permissions. A successful Apple identity check does not override the instance's provisioning policy.
+1. Use a compatible release of the official eZacto iOS app. The pinned credential service supports its exact native audience, `com.ezacto.app`; a custom app bundle identifier is not supported by this native lifecycle integration.
+2. Set `APPLE_CLIENT_ID=com.ezacto.app`. This is an audience allowlist, not a secret or a login credential. Keep web Services IDs out of the native audience configuration.
+3. Set `APP_BASE_URL` to this instance's exact public HTTPS origin, with no trailing slash, path, query, fragment or credentials. Deploy using the [credential deployment guide](integrations.md); the container reads the same variables. Keep an independently tested administrator recovery method.
+4. Open **Settings → Company → Ways in** as an administrator and enable Apple. Confirm the deployed capability response reports `available:true` and `lifecycle_version:1`. The native app owns the Apple prompt; browser support has its own deployment contract.
+5. Use a controlled Apple account through the native app, pointing it at this instance. Check the resulting eZacto user and permissions. A custody receipt proves provider-token handling, not workspace membership: the instance still independently verifies the Apple identity and applies its linking and provisioning policy.
+6. Verify the disposable account's closure and Apple cleanup using the [lifecycle runbook](apple-credential-lifecycle.md). Local access closure and verified Apple revocation are distinct results; do not use the stable reviewer or a real customer account for destructive testing.
 
-The current native OSS endpoint verifies Apple's signed identity token. It does not require an Apple private signing key in the OSS server configuration. An App Store Connect API key is not a Sign in with Apple key.
+The OSS server independently verifies Apple's signed identity token and the fixed credential service's origin-bound receipt, including matching provider subject and nonce. Every new native sign-in requires this receipt, even for an existing account. Historical missing-grant recovery does not permit identity-token-only login. The server needs no Apple private signing key, refresh token or service capability; those remain with the designated credential service and native recovery flow. An App Store Connect API key is not a Sign in with Apple key.
 
 ## Preparing for a supported browser deployment
 
@@ -41,7 +42,8 @@ If you send messages to Apple relay addresses, register your outbound email sour
 
 | Symptom | Check |
 | --- | --- |
-| Apple method is not configured | `APPLE_CLIENT_ID` reached the runtime deployed to the instance the app uses |
+| Native capability is unavailable | Official native audience, canonical HTTPS `APP_BASE_URL`, enabled Ways in policy, and a compatible lifecycle-enabled server release |
+| `apple_lifecycle_unavailable` | Required lifecycle configuration, credential storage and fixed issuer verification are available; inspect safe operator diagnostics rather than sharing tokens |
 | `404 sign_in_method_unavailable` | Apple is disabled in Ways in |
 | `apple_authentication_failed` | The native token is genuine, current, and addressed to the configured app; do not copy tokens into support tickets |
 | `apple_profile_incomplete` | Required profile information was unavailable for a new account; Apple's first authorization and subsequent sign-ins can provide different profile data |
