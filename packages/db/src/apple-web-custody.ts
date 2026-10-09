@@ -67,9 +67,12 @@ const createStore = (db: Database): AppleWebCustodyStore => ({
         bindings: [input.grantId, input.generation, input.updatedAt, input.cleanupRequestId, input.generation,
           input.subjectDigest, input.serviceIssuer, input.instanceOrigin, input.clientId, input.generation, input.cleanupRequestId] },
       { query: `INSERT INTO apple_identity_channels(subject_hash, user_id, channel, known_from_first_link)
-        SELECT ?, user_id, 'web', ? FROM apple_web_connections
+        SELECT ?, user_id, 'web', CASE WHEN (? = 1 OR EXISTS(
+          SELECT 1 FROM apple_identity_channels WHERE subject_hash = ? AND user_id = ? AND known_from_first_link = 1))
+          AND NOT EXISTS(SELECT 1 FROM apple_identity_channels WHERE subject_hash = ? AND user_id = ? AND known_from_first_link = 0)
+          THEN 1 ELSE 0 END FROM apple_web_connections
         WHERE browser_hash = ? AND user_id = ? AND grant_id = ? AND generation = ? AND status = 'active'
-        ON CONFLICT DO NOTHING`, bindings: [channelDigest, identity?.knownFromFirstLink === true ? 1 : 0,
+        ON CONFLICT DO NOTHING`, bindings: [channelDigest, identity?.knownFromFirstLink === true ? 1 : 0, channelDigest, input.userId, channelDigest, input.userId,
           input.browserHash, input.userId, input.grantId, input.generation] },
     ])
     return row(rows[0]?.[0])

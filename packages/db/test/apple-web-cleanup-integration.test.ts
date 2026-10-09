@@ -14,7 +14,8 @@ const now = '2026-10-09T00:00:00.000Z'
 for (const runtime of ['SQLite', 'D1']) describe(`combined Apple cleanup (${runtime})`, () => {
   let dispose: (() => Promise<void>) | undefined
   afterEach(async () => dispose?.())
-  it.each([false, true])('keeps every known channel unresolved through local erasure: native=%s', async nativeLinked => {
+  it.each(['web-only', 'native-first', 'web-first'])('keeps every known channel unresolved through local erasure: %s', async order => {
+    const nativeLinked = order !== 'web-only'
     let database: Parameters<typeof createAppleLifecycleRepository>[0]
     let web: AppleWebCustodyStore
     let execute: (sql: string) => Promise<unknown>
@@ -42,11 +43,12 @@ for (const runtime of ['SQLite', 'D1']) describe(`combined Apple cleanup (${runt
     } })
     const native = createAppleLifecycleRepository(database)
     const binding = { subject: 'apple-pat', origin: 'https://app.example.com', grantId: 'native_grant', generation: 1, eventId: 'native_binding' }
-    if (nativeLinked) expect(await native.recordSignIn({ ...binding, userId: 2, now })).toBe(true)
+    if (order === 'native-first') expect(await native.recordSignIn({ ...binding, userId: 2, now, knownFromFirstLink: true })).toBe(true)
     const connection = { id: 'c'.repeat(43), subjectDigest: 'a'.repeat(64), browserHash: 'b'.repeat(64), userId: 2,
       serviceIssuer: 'https://apple-auth.ezacto.com', instanceOrigin: 'https://app.example.com', clientId: 'com.ezacto.web', grantId: 'web_grant', generation: 2,
       sealedCapability: '{"ciphertext":"encrypted"}', sealedReceipt: null, cleanupRequestId: null, status: 'active' as const, createdAt: now, updatedAt: now }
-    expect(await web.save(connection, { subject: 'apple-pat', knownFromFirstLink: true })).not.toBeNull()
+    expect(await web.save(connection, { subject: 'apple-pat', knownFromFirstLink: order !== 'native-first' })).not.toBeNull()
+    if (order === 'web-first') expect(await native.recordSignIn({ ...binding, userId: 2, now, knownFromFirstLink: false })).toBe(true)
     await createAccountDeletionRequestRepository(database).request({ userId: 2, id: 'request-one', expectedPolicyVersion: 1, now })
     await native.begin(2, 'request-one'); await web.begin(2, 'request-one', now)
     const closure = createAccountClosureRepository(database)
