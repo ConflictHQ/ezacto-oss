@@ -26,6 +26,14 @@ both real books and the public demo. Use fictional records only. Authentication
 is required for business records and attachments. No email, OIDC, payment
 integration, or Sentry credentials are inherited from other environments.
 
+The review payload explicitly sets the official native app audience
+`APPLE_CLIENT_ID=com.ezacto.app`. This public identifier cannot be overridden by
+inherited environment values. It does not enable browser Apple sign-in or install
+an Apple private key. The canonical instance origin remains
+`https://review.ezacto.io`; Apple credential custody stays in the separate
+first-party service. The workspace's normal sign-in and provisioning policies
+still apply.
+
 ## Provision and operate
 
 Create the `app-review` GitHub environment with three separately generated secrets:
@@ -52,6 +60,16 @@ state or password. The workflow does not wipe/reset data. Once the review starts
 keep its source and fixture data stable and do not redeploy without a reason.
 
 ## Acceptance after deployment
+
+Deploy the compatible native lifecycle backend before testing newer mobile builds.
+As an administrator, enable Apple in the instance's sign-in policy and verify
+`GET /auth/apple/native-capabilities` reports
+`{available:true,lifecycle_version:1}`. A configured audience alone is not proof
+of compatibility or successful Apple authentication. Use a separately authorized
+disposable Apple identity under the normal invitation/provisioning rules to test
+sign-in, account closure and provider cleanup. Keep the stable password-based
+reviewer login and administrator recovery access intact. Verify the public
+credential-service disclosure before the native Apple prompt.
 
 Populate synthetic clients, projects, time, invoices and expenses through the
 normal API. Establish a stable reviewer login and a separate disposable account

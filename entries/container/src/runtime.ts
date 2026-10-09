@@ -42,6 +42,7 @@ import {
   createAccountRetentionRepository,
   createAccountDeletionRequestRepository,
   createAccountClosureRepository,
+  createAccountRetentionReviewRepository,
   createAppleLifecycleRepository,
   createAccountDeletionStatusRepository,
   createTimesheetApprovalRepository,
@@ -235,6 +236,7 @@ export const prepareContainerDatabase = (
   database.pragma('busy_timeout = 5000')
   database.pragma('wal_autocheckpoint = 1000')
   migrateContainer(database)
+  if(database.prepare('SELECT 1 FROM account_restore_quarantine WHERE id=1 AND quarantined=1').get())throw new Error('Restored privacy evidence must be reconciled before this instance serves traffic.')
 
   assertPragma(database, 'journal_mode', 'wal')
   assertPragma(database, 'synchronous', 2)
@@ -358,11 +360,18 @@ const assertDatabasePath = async (path: string): Promise<void> => {
   }
 }
 
+export const assertNoIncompletePrivacyRestore = async (directory: string): Promise<void> => {
+  try { await lstat(resolve(directory, '.privacy-restore-incomplete')) }
+  catch(error) { if(error instanceof Error && 'code' in error && error.code==='ENOENT') return; throw error }
+  throw new Error('Incomplete physical restore: privacy evidence must be reconciled before startup')
+}
+
 export const createContainerRuntime = async (
   config: ContainerConfig,
   options: ContainerRuntimeOptions = {},
 ): Promise<ContainerRuntime> => {
   await ensureDataDirectory(config.dataDirectory)
+  await assertNoIncompletePrivacyRestore(config.dataDirectory)
   await assertDatabasePath(config.databasePath)
   const database = new BetterSqlite3(config.databasePath, { timeout: 5_000 })
   let queue: ContainerEmailQueue | undefined
@@ -897,6 +906,7 @@ export const createContainerRuntime = async (
     accountRetention: createAccountRetentionRepository(drizzle),
     accountDeletionRequests: createAccountDeletionRequestRepository(drizzle),
     accountClosure: createAccountClosureRepository(drizzle),
+    accountRetentionReview: createAccountRetentionReviewRepository(drizzle),
     nativeAppleLifecycle: createAppleLifecycleRepository(drizzle),
     accountDeletionTracking: createAccountDeletionStatusRepository(drizzle),
       organizationName,
