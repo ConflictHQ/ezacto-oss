@@ -87,8 +87,8 @@ export interface AppleAssertion {
 export interface AppleTokenExpectations {
   /**
    * The exact `nonce` claim the token must carry. The browser flow binds every
-   * token to the transaction that asked for it this way; the native route has
-   * no transaction and passes nothing.
+   * token to its browser transaction; native sign-in requires the nonce from
+   * the verified origin-bound lifecycle receipt.
    */
   nonce?: string
 }
@@ -481,7 +481,11 @@ export const installAppleRoutes = <Bindings extends object>(
     if (typeof body.bindingReceipt !== 'string' || body.bindingReceipt.length > 16_384)
       throw validationError([{field:'bindingReceipt',code:'required',message:'Use a current eZacto app with Apple credential lifecycle support.'}])
     const now=lifecycle.clock()
-    if (!await lifecycle.store.allowProof(now)) {
+    const persist = async <T>(action:()=>Promise<T>):Promise<T> => {
+      try { return await action() }
+      catch { throw appleError(503,'apple_lifecycle_unavailable','Apple credential storage is temporarily unavailable.') }
+    }
+    if (!await persist(()=>lifecycle.store.allowProof(now))) {
       context.header('retry-after','60')
       throw appleError(429,'rate_limited','Try Apple sign-in again shortly.')
     }
@@ -531,7 +535,7 @@ export const installAppleRoutes = <Bindings extends object>(
     if (identity.status === 'disabled') {
       throw appleError(403, 'account_disabled', 'This ezacto user is disabled.')
     }
-    if (!await lifecycle.store.recordSignIn({...proof,userId:identity.userId,now}))
+    if (!await persist(()=>lifecycle.store.recordSignIn({...proof,userId:identity.userId,now})))
       throw appleError(409,'apple_binding_not_accepted','The Apple authorization changed. Start a fresh Apple sign-in.')
     const session = await options.sessions.issue(identity.userId)
     context.header('set-cookie', session.setCookie, { append: true })
