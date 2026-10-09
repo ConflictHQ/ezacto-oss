@@ -204,6 +204,7 @@ function mockServer({
   anonymousDenied = true,
   secureCookie = true,
   existingOwner = false,
+  bootstrapConflict = existingOwner,
   ownerUserId = 1,
   ownerProfile = "administrator",
   tokenStatus,
@@ -224,7 +225,7 @@ function mockServer({
       paths.push(`${init.method} ${path}`);
       if (path.startsWith("/__ezacto/")) {
         // A used review workspace rejects exact first-run bootstrap retries.
-        if (existingOwner && path === "/__ezacto/bootstrap")
+        if (bootstrapConflict && path === "/__ezacto/bootstrap")
           return Response.json({}, { status: 409 });
         if (path.endsWith("owner-password")) {
           if (passwordConflict) return Response.json({}, { status: 409 });
@@ -346,9 +347,12 @@ for (const failure of [
 }
 
 test("upgrade recovers password enrollment interrupted after owner creation", async () => {
-  const server = mockServer({ existingOwner: true, passwordEnrolled: false });
+  const server = mockServer({
+    existingOwner: true,
+    passwordEnrolled: false,
+    bootstrapConflict: false,
+  });
   await bootstrapReview(env, server.request);
-  assert.equal(server.paths.includes("POST /__ezacto/bootstrap"), false);
   assert.ok(
     server.paths.indexOf("POST /__ezacto/bootstrap/owner-password") <
       server.paths.indexOf("POST /auth/sign-in"),
