@@ -90,5 +90,6 @@ export interface AccountRetentionReviewStore {
     now: string;
     acknowledged: true;
     appleResolved: boolean;
+    appleHistoricalManualVerified?: boolean;
   }): Promise<{ completed_at: string; confirmation: string }>;
 }

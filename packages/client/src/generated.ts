@@ -1333,6 +1333,7 @@ export type RetentionReviewInput = {
 };
 
 export type DeletionCompletionInput = {
+  "apple_historical_manual_verified"?: boolean;
   "expected_request_version": number;
   "expected_reviews": {
   [key: string]: number;

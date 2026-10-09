@@ -176,7 +176,12 @@ export function installAccountRetentionReviewRoutes<Bindings extends object>(
       body = await readObjectBody(context);
     const errors = unknownFieldErrors(
       body,
-      new Set(["expected_request_version", "expected_reviews", "acknowledged"]),
+      new Set([
+        "expected_request_version",
+        "expected_reviews",
+        "acknowledged",
+        "apple_historical_manual_verified",
+      ]),
     );
     if (
       !Number.isSafeInteger(body.expected_request_version) ||
@@ -206,6 +211,15 @@ export function installAccountRetentionReviewRoutes<Bindings extends object>(
         code: "invalid",
         message: "Use the exact reviewed versions.",
       });
+    if (
+      body.apple_historical_manual_verified !== undefined &&
+      typeof body.apple_historical_manual_verified !== "boolean"
+    )
+      errors.push({
+        field: "apple_historical_manual_verified",
+        code: "invalid",
+        message: "Use an explicit historical-disconnect acknowledgment.",
+      });
     assertFields(errors);
     try {
       const apple = await options.appleCleanup?.status(context.req.param("id"));
@@ -219,6 +233,9 @@ export function installAccountRetentionReviewRoutes<Bindings extends object>(
             acknowledged: true,
             now: options.clock(),
             appleResolved: apple === "not_linked" || apple === "revoked",
+            appleHistoricalManualVerified:
+              body.apple_historical_manual_verified === true &&
+              apple === "manual_required",
           }),
         },
         200,

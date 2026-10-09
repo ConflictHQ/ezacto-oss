@@ -22,6 +22,11 @@ const seed = (
     )
     .join('\n')}`
 export const accountRetentionReviewMigration = [
+  `ALTER TABLE account_deletion_requests ADD COLUMN apple_historical_manual_verified INTEGER NOT NULL DEFAULT 0 CHECK(apple_historical_manual_verified IN (0,1))`,
+  `CREATE TRIGGER account_deletion_completion_immutable BEFORE UPDATE ON account_deletion_requests
+    WHEN OLD.status='completed' AND (NEW.status IS NOT OLD.status OR NEW.completed_at IS NOT OLD.completed_at
+      OR NEW.completion_confirmation IS NOT OLD.completion_confirmation OR NEW.apple_historical_manual_verified IS NOT OLD.apple_historical_manual_verified)
+    BEGIN SELECT RAISE(ABORT,'completed request outcome is immutable'); END`,
   `CREATE TABLE IF NOT EXISTS account_restore_quarantine(id INTEGER PRIMARY KEY CHECK(id=1),quarantined INTEGER NOT NULL CHECK(quarantined IN (0,1)),source_digest TEXT,evidence TEXT,updated_at TEXT NOT NULL) STRICT`,
   `CREATE TABLE account_retention_obligations (
     request_id TEXT NOT NULL REFERENCES account_closures(request_id) ON DELETE RESTRICT,
@@ -50,6 +55,18 @@ export const accountRetentionReviewMigration = [
   END`,
   `CREATE TRIGGER account_retention_review_events_immutable BEFORE UPDATE ON account_retention_review_events BEGIN SELECT RAISE(ABORT,'retention review history is immutable'); END`,
   `CREATE TRIGGER account_retention_review_events_keep BEFORE DELETE ON account_retention_review_events BEGIN SELECT RAISE(ABORT,'retention review history cannot be silently removed'); END`,
+  `CREATE TABLE account_deletion_completion_audit (
+    request_id TEXT PRIMARY KEY REFERENCES account_deletion_requests(id) ON DELETE RESTRICT,
+    actor_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    completed_at TEXT NOT NULL,apple_historical_manual_verified INTEGER NOT NULL CHECK(apple_historical_manual_verified IN (0,1)),
+    apple_review_version INTEGER NOT NULL,apple_evidence TEXT NOT NULL,confirmation TEXT NOT NULL
+  ) STRICT`,
+  `CREATE TRIGGER account_deletion_completion_audit_record AFTER UPDATE ON account_deletion_requests WHEN NEW.status='completed' AND OLD.status<>'completed' BEGIN
+    INSERT INTO account_deletion_completion_audit SELECT NEW.id,NEW.updated_by_user_id,NEW.completed_at,NEW.apple_historical_manual_verified,version,evidence,NEW.completion_confirmation
+      FROM account_retention_obligations WHERE request_id=NEW.id AND area='apple_authorization';
+  END`,
+  `CREATE TRIGGER account_deletion_completion_audit_immutable BEFORE UPDATE ON account_deletion_completion_audit BEGIN SELECT RAISE(ABORT,'completion evidence is immutable'); END`,
+  `CREATE TRIGGER account_deletion_completion_audit_keep BEFORE DELETE ON account_deletion_completion_audit BEGIN SELECT RAISE(ABORT,'completion evidence cannot be silently removed'); END`,
   ...seed('1')
     .split(';')
     .map((statement) => statement.trim())

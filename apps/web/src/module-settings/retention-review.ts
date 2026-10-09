@@ -26,7 +26,7 @@ export function createRetentionReviewController(
   const queue = section.querySelector<HTMLElement>(
     "[data-retention-due-list]",
   )!;
-  let queueAfter:string|null=null;
+  let queueAfter: string | null = null;
   let session: Active | null = null,
     request: AccountDeletionRecord | null = null,
     revision = 0,
@@ -61,7 +61,29 @@ export function createRetentionReviewController(
       );
     return result.json() as Promise<T>;
   };
-  const display = (rows: RetentionObligation[]) => {
+  const display = (rows: RetentionObligation[], savedArea?: string) => {
+    const drafts = new Map<
+      string,
+      { name: string; value: string; checked: boolean }[]
+    >();
+    if (savedArea)
+      for (const form of content.querySelectorAll<HTMLFormElement>(
+        "form[data-area]",
+      )) {
+        if (form.dataset.area === savedArea) continue;
+        drafts.set(
+          form.dataset.area!,
+          Array.from(
+            form.querySelectorAll<
+              HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+            >("[name]"),
+          ).map((field) => ({
+            name: field.name,
+            value: field.value,
+            checked: field instanceof HTMLInputElement && field.checked,
+          })),
+        );
+      }
     content.replaceChildren();
     for (const row of rows) {
       const details = document.createElement("details"),
@@ -78,6 +100,7 @@ export function createRetentionReviewController(
           "An active hold must be explicitly released before removal can be recorded.",
         );
       const form = document.createElement("form");
+      form.dataset.area = row.area;
       const label = document.createElement("label");
       label.textContent = "Decision";
       const decision = document.createElement("select");
@@ -122,6 +145,7 @@ export function createRetentionReviewController(
       dateLabel.textContent = "Next review date (UTC; required when retaining)";
       const date = document.createElement("input");
       date.type = "date";
+      date.name = "next_review_date";
       date.value = row.next_review_at?.slice(0, 10) ?? "";
       dateLabel.append(date);
       form.append(dateLabel);
@@ -132,6 +156,7 @@ export function createRetentionReviewController(
       const ackLabel = document.createElement("label"),
         ack = document.createElement("input");
       ack.type = "checkbox";
+      ack.name = "acknowledged";
       ack.required = true;
       ackLabel.append(
         ack,
@@ -171,12 +196,21 @@ export function createRetentionReviewController(
               rows.map((item) =>
                 item.area === response.data.area ? response.data : item,
               ),
+              row.area,
             );
             status.textContent =
               "Review recorded. No automatic deletion was performed.";
           };
         }, true);
       });
+      for (const draft of drafts.get(row.area) ?? []) {
+        const field = form.elements.namedItem(draft.name) as
+          HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null;
+        if (field) {
+          field.value = draft.value;
+          if (field instanceof HTMLInputElement) field.checked = draft.checked;
+        }
+      }
       details.append(form);
       content.append(details);
     }
@@ -196,7 +230,16 @@ export function createRetentionReviewController(
       button.type = "submit";
       button.textContent = "Confirm reviewed request outcome";
       button.disabled = demo;
-      complete.append(label, button);
+      const manualLabel = document.createElement("label"),
+        manual = document.createElement("input");
+      manual.type = "checkbox";
+      manualLabel.append(
+        manual,
+        document.createTextNode(
+          " Historical Apple accounts only: I verified manual disconnect and recorded its protected evidence in the Apple authorization removal review. This does not replace proof for any current known grant.",
+        ),
+      );
+      complete.append(manualLabel, label, button);
       complete.addEventListener("submit", (event) => {
         event.preventDefault();
         if (!complete.reportValidity()) return;
@@ -207,6 +250,7 @@ export function createRetentionReviewController(
             "POST",
             {
               expected_request_version: selected.version,
+              apple_historical_manual_verified: manual.checked,
               expected_reviews: Object.fromEntries(
                 rows.map((row) => [row.area, row.version]),
               ),
@@ -279,7 +323,8 @@ export function createRetentionReviewController(
     busy = false;
     content.replaceChildren();
     queue.replaceChildren();
-    queueAfter=null;due.textContent="Show due and overdue reviews";
+    queueAfter = null;
+    due.textContent = "Show due and overdue reviews";
     status.textContent = "";
     reference.textContent = selected
       ? `Request ${selected.id} · ${selected.status.replaceAll("_", " ")}`
@@ -308,7 +353,7 @@ export function createRetentionReviewController(
     status.textContent = "Loading due reviews…";
     void call<{ data: RetentionObligation[] }>(
       active,
-      `/api/v1/admin/retention-reviews${queueAfter?`?after=${encodeURIComponent(queueAfter)}`:""}`,
+      `/api/v1/admin/retention-reviews${queueAfter ? `?after=${encodeURIComponent(queueAfter)}` : ""}`,
     )
       .then((result) =>
         active.present(() => {
@@ -343,9 +388,14 @@ export function createRetentionReviewController(
             item.append(button);
             queue.append(item);
           }
-          const last=result.data.at(-1);
-          queueAfter=result.data.length===100&&last?`${last.request_id}/${last.area}`:null;
-          due.textContent=queueAfter?"Show next due reviews":"Refresh due reviews";
+          const last = result.data.at(-1);
+          queueAfter =
+            result.data.length === 100 && last
+              ? `${last.request_id}/${last.area}`
+              : null;
+          due.textContent = queueAfter
+            ? "Show next due reviews"
+            : "Refresh due reviews";
           status.textContent = result.data.length
             ? "Due and overdue obligations remain actionable, including after request completion."
             : "No due reviews were found.";

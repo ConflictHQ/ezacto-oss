@@ -1,4 +1,5 @@
 import BetterSqlite3 from 'better-sqlite3'
+import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core'
 import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
@@ -103,7 +104,7 @@ for (const runtime of ['SQLite', 'D1'])
           now: at,
           ...change,
         })
-      return { store, rows, exec, review }
+      return { store, rows, exec, review, database }
     }
     it('creates durable category and downstream obligations and rejects stale or unauthorized review', async () => {
       const { store, review, rows } = await setup()
@@ -147,6 +148,111 @@ for (const runtime of ['SQLite', 'D1'])
       })
       expect(held.decision).toBe('removed')
       expect(await rows('SELECT * FROM account_retention_review_events')).toHaveLength(3)
+    })
+    it('keeps historical manual verification distinct and rejects native or web custody appearing during completion', async () => {
+      const { store, review, rows, exec, database } = await setup()
+      await exec("INSERT INTO apple_deletion_unknown(request_id) VALUES('request-one')")
+      for (let row of await store.read(1, 'request-one')) {
+        if (row.hold_active) row = await review(row, { decision: 'release_hold' })
+        await review(
+          row,
+          row.area === 'apple_authorization'
+            ? {
+                decision: 'removed',
+                evidence:
+                  'Protected ticket records the requester verified historical Apple disconnect.',
+              }
+            : {},
+        )
+      }
+      const obligations = await store.read(1, 'request-one')
+      const input = {
+        actorUserId: 1,
+        requestId: 'request-one',
+        expectedRequestVersion: Number(
+          (await rows("SELECT version FROM account_deletion_requests WHERE id='request-one'"))[0]!
+            .version,
+        ),
+        expectedReviews: Object.fromEntries(obligations.map((row) => [row.area, row.version])),
+        now: at,
+        acknowledged: true as const,
+        appleResolved: false,
+        appleHistoricalManualVerified: true,
+      }
+      await expect(
+        store.complete({ ...input, appleHistoricalManualVerified: false }),
+      ).rejects.toMatchObject({ code: 'review_incomplete' })
+      const dialect = new SQLiteSyncDialect()
+      const racing = (mutation: string) => {
+        let changed = false
+        const proxy = new Proxy(database, {
+          get(target, key) {
+            if (key === 'all')
+              return async (query: Parameters<typeof database.all>[0]) => {
+                if (
+                  !changed &&
+                  (typeof query === 'string'
+                    ? query
+                    : dialect.sqlToQuery(query.getSQL()).sql
+                  ).startsWith('UPDATE account_deletion_requests')
+                ) {
+                  changed = true
+                  await exec(mutation)
+                }
+                return target.all(query)
+              }
+            const value = Reflect.get(target, key)
+            return typeof value === 'function' ? value.bind(target) : value
+          },
+        })
+        return createAccountRetentionReviewRepository(proxy)
+      }
+      await expect(
+        racing(
+          `INSERT INTO apple_deletion_subjects(request_id,subject_hash,origin,grant_id,generation,updated_at) VALUES('request-one','${'a'.repeat(64)}','https://example.test','current-native-grant',1,'${at}')`,
+        ).complete(input),
+      ).rejects.toMatchObject({ code: 'review_changed' })
+      await exec(
+        `INSERT INTO apple_revocation_events(request_id,subject_hash,origin,grant_id,generation,event_id,revoked_at,accepted_at) VALUES('request-one','${'a'.repeat(64)}','https://example.test','current-native-grant',1,'verified-native-event','${at}','${at}')`,
+      )
+      await expect(
+        racing(
+          `INSERT INTO apple_web_connections(id,subject_digest,browser_hash,user_id,service_issuer,instance_origin,client_id,grant_id,generation,status,created_at,updated_at) VALUES('${'b'.repeat(43)}','${'c'.repeat(64)}','${'d'.repeat(64)}',2,'https://apple-auth.ezacto.com','https://app.example.com','com.ezacto.web','current-web-grant',1,'pending','${at}','${at}')`,
+        ).complete(input),
+      ).rejects.toMatchObject({ code: 'review_changed' })
+      expect(
+        await rows("SELECT status FROM account_deletion_requests WHERE id='request-one'"),
+      ).toEqual([{ status: 'action_required' }])
+      await exec(
+        `INSERT INTO apple_web_cleanup_requests(request_id,user_id,captured_at) VALUES('request-one',2,'${at}')`,
+      )
+      await exec(
+        `INSERT INTO apple_web_cleanup_obligations(request_id,connection_id,grant_id,generation,status,updated_at) VALUES('request-one','${'b'.repeat(43)}','current-web-grant',1,'pending','${at}')`,
+      )
+      await exec(`UPDATE apple_web_connections SET status='revoked' WHERE id='${'b'.repeat(43)}'`)
+      await expect(store.complete(input)).rejects.toMatchObject({ code: 'review_changed' })
+      await exec(
+        "UPDATE apple_web_cleanup_obligations SET status='revoked',sealed_receipt='{}' WHERE request_id='request-one'",
+      )
+      const result = await store.complete(input)
+      expect(result.confirmation).toContain('Historical Apple disconnect was manually verified')
+      expect(result.confirmation).toContain('not a signed provider revocation receipt')
+      expect(
+        await rows(
+          'SELECT actor_user_id,apple_historical_manual_verified,apple_evidence FROM account_deletion_completion_audit',
+        ),
+      ).toEqual([
+        {
+          actor_user_id: 1,
+          apple_historical_manual_verified: 1,
+          apple_evidence:
+            'Protected ticket records the requester verified historical Apple disconnect.',
+        },
+      ])
+      expect(await rows('SELECT * FROM apple_deletion_unknown')).toHaveLength(1)
+      await expect(
+        exec("UPDATE account_deletion_completion_audit SET apple_evidence='rewritten'"),
+      ).rejects.toThrow('immutable')
     })
     it('confirms only an exactly reviewed outcome, keeps retention due later and never infers provider revocation', async () => {
       const { store, review, rows } = await setup()

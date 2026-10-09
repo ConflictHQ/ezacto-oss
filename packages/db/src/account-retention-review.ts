@@ -92,7 +92,14 @@ export function createAccountRetentionReviewRepository(
     },
     async complete(input) {
       const rows = await read(input.actorUserId, input.requestId)
-      if (input.acknowledged !== true || !time(input.now) || !input.appleResolved)
+      const manual = input.appleHistoricalManualVerified === true
+      const appleReview = rows.find((row) => row.area === 'apple_authorization')
+      if (
+        input.acknowledged !== true ||
+        !time(input.now) ||
+        (!input.appleResolved && !manual) ||
+        (manual && appleReview?.decision !== 'removed')
+      )
         throw new RetentionReviewError('review_incomplete')
       if (
         rows.some(
@@ -114,15 +121,25 @@ export function createAccountRetentionReviewRepository(
           (row) =>
             `${row.area.replaceAll('_', ' ')} (review by ${row.next_review_at!.slice(0, 10)})`,
         )
-      const confirmation = `Local account access and sign-in credentials were removed. The operator reviewed downstream cleanup evidence.${retained.length ? ` Records remain under documented retention: ${retained.join('; ')}.` : ' No reviewed category remains designated for retention.'} This confirms the reviewed request outcome; it does not certify legal compliance or guarantee that all historical copies are physically destroyed.`
+      const confirmation = `Local account access and sign-in credentials were removed. The operator reviewed downstream cleanup evidence.${manual ? ' Historical Apple disconnect was manually verified by the operator; this is not a signed provider revocation receipt.' : ''}${retained.length ? ` Records remain under documented retention: ${retained.join('; ')}.` : ' No reviewed category remains designated for retention.'} This confirms the reviewed request outcome; it does not certify legal compliance or guarantee that all historical copies are physically destroyed.`
       const serialized = JSON.stringify(expected)
       const updated = await database.all<{
         completed_at: string
       }>(sql`UPDATE account_deletion_requests SET status='completed',completed_at=${input.now},completion_confirmation=${confirmation},message=${confirmation},
-        updated_at=${input.now},updated_by_user_id=${input.actorUserId},version=version+1
+        updated_at=${input.now},updated_by_user_id=${input.actorUserId},version=version+1,apple_historical_manual_verified=${manual ? 1 : 0}
         WHERE id=${input.requestId} AND version=${input.expectedRequestVersion} AND status<>'completed'
           AND EXISTS(SELECT 1 FROM account_closures WHERE request_id=${input.requestId})
           AND EXISTS(SELECT 1 FROM users WHERE id=${input.actorUserId} AND is_active=1 AND profile='administrator')
+          AND NOT EXISTS(SELECT 1 FROM user_identities WHERE user_id=account_deletion_requests.user_id AND provider='apple')
+          AND NOT EXISTS(SELECT 1 FROM apple_deletion_subjects subject WHERE subject.request_id=account_deletion_requests.id AND subject.generation IS NOT NULL
+            AND NOT EXISTS(SELECT 1 FROM apple_revocation_events event WHERE event.request_id=subject.request_id AND event.subject_hash=subject.subject_hash
+              AND event.origin=subject.origin AND event.grant_id=subject.grant_id AND event.generation=subject.generation))
+          AND NOT EXISTS(SELECT 1 FROM apple_web_cleanup_obligations WHERE request_id=account_deletion_requests.id AND status<>'revoked')
+          AND NOT EXISTS(SELECT 1 FROM apple_web_connections WHERE user_id=account_deletion_requests.user_id AND status<>'revoked')
+          AND (${manual ? 1 : 0}=1 OR (
+            NOT EXISTS(SELECT 1 FROM apple_deletion_unknown WHERE request_id=account_deletion_requests.id)
+            AND NOT EXISTS(SELECT 1 FROM apple_deletion_subjects WHERE request_id=account_deletion_requests.id AND generation IS NULL)
+            AND NOT EXISTS(SELECT 1 FROM apple_identity_channels WHERE user_id=account_deletion_requests.user_id AND known_from_first_link=0)))
           AND NOT EXISTS(SELECT 1 FROM account_retention_obligations obligation WHERE request_id=${input.requestId} AND
             (version IS NOT json_extract(${serialized},'$.'||area) OR decision IN ('pending','failed','release_hold') OR (decision='retain' AND (next_review_at IS NULL OR next_review_at<=${input.now}))))
           AND (SELECT count(*) FROM account_retention_obligations WHERE request_id=${input.requestId})=json_array_length(json(${JSON.stringify(Object.keys(expected))}))

@@ -3860,6 +3860,7 @@ export const accountDeletionRequests = sqliteTable('account_deletion_requests', 
   expectedCompletionAt: text('expected_completion_at'),
   completedAt: text('completed_at'),
   completionConfirmation: text('completion_confirmation'),
+  appleHistoricalManualVerified: integer('apple_historical_manual_verified',{mode:'boolean'}).notNull().default(false),
   notification: text('notification', { enum: ['pending', 'sending', 'queued', 'failed', 'unavailable'] }).notNull().default('pending'),
   notificationUpdatedAt: text('notification_updated_at').notNull(),
   notificationDeliveryId: integer('notification_delivery_id').references(() => emailLog.id, { onDelete: 'set null' }),
@@ -3979,3 +3980,13 @@ export const appleWebCleanupObligations = sqliteTable('apple_web_cleanup_obligat
   sealedReceipt: text('sealed_receipt'),
   updatedAt: text('updated_at').notNull(),
 }, table => [primaryKey({ columns: [table.requestId, table.connectionId] })])
+
+export const accountDeletionCompletionAudit = sqliteTable('account_deletion_completion_audit', {
+  requestId:text('request_id').primaryKey().references(()=>accountDeletionRequests.id,{onDelete:'restrict'}),
+  actorUserId:integer('actor_user_id').notNull().references(()=>users.id,{onDelete:'restrict'}),
+  completedAt:text('completed_at').notNull(),appleHistoricalManualVerified:integer('apple_historical_manual_verified',{mode:'boolean'}).notNull(),
+  appleReviewVersion:integer('apple_review_version').notNull(),appleEvidence:text('apple_evidence').notNull(),confirmation:text('confirmation').notNull(),
+})
+export const accountRestoreQuarantine = sqliteTable('account_restore_quarantine', {
+ id:integer('id').primaryKey(),quarantined:integer('quarantined',{mode:'boolean'}).notNull(),sourceDigest:text('source_digest'),evidence:text('evidence'),updatedAt:text('updated_at').notNull(),
+})

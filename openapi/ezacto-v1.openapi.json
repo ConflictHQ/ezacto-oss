@@ -30552,6 +30552,9 @@
           "acknowledged"
         ],
         "properties": {
+          "apple_historical_manual_verified": {
+            "type": "boolean"
+          },
           "expected_request_version": {
             "type": "integer",
             "minimum": 1
