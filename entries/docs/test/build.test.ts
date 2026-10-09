@@ -39,6 +39,11 @@ describe('ezacto.dev build', () => {
         expect(href, `${guide.name}: ${href}`).toMatch(/^href="https:\/\/github\.com\/ConflictHQ\/ezacto-oss\//)
       }
     }
+    const operator = await page('docs/operator-guide/index.html')
+    for (const slug of ['apple-setup', 'google-sign-in-setup', 'sentry-setup', 'email-setup', 'wise-setup', 'quickbooks-setup', 'bill-setup', 'stripe-setup', 'integrations', 'staff-payments']) {
+      expect(operator).toContain(`href="/docs/${slug}/"`)
+      expect(await page(`docs/${slug}/index.html`)).toContain('<article>')
+    }
     const worker = await page('docs/self-host-worker/index.html')
     expect(worker).toContain('href="/docs/self-host-container/"')
     expect(worker).toContain('href="/docs/restore/"')

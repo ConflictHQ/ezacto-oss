@@ -16,6 +16,13 @@ const escape = (value) =>
 
 /** Guides in the order the navigation lists them. */
 const GUIDES = [
+  ['operator-guide', 'docs/operator-guide.md', 'Operator guide'],
+  ['apple-setup', 'docs/apple-setup.md', 'Sign in with Apple setup'],
+  ['google-sign-in-setup', 'docs/google-sign-in-setup.md', 'Google sign-in setup'],
+  ['sentry-setup', 'docs/sentry-setup.md', 'Sentry setup'],
+  ['email-setup', 'docs/email-setup.md', 'Transactional email setup'],
+  ['stripe-setup', 'docs/stripe-setup.md', 'Stripe invoice payments'],
+  ['staff-payments', 'docs/staff-payments.md', 'Staff payments'],
   ['self-host-worker', 'docs/self-host-worker.md', 'Self-host on Cloudflare Workers'],
   ['self-host-container', 'docs/self-host-container.md', 'Self-host in a container'],
   ['restore', 'RESTORE.md', 'Backup and restore'],
