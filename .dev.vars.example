@@ -73,3 +73,8 @@ WISE_WEBHOOK_PUBLIC_KEY=
 HARVEST_ACCOUNT_ID=
 HARVEST_PAT=
 HARVEST_USER_AGENT_EMAIL=
+
+# CI-only: app-review GitHub environment, never runtime vars or shared keys.
+# REVIEW_CURSOR_SIGNING_KEY: a separate canonical base64url 32-byte signing key.
+# REVIEW_BOOTSTRAP_TOKEN: a separate ezacto_<16 base64url>_<43 base64url> token.
+# REVIEW_OWNER_PASSWORD: a separate generated 24–128 character password.
