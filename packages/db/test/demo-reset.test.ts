@@ -62,6 +62,23 @@ describe('demo reset', () => {
     expect([...filled].sort()).toEqual([...PRESERVED_TABLES].sort())
   })
 
+  it('[security] preserves the original account closure secret across a demo reset', async () => {
+    const { client, driver } = harness()
+    migrateContainer(client)
+    const before = client.prepare('SELECT secret FROM account_closure_security WHERE id = 1').get() as {
+      secret: string
+    }
+
+    await wipeAndSeedDemo(driver, { now, years, confirm: 'wipe-and-reload' })
+
+    // Compare inside SQLite so an assertion failure never prints key material.
+    const unchanged = client
+      .prepare('SELECT count(*) AS n FROM account_closure_security WHERE id = 1 AND secret = ?')
+      .get(before.secret) as { n: number }
+    expect(unchanged.n).toBe(1)
+    expect(count(client, 'account_closure_security')).toBe(1)
+  })
+
   it('[security] puts the triggers back when the wipe fails halfway through', async () => {
     // The wipe drops every trigger before it empties anything, so if the drops
     // commit and the rest does not, what is left is a live database with no
