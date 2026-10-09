@@ -6626,6 +6626,25 @@ export const mountShell = async (
     return
   }
 
+  const appleResult = new URLSearchParams(globalThis.location.search).get('apple_sign_in')
+  if (appleResult !== null) {
+    const messages: Record<string, string> = {
+      cancelled: 'Apple sign-in was cancelled. You can try again.',
+      unavailable: 'Apple sign-in is unavailable. Please try again or use another sign-in method.',
+      invalid: 'Apple sign-in could not be verified. Please start again.',
+      denied: 'This Apple account does not have access to this workspace. Ask an administrator for an invitation.',
+      private_email: 'This private Apple email is not linked to your workspace. Use your existing sign-in method or ask an administrator for help.',
+      disabled: 'This workspace account is disabled. Ask an administrator for help.',
+      profile: 'Apple did not provide the profile information this workspace needs. Ask an administrator for help.',
+      disconnected: 'Your Apple authorization has been disconnected. Workspace records have not been deleted.',
+    }
+    const result = document.querySelector<HTMLElement>('[data-apple-sign-in-result]')
+    if (result !== null) result.textContent = messages[appleResult] ?? ''
+    const cleaned = new URL(globalThis.location.href)
+    cleaned.searchParams.delete('apple_sign_in')
+    globalThis.history.replaceState(null, '', cleaned.pathname + cleaned.search + cleaned.hash)
+  }
+
   const initialOperation = currentAuthOperation(null)
   try {
     await loadAuthenticatedShell(initialOperation)

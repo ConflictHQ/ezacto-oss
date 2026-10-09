@@ -3936,3 +3936,39 @@ export const appleIdentityChannels = sqliteTable('apple_identity_channels', {
   subjectHash:text('subject_hash').notNull(),userId:integer('user_id').notNull().references(()=>users.id,{onDelete:'restrict'}),
   channel:text('channel',{enum:['native','web']}).notNull(),knownFromFirstLink:integer('known_from_first_link',{mode:'boolean'}).notNull(),
 },table=>[primaryKey({columns:[table.subjectHash,table.userId,table.channel]})])
+
+
+/** Web-only encrypted capability custody, separate from native proof metadata. */
+export const appleWebConnections = sqliteTable('apple_web_connections', {
+  id: text('id').primaryKey(),
+  subjectDigest: text('subject_digest').notNull(),
+  browserHash: text('browser_hash').notNull().unique(),
+  userId: integer('user_id').references(() => users.id, { onDelete: 'restrict' }),
+  serviceIssuer: text('service_issuer').notNull(),
+  instanceOrigin: text('instance_origin').notNull(),
+  clientId: text('client_id').notNull(),
+  grantId: text('grant_id').notNull(),
+  generation: integer('generation').notNull(),
+  sealedCapability: text('sealed_capability'),
+  sealedReceipt: text('sealed_receipt'),
+  cleanupRequestId: text('cleanup_request_id'),
+  status: text('status', { enum: ['active', 'pending', 'revoked', 'manual_required'] }).notNull(),
+  ...timestamps,
+}, table => [
+  uniqueIndex('apple_web_current_subject').on(table.subjectDigest, table.serviceIssuer, table.instanceOrigin, table.clientId).where(sql`${table.status} != 'revoked'`),
+  index('apple_web_user').on(table.userId).where(sql`${table.userId} is not null`),
+])
+export const appleWebCleanupRequests = sqliteTable('apple_web_cleanup_requests', {
+  requestId: text('request_id').primaryKey(),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  capturedAt: text('captured_at').notNull(),
+})
+export const appleWebCleanupObligations = sqliteTable('apple_web_cleanup_obligations', {
+  requestId: text('request_id').notNull().references(() => appleWebCleanupRequests.requestId),
+  connectionId: text('connection_id').notNull().references(() => appleWebConnections.id),
+  grantId: text('grant_id').notNull(),
+  generation: integer('generation').notNull(),
+  status: text('status', { enum: ['pending', 'revoked', 'manual_required'] }).notNull(),
+  sealedReceipt: text('sealed_receipt'),
+  updatedAt: text('updated_at').notNull(),
+}, table => [primaryKey({ columns: [table.requestId, table.connectionId] })])
