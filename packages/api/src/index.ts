@@ -433,3 +433,5 @@ export { installStaffPaymentRoutes } from './staff-payments.js'
 export { installPaymentRunRoutes } from './payment-runs.js'
 
 export * from './account-retention.js'
+
+export { installAccountDeletionRequestRoutes } from './account-deletion-requests.js'

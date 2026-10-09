@@ -44,3 +44,5 @@ export * from './payment-actuals.js'
 export * from './account-retention.js'
 
 export { PRIVACY_FRAMEWORK_CATALOG, PRIVACY_REFERENCE_REVIEWED_ON } from './privacy-frameworks.js'
+
+export * from './account-deletion.js'

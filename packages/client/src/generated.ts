@@ -1230,13 +1230,59 @@ export type ProfileEnvelope = {
   "links": Links;
 };
 
+export type AccountDeletionSubmission = {
+  "expected_policy_version"?: number | null;
+};
+
+export type AccountDeletionUpdate = {
+  "expected_version": number;
+  "status": "pending" | "in_progress" | "action_required";
+  "message": string;
+  "expected_completion_at": string | null;
+};
+
+export type AccountDeletionRecord = {
+  "id": string;
+  "user_id": number;
+  "requested_at": string;
+  "policy_version": number | null;
+  "policy_snapshot": AccountRetentionPolicy | null;
+  "policy_reviewed": boolean;
+  "status": "pending" | "in_progress" | "action_required" | "completed";
+  "version": number;
+  "message": string;
+  "response_target_at": string | null;
+  "expected_completion_at": string | null;
+  "completed_at": string | null;
+  "completion_confirmation": string | null;
+  "notification": "pending" | "sending" | "queued" | "failed" | "unavailable";
+  "notification_updated_at": string;
+  "notification_delivery_id": number | null;
+  "updated_at": string;
+};
+
+export type AccountDeletionStatusEnvelope = {
+  "data": AccountDeletionRecord | null;
+  "links": Links;
+};
+
+export type AccountDeletionDetailEnvelope = {
+  "data": AccountDeletionRecord;
+  "links": Links;
+};
+
+export type AccountDeletionListEnvelope = {
+  "data": Array<AccountDeletionRecord>;
+  "links": Links;
+};
+
 export type AccountDeletionRequest = {
   "user_id": number;
   "requested_at": string;
 };
 
 export type AccountDeletionRequestEnvelope = {
-  "data": AccountDeletionRequest;
+  "data": AccountDeletionRecord | AccountDeletionRequest;
   "links": Links;
 };
 
@@ -3917,10 +3963,11 @@ export class EzactoClient {
     });
   }
 
-  async requestAccountDeletion(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<AccountDeletionRequestEnvelope> {
+  async requestAccountDeletion(args: { body?: AccountDeletionSubmission; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<AccountDeletionRequestEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<AccountDeletionRequestEnvelope>("POST", "/api/v1/profile/deletion-request", {
+      body: args.body,
       signal: args.signal,
       headers,
     });
@@ -5759,6 +5806,53 @@ export class EzactoClient {
 
     return this.request<AccountRetentionEnvelope>("POST", "/api/v1/admin/retention-policy", {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getAccountDeletionRequest(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<AccountDeletionStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountDeletionStatusEnvelope>("GET", "/api/v1/profile/deletion-request", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listAccountDeletionRequests(args: { query?: { "after"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<AccountDeletionListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountDeletionListEnvelope>("GET", "/api/v1/admin/deletion-requests", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getAccountDeletionRequestForAdmin(args: { "id": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<AccountDeletionDetailEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountDeletionDetailEnvelope>("GET", "/api/v1/admin/deletion-requests/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateAccountDeletionRequest(args: { "id": string; body: AccountDeletionUpdate; signal?: AbortSignal; headers?: HeadersInit }): Promise<AccountDeletionDetailEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountDeletionDetailEnvelope>("PATCH", "/api/v1/admin/deletion-requests/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async retryAccountDeletionNotification(args: { "id": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<AccountDeletionDetailEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountDeletionDetailEnvelope>("POST", "/api/v1/admin/deletion-requests/:id/notification".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });

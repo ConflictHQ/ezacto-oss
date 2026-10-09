@@ -3845,3 +3845,33 @@ export const accountRetentionPolicies = sqliteTable('account_retention_policies'
   check('account_retention_policy_version', sql`${table.version} between 1 and 9007199254740991`),
   check('account_retention_policy_json', sql`json_valid(${table.policyJson}) and json_type(${table.policyJson}) = 'object' and coalesce(json_type(${table.policyJson}, '$.acknowledged') = 'true', 0)`),
 ])
+
+/** Dedicated deletion workflow; the immutable disclosure outlives email delivery. */
+export const accountDeletionRequests = sqliteTable('account_deletion_requests', {
+  id: text('id').primaryKey(),
+  userId: integer('user_id').notNull().unique().references(() => users.id, { onDelete: 'restrict' }),
+  requestedAt: text('requested_at').notNull(),
+  policyVersion: integer('policy_version').references(() => accountRetentionPolicies.version, { onDelete: 'restrict' }),
+  policySnapshot: text('policy_snapshot'),
+  policyReviewed: integer('policy_reviewed', { mode: 'boolean' }).notNull().default(false),
+  status: text('status', { enum: ['pending', 'in_progress', 'action_required', 'completed'] }).notNull().default('pending'),
+  version: integer('version').notNull().default(1),
+  message: text('message').notNull().default(''),
+  expectedCompletionAt: text('expected_completion_at'),
+  completedAt: text('completed_at'),
+  completionConfirmation: text('completion_confirmation'),
+  notification: text('notification', { enum: ['pending', 'sending', 'queued', 'failed', 'unavailable'] }).notNull().default('pending'),
+  notificationUpdatedAt: text('notification_updated_at').notNull(),
+  notificationDeliveryId: integer('notification_delivery_id').references(() => emailLog.id, { onDelete: 'set null' }),
+  updatedAt: text('updated_at').notNull(),
+  updatedByUserId: integer('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+})
+export const accountDeletionRequestUpdates = sqliteTable('account_deletion_request_updates', {
+  requestId: text('request_id').notNull().references(() => accountDeletionRequests.id, { onDelete: 'cascade' }),
+  version: integer('version').notNull(),
+  status: text('status').notNull(),
+  message: text('message').notNull(),
+  expectedCompletionAt: text('expected_completion_at'),
+  occurredAt: text('occurred_at').notNull(),
+  actorUserId: integer('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+}, (table) => [primaryKey({ columns: [table.requestId, table.version] })])

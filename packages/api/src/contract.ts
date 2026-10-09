@@ -1141,6 +1141,14 @@ const moduleSettingsOperations: ApiContractOperation[] = [
 
 // Issue 761. Which ways in the instance offers, as an administrator setting
 // rather than three separate deploy secrets.
+const accountDeletionOperations: ApiContractOperation[] = [
+  { method: "get", path: "/api/v1/profile/deletion-request", operationId: "getAccountDeletionRequest", summary: "Read your deletion request and original policy disclosure", tag: "profile", responseStatus: 200, responseSchema: "AccountDeletionStatusEnvelope" },
+  { method: "get", path: "/api/v1/admin/deletion-requests", operationId: "listAccountDeletionRequests", summary: "List account deletion requests", tag: "admin-modules", responseStatus: 200, responseSchema: "AccountDeletionListEnvelope", sessionOnly: true, parameters: [{ name: "after", location: "query", required: false, schema: { type: "string" } }] },
+  { method: "get", path: "/api/v1/admin/deletion-requests/:id", operationId: "getAccountDeletionRequestForAdmin", summary: "Read an account deletion request", tag: "admin-modules", responseStatus: 200, responseSchema: "AccountDeletionDetailEnvelope", sessionOnly: true, parameters: [stringPath("id")] },
+  { method: "patch", path: "/api/v1/admin/deletion-requests/:id", operationId: "updateAccountDeletionRequest", summary: "Update request progress without completing erasure", tag: "admin-modules", responseStatus: 200, responseSchema: "AccountDeletionDetailEnvelope", sessionOnly: true, parameters: [stringPath("id")], requestSchema: "AccountDeletionUpdate", requestRequired: true },
+  { method: "post", path: "/api/v1/admin/deletion-requests/:id/notification", operationId: "retryAccountDeletionNotification", summary: "Retry an unavailable or failed administrator notification", tag: "admin-modules", responseStatus: 200, responseSchema: "AccountDeletionDetailEnvelope", sessionOnly: true, parameters: [stringPath("id")] },
+];
+
 const accountRetentionOperations: ApiContractOperation[] = [
   { method: "get", path: "/api/v1/profile/retention-policy", operationId: "getAccountRetentionPolicy", summary: "Read the operator's published erasure and retention disclosure", tag: "profile", responseStatus: 200, responseSchema: "AccountRetentionEnvelope", description: "Requires a staff session or a token with time_entries:read." },
   { method: "post", path: "/api/v1/admin/retention-policy", operationId: "publishAccountRetentionPolicy", summary: "Publish an operator erasure and retention policy version", tag: "admin-modules", responseStatus: 200, responseSchema: "AccountRetentionEnvelope", requestSchema: "AccountRetentionPublication", requestRequired: true, sessionOnly: true },
@@ -2881,11 +2889,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     requestRequired: true,
   },
   {
-    // Starting the deletion of one's own account from inside an app (App
-    // Store Guideline 5.1.1(v), Google Play's account deletion policy). A
-    // request, recorded and sent to the administrators, who decide: the
-    // account is the organization's, and nothing about it changes here.
-    // Asking again answers with the first request's time.
+    // Durable requests on current runtimes; legacy adapters retain the base envelope.
     method: "post",
     path: "/api/v1/profile/deletion-request",
     operationId: "requestAccountDeletion",
@@ -2893,6 +2897,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     tag: "profile",
     responseStatus: 202,
     responseSchema: "AccountDeletionRequestEnvelope",
+    requestSchema: "AccountDeletionSubmission",
   },
   ...generalOperations(),
   ...rateOperations(),
@@ -2908,6 +2913,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...moduleSettingsOperations,
   ...signInMethodOperations,
   ...accountRetentionOperations,
+  ...accountDeletionOperations,
   ...backupOperations,
   ...quickBooksOperations,
   ...wiseOperations,
@@ -4856,6 +4862,35 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   ProfileEnvelope: envelope("Profile"),
+  AccountDeletionSubmission: {
+    type: "object", additionalProperties: false,
+    properties: { expected_policy_version: nullable({ type: "integer", minimum: 1 }) },
+  },
+  AccountDeletionUpdate: {
+    type: "object", additionalProperties: false, required: ["expected_version", "status", "message", "expected_completion_at"],
+    properties: {
+      expected_version: { type: "integer", minimum: 1, maximum: 9007199254740990 },
+      status: { type: "string", enum: ["pending", "in_progress", "action_required"] },
+      message: { type: "string", maxLength: 5000 },
+      expected_completion_at: nullable(timestampSchema),
+    },
+  },
+  AccountDeletionRecord: {
+    type: "object", additionalProperties: false,
+    required: ["id", "user_id", "requested_at", "policy_version", "policy_snapshot", "policy_reviewed", "status", "version", "message", "response_target_at", "expected_completion_at", "completed_at", "completion_confirmation", "notification", "notification_updated_at", "notification_delivery_id", "updated_at"],
+    properties: {
+      id: stringSchema, user_id: integerSchema, requested_at: timestampSchema,
+      policy_version: nullable(integerSchema), policy_snapshot: nullable(reference("AccountRetentionPolicy")), policy_reviewed: booleanSchema,
+      status: { type: "string", enum: ["pending", "in_progress", "action_required", "completed"] },
+      version: integerSchema, message: stringSchema, response_target_at: nullable(timestampSchema),
+      expected_completion_at: nullable(timestampSchema), completed_at: nullable(timestampSchema), completion_confirmation: nullable(stringSchema),
+      notification: { type: "string", enum: ["pending", "sending", "queued", "failed", "unavailable"] },
+      notification_updated_at: timestampSchema, notification_delivery_id: nullable(integerSchema), updated_at: timestampSchema,
+    },
+  },
+  AccountDeletionStatusEnvelope: { type: "object", required: ["data", "links"], additionalProperties: false, properties: { data: nullable(reference("AccountDeletionRecord")), links: reference("Links") } },
+  AccountDeletionDetailEnvelope: envelope("AccountDeletionRecord"),
+  AccountDeletionListEnvelope: { type: "object", required: ["data", "links"], additionalProperties: false, properties: { data: { type: "array", items: reference("AccountDeletionRecord") }, links: reference("Links") } },
   AccountDeletionRequest: {
     type: "object",
     required: ["user_id", "requested_at"],
@@ -4866,7 +4901,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
-  AccountDeletionRequestEnvelope: envelope("AccountDeletionRequest"),
+  AccountDeletionRequestEnvelope: { type: "object", required: ["data", "links"], additionalProperties: false,
+    properties: { data: { anyOf: [reference("AccountDeletionRecord"), reference("AccountDeletionRequest")] }, links: reference("Links") } },
   TimeEntryOption: {
     type: "object",
     required: ["project_id", "task_id", "minimum_note_length"],

@@ -28,6 +28,7 @@ import {
   createModuleSettingsRepository,
   createSignInMethodRepository,
   createAccountRetentionRepository,
+  createAccountDeletionRequestRepository,
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
   createTeamRepository,
@@ -1068,6 +1069,7 @@ export const createRuntimeServices = async (
     moduleSettings: createModuleSettingsRepository(drizzle),
     signInMethods: createSignInMethodRepository(drizzle),
     accountRetention: createAccountRetentionRepository(drizzle),
+    accountDeletionRequests: createAccountDeletionRequestRepository(drizzle),
     organizationName,
     ssoProvisioningDomains: createD1SsoProvisioningDomainStore(database),
     // The #520 organisation setting, read the same way the other two module

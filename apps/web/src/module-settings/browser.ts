@@ -1,3 +1,4 @@
+import { createDeletionRequestsController } from './deletion-requests.js'
 import { createRetentionController } from './retention.js'
 import {
   EzactoApiError,
@@ -1048,6 +1049,7 @@ export const createModuleSettingsController = (
    * all the non-privileged branch used to do, does not remove what is rendered
    * above them.
    */
+  const deletionRequests = createDeletionRequestsController(required<HTMLElement>('[data-module-settings-page]'), demo)
   const retention = createRetentionController(required<HTMLElement>('[data-module-settings-page]'), demo)
 
   const clearPrivatePresentation = (): void => {
@@ -1057,6 +1059,7 @@ export const createModuleSettingsController = (
     session = null
     loaded.clear()
     retention.clear()
+    deletionRequests.clear()
     // Its controls come back with the page rather than from the finally of an
     // operation that is no longer allowed to touch anything.
     noteSubmit.disabled = false
@@ -2017,7 +2020,7 @@ export const createModuleSettingsController = (
   const sectionLoaders: Readonly<Record<string, (active: ActiveSession) => Promise<void>>> = {
     modules: loadModules,
     erasure: async (active) => {
-      try { await retention.load(active) }
+      try { await retention.load(active); await deletionRequests.load(active) }
       catch (error) {
         active.presentFailure(error, () => sectionFailed('erasure', required<HTMLElement>('[data-retention-status]'), error, 'Only administrators can manage this policy.', 'The policy could not be loaded.'))
       }

@@ -77,6 +77,27 @@ test("[e2e:retention] publishes and reloads an operator policy with a fresh ackn
   ).toBeChecked();
   await expect(time.getByLabel("Review within (days)")).toHaveValue("30");
   await expect(acknowledgement).not.toBeChecked();
+  const requested = await page.evaluate(async () => {
+    const policyResponse = await fetch('/api/v1/profile/retention-policy');
+    if (!policyResponse.ok) throw new Error(`Policy response ${policyResponse.status}`);
+    const published = await policyResponse.json();
+    const asked = await fetch('/api/v1/profile/deletion-request', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expected_policy_version: published.data.version }) });
+    if (asked.status !== 202) throw new Error(`Deletion request response ${asked.status}`);
+    return asked.json();
+  });
+  expect(requested.data.policy_reviewed).toBe(true);
+  expect(requested.data.status).toBe('pending');
+  await page.getByRole('button', { name: 'Refresh requests' }).click();
+  await page.locator('[data-deletion-list] button').filter({ hasText: `User ${requested.data.user_id}:` }).click();
+  const requestForm = page.locator('[data-deletion-form]');
+  await requestForm.getByLabel('Status', { exact: true }).selectOption('in_progress');
+  await requestForm.getByLabel('Message shown to the requester').fill('Reviewing the identified work records and applicable retention rules.');
+  await requestForm.getByRole('button', { name: 'Save request update' }).click();
+  await expect(page.locator('[data-deletion-result]')).toContainText('Request updated');
+  const updated = await page.evaluate(async () => (await fetch('/api/v1/profile/deletion-request')).json());
+  expect(updated.data.status).toBe('in_progress');
+  expect(updated.data.completed_at).toBeNull();
+  expect(updated.data.policy_snapshot).toEqual(requested.data.policy_snapshot);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
