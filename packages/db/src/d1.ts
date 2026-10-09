@@ -426,3 +426,5 @@ export * from './account-closure.js'
 export * from './account-deletion-status.js'
 
 export * from './apple-lifecycle.js'
+
+export { createAccountRetentionReviewRepository } from './account-retention-review.js'

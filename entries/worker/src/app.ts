@@ -1,5 +1,5 @@
 import { aggregateAppleCleanup, type AppleCleanupPort, type AppleLifecycleStore, type AppleWebCleanupPort } from '@ezacto/core'
-import type { AccountDeletionStore, AccountClosureStore, AccountDeletionStatusStore } from '@ezacto/core'
+import type { AccountDeletionStore, AccountClosureStore, AccountRetentionReviewStore, AccountDeletionStatusStore } from '@ezacto/core'
 import type { PaymentRunsService } from '@ezacto/core'
 import { installPaymentRunRoutes } from '@ezacto/api'
 import { installStaffPaymentRoutes } from '@ezacto/api'
@@ -58,6 +58,7 @@ import {
   installReportRoutes,
   installProfileRoutes,
   installAccountClosureRoutes,
+  installAccountRetentionReviewRoutes,
   installAccountDeletionStatusRoutes,
   installSessionRoutes,
   installSsoDomainRoutes,
@@ -312,6 +313,7 @@ export interface RuntimeServices {
   /** Which ways in are switched on (issue 761). */
   accountDeletionRequests?: AccountDeletionStore
   accountClosure?: AccountClosureStore
+  accountRetentionReview?: AccountRetentionReviewStore
   nativeAppleLifecycle?: AppleLifecycleStore
   appleWebCleanup?: AppleWebCleanupPort
   accountDeletionTracking?: AccountDeletionStatusStore
@@ -597,6 +599,7 @@ export const createApp = (
                 ? {}
                 : { deletionMailer: services.accountDeletionMailer }),
             })
+            if(services.accountRetentionReview) installAccountRetentionReviewRoutes(api,{store:services.accountRetentionReview,clock:()=>systemClock.now().instant,...(appleCleanup===undefined?{}:{appleCleanup})})
             if (services.accountClosure) installAccountClosureRoutes(api, { store: services.accountClosure, clock: () => systemClock.now().instant, ...(appleCleanup === undefined ? {} : { appleCleanup }), ...(services.appleWebCleanup === undefined ? {} : {performAppleCleanup:(requestId:string)=>services.appleWebCleanup!.perform(requestId)}) })
             installEmailLogRoutes(api, services.emailLog)
             installEmailHealthRoutes(api, services.emailLog)

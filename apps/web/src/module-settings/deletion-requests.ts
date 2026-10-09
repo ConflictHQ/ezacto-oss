@@ -1,3 +1,4 @@
+import { createRetentionReviewController } from './retention-review.js';
 import { createAccountClosureController } from './account-closure.js';
 import type { AccountDeletionRecord } from "@ezacto/core";
 import { EzactoApiError } from "@conflict-hq/ezacto-client";
@@ -38,6 +39,7 @@ export function createDeletionRequestsController(
   let next: string | null = null;
   let busy = false;
   const records = new Map<string, AccountDeletionRecord>();
+  const retention = createRetentionReviewController(root,demo,()=>reload(false));
   const closure = createAccountClosureController(root, demo, () => reload(false));
   const writable = () =>
     session?.identity.profile === "administrator" &&
@@ -79,6 +81,7 @@ export function createDeletionRequestsController(
   const display = (record: AccountDeletionRecord) => {
     selected = record;
     closure.select(session, record);
+    retention.select(session, record);
     detail.hidden = false;
     root.querySelector<HTMLElement>("[data-deletion-heading]")!.textContent =
       `User ${record.user_id} · ${record.status.replaceAll("_", " ")}`;
@@ -173,6 +176,7 @@ export function createDeletionRequestsController(
     if (!append) {
       selected = null;
       closure.select(null, null);
+      retention.select(null, null);
       records.clear();
       detail.hidden = true;
     }
@@ -259,6 +263,7 @@ export function createDeletionRequestsController(
     clear() {
       session = null;
       closure.select(null, null);
+      retention.select(null, null);
       selected = null;
       records.clear();
       next = null;
@@ -274,6 +279,7 @@ export function createDeletionRequestsController(
     },
     async load(active: Active) {
       session = active;
+      retention.select(active,null);
       if (active.identity.profile !== "administrator") return;
       active.present(() => {
         section.hidden = false;
