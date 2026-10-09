@@ -36,7 +36,7 @@ export interface AppleWebProviderConfig {
  */
 export interface AppleWebGrant {
   subject: string
-  bindUser(userId: number): Promise<{ setCookie: string }>
+  bindUser(userId: number, provenance: { knownFromFirstLink: boolean }): Promise<{ setCookie: string }>
   bindBrowser(): Promise<{ setCookie: string }>
 }
 
@@ -273,7 +273,7 @@ export const installAppleWebRoutes = <Bindings extends object>(
         if (identity.status === 'disabled') throw new WebFailure('disabled')
         if (identity.status === 'provisioning_not_permitted') throw new WebFailure(assertion.isPrivateEmail ? 'private_email' : 'denied')
         userId = identity.userId
-        const connection = await grant.bindUser(userId)
+        const connection = await grant.bindUser(userId, { knownFromFirstLink: identity.matchedBy !== 'subject' })
         context.header('set-cookie', connection.setCookie, { append: true })
       }
       const session = await options.sessions.issue(userId)

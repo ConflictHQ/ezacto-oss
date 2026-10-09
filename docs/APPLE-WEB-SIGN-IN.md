@@ -101,7 +101,10 @@ status; administrators can explicitly retry cleanup from the deletion request.
 Status and preview reads never revoke credentials. Only
 verified matching web revocation proof marks that obligation revoked; proof and
 minimal tracking evidence are encrypted at rest. Native receipts cannot discharge
-web obligations, or vice versa. A newer native/demo/team sign-in can supersede an
+web obligations, or vice versa. Channel provenance distinguishes a newly linked
+web-only identity from an older unclassified Apple identity. Signing in again
+does not erase historical uncertainty or prove an old native grant revoked.
+A newer native/demo/team sign-in can supersede an
 older capability. Such a failure remains pending or manual-required until
 request-bound reauthorization and matching proof arrive; a shared subject alone
 is never evidence that all channels were cleaned up. Ordinary workspace erasure

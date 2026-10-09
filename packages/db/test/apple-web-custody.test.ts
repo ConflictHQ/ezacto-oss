@@ -11,7 +11,10 @@ const connection = (overrides: Partial<AppleWebConnection> = {}): AppleWebConnec
   grantId: 'grant_0001', generation: 1, sealedCapability: '{"kid":"test","ciphertext":"encrypted"}',
   sealedReceipt: null, cleanupRequestId: null, status: 'active', createdAt: now, updatedAt: now, ...overrides,
 })
-const schema = ['CREATE TABLE users(id INTEGER PRIMARY KEY, is_active INTEGER NOT NULL) STRICT', 'INSERT INTO users VALUES(1,1),(2,1)', ...appleWebCustodyMigration]
+const schema = ['CREATE TABLE account_closure_security(id INTEGER PRIMARY KEY, secret TEXT NOT NULL)', "INSERT INTO account_closure_security VALUES(1,'" + 'ab'.repeat(32) + "')",
+  'CREATE TABLE user_identities(user_id INTEGER, provider TEXT, provider_subject TEXT)', "INSERT INTO user_identities VALUES(1,'apple','subject-1'),(2,'apple','subject-2')",
+  "CREATE TABLE apple_identity_channels(subject_hash TEXT, user_id INTEGER, channel TEXT, known_from_first_link INTEGER, PRIMARY KEY(subject_hash,user_id,channel))",
+  'CREATE TABLE users(id INTEGER PRIMARY KEY, is_active INTEGER NOT NULL) STRICT', 'INSERT INTO users VALUES(1,1),(2,1)', ...appleWebCustodyMigration]
 for (const runtime of ['container', 'D1'] as const) {
   describe(`web Apple custody (${runtime})`, () => {
     const cleanups: (() => Promise<void>)[] = []
@@ -22,13 +25,15 @@ for (const runtime of ['container', 'D1'] as const) {
         db.pragma('foreign_keys = ON')
         for (const sql of schema) db.exec(sql)
         cleanups.push(async () => { db.close() })
-        return createContainerAppleWebCustodyStore(db)
+        const store = createContainerAppleWebCustodyStore(db)
+        return { ...store, save: (input: AppleWebConnection) => store.save(input, input.userId === null ? undefined : { subject: 'subject-' + input.userId, knownFromFirstLink: true }) }
       }
       const mf = new Miniflare({ modules: true, script: 'export default {fetch(){return new Response("ok")}}', d1Databases: ['DB'] })
       cleanups.push(() => mf.dispose())
       const db = await mf.getD1Database('DB')
       for (const sql of schema) await db.prepare(sql).run()
-      return createD1AppleWebCustodyStore(db)
+      const store = createD1AppleWebCustodyStore(db)
+      return { ...store, save: (input: AppleWebConnection) => store.save(input, input.userId === null ? undefined : { subject: 'subject-' + input.userId, knownFromFirstLink: true }) }
     }
     it('rotates browser recovery independently of sessions and rejects older generations', async () => {
       const store = await harness(), first = connection()

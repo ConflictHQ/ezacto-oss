@@ -1,4 +1,5 @@
 import type BetterSqlite3 from 'better-sqlite3'
+import { accountClosureDigest, closedAccountProviderKey } from './account-closure-sign-in.js'
 import { aggregateAppleCleanup, type AppleCleanupStatus } from '@ezacto/core'
 
 import type { AppleWebConnection, AppleWebCustodyStore } from '@ezacto/core'
@@ -24,15 +25,24 @@ const timestamp = (value: string): string => {
   return value
 }
 const createStore = (db: Database): AppleWebCustodyStore => ({
-  async save(input) {
+  async save(input, identity) {
     opaque(input.id); digest(input.subjectDigest); digest(input.browserHash); opaque(input.grantId)
     timestamp(input.createdAt); timestamp(input.updatedAt)
     if (input.status !== 'active' || input.sealedCapability === null || !Number.isSafeInteger(input.generation) || input.generation < 1) throw new TypeError('Invalid Apple custody grant')
     if (input.cleanupRequestId !== null) opaque(input.cleanupRequestId)
+    if (input.userId !== null && (identity === undefined || !identity.subject || identity.subject.length > 255)) throw new TypeError('Verified Apple identity required for team custody')
+    let channelDigest: string | null = null
+    if (input.userId !== null && identity !== undefined) {
+      const security = await db.atomic([{ query: 'SELECT secret FROM account_closure_security WHERE id = 1', bindings: [] }])
+      const secret = security[0]?.[0]?.secret
+      if (typeof secret !== 'string') throw new Error('Missing account closure security configuration')
+      channelDigest = accountClosureDigest(secret, 'provider', closedAccountProviderKey('apple', identity.subject))
+    }
     const rows = await db.atomic([{ query: `INSERT INTO apple_web_connections (${columns.replace(/ AS [A-Za-z]+/g, '')})
       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       WHERE (? IS NULL OR (EXISTS(SELECT 1 FROM users WHERE id = ? AND is_active = 1)
-        AND NOT EXISTS(SELECT 1 FROM apple_web_cleanup_requests WHERE user_id = ?)))
+        AND NOT EXISTS(SELECT 1 FROM apple_web_cleanup_requests WHERE user_id = ?)
+        AND EXISTS(SELECT 1 FROM user_identities WHERE user_id = ? AND provider = 'apple' AND provider_subject = ?)))
         AND (? IS NULL OR NOT EXISTS(SELECT 1 FROM apple_web_cleanup_requests WHERE request_id = ?)
           OR EXISTS(SELECT 1 FROM apple_web_cleanup_obligations obligation JOIN apple_web_connections custody ON custody.id = obligation.connection_id
             WHERE obligation.request_id = ? AND custody.subject_digest = ? AND custody.service_issuer = ? AND custody.instance_origin = ? AND custody.client_id = ?))
@@ -46,7 +56,7 @@ const createStore = (db: Database): AppleWebCustodyStore => ({
         AND (apple_web_connections.cleanup_request_id IS NULL OR apple_web_connections.cleanup_request_id = excluded.cleanup_request_id)
       RETURNING ${columns}`, bindings: [input.id, input.subjectDigest, input.browserHash, input.userId,
       input.serviceIssuer, input.instanceOrigin, input.clientId, input.grantId, input.generation,
-      input.sealedCapability, input.sealedReceipt, input.cleanupRequestId, input.status, input.createdAt, input.updatedAt, input.userId, input.userId, input.userId,
+      input.sealedCapability, input.sealedReceipt, input.cleanupRequestId, input.status, input.createdAt, input.updatedAt, input.userId, input.userId, input.userId, input.userId, identity?.subject ?? null,
       input.cleanupRequestId, input.cleanupRequestId, input.cleanupRequestId, input.subjectDigest, input.serviceIssuer, input.instanceOrigin, input.clientId] },
       { query: `UPDATE apple_web_cleanup_obligations SET grant_id = ?, generation = ?, status = 'pending', updated_at = ?
         WHERE request_id = ? AND status != 'revoked' AND generation < ? AND connection_id IN
@@ -54,6 +64,11 @@ const createStore = (db: Database): AppleWebCustodyStore => ({
            AND generation = ? AND cleanup_request_id = ? AND status = 'active')`,
         bindings: [input.grantId, input.generation, input.updatedAt, input.cleanupRequestId, input.generation,
           input.subjectDigest, input.serviceIssuer, input.instanceOrigin, input.clientId, input.generation, input.cleanupRequestId] },
+      { query: `INSERT INTO apple_identity_channels(subject_hash, user_id, channel, known_from_first_link)
+        SELECT ?, user_id, 'web', ? FROM apple_web_connections
+        WHERE browser_hash = ? AND user_id = ? AND grant_id = ? AND generation = ? AND status = 'active'
+        ON CONFLICT DO NOTHING`, bindings: [channelDigest, identity?.knownFromFirstLink === true ? 1 : 0,
+          input.browserHash, input.userId, input.grantId, input.generation] },
     ])
     return row(rows[0]?.[0])
   },

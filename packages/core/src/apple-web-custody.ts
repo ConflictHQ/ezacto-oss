@@ -19,7 +19,7 @@ export interface AppleWebConnection {
 }
 
 export interface AppleWebCustodyStore {
-  save(input: AppleWebConnection): Promise<AppleWebConnection | null>
+  save(input: AppleWebConnection, identity?: { subject: string; knownFromFirstLink: boolean }): Promise<AppleWebConnection | null>
   browser(hash: string): Promise<AppleWebConnection | null>
   begin(userId: number, requestId: string, now: string): Promise<void>
   obligations(requestId: string): Promise<AppleWebConnection[]>

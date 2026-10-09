@@ -73,6 +73,14 @@ describe('Apple web authorization', () => {
     expect(response.headers.get('set-cookie')).toBe(`${APPLE_WEB_STATE_COOKIE}=${state}; Path=/; Secure; HttpOnly; SameSite=None; Max-Age=300`)
   })
 
+  it.each(['created', 'verified_email'] as const)('records first-link web provenance only for a new Apple identity: %s', async matchedBy => {
+    const h = setup()
+    h.identities.resolveProvider.mockResolvedValue({ status: 'active', matchedBy, userId: 7, profile: 'member', managerGrants: [] })
+    const { state, cookie } = await h.start()
+    expect((await h.callback(state, cookie)).status).toBe(303)
+    expect(h.grant.bindUser).toHaveBeenCalledWith(7, { knownFromFirstLink: true })
+  })
+
   it('binds durable web custody before issuing the team session', async () => {
     const h = setup()
     const { state, cookie, authorization } = await h.start()
@@ -82,7 +90,7 @@ describe('Apple web authorization', () => {
     expect(h.verify).toHaveBeenCalledWith('valid-token', { nonce: authorization.searchParams.get('nonce') })
     expect(h.exchange).toHaveBeenCalledWith(expect.objectContaining({ servicesId: h.servicesId, redirectUri: `${h.origin}/auth/apple/callback`, nonce: authorization.searchParams.get('nonce') }))
     expect(h.identities.resolveProvider).toHaveBeenCalledWith(expect.objectContaining({ email: 'member@example.test', firstName: 'Test', lastName: 'Member' }))
-    expect(h.grant.bindUser).toHaveBeenCalledWith(7)
+    expect(h.grant.bindUser).toHaveBeenCalledWith(7, { knownFromFirstLink: false })
     expect(h.grant.bindUser.mock.invocationCallOrder[0]).toBeLessThan(h.sessions.issue.mock.invocationCallOrder[0]!)
     expect(h.disconnect).not.toHaveBeenCalled()
   })

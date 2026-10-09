@@ -140,7 +140,7 @@ export function createAppleWebLifecycle(options: {
         typeof value.capability !== 'string' || !/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{32}\.[A-Za-z0-9_-]{43}$/.test(value.capability) ||
         value.capability.split('.')[1] !== proof.grantId) throw new Error('Apple web binding proof mismatch')
       const capability = value.capability
-      const bind = async (userId: number | null) => {
+      const bind = async (userId: number | null, knownFromFirstLink = false) => {
         const routingKey = await crypto.subtle.importKey('raw', decode(config.routingSecret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
         const subjectDigest = Array.from(new Uint8Array(await crypto.subtle.sign('HMAC', routingKey, encoder.encode(proof.subject)))).map(byte => byte.toString(16).padStart(2, '0')).join('')
         const handle = token()
@@ -150,14 +150,14 @@ export function createAppleWebLifecycle(options: {
           serviceIssuer: APPLE_LIFECYCLE_ISSUER, instanceOrigin: config.redirectOrigin, clientId: config.servicesId,
           sealedCapability: await seal({ capability, subject: proof.subject }, context(metadata)),
           sealedReceipt: null, cleanupRequestId: typeof proof.payload.request_id === 'string' ? proof.payload.request_id : null,
-          status: 'active', createdAt: timestamp, updatedAt: timestamp })
+          status: 'active', createdAt: timestamp, updatedAt: timestamp }, userId === null ? undefined : { subject: proof.subject, knownFromFirstLink })
         if (saved === null) throw new Error('Apple web custody needs request-bound recovery')
         return { setCookie: cookie(handle) }
       }
       return { subject: proof.subject,
-        bindUser: async userId => {
+        bindUser: async (userId, provenance) => {
           if (config.site !== 'team' || input.purpose !== 'sign-in' || !Number.isSafeInteger(userId) || userId < 1) throw new Error('Invalid Apple team custody')
-          return bind(userId)
+          return bind(userId, provenance.knownFromFirstLink)
         },
         bindBrowser: () => bind(null),
       }

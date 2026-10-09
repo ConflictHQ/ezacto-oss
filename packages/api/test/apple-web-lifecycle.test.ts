@@ -13,6 +13,7 @@ const setup = async (demo = false) => {
   const db = new BetterSqlite3(':memory:'); databases.push(db)
   db.pragma('foreign_keys = ON')
   db.exec('CREATE TABLE users(id INTEGER PRIMARY KEY, is_active INTEGER NOT NULL) STRICT; INSERT INTO users VALUES(1,1),(2,1)')
+  db.exec("CREATE TABLE account_closure_security(id INTEGER PRIMARY KEY, secret TEXT NOT NULL); INSERT INTO account_closure_security VALUES(1,'" + 'ab'.repeat(32) + "'); CREATE TABLE user_identities(user_id INTEGER, provider TEXT, provider_subject TEXT); INSERT INTO user_identities VALUES(1,'apple','private-apple-subject'); CREATE TABLE apple_identity_channels(subject_hash TEXT, user_id INTEGER, channel TEXT, known_from_first_link INTEGER, PRIMARY KEY(subject_hash,user_id,channel))")
   for (const sql of appleWebCustodyMigration) db.exec(sql)
   const store = createContainerAppleWebCustodyStore(db)
   const pair = await generateKeyPair('ES256')
@@ -70,23 +71,41 @@ const setup = async (demo = false) => {
 describe('Apple web lifecycle custody', () => {
   it('encrypts capability and subject before issuing an independent browser handle', async () => {
     const h = await setup(), grant = await h.exchange()
-    const connection = await grant.bindUser(1)
+    const connection = await grant.bindUser(1, { knownFromFirstLink: true })
     expect(connection.setCookie).toContain(APPLE_WEB_CONNECTION_COOKIE + '=')
     expect(connection.setCookie).toContain('Secure; HttpOnly; SameSite=Lax')
     expect(connection.setCookie).not.toContain(h.capability())
     const stored = JSON.stringify(h.db.prepare('SELECT * FROM apple_web_connections').all())
     expect(stored).not.toContain(h.capability())
     expect(stored).not.toContain('private-apple-subject')
+    expect(h.db.prepare('SELECT channel, known_from_first_link FROM apple_identity_channels').all()).toEqual([{ channel: 'web', known_from_first_link: 1 }])
     expect(await h.lifecycle.connected(h.request(connection.setCookie))).toBe(true)
     expect(await h.lifecycle.connected(h.request('session=shared-demo'))).toBe(false)
     expect(h.requests.some(request => request.path.includes('/revocations'))).toBe(false)
   })
 
+  it('does not save custody or channel provenance for a different workspace identity', async () => {
+    const h = await setup()
+    await expect((await h.exchange()).bindUser(2, { knownFromFirstLink: true })).rejects.toThrow()
+    expect(h.db.prepare('SELECT * FROM apple_web_connections').all()).toEqual([])
+    expect(h.db.prepare('SELECT * FROM apple_identity_channels').all()).toEqual([])
+  })
+
+  it('records verified web provenance without promoting a previously unclassified identity', async () => {
+    const h = await setup()
+    await (await h.exchange()).bindUser(1, { knownFromFirstLink: false })
+    expect(h.db.prepare('SELECT channel, known_from_first_link FROM apple_identity_channels').all()).toEqual([{ channel: 'web', known_from_first_link: 0 }])
+    h.advance()
+    await (await h.exchange()).bindUser(1, { knownFromFirstLink: true })
+    expect(h.db.prepare('SELECT known_from_first_link FROM apple_identity_channels').get()).toEqual({ known_from_first_link: 0 })
+  })
+
   it('keeps demo custody independent of the published workspace member', async () => {
     const h = await setup(true), grant = await h.exchange()
-    await expect(grant.bindUser(1)).rejects.toThrow()
+    await expect(grant.bindUser(1, { knownFromFirstLink: true })).rejects.toThrow()
     const connection = await grant.bindBrowser()
     expect(h.db.prepare('SELECT user_id FROM apple_web_connections').get()).toEqual({ user_id: null })
+    expect(h.db.prepare('SELECT * FROM apple_identity_channels').all()).toEqual([])
     await h.lifecycle.begin(1, 'request_001')
     expect(await h.lifecycle.status('request_001')).toBe('not_linked')
     expect(await h.lifecycle.connected(h.request(connection.setCookie))).toBe(true)
@@ -100,7 +119,7 @@ describe('Apple web lifecycle custody', () => {
 
   it('keeps cleanup unresolved on provider failure and completes only matching verified proof', async () => {
     const h = await setup(), grant = await h.exchange()
-    await grant.bindUser(1)
+    await grant.bindUser(1, { knownFromFirstLink: true })
     h.fail(true)
     await h.lifecycle.begin(1, 'request_001')
     expect(h.requests.some(request => request.path === '/v1/apple/revocations')).toBe(false)
@@ -118,14 +137,14 @@ describe('Apple web lifecycle custody', () => {
   })
 
   it('rejects modified ciphertext without contacting the revocation endpoint', async () => {
-    const h = await setup(), grant = await h.exchange(), connection = await grant.bindUser(1)
+    const h = await setup(), grant = await h.exchange(), connection = await grant.bindUser(1, { knownFromFirstLink: true })
     h.db.prepare("UPDATE apple_web_connections SET sealed_capability = json_set(sealed_capability, '$.ciphertext', 'dGFtcGVyZWQ')").run()
     await expect(h.lifecycle.disconnect(h.request(connection.setCookie))).rejects.toThrow()
     expect(h.requests.some(request => request.path === '/v1/apple/revocations')).toBe(false)
   })
 
   it('recovers a lost browser handle against the original deletion request and rotates custody', async () => {
-    const h = await setup(), original = await (await h.exchange()).bindUser(1)
+    const h = await setup(), original = await (await h.exchange()).bindUser(1, { knownFromFirstLink: true })
     h.fail(true); await h.lifecycle.begin(1, 'request_001'); await h.lifecycle.perform('request_001')
     h.fail(false); h.advance()
     const replacement = await (await h.exchange('disconnect', 'request_001')).bindBrowser()
