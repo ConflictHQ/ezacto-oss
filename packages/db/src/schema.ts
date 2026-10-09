@@ -3932,6 +3932,11 @@ export const appleLifecycleLimits = sqliteTable('apple_lifecycle_limits', {
   windowMinute: integer('window_minute').primaryKey(), attempts: integer('attempts').notNull(),
 })
 
+export const appleIdentityChannels = sqliteTable('apple_identity_channels', {
+  subjectHash:text('subject_hash').notNull(),userId:integer('user_id').notNull().references(()=>users.id,{onDelete:'restrict'}),
+  channel:text('channel',{enum:['native','web']}).notNull(),knownFromFirstLink:integer('known_from_first_link',{mode:'boolean'}).notNull(),
+},table=>[primaryKey({columns:[table.subjectHash,table.userId,table.channel]})])
+
 
 /** Web-only encrypted capability custody, separate from native proof metadata. */
 export const appleWebConnections = sqliteTable('apple_web_connections', {

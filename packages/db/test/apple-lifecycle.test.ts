@@ -8,6 +8,7 @@ import {
   migrateContainerThrough,
   migrateD1Through,
 } from '../src/migrate.js'
+import { accountClosureDigest, closedAccountProviderKey } from '../src/account-closure-sign-in.js'
 import { createAppleLifecycleRepository } from '../src/apple-lifecycle.js'
 import { createAccountClosureRepository } from '../src/account-closure.js'
 import { createAccountDeletionRequestRepository } from '../src/account-deletion-requests.js'
@@ -117,6 +118,41 @@ for (const runtime of ['SQLite', 'D1'])
         close,
       }
     }
+    it('separates proven web-only custody from native and unknown historical obligations', async () => {
+      const { store, rows, exec, request, close } = await setup()
+      const secret = (await rows('SELECT secret FROM account_closure_security'))[0]!
+        .secret as string
+      const digest = accountClosureDigest(
+        secret,
+        'provider',
+        closedAccountProviderKey('apple', 'apple-pat'),
+      )
+      await exec(`INSERT INTO apple_identity_channels VALUES('${digest}',2,'web',0)`)
+      await request()
+      expect(await store.status('request-one')).toBe('manual_required')
+      // This fixture now represents proof that the identity's first linkage was web.
+      await exec('UPDATE apple_identity_channels SET known_from_first_link=1')
+      expect(await store.status('request-one')).toBe('not_linked')
+      await store.begin(2, 'request-one')
+      expect(await rows('SELECT * FROM apple_deletion_subjects')).toHaveLength(0)
+      await close()
+      expect(await store.status('request-one')).toBe('not_linked')
+    })
+    it('keeps a native obligation when a subject has both verified channels', async () => {
+      const { store, rows, exec, request, close } = await setup()
+      await store.recordSignIn({ ...binding, userId: 2, now: at })
+      const digest = (await rows('SELECT subject_hash FROM apple_native_grants'))[0]!.subject_hash
+      await exec(`INSERT INTO apple_identity_channels VALUES('${digest}',2,'web',1)`)
+      await request()
+      await close()
+      expect(await store.status('request-one')).toBe('pending')
+      expect(await store.acceptRevocation(revoked)).toBe(true)
+      expect(await store.status('request-one')).toBe('revoked')
+      // Web status is independently aggregated; native evidence never updates it.
+      expect(await rows("SELECT * FROM apple_identity_channels WHERE channel='web'")).toHaveLength(
+        1,
+      )
+    })
     it('keeps unmapped historical closure conservative after a receipt for one recovered identity', async () => {
       const { store, request, close, upgrade, rows } = await setup(true)
       await request()

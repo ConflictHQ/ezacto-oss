@@ -5,6 +5,13 @@ const syncRequest = `INSERT INTO apple_deletion_subjects(request_id,subject_hash
   WHERE apple_deletion_subjects.generation IS NULL OR excluded.generation>apple_deletion_subjects.generation;`
 
 export const appleLifecycleMigration = [
+  `CREATE TABLE apple_identity_channels (
+    subject_hash TEXT NOT NULL CHECK(length(subject_hash)=64),
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    channel TEXT NOT NULL CHECK(channel IN ('native','web')),
+    known_from_first_link INTEGER NOT NULL CHECK(known_from_first_link IN (0,1)),
+    PRIMARY KEY(subject_hash,user_id,channel)
+  ) STRICT`,
   `CREATE TABLE apple_native_grants (
     subject_hash TEXT PRIMARY KEY CHECK(length(subject_hash)=64),
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
@@ -40,7 +47,9 @@ export const appleLifecycleMigration = [
   ),
   ...['INSERT', 'UPDATE'].map(
     (operation) =>
-      `CREATE TRIGGER apple_native_grants_request_${operation.toLowerCase()} AFTER ${operation} ON apple_native_grants BEGIN ${syncRequest} END`,
+      `CREATE TRIGGER apple_native_grants_request_${operation.toLowerCase()} AFTER ${operation} ON apple_native_grants BEGIN
+        INSERT INTO apple_identity_channels(subject_hash,user_id,channel,known_from_first_link) VALUES(NEW.subject_hash,NEW.user_id,'native',1) ON CONFLICT DO NOTHING;
+        ${syncRequest} END`,
   ),
   `CREATE TRIGGER apple_request_capture AFTER INSERT ON account_deletion_requests BEGIN
     INSERT INTO apple_deletion_subjects(request_id,subject_hash,origin,grant_id,generation,updated_at)
@@ -50,7 +59,10 @@ export const appleLifecycleMigration = [
     INSERT INTO apple_deletion_subjects(request_id,subject_hash,origin,grant_id,generation,updated_at)
       SELECT NEW.request_id,json_extract(key.value,'$.digest'),grant_record.origin,grant_record.grant_id,grant_record.generation,NEW.closed_at
       FROM json_each(NEW.replay_keys) key LEFT JOIN apple_native_grants grant_record ON grant_record.subject_hash=json_extract(key.value,'$.digest')
-      WHERE json_extract(key.value,'$.provider')='apple' ON CONFLICT(request_id,subject_hash) DO NOTHING;
+      WHERE json_extract(key.value,'$.provider')='apple' AND (grant_record.subject_hash IS NOT NULL OR NOT EXISTS(
+        SELECT 1 FROM apple_identity_channels channel WHERE channel.subject_hash=json_extract(key.value,'$.digest') AND channel.user_id=NEW.user_id AND channel.channel='web' AND channel.known_from_first_link=1
+          AND NOT EXISTS(SELECT 1 FROM apple_identity_channels native WHERE native.subject_hash=channel.subject_hash AND native.user_id=channel.user_id AND native.channel='native')))
+      ON CONFLICT(request_id,subject_hash) DO NOTHING;
   END`,
   ...['UPDATE', 'DELETE'].map(
     (

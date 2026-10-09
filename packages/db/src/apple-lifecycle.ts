@@ -35,6 +35,13 @@ export function createAppleLifecycleRepository(database: Database): AppleLifecyc
       closedAccountProviderKey('apple', subject),
     )
   }
+  const provenWebOnly = async (requestId: string, digest: string) =>
+    (
+      await database.all(sql`SELECT 1 FROM apple_identity_channels web JOIN account_deletion_requests request ON request.user_id=web.user_id
+      WHERE request.id=${requestId} AND web.subject_hash=${digest} AND web.channel='web' AND web.known_from_first_link=1
+        AND NOT EXISTS(SELECT 1 FROM apple_identity_channels native WHERE native.subject_hash=web.subject_hash AND native.user_id=web.user_id AND native.channel='native')
+        AND NOT EXISTS(SELECT 1 FROM apple_native_grants WHERE subject_hash=web.subject_hash AND user_id=web.user_id)`)
+    ).length === 1
   const captureCurrent = async (requestId: string) => {
     const identities = await database.all<{
       provider_subject: string
@@ -43,6 +50,7 @@ export function createAppleLifecycleRepository(database: Database): AppleLifecyc
       WHERE request.id=${requestId} AND request.status<>'completed' AND identity.provider='apple'`)
     for (const identity of identities) {
       const digest = await subjectHash(identity.provider_subject)
+      if (await provenWebOnly(requestId, digest)) continue
       await database.run(sql`INSERT INTO apple_deletion_subjects(request_id,subject_hash,origin,grant_id,generation,updated_at)
         SELECT request.id,${digest},grant_record.origin,grant_record.grant_id,grant_record.generation,request.updated_at
         FROM account_deletion_requests request LEFT JOIN apple_native_grants grant_record ON grant_record.subject_hash=${digest}
@@ -142,6 +150,7 @@ export function createAppleLifecycleRepository(database: Database): AppleLifecyc
         WHERE request.id=${requestId} AND request.status<>'completed' AND identity.provider='apple'`)
       for (const identity of current) {
         const digest = await subjectHash(identity.provider_subject)
+        if (await provenWebOnly(requestId, digest)) continue
         if (
           !(
             await database.all(
