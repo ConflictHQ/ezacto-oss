@@ -2382,7 +2382,10 @@ test('[e2e:invoice-banded] raises a flat fee covering tracked time, up to a limi
   })
 
   // The draft opens: the fee, then the hour past the limit at its rate.
-  // The draft opens at its number; its id comes from the number lookup.
+  // The URL pattern also matches /invoices/new. Wait for the rendered draft
+  // before reading its number or evaluating in its document (#984).
+  const detail = page.locator('[data-invoice-document]')
+  await expect(detail).toBeVisible()
   await expect(page).toHaveURL(/\/invoices\/[^/]+$/u)
   const bandNumber = decodeURIComponent(new URL(page.url()).pathname.split('/').pop()!)
   const invoiceId = (
@@ -2426,8 +2429,6 @@ test('[e2e:invoice-banded] raises a flat fee covering tracked time, up to a limi
     { description: 'July retainer', quantity: 1, unit_price_cents: 120_000, amount_cents: 120_000 },
     { description: overage, quantity: 2, unit_price_cents: 10_000, amount_cents: 20_000 },
   ])
-  const detail = page.locator('[data-invoice-document]')
-  await expect(detail).toBeVisible()
   await expect(detail.locator('[data-invoice-detail-lines]')).toContainText('July retainer')
   await expect(detail.locator('[data-invoice-detail-lines]')).toContainText(overage)
   await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$1,400.00')
