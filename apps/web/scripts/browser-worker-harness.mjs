@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer'
 import http from 'node:http'
 import { resolve } from 'node:path'
 import { URL } from 'node:url'
-import { createD1PasswordAuthService } from '@ezacto/db/d1'
+import { createD1PasswordAuthService, createD1Database, createAccountDeletionRequestRepository } from '@ezacto/db/d1'
 import { build } from 'esbuild'
 import { Miniflare, NoOpLog } from 'miniflare'
 
@@ -944,6 +944,41 @@ const fixtureControl = async (request, response) => {
           .bind(91011, teammateId, teammateId, spentDate, timestamp, timestamp),
       ])
     }
+  } else if (action === "account-closure-seed") {
+    // Disposable person in this harness's ephemeral D1 only; never close the owner.
+    await database
+      .prepare(
+        `INSERT INTO users(id,first_name,last_name,profile,is_active,manager_grants,telephone,created_at,updated_at) VALUES(97201,'Fictional','Closure','member',1,'[]','555-0199',?,?)`,
+      )
+      .bind(fixtureInstant, fixtureInstant)
+      .run();
+    const request = createAccountDeletionRequestRepository(
+      createD1Database(database),
+    );
+    await request.request({
+      userId: 97201,
+      id: "browser-closure-972",
+      now: fixtureInstant,
+    });
+  } else if (action === "account-closure-assert") {
+    const person = await database
+      .prepare(
+        "SELECT first_name,last_name,is_active,telephone FROM users WHERE id=97201",
+      )
+      .first();
+    const receipt = await database
+      .prepare(
+        "SELECT request_id FROM account_closures WHERE request_id='browser-closure-972'",
+      )
+      .first();
+    if (
+      !receipt ||
+      person.is_active !== 0 ||
+      person.telephone !== null ||
+      person.first_name !== "Closed" ||
+      person.last_name !== "account"
+    )
+      throw new Error("Disposable closure was not durably applied");
   } else if (action === 'payment-run-reset' || action === 'sign-in-rate-reset') {
     // Clearing the sign-in limit is all either does. The second name is for a
     // spec that signs in late in a run, after the rest of the suite has spent

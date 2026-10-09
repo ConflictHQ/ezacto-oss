@@ -1,5 +1,6 @@
 import { appleWebConfiguration } from './apple-web.js'
-import type { AppleWebCleanupPort } from '@ezacto/core'
+import { aggregateAppleCleanup, type AppleCleanupPort, type AppleLifecycleStore, type AppleWebCleanupPort } from '@ezacto/core'
+import type { AccountDeletionStore, AccountClosureStore, AccountDeletionStatusStore } from '@ezacto/core'
 import type { PaymentRunsService } from '@ezacto/core'
 import { installPaymentRunRoutes } from '@ezacto/api'
 import { installStaffPaymentRoutes } from '@ezacto/api'
@@ -42,9 +43,13 @@ import {
   installMagicLinkRoutes,
   installModuleSettingsRoutes,
   installAppleRoutes,
+  installAppleLifecycleRoutes,
+
   installAppleWebRoutes,
   type AppleWebLifecyclePort,
   installSignInMethodRoutes,
+  installAccountRetentionRoutes,
+  type AccountRetentionService,
   createSignInMethodPolicy,
   installGitHubRoutes,
   installMoneyResourceRoutes,
@@ -56,6 +61,8 @@ import {
   installPublicBrandAssetRoutes,
   installReportRoutes,
   installProfileRoutes,
+  installAccountClosureRoutes,
+  installAccountDeletionStatusRoutes,
   installSessionRoutes,
   installSsoDomainRoutes,
   installTrackedResourceRoutes,
@@ -299,7 +306,6 @@ export type WorkerEnv = AppEnv & {
 }
 
 export interface RuntimeServices {
-  appleWebCleanup?: AppleWebCleanupPort
   appleWebLifecycle?: AppleWebLifecyclePort
   bootstrap(input: InstanceBootstrapInput): Promise<InstanceBootstrapResult>
   enrollOwnerPassword(
@@ -315,6 +321,12 @@ export interface RuntimeServices {
   isExpensesModuleEnabled(): Promise<boolean>
   moduleSettings: ModuleSettingsService
   /** Which ways in are switched on (issue 761). */
+  accountDeletionRequests?: AccountDeletionStore
+  accountClosure?: AccountClosureStore
+  nativeAppleLifecycle?: AppleLifecycleStore
+  appleWebCleanup?: AppleWebCleanupPort
+  accountDeletionTracking?: AccountDeletionStatusStore
+  accountRetention?: AccountRetentionService
   signInMethods: SignInMethodService
   /** The domains SSO may provision a user for, and their DNS challenges (#270). */
   ssoProvisioningDomains: SsoProvisioningDomainService
@@ -492,6 +504,11 @@ export const createApp = (
    */
   signInMethods?: { read(env: AppEnv): Promise<readonly SignInMethodState[] | null> },
 ) => {
+  const cleanupPorts = ([services?.nativeAppleLifecycle, services?.appleWebCleanup] as (AppleCleanupPort | undefined)[]).filter((port): port is AppleCleanupPort => port !== undefined)
+  const appleCleanup: AppleCleanupPort | undefined = cleanupPorts.length === 0 ? undefined : {
+    async begin(userId,requestId) { for(const port of cleanupPorts) await port.begin(userId,requestId) },
+    async status(requestId) { return aggregateAppleCleanup(await Promise.all(cleanupPorts.map(port=>port.status(requestId)))) },
+  }
   const shellBrand = async (env: AppEnv) => {
     const stored = brandAssets === undefined ? [] : await brandAssets.list(env)
     return brandFromSources(
@@ -583,11 +600,15 @@ export const createApp = (
             installSessionRoutes(api, services.sessions)
             installProfileRoutes(api, {
               repository: services.profile,
+              ...(appleCleanup === undefined ? {} : { appleCleanup }),
+              ...(services.accountDeletionTracking === undefined ? {} : { deletionTracking: services.accountDeletionTracking }),
+              ...(services.accountDeletionRequests === undefined ? {} : { deletionStore: services.accountDeletionRequests }),
               clock: () => systemClock.now().instant,
               ...(services.accountDeletionMailer === undefined
                 ? {}
                 : { deletionMailer: services.accountDeletionMailer }),
             })
+            if (services.accountClosure) installAccountClosureRoutes(api, { store: services.accountClosure, clock: () => systemClock.now().instant, ...(appleCleanup === undefined ? {} : { appleCleanup }), ...(services.appleWebCleanup === undefined ? {} : {performAppleCleanup:(requestId:string)=>services.appleWebCleanup!.perform(requestId)}) })
             installEmailLogRoutes(api, services.emailLog)
             installEmailHealthRoutes(api, services.emailLog)
             installEmailConfigurationRoutes(api, {
@@ -743,6 +764,12 @@ export const createApp = (
               service: services.moduleSettings,
               clock: () => systemClock.now().instant,
             })
+            if (services.accountRetention !== undefined) {
+              installAccountRetentionRoutes(api, {
+                service: services.accountRetention,
+                clock: () => systemClock.now().instant,
+              })
+            }
             installSignInMethodRoutes(api, {
               service: services.signInMethods,
               configured: (bindings) => deployedSignInMethods(bindings as WorkerEnv),
@@ -892,7 +919,11 @@ export const createApp = (
         // token and gets the ordinary session back; it reuses the shared
         // identity resolver and session issuer, so it needs no store of its
         // own. Configured off (404) until APPLE_CLIENT_ID names an audience.
+        if (services.accountDeletionTracking) installAccountDeletionStatusRoutes(app, { store: services.accountDeletionTracking, clock: () => systemClock.now().instant, ...(appleCleanup === undefined ? {} : { appleCleanup }) })
+        const nativeLifecycle=services.nativeAppleLifecycle===undefined?undefined:{store:services.nativeAppleLifecycle,origin:(env:AppEnv)=>env.APP_BASE_URL,clock:()=>systemClock.now().instant}
+        if(nativeLifecycle)installAppleLifecycleRoutes(app,nativeLifecycle)
         installAppleRoutes(app, {
+          ...(nativeLifecycle === undefined ? {} : { lifecycle: nativeLifecycle }),
           policy: signInPolicy,
           identities: services.identities,
           sessions: services.sessions,

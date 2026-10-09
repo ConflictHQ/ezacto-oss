@@ -3834,6 +3834,104 @@ export const scheduledReminders = sqliteTable(
   ],
 )
 
+/** Published operator policy history for explaining earlier disclosures. */
+export const accountRetentionPolicies = sqliteTable('account_retention_policies', {
+  version: integer('version').primaryKey(),
+  policyJson: text('policy_json').notNull(),
+  publishedByUserId: integer('published_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+  publishedAt: text('published_at').notNull(),
+}, (table) => [
+  check('account_retention_policy_published_at', sql`unixepoch(${table.publishedAt}) is not null`),
+  check('account_retention_policy_version', sql`${table.version} between 1 and 9007199254740991`),
+  check('account_retention_policy_json', sql`json_valid(${table.policyJson}) and json_type(${table.policyJson}) = 'object' and coalesce(json_type(${table.policyJson}, '$.acknowledged') = 'true', 0)`),
+])
+
+/** Dedicated deletion workflow; the immutable disclosure outlives email delivery. */
+export const accountDeletionRequests = sqliteTable('account_deletion_requests', {
+  id: text('id').primaryKey(),
+  userId: integer('user_id').notNull().unique().references(() => users.id, { onDelete: 'restrict' }),
+  requestedAt: text('requested_at').notNull(),
+  policyVersion: integer('policy_version').references(() => accountRetentionPolicies.version, { onDelete: 'restrict' }),
+  policySnapshot: text('policy_snapshot'),
+  policyReviewed: integer('policy_reviewed', { mode: 'boolean' }).notNull().default(false),
+  status: text('status', { enum: ['pending', 'in_progress', 'action_required', 'completed'] }).notNull().default('pending'),
+  version: integer('version').notNull().default(1),
+  message: text('message').notNull().default(''),
+  expectedCompletionAt: text('expected_completion_at'),
+  completedAt: text('completed_at'),
+  completionConfirmation: text('completion_confirmation'),
+  notification: text('notification', { enum: ['pending', 'sending', 'queued', 'failed', 'unavailable'] }).notNull().default('pending'),
+  notificationUpdatedAt: text('notification_updated_at').notNull(),
+  notificationDeliveryId: integer('notification_delivery_id').references(() => emailLog.id, { onDelete: 'set null' }),
+  updatedAt: text('updated_at').notNull(),
+  updatedByUserId: integer('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+})
+export const accountDeletionRequestUpdates = sqliteTable('account_deletion_request_updates', {
+  requestId: text('request_id').notNull().references(() => accountDeletionRequests.id, { onDelete: 'cascade' }),
+  version: integer('version').notNull(),
+  status: text('status').notNull(),
+  message: text('message').notNull(),
+  expectedCompletionAt: text('expected_completion_at'),
+  occurredAt: text('occurred_at').notNull(),
+  actorUserId: integer('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+}, (table) => [primaryKey({ columns: [table.requestId, table.version] })])
+
+export const accountClosureSecurity = sqliteTable('account_closure_security', {
+  id: integer('id').primaryKey(),
+  secret: text('secret').notNull(),
+})
+export const accountClosures = sqliteTable('account_closures', {
+  requestId: text('request_id').primaryKey().references(() => accountDeletionRequests.id, { onDelete: 'restrict' }),
+  userId: integer('user_id').notNull().unique().references(() => users.id, { onDelete: 'restrict' }),
+  actorUserId: integer('actor_user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  closedAt: text('closed_at').notNull(),
+  policyVersion: integer('policy_version').notNull().references(() => accountRetentionPolicies.version, { onDelete: 'restrict' }),
+  policySnapshot: text('policy_snapshot').notNull(),
+  inventoryJson: text('inventory_json').notNull(),
+  replayKeys: text('replay_keys').notNull(),
+  retainedIdentity: integer('retained_identity', { mode: 'boolean' }).notNull(),
+  appleCleanup: text('apple_cleanup', { enum: ['not_linked', 'pending'] }).notNull(),
+})
+export const closedAccountSignInGuards = sqliteTable('closed_account_sign_in_guards', {
+  digest: text('digest').notNull(),
+  requestId: text('request_id').notNull().references(() => accountClosures.requestId, { onDelete: 'restrict' }),
+  kind: text('kind', { enum: ['email', 'provider'] }).notNull(),
+  createdAt: text('created_at').notNull(),
+}, (table) => [primaryKey({ columns: [table.digest, table.requestId] })])
+
+export const accountDeletionStatusAccess = sqliteTable('account_deletion_status_access', {
+  id: integer('id').primaryKey(),
+  requestId: text('request_id').notNull().references(() => accountDeletionRequests.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull().unique(),
+  issuedAt: text('issued_at').notNull(),
+  expiresAt: text('expires_at').notNull(),
+})
+export const accountDeletionStatusLimits = sqliteTable('account_deletion_status_limits', {
+  windowMinute: integer('window_minute').primaryKey(),
+  attempts: integer('attempts').notNull(),
+})
+
+export const appleNativeGrants = sqliteTable('apple_native_grants', {
+  subjectHash: text('subject_hash').primaryKey(), userId: integer('user_id').notNull().references(() => users.id, {onDelete:'restrict'}),
+  origin: text('origin').notNull(), grantId: text('grant_id').notNull(), generation: integer('generation').notNull(),
+  bindingJti: text('binding_jti').notNull().unique(), updatedAt: text('updated_at').notNull(),
+})
+export const appleDeletionSubjects = sqliteTable('apple_deletion_subjects', {
+  requestId: text('request_id').notNull().references(() => accountDeletionRequests.id, {onDelete:'restrict'}), subjectHash: text('subject_hash').notNull(),
+  origin: text('origin'), grantId: text('grant_id'), generation: integer('generation'), updatedAt: text('updated_at').notNull(),
+}, table => [primaryKey({columns:[table.requestId,table.subjectHash]})])
+export const appleDeletionUnknown = sqliteTable('apple_deletion_unknown', {
+  requestId: text('request_id').primaryKey().references(() => accountDeletionRequests.id, {onDelete:'restrict'}),
+})
+export const appleRevocationEvents = sqliteTable('apple_revocation_events', {
+  requestId: text('request_id').notNull(), subjectHash: text('subject_hash').notNull(), origin: text('origin').notNull(),
+  grantId: text('grant_id').notNull(), generation: integer('generation').notNull(), eventId: text('event_id').notNull().unique(),
+  revokedAt: text('revoked_at').notNull(), acceptedAt: text('accepted_at').notNull(),
+}, table => [primaryKey({columns:[table.requestId,table.subjectHash,table.generation]}),foreignKey({columns:[table.requestId,table.subjectHash],foreignColumns:[appleDeletionSubjects.requestId,appleDeletionSubjects.subjectHash]}).onDelete('restrict')])
+export const appleLifecycleLimits = sqliteTable('apple_lifecycle_limits', {
+  windowMinute: integer('window_minute').primaryKey(), attempts: integer('attempts').notNull(),
+})
+
 
 /** Web-only encrypted capability custody, separate from native proof metadata. */
 export const appleWebConnections = sqliteTable('apple_web_connections', {

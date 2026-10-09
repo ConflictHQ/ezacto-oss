@@ -433,6 +433,17 @@ export { installStaffPaymentRoutes } from './staff-payments.js'
 
 export { installPaymentRunRoutes } from './payment-runs.js'
 
+export * from './account-retention.js'
+
+export { installAccountDeletionRequestRoutes } from './account-deletion-requests.js'
+
+export { installAccountClosureRoutes } from './account-closure.js'
+
+export { installAccountDeletionStatusRoutes } from './account-deletion-status.js'
+
+export * from './apple-lifecycle.js'
+export * from './apple-lifecycle-proof.js'
+
 export {
   APPLE_WEB_START_PATH,
   APPLE_WEB_CALLBACK_PATH,

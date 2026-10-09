@@ -1230,14 +1230,191 @@ export type ProfileEnvelope = {
   "links": Links;
 };
 
+export type NativeAppleCapabilities = {
+  "available": boolean;
+  "lifecycle_version": 1;
+};
+
+export type NativeAppleSignInInput = {
+  "identityToken": string;
+  "bindingReceipt": string;
+  "fullName"?: {
+  "givenName"?: string;
+  "familyName"?: string;
+};
+};
+
+export type NativeAppleSignInEnvelope = {
+  "data": {
+  "ok": true;
+};
+};
+
+export type AppleLifecycleProofInput = {
+  "receipt": string;
+};
+
+export type AppleCleanupStatus = "not_linked" | "pending" | "revoked" | "manual_required";
+
+export type AccountClosureInventoryItem = {
+  "location": string;
+  "count": number;
+  "category": "time_and_worker_attribution" | "billing_and_payments" | "audit_and_security" | "legal_hold";
+};
+
+export type AccountClosureRecord = {
+  "request_id": string;
+  "user_id": number;
+  "actor_user_id": number;
+  "closed_at": string;
+  "policy_version": number;
+  "policy_snapshot": AccountRetentionPolicy;
+  "inventory": Array<AccountClosureInventoryItem>;
+  "retained_identity": boolean;
+  "apple_cleanup": AppleCleanupStatus;
+};
+
+export type AccountClosurePreview = {
+  "apple_cleanup_retry_available"?: boolean;
+  "request_id": string;
+  "user_id": number;
+  "request_version": number;
+  "review_token": string;
+  "policy_version": number | null;
+  "policy_snapshot": AccountRetentionPolicy | null;
+  "inventory": Array<AccountClosureInventoryItem>;
+  "uncovered_categories": Array<"time_and_worker_attribution" | "billing_and_payments" | "audit_and_security" | "legal_hold">;
+  "owner_transfer_required": boolean;
+  "running_timer": boolean;
+  "closure": AccountClosureRecord | null;
+};
+
+export type EmptyObject = Record<string, unknown>;
+
+export type AppleCleanupStatusEnvelope = {
+  "data": {
+  "apple_cleanup": AppleCleanupStatus;
+};
+};
+
+export type AccountClosureInput = {
+  "expected_version": number;
+  "expected_policy_version": number;
+  "review_token": string;
+  "acknowledged": true;
+};
+
+export type AccountClosurePreviewEnvelope = {
+  "data": AccountClosurePreview;
+};
+
+export type AccountClosureRecordEnvelope = {
+  "data": AccountClosureRecord;
+};
+
+export type AccountDeletionStatusAccess = {
+  "token": string;
+  "expires_at": string;
+  "url": string;
+};
+
+export type AccountDeletionTrackingInput = {
+  "token": string;
+};
+
+export type AccountDeletionRetainedDisclosure = {
+  "category": string;
+  "reason": string;
+  "period": string;
+  "review_after_days": number;
+  "review_due": string;
+};
+
+export type AccountDeletionClosureDisclosure = {
+  "retained_records": Array<AccountDeletionRetainedDisclosure>;
+  "backup_handling": string;
+  "user_notice": string;
+  "operator_contact": string;
+};
+
+export type AccountDeletionTrackingStatus = {
+  "apple_cleanup"?: AppleCleanupStatus;
+  "request_id": string;
+  "status": "pending" | "in_progress" | "action_required" | "completed";
+  "requested_at": string;
+  "expected_completion_at": string | null;
+  "closed_at": string | null;
+  "completed_at": string | null;
+  "message": string;
+  "completion_confirmation": string | null;
+  "policy_version": number | null;
+  "policy_snapshot": AccountRetentionPolicy | null;
+  "policy_reviewed": boolean;
+  "closure_disclosure": AccountDeletionClosureDisclosure | null;
+  "operator_contact": string | null;
+  "expires_at": string;
+};
+
+export type AccountDeletionTrackingEnvelope = {
+  "data": AccountDeletionTrackingStatus;
+};
+
+export type AccountDeletionSubmission = {
+  "expected_policy_version"?: number | null;
+};
+
+export type AccountDeletionUpdate = {
+  "expected_version": number;
+  "status": "pending" | "in_progress" | "action_required";
+  "message": string;
+  "expected_completion_at": string | null;
+};
+
+export type AccountDeletionRecord = {
+  "apple_cleanup"?: AppleCleanupStatus;
+  "id": string;
+  "user_id": number;
+  "requested_at": string;
+  "policy_version": number | null;
+  "policy_snapshot": AccountRetentionPolicy | null;
+  "policy_reviewed": boolean;
+  "status": "pending" | "in_progress" | "action_required" | "completed";
+  "version": number;
+  "message": string;
+  "response_target_at": string | null;
+  "expected_completion_at": string | null;
+  "completed_at": string | null;
+  "completion_confirmation": string | null;
+  "notification": "pending" | "sending" | "queued" | "failed" | "unavailable";
+  "notification_updated_at": string;
+  "notification_delivery_id": number | null;
+  "updated_at": string;
+};
+
+export type AccountDeletionStatusEnvelope = {
+  "data": AccountDeletionRecord | null;
+  "links": Links;
+};
+
+export type AccountDeletionDetailEnvelope = {
+  "data": AccountDeletionRecord;
+  "links": Links;
+};
+
+export type AccountDeletionListEnvelope = {
+  "data": Array<AccountDeletionRecord>;
+  "links": Links;
+};
+
 export type AccountDeletionRequest = {
   "user_id": number;
   "requested_at": string;
 };
 
 export type AccountDeletionRequestEnvelope = {
-  "data": AccountDeletionRequest;
+  "data": AccountDeletionRecord | AccountDeletionRequest;
   "links": Links;
+  "status_access"?: AccountDeletionStatusAccess;
 };
 
 export type TimeEntryOption = {
@@ -3126,6 +3303,39 @@ export type ModuleListEnvelope = {
   "links": Links;
 };
 
+export type AccountRetentionRule = {
+  "category": "time_and_worker_attribution" | "billing_and_payments" | "audit_and_security" | "legal_hold";
+  "reason": string;
+  "period": string;
+  "review_after_days": number;
+};
+
+export type AccountRetentionPolicy = {
+  "frameworks": Array<"gdpr" | "us_florida" | "us_al" | "us_ak" | "us_az" | "us_ar" | "california_ccpa_cpra" | "colorado_cpa" | "us_ct" | "us_de" | "us_dc" | "us_fl" | "us_ga" | "us_hi" | "us_id" | "us_il" | "us_in" | "us_ia" | "us_ks" | "us_ky" | "us_la" | "us_me" | "us_md" | "us_ma" | "us_mi" | "us_mn" | "us_ms" | "us_mo" | "us_mt" | "us_ne" | "us_nv" | "us_nh" | "us_nj" | "us_nm" | "us_ny" | "us_nc" | "us_nd" | "us_oh" | "us_ok" | "us_or" | "us_pa" | "us_ri" | "us_sc" | "us_sd" | "us_tn" | "texas_tdpsa" | "us_ut" | "us_vt" | "us_va" | "us_wa" | "us_wv" | "us_wi" | "us_wy" | "other">;
+  "retained_records": Array<AccountRetentionRule>;
+  "response_target_days": number;
+  "operator_contact": string;
+  "user_notice": string;
+  "backup_handling": string;
+  "acknowledged": true;
+};
+
+export type AccountRetentionPublication = {
+  "expected_version": number;
+  "policy": AccountRetentionPolicy;
+};
+
+export type AccountRetentionRecord = {
+  "version": number;
+  "policy": AccountRetentionPolicy;
+  "published_at": string;
+};
+
+export type AccountRetentionEnvelope = {
+  "data": AccountRetentionRecord | null;
+  "links": Links;
+};
+
 export type SignInMethodState = {
   "method": "password" | "magic_link" | "google" | "github" | "apple";
   "configured": boolean;
@@ -3587,6 +3797,45 @@ export class EzactoClient {
     return body as T;
   }
 
+  async getNativeAppleCapabilities(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<NativeAppleCapabilities> {
+    const headers = new Headers(args.headers);
+
+    return this.request<NativeAppleCapabilities>("GET", "/auth/apple/native-capabilities", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async signInNativeApple(args: { body: NativeAppleSignInInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<NativeAppleSignInEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<NativeAppleSignInEnvelope>("POST", "/auth/apple", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async rebindAppleCleanup(args: { "id": string; body: AppleLifecycleProofInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/auth/apple/deletion-requests/:id/binding".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async acceptAppleRevocation(args: { "id": string; body: AppleLifecycleProofInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/auth/apple/deletion-requests/:id/revocation".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
   async signup(args: { body: SignupInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<AuthAcceptedEnvelope> {
     const headers = new Headers(args.headers);
 
@@ -3884,10 +4133,11 @@ export class EzactoClient {
     });
   }
 
-  async requestAccountDeletion(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<AccountDeletionRequestEnvelope> {
+  async requestAccountDeletion(args: { body?: AccountDeletionSubmission; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<AccountDeletionRequestEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<AccountDeletionRequestEnvelope>("POST", "/api/v1/profile/deletion-request", {
+      body: args.body,
       signal: args.signal,
       headers,
     });
@@ -5707,6 +5957,111 @@ export class EzactoClient {
 
     return this.request<SignInMethodListEnvelope>("PATCH", "/api/v1/admin/sign-in-methods/:method".replace(":method", encodeURIComponent(String(args["method"]))), {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getAccountRetentionPolicy(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<AccountRetentionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountRetentionEnvelope>("GET", "/api/v1/profile/retention-policy", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async publishAccountRetentionPolicy(args: { body: AccountRetentionPublication; signal?: AbortSignal; headers?: HeadersInit }): Promise<AccountRetentionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountRetentionEnvelope>("POST", "/api/v1/admin/retention-policy", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async readAccountDeletionTrackingStatus(args: { "id": string; body: AccountDeletionTrackingInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<AccountDeletionTrackingEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountDeletionTrackingEnvelope>("POST", "/account-deletion/requests/:id/status".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async previewAccountClosure(args: { "id": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<AccountClosurePreviewEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountClosurePreviewEnvelope>("GET", "/api/v1/admin/deletion-requests/:id/closure".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async closeAccountAccess(args: { "id": string; body: AccountClosureInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<AccountClosureRecordEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountClosureRecordEnvelope>("POST", "/api/v1/admin/deletion-requests/:id/closure".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async retryAccountAppleCleanup(args: { "id": string; body: EmptyObject; signal?: AbortSignal; headers?: HeadersInit }): Promise<AppleCleanupStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AppleCleanupStatusEnvelope>("POST", "/api/v1/admin/deletion-requests/:id/apple-cleanup".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getAccountDeletionRequest(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<AccountDeletionStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountDeletionStatusEnvelope>("GET", "/api/v1/profile/deletion-request", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listAccountDeletionRequests(args: { query?: { "after"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<AccountDeletionListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountDeletionListEnvelope>("GET", "/api/v1/admin/deletion-requests", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getAccountDeletionRequestForAdmin(args: { "id": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<AccountDeletionDetailEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountDeletionDetailEnvelope>("GET", "/api/v1/admin/deletion-requests/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateAccountDeletionRequest(args: { "id": string; body: AccountDeletionUpdate; signal?: AbortSignal; headers?: HeadersInit }): Promise<AccountDeletionDetailEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountDeletionDetailEnvelope>("PATCH", "/api/v1/admin/deletion-requests/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async retryAccountDeletionNotification(args: { "id": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<AccountDeletionDetailEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountDeletionDetailEnvelope>("POST", "/api/v1/admin/deletion-requests/:id/notification".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });

@@ -14,7 +14,7 @@ import {
   type AppleSessionIssuer,
 } from '../src/index.js'
 
-const clientId = 'media.conflict.ezacto'
+const clientId = 'com.ezacto.app'
 const subject = '000123.4d5e6f.0001'
 const fixedNow = new Date('2026-09-15T12:00:00.000Z')
 const fixedEpoch = Math.floor(fixedNow.valueOf() / 1_000)
@@ -65,7 +65,7 @@ const identityToken = async (
   if (changes.isPrivateEmail !== undefined) {
     payload.is_private_email = changes.isPrivateEmail
   }
-  if (changes.nonce !== undefined) payload.nonce = changes.nonce
+  payload.nonce = changes.nonce ?? 'native-nonce'
   // Apple's identity-token header carries alg and kid but no typ; the verifier
   // must not require one.
   return new SignJWT(payload)
@@ -294,6 +294,7 @@ const routeHarness = (
     provider?: () => AppleProviderConfig | null
     verifier?: AppleIdentityTokenVerifier
     injectVerifier?: boolean
+    lifecycle?: boolean
   } = {},
 ) => {
   const identities = {
@@ -315,17 +316,20 @@ const routeHarness = (
   }
   const provider = options.provider ?? (() => ({ clientId }))
   const injectVerifier = options.injectVerifier ?? true
+  const lifecycleStore={begin:vi.fn(async()=>undefined),status:vi.fn(async()=> 'pending' as const),recordSignIn:vi.fn(async()=>true),rebind:vi.fn(async()=>true),acceptRevocation:vi.fn(async()=>true),allowProof:vi.fn(async()=>true)}
+  const lifecycleVerifier={verify:vi.fn(async()=>({type:'apple_grant' as const,purpose:'sign-in' as const,subject,origin:'https://ezacto.io',grantId:'grant-one',generation:12,eventId:'binding-one',nonce:'native-nonce',challengeId:'challenge-one'}))}
   const app = createApiApp({
     installApp(app) {
       installAppleRoutes(app, {
         identities,
         sessions,
         provider,
+        ...(options.lifecycle===false?{}:{lifecycle:{store:lifecycleStore,verifier:lifecycleVerifier,origin:()=> 'https://ezacto.io',clock:()=>fixedNow.toISOString()}}),
         ...(injectVerifier ? { verifier } : {}),
       })
     },
   })
-  return { app, identities, sessions, verifier }
+  return { app, identities, sessions, verifier, lifecycleStore, lifecycleVerifier }
 }
 
 const post = (
@@ -336,10 +340,32 @@ const post = (
   app.request('https://ezacto.io/auth/apple', {
     method: 'POST',
     headers,
-    body: typeof body === 'string' ? body : JSON.stringify(body),
+    body: typeof body === 'string' ? body : JSON.stringify(typeof body==='object'&&body!==null&&!Array.isArray(body)?{bindingReceipt:'signed-service-proof',...body}:body),
   })
 
 describe('Apple native sign-in route', () => {
+  it('[security] advertises positive lifecycle support and rejects every unbound new login, including existing users',async()=>{
+    const {app,identities,sessions,lifecycleStore}=routeHarness()
+    expect(await (await app.request('https://ezacto.io/auth/apple/native-capabilities')).json()).toEqual({available:true,lifecycle_version:1})
+    expect((await post(app,{identityToken:'signed.apple.token',bindingReceipt:undefined})).status).toBe(422)
+    expect(identities.resolveProvider).not.toHaveBeenCalled()
+    lifecycleStore.recordSignIn.mockResolvedValue(false)
+    expect((await post(app,{identityToken:'signed.apple.token'})).status).toBe(409)
+    expect(sessions.issue).not.toHaveBeenCalled()
+    const old=routeHarness({lifecycle:false})
+    expect(await (await old.app.request('https://ezacto.io/auth/apple/native-capabilities')).json()).toEqual({available:false,lifecycle_version:1})
+    expect((await post(old.app,{identityToken:'signed.apple.token'})).status).toBe(503)
+    expect(old.identities.resolveProvider).not.toHaveBeenCalled()
+  })
+  it('[security] refuses another Apple subject or cleanup-purpose proof before membership resolution',async()=>{
+    const {app,identities,lifecycleVerifier}=routeHarness()
+    const valid=await lifecycleVerifier.verify()
+    lifecycleVerifier.verify.mockResolvedValue({...valid,subject:'another-apple-subject'})
+    expect((await post(app,{identityToken:'signed.apple.token'})).status).toBe(401)
+    lifecycleVerifier.verify.mockResolvedValue({...valid,purpose:'cleanup'} as never)
+    expect((await post(app,{identityToken:'signed.apple.token'})).status).toBe(401)
+    expect(identities.resolveProvider).not.toHaveBeenCalled()
+  })
   it('[api] verifies the token, links the user, and issues the ordinary session', async () => {
     const { app, identities, sessions, verifier } = routeHarness()
     const response = await post(app, {
@@ -355,7 +381,7 @@ describe('Apple native sign-in route', () => {
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(
       (verifier.verify as ReturnType<typeof vi.fn>),
-    ).toHaveBeenCalledWith('signed.apple.token')
+    ).toHaveBeenCalledWith('signed.apple.token', {nonce:'native-nonce'})
     expect(identities.resolveProvider).toHaveBeenCalledWith({
       provider: 'apple',
       subject,

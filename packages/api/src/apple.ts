@@ -11,6 +11,8 @@ import {
   type JWTPayload,
 } from 'jose'
 import type { ApiContext } from './context.js'
+import type { AppleLifecycleOptions } from './apple-lifecycle.js'
+import { appleInstanceOrigin, AppleProofUnavailable, createAppleLifecycleVerifier } from './apple-lifecycle-proof.js'
 import { ApiError, readJsonBody, validationError } from './errors.js'
 import {
   signInMethodUnavailable,
@@ -44,8 +46,8 @@ export type AppleFetch = (url: string, init: RequestInit) => Promise<Response>
  *
  * The website's Services ID does not belong here. The browser flow
  * (`apple-web.ts`) verifies its tokens against that ID itself, bound to a
- * nonce; this route checks no nonce, so listing the Services ID here would let
- * a token lifted from the browser flow sign in without one (issue 768).
+ * nonce; the native lifecycle proof and exact native audience must remain independent
+ * of the web flow (issues 768 and 975).
  */
 export interface AppleProviderConfig {
   clientId: string
@@ -125,11 +127,11 @@ export interface AppleRouteOptions<Bindings extends object> {
    * has to stop the route rather than a control that was never there.
    */
   policy?: SignInMethodPolicy
-
+  lifecycle?: AppleLifecycleOptions<Bindings>
 }
 
 const appleError = (
-  status: 400 | 401 | 403 | 404 | 503,
+  status: 400 | 401 | 403 | 404 | 409 | 429 | 503,
   code: string,
   message: string,
 ): ApiError => new ApiError({ status, code, message })
@@ -371,6 +373,7 @@ export const installAppleRoutes = <Bindings extends object>(
   // A single-organization deployment has one stable Apple audience, so the
   // JWKS-backed verifier is built once and reused; that is where jose's key
   // cache lives, and a fresh verifier per request would refetch every time.
+  const lifecycleVerifier = options.lifecycle?.verifier ?? createAppleLifecycleVerifier()
   let cached: { key: string; verifier: AppleIdentityTokenVerifier } | null = null
   const verifierFor = (
     config: AppleProviderConfig,
@@ -388,6 +391,18 @@ export const installAppleRoutes = <Bindings extends object>(
     }
     return cached.verifier
   }
+
+  app.get('/auth/apple/native-capabilities', async context => {
+    setResponseHeaders(context)
+    let available:boolean
+    try {
+      const configured=options.provider(context.env)
+      available=options.lifecycle!==undefined && appleInstanceOrigin(options.lifecycle.origin(context.env))!==null && configured!==null &&
+        normalizedConfig(configured).audiences.includes('com.ezacto.app') &&
+        (options.policy===undefined || await options.policy.isLive('apple',context.env))
+    } catch { available=false }
+    return context.json({available,lifecycle_version:1})
+  })
 
   app.post('/auth/apple', async (context) => {
     if (
@@ -436,7 +451,7 @@ export const installAppleRoutes = <Bindings extends object>(
       ])
     }
     const unknownFields = Object.keys(body).filter(
-      (field) => field !== 'identityToken' && field !== 'fullName',
+      (field) => field !== 'identityToken' && field !== 'fullName' && field !== 'bindingReceipt',
     )
     if (unknownFields.length > 0) {
       throw validationError(
@@ -459,9 +474,30 @@ export const installAppleRoutes = <Bindings extends object>(
     const firstName = optionalName(nameSource.givenName)
     const lastName = optionalName(nameSource.familyName)
 
-    const verifier = verifierFor(configured, normalized)
-    const assertion = await verifier.verify(body.identityToken)
-    if (assertion === null) throw authFailure()
+    const lifecycle = options.lifecycle
+    const origin = lifecycle === undefined ? null : appleInstanceOrigin(lifecycle.origin(context.env))
+    if (!lifecycle || !origin || !normalized.audiences.includes('com.ezacto.app'))
+      throw appleError(503, 'apple_lifecycle_unavailable', 'This server is not ready for the current native Apple sign-in protocol.')
+    if (typeof body.bindingReceipt !== 'string' || body.bindingReceipt.length > 16_384)
+      throw validationError([{field:'bindingReceipt',code:'required',message:'Use a current eZacto app with Apple credential lifecycle support.'}])
+    const now=lifecycle.clock()
+    if (!await lifecycle.store.allowProof(now)) {
+      context.header('retry-after','60')
+      throw appleError(429,'rate_limited','Try Apple sign-in again shortly.')
+    }
+    let proof
+    try { proof=await lifecycleVerifier.verify(body.bindingReceipt,origin) }
+    catch(error){
+      if(error instanceof AppleProofUnavailable)throw appleError(503,'apple_lifecycle_unavailable','Apple credential verification is temporarily unavailable.')
+      throw error
+    }
+    if(!proof || proof.type!=='apple_grant' || proof.purpose!=='sign-in')throw authFailure()
+    // The first-party lifecycle service is scoped to this exact native audience.
+    // A web Services ID never broadens the native route's verifier.
+    const nativeConfig={...configured,clientId:'com.ezacto.app'}
+    const verifier = verifierFor(nativeConfig, normalizedConfig(nativeConfig))
+    const assertion = await verifier.verify(body.identityToken, {nonce:proof.nonce})
+    if (assertion === null || assertion.subject!==proof.subject) throw authFailure()
 
     let identity: ProviderIdentityResolution
     try {
@@ -481,7 +517,7 @@ export const installAppleRoutes = <Bindings extends object>(
           'Apple did not return the profile required to create this user.',
         )
       }
-      throw error
+      throw appleError(503, 'apple_identity_unavailable', 'Apple sign-in is temporarily unavailable.')
     }
     // Keep native membership behavior unchanged; the web demo has a separate
     // route that bypasses identity resolution altogether.
@@ -495,6 +531,8 @@ export const installAppleRoutes = <Bindings extends object>(
     if (identity.status === 'disabled') {
       throw appleError(403, 'account_disabled', 'This ezacto user is disabled.')
     }
+    if (!await lifecycle.store.recordSignIn({...proof,userId:identity.userId,now}))
+      throw appleError(409,'apple_binding_not_accepted','The Apple authorization changed. Start a fresh Apple sign-in.')
     const session = await options.sessions.issue(identity.userId)
     context.header('set-cookie', session.setCookie, { append: true })
     setResponseHeaders(context)
