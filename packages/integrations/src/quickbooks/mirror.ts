@@ -334,6 +334,7 @@ export interface InboundPayment {
   readonly amountCents: number
   readonly paidOn: string | null
   readonly quickBooksPaymentId: string
+  readonly quickBooksInvoiceId: string
 }
 
 /**
@@ -361,6 +362,7 @@ export const inboundPayments = (
         amountCents: Math.round(line.Amount * 100),
         paidOn: payment.TxnDate ?? null,
         quickBooksPaymentId: payment.Id,
+        quickBooksInvoiceId: linked.TxnId,
       })
     }
   }

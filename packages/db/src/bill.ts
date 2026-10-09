@@ -209,6 +209,7 @@ export const createBillMirrorSource = (
       externalAccountId: BILL_ACCOUNT_KEY,
       accountDisplayName: 'BILL',
       providerTransactionId: input.billPaymentId,
+      share: input.billInvoiceId,
       amountCents: input.amountCents,
       paidOn: input.paidOn,
       now: stamp,
