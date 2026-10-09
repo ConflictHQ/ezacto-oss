@@ -153,6 +153,12 @@ for (const runtime of ['SQLite', 'D1'])
         1,
       )
     })
+    it('rejects partially populated expected grant tuples at the database boundary',async()=>{
+      const {exec,request}=await setup()
+      await request()
+      for(const tuple of ["'https://time.example.test','grant',NULL","NULL,'grant',1","'https://time.example.test',NULL,1"])
+        await expect(exec(`INSERT INTO apple_deletion_subjects VALUES('request-one','${'a'.repeat(64)}',${tuple},'${at}')`)).rejects.toThrow(/CHECK constraint failed/)
+    })
     it('keeps unmapped historical closure conservative after a receipt for one recovered identity', async () => {
       const { store, request, close, upgrade, rows } = await setup(true)
       await request()
