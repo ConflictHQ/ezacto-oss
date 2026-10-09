@@ -27,26 +27,54 @@ export async function bootstrapReview(env, request = fetch) {
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-    if (response.status !== status)
+    if (
+      !(Array.isArray(status)
+        ? status.includes(response.status)
+        : response.status === status)
+    )
       throw new Error(`Review ${method} ${path}: HTTP ${response.status}`);
     return response;
   }
   const bearer = secrets.EZACTO_BOOTSTRAP_TOKEN;
-  for (let retry = 0; retry < 2; retry += 1) {
-    const result = await (
-      await call("/__ezacto/bootstrap", {
-        method: "POST",
-        body: identity,
-        bearer,
-      })
-    ).json();
+  // Bootstrap is an exact first-run retry, not an upgrade operation: ordinary
+  // profile edits and additional users/tokens intentionally make it conflict.
+  // Authenticate the existing owner first. Only an unauthenticated token may
+  // try bootstrap, whose database guards still refuse changed identity state.
+  const existing = await call("/api/v1/whoami", {
+    bearer,
+    status: [200, 401],
+  });
+  const needsBootstrap = existing.status === 401;
+  if (!needsBootstrap) {
+    const owner = await existing.json();
     if (
-      result.data?.status !== "ready" ||
-      result.data.user_id !== 1 ||
-      result.data.profile !== "administrator"
+      owner.data?.user_id !== 1 ||
+      owner.data.profile !== "administrator" ||
+      owner.data.authentication?.kind !== "token"
     ) {
-      throw new Error("Review bootstrap identity mismatch");
+      throw new Error("Review existing owner identity mismatch");
     }
+  }
+  for (let retry = 0; retry < 2; retry += 1) {
+    if (needsBootstrap) {
+      const result = await (
+        await call("/__ezacto/bootstrap", {
+          method: "POST",
+          body: identity,
+          bearer,
+        })
+      ).json();
+      if (
+        result.data?.status !== "ready" ||
+        result.data.user_id !== 1 ||
+        result.data.profile !== "administrator"
+      ) {
+        throw new Error("Review bootstrap identity mismatch");
+      }
+    }
+    // This endpoint inserts a missing credential or verifies an exact retry;
+    // it cannot replace an existing password. It also recovers an interrupted
+    // first run that created the owner/token but never enrolled the password.
     const password = await (
       await call("/__ezacto/bootstrap/owner-password", {
         method: "POST",
@@ -103,7 +131,7 @@ export async function bootstrapReview(env, request = fetch) {
   await call("/api/v1/whoami", { status: 401 });
   await call("/api/v1/expenses", { status: 401 });
   console.log(
-    "Review owner ready: exact retry, password, token, session revocation and anonymous access checks passed",
+    `Review owner ready: ${needsBootstrap ? "exact bootstrap retry" : "existing owner preserved"}, password, token, session revocation and anonymous access checks passed`,
   );
 }
 

@@ -203,8 +203,17 @@ function mockServer({
   revoke = true,
   anonymousDenied = true,
   secureCookie = true,
+  existingOwner = false,
+  bootstrapConflict = existingOwner,
+  ownerUserId = 1,
+  ownerProfile = "administrator",
+  tokenStatus,
+  loginStatus = 200,
+  passwordEnrolled = true,
+  passwordConflict = false,
 } = {}) {
   let revoked = false;
+  let bootstrapped = existingOwner;
   const paths = [];
   return {
     paths,
@@ -215,6 +224,14 @@ function mockServer({
       const path = parsed.pathname;
       paths.push(`${init.method} ${path}`);
       if (path.startsWith("/__ezacto/")) {
+        // A used review workspace rejects exact first-run bootstrap retries.
+        if (bootstrapConflict && path === "/__ezacto/bootstrap")
+          return Response.json({}, { status: 409 });
+        if (path.endsWith("owner-password")) {
+          if (passwordConflict) return Response.json({}, { status: 409 });
+          passwordEnrolled = true;
+        }
+        bootstrapped = true;
         assert.equal(
           init.headers.authorization,
           `Bearer ${env.REVIEW_BOOTSTRAP_TOKEN}`,
@@ -234,6 +251,11 @@ function mockServer({
         });
       }
       if (path === "/auth/sign-in") {
+        if (loginStatus !== 200 || !passwordEnrolled)
+          return Response.json(
+            {},
+            { status: passwordEnrolled ? loginStatus : 401 },
+          );
         assert.deepEqual(JSON.parse(init.body), {
           email: "reviewer@ezacto.example",
           password: env.REVIEW_OWNER_PASSWORD,
@@ -260,14 +282,16 @@ function mockServer({
             { current: true, id: 7 },
           ],
         });
+      if (init.headers.authorization && (!bootstrapped || tokenStatus))
+        return Response.json({}, { status: tokenStatus ?? 401 });
       const authenticated =
         (init.headers.cookie && !revoked) || init.headers.authorization;
       if (!authenticated)
         return Response.json({}, { status: anonymousDenied ? 401 : 200 });
       return Response.json({
         data: {
-          user_id: 1,
-          profile: "administrator",
+          user_id: ownerUserId,
+          profile: ownerProfile,
           authentication: { kind: init.headers.cookie ? "session" : "token" },
         },
       });
@@ -290,6 +314,68 @@ test("bootstrap exercises exact retry, private login, token access and session r
   );
   assert.ok(server.paths.includes("DELETE /api/v1/sessions/7"));
   assert.equal(server.paths.at(-1), "GET /api/v1/expenses");
+});
+
+test("upgrade preserves a used owner workspace without repeating first-run bootstrap", async () => {
+  const server = mockServer({ existingOwner: true });
+  await bootstrapReview(env, server.request);
+  assert.equal(server.paths[0], "GET /api/v1/whoami");
+  assert.equal(
+    server.paths.some((path) => path === "POST /__ezacto/bootstrap"),
+    false,
+  );
+  assert.ok(server.paths.includes("POST /auth/sign-in"));
+  assert.ok(server.paths.includes("DELETE /api/v1/sessions/7"));
+  assert.equal(server.paths.at(-1), "GET /api/v1/expenses");
+});
+
+for (const failure of [
+  { ownerUserId: 2 },
+  { ownerProfile: "member" },
+  { tokenStatus: 403 },
+  { tokenStatus: 500 },
+  { loginStatus: 401 },
+]) {
+  test(`upgrade rejects failed owner verification without repeating first-run bootstrap: ${JSON.stringify(failure)}`, async () => {
+    const server = mockServer({ existingOwner: true, ...failure });
+    await assert.rejects(bootstrapReview(env, server.request));
+    assert.equal(
+      server.paths.some((path) => path === "POST /__ezacto/bootstrap"),
+      false,
+    );
+  });
+}
+
+test("upgrade recovers password enrollment interrupted after owner creation", async () => {
+  const server = mockServer({
+    existingOwner: true,
+    passwordEnrolled: false,
+    bootstrapConflict: false,
+  });
+  await bootstrapReview(env, server.request);
+  assert.ok(
+    server.paths.indexOf("POST /__ezacto/bootstrap/owner-password") <
+      server.paths.indexOf("POST /auth/sign-in"),
+  );
+  assert.ok(server.paths.includes("DELETE /api/v1/sessions/7"));
+});
+
+test("existing password mismatch stops at the guarded enrollment endpoint", async () => {
+  const server = mockServer({ existingOwner: true, passwordConflict: true });
+  await assert.rejects(bootstrapReview(env, server.request));
+  assert.deepEqual(server.paths, [
+    "GET /api/v1/whoami",
+    "POST /__ezacto/bootstrap/owner-password",
+  ]);
+});
+
+test("revoked bootstrap token cannot overwrite a used review workspace", async () => {
+  const server = mockServer({ existingOwner: true, tokenStatus: 401 });
+  await assert.rejects(bootstrapReview(env, server.request));
+  assert.deepEqual(server.paths, [
+    "GET /api/v1/whoami",
+    "POST /__ezacto/bootstrap",
+  ]);
 });
 
 for (const failure of [
