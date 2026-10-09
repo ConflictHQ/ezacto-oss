@@ -21,8 +21,10 @@ const snapshotVersion = 1;
 
 // Only for directories this tool creates itself. Operator-supplied paths must
 // still pass the strict no-symlink checks without being silently normalized.
-export const createCanonicalTemporaryDirectory = async (prefix, parent = tmpdir()) =>
-  realpath(await mkdtemp(join(parent, prefix)));
+export const createCanonicalTemporaryDirectory = async (
+  prefix,
+  parent = tmpdir(),
+) => realpath(await mkdtemp(join(parent, prefix)));
 const dockerName = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 const imageName = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,511}$/u;
 const attachmentFile = /^attachments\/sha256\/([0-9a-f]{2})\/([0-9a-f]{64})$/u;
@@ -313,8 +315,8 @@ const containerInspection = async (name) => {
   return decoded[0];
 };
 
-const volumeReferences = async (volume) => {
-  const listed = await docker([
+const volumeReferences = async (volume, execute = docker) => {
+  const listed = await execute([
     "container",
     "ls",
     "--all",
@@ -332,7 +334,7 @@ const volumeReferences = async (volume) => {
   }
   if (ids.length === 0) return [];
 
-  const result = await docker(["container", "inspect", ...ids]);
+  const result = await execute(["container", "inspect", ...ids]);
   let decoded;
   try {
     decoded = JSON.parse(result.stdout);
@@ -464,6 +466,7 @@ const fs = require('node:fs')
 const source = '/restore'
 const target = '/data'
 if (fs.readdirSync(target).length !== 0) throw new Error('target volume is not empty')
+fs.writeFileSync(target + '/.privacy-restore-incomplete', 'Keep this restored volume offline until privacy quarantine is durable.\n', {mode:0o600,flag:'wx'})
 const copy = (from, to) => {
   const metadata = fs.lstatSync(from)
   if (metadata.isSymbolicLink()) throw new Error('snapshot contains a symbolic link')
@@ -489,14 +492,19 @@ const secure = (path) => {
 secure(target)
 `;
 
-const verifyRestoredVolume = async ({ bundle, volume, image, expected }) => {
-  const temporaryRoot = await createCanonicalTemporaryDirectory("ezacto-restore-verify-");
+const verifyRestoredVolume = async (
+  { bundle, volume, image, expected },
+  execute = docker,
+) => {
+  const temporaryRoot = await createCanonicalTemporaryDirectory(
+    "ezacto-restore-verify-",
+  );
   const extracted = join(temporaryRoot, "data");
   const verifier = `ezacto-restore-verify-${process.pid}-${randomBytes(6).toString("hex")}`;
   let created = false;
   try {
     await mkdir(extracted, { mode: 0o700 });
-    await docker([
+    await execute([
       "container",
       "create",
       "--name",
@@ -510,14 +518,15 @@ const verifyRestoredVolume = async ({ bundle, volume, image, expected }) => {
       "process.exit(0)",
     ]);
     created = true;
-    await docker(["container", "cp", `${verifier}:/data/.`, extracted]);
+    await execute(["container", "cp", `${verifier}:/data/.`, extracted]);
+    await rm(join(extracted, ".privacy-restore-incomplete"));
     const actual = await durableInventory(extracted);
     if (!sameInventory(actual, expected.files)) {
       fail("restored volume does not match the snapshot checksums");
     }
   } finally {
     if (created) {
-      await docker(["container", "rm", "--force", verifier]).catch(
+      await execute(["container", "rm", "--force", verifier]).catch(
         () => undefined,
       );
     }
@@ -528,17 +537,31 @@ const verifyRestoredVolume = async ({ bundle, volume, image, expected }) => {
   );
 };
 
-const restore = async ({ bundle, volume, image }) => {
+export const restorePhysicalSnapshot = async (
+  { bundle, volume, image },
+  execute = docker,
+) => {
   assertSnapshotPath(bundle, "bundle");
   if (!dockerName.test(volume)) fail("volume name is invalid");
   if (!imageName.test(image) || image.startsWith("-"))
     fail("image name is invalid");
   const metadata = await verifyPhysicalSnapshot(bundle);
-  await docker(["volume", "inspect", volume]);
-  if ((await volumeReferences(volume)).length !== 0) {
+  await execute(["volume", "inspect", volume]);
+  if ((await volumeReferences(volume, execute)).length !== 0) {
     fail("target volume must not be referenced by any container");
   }
-  await docker([
+  await execute([
+    "run",
+    "--rm",
+    "--network",
+    "none",
+    "--entrypoint",
+    "node",
+    image,
+    "-e",
+    "require('node:fs').accessSync('entries/container/dist/privacy-restore.js')",
+  ]);
+  await execute([
     "run",
     "--rm",
     "--user",
@@ -553,9 +576,43 @@ const restore = async ({ bundle, volume, image }) => {
     "-e",
     restoreHelper,
   ]);
-  await verifyRestoredVolume({ bundle, volume, image, expected: metadata });
-  await docker(["run","--rm","--user","1000:1000","--mount",`type=volume,source=${volume},target=/data`,"--entrypoint","node",image,"entries/container/dist/privacy-restore.js","quarantine","--database","/data/db.sqlite"]);
-  process.stdout.write("Restored database is quarantined. Replay current closure evidence and verify downstream cleanup before releasing it for service.\n");
+  await verifyRestoredVolume(
+    { bundle, volume, image, expected: metadata },
+    execute,
+  );
+  await execute([
+    "run",
+    "--rm",
+    "--user",
+    "1000:1000",
+    "--mount",
+    `type=volume,source=${volume},target=/data`,
+    "--entrypoint",
+    "node",
+    image,
+    "entries/container/dist/privacy-restore.js",
+    "quarantine",
+    "--database",
+    "/data/db.sqlite",
+  ]);
+  await execute([
+    "run",
+    "--rm",
+    "--network",
+    "none",
+    "--user",
+    "1000:1000",
+    "--mount",
+    `type=volume,source=${volume},target=/data`,
+    "--entrypoint",
+    "node",
+    image,
+    "-e",
+    "require('node:fs').rmSync('/data/.privacy-restore-incomplete',{force:true})",
+  ]);
+  process.stdout.write(
+    "Restored database is quarantined. Replay current closure evidence and verify downstream cleanup before releasing it for service.\n",
+  );
 };
 
 const optionsFor = (args) => {
@@ -602,7 +659,7 @@ const main = async () => {
     return;
   }
   if (command === "restore") {
-    await restore(
+    await restorePhysicalSnapshot(
       requiredOptions(optionsFor(args), ["bundle", "volume", "image"]),
     );
     return;

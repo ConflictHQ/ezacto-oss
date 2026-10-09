@@ -167,3 +167,44 @@ it("sends manual historical acknowledgment separately and suppresses stale respo
   await Promise.resolve();
   expect(form("backups")).toBeNull();
 });
+
+it("locks submitted controls until a deferred save returns", async () => {
+  let resolve!: (response: Response) => void;
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(response([row]))
+    .mockImplementationOnce(() => new Promise<Response>((r) => (resolve = r)));
+  vi.stubGlobal("fetch", fetch);
+  mount();
+  await vi.waitFor(() => expect(form("backups")).not.toBeNull());
+  const selected = form("backups");
+  (selected.elements.namedItem("evidence") as HTMLTextAreaElement).value =
+    "Submitted protected evidence.";
+  (selected.elements.namedItem("acknowledged") as HTMLInputElement).checked =
+    true;
+  submit(selected);
+  expect(
+    (selected.elements.namedItem("evidence") as HTMLTextAreaElement).disabled,
+  ).toBe(true);
+  expect(
+    (selected.elements.namedItem("decision") as HTMLSelectElement).disabled,
+  ).toBe(true);
+  resolve(
+    response({
+      ...row,
+      version: 2,
+      decision: "failed",
+      evidence: "Submitted protected evidence.",
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(
+      (form("backups").elements.namedItem("evidence") as HTMLTextAreaElement)
+        .disabled,
+    ).toBe(false),
+  );
+  expect(
+    (form("backups").elements.namedItem("evidence") as HTMLTextAreaElement)
+      .value,
+  ).toBe("Submitted protected evidence.");
+});

@@ -39,7 +39,7 @@ export function createDeletionRequestsController(
   let next: string | null = null;
   let busy = false;
   const records = new Map<string, AccountDeletionRecord>();
-  const retention = createRetentionReviewController(root,demo,()=>reload(false));
+  const retention = createRetentionReviewController(root,demo,(confirmation)=>reload(false,confirmation));
   const closure = createAccountClosureController(root, demo, () => reload(false));
   const writable = () =>
     session?.identity.profile === "administrator" &&
@@ -168,7 +168,7 @@ export function createDeletionRequestsController(
         "The request could not be completed. Refresh to check its current status.",
       );
     });
-  const reload = (append: boolean) => {
+  const reload = (append: boolean, confirmation = "") => {
     const active = session;
     if (!active || busy) return;
     busy = true;
@@ -176,7 +176,7 @@ export function createDeletionRequestsController(
     if (!append) {
       selected = null;
       closure.select(null, null);
-      retention.select(null, null);
+      retention.select(active, null, confirmation);
       records.clear();
       detail.hidden = true;
     }

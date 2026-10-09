@@ -9,7 +9,7 @@ type Active = SessionPresenter & {
 export function createRetentionReviewController(
   root: HTMLElement,
   demo: boolean,
-  onCompleted: () => void,
+  onCompleted: (confirmation: string) => void,
 ) {
   const section = root.querySelector<HTMLElement>("[data-retention-review]")!;
   const content = section.querySelector<HTMLElement>(
@@ -259,7 +259,7 @@ export function createRetentionReviewController(
           );
           return () => {
             status.textContent = result.data.confirmation;
-            onCompleted();
+            onCompleted(result.data.confirmation);
           };
         }, true);
       });
@@ -286,8 +286,13 @@ export function createRetentionReviewController(
       return;
     busy = true;
     status.textContent = "Working…";
-    for (const button of content.querySelectorAll<HTMLButtonElement>("button"))
-      button.disabled = true;
+    for (const control of content.querySelectorAll<
+      | HTMLInputElement
+      | HTMLButtonElement
+      | HTMLTextAreaElement
+      | HTMLSelectElement
+    >("input,button,textarea,select"))
+      control.disabled = true;
     void action(active, selected)
       .then((show) =>
         active.present(() => {
@@ -306,16 +311,20 @@ export function createRetentionReviewController(
       .finally(() => {
         if (current === revision) {
           busy = false;
-          for (const button of content.querySelectorAll<HTMLButtonElement>(
-            "button",
-          ))
-            button.disabled = demo;
+          for (const control of content.querySelectorAll<
+            | HTMLInputElement
+            | HTMLButtonElement
+            | HTMLTextAreaElement
+            | HTMLSelectElement
+          >("input,button,textarea,select"))
+            control.disabled = demo;
         }
       });
   };
   const select = (
     active: Active | null,
     selected: AccountDeletionRecord | null,
+    feedback = "",
   ) => {
     revision++;
     session = active;
@@ -325,7 +334,7 @@ export function createRetentionReviewController(
     queue.replaceChildren();
     queueAfter = null;
     due.textContent = "Show due and overdue reviews";
-    status.textContent = "";
+    status.textContent = feedback;
     reference.textContent = selected
       ? `Request ${selected.id} · ${selected.status.replaceAll("_", " ")}`
       : "Select a request to review its remaining obligations.";

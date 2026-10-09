@@ -360,11 +360,18 @@ const assertDatabasePath = async (path: string): Promise<void> => {
   }
 }
 
+export const assertNoIncompletePrivacyRestore = async (directory: string): Promise<void> => {
+  try { await lstat(resolve(directory, '.privacy-restore-incomplete')) }
+  catch(error) { if(error instanceof Error && 'code' in error && error.code==='ENOENT') return; throw error }
+  throw new Error('Incomplete physical restore: privacy evidence must be reconciled before startup')
+}
+
 export const createContainerRuntime = async (
   config: ContainerConfig,
   options: ContainerRuntimeOptions = {},
 ): Promise<ContainerRuntime> => {
   await ensureDataDirectory(config.dataDirectory)
+  await assertNoIncompletePrivacyRestore(config.dataDirectory)
   await assertDatabasePath(config.databasePath)
   const database = new BetterSqlite3(config.databasePath, { timeout: 5_000 })
   let queue: ContainerEmailQueue | undefined

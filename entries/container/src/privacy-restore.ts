@@ -10,7 +10,7 @@ import {
   existsSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname, basename } from "node:path";
 import { pathToFileURL } from "node:url";
 import { migrateContainer } from "@ezacto/db";
 type Row = Record<string, unknown>;
@@ -35,7 +35,7 @@ const insert = (db: BetterSqlite3.Database, table: string, row: Row) => {
 };
 const sourceState = (source: BetterSqlite3.Database) => {
   const closures = source
-    .prepare("SELECT * FROM account_closures ORDER BY request_id")
+    .prepare("SELECT * FROM account_closures ORDER BY closed_at,request_id")
     .all() as Row[];
   const requests = source
     .prepare("SELECT * FROM account_deletion_requests ORDER BY id")
@@ -98,7 +98,23 @@ export function replayClosureHistory(
   target.pragma("foreign_keys=ON");
   target
     .transaction(() => {
-      for (const closure of state.closures) {
+      const remaining = [...state.closures];
+      const ordered: Row[] = [];
+      while (remaining.length) {
+        const index = remaining.findIndex(
+          (closure) =>
+            !remaining.some(
+              (other) =>
+                other !== closure && other.actor_user_id === closure.user_id,
+            ),
+        );
+        if (index < 0)
+          throw new Error(
+            "Closure actor dependencies cannot be reconciled; keep this restore offline.",
+          );
+        ordered.push(remaining.splice(index, 1)[0]!);
+      }
+      for (const closure of ordered) {
         const existing = target
           .prepare("SELECT user_id FROM account_closures WHERE request_id=?")
           .get(closure.request_id) as { user_id: number } | undefined;
@@ -278,6 +294,9 @@ export function privacyRestoreCommand(args: string[]): void {
   try {
     if (action === "quarantine") {
       quarantineRestoredDatabase(target);
+      // Only the snapshot tool's exact database filename owns this copy marker.
+      // SQLite quarantine is committed before the marker can disappear.
+      if(basename(values.database)==='db.sqlite')rmSync(join(dirname(values.database),'.privacy-restore-incomplete'),{force:true});
       return;
     }
     if (

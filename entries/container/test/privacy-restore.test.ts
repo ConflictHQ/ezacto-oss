@@ -133,3 +133,74 @@ it("refuses cross-instance or changed evidence and leaves failed replay quaranti
     target.prepare("SELECT quarantined FROM account_restore_quarantine").get(),
   ).toEqual({ quarantined: 1 });
 });
+
+for (const tied of [false, true])
+  it(`replays historical administrator dependencies before closing the actor (equal timestamps: ${tied})`, async () => {
+    const source = new BetterSqlite3(":memory:");
+    opened.push(source);
+    migrateContainer(source);
+    source.exec(
+      `INSERT INTO users(id,first_name,last_name,profile,is_active,manager_grants,created_at,updated_at) VALUES(1,'Owner','One','administrator',1,'[]','${at}','${at}'),(2,'Admin','Two','administrator',1,'[]','${at}','${at}'),(3,'Member','Three','member',1,'[]','${at}','${at}')`,
+    );
+    const db = createContainerDatabase(source);
+    await createAccountRetentionRepository(db).publish({
+      actorUserId: 1,
+      expectedVersion: 0,
+      now: at,
+      policy: {
+        frameworks: [],
+        retained_records: [
+          {
+            category: "audit_and_security",
+            reason: "Protected review fixture evidence.",
+            period: "Until review.",
+            review_after_days: 30,
+          },
+        ],
+        response_target_days: 14,
+        operator_contact: "privacy@example.test",
+        user_notice: "Close account access.",
+        backup_handling: "Replay closure evidence before release.",
+        acknowledged: true,
+      },
+    });
+    const requests = createAccountDeletionRequestRepository(db);
+    await requests.request({
+      userId: 3,
+      id: "z-first-closure",
+      expectedPolicyVersion: 1,
+      now: at,
+    });
+    await requests.request({
+      userId: 2,
+      id: "a-later-closure",
+      expectedPolicyVersion: 1,
+      now: at,
+    });
+    const target = new BetterSqlite3(source.serialize());
+    opened.push(target);
+    const closures = createAccountClosureRepository(db);
+    for (const [actor, id, time] of [
+      [2, "z-first-closure", at],
+      [1, "a-later-closure", tied ? at : "2026-10-09T00:01:00.000Z"],
+    ] as const) {
+      const preview = await closures.preview(actor, id);
+      await closures.close({
+        actorUserId: actor,
+        id,
+        expectedVersion: preview.request_version,
+        expectedPolicyVersion: 1,
+        reviewToken: preview.review_token,
+        acknowledged: true,
+        now: time,
+      });
+    }
+    expect(replayClosureHistory(target, source).replayed).toBe(2);
+    expect(
+      target.prepare("SELECT id,is_active FROM users ORDER BY id").all(),
+    ).toEqual([
+      { id: 1, is_active: 1 },
+      { id: 2, is_active: 0 },
+      { id: 3, is_active: 0 },
+    ]);
+  });

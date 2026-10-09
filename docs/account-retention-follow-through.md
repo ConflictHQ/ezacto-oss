@@ -26,7 +26,7 @@ Request completion requires reviewed decisions with no pending, failed or overdu
 
 ## Container restore quarantine
 
-A supported physical restore first verifies the snapshot checksums and then quarantines the restored database. The server refuses startup while quarantine is set, before its email or integration work can resume. The quarantine deliberately changes the restored database after exact snapshot verification.
+A supported physical restore preflights the quarantine helper and creates a durable incomplete-restore marker before copying any data. It verifies the snapshot checksums and then quarantines the restored database. If copying or the quarantine helper fails, the marker prevents container startup before the database opens. Repair the helper/image and rerun its `quarantine --database /data/db.sqlite` command while offline; only a successful committed database quarantine clears the marker. The server refuses startup while quarantine is set, before its email or integration work can resume. The quarantine deliberately changes the restored database after exact snapshot verification.
 
 Keep the restored volume offline. Obtain a separate, protected, stopped/checkpointed **current** database snapshot from the same instance, including its closure and retention-review history. Do not use the old restored backup itself as current evidence. Preserve the original backup and evidence under the operator’s documented access and retention controls.
 
@@ -40,7 +40,7 @@ docker run --rm --network none --user 0:0 \
   --database /data/db.sqlite --current-database /evidence/current.sqlite
 ```
 
-The tool checks the same-instance closure secret without printing it, copies the source into a temporary private directory, and replays missing local closures transactionally. It checks profile minimization, removal of sign-in credentials and replay prevention. Running timers, ownership conflicts, unrelated instance evidence and snapshots predating the closure security identity fail closed and require offline reconciliation. Provider history that cannot be reconstructed remains conservatively unresolved.
+The tool checks the same-instance closure secret without printing it, copies the source into a temporary private directory, and replays missing local closures transactionally, respecting historical actor dependencies so an administrator’s earlier actions are replayed before their own account is closed, including equal timestamps. It checks profile minimization, removal of sign-in credentials and replay prevention. Running timers, ownership conflicts, unrelated instance evidence and snapshots predating the closure security identity fail closed and require offline reconciliation. Provider history that cannot be reconstructed remains conservatively unresolved.
 
 Replay does **not** reconstruct every later free-text edit, attachment removal, email deletion or external export cleanup. Compare the restored data and object storage with current evidence and reapply those actions while offline. Reconcile current policy reviews and provider obligations, and ensure mail/integration queues cannot resend withdrawn information. Review separately retained backup copies under the documented operator schedule. Record the actual result in a protected restore ticket.
 
