@@ -157,12 +157,18 @@ test("[e2e:retention] publishes and reloads an operator policy with a fresh ackn
     .click();
   await expect(page.locator("[data-closure-form]")).toBeVisible();
   await page.locator("[data-closure-form]").getByRole("checkbox").check();
+  const closed = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/closure"),
+  );
   await page
     .getByRole("button", {
       name: "Close access and erase local credentials",
       exact: true,
     })
     .click();
+  expect((await closed).status()).toBe(200);
   await expect(
     page
       .locator("[data-deletion-list] button")
@@ -178,6 +184,95 @@ test("[e2e:retention] publishes and reloads an operator policy with a fresh ackn
   await expect(page.locator("[data-closure-inventory]")).toContainText(
     "Local credentials were erased",
   );
+  await page
+    .getByRole("button", {
+      name: "Review retained records and cleanup",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.locator("[data-retention-content] form[data-area]"),
+  ).toHaveCount(9);
+  const areas = await page
+    .locator("[data-retention-content] form[data-area]")
+    .evaluateAll((forms) =>
+      forms.map((form) => (form as HTMLFormElement).dataset.area!),
+    );
+  for (const area of areas) {
+    const review = page.locator(
+      `[data-retention-content] form[data-area="${area}"]`,
+    );
+    await review.locator("..").locator("summary").click();
+    const retained =
+      area === "audit_and_security" || area === "time_and_worker_attribution";
+    await review
+      .getByRole("combobox", { name:"Decision", exact: true })
+      .selectOption(retained ? "retain" : "not_applicable");
+    await review
+      .getByLabel("Actual evidence or protected reference")
+      .fill(
+        "Disposable browser fixture: inspected applicable records and documented their outcome.",
+      );
+    if (retained) {
+      await review
+        .getByLabel("Current documented basis")
+        .fill(
+          "Fixture work and minimal request evidence remain necessary for the documented review.",
+        );
+      await review
+        .getByLabel("Period or release condition")
+        .fill(
+          "Release after the protected fixture review confirms the purpose ended.",
+        );
+      await review.getByLabel("Next review date").fill("2099-01-01");
+    }
+    await review.getByRole("checkbox").check();
+    await review
+      .getByRole("button", { name: "Record review", exact: true })
+      .click();
+    await expect(page.locator("[data-retention-review] [data-retention-status]")).toContainText(
+      "Review recorded",
+    );
+    await expect(
+      page
+        .locator(`[data-retention-content] form[data-area="${area}"]`)
+        .locator("input[type=checkbox]"),
+    ).not.toBeChecked();
+  }
+  const complete = page.locator("[data-retention-content] > form");
+  await complete
+    .getByLabel("I verified each cleanup outcome", { exact: false })
+    .check();
+  await complete
+    .getByRole("button", {
+      name: "Confirm reviewed request outcome",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page
+      .locator("[data-deletion-list] button")
+      .filter({ hasText: "User 97201:" }),
+  ).toContainText("completed");
+  await page
+    .locator("[data-deletion-list] button")
+    .filter({ hasText: "User 97201:" })
+    .click();
+  await page
+    .getByRole("button", {
+      name: "Review retained records and cleanup",
+      exact: true,
+    })
+    .click();
+  await expect(page.locator("[data-retention-content]")).toContainText(
+    "2099-01-01",
+  );
+  await expect(
+    page.getByRole("button", {
+      name: "Confirm reviewed request outcome",
+      exact: true,
+    }),
+  ).toHaveCount(0);
   const asserted = await page.request.post(
     "/__ezacto_browser_fixture__/start-end",
     {

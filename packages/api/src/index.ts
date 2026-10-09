@@ -309,6 +309,7 @@ export {
   type AppleFetch,
   type AppleIdentityResolver,
   type AppleIdentityTokenVerifier,
+  type AppleTokenExpectations,
   type AppleProviderConfig,
   type AppleRouteOptions,
   type AppleSessionIssuer,
@@ -442,3 +443,18 @@ export { installAccountDeletionStatusRoutes } from './account-deletion-status.js
 
 export * from './apple-lifecycle.js'
 export * from './apple-lifecycle-proof.js'
+
+export { installAccountRetentionReviewRoutes } from './account-retention-review.js'
+export {
+  APPLE_WEB_START_PATH,
+  APPLE_WEB_CALLBACK_PATH,
+  APPLE_WEB_STATE_COOKIE,
+  assertValidAppleWebProviderConfig,
+  installAppleWebRoutes,
+  type AppleWebGrant,
+  type AppleWebLifecyclePort,
+  type AppleWebProviderConfig,
+  type AppleWebRouteOptions,
+} from './apple-web.js'
+
+export { createAppleWebLifecycle, assertAppleWebCustodyConfig, APPLE_WEB_CONNECTION_COOKIE, type AppleWebCustodyConfig } from './apple-web-lifecycle.js'

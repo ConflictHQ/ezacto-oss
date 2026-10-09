@@ -188,3 +188,81 @@ describe("operator deletion request queue", () => {
     ).toBe(true);
   });
 });
+
+it("keeps the due queue usable after refresh and retains completion feedback across the parent reload", async () => {
+  const obligation = {
+    request_id: record.id,
+    area: "apple_authorization",
+    kind: "downstream",
+    original_reason: "Protected fixture.",
+    original_period: "Until reviewed.",
+    decision: "not_applicable",
+    basis: "",
+    release_condition: "",
+    evidence: "Verified fixture has no Apple identity.",
+    next_review_at: null,
+    hold_active: false,
+    version: 2,
+    reviewed_at: null,
+    actor_user_id: null,
+  };
+  const confirmation =
+    "Local closure reviewed. Required work attribution remains retained.";
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(response([record]))
+    .mockResolvedValueOnce(response([record]))
+    .mockResolvedValueOnce(response([obligation]))
+    .mockResolvedValueOnce(
+      response({ completed_at: "2026-10-09T00:00:00.000Z", confirmation }),
+    )
+    .mockResolvedValueOnce(
+      response([
+        {
+          ...record,
+          status: "completed",
+          completion_confirmation: confirmation,
+        },
+      ]),
+    );
+  vi.stubGlobal("fetch", fetch);
+  const { controller, active, select } = mount();
+  await controller.load(active);
+  document.querySelector<HTMLButtonElement>("[data-deletion-refresh]")!.click();
+  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() =>
+    expect(
+      document.querySelector<HTMLButtonElement>("[data-deletion-refresh]")!
+        .disabled,
+    ).toBe(false),
+  );
+  expect(
+    document.querySelector<HTMLButtonElement>("[data-retention-due]")!.disabled,
+  ).toBe(false);
+  select();
+  document.querySelector<HTMLButtonElement>("[data-retention-load]")!.click();
+  await vi.waitFor(() =>
+    expect(
+      document.querySelector("[data-retention-content] > form"),
+    ).not.toBeNull(),
+  );
+  const complete = document.querySelector<HTMLFormElement>(
+    "[data-retention-content] > form",
+  )!;
+  complete.querySelector<HTMLInputElement>("input[required]")!.checked = true;
+  complete.dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(5));
+  await vi.waitFor(() =>
+    expect(
+      document.querySelector("[data-deletion-list]")!.textContent,
+    ).toContain("completed"),
+  );
+  expect(document.querySelector("[data-retention-status]")!.textContent).toBe(
+    confirmation,
+  );
+  expect(
+    document.querySelector<HTMLButtonElement>("[data-retention-due]")!.disabled,
+  ).toBe(false);
+});
