@@ -113,6 +113,17 @@ Password login for the bootstrapped owner does not require SES. Public signup,
 email verification, and password reset do: configure a verified SES sender and
 the documented IAM actions in [the infrastructure contract](infra.md#env--secrets).
 
+The password sign-in screen includes **Forgot password?**. It sends a one-time
+reset link through the configured mail transport and shows the same confirmation
+whether an account exists or not. New links keep the token in the URL fragment;
+the browser removes it before loading account data. Previously delivered query
+links remain supported. After a successful reset, existing sessions are revoked
+and the user signs in with the new password; enrolled two-factor authentication
+still applies. Expired or already-used links require a new request. Recovery is
+unavailable on the public demo and when password sign-in is disabled.
+
+This uses the self-hosted password service and requires no Cognito account.
+
 ## 3. Provision and deploy
 
 Commit the customized Wrangler configuration through your normal review path.

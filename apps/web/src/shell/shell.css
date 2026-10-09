@@ -4176,6 +4176,20 @@ dialog h2,
   font-weight: 600;
   text-decoration: none;
 }
+/* Provider colors stay fixed across instance themes (Google neutral treatment). */
+.oidc-sign-in[data-oidc-provider="google"] {
+  background: var(--ez-google-sign-in-background);
+  color: var(--ez-google-sign-in-foreground);
+  border-color: transparent;
+  padding: 0 12px 0 2px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.oidc-sign-in[data-oidc-provider="google"] img {
+  flex: 0 0 40px;
+  object-fit: contain;
+}
 .auth-divider,
 .auth-build-stamp {
   color: var(--ez-muted);
@@ -5184,6 +5198,42 @@ button[data-auth-action]:disabled {
 .session-status[data-state="ready"] {
   border-color: var(--ez-action);
   color: var(--ez-ink);
+}
+/*
+ * A write being sent again after it failed (issue 953). Fixed to the corner, so
+ * it reads the same beside the sidebar and under the top bar, and stays in view
+ * while the page beneath it scrolls. Below the session check, which covers
+ * everything while it runs.
+ */
+.write-status {
+  position: fixed;
+  z-index: 950;
+  inset-block-end: 16px;
+  inset-inline-end: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-status-bg);
+  color: var(--ez-status-fg);
+  box-shadow: var(--ez-shadow-menu);
+}
+.write-status-spinner {
+  width: 14px;
+  aspect-ratio: 1;
+  flex: 0 0 auto;
+  border: 2px solid var(--ez-border);
+  border-top-color: var(--ez-action);
+  border-radius: 50%;
+  animation: auth-spin 900ms linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .write-status-spinner {
+    animation: none;
+  }
 }
 .week-surface {
   border: 1px solid var(--ez-border);
@@ -7188,6 +7238,7 @@ dialog textarea {
   .build-stamp,
   .data-quality,
   .session-check-overlay,
+  .write-status,
   dialog {
     display: none !important;
   }

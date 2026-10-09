@@ -11,6 +11,7 @@ import { DEMO_UNAVAILABLE, demoUnavailable, isDemoDeployment } from '../demo.js'
 import { invoiceAddressLines } from '../invoice-addresses.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
+import { shellFetch } from '../shell/net.js'
 import {
   DEFAULT_COMPANY_SETTINGS_SECTION,
   resolveSettingsSection,
@@ -69,12 +70,14 @@ interface BrandAssetListEnvelope {
  * These three go through `fetch` rather than the generated client for the same
  * reason `fetchModules` does: the upload is `multipart/form-data`, which the
  * generated JSON client has no shape for, and having the list travel by a
- * different road from the upload that changes it is how the two drift.
+ * different road from the upload that changes it is how the two drift. The
+ * fetch is still the shell's own, so the writes are keyed and retried like
+ * every other (issue 953).
  */
 const fetchBrandAssets = async (
   signal?: AbortSignal,
 ): Promise<readonly BrandAssetState[]> => {
-  const response = await globalThis.fetch('/api/v1/settings/brand-assets', {
+  const response = await shellFetch('/api/v1/settings/brand-assets', {
     credentials: 'same-origin',
     ...withSignal(signal),
   })
@@ -96,7 +99,7 @@ const uploadBrandAsset = async (
 ): Promise<void> => {
   const body = new FormData()
   body.append('file', file)
-  const response = await globalThis.fetch(`/api/v1/settings/brand-assets/${segment}`, {
+  const response = await shellFetch(`/api/v1/settings/brand-assets/${segment}`, {
     method: 'POST',
     body,
     credentials: 'same-origin',
@@ -110,7 +113,7 @@ const uploadBrandAsset = async (
 }
 
 const removeBrandAsset = async (segment: string, signal?: AbortSignal): Promise<void> => {
-  const response = await globalThis.fetch(`/api/v1/settings/brand-assets/${segment}`, {
+  const response = await shellFetch(`/api/v1/settings/brand-assets/${segment}`, {
     method: 'DELETE',
     credentials: 'same-origin',
     ...withSignal(signal),
@@ -196,7 +199,7 @@ const withSignal = (signal?: AbortSignal): { signal?: AbortSignal } =>
   signal === undefined ? {} : { signal }
 
 const fetchModules = async (signal?: AbortSignal): Promise<readonly ModuleState[]> => {
-  const response = await globalThis.fetch('/api/v1/admin/modules', {
+  const response = await shellFetch('/api/v1/admin/modules', {
     credentials: 'same-origin',
     ...withSignal(signal),
   })
@@ -219,7 +222,7 @@ const patchModule = async (
   enabled: boolean,
   signal?: AbortSignal,
 ): Promise<readonly ModuleState[]> => {
-  const response = await globalThis.fetch(`/api/v1/admin/modules/${module}`, {
+  const response = await shellFetch(`/api/v1/admin/modules/${module}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ enabled }),
@@ -259,7 +262,7 @@ const refusal = (body: string, fallback: string): string => {
 const fetchSignInMethods = async (
   signal?: AbortSignal,
 ): Promise<readonly SignInMethodState[]> => {
-  const response = await globalThis.fetch('/api/v1/admin/sign-in-methods', {
+  const response = await shellFetch('/api/v1/admin/sign-in-methods', {
     credentials: 'same-origin',
     ...withSignal(signal),
   })
@@ -279,7 +282,7 @@ const patchSignInMethod = async (
   enabled: boolean,
   signal?: AbortSignal,
 ): Promise<readonly SignInMethodState[]> => {
-  const response = await globalThis.fetch(
+  const response = await shellFetch(
     `/api/v1/admin/sign-in-methods/${method}`,
     {
       method: 'PATCH',
