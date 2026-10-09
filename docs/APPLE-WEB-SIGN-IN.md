@@ -53,7 +53,7 @@ origin, including when an HTTPS reverse proxy talks HTTP internally.
 
 | Setting | Value |
 | --- | --- |
-| `APPLE_WEB_ENABLED` | `true` only after all acceptance gates below pass |
+| `APPLE_WEB_ENABLED` | `true` only during coordinated acceptance or after its gates pass |
 | `APPLE_WEB_SERVICES_ID` | The exact Services ID for this deployment |
 | `APPLE_WEB_CAPABILITY_KEYS` | JSON object of key ID to canonical base64url 32-byte AES key |
 | `APPLE_WEB_ACTIVE_KEY_ID` | Key ID used for new ciphertext |
@@ -131,7 +131,7 @@ context, not a live Apple token. Cloudflare processes that service's encrypted
 storage; its retention and recovery-copy inventory must be published alongside
 the website and App Store privacy disclosures before enablement.
 
-## Acceptance before enablement
+## Controlled acceptance and ongoing enablement
 
 - Confirm the shared Services ID, associated primary app, both domains and exact return URLs in Apple Developer.
 - Deploy the reviewed native and web lifecycle service, publish its credential-retention inventory and update App Store privacy answers.
@@ -139,4 +139,4 @@ the website and App Store privacy disclosures before enablement.
 - Verify disposable accounts across native, team web and demo web: actual exchange, subject correspondence, explicit disconnect, provider-wide impact and request-bound recovery after losing browser state.
 - Confirm demo sign-in creates no user or identity link and that one visitor's shared demo session cannot revoke another visitor's authorization.
 - Test Hide My Email, cancellation, disabled accounts, expired/replayed callbacks and a temporary lifecycle outage on physical Safari and supported browsers.
-- Enable the central web flag and each website's flag only after the integration and real Apple checks pass. Do not treat mocked provider tests as provider acceptance.
+- After source, privacy, configuration and deployment checks pass, coordinate a controlled acceptance window with the central service and each website enabled deliberately. Disable new sign-in immediately if real-provider checks fail; preserve custody settings for cleanup. Retain ongoing enablement only after that site passes the checks above. Do not treat mocked provider tests as provider acceptance.
