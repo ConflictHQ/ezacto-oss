@@ -3914,7 +3914,7 @@ export const accountDeletionStatusLimits = sqliteTable('account_deletion_status_
 export const appleNativeGrants = sqliteTable('apple_native_grants', {
   subjectHash: text('subject_hash').primaryKey(), userId: integer('user_id').notNull().references(() => users.id, {onDelete:'restrict'}),
   origin: text('origin').notNull(), grantId: text('grant_id').notNull(), generation: integer('generation').notNull(),
-  bindingJti: text('binding_jti').notNull().unique(), updatedAt: text('updated_at').notNull(),
+  bindingJti: text('binding_jti').notNull().unique(), updatedAt: text('updated_at').notNull(), knownFromFirstLink:integer('known_from_first_link',{mode:'boolean'}).notNull().default(false),
 })
 export const appleDeletionSubjects = sqliteTable('apple_deletion_subjects', {
   requestId: text('request_id').notNull().references(() => accountDeletionRequests.id, {onDelete:'restrict'}), subjectHash: text('subject_hash').notNull(),

@@ -535,7 +535,7 @@ export const installAppleRoutes = <Bindings extends object>(
     if (identity.status === 'disabled') {
       throw appleError(403, 'account_disabled', 'This ezacto user is disabled.')
     }
-    if (!await persist(()=>lifecycle.store.recordSignIn({...proof,userId:identity.userId,now})))
+    if (!await persist(()=>lifecycle.store.recordSignIn({...proof,userId:identity.userId,now,knownFromFirstLink:identity.matchedBy!=='subject'})))
       throw appleError(409,'apple_binding_not_accepted','The Apple authorization changed. Start a fresh Apple sign-in.')
     const session = await options.sessions.issue(identity.userId)
     context.header('set-cookie', session.setCookie, { append: true })

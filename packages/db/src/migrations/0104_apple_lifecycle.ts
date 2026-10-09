@@ -16,7 +16,7 @@ export const appleLifecycleMigration = [
     subject_hash TEXT PRIMARY KEY CHECK(length(subject_hash)=64),
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     origin TEXT NOT NULL, grant_id TEXT NOT NULL, generation INTEGER NOT NULL CHECK(generation>0),
-    binding_jti TEXT NOT NULL UNIQUE, updated_at TEXT NOT NULL
+    binding_jti TEXT NOT NULL UNIQUE, updated_at TEXT NOT NULL, known_from_first_link INTEGER NOT NULL DEFAULT 0 CHECK(known_from_first_link IN (0,1))
   ) STRICT`,
   `CREATE TABLE apple_deletion_subjects (
     request_id TEXT NOT NULL REFERENCES account_deletion_requests(id) ON DELETE RESTRICT,
@@ -48,7 +48,7 @@ export const appleLifecycleMigration = [
   ...['INSERT', 'UPDATE'].map(
     (operation) =>
       `CREATE TRIGGER apple_native_grants_request_${operation.toLowerCase()} AFTER ${operation} ON apple_native_grants BEGIN
-        INSERT INTO apple_identity_channels(subject_hash,user_id,channel,known_from_first_link) VALUES(NEW.subject_hash,NEW.user_id,'native',1) ON CONFLICT DO NOTHING;
+        INSERT INTO apple_identity_channels(subject_hash,user_id,channel,known_from_first_link) VALUES(NEW.subject_hash,NEW.user_id,'native',NEW.known_from_first_link) ON CONFLICT DO NOTHING;
         ${syncRequest} END`,
   ),
   `CREATE TRIGGER apple_request_capture AFTER INSERT ON account_deletion_requests BEGIN

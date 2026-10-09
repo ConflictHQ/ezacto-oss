@@ -46,7 +46,7 @@ export interface AppleRevocationProof extends AppleGrantBinding {
 /** No Apple token or service capability crosses this persistence boundary. */
 export interface AppleLifecycleStore extends AppleCleanupPort {
   recordSignIn(
-    input: AppleGrantBinding & { userId: number; now: string },
+    input: AppleGrantBinding & { userId: number; now: string; knownFromFirstLink?: boolean },
   ): Promise<boolean>;
   rebind(
     input: AppleGrantBinding & { requestId: string; now: string },

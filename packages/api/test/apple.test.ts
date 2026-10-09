@@ -364,6 +364,12 @@ describe('Apple native sign-in route', () => {
       expect(sessions.issue).not.toHaveBeenCalled()
     } finally {logger.mockRestore()}
   })
+  it.each(['subject','verified_email','created'] as const)('[security] derives first-link provenance from resolver result %s',async(matchedBy)=>{
+    const {app,identities,lifecycleStore}=routeHarness()
+    identities.resolveProvider.mockResolvedValue({...activeIdentity,matchedBy})
+    expect((await post(app,{identityToken:'signed.apple.token'})).status).toBe(200)
+    expect(lifecycleStore.recordSignIn).toHaveBeenCalledWith(expect.objectContaining({knownFromFirstLink:matchedBy!=='subject'}))
+  })
   it('[security] advertises positive lifecycle support and rejects every unbound new login, including existing users',async()=>{
     const {app,identities,sessions,lifecycleStore}=routeHarness()
     expect(await (await app.request('https://ezacto.io/auth/apple/native-capabilities')).json()).toEqual({available:true,lifecycle_version:1})

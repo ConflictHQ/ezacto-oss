@@ -68,7 +68,10 @@ Every known identity and channel must be resolved before the aggregate says
 `revoked`. Native evidence cannot discharge web-token obligations. Missing
 historical token custody, or older closures without per-identity evidence,
 remain `manual_required`; one recovered proof cannot establish that unknown
-other grants were revoked. Explain Apple's manual account-connection controls
+other grants were revoked. A new native or web binding on an unclassified
+pre-existing identity also preserves historical uncertainty. Only a verified
+first linkage establishes channel provenance; later receipts cannot silently
+rewrite that history. Explain Apple's manual account-connection controls
 without preventing local account closure or falsely reporting provider cleanup.
 
 Provider cleanup is not complete data erasure. Remaining business records,

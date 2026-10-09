@@ -17,6 +17,7 @@ import { createAccountRetentionRepository } from '../src/account-retention.js'
 const at = '2026-10-09T00:00:00.000Z'
 const origin = 'https://time.example.test'
 const binding = {
+  knownFromFirstLink:true,
   subject: 'apple-pat',
   origin,
   grantId: 'grant-one',
@@ -158,6 +159,15 @@ for (const runtime of ['SQLite', 'D1'])
       await request()
       for(const tuple of ["'https://time.example.test','grant',NULL","NULL,'grant',1","'https://time.example.test',NULL,1"])
         await expect(exec(`INSERT INTO apple_deletion_subjects VALUES('request-one','${'a'.repeat(64)}',${tuple},'${at}')`)).rejects.toThrow(/CHECK constraint failed/)
+    })
+    it('keeps unknown historical channels actionable after fresh native authorization and revocation',async()=>{
+      const {store,request,close,rows}=await setup()
+      await store.recordSignIn({...binding,knownFromFirstLink:false,userId:2,now:at})
+      await request()
+      await close()
+      expect(await store.acceptRevocation(revoked)).toBe(true)
+      expect(await store.status('request-one')).toBe('manual_required')
+      expect(await rows("SELECT known_from_first_link FROM apple_identity_channels WHERE channel='native'")).toEqual([{known_from_first_link:0}])
     })
     it('keeps unmapped historical closure conservative after a receipt for one recovered identity', async () => {
       const { store, request, close, upgrade, rows } = await setup(true)
