@@ -160,6 +160,16 @@ for (const runtime of ['SQLite', 'D1'])
       for(const tuple of ["'https://time.example.test','grant',NULL","NULL,'grant',1","'https://time.example.test',NULL,1"])
         await expect(exec(`INSERT INTO apple_deletion_subjects VALUES('request-one','${'a'.repeat(64)}',${tuple},'${at}')`)).rejects.toThrow(/CHECK constraint failed/)
     })
+    it('inherits proven identity first-link history for a newly added native channel',async()=>{
+      const {store,rows,exec,request,close}=await setup()
+      const secret=(await rows('SELECT secret FROM account_closure_security'))[0]!.secret as string
+      const digest=accountClosureDigest(secret,'provider',closedAccountProviderKey('apple','apple-pat'))
+      await exec(`INSERT INTO apple_identity_channels VALUES('${digest}',2,'web',1)`)
+      await store.recordSignIn({...binding,knownFromFirstLink:false,userId:2,now:at})
+      expect(await rows("SELECT known_from_first_link FROM apple_identity_channels WHERE channel='native'")).toEqual([{known_from_first_link:1}])
+      await request();await close()
+      expect(await store.status('request-one')).toBe('pending')
+    })
     it('keeps unknown historical channels actionable after fresh native authorization and revocation',async()=>{
       const {store,request,close,rows}=await setup()
       await store.recordSignIn({...binding,knownFromFirstLink:false,userId:2,now:at})
