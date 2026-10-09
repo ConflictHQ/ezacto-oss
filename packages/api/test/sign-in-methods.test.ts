@@ -306,15 +306,33 @@ describe('switching a sign-in method off', () => {
 })
 
 describe('the Apple route under the setting', () => {
-  // Apple draws no button on the sign-in card, so switching it off has to stop
-  // the route -- there is no control to hide. That is the whole point of the
-  // setting enforcing server-side rather than in the markup.
+  // The native route must refuse a disabled method before inspecting either
+  // credential; hiding a sign-in control is not server-side enforcement.
   const appleHarness = (enabled: boolean) => {
     const sessions = { issue: vi.fn(async () => ({ setCookie: 'x=y' })) }
     const verify = vi.fn(async () => ({
       subject: 'apple-subject',
       email: 'ada@example.test',
       emailVerified: true,
+    }))
+    const lifecycleStore = {
+      begin: vi.fn(async () => undefined),
+      status: vi.fn(async () => 'pending' as const),
+      recordSignIn: vi.fn(async () => true),
+      rebind: vi.fn(async () => true),
+      acceptRevocation: vi.fn(async () => true),
+      allowProof: vi.fn(async () => true),
+    }
+    const verifyProof = vi.fn(async () => ({
+      type: 'apple_grant' as const,
+      purpose: 'sign-in' as const,
+      subject: 'apple-subject',
+      origin: 'https://instance.example.test',
+      grantId: 'grant-one',
+      generation: 1,
+      eventId: 'binding-one',
+      nonce: 'native-nonce',
+      challengeId: 'challenge-one',
     }))
     const app = createApiApp({
       installApp: (app) => {
@@ -329,8 +347,14 @@ describe('the Apple route under the setting', () => {
             })),
           },
           sessions,
-          provider: () => ({ clientId: 'com.example.app' }),
+          provider: () => ({ clientId: 'com.ezacto.app' }),
           verifier: { verify },
+          lifecycle: {
+            store: lifecycleStore,
+            verifier: { verify: verifyProof },
+            origin: () => 'https://instance.example.test',
+            clock: () => '2026-10-09T00:00:00.000Z',
+          },
           policy: createSignInMethodPolicy({
             service: { list: async () => [{ method: 'apple', enabled }] },
             configured: () => ['apple'],
@@ -338,18 +362,18 @@ describe('the Apple route under the setting', () => {
         })
       },
     })
-    return { app, sessions, verify }
+    return { app, sessions, verify, verifyProof, lifecycleStore }
   }
 
   const postToken = (app: ReturnType<typeof createApiApp>) =>
     app.request('/auth/apple', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ identityToken: 'a.b.c' }),
+      body: JSON.stringify({ identityToken: 'a.b.c', bindingReceipt: 'signed-service-proof' }),
     })
 
   it('[security] refuses before verifying the token when it is switched off', async () => {
-    const { app, sessions, verify } = appleHarness(false)
+    const { app, sessions, verify, verifyProof, lifecycleStore } = appleHarness(false)
     const response = await postToken(app)
     expect(response.status).toBe(404)
     expect(await response.json()).toMatchObject({
@@ -357,12 +381,17 @@ describe('the Apple route under the setting', () => {
     })
     // Refused before the credential is read, as every other family is.
     expect(verify).not.toHaveBeenCalled()
+    expect(verifyProof).not.toHaveBeenCalled()
+    expect(lifecycleStore.recordSignIn).not.toHaveBeenCalled()
     expect(sessions.issue).not.toHaveBeenCalled()
   })
 
   it('[security] still signs in while it is on', async () => {
-    const { app, sessions } = appleHarness(true)
+    const { app, sessions, verify, verifyProof, lifecycleStore } = appleHarness(true)
     expect((await postToken(app)).status).toBe(200)
+    expect(verifyProof).toHaveBeenCalledWith('signed-service-proof', 'https://instance.example.test')
+    expect(verify).toHaveBeenCalledWith('a.b.c', { nonce: 'native-nonce' })
+    expect(lifecycleStore.recordSignIn).toHaveBeenCalledWith(expect.objectContaining({ userId: 42, grantId: 'grant-one' }))
     expect(sessions.issue).toHaveBeenCalledWith(42)
   })
 })

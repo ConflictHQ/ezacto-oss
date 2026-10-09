@@ -1,3 +1,4 @@
+import { appleLifecycleMigration } from './migrations/0104_apple_lifecycle.js'
 import { accountClosureMigration } from './migrations/0103_account_closure.js'
 import { accountDeletionRequestsMigration } from './migrations/0102_account_deletion_requests.js'
 import { accountRetentionPolicyMigration } from './migrations/0101_account_retention_policy.js'
@@ -1560,6 +1561,7 @@ const migrations = [
   { id: '0101_account_retention_policy', statements: accountRetentionPolicyMigration },
   { id: '0102_account_deletion_requests', statements: accountDeletionRequestsMigration },
   { id: '0103_account_closure', statements: accountClosureMigration },
+  { id: '0104_apple_lifecycle', statements: appleLifecycleMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

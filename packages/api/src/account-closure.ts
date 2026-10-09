@@ -1,5 +1,10 @@
 import type { Hono } from "hono";
-import { AccountClosureError, type AccountClosureStore } from "@ezacto/core";
+import {
+  AccountClosureError,
+  type AppleCleanupPort,
+  type AppleCleanupStatus,
+  type AccountClosureStore,
+} from "@ezacto/core";
 import type { ApiContext } from "./context.js";
 import { requireSessionPrincipal } from "./auth.js";
 import { ApiError } from "./errors.js";
@@ -11,7 +16,12 @@ import {
 
 export function installAccountClosureRoutes<Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
-  options: { store: AccountClosureStore; clock(): string },
+  options: {
+    store: AccountClosureStore;
+    clock(): string;
+    appleCleanup?: AppleCleanupPort;
+    performAppleCleanup?(requestId: string): Promise<void>;
+  },
 ): void {
   const actor = (
     context: Parameters<typeof requireSessionPrincipal<Bindings>>[0],
@@ -39,15 +49,33 @@ export function installAccountClosureRoutes<Bindings extends object>(
       });
     throw error;
   };
+  // A remote outage cannot undo a successful local closure. Never report that
+  // local erasure failed merely because provider cleanup still needs attention.
+  const performCleanup = async (
+    requestId: string,
+  ): Promise<AppleCleanupStatus> => {
+    try {
+      await options.performAppleCleanup?.(requestId);
+      return (
+        (await options.appleCleanup?.status(requestId)) ?? "manual_required"
+      );
+    } catch {
+      return "manual_required";
+    }
+  };
   const path = "/admin/deletion-requests/:id/closure";
   api.get(path, async (context) => {
     const userId = actor(context);
     try {
-      return context.json(
-        { data: await options.store.preview(userId, context.req.param("id")) },
-        200,
-        { "cache-control": "no-store" },
-      );
+      const data = await options.store.preview(userId, context.req.param("id"));
+      if (data.closure && options.performAppleCleanup)
+        data.apple_cleanup_retry_available = true;
+      if (data.closure && options.appleCleanup)
+        data.closure = {
+          ...data.closure,
+          apple_cleanup: await options.appleCleanup.status(data.request_id),
+        };
+      return context.json({ data }, 200, { "cache-control": "no-store" });
     } catch (error) {
       return fail(error);
     }
@@ -93,21 +121,55 @@ export function installAccountClosureRoutes<Bindings extends object>(
       });
     assertFields(errors);
     try {
-      return context.json(
-        {
-          data: await options.store.close({
-            actorUserId: userId,
-            id: context.req.param("id"),
-            expectedVersion: body.expected_version as number,
-            reviewToken: body.review_token as string,
-            expectedPolicyVersion: body.expected_policy_version as number,
-            acknowledged: true,
-            now: options.clock(),
-          }),
-        },
-        200,
-        { "cache-control": "no-store" },
+      if (options.appleCleanup) {
+        const preview = await options.store.preview(
+          userId,
+          context.req.param("id"),
+        );
+        await options.appleCleanup.begin(preview.user_id, preview.request_id);
+      }
+      const data = await options.store.close({
+        actorUserId: userId,
+        id: context.req.param("id"),
+        expectedVersion: body.expected_version as number,
+        reviewToken: body.review_token as string,
+        expectedPolicyVersion: body.expected_policy_version as number,
+        acknowledged: true,
+        now: options.clock(),
+      });
+      if (options.performAppleCleanup)
+        data.apple_cleanup = await performCleanup(data.request_id);
+      return context.json({ data }, 200, { "cache-control": "no-store" });
+    } catch (error) {
+      return fail(error);
+    }
+  });
+  api.post("/admin/deletion-requests/:id/apple-cleanup", async (context) => {
+    const userId = actor(context);
+    const body = await readObjectBody(context);
+    assertFields(unknownFieldErrors(body, new Set()));
+    try {
+      const preview = await options.store.preview(
+        userId,
+        context.req.param("id"),
       );
+      if (!preview.closure)
+        throw new ApiError({
+          status: 409,
+          code: "local_closure_required",
+          message:
+            "Close local account access before retrying provider cleanup.",
+        });
+      if (!options.performAppleCleanup)
+        throw new ApiError({
+          status: 503,
+          code: "apple_cleanup_unavailable",
+          message: "Server-managed Apple cleanup is not configured.",
+        });
+      const apple_cleanup = await performCleanup(preview.request_id);
+      return context.json({ data: { apple_cleanup } }, 200, {
+        "cache-control": "no-store",
+      });
     } catch (error) {
       return fail(error);
     }
