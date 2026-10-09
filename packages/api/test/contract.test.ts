@@ -39,6 +39,8 @@ import {
   installTwoFactorChallengeRoutes,
   installReportRoutes,
   installProfileRoutes,
+  installAccountClosureRoutes,
+  installAccountDeletionStatusRoutes,
   installSessionRoutes,
   installSsoDomainRoutes,
   installTwoFactorRoutes,
@@ -144,6 +146,14 @@ const documentedApp = () =>
   createApiApp({
     authentication: { tokens, sessions },
     installApp: (app) => {
+      installAccountDeletionStatusRoutes(app, {
+        store: {
+          issue: unavailable,
+          read: unavailable,
+          allowRead: unavailable,
+        },
+        clock: () => "2026-01-01T00:00:00.000Z",
+      });
       installOidcRoutes(app, {
         transactions: oidcTransactions,
         identities,
@@ -165,6 +175,10 @@ const documentedApp = () =>
     },
     installApi: (api) => {
       installSessionRoutes(api, sessions);
+      installAccountClosureRoutes(api, {
+        store: { preview: unavailable, close: unavailable },
+        clock: () => "2026-01-01T00:00:00.000Z",
+      });
       installProfileRoutes(api, {
         deletionStore: {
           request: async () => { throw new Error("Contract fixture does not create requests"); },
@@ -389,7 +403,7 @@ describe("OpenAPI contract", () => {
       .routes.filter(
         (route) =>
           route.method !== "ALL" &&
-          (route.path.startsWith("/api/v1") || route.path.startsWith("/auth")),
+          (route.path.startsWith("/api/v1") || route.path.startsWith("/auth") || route.path.startsWith("/account-deletion/")),
       )
       .map((route) => `${route.method.toLowerCase()} ${route.path}`)
       .sort();

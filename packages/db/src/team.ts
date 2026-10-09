@@ -445,6 +445,7 @@ const translateMutationError = (error: unknown): never => {
   const message = error instanceof Error ? error.message : String(error)
   const lower = message.toLowerCase()
   if (
+    lower.includes('closed account') ||
     lower.includes('owner cannot') ||
     lower.includes('retain an active administrator') ||
     lower.includes('owner cannot be deactivated')

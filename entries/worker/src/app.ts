@@ -1,4 +1,4 @@
-import type { AccountDeletionStore } from '@ezacto/core'
+import type { AccountDeletionStore, AccountClosureStore, AccountDeletionStatusStore } from '@ezacto/core'
 import type { PaymentRunsService } from '@ezacto/core'
 import { installPaymentRunRoutes } from '@ezacto/api'
 import { installStaffPaymentRoutes } from '@ezacto/api'
@@ -55,6 +55,8 @@ import {
   installPublicBrandAssetRoutes,
   installReportRoutes,
   installProfileRoutes,
+  installAccountClosureRoutes,
+  installAccountDeletionStatusRoutes,
   installSessionRoutes,
   installSsoDomainRoutes,
   installTrackedResourceRoutes,
@@ -307,6 +309,8 @@ export interface RuntimeServices {
   moduleSettings: ModuleSettingsService
   /** Which ways in are switched on (issue 761). */
   accountDeletionRequests?: AccountDeletionStore
+  accountClosure?: AccountClosureStore
+  accountDeletionTracking?: AccountDeletionStatusStore
   accountRetention?: AccountRetentionService
   signInMethods: SignInMethodService
   /** The domains SSO may provision a user for, and their DNS challenges (#270). */
@@ -576,12 +580,14 @@ export const createApp = (
             installSessionRoutes(api, services.sessions)
             installProfileRoutes(api, {
               repository: services.profile,
+              ...(services.accountDeletionTracking === undefined ? {} : { deletionTracking: services.accountDeletionTracking }),
               ...(services.accountDeletionRequests === undefined ? {} : { deletionStore: services.accountDeletionRequests }),
               clock: () => systemClock.now().instant,
               ...(services.accountDeletionMailer === undefined
                 ? {}
                 : { deletionMailer: services.accountDeletionMailer }),
             })
+            if (services.accountClosure) installAccountClosureRoutes(api, { store: services.accountClosure, clock: () => systemClock.now().instant })
             installEmailLogRoutes(api, services.emailLog)
             installEmailHealthRoutes(api, services.emailLog)
             installEmailConfigurationRoutes(api, {
@@ -892,6 +898,7 @@ export const createApp = (
         // token and gets the ordinary session back; it reuses the shared
         // identity resolver and session issuer, so it needs no store of its
         // own. Configured off (404) until APPLE_CLIENT_ID names an audience.
+        if (services.accountDeletionTracking) installAccountDeletionStatusRoutes(app, { store: services.accountDeletionTracking, clock: () => systemClock.now().instant })
         installAppleRoutes(app, {
           policy: signInPolicy,
           identities: services.identities,

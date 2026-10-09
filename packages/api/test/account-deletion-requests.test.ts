@@ -3,6 +3,7 @@ import {
   AccountDeletionError,
   type AccountDeletionRecord,
   type AccountDeletionStore,
+  type AccountDeletionStatusStore,
 } from "@ezacto/core";
 import {
   createApiApp,
@@ -30,7 +31,10 @@ const initial: AccountDeletionRecord = {
   notification_delivery_id: null,
   updated_at: at,
 };
-function harness(mailer?: AccountDeletionMailer) {
+function harness(
+  mailer?: AccountDeletionMailer,
+  tracking?: AccountDeletionStatusStore,
+) {
   let current: AccountDeletionRecord | null = null;
   const store: AccountDeletionStore = {
     request: vi.fn(async (input) => {
@@ -80,6 +84,7 @@ function harness(mailer?: AccountDeletionMailer) {
         store,
         clock: () => at,
         ...(mailer ? { mailer } : {}),
+        ...(tracking ? { tracking } : {}),
       }),
   });
   const call = (
@@ -97,6 +102,37 @@ function harness(mailer?: AccountDeletionMailer) {
   return { app, store, call };
 }
 describe("durable deletion API", () => {
+  it("returns scoped tracking access for the durable request, including an authenticated request racing closure", async () => {
+    const access = {
+      token: "ezacto_deletion_" + "a".repeat(64),
+      expires_at: "2027-01-07T00:00:00.000Z",
+      url: "/account-deletion/requests/request-1/status",
+    };
+    const tracking: AccountDeletionStatusStore = {
+      issue: vi.fn(async () => access),
+      read: vi.fn(async () => null),
+      allowRead: vi.fn(async () => true),
+    };
+    const { call, store } = harness(undefined, tracking);
+    const first = await call(undefined, "POST", {});
+    expect(first.status).toBe(202);
+    expect(await first.json()).toMatchObject({
+      data: { id: "request-1", version: 1 },
+      status_access: access,
+    });
+    vi.mocked(store.readOwn).mockResolvedValue(null);
+    const repeated = await call(undefined, "POST", {});
+    expect(repeated.status).toBe(202);
+    expect(await repeated.json()).toMatchObject({
+      data: { id: "request-1", version: 1 },
+      status_access: access,
+    });
+    expect(tracking.issue).toHaveBeenLastCalledWith({
+      requestId: "request-1",
+      userId: 2,
+      now: at,
+    });
+  });
   it("returns a recorded request when mail is unavailable, and exposes only the requester’s status", async () => {
     const { call, store } = harness();
     const response = await call(undefined, "POST", {});

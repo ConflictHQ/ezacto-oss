@@ -1230,6 +1230,99 @@ export type ProfileEnvelope = {
   "links": Links;
 };
 
+export type AccountClosureInventoryItem = {
+  "location": string;
+  "count": number;
+  "category": "time_and_worker_attribution" | "billing_and_payments" | "audit_and_security" | "legal_hold";
+};
+
+export type AccountClosureRecord = {
+  "request_id": string;
+  "user_id": number;
+  "actor_user_id": number;
+  "closed_at": string;
+  "policy_version": number;
+  "policy_snapshot": AccountRetentionPolicy;
+  "inventory": Array<AccountClosureInventoryItem>;
+  "retained_identity": boolean;
+  "apple_cleanup": "not_linked" | "pending";
+};
+
+export type AccountClosurePreview = {
+  "request_id": string;
+  "user_id": number;
+  "request_version": number;
+  "review_token": string;
+  "policy_version": number | null;
+  "policy_snapshot": AccountRetentionPolicy | null;
+  "inventory": Array<AccountClosureInventoryItem>;
+  "uncovered_categories": Array<"time_and_worker_attribution" | "billing_and_payments" | "audit_and_security" | "legal_hold">;
+  "owner_transfer_required": boolean;
+  "running_timer": boolean;
+  "closure": AccountClosureRecord | null;
+};
+
+export type AccountClosureInput = {
+  "expected_version": number;
+  "expected_policy_version": number;
+  "review_token": string;
+  "acknowledged": true;
+};
+
+export type AccountClosurePreviewEnvelope = {
+  "data": AccountClosurePreview;
+};
+
+export type AccountClosureRecordEnvelope = {
+  "data": AccountClosureRecord;
+};
+
+export type AccountDeletionStatusAccess = {
+  "token": string;
+  "expires_at": string;
+  "url": string;
+};
+
+export type AccountDeletionTrackingInput = {
+  "token": string;
+};
+
+export type AccountDeletionRetainedDisclosure = {
+  "category": string;
+  "reason": string;
+  "period": string;
+  "review_after_days": number;
+  "review_due": string;
+};
+
+export type AccountDeletionClosureDisclosure = {
+  "retained_records": Array<AccountDeletionRetainedDisclosure>;
+  "backup_handling": string;
+  "user_notice": string;
+  "operator_contact": string;
+};
+
+export type AccountDeletionTrackingStatus = {
+  "request_id": string;
+  "status": "pending" | "in_progress" | "action_required" | "completed";
+  "requested_at": string;
+  "expected_completion_at": string | null;
+  "closed_at": string | null;
+  "completed_at": string | null;
+  "message": string;
+  "completion_confirmation": string | null;
+  "policy_version": number | null;
+  "policy_snapshot": AccountRetentionPolicy | null;
+  "policy_reviewed": boolean;
+  "closure_disclosure": AccountDeletionClosureDisclosure | null;
+  "operator_contact": string | null;
+  "expires_at": string;
+};
+
+export type AccountDeletionTrackingEnvelope = {
+  "data": AccountDeletionTrackingStatus;
+};
+
 export type AccountDeletionSubmission = {
   "expected_policy_version"?: number | null;
 };
@@ -1284,6 +1377,7 @@ export type AccountDeletionRequest = {
 export type AccountDeletionRequestEnvelope = {
   "data": AccountDeletionRecord | AccountDeletionRequest;
   "links": Links;
+  "status_access"?: AccountDeletionStatusAccess;
 };
 
 export type TimeEntryOption = {
@@ -5805,6 +5899,35 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<AccountRetentionEnvelope>("POST", "/api/v1/admin/retention-policy", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async readAccountDeletionTrackingStatus(args: { "id": string; body: AccountDeletionTrackingInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<AccountDeletionTrackingEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountDeletionTrackingEnvelope>("POST", "/account-deletion/requests/:id/status".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async previewAccountClosure(args: { "id": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<AccountClosurePreviewEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountClosurePreviewEnvelope>("GET", "/api/v1/admin/deletion-requests/:id/closure".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async closeAccountAccess(args: { "id": string; body: AccountClosureInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<AccountClosureRecordEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountClosureRecordEnvelope>("POST", "/api/v1/admin/deletion-requests/:id/closure".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
       signal: args.signal,
       headers,

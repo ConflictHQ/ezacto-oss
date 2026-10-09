@@ -20,5 +20,16 @@ export const renderDeletionRequests = () => `
         <button type="submit">Save request update</button>
       </form>
       <p role="status" aria-live="polite" data-deletion-result></p>
+      <section aria-label="Account closure" data-account-closure>
+        <h4>Close account access</h4>
+        <p>Review this person's actual records before closing access. This permanently removes local sign-in credentials and unnecessary profile fields. Retained records, Apple authorization, external systems and backups need separate review.</p>
+        <button type="button" data-closure-review>Review account closure</button>
+        <div data-closure-inventory></div>
+        <form data-closure-form hidden>
+          <label><input type="checkbox" name="acknowledged" required> I reviewed the actual retained records and current operator policy. The documented reasons, periods and review targets apply to this person. I understand access closure is irreversible and does not confirm that all data was erased.</label>
+          <button type="submit">Close access and erase local credentials</button>
+        </form>
+        <p role="status" aria-live="polite" data-closure-result></p>
+      </section>
     </section>
   </section>`;

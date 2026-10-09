@@ -39,6 +39,8 @@ import {
   createSignInMethodRepository,
   createAccountRetentionRepository,
   createAccountDeletionRequestRepository,
+  createAccountClosureRepository,
+  createAccountDeletionStatusRepository,
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
   createTeamRepository,
@@ -891,6 +893,8 @@ export const createContainerRuntime = async (
       signInMethods: createSignInMethodRepository(drizzle),
     accountRetention: createAccountRetentionRepository(drizzle),
     accountDeletionRequests: createAccountDeletionRequestRepository(drizzle),
+    accountClosure: createAccountClosureRepository(drizzle),
+    accountDeletionTracking: createAccountDeletionStatusRepository(drizzle),
       organizationName,
       ssoProvisioningDomains:
         createContainerSsoProvisioningDomainStore(database),

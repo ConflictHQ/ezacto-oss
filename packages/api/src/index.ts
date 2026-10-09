@@ -435,3 +435,7 @@ export { installPaymentRunRoutes } from './payment-runs.js'
 export * from './account-retention.js'
 
 export { installAccountDeletionRequestRoutes } from './account-deletion-requests.js'
+
+export { installAccountClosureRoutes } from './account-closure.js'
+
+export { installAccountDeletionStatusRoutes } from './account-deletion-status.js'
