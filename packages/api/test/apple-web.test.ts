@@ -8,7 +8,7 @@ import type { OidcTransactionStorePort, OidcTransaction } from '../src/oidc.js'
 const initialTime = Date.parse('2026-10-09T03:00:00.000Z')
 const setup = (options: { demo?: boolean; origin?: string; configured?: boolean; lifecycle?: boolean; live?: boolean; rendered?: boolean } = {}) => {
   const origin = options.origin ?? 'https://app.example.com'
-  const servicesId = options.demo ? 'com.ezacto.web.demo' : 'com.ezacto.web'
+  const servicesId = 'com.ezacto.web'
   let time = initialTime
   const pending = new Map<string, OidcTransaction>()
   const transactions: OidcTransactionStorePort = {

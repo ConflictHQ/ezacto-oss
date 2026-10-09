@@ -20,7 +20,7 @@ const setup = async (demo = false) => {
   const store = createContainerAppleWebCustodyStore(db)
   const pair = await generateKeyPair('ES256')
   const publicKey = { ...await exportJWK(pair.publicKey), kid: 'service-test', alg: 'ES256', use: 'sig' }
-  const clientId = demo ? 'com.ezacto.web.demo' : 'com.ezacto.web'
+  const clientId = 'com.ezacto.web'
   const origin = demo ? 'https://ezacto.io' : 'https://app.example.com'
   let overrides: Record<string, unknown> = {}
   let generation = 1, grantId = 'g'.repeat(32), failed = false
@@ -32,7 +32,7 @@ const setup = async (demo = false) => {
     ...(type === 'apple_grant' ? { purpose: cleanupRequest === undefined ? 'sign-in' : 'cleanup', nonce: 'n'.repeat(43), challenge_id: 'c'.repeat(43), ...(cleanupRequest === undefined ? {} : { request_id: cleanupRequest }) }
       : { status: 'revoked', request_id: requestId, revoked_at: Math.floor(fixed.valueOf() / 1000) }),
     ...overrides,
-  }).setProtectedHeader({ alg: 'ES256', typ: 'JWT', kid: 'service-test' }).setIssuer(issuer).setAudience(origin)
+  }).setProtectedHeader({ alg: 'ES256', typ: 'JWT', kid: 'service-test' }).setIssuer(issuer).setAudience(typeof overrides['aud'] === 'string' ? overrides['aud'] : origin)
     .setSubject('private-apple-subject').setJti('event_0001').setIssuedAt(Math.floor(fixed.valueOf() / 1000))
     .setExpirationTime(Math.floor(fixed.valueOf() / 1000) + 300).sign(pair.privateKey)
   const retrieve: typeof fetch = async (input, init = {}) => {
@@ -71,6 +71,18 @@ const setup = async (demo = false) => {
 }
 
 describe('Apple web lifecycle custody', () => {
+  it.each([false, true])('keeps site challenges and receipts separate under the shared audience: demo=%s', async demo => {
+    const h = await setup(demo)
+    const otherOrigin = demo ? 'https://app.example.com' : 'https://ezacto.io'
+    await expect(h.lifecycle.challenge({ servicesId: 'com.ezacto.web', instanceOrigin: otherOrigin,
+      redirectUri: otherOrigin + '/auth/apple/callback', demo, purpose: 'sign-in' })).rejects.toThrow()
+    expect(h.requests).toEqual([])
+    h.override({ aud: otherOrigin })
+    await expect(h.exchange()).rejects.toThrow()
+    expect(h.requests[0]?.body).toEqual({ site: demo ? 'demo' : 'team', purpose: 'sign-in' })
+    expect(h.db.prepare('SELECT count(*) AS n FROM apple_web_connections').get()).toEqual({ n: 0 })
+  })
+
   it('encrypts capability and subject before issuing an independent browser handle', async () => {
     const h = await setup(), grant = await h.exchange()
     const connection = await grant.bindUser(1, { knownFromFirstLink: true })
