@@ -64,18 +64,27 @@ export const cleanupClient = async (
   record: (timing: CleanupTiming) => void,
 ) => {
   const start = Date.now()
-  record({ stage: 'read_started', elapsedMs: 0 })
-  const current = await request.get(`/api/v1/clients/${id}`, { timeout: 10_000 })
-  record({ stage: 'read_completed', elapsedMs: Date.now() - start, status: current.status() })
-  if (!current.ok()) return { read: current.status(), deleted: 0 }
-  const body = await current.json() as { data: { name: string } }
-  if (body.data.name !== name) return { read: current.status(), deleted: 0 }
-  record({ stage: 'marker_verified', elapsedMs: Date.now() - start })
-  record({ stage: 'delete_started', elapsedMs: Date.now() - start })
-  const deleted = await request.delete(`/api/v1/clients/${id}`, {
-    timeout: 10_000,
-    headers: { origin: 'https://ezacto.io' },
-  })
-  record({ stage: 'delete_completed', elapsedMs: Date.now() - start, status: deleted.status() })
-  return { read: current.status(), deleted: deleted.status() }
+  let phase = 'client lookup'
+  try {
+    record({ stage: 'read_started', elapsedMs: 0 })
+    const current = await request.get(`/api/v1/clients/${id}`, { timeout: 10_000 })
+    record({ stage: 'read_completed', elapsedMs: Date.now() - start, status: current.status() })
+    if (!current.ok()) return { read: current.status(), deleted: 0 }
+    phase = 'client marker verification'
+    const body = await current.json() as { data: { name: string } }
+    if (body.data.name !== name) return { read: current.status(), deleted: 0 }
+    record({ stage: 'marker_verified', elapsedMs: Date.now() - start })
+    phase = 'client deletion'
+    record({ stage: 'delete_started', elapsedMs: Date.now() - start })
+    const deleted = await request.delete(`/api/v1/clients/${id}`, {
+      timeout: 10_000,
+      headers: { origin: 'https://ezacto.io' },
+    })
+    record({ stage: 'delete_completed', elapsedMs: Date.now() - start, status: deleted.status() })
+    return { read: current.status(), deleted: deleted.status() }
+  } catch {
+    // Playwright transport errors include a Call log with request headers.
+    // Keep only our own stage; the separate timing artifact carries statuses.
+    throw new Error(`Deployment test cleanup could not finish ${phase}.`)
+  }
 }

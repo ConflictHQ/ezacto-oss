@@ -58,4 +58,25 @@ describe('deployed acceptance diagnostics', () => {
     expect(remove).not.toHaveBeenCalled()
     expect(record.mock.calls.map(([event]) => event.stage)).toEqual(['read_started', 'read_completed'])
   })
+
+  it.each(['lookup', 'deletion'] as const)('redacts transport credentials when cleanup fails during %s', async (phase) => {
+    const secret = 'private-session-cookie-from-transport-call-log'
+    const transportError = new Error(`Request failed\nCall log:\n - cookie: ${secret}`)
+    const request = {
+      get: phase === 'lookup'
+        ? vi.fn().mockRejectedValue(transportError)
+        : vi.fn(async () => ({
+            ok: () => true,
+            status: () => 200,
+            json: async () => ({ data: { name: 'Deployment E2E unique-marker' } }),
+          })),
+      delete: vi.fn().mockRejectedValue(transportError),
+    } as unknown as APIRequestContext
+    const error: unknown = await cleanupClient(request, 123, 'Deployment E2E unique-marker', () => {})
+      .catch((failure: unknown) => failure)
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe(`Deployment test cleanup could not finish client ${phase}.`)
+    expect((error as Error).stack).not.toContain(secret)
+    expect((error as Error).cause).toBeUndefined()
+  })
 })
