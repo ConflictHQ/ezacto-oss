@@ -62,7 +62,7 @@
       "durationSeconds": 11.54
     },
     "dockerAcceptance": "passed actual first-run signup/SMTP/tracking and exclusive stopped-volume SQLite/attachment backup/restore",
-    "fullVerify": "Running; not yet accepted. Full verify must finish green before PR creation."
+    "fullVerify": "Initial unconstrained run deliberately interrupted after a shared-host overlap warning; not accepted. Its entire owned process group was confirmed drained. Replacement uses VITEST_MAX_WORKERS=1 with the same npm run verify scope and unchanged timeouts; not yet accepted."
   },
   "fixtureCorrections": [
     "Initial composition fixtures omitted required organizations.modules; corrected fixtures without changing schema checks.",
