@@ -1,0 +1,96 @@
+name: deploy app review instance
+
+# A single named test instance for mobile App Review, not a hosted service.
+# No branch previews, automatic deploys, arbitrary hosts or production bindings.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: deploy-app-review
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/verify.yml
+  deploy:
+    needs: verify
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: app-review
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      REVIEW_CURSOR_SIGNING_KEY: ${{ secrets.REVIEW_CURSOR_SIGNING_KEY }}
+      REVIEW_BOOTSTRAP_TOKEN: ${{ secrets.REVIEW_BOOTSTRAP_TOKEN }}
+      REVIEW_OWNER_PASSWORD: ${{ secrets.REVIEW_OWNER_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: npm ci
+      - run: npm run build
+      - name: provision isolated resources and render the existing prod template
+        run: node scripts/app-review-instance.mjs prepare
+      - name: verify existing review migration ledger before an upgrade
+        run: |
+          npx --no-install wrangler d1 execute ezacto-app-review --remote --env prod \
+            --config entries/worker/wrangler.jsonc --json \
+            --command "SELECT name FROM sqlite_master WHERE type='table' AND name='_ezacto_migrations'" \
+            > "$RUNNER_TEMP/review-tables.json"
+          if jq -e '.[0].results | length == 1' "$RUNNER_TEMP/review-tables.json" >/dev/null; then
+            npx --no-install wrangler d1 execute ezacto-app-review --remote --env prod \
+              --config entries/worker/wrangler.jsonc --json \
+              --command 'SELECT id, statements_sha256 FROM _ezacto_migrations ORDER BY id' \
+              > "$RUNNER_TEMP/review-ledger.json"
+            node packages/migrate/dist/cli.js preflight-migrations --upgrade \
+              --input "$RUNNER_TEMP/review-ledger.json"
+          else
+            jq -e '.[0].results | length == 0' "$RUNNER_TEMP/review-tables.json" >/dev/null
+          fi
+      - name: install private review secrets before serving the empty instance
+        working-directory: entries/worker
+        run: |
+          node --input-type=module -e '
+            import { reviewSecrets } from "../../scripts/app-review-instance.mjs";
+            process.stdout.write(JSON.stringify(reviewSecrets(process.env)));
+          ' | npx --no-install wrangler secret bulk --env prod
+      - name: deploy the reviewed source
+        working-directory: entries/worker
+        run: |
+          npx --no-install wrangler deploy --env prod \
+            --var "RELEASE:$GITHUB_SHA" \
+            --var 'OIDC_REDIRECT_ORIGIN:https://review.ezacto.io'
+      - name: accept deployed bindings and exact release
+        run: |
+          node scripts/app-review-instance.mjs deployed
+          for attempt in $(seq 1 30); do
+            if curl -fsS --max-time 10 https://review.ezacto.io/healthz \
+              | jq -e --arg release "$GITHUB_SHA" '.release == $release and .environment == "prod"' >/dev/null; then
+              exit 0
+            fi
+            sleep 3
+          done
+          echo '::error::Review host did not serve the expected release'
+          exit 1
+      - name: enroll and verify private owner
+        id: owner
+        run: node scripts/bootstrap-app-review.mjs
+      # Keep the first-run guard in place on failure. Removing it before owner
+      # enrollment is verified could expose a public account-claim window.
+      - name: remove temporary bootstrap endpoint authority after verified enrollment
+        if: steps.owner.outcome == 'success'
+        working-directory: entries/worker
+        run: npx --no-install wrangler secret delete EZACTO_BOOTSTRAP_TOKEN --env prod
+      - name: publish non-secret deployment evidence
+        run: |
+          {
+            echo 'App Review self-hosted instance: https://review.ezacto.io'
+            echo "Source: $GITHUB_SHA"
+            echo 'Private password and API-token authentication verified.'
+            echo 'Anonymous records access denied; session logout verified.'
+            echo 'Bootstrap endpoint authority removed.'
+            echo 'Business fixtures, receipt upload and deletion QA remain separate acceptance steps.'
+          } >> "$GITHUB_STEP_SUMMARY"

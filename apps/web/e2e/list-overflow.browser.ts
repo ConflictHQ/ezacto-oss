@@ -47,7 +47,7 @@ for (const path of listScreens) {
     await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
     await page.goto(path)
     await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-    await page.getByLabel('Password').fill(fixturePassword)
+    await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
     await page.getByRole('button', { name: 'Sign in', exact: true }).click()
     await page.waitForTimeout(1200)
     await page.setViewportSize({ width: 390, height: 844 })

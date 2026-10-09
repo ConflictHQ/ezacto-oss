@@ -24,7 +24,9 @@ describe('company settings', () => {
   // company page that never resolves it leaves every section behind a spinner.
   // Both admin endpoints the company page reads directly rather than through
   // the typed client. Keyed by path, so the sign-in section does not get handed
-  // the module payload and draw cards for methods that do not exist.
+  // the module payload and draw cards for methods that do not exist. A real
+  // Response: those reads go through the shell's fetch, which reads the answer's
+  // headers (issue 953).
   const stubModulesEndpoint = (): void => {
     vi.stubGlobal(
       'fetch',
@@ -33,12 +35,10 @@ describe('company settings', () => {
         const data = path.includes('/admin/sign-in-methods')
           ? [{ method: 'password', configured: true, enabled: true }]
           : [{ module: 'expenses', enabled: true }]
-        return {
-          ok: true,
+        return new Response(JSON.stringify({ data }), {
           status: 200,
-          json: async () => ({ data }),
-          text: async () => JSON.stringify({ data }),
-        }
+          headers: { 'content-type': 'application/json' },
+        })
       }),
     )
   }

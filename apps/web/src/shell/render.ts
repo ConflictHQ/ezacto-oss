@@ -1,5 +1,6 @@
 import { renderStaffPayments } from '../staff-payments/render.js'
-import { shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
+import { PASSWORD_MIN_CODE_POINTS, PASSWORD_MAX_CODE_POINTS } from '@ezacto/core'
+import { googleSignInIcon, shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
 import { iconMarkup, type IconName } from '../components/icons.js'
 import { INSTANCE_THEME_STYLESHEET_PATH } from '../instance-theme.js'
 import { defaultTheme, themeManifest } from '../theme.js'
@@ -429,7 +430,7 @@ const providerSignIn = (
   const links: string[] = []
   if (providers.includes('google')) {
     links.push(
-      `<a class="oidc-sign-in" data-oidc-provider="google" href="${safePath('/auth/oidc/google')}">Continue with Google</a>`,
+      `<a class="oidc-sign-in" data-oidc-provider="google" href="${safePath('/auth/oidc/google')}"><img src="${googleSignInIcon}" alt="" width="40" height="40">Continue with Google</a>`,
     )
   }
   if (providers.includes('github')) {
@@ -593,6 +594,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
             </label>
             <button class="primary-action" type="submit" data-sign-in-submit>Sign in</button>
             <p class="auth-result" data-sign-in-result role="status" aria-live="polite"></p>
+            <button class="sign-in-restart" type="button" data-password-forgot hidden>Forgot password?</button>
             ${demoCredentials(options.demoAccounts ?? [])}
           </div>
           ${passwordSignIn || (options.signInProviders ?? []).length > 0 ? '' : noSignInMethod(brand)}
@@ -610,6 +612,23 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <button class="sign-in-restart" type="button" data-two-factor-cancel>Start over</button>
           <p class="auth-result" data-two-factor-result role="status" aria-live="polite"></p>
         </form>
+        <form class="sign-in-form" data-password-request-form method="post" action="/auth/password/forgot" hidden>
+          <div class="auth-heading"><h2>Reset your password</h2><p>Enter the email address you use for this workspace.</p></div>
+          <label for="ez-password-request-email">Email<input id="ez-password-request-email" name="email" type="email" autocomplete="username" maxlength="254" required></label>
+          <button class="primary-action" type="submit">Send reset link</button>
+          <button class="sign-in-restart" type="button" data-password-recovery-back>Back to sign in</button>
+          <p class="auth-result" data-password-request-result role="status" aria-live="polite"></p>
+        </form>
+        <form class="sign-in-form" data-password-reset-form method="post" action="/auth/password/reset" hidden>
+          <div class="auth-heading"><h2>Choose your new password</h2><p>Use at least ${PASSWORD_MIN_CODE_POINTS} characters. After resetting, sign in again with your new password.</p></div>
+          <label for="ez-password-reset-password">New password<input id="ez-password-reset-password" name="password" type="password" autocomplete="new-password" maxlength="${PASSWORD_MAX_CODE_POINTS * 2}" required></label>
+          <label for="ez-password-reset-confirm">Confirm new password<input id="ez-password-reset-confirm" name="confirm" type="password" autocomplete="new-password" maxlength="${PASSWORD_MAX_CODE_POINTS * 2}" required></label>
+          <button class="primary-action" type="submit">Reset password</button>
+          <button class="sign-in-restart" type="button" data-password-recovery-restart>Request a new link</button>
+          <button class="sign-in-restart" type="button" data-password-recovery-back>Back to sign in</button>
+          <p class="auth-result" data-password-reset-result role="status" aria-live="polite"></p>
+        </form>
+        <p class="auth-result" data-password-recovery-notice role="status" aria-live="polite" hidden></p>
         <noscript>${renderEmptyState('JavaScript is required', `The ${escapeHtml(brand)} app uses JavaScript to establish and protect your session.`)}</noscript>
       </div>
       <p class="auth-build-stamp">${escapeHtml(options.environment)} · ${escapeHtml(shortRelease)}</p>
@@ -1165,6 +1184,14 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   </dialog>
   <footer class="build-stamp">${escapeHtml(options.environment)} · ${escapeHtml(shortRelease)}</footer>
   </div>
+  <!--
+    A write that failed once and is being sent again (issue 953). Outside the
+    signed-in shell, so a sign-in being retried shows it as well.
+  -->
+  <aside class="write-status" data-write-status role="status" aria-live="polite" hidden>
+    <span class="write-status-spinner" aria-hidden="true"></span>
+    <span data-write-status-message>Saving… retrying</span>
+  </aside>
 </body>
 </html>`
 }

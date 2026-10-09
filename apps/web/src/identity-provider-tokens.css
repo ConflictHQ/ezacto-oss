@@ -1,0 +1,5 @@
+/* Provider branding is fixed, independent of the workspace theme palette. */
+:root {
+  --ez-google-sign-in-background: #f2f2f2;
+  --ez-google-sign-in-foreground: #1f1f1f;
+}

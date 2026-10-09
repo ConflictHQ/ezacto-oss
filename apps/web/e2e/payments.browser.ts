@@ -134,7 +134,7 @@ test("[e2e:payments] schedules only after review and exposes the filtered paymen
   });
   await page.goto("/payments?month=2026-08");
   await page.locator("[data-sign-in-form]").getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill(password);
+  await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Payments", exact: true }),
@@ -255,7 +255,7 @@ test('[e2e:payments] reviews actual hours before confirming earnings and handing
   })
   await page.route('**/api/v1/payment-runs/preview',route=>{previews++;return route.fulfill({status:500})})
   await page.goto('/payments?month=2026-08')
-  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(email);await page.getByLabel('Password').fill(password)
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(email);await page.getByLabel('Password', { exact: true }).fill(password)
   await page.getByRole('button',{name:'Sign in',exact:true}).click()
   await page.getByRole('tab',{name:'Review actuals',exact:true}).click()
   await page.getByRole('button',{name:'Load actuals for work month'}).click()
