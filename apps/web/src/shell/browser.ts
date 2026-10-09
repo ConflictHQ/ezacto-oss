@@ -1,4 +1,5 @@
 import { createStaffPaymentsController } from '../staff-payments/browser.js'
+import { mountPasswordRecovery, takePasswordResetLink } from './password-recovery.js'
 import {
   EzactoApiError,
   type GeneralResource,
@@ -150,6 +151,8 @@ import {
   type ShellSnapshot,
   TimeEntryNoteValidationError,
 } from './model.js'
+import { shellPendingWrites, type PendingWrites } from './net.js'
+import { bindWriteStatus } from './write-status.js'
 
 type GridView = 'desktop' | 'phone'
 
@@ -1267,7 +1270,17 @@ const collectResources = async (
   return resources
 }
 
-export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Promise<void> => {
+export const mountShell = async (
+  api: ShellApi = createSameOriginShellApi(),
+  writes: PendingWrites = shellPendingWrites,
+): Promise<void> => {
+  const resetLink = takePasswordResetLink()
+  // Bind before sign-in so its retry status is visible (issue 953).
+  bindWriteStatus(
+    required<HTMLElement>('[data-write-status]'),
+    required<HTMLElement>('[data-write-status-message]'),
+    writes,
+  )
   const authGateway = required<HTMLElement>('[data-auth-gateway]')
   const authChecking = required<HTMLElement>('[data-auth-checking]')
   const sessionCheckOverlay = required<HTMLElement>('[data-session-check-overlay]')
@@ -1771,6 +1784,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
 
   const showSignedOutScreen = (): void => {
+    passwordRecovery?.clear()
     sessionCheckOverlay.hidden = true
     authenticatedShell.hidden = true
     authenticatedShell.inert = true
@@ -1788,6 +1802,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
 
   const showAuthenticatedShell = (): void => {
+    passwordRecovery?.clear()
     sessionCheckOverlay.hidden = true
     authGateway.hidden = true
     authGateway.dataset.state = 'authenticated'
@@ -6589,6 +6604,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       if (chosen !== 'comfortable' && chosen !== 'compact') return
       syncDensityChoice(density.set(chosen))
     })
+  }
+
+  const passwordRecovery = mountPasswordRecovery({ api,
+    enter: () => { pendingChallenge = null; transitionSignedOut() },
+    leave: message => transitionSignedOut(message),
+  })
+  if (resetLink) {
+    passwordRecovery.open(resetLink)
+    return
   }
 
   // A magic link answered by an enrolled user lands here with a challenge
