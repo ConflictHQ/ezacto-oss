@@ -1,14 +1,14 @@
 # Sign in with Apple: operator setup
 
-Apple sign-in has two distinct deployment paths. The OSS endpoint accepts the official native app's Apple identity token and an independently verified credential-custody receipt at `POST /auth/apple`. Browser Sign in with Apple is being developed separately; registering a Services ID alone does not enable a browser button on an arbitrary self-hosted instance.
+Apple sign-in has two distinct deployment paths. The OSS endpoint accepts the official native app's Apple identity token and an independently verified credential-custody receipt at `POST /auth/apple`. Browser Sign in with Apple is implemented for the two explicitly supported first-party sites under a separate controlled rollout. Registering a Services ID alone does not enable a browser button on an arbitrary self-hosted instance.
 
 ## What is available
 
 | Path | Current operator contract |
 | --- | --- |
 | Native app → OSS instance | Use the official app, configure `APPLE_CLIENT_ID=com.ezacto.app` and a canonical HTTPS `APP_BASE_URL`, then enable Apple in the instance's sign-in policy |
-| Browser sign-in on first-party websites | Separate rollout with a central credential service; not part of the current released setup described here |
-| Browser sign-in on an independent domain | Requires an integration supporting the operator's audience and domain; the pending first-party implementation does not accept arbitrary domains |
+| Browser sign-in on first-party websites | Fixed-site integration with shared `com.ezacto.web`, encrypted custody and explicit cleanup; follow the [first-party web runbook](APPLE-WEB-SIGN-IN.md) and its provider acceptance gates |
+| Browser sign-in on an independent domain | Requires an integration supporting the operator's audience and domain; the first-party implementation does not accept arbitrary domains |
 
 This server source supports native lifecycle protocol version 1. Match the mobile and deployed server releases before enabling Apple login: the app checks `GET /auth/apple/native-capabilities` for `{available:true,lifecycle_version:1}` before opening the native prompt. It then obtains a signed, instance-bound custody receipt alongside the Apple identity token. Older identity-token-only clients or servers do not satisfy this contract; deploying the central service alone does not upgrade an older instance. See [credential lifecycle and recovery](apple-credential-lifecycle.md). Browser integration remains a separate release and deployment boundary.
 
@@ -25,12 +25,12 @@ The OSS server independently verifies Apple's signed identity token and the fixe
 
 ## Preparing for a supported browser deployment
 
-Follow these steps only alongside the browser integration's release-specific operator runbook:
+For the two supported first-party sites, follow the [web deployment and acceptance runbook](APPLE-WEB-SIGN-IN.md). It specifies the exact domains and callbacks, custody settings and cleanup workflow; source availability does not mean either site's flag is enabled. Independent operators need their own Apple Developer configuration and a separately supported integration. The following portal steps alone do not extend the fixed first-party service:
 
 1. Enable Sign in with Apple on a primary App ID in the Apple Developer account.
 2. Create a Services ID for the web service, associate it with the primary App ID, and register the exact website domains and HTTPS return URLs required by that integration. An app bundle identifier and a Services ID serve different audiences.
 3. Create the Sign in with Apple key that the server's authorization-code exchange needs. Keep the `.p8` key, key ID and team configuration in the designated credential service or secret store. Never put the private key in a frontend bundle.
-4. Configure the approved server integration, then verify callback state, account mapping, cancellation and account/grant cleanup before enabling its login button. Test native/web identity correspondence with controlled accounts; matching email addresses are not proof of the same provider subject.
+4. Configure the approved server integration, then use its controlled acceptance procedure to verify callback state, account mapping, cancellation and account/grant cleanup before retaining general sign-in enablement. Test native/web identity correspondence with controlled accounts; matching email addresses are not proof of the same provider subject.
 
 Apple documents the [Services ID/domain setup](https://developer.apple.com/help/account/capabilities/configure-sign-in-with-apple-for-the-web) and [environment and key requirements](https://developer.apple.com/documentation/signinwithapple/configuring-your-environment-for-sign-in-with-apple). The first-party browser rollout uses a central service with a fixed deployment policy; these Apple portal steps do not make that service available to independent installations.
 
