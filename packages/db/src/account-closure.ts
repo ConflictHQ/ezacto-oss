@@ -55,6 +55,8 @@ const closureTables = new Set([
   'organization_owner',
   'account_deletion_requests',
   'account_deletion_request_updates',
+  // Capturing cleanup obligations must not invalidate the closure preview.
+  'apple_web_cleanup_requests',
   'account_closures',
   'closed_account_sign_in_guards',
 ])
