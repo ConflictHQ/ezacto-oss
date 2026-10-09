@@ -590,7 +590,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
             <p>Use your account to continue to your workspace.</p>
           </div>
           ${providerSignIn(options.signInProviders ?? [], passwordSignIn)}
-          ${(options.signInProviders ?? []).includes('apple') ? `<p class="apple-authorization-note">${options.demo === true ? 'Apple opens the shared sample workspace. It does not create a workspace account or link your identity to sample data. ' : ''}The Ezacto Apple sign-in service securely retains your Apple authorization. Signing out does not revoke it. <a href="/auth/apple/disconnect">Disconnect Apple</a> to withdraw authorization; this may also affect the iPhone app and other Ezacto sites.</p>` : ''}
+          ${(options.signInProviders ?? []).includes('apple') ? `<p class="apple-authorization-note">${options.demo === true ? 'Apple opens the shared sample workspace. It does not create a workspace account or link your identity to sample data. ' : ''}The Ezacto Apple sign-in service securely retains your Apple authorization. Signing out does not revoke it. <a href="/auth/apple/disconnect">Disconnect Apple</a> to withdraw authorization; this may also affect the iPhone app and other Ezacto sites. <a href="https://ezacto.com/app-privacy.html#apple-web">Apple sign-in privacy details</a>.</p>` : ''}
           <p class="auth-result" data-apple-sign-in-result role="status" aria-live="polite"></p>
           <div class="password-entry" data-password-entry${passwordSignIn ? '' : ' hidden'}>
             <label for="ez-sign-in-email">Email
@@ -1222,7 +1222,7 @@ export const renderAppleDisconnect = (options: {
 <link rel="stylesheet" href="/assets/ezacto.css"></head>
 <body><main class="apple-disconnect"><div class="auth-card">
 <div class="auth-heading"><p class="eyebrow">Apple authorization</p><h1>Disconnect Apple</h1></div>
-<p>Ezacto securely retains your Apple authorization in its sign-in service. Signing out of a workspace does not revoke it.</p>
+<p>Ezacto securely retains your Apple authorization in its sign-in service. Signing out of a workspace does not revoke it. <a href="https://ezacto.com/app-privacy.html#apple-web">Apple sign-in privacy details</a>.</p>
 <p>Disconnecting withdraws that authorization from Apple. It may also affect Sign in with Apple in the Ezacto iPhone app and other Ezacto sites linked to the same Apple app. Your workspace and its records are not deleted.</p>
 ${options.unavailable ? '<p class="auth-result" role="alert">Apple authorization could not be checked or disconnected. No successful disconnection has been confirmed. Please try again.</p>' : ''}
 ${options.disconnected === true ? '<p role="status">Your Apple authorization has been disconnected. Your workspace records have not been deleted.</p>' : options.connected ? `<form class="sign-in-form" method="post" action="/auth/apple/disconnect">
