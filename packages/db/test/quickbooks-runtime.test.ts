@@ -904,6 +904,7 @@ describe("sync from the invoice page (issue 819)", () => {
       paidOn: "2026-09-20",
       realmId: "realm-a",
       quickBooksPaymentId: "qb-pay-from-qbo",
+      quickBooksInvoiceId: "qb-inv-42",
     });
     const recorded = sqlite!
       .prepare(`SELECT id, created_at FROM invoice_payments WHERE invoice_id = 42`)
@@ -1444,7 +1445,7 @@ describe("our own receipts coming back from QuickBooks", () => {
       await announce(built);
 
       expect(receipts()).toEqual([
-        { id: expect.any(Number), provider: "quickbooks", provider_transaction_id: "qb-pay-9", amount_cents: 100_000 },
+        { id: expect.any(Number), provider: "quickbooks", provider_transaction_id: "qb-pay-9:qb-inv-8", amount_cents: 100_000 },
       ]);
       expect(owed()).toEqual({ due_amount_cents: 150_000, state: "open" });
       expect(skippedReasons()).toEqual([null]);
@@ -1501,7 +1502,7 @@ describe("our own receipts coming back from QuickBooks", () => {
       maximumCents: 0,
     });
     expect(receipts()).toEqual([
-      { id: expect.any(Number), provider: "quickbooks", provider_transaction_id: "qb-pay-9", amount_cents: 250_000 },
+      { id: expect.any(Number), provider: "quickbooks", provider_transaction_id: "qb-pay-9:qb-inv-8", amount_cents: 250_000 },
     ]);
     expect(owed()).toEqual({ due_amount_cents: 0, state: "paid" });
   });

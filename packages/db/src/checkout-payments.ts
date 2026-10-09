@@ -41,6 +41,15 @@ export interface CheckoutPaymentInput {
   accountDisplayName: string
   /** The provider's own id for the payment. The idempotency key, throughout. */
   providerTransactionId: string
+  /**
+   * The provider's own id for the invoice this share of the payment settled,
+   * for providers where one payment settles several invoices at once (BILL,
+   * QuickBooks). The receipt is then keyed on the payment and this together:
+   * keyed on the payment alone, the first invoice's receipt claimed the id and
+   * every other invoice the payment covered was answered `already_recorded`
+   * and left open -- one Kestrel Environmental payment for 1299 and 1302 closed only 1299.
+   */
+  share?: string
   amountCents: number
   /** A plain date, where the provider gave one. */
   paidOn: string | null
@@ -140,15 +149,23 @@ const recordCheckoutPaymentOnce = async (
   })()
   if (accountId === undefined) return 'invoice_not_payable'
 
+  const transactionId =
+    input.share === undefined
+      ? input.providerTransactionId
+      : `${input.providerTransactionId}:${input.share}`
+  // A share recorded before receipts were keyed per share carries the bare
+  // payment id; on this same invoice, it is this share.
   const already = await database.all<{ id: number }>(sql`
     SELECT id FROM invoice_payments
     WHERE provider_account_id = ${accountId}
-      AND provider_transaction_id = ${input.providerTransactionId}`)
+      AND (provider_transaction_id = ${transactionId}
+        OR (invoice_id = ${input.invoiceId}
+          AND provider_transaction_id = ${input.providerTransactionId}))`)
   if (already.length > 0) return 'already_recorded'
 
   // Derived from the provider's payment id so a second attempt is the same
   // command rather than a new one.
-  const commandId = `${input.provider}-payment-${input.providerTransactionId}`
+  const commandId = `${input.provider}-payment-${transactionId}`
   try {
     await recordInvoicePayment(database, {
       invoiceId: input.invoiceId,
@@ -169,7 +186,7 @@ const recordCheckoutPaymentOnce = async (
         paidDate: input.paidOn,
         provider: input.provider,
         providerAccountId: accountId,
-        providerTransactionId: input.providerTransactionId,
+        providerTransactionId: transactionId,
       },
     })
     return 'recorded'
@@ -179,7 +196,7 @@ const recordCheckoutPaymentOnce = async (
     const settled = await database.all<{ id: number }>(sql`
       SELECT id FROM invoice_payments
       WHERE provider_account_id = ${accountId}
-        AND provider_transaction_id = ${input.providerTransactionId}`)
+        AND provider_transaction_id = ${transactionId}`)
     if (settled.length > 0) return 'already_recorded'
     // The command refuses a payment larger than the balance it would land on,
     // decided against the same version it writes at. A provider's report of
