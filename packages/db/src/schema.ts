@@ -3914,7 +3914,7 @@ export const accountDeletionStatusLimits = sqliteTable('account_deletion_status_
 export const appleNativeGrants = sqliteTable('apple_native_grants', {
   subjectHash: text('subject_hash').primaryKey(), userId: integer('user_id').notNull().references(() => users.id, {onDelete:'restrict'}),
   origin: text('origin').notNull(), grantId: text('grant_id').notNull(), generation: integer('generation').notNull(),
-  bindingJti: text('binding_jti').notNull().unique(), updatedAt: text('updated_at').notNull(),
+  bindingJti: text('binding_jti').notNull().unique(), updatedAt: text('updated_at').notNull(), knownFromFirstLink:integer('known_from_first_link',{mode:'boolean'}).notNull().default(false),
 })
 export const appleDeletionSubjects = sqliteTable('apple_deletion_subjects', {
   requestId: text('request_id').notNull().references(() => accountDeletionRequests.id, {onDelete:'restrict'}), subjectHash: text('subject_hash').notNull(),
@@ -3931,3 +3931,8 @@ export const appleRevocationEvents = sqliteTable('apple_revocation_events', {
 export const appleLifecycleLimits = sqliteTable('apple_lifecycle_limits', {
   windowMinute: integer('window_minute').primaryKey(), attempts: integer('attempts').notNull(),
 })
+
+export const appleIdentityChannels = sqliteTable('apple_identity_channels', {
+  subjectHash:text('subject_hash').notNull(),userId:integer('user_id').notNull().references(()=>users.id,{onDelete:'restrict'}),
+  channel:text('channel',{enum:['native','web']}).notNull(),knownFromFirstLink:integer('known_from_first_link',{mode:'boolean'}).notNull(),
+},table=>[primaryKey({columns:[table.subjectHash,table.userId,table.channel]})])

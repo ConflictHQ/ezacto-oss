@@ -318,7 +318,9 @@ const routeHarness = (
   const injectVerifier = options.injectVerifier ?? true
   const lifecycleStore={begin:vi.fn(async()=>undefined),status:vi.fn(async()=> 'pending' as const),recordSignIn:vi.fn(async()=>true),rebind:vi.fn(async()=>true),acceptRevocation:vi.fn(async()=>true),allowProof:vi.fn(async()=>true)}
   const lifecycleVerifier={verify:vi.fn(async()=>({type:'apple_grant' as const,purpose:'sign-in' as const,subject,origin:'https://ezacto.io',grantId:'grant-one',generation:12,eventId:'binding-one',nonce:'native-nonce',challengeId:'challenge-one'}))}
+  const reportError=vi.fn()
   const app = createApiApp({
+    reportError,
     installApp(app) {
       installAppleRoutes(app, {
         identities,
@@ -329,7 +331,7 @@ const routeHarness = (
       })
     },
   })
-  return { app, identities, sessions, verifier, lifecycleStore, lifecycleVerifier }
+  return { app, identities, sessions, verifier, lifecycleStore, lifecycleVerifier, reportError }
 }
 
 const post = (
@@ -344,6 +346,30 @@ const post = (
   })
 
 describe('Apple native sign-in route', () => {
+  it.each(['allowProof','recordSignIn'] as const)('[security] redacts native persistence failure in %s from responses, console and reporter',async(method)=>{
+    const {app,lifecycleStore,reportError,sessions}=routeHarness()
+    lifecycleStore[method].mockRejectedValue(new Error('secret-apple-subject SQL-bind-private-token'))
+    const logger=vi.spyOn(console,'error').mockImplementation(()=>undefined)
+    try {
+      const result=await post(app,{identityToken:'signed.apple.token'})
+      expect(result.status).toBe(503)
+      expect(await result.text()).not.toMatch(/secret-apple-subject|private-token/)
+      expect(logger).toHaveBeenCalledOnce()
+      expect(reportError).toHaveBeenCalledOnce()
+      for(const reported of [logger.mock.calls[0]![1],reportError.mock.calls[0]![0]]) {
+        expect(reported).toBeInstanceOf(Error)
+        expect(String(reported)).not.toMatch(/secret-apple-subject|private-token/)
+        expect((reported as Error).cause).toBeUndefined()
+      }
+      expect(sessions.issue).not.toHaveBeenCalled()
+    } finally {logger.mockRestore()}
+  })
+  it.each(['subject','verified_email','created'] as const)('[security] derives first-link provenance from resolver result %s',async(matchedBy)=>{
+    const {app,identities,lifecycleStore}=routeHarness()
+    identities.resolveProvider.mockResolvedValue({...activeIdentity,matchedBy})
+    expect((await post(app,{identityToken:'signed.apple.token'})).status).toBe(200)
+    expect(lifecycleStore.recordSignIn).toHaveBeenCalledWith(expect.objectContaining({knownFromFirstLink:matchedBy!=='subject'}))
+  })
   it('[security] advertises positive lifecycle support and rejects every unbound new login, including existing users',async()=>{
     const {app,identities,sessions,lifecycleStore}=routeHarness()
     expect(await (await app.request('https://ezacto.io/auth/apple/native-capabilities')).json()).toEqual({available:true,lifecycle_version:1})

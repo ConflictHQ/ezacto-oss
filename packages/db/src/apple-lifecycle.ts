@@ -35,6 +35,13 @@ export function createAppleLifecycleRepository(database: Database): AppleLifecyc
       closedAccountProviderKey('apple', subject),
     )
   }
+  const provenWebOnly = async (requestId: string, digest: string) =>
+    (
+      await database.all(sql`SELECT 1 FROM apple_identity_channels web JOIN account_deletion_requests request ON request.user_id=web.user_id
+      WHERE request.id=${requestId} AND web.subject_hash=${digest} AND web.channel='web' AND web.known_from_first_link=1
+        AND NOT EXISTS(SELECT 1 FROM apple_identity_channels native WHERE native.subject_hash=web.subject_hash AND native.user_id=web.user_id AND native.channel='native')
+        AND NOT EXISTS(SELECT 1 FROM apple_native_grants WHERE subject_hash=web.subject_hash AND user_id=web.user_id)`)
+    ).length === 1
   const captureCurrent = async (requestId: string) => {
     const identities = await database.all<{
       provider_subject: string
@@ -43,6 +50,7 @@ export function createAppleLifecycleRepository(database: Database): AppleLifecyc
       WHERE request.id=${requestId} AND request.status<>'completed' AND identity.provider='apple'`)
     for (const identity of identities) {
       const digest = await subjectHash(identity.provider_subject)
+      if (await provenWebOnly(requestId, digest)) continue
       await database.run(sql`INSERT INTO apple_deletion_subjects(request_id,subject_hash,origin,grant_id,generation,updated_at)
         SELECT request.id,${digest},grant_record.origin,grant_record.grant_id,grant_record.generation,request.updated_at
         FROM account_deletion_requests request LEFT JOIN apple_native_grants grant_record ON grant_record.subject_hash=${digest}
@@ -69,8 +77,8 @@ export function createAppleLifecycleRepository(database: Database): AppleLifecyc
       const digest = await subjectHash(input.subject)
       try {
         const rows =
-          await database.all(sql`INSERT INTO apple_native_grants(subject_hash,user_id,origin,grant_id,generation,binding_jti,updated_at)
-          SELECT ${digest},${input.userId},${input.origin},${input.grantId},${input.generation},${input.eventId},${input.now}
+          await database.all(sql`INSERT INTO apple_native_grants(subject_hash,user_id,origin,grant_id,generation,binding_jti,updated_at,known_from_first_link)
+          SELECT ${digest},${input.userId},${input.origin},${input.grantId},${input.generation},${input.eventId},${input.now},${input.knownFromFirstLink===true?1:0}
           WHERE EXISTS(SELECT 1 FROM users WHERE id=${input.userId} AND is_active=1)
             AND EXISTS(SELECT 1 FROM user_identities WHERE user_id=${input.userId} AND provider='apple' AND provider_subject=${input.subject})
             AND NOT EXISTS(SELECT 1 FROM account_closures WHERE user_id=${input.userId})
@@ -133,6 +141,8 @@ export function createAppleLifecycleRepository(database: Database): AppleLifecyc
       return matching()
     },
     async status(requestId) {
+      if ((await database.all(sql`SELECT 1 FROM apple_identity_channels channel JOIN account_deletion_requests request ON request.user_id=channel.user_id
+        WHERE request.id=${requestId} AND channel.known_from_first_link=0 LIMIT 1`)).length) return 'manual_required'
       // Status is read-only. Older requests without a captured obligation stay
       // conservative until an explicit request/closure capture occurs.
       const current = await database.all<{
@@ -142,6 +152,7 @@ export function createAppleLifecycleRepository(database: Database): AppleLifecyc
         WHERE request.id=${requestId} AND request.status<>'completed' AND identity.provider='apple'`)
       for (const identity of current) {
         const digest = await subjectHash(identity.provider_subject)
+        if (await provenWebOnly(requestId, digest)) continue
         if (
           !(
             await database.all(
