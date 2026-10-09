@@ -89,7 +89,9 @@ request's recovery context. These are engineering recovery windows, not legal
 retention periods. The instance's separate deletion-status capability has its
 own [expiry rules](account-closure-data-inventory.md#following-a-request-after-sign-in-access-closes).
 
-Web Apple sign-in uses separate Services IDs and encrypted server-held custody.
+Web Apple sign-in uses the single `com.ezacto.web` Services ID, separate from the
+native `com.ezacto.app` audience, with distinct site origins and encrypted
+server-held custody.
 Its adapter must capture obligations before closure, perform external cleanup
 only after valid authorization, and retry without losing undelivered evidence.
 Administrators can use the closure review’s “Retry server-managed Apple cleanup”
