@@ -22,7 +22,7 @@ export const appleLifecycleMigration = [
     request_id TEXT NOT NULL REFERENCES account_deletion_requests(id) ON DELETE RESTRICT,
     subject_hash TEXT NOT NULL CHECK(length(subject_hash)=64), origin TEXT, grant_id TEXT, generation INTEGER,
     updated_at TEXT NOT NULL, PRIMARY KEY(request_id,subject_hash),
-    CHECK((origin IS NULL AND grant_id IS NULL AND generation IS NULL) OR (origin IS NOT NULL AND grant_id IS NOT NULL AND generation>0))
+    CHECK((origin IS NULL AND grant_id IS NULL AND generation IS NULL) OR (origin IS NOT NULL AND grant_id IS NOT NULL AND generation IS NOT NULL AND generation>0))
   ) STRICT`,
   `CREATE TABLE apple_deletion_unknown (
     request_id TEXT PRIMARY KEY REFERENCES account_deletion_requests(id) ON DELETE RESTRICT
