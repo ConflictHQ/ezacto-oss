@@ -48,7 +48,10 @@ export const appleLifecycleMigration = [
   ...['INSERT', 'UPDATE'].map(
     (operation) =>
       `CREATE TRIGGER apple_native_grants_request_${operation.toLowerCase()} AFTER ${operation} ON apple_native_grants BEGIN
-        INSERT INTO apple_identity_channels(subject_hash,user_id,channel,known_from_first_link) VALUES(NEW.subject_hash,NEW.user_id,'native',NEW.known_from_first_link) ON CONFLICT DO NOTHING;
+        INSERT INTO apple_identity_channels(subject_hash,user_id,channel,known_from_first_link) VALUES(NEW.subject_hash,NEW.user_id,'native',CASE
+          WHEN NOT EXISTS(SELECT 1 FROM apple_identity_channels prior WHERE prior.subject_hash=NEW.subject_hash AND prior.user_id=NEW.user_id AND prior.known_from_first_link=0)
+            AND (NEW.known_from_first_link=1 OR EXISTS(SELECT 1 FROM apple_identity_channels prior WHERE prior.subject_hash=NEW.subject_hash AND prior.user_id=NEW.user_id AND prior.known_from_first_link=1))
+          THEN 1 ELSE 0 END) ON CONFLICT DO NOTHING;
         ${syncRequest} END`,
   ),
   `CREATE TRIGGER apple_request_capture AFTER INSERT ON account_deletion_requests BEGIN
