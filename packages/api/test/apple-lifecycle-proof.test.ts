@@ -111,6 +111,40 @@ describe("fixed-trust Apple lifecycle proof", () => {
       appleInstanceOrigin("https://user:password@time.example.test"),
     ).toBeNull();
   });
+  it("treats invalid, oversized or private key responses as service outages", async () => {
+    const { sign } = await signing();
+    const receipt = await sign();
+    for (const response of [
+      new Response("not json"),
+      new Response("x".repeat(32769)),
+      Response.json({ keys: [] }),
+      Response.json({
+        keys: [
+          {
+            kty: "EC",
+            crv: "P-256",
+            kid: "fixture-key",
+            alg: "ES256",
+            use: "sig",
+            x: "x",
+            y: "y",
+            d: "private",
+          },
+        ],
+      }),
+    ]) {
+      const verifier = createAppleLifecycleVerifier({
+        now: () => now,
+        fetch: async (_url, init) => {
+          expect(init?.redirect).toBe("error");
+          return response;
+        },
+      });
+      await expect(verifier.verify(receipt, origin)).rejects.toBeInstanceOf(
+        AppleProofUnavailable,
+      );
+    }
+  });
   it("rejects untrusted signatures and algorithms while distinguishing fixed-key service outage", async () => {
     const { verifier, sign } = await signing();
     const other = await generateKeyPair("ES256");
@@ -145,4 +179,3 @@ describe("fixed-trust Apple lifecycle proof", () => {
     );
   });
 });
-

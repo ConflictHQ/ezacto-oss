@@ -33,7 +33,10 @@ const opaque = (value: unknown, max = 500): value is string =>
   typeof value === "string" &&
   value.length > 0 &&
   value.length <= max &&
-  Array.from(value).every(character => character.charCodeAt(0) > 32 && character.charCodeAt(0) !== 127);
+  Array.from(value).every(
+    (character) =>
+      character.charCodeAt(0) > 32 && character.charCodeAt(0) !== 127,
+  );
 const positive = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 
@@ -72,6 +75,34 @@ export function createAppleLifecycleKeySet(
         for (const chunk of chunks) {
           bytes.set(chunk, offset);
           offset += chunk.length;
+        }
+        const document: unknown = JSON.parse(new TextDecoder().decode(bytes));
+        if (
+          typeof document !== "object" ||
+          document === null ||
+          !("keys" in document) ||
+          !Array.isArray(document.keys) ||
+          document.keys.length < 1 ||
+          document.keys.length > 5
+        )
+          throw new Error("Invalid published key set");
+        const identifiers = new Set<string>();
+        for (const key of document.keys) {
+          if (
+            typeof key !== "object" ||
+            key === null ||
+            key.kty !== "EC" ||
+            key.crv !== "P-256" ||
+            key.alg !== "ES256" ||
+            key.use !== "sig" ||
+            !opaque(key.kid, 200) ||
+            !opaque(key.x, 200) ||
+            !opaque(key.y, 200) ||
+            "d" in key ||
+            identifiers.has(key.kid)
+          )
+            throw new Error("Invalid published verification key");
+          identifiers.add(key.kid);
         }
         return new Response(bytes, {
           status: 200,
