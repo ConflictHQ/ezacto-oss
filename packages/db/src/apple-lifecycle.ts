@@ -77,8 +77,8 @@ export function createAppleLifecycleRepository(database: Database): AppleLifecyc
       const digest = await subjectHash(input.subject)
       try {
         const rows =
-          await database.all(sql`INSERT INTO apple_native_grants(subject_hash,user_id,origin,grant_id,generation,binding_jti,updated_at)
-          SELECT ${digest},${input.userId},${input.origin},${input.grantId},${input.generation},${input.eventId},${input.now}
+          await database.all(sql`INSERT INTO apple_native_grants(subject_hash,user_id,origin,grant_id,generation,binding_jti,updated_at,known_from_first_link)
+          SELECT ${digest},${input.userId},${input.origin},${input.grantId},${input.generation},${input.eventId},${input.now},${input.knownFromFirstLink===true?1:0}
           WHERE EXISTS(SELECT 1 FROM users WHERE id=${input.userId} AND is_active=1)
             AND EXISTS(SELECT 1 FROM user_identities WHERE user_id=${input.userId} AND provider='apple' AND provider_subject=${input.subject})
             AND NOT EXISTS(SELECT 1 FROM account_closures WHERE user_id=${input.userId})
@@ -141,6 +141,8 @@ export function createAppleLifecycleRepository(database: Database): AppleLifecyc
       return matching()
     },
     async status(requestId) {
+      if ((await database.all(sql`SELECT 1 FROM apple_identity_channels channel JOIN account_deletion_requests request ON request.user_id=channel.user_id
+        WHERE request.id=${requestId} AND channel.known_from_first_link=0 LIMIT 1`)).length) return 'manual_required'
       // Status is read-only. Older requests without a captured obligation stay
       // conservative until an explicit request/closure capture occurs.
       const current = await database.all<{
