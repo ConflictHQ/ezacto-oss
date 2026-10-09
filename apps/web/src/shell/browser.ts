@@ -150,6 +150,8 @@ import {
   type ShellSnapshot,
   TimeEntryNoteValidationError,
 } from './model.js'
+import { shellPendingWrites, type PendingWrites } from './net.js'
+import { bindWriteStatus } from './write-status.js'
 
 type GridView = 'desktop' | 'phone'
 
@@ -1267,7 +1269,16 @@ const collectResources = async (
   return resources
 }
 
-export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Promise<void> => {
+export const mountShell = async (
+  api: ShellApi = createSameOriginShellApi(),
+  writes: PendingWrites = shellPendingWrites,
+): Promise<void> => {
+  // First, so a sign-in being retried shows the status as well (issue 953).
+  bindWriteStatus(
+    required<HTMLElement>('[data-write-status]'),
+    required<HTMLElement>('[data-write-status-message]'),
+    writes,
+  )
   const authGateway = required<HTMLElement>('[data-auth-gateway]')
   const authChecking = required<HTMLElement>('[data-auth-checking]')
   const sessionCheckOverlay = required<HTMLElement>('[data-session-check-overlay]')
