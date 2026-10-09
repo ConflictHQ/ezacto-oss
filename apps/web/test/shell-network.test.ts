@@ -88,6 +88,38 @@ const post = (body: BodyInit | null = '{}', headers: HeadersInit = {}): RequestI
 
 const dropped = (): TypeError => new TypeError('Failed to fetch')
 
+describe('password recovery is never automatically replayed', () => {
+  for (const operation of ['forgot', 'reset'] as const) {
+    it.each(['drop', 408, 429, 500, 503] as const)(
+      `[security] sends ${operation} once after %s even when keys are advertised`,
+      async (failure) => {
+        const first = failure === 'drop' ? dropped() : answer(failure, { ...advertised, 'retry-after': '0' })
+        const { fetch, sent, waits, pending } = harness([first, answer(200)], { honours: true })
+        const client = new EzactoClient({ baseUrl: origin, fetch })
+        const request = operation === 'forgot'
+          ? client.requestPasswordReset({ body: { email: 'owner@example.test' } })
+          : client.resetPassword({ body: { token: 'fixture-token', password: 'fixture-new-password' } })
+        await expect(request).rejects.toThrow()
+        expect(sent).toHaveLength(1)
+        expect(String(sent[0]!.input)).toBe(`${origin}/auth/password/${operation}`)
+        expect(waits).toEqual([])
+        expect(pending.unsent).toBe(0)
+      },
+    )
+  }
+
+  it('[security] also excludes a relative recovery URL with a query', async () => {
+    vi.stubGlobal('location', new URL(`${origin}/`))
+    try {
+      const { fetch, sent } = harness([answer(503, advertised), answer(200)], { honours: true })
+      expect((await fetch('/auth/password/reset?source=login', post())).status).toBe(503)
+      expect(sent).toHaveLength(1)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
 describe('the key every write carries', () => {
   it('[unit] makes one key per write and sends it on every attempt of that write', async () => {
     const { fetch, sent } = harness(

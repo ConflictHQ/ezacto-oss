@@ -202,6 +202,17 @@ const originOf = (address: string): string => {
   }
 }
 
+// Password recovery uses one-time credentials and can trigger mail. The API's
+// general idempotency advertisement does not promise replay for these routes.
+const isPasswordRecovery = (address: string): boolean => {
+  try {
+    const path = new URL(address, globalThis.location?.href).pathname
+    return path === '/auth/password/forgot' || path === '/auth/password/reset'
+  } catch {
+    return false
+  }
+}
+
 /**
  * A multipart body is encoded once, here, rather than by each attempt. Every
  * encoding picks a fresh boundary, so the bytes of a second attempt would not
@@ -231,6 +242,8 @@ const encodeOnce = async (
  * - A write is retried after any of those only where its origin honours keys;
  *   elsewhere only after 408, 429, or a 503 with `Retry-After`.
  * - The caller's abort stops it at once, mid-wait included.
+ * - Password reset requests and confirmations are sent once, regardless of
+ *   origin support: their one-time credentials and mail are outside that promise.
  */
 export const createRetryingFetch = (
   options: RetryingFetchOptions = {},
@@ -251,10 +264,12 @@ export const createRetryingFetch = (
     const method = (init?.method ?? request?.method ?? 'GET').toUpperCase()
     const write = writeMethods.has(method)
     const signal = init?.signal ?? request?.signal ?? undefined
-    const origin = originOf(request?.url ?? String(input))
+    const address = request?.url ?? String(input)
+    const origin = originOf(address)
     // A stream can be read once, so a body that is one -- including the body a
     // Request carries -- is sent once. Anything else can be sent again as it is.
     const replayable =
+      !(write && isPasswordRecovery(address)) &&
       !(init?.body instanceof ReadableStream) && (request === null || request.body === null)
 
     let attemptInit = init

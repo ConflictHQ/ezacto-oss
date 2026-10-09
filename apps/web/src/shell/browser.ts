@@ -1,4 +1,5 @@
 import { createStaffPaymentsController } from '../staff-payments/browser.js'
+import { mountPasswordRecovery, takePasswordResetLink } from './password-recovery.js'
 import {
   EzactoApiError,
   type GeneralResource,
@@ -1273,7 +1274,8 @@ export const mountShell = async (
   api: ShellApi = createSameOriginShellApi(),
   writes: PendingWrites = shellPendingWrites,
 ): Promise<void> => {
-  // First, so a sign-in being retried shows the status as well (issue 953).
+  const resetLink = takePasswordResetLink()
+  // Bind before sign-in so its retry status is visible (issue 953).
   bindWriteStatus(
     required<HTMLElement>('[data-write-status]'),
     required<HTMLElement>('[data-write-status-message]'),
@@ -1782,6 +1784,7 @@ export const mountShell = async (
   }
 
   const showSignedOutScreen = (): void => {
+    passwordRecovery?.clear()
     sessionCheckOverlay.hidden = true
     authenticatedShell.hidden = true
     authenticatedShell.inert = true
@@ -1799,6 +1802,7 @@ export const mountShell = async (
   }
 
   const showAuthenticatedShell = (): void => {
+    passwordRecovery?.clear()
     sessionCheckOverlay.hidden = true
     authGateway.hidden = true
     authGateway.dataset.state = 'authenticated'
@@ -6600,6 +6604,15 @@ export const mountShell = async (
       if (chosen !== 'comfortable' && chosen !== 'compact') return
       syncDensityChoice(density.set(chosen))
     })
+  }
+
+  const passwordRecovery = mountPasswordRecovery({ api,
+    enter: () => { pendingChallenge = null; transitionSignedOut() },
+    leave: message => transitionSignedOut(message),
+  })
+  if (resetLink) {
+    passwordRecovery.open(resetLink)
+    return
   }
 
   // A magic link answered by an enrolled user lands here with a challenge

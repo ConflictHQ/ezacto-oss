@@ -110,6 +110,8 @@ export interface ShellApi
     input: { readonly code: string; readonly challenge?: string },
     signal?: AbortSignal,
   ): Promise<void>
+  requestPasswordReset?(email: string, signal?: AbortSignal): Promise<void>
+  resetPassword?(input: { token: string; password: string }, signal?: AbortSignal): Promise<void>
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
   listProjects(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listClients?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
@@ -1105,6 +1107,12 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     })
+  },
+  requestPasswordReset: async (email, signal) => {
+    await client.requestPasswordReset({ body: { email }, ...withSignal(signal) })
+  },
+  resetPassword: async (input, signal) => {
+    await client.resetPassword({ body: input, ...withSignal(signal) })
   },
   logoutCurrentSession: async (signal) => {
     const current = (await client.listSessions(withSignal(signal))).data.find(

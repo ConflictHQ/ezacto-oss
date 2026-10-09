@@ -27,8 +27,13 @@ const authKind = (delivery: AuthDelivery): EmailTemplateKind =>
 const actionUrl = (delivery: AuthDelivery, appOrigin: string): string => {
   const action = delivery.kind === 'verify_email' ? 'verify-email' : 'password-reset'
   const url = new URL('/', appOrigin)
-  url.searchParams.set('auth', action)
-  url.searchParams.set('token', delivery.token)
+  if (delivery.kind === 'password_reset') {
+    // A fragment reaches the browser, not reverse-proxy/request logs.
+    url.hash = new URLSearchParams({ auth: action, token: delivery.token }).toString()
+  } else {
+    url.searchParams.set('auth', action)
+    url.searchParams.set('token', delivery.token)
+  }
   return url.toString()
 }
 
