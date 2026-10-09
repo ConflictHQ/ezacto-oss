@@ -35,6 +35,7 @@ import {
   installOutboxRoutes,
   installPasswordAuthRoutes,
   installSignInMethodRoutes,
+  installAccountRetentionRoutes,
   installTwoFactorChallengeRoutes,
   installReportRoutes,
   installProfileRoutes,
@@ -344,6 +345,13 @@ const documentedApp = () =>
         clientKey: () => "contract-fixture",
       });
       installTwoFactorRoutes(api, twoFactor);
+      installAccountRetentionRoutes(api, {
+        service: {
+          read: async () => null,
+          publish: async () => { throw new Error("Contract fixture does not publish policies"); },
+        },
+        clock: () => "2026-08-28T12:00:00.000Z",
+      });
       installSignInMethodRoutes(api, {
         service: {
           list: async () => [],
