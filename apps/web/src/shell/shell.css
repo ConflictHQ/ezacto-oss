@@ -4176,6 +4176,20 @@ dialog h2,
   font-weight: 600;
   text-decoration: none;
 }
+/* Provider colors stay fixed across instance themes (Google neutral treatment). */
+.oidc-sign-in[data-oidc-provider="google"] {
+  background: var(--ez-google-sign-in-background);
+  color: var(--ez-google-sign-in-foreground);
+  border-color: transparent;
+  padding: 0 12px 0 2px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.oidc-sign-in[data-oidc-provider="google"] img {
+  flex: 0 0 40px;
+  object-fit: contain;
+}
 .auth-divider,
 .auth-build-stamp {
   color: var(--ez-muted);

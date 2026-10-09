@@ -1,5 +1,5 @@
 import { renderStaffPayments } from '../staff-payments/render.js'
-import { shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
+import { googleSignInIcon, shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
 import { iconMarkup, type IconName } from '../components/icons.js'
 import { INSTANCE_THEME_STYLESHEET_PATH } from '../instance-theme.js'
 import { defaultTheme, themeManifest } from '../theme.js'
@@ -429,7 +429,7 @@ const providerSignIn = (
   const links: string[] = []
   if (providers.includes('google')) {
     links.push(
-      `<a class="oidc-sign-in" data-oidc-provider="google" href="${safePath('/auth/oidc/google')}">Continue with Google</a>`,
+      `<a class="oidc-sign-in" data-oidc-provider="google" href="${safePath('/auth/oidc/google')}"><img src="${googleSignInIcon}" alt="" width="40" height="40">Continue with Google</a>`,
     )
   }
   if (providers.includes('github')) {
