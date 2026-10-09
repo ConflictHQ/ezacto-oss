@@ -1,5 +1,6 @@
 import { renderStaffPayments } from '../staff-payments/render.js'
-import { shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
+import { PASSWORD_MIN_CODE_POINTS, PASSWORD_MAX_CODE_POINTS } from '@ezacto/core'
+import { googleSignInIcon, shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
 import { iconMarkup, type IconName } from '../components/icons.js'
 import { INSTANCE_THEME_STYLESHEET_PATH } from '../instance-theme.js'
 import { defaultTheme, themeManifest } from '../theme.js'
@@ -371,6 +372,26 @@ const directorySections: ReadonlySet<string> = new Set(['Projects', 'Tasks', 'Cl
 const foldedSections = ['Home', 'Tasks', 'Team'] as const
 
 /**
+ * One line under each destination in the Menu's cards, so the Menu reads as a
+ * map of the product rather than a second copy of the sidebar.
+ */
+const sectionHints: Readonly<
+  Record<(typeof sections)[number] | (typeof foldedSections)[number], string>
+> = {
+  Time: 'Your week, timers and entries',
+  Approvals: 'Timesheets waiting on you',
+  Expenses: 'Receipts and reimbursements',
+  Projects: 'Budgets, tasks and progress',
+  Clients: 'Contacts and client history',
+  Invoices: 'Drafts, sent and paid',
+  Payments: 'Staff and contractor payouts',
+  Reports: 'Hours, money and exports',
+  Home: 'Today at a glance',
+  Tasks: 'The task list projects draw on',
+  Team: 'People, roles and rates',
+}
+
+/**
  * Each section's mark (the 2026-10 reskin). A collapsed sidebar is read by
  * these alone, so every section has one; the label stays in the link, hidden
  * from sight but not from a screen reader, so the link's name never changes.
@@ -409,7 +430,7 @@ const providerSignIn = (
   const links: string[] = []
   if (providers.includes('google')) {
     links.push(
-      `<a class="oidc-sign-in" data-oidc-provider="google" href="${safePath('/auth/oidc/google')}">Continue with Google</a>`,
+      `<a class="oidc-sign-in" data-oidc-provider="google" href="${safePath('/auth/oidc/google')}"><img src="${googleSignInIcon}" alt="" width="40" height="40">Continue with Google</a>`,
     )
   }
   if (providers.includes('github')) {
@@ -510,7 +531,19 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const navLink = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
     `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Payments' ? ' data-staff-payments-nav hidden' : ''}${section === 'Expenses' ? ' data-expenses-nav' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${iconMarkup(sectionIcons[section])}<span class="nav-label">${section}</span></a>`
   const navigation = sections.map(navLink).join('')
-  const foldedNavigation = foldedSections.map(navLink).join('')
+  // The Menu's cards are their own component: the sidebar's links shrink to
+  // marks when it is collapsed, and the Menu must never inherit that. Same
+  // gates and same current-page mark as the links, so permissions and the
+  // command bar read them exactly as before.
+  const menuCard = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
+    navLink(section)
+      .replace('<a ', `<a class="menu-card" aria-describedby="menu-hint-${section.toLowerCase()}" `)
+      .replace(
+        `<span class="nav-label">${section}</span>`,
+        `<span class="menu-card-text"><span class="menu-card-title">${section}</span><span class="menu-card-hint" id="menu-hint-${section.toLowerCase()}" aria-hidden="true">${sectionHints[section]}</span></span>`,
+      )
+  const menuNavigation = sections.map(menuCard).join('')
+  const menuFoldedNavigation = foldedSections.map(menuCard).join('')
 
   return `<!doctype html>
 <html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="${colorScheme}"${instancePalette ? ' data-ez-palette="instance"' : ''} data-ez-nav="${navLayout}" data-ez-sidebar="${sidebar}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
@@ -561,6 +594,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
             </label>
             <button class="primary-action" type="submit" data-sign-in-submit>Sign in</button>
             <p class="auth-result" data-sign-in-result role="status" aria-live="polite"></p>
+            <button class="sign-in-restart" type="button" data-password-forgot hidden>Forgot password?</button>
             ${demoCredentials(options.demoAccounts ?? [])}
           </div>
           ${passwordSignIn || (options.signInProviders ?? []).length > 0 ? '' : noSignInMethod(brand)}
@@ -578,6 +612,23 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <button class="sign-in-restart" type="button" data-two-factor-cancel>Start over</button>
           <p class="auth-result" data-two-factor-result role="status" aria-live="polite"></p>
         </form>
+        <form class="sign-in-form" data-password-request-form method="post" action="/auth/password/forgot" hidden>
+          <div class="auth-heading"><h2>Reset your password</h2><p>Enter the email address you use for this workspace.</p></div>
+          <label for="ez-password-request-email">Email<input id="ez-password-request-email" name="email" type="email" autocomplete="username" maxlength="254" required></label>
+          <button class="primary-action" type="submit">Send reset link</button>
+          <button class="sign-in-restart" type="button" data-password-recovery-back>Back to sign in</button>
+          <p class="auth-result" data-password-request-result role="status" aria-live="polite"></p>
+        </form>
+        <form class="sign-in-form" data-password-reset-form method="post" action="/auth/password/reset" hidden>
+          <div class="auth-heading"><h2>Choose your new password</h2><p>Use at least ${PASSWORD_MIN_CODE_POINTS} characters. After resetting, sign in again with your new password.</p></div>
+          <label for="ez-password-reset-password">New password<input id="ez-password-reset-password" name="password" type="password" autocomplete="new-password" maxlength="${PASSWORD_MAX_CODE_POINTS * 2}" required></label>
+          <label for="ez-password-reset-confirm">Confirm new password<input id="ez-password-reset-confirm" name="confirm" type="password" autocomplete="new-password" maxlength="${PASSWORD_MAX_CODE_POINTS * 2}" required></label>
+          <button class="primary-action" type="submit">Reset password</button>
+          <button class="sign-in-restart" type="button" data-password-recovery-restart>Request a new link</button>
+          <button class="sign-in-restart" type="button" data-password-recovery-back>Back to sign in</button>
+          <p class="auth-result" data-password-reset-result role="status" aria-live="polite"></p>
+        </form>
+        <p class="auth-result" data-password-recovery-notice role="status" aria-live="polite" hidden></p>
         <noscript>${renderEmptyState('JavaScript is required', `The ${escapeHtml(brand)} app uses JavaScript to establish and protect your session.`)}</noscript>
       </div>
       <p class="auth-build-stamp">${escapeHtml(options.environment)} · ${escapeHtml(shortRelease)}</p>
@@ -626,8 +677,9 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
       <div class="account-identity" data-current-identity hidden>
         <svg class="identity-avatar" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8.5" r="3.25"/><path d="M5.75 19a6.25 6.25 0 0 1 12.5 0"/></svg>
         <span class="identity-text">
-          <span class="visually-hidden">Signed in as </span><span class="identity-name" data-current-profile>—</span>
-          <span class="identity-meta">User #<span data-current-user-id>—</span></span>
+          <span class="visually-hidden">Signed in as </span><span class="identity-name" data-current-name hidden></span>
+          <span class="identity-meta identity-role" data-current-profile>—</span>
+          <span class="visually-hidden">User <span data-current-user-id>—</span></span>
         </span>
         <a class="identity-settings" href="/settings/user" data-settings-link>${iconMarkup('sliders')}<span class="identity-action-label">Settings</span></a>
         <button type="button" class="identity-signout" data-logout>${iconMarkup('sign-out')}<span class="identity-action-label">Sign out</span></button>
@@ -1070,8 +1122,14 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   </dialog>
   <dialog class="menu-dialog" data-menu-dialog aria-labelledby="menu-title">
     <header><div><p class="eyebrow">Menu</p><h2 id="menu-title">Navigate</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
-    <nav aria-label="Mobile primary">${navigation}</nav>
-    <nav class="secondary-nav" data-secondary-nav aria-label="More">${foldedNavigation}</nav>
+    <section class="menu-group" aria-labelledby="menu-work-title">
+      <h3 class="menu-group-title" id="menu-work-title">Work</h3>
+      <nav class="menu-grid" aria-label="Mobile primary">${menuNavigation}</nav>
+    </section>
+    <section class="menu-group" aria-labelledby="menu-more-title">
+      <h3 class="menu-group-title" id="menu-more-title">Set up</h3>
+      <nav class="menu-grid secondary-nav" data-secondary-nav aria-label="More">${menuFoldedNavigation}</nav>
+    </section>
     <!--
       The layout switch, where the navigation is (the 2026-10 reskin). Settings
       carries the same pair beside the theme; both write one cookie.
@@ -1126,6 +1184,14 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   </dialog>
   <footer class="build-stamp">${escapeHtml(options.environment)} · ${escapeHtml(shortRelease)}</footer>
   </div>
+  <!--
+    A write that failed once and is being sent again (issue 953). Outside the
+    signed-in shell, so a sign-in being retried shows it as well.
+  -->
+  <aside class="write-status" data-write-status role="status" aria-live="polite" hidden>
+    <span class="write-status-spinner" aria-hidden="true"></span>
+    <span data-write-status-message>Saving… retrying</span>
+  </aside>
 </body>
 </html>`
 }

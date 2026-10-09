@@ -46,7 +46,7 @@ test('[e2e:client-360] draws every panel of the client page, none inside another
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/clients/1')
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
   // The name first. A page that never loaded its client has every panel absent

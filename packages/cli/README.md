@@ -59,6 +59,13 @@ runtime dependencies. Build before packing, and publish version 0.1.3 through th
 existing `npm-v0.1.3` release workflow after the fix is merged. Version 0.1.2
 cannot be repaired in place; pin 0.1.1 until the patch is published.
 
+Run `npm run test:package -w @conflict-hq/ezacto-cli` from the repository root
+after building the workspaces. It packs both release candidates, globally installs
+them into a temporary prefix outside the checkout, and exercises help, the bundled
+report inventory, and a SQLite backup through the installed `ez` command. This
+check runs in CI and before either package is published; it needs access to npm
+for public dependencies and cleans up its temporary installation afterward.
+
 ## Report permissions
 
 `ez report list` names the scope required by each report. `ez uninvoiced` and

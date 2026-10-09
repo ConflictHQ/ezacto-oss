@@ -1,4 +1,5 @@
 import { createStaffPaymentsController } from '../staff-payments/browser.js'
+import { mountPasswordRecovery, takePasswordResetLink } from './password-recovery.js'
 import {
   EzactoApiError,
   type GeneralResource,
@@ -150,6 +151,8 @@ import {
   type ShellSnapshot,
   TimeEntryNoteValidationError,
 } from './model.js'
+import { shellPendingWrites, type PendingWrites } from './net.js'
+import { bindWriteStatus } from './write-status.js'
 
 type GridView = 'desktop' | 'phone'
 
@@ -1267,7 +1270,17 @@ const collectResources = async (
   return resources
 }
 
-export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Promise<void> => {
+export const mountShell = async (
+  api: ShellApi = createSameOriginShellApi(),
+  writes: PendingWrites = shellPendingWrites,
+): Promise<void> => {
+  const resetLink = takePasswordResetLink()
+  // Bind before sign-in so its retry status is visible (issue 953).
+  bindWriteStatus(
+    required<HTMLElement>('[data-write-status]'),
+    required<HTMLElement>('[data-write-status-message]'),
+    writes,
+  )
   const authGateway = required<HTMLElement>('[data-auth-gateway]')
   const authChecking = required<HTMLElement>('[data-auth-checking]')
   const sessionCheckOverlay = required<HTMLElement>('[data-session-check-overlay]')
@@ -1771,6 +1784,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
 
   const showSignedOutScreen = (): void => {
+    passwordRecovery?.clear()
     sessionCheckOverlay.hidden = true
     authenticatedShell.hidden = true
     authenticatedShell.inert = true
@@ -1788,6 +1802,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
 
   const showAuthenticatedShell = (): void => {
+    passwordRecovery?.clear()
     sessionCheckOverlay.hidden = true
     authGateway.hidden = true
     authGateway.dataset.state = 'authenticated'
@@ -2033,6 +2048,26 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     signInEmail.focus()
   }
 
+  // The identity card leads with the person's name (it read "User #1"). The
+  // profile carries it; until it answers, or where a server sends none, the
+  // role stands in, and the address shows on hover.
+  const showIdentityName = (
+    profile: { first_name?: string; last_name?: string; email?: string | null } | null,
+  ): void => {
+    const nameElement = required<HTMLElement>('[data-current-name]')
+    const fullName = [profile?.first_name, profile?.last_name]
+      .filter((part): part is string => typeof part === 'string' && part.trim() !== '')
+      .join(' ')
+    const name = fullName !== '' ? fullName : (profile?.email ?? '')
+    nameElement.textContent = name
+    nameElement.hidden = name === ''
+    const card = nameElement.closest<HTMLElement>('[data-current-identity]')
+    if (card !== null) {
+      if (typeof profile?.email === 'string' && profile.email !== '') card.title = profile.email
+      else card.removeAttribute('title')
+    }
+  }
+
   const showAuthenticated = (identity: Whoami): AuthOperation => {
     const operation = beginAuthGeneration(identity.user_id)
     clearFormState()
@@ -2047,6 +2082,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     currentIdentityPanel.hidden = false
     required<HTMLElement>('[data-current-user-id]').textContent = String(identity.user_id)
     required<HTMLElement>('[data-current-profile]').textContent = profileLabel(identity.profile)
+    showIdentityName(null)
+    // After this returns, so the loader below is defined; the card shows the
+    // role until the profile answers.
+    queueMicrotask(() => loadIdentityName(operation))
     for (const link of document.querySelectorAll<HTMLElement>('[data-team-nav]')) {
       link.hidden = true
     }
@@ -2600,7 +2639,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const settingsStatus = document.querySelector<HTMLElement>('[data-settings-user-status]')
     if (facts === null || settingsStatus === null) return
     const rows: readonly (readonly [string, string])[] = [
-      ['Signed in as', `User #${identity.user_id}`],
+      // The name the identity card already resolved, or the id where none came.
+      [
+        'Signed in as',
+        document.querySelector<HTMLElement>('[data-current-name]')?.textContent?.trim() ||
+          `User #${identity.user_id}`,
+      ],
       ['Permission profile', profileLabel(identity.profile)],
       [
         'Sign-in method',
@@ -5689,6 +5733,18 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   // A person's own timezone. `PATCH /profile` has existed since the timer bug
   // was fixed but nothing in the shell ever called it, so the only way to set
   // one was for an administrator to edit that person on the team page.
+  // The card's name, read once per sign-in. A failure leaves the role showing;
+  // a session that has ended is the week's to report, not this read's.
+  const loadIdentityName = (operation: AuthOperation): void => {
+    if (api.getProfile === undefined) return
+    void api
+      .getProfile(operation.signal)
+      .then((profile) => {
+        if (isSessionCurrent(operation)) showIdentityName(profile)
+      })
+      .catch(() => undefined)
+  }
+
   const loadProfileTimezone = (): void => {
     const operation = sessionOperation()
     if (operation === null || api.getProfile === undefined) return
@@ -5696,6 +5752,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       .getProfile(operation.signal)
       .then((profile) => {
         if (!isSessionCurrent(operation)) return
+        showIdentityName(profile)
         if (document.activeElement === profileTimezone) return
         // 'UTC' is this column's "unset", not a choice: say so rather than
         // showing a zone the person never picked.
@@ -6547,6 +6604,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       if (chosen !== 'comfortable' && chosen !== 'compact') return
       syncDensityChoice(density.set(chosen))
     })
+  }
+
+  const passwordRecovery = mountPasswordRecovery({ api,
+    enter: () => { pendingChallenge = null; transitionSignedOut() },
+    leave: message => transitionSignedOut(message),
+  })
+  if (resetLink) {
+    passwordRecovery.open(resetLink)
+    return
   }
 
   // A magic link answered by an enrolled user lands here with a challenge

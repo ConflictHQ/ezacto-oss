@@ -93,6 +93,7 @@ import {
   setBillDelivery,
   createQuickBooksMirrorSource,
   createQuickBooksStore,
+  readUserIdentity,
   readUserTimezone,
   updateUserTimezone,
 } from '@ezacto/db'
@@ -682,6 +683,7 @@ export const createContainerRuntime = async (
       ),
       profile: {
         readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
+        readIdentity: async (userId) => await readUserIdentity(drizzle, userId),
         updateTimezone: async (userId, timezone, occurredAt) => {
           await updateUserTimezone(drizzle, userId, timezone, occurredAt)
         },
