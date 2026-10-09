@@ -2,6 +2,7 @@ import type {
   AccountClosurePreview,
   AccountClosureRecord,
   AccountDeletionRecord,
+  AppleCleanupStatus,
 } from "@ezacto/core";
 import { EzactoApiError } from "@conflict-hq/ezacto-client";
 import type { SessionPresenter } from "../session.js";
@@ -68,8 +69,63 @@ export function createAccountClosureController(
         `Access closed ${data.closure.closed_at}. Local credentials were erased. This request still requires review of retained records and external cleanup.`,
       );
       paragraph(
-        `Apple authorization: ${data.closure.apple_cleanup === "pending" ? "provider cleanup pending" : "no Apple identity was linked at closure"}.`,
+        `Apple authorization: ${{ pending: "provider cleanup pending", not_linked: "no Apple identity was linked", revoked: "provider invalidation confirmed; retained records still need review", manual_required: "historical or unsupported Apple authorization needs manual review" }[data.closure.apple_cleanup]}.`,
       );
+      if (
+        data.apple_cleanup_retry_available &&
+        !demo &&
+        ["pending", "manual_required"].includes(data.closure.apple_cleanup)
+      ) {
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.textContent = "Retry server-managed Apple cleanup";
+        retry.addEventListener("click", () => {
+          const active = session,
+            record = selected,
+            current = revision;
+          if (!active || !record || busy || active.signal.aborted) return;
+          busy = true;
+          retry.disabled = true;
+          result.textContent = "Retrying Apple cleanup…";
+          void request<{ data: { apple_cleanup: AppleCleanupStatus } }>(
+            active,
+            `/api/v1/admin/deletion-requests/${record.id}/apple-cleanup`,
+            {},
+          )
+            .then((response) =>
+              active.present(() => {
+                if (current !== revision) return;
+                render({
+                  ...data,
+                  closure: {
+                    ...data.closure!,
+                    apple_cleanup: response.data.apple_cleanup,
+                  },
+                });
+                result.textContent =
+                  response.data.apple_cleanup === "revoked"
+                    ? "Apple cleanup confirmed. Retained records still require review."
+                    : "Apple cleanup remains unresolved. Local account access stays closed.";
+              }),
+            )
+            .catch((error) =>
+              active.presentFailure(error, () => {
+                if (current === revision)
+                  result.textContent = apiErrorMessage(
+                    error,
+                    "Apple cleanup could not be confirmed. Local account access stays closed.",
+                  );
+              }),
+            )
+            .finally(() => {
+              if (current === revision) {
+                busy = false;
+                retry.disabled = false;
+              }
+            });
+        });
+        inventory.append(retry);
+      }
       for (const rule of data.closure.policy_snapshot.retained_records)
         paragraph(
           `${rule.category.replaceAll("_", " ")}: ${rule.reason} Period: ${rule.period} Review by ${new Date(Date.parse(data.closure.closed_at) + rule.review_after_days * 86400000).toISOString().slice(0, 10)}.`,

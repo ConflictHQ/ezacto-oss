@@ -293,6 +293,7 @@ export function createAccountClosureRepository(database: Database): AccountClosu
       const keys = [
         ...credentials.identities.map((identity) => ({
           kind: 'provider',
+          provider: identity.provider,
           digest: accountClosureDigest(
             secret,
             'provider',

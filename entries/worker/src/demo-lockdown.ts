@@ -101,6 +101,7 @@ export const DEMO_ACCESS_ROUTES: readonly string[] = [
   'patch /api/v1/admin/deletion-requests/:id',
   'post /api/v1/admin/deletion-requests/:id/notification',
   'post /api/v1/admin/deletion-requests/:id/closure',
+  'post /api/v1/admin/deletion-requests/:id/apple-cleanup',
   'post /api/v1/settings/sso-domains',
   'post /api/v1/settings/sso-domains/:id/verify',
   'delete /api/v1/settings/sso-domains/:id',

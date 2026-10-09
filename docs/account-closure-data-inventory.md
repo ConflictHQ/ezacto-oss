@@ -19,7 +19,7 @@ review target for each retained category. A selected law is not that basis.
 | Email queue/log/provider copies | Cancel queued deliveries addressed/copied to the closed account before removing its directory address; retain log evidence for review | A multi-recipient queued message may need reissuing without that address. A provider call already in flight cannot be recalled; provider copies, sender snapshots and immutable message contents require review |
 | External integrations and exports | No false claim of remote deletion | Operator identifies processors/exports and records actual cleanup or necessary retention evidence |
 | Backups and restore | Published operator backup handling remains part of the disclosure | Reapply closure/revocation evidence before restored service accepts traffic; isolated restore testing must never resurrect real credentials |
-| Sign in with Apple | Delete local identity and credentials, record provider cleanup pending | Verify request-bound service evidence separately. Missing historical tokens require honest manual Apple guidance; the user can still receive local closure |
+| Sign in with Apple | Capture each known obligation, then delete local identity and credentials; retain pseudonymous grant and immutable revocation evidence | Verify exact request/origin/subject/grant/generation service evidence for every identity and channel. Missing historical custody remains actionable; see [Apple credential lifecycle](apple-credential-lifecycle.md) |
 
 The review enumerates current direct references to `users` (both restrictive and
 nullable foreign keys) and known email/outbox records. New user-linked tables are

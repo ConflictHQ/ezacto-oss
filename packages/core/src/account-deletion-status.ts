@@ -1,3 +1,4 @@
+import type { AppleCleanupStatus } from './apple-lifecycle.js'
 import type {
   AccountRetentionPolicy,
   AccountRetentionRule,
@@ -9,6 +10,7 @@ export interface AccountDeletionStatusAccess {
   url: string;
 }
 export interface AccountDeletionTrackingStatus {
+  apple_cleanup?: AppleCleanupStatus;
   request_id: string;
   status: AccountDeletionStatus;
   requested_at: string;

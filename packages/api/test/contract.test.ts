@@ -40,6 +40,8 @@ import {
   installReportRoutes,
   installProfileRoutes,
   installAccountClosureRoutes,
+  installAppleRoutes,
+  installAppleLifecycleRoutes,
   installAccountDeletionStatusRoutes,
   installSessionRoutes,
   installSsoDomainRoutes,
@@ -146,6 +148,8 @@ const documentedApp = () =>
   createApiApp({
     authentication: { tokens, sessions },
     installApp: (app) => {
+      installAppleRoutes(app,{identities:{resolveProvider:unavailable},sessions:{issue:unavailable},provider:()=>null});
+      installAppleLifecycleRoutes(app,{store:{begin:unavailable,status:unavailable,recordSignIn:unavailable,rebind:unavailable,acceptRevocation:unavailable,allowProof:unavailable},origin:()=>undefined,clock:()=>"2026-10-09T00:00:00.000Z"});
       installAccountDeletionStatusRoutes(app, {
         store: {
           issue: unavailable,

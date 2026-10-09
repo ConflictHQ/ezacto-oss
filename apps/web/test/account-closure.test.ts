@@ -121,6 +121,19 @@ describe("operator account closure review", () => {
       "Do not select a category merely",
     );
   });
+  it("retries configured web cleanup after closure without claiming complete erasure", async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(response({...preview,apple_cleanup_retry_available:true,closure:{request_id:"request-1",user_id:2,actor_user_id:1,closed_at:"2026-10-09T00:00:00.000Z",policy_version:3,policy_snapshot:policy,inventory:[],retained_identity:false,apple_cleanup:"pending"}})).mockResolvedValueOnce(response({apple_cleanup:"revoked"}));
+    vi.stubGlobal("fetch",fetch);
+    const {review,closed}=mount();
+    review.click();
+    await vi.waitFor(()=>expect(document.body.textContent).toContain("Retry server-managed Apple cleanup"));
+    const retry=Array.from(document.querySelectorAll("button")).find(button=>button.textContent==="Retry server-managed Apple cleanup")!;
+    retry.click();
+    await vi.waitFor(()=>expect(document.body.textContent).toContain("Apple cleanup confirmed. Retained records still require review."));
+    expect(fetch.mock.calls[1]![0]).toBe("/api/v1/admin/deletion-requests/request-1/apple-cleanup");
+    expect(JSON.parse(fetch.mock.calls[1]![1].body)).toEqual({});
+    expect(closed).not.toHaveBeenCalled();
+  });
   it("does not replace another selection with a late preview and keeps demo read-only", async () => {
     let finish: (response: Response) => void = () => undefined;
     const fetch = vi.fn(

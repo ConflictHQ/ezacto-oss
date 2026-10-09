@@ -1,3 +1,4 @@
+import type { AppleCleanupStatus } from './apple-lifecycle.js'
 import type {
   AccountRetentionCategory,
   AccountRetentionPolicy,
@@ -17,9 +18,10 @@ export interface AccountClosureRecord {
   policy_snapshot: AccountRetentionPolicy;
   inventory: AccountClosureInventoryItem[];
   retained_identity: boolean;
-  apple_cleanup: "not_linked" | "pending";
+  apple_cleanup: AppleCleanupStatus;
 }
 export interface AccountClosurePreview {
+  apple_cleanup_retry_available?: boolean;
   request_id: string;
   user_id: number;
   request_version: number;

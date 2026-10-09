@@ -4,6 +4,7 @@ import {
   hasAccountDeletionControlCharacters,
   type AccountDeletionRecord,
   type AccountDeletionStore,
+  type AppleCleanupPort,
   type AccountDeletionStatusStore,
   type AccountDeletionUpdate,
 } from "@ezacto/core";
@@ -66,10 +67,12 @@ export function installAccountDeletionRequestRoutes<Bindings extends object>(
   options: {
     store: AccountDeletionStore;
     tracking?: AccountDeletionStatusStore;
+    appleCleanup?: AppleCleanupPort;
     clock(): string;
     mailer?: AccountDeletionMailer;
   },
 ): void {
+  const withApple = async(record: AccountDeletionRecord | null) => record===null || options.appleCleanup===undefined ? record : {...record,apple_cleanup:await options.appleCleanup.status(record.id)};
   const notify = async (record: AccountDeletionRecord, actor: number) => {
     const now = options.clock();
     if (!(await options.store.claimNotification(record.id, actor, now)))
@@ -104,7 +107,7 @@ export function installAccountDeletionRequestRoutes<Bindings extends object>(
     try {
       return context.json(
         envelope(
-          await options.store.readOwn(context.get("principal").userId),
+          await withApple(await options.store.readOwn(context.get("principal").userId)),
           ownPath,
         ),
         200,
@@ -151,10 +154,11 @@ export function installAccountDeletionRequestRoutes<Bindings extends object>(
                 number | null,
             }),
       });
+      await options.appleCleanup?.begin(userId,result.record.id);
       const statusAccess = await options.tracking?.issue({ requestId: result.record.id, userId, now: options.clock() });
       if (result.created) await notify(result.record, userId);
       return context.json(
-        { ...envelope((await options.store.readOwn(userId)) ?? result.record, ownPath), ...(statusAccess === undefined ? {} : { status_access: statusAccess }) },
+        { ...envelope(await withApple((await options.store.readOwn(userId)) ?? result.record), ownPath), ...(statusAccess === undefined ? {} : { status_access: statusAccess }) },
         202,
         noStore,
       );

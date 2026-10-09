@@ -1230,6 +1230,32 @@ export type ProfileEnvelope = {
   "links": Links;
 };
 
+export type NativeAppleCapabilities = {
+  "available": boolean;
+  "lifecycle_version": 1;
+};
+
+export type NativeAppleSignInInput = {
+  "identityToken": string;
+  "bindingReceipt": string;
+  "fullName"?: {
+  "givenName"?: string;
+  "familyName"?: string;
+};
+};
+
+export type NativeAppleSignInEnvelope = {
+  "data": {
+  "ok": true;
+};
+};
+
+export type AppleLifecycleProofInput = {
+  "receipt": string;
+};
+
+export type AppleCleanupStatus = "not_linked" | "pending" | "revoked" | "manual_required";
+
 export type AccountClosureInventoryItem = {
   "location": string;
   "count": number;
@@ -1245,10 +1271,11 @@ export type AccountClosureRecord = {
   "policy_snapshot": AccountRetentionPolicy;
   "inventory": Array<AccountClosureInventoryItem>;
   "retained_identity": boolean;
-  "apple_cleanup": "not_linked" | "pending";
+  "apple_cleanup": AppleCleanupStatus;
 };
 
 export type AccountClosurePreview = {
+  "apple_cleanup_retry_available"?: boolean;
   "request_id": string;
   "user_id": number;
   "request_version": number;
@@ -1260,6 +1287,14 @@ export type AccountClosurePreview = {
   "owner_transfer_required": boolean;
   "running_timer": boolean;
   "closure": AccountClosureRecord | null;
+};
+
+export type EmptyObject = Record<string, unknown>;
+
+export type AppleCleanupStatusEnvelope = {
+  "data": {
+  "apple_cleanup": AppleCleanupStatus;
+};
 };
 
 export type AccountClosureInput = {
@@ -1303,6 +1338,7 @@ export type AccountDeletionClosureDisclosure = {
 };
 
 export type AccountDeletionTrackingStatus = {
+  "apple_cleanup"?: AppleCleanupStatus;
   "request_id": string;
   "status": "pending" | "in_progress" | "action_required" | "completed";
   "requested_at": string;
@@ -1335,6 +1371,7 @@ export type AccountDeletionUpdate = {
 };
 
 export type AccountDeletionRecord = {
+  "apple_cleanup"?: AppleCleanupStatus;
   "id": string;
   "user_id": number;
   "requested_at": string;
@@ -3760,6 +3797,45 @@ export class EzactoClient {
     return body as T;
   }
 
+  async getNativeAppleCapabilities(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<NativeAppleCapabilities> {
+    const headers = new Headers(args.headers);
+
+    return this.request<NativeAppleCapabilities>("GET", "/auth/apple/native-capabilities", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async signInNativeApple(args: { body: NativeAppleSignInInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<NativeAppleSignInEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<NativeAppleSignInEnvelope>("POST", "/auth/apple", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async rebindAppleCleanup(args: { "id": string; body: AppleLifecycleProofInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/auth/apple/deletion-requests/:id/binding".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async acceptAppleRevocation(args: { "id": string; body: AppleLifecycleProofInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/auth/apple/deletion-requests/:id/revocation".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
   async signup(args: { body: SignupInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<AuthAcceptedEnvelope> {
     const headers = new Headers(args.headers);
 
@@ -5928,6 +6004,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<AccountClosureRecordEnvelope>("POST", "/api/v1/admin/deletion-requests/:id/closure".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async retryAccountAppleCleanup(args: { "id": string; body: EmptyObject; signal?: AbortSignal; headers?: HeadersInit }): Promise<AppleCleanupStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AppleCleanupStatusEnvelope>("POST", "/api/v1/admin/deletion-requests/:id/apple-cleanup".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
       signal: args.signal,
       headers,
