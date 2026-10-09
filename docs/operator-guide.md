@@ -14,7 +14,7 @@ Set up and operate an eZacto instance: identity, email, error reporting, account
 
 | Job | Guide | What a successful setup proves |
 | --- | --- | --- |
-| Apple identity | [Sign in with Apple](apple-setup.md) | Native sign-in works for an allowed user; browser rollout has separate requirements |
+| Apple identity | [Sign in with Apple](apple-setup.md) | Compatible mobile/server releases sign in an allowed user; browser rollout has separate requirements |
 | Google identity | [Google sign-in](google-sign-in-setup.md) | The exact callback returns to this instance and creates the expected session |
 | Error reporting | [Sentry](sentry-setup.md) | Errors arrive in the intended project/environment with the right release |
 | Transactional email | [Email](email-setup.md) | A controlled message reaches its intended inbox through the configured transport |
