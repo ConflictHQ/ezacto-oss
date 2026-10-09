@@ -1,48 +1,22 @@
 import {
+  PRIVACY_FRAMEWORK_CATALOG,
+  PRIVACY_REFERENCE_REVIEWED_ON,
+} from "@ezacto/core";
+import {
   EzactoApiError,
   type AccountRetentionRecord,
 } from "@conflict-hq/ezacto-client";
 import type { SessionPresenter } from "../session.js";
 import { apiErrorMessage } from "./model.js";
 
-const frameworks = [
-  [
-    "gdpr",
-    "EU / EEA GDPR",
-    "Assess territorial scope and a specific Article 17 exception before retaining data.",
-    "https://eur-lex.europa.eu/eli/reg/2016/679/oj",
-  ],
-  [
-    "california_ccpa_cpra",
-    "California CCPA, as amended by CPRA",
-    "Assess business coverage and deletion exceptions. Employment data is not generally excluded.",
-    "https://oag.ca.gov/privacy/ccpa",
-  ],
-  [
-    "texas_tdpsa",
-    "Texas Data Privacy and Security Act",
-    "Its consumer definition excludes employment and commercial contexts; retention exceptions must remain necessary and proportionate.",
-    "https://tcss.legis.texas.gov/resources/BC/htm/BC.541.htm",
-  ],
-  [
-    "colorado_cpa",
-    "Colorado Privacy Act",
-    "General consumer rights exclude employment and commercial contexts. Assess any separate obligations.",
-    "https://coag.gov/resources/colorado-privacy-act/",
-  ],
-  [
-    "us_florida",
-    "Applicable US / Florida obligations",
-    "Identify the actual tax, employment, accounting or other obligation. US law alone is not the EU-law exception in GDPR Article 17(3)(b).",
-    "https://www.leg.state.fl.us/statutes/",
-  ],
-  [
-    "other",
-    "Other applicable laws",
-    "Describe the jurisdiction and actual basis in the relevant retention reason and user disclosure.",
-    null,
-  ],
-] as const;
+const frameworks = PRIVACY_FRAMEWORK_CATALOG;
+const renderFramework = ({
+  id,
+  label,
+  note,
+  url,
+}: (typeof frameworks)[number]): string =>
+  `<div data-privacy-framework><label class="settings-toggle"><input type="checkbox" name="framework" value="${id}" aria-describedby="retention-${id}-note">${label}</label><p class="hint" id="retention-${id}-note">${note}${url === null ? "" : ` <a href="${url}" target="_blank" rel="noopener noreferrer">Reference</a>`}</p></div>`;
 const categories = [
   [
     "time_and_worker_attribution",
@@ -76,7 +50,19 @@ export const renderRetentionSection = (): string => `
         <legend>Operator policy</legend>
         <fieldset><legend>Applicable frameworks</legend>
           <p>Check only frameworks you have assessed. These selections do not waive user rights or authorize blanket retention.</p>
-          ${frameworks.map(([id, label, note, url]) => `<label class="settings-toggle"><input type="checkbox" name="framework" value="${id}" aria-describedby="retention-${id}-note">${label}</label><p class="hint" id="retention-${id}-note">${note}${url === null ? "" : ` <a href="${url}" target="_blank" rel="noopener noreferrer">Official reference</a>`}</p>`).join("")}
+          ${frameworks
+            .filter((entry) => entry.state === null)
+            .map(renderFramework)
+            .join("")}
+          <details data-privacy-states><summary>US states and District of Columbia</summary>
+            <p>Reviewed ${PRIVACY_REFERENCE_REVIEWED_ON}. Entries distinguish current laws, enacted future laws, sector-specific examples and jurisdictions needing an operator assessment. This is a dated reference, not an exhaustive legal opinion.</p>
+            <label>Find a state or privacy law<input type="search" data-privacy-filter autocomplete="off"></label>
+            <p data-privacy-filter-status role="status" aria-live="polite"></p>
+            ${frameworks
+              .filter((entry) => entry.state !== null)
+              .map(renderFramework)
+              .join("")}
+          </details>
         </fieldset>
         <fieldset><legend>Records retained after account closure</legend>
           <p>For each checked category, specify why it is necessary, when retention ends, and when it must be reviewed. Leave unchecked when you have no justified retention need. A review interval is a follow-up target, not automatic erasure.</p>
@@ -138,9 +124,29 @@ export function createRetentionController(root: HTMLElement, demo: boolean) {
         input.disabled = details.disabled;
     }
   };
+  const filter = form.querySelector<HTMLInputElement>("[data-privacy-filter]")!;
+  const filterStatus = form.querySelector<HTMLElement>(
+    "[data-privacy-filter-status]",
+  )!;
+  const filterStates = () => {
+    const query = filter.value.trim().toLocaleLowerCase();
+    let visible = 0;
+    for (const row of form.querySelectorAll<HTMLElement>(
+      "[data-privacy-states] [data-privacy-framework]",
+    )) {
+      row.hidden = !(row.textContent ?? "").toLocaleLowerCase().includes(query);
+      if (!row.hidden) visible++;
+    }
+    filterStatus.textContent =
+      query === ""
+        ? ""
+        : `${visible} matching jurisdictions. Filtering does not change your selections.`;
+  };
+  filter.addEventListener("input", filterStates);
   form.addEventListener("change", updateCategories);
   const display = (record: AccountRetentionRecord | null) => {
     form.reset();
+    filterStates();
     version = record?.version ?? 0;
     if (record !== null) {
       const policy = record.policy;
@@ -164,6 +170,10 @@ export function createRetentionController(root: HTMLElement, demo: boolean) {
         field(name).value = policy[name];
       field("response_target_days").value = String(policy.response_target_days);
     }
+    form.querySelector<HTMLDetailsElement>("[data-privacy-states]")!.open =
+      record?.policy.frameworks.some((id) =>
+        frameworks.some((entry) => entry.id === id && entry.state !== null),
+      ) ?? false;
     // Every publication needs a fresh acknowledgement, including edits.
     check("acknowledged").checked = false;
     updateCategories();
@@ -275,6 +285,7 @@ export function createRetentionController(root: HTMLElement, demo: boolean) {
       busy = false;
       version = 0;
       form.reset();
+      filterStates();
       form.hidden = true;
       status.textContent = "";
       result.textContent = "";

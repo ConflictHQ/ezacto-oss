@@ -29,6 +29,7 @@ test("[e2e:retention] publishes and reloads an operator policy with a fresh ackn
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   const form = page.locator("[data-retention-form]");
   await expect(form).toBeVisible();
+  await form.locator("[data-privacy-states] summary").click();
   await form.getByLabel("Colorado Privacy Act", { exact: true }).check();
   const time = form.locator(
     '[data-retention-category="time_and_worker_attribution"]',

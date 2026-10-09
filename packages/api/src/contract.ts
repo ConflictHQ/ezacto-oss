@@ -1,3 +1,4 @@
+import { ACCOUNT_PRIVACY_FRAMEWORKS } from '@ezacto/core';
 import { paymentRunOperations, paymentRunSchemas } from './payment-run-contract.js'
 import { staffPaymentOperations, staffPaymentSchemas } from './staff-payment-contract.js';
 import { commercialTermFields, DETAILED_TIME_PDF_ROW_LIMIT, maximumBulkApprovalSelections } from "@ezacto/core";
@@ -8392,7 +8393,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object", additionalProperties: false,
     required: ["frameworks", "retained_records", "response_target_days", "operator_contact", "user_notice", "backup_handling", "acknowledged"],
     properties: {
-      frameworks: { type: "array", uniqueItems: true, items: { type: "string", enum: ["gdpr", "california_ccpa_cpra", "texas_tdpsa", "colorado_cpa", "us_florida", "other"] } },
+      frameworks: { type: "array", uniqueItems: true, items: { type: "string", enum: [...ACCOUNT_PRIVACY_FRAMEWORKS] } },
       retained_records: { type: "array", maxItems: 4, items: reference("AccountRetentionRule") },
       response_target_days: { type: "integer", minimum: 1, maximum: 90 },
       operator_contact: { type: "string", format: "email", maxLength: 254 },

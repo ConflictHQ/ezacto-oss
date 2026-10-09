@@ -1,14 +1,11 @@
-/** Operator policy, not a legal determination or an automatic erasure job. */
-export const ACCOUNT_PRIVACY_FRAMEWORKS = [
-  "gdpr",
-  "california_ccpa_cpra",
-  "texas_tdpsa",
-  "colorado_cpa",
-  "us_florida",
-  "other",
-] as const;
-export type AccountPrivacyFramework =
-  (typeof ACCOUNT_PRIVACY_FRAMEWORKS)[number];
+import {
+  ACCOUNT_PRIVACY_FRAMEWORKS,
+  type AccountPrivacyFramework,
+} from "./privacy-frameworks.js";
+export {
+  ACCOUNT_PRIVACY_FRAMEWORKS,
+  type AccountPrivacyFramework,
+} from "./privacy-frameworks.js";
 
 export const ACCOUNT_RETENTION_CATEGORIES = [
   "time_and_worker_attribution",

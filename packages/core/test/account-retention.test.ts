@@ -111,3 +111,46 @@ describe("operator account erasure and retention policy", () => {
       ).toThrow(AccountRetentionPolicyError);
   });
 });
+
+it("accepts every state assessment without inferring retention rights or rewriting the operator policy", async () => {
+  const { PRIVACY_FRAMEWORK_CATALOG, ACCOUNT_PRIVACY_FRAMEWORKS } =
+    await import("../src/privacy-frameworks.js");
+  const states = PRIVACY_FRAMEWORK_CATALOG.filter(
+    (entry) => entry.state !== null,
+  );
+  expect(new Set(states.map((entry) => entry.state)).size).toBe(51);
+  expect(states.map((entry) => entry.state)).toEqual(
+    expect.arrayContaining([
+      "Alaska",
+      "District of Columbia",
+      "Delaware",
+      "Florida",
+      "Oklahoma",
+      "Vermont",
+      "Wyoming",
+    ]),
+  );
+  expect(new Set(ACCOUNT_PRIVACY_FRAMEWORKS).size).toBe(
+    ACCOUNT_PRIVACY_FRAMEWORKS.length,
+  );
+  const input = {
+    ...policy(),
+    frameworks: [...ACCOUNT_PRIVACY_FRAMEWORKS],
+    retained_records: [],
+  };
+  expect(parseAccountRetentionPolicy(input)).toEqual(input);
+  expect(states.find((entry) => entry.state === "Alaska")?.status).toBe(
+    "operator_assessment",
+  );
+  expect(states.find((entry) => entry.state === "Washington")?.status).toBe(
+    "sector_specific",
+  );
+  expect(states.find((entry) => entry.state === "Oklahoma")).toMatchObject({
+    status: "enacted_future",
+    effectiveOn: "2027-01-01",
+  });
+  expect(states.find((entry) => entry.state === "Vermont")).toMatchObject({
+    status: "enacted_future",
+    effectiveOn: "2028-01-01",
+  });
+});

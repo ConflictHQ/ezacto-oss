@@ -10,8 +10,12 @@ certification, user consent, waiver of rights, or permission to keep all records
 An active administrator signs into the web app, then opens **Settings → Company
 → Erasure and retention** (`#erasure`). Review and publish:
 
-1. Applicable frameworks: GDPR, California CCPA/CPRA, Texas TDPSA, Colorado CPA,
-   applicable US/Florida obligations, or other applicable laws. No framework is
+1. Applicable frameworks: GDPR, all 50 US states and the District of Columbia,
+   applicable US/Florida recordkeeping duties, and other laws or jurisdictions.
+   Search the state list to find a law; filtering does not clear selections.
+   The [dated state reference](us-state-privacy-reference.md) distinguishes
+   current laws, enacted future laws, sector-specific examples and entries
+   requiring an operator assessment. No framework is
    selected automatically. An empty selection does not establish an exemption.
 2. Categories that actually require retention: time and worker attribution;
    invoices, expenses and payments; audit and security; specific legal holds.

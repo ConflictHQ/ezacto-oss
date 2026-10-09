@@ -153,3 +153,35 @@ describe("operator erasure and retention form", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });
+
+it("lists all states, preserves choices hidden by search, and shows saved selections on reload", async () => {
+  const fetcher = vi.fn(async (_path: unknown, options?: RequestInit) =>
+    response(options?.method === "POST" ? { ...record, version: 4 } : record),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  const { controller, active, form } = mount();
+  await controller.load(active);
+  const states = form.querySelector<HTMLDetailsElement>(
+    "[data-privacy-states]",
+  )!;
+  expect(states.open).toBe(true);
+  expect(states.querySelectorAll('[name="framework"]')).toHaveLength(51);
+  const search = form.querySelector<HTMLInputElement>("[data-privacy-filter]")!;
+  search.value = "Alaska";
+  search.dispatchEvent(new Event("input"));
+  expect(
+    [
+      ...states.querySelectorAll<HTMLElement>("[data-privacy-framework]"),
+    ].filter((row) => !row.hidden),
+  ).toHaveLength(1);
+  expect(
+    form.querySelector<HTMLInputElement>('[value="colorado_cpa"]')!.checked,
+  ).toBe(true);
+  form.querySelector<HTMLInputElement>('[value="us_ak"]')!.checked = true;
+  (form.elements.namedItem("acknowledged") as HTMLInputElement).checked = true;
+  form.dispatchEvent(new Event("submit", { cancelable: true }));
+  await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+  const sent = JSON.parse(fetcher.mock.calls[1]![1]!.body as string);
+  expect(sent.policy.frameworks).toEqual(["us_ak", "colorado_cpa"]);
+  expect(sent.policy.retained_records).toEqual(policy.retained_records);
+});

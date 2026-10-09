@@ -3134,7 +3134,7 @@ export type AccountRetentionRule = {
 };
 
 export type AccountRetentionPolicy = {
-  "frameworks": Array<"gdpr" | "california_ccpa_cpra" | "texas_tdpsa" | "colorado_cpa" | "us_florida" | "other">;
+  "frameworks": Array<"gdpr" | "us_florida" | "us_al" | "us_ak" | "us_az" | "us_ar" | "california_ccpa_cpra" | "colorado_cpa" | "us_ct" | "us_de" | "us_dc" | "us_fl" | "us_ga" | "us_hi" | "us_id" | "us_il" | "us_in" | "us_ia" | "us_ks" | "us_ky" | "us_la" | "us_me" | "us_md" | "us_ma" | "us_mi" | "us_mn" | "us_ms" | "us_mo" | "us_mt" | "us_ne" | "us_nv" | "us_nh" | "us_nj" | "us_nm" | "us_ny" | "us_nc" | "us_nd" | "us_oh" | "us_ok" | "us_or" | "us_pa" | "us_ri" | "us_sc" | "us_sd" | "us_tn" | "texas_tdpsa" | "us_ut" | "us_vt" | "us_va" | "us_wa" | "us_wv" | "us_wi" | "us_wy" | "other">;
   "retained_records": Array<AccountRetentionRule>;
   "response_target_days": number;
   "operator_contact": string;
