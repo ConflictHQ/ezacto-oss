@@ -49,11 +49,13 @@ const createStore = (db: Database): AppleWebCustodyStore => ({
       ON CONFLICT(subject_digest, service_issuer, instance_origin, client_id) WHERE status != 'revoked' DO UPDATE SET
         browser_hash = excluded.browser_hash, user_id = coalesce(excluded.user_id, apple_web_connections.user_id),
         grant_id = excluded.grant_id, generation = excluded.generation, sealed_capability = excluded.sealed_capability,
-        cleanup_request_id = coalesce(apple_web_connections.cleanup_request_id, excluded.cleanup_request_id),
+        cleanup_request_id = coalesce(excluded.cleanup_request_id, apple_web_connections.cleanup_request_id),
         status = 'active', updated_at = excluded.updated_at
       WHERE apple_web_connections.generation < excluded.generation
         AND (apple_web_connections.user_id IS NULL OR excluded.user_id IS NULL OR apple_web_connections.user_id = excluded.user_id)
-        AND (apple_web_connections.cleanup_request_id IS NULL OR apple_web_connections.cleanup_request_id = excluded.cleanup_request_id)
+        AND (apple_web_connections.cleanup_request_id IS NULL OR apple_web_connections.cleanup_request_id = excluded.cleanup_request_id
+          OR (NOT EXISTS(SELECT 1 FROM apple_web_cleanup_requests WHERE request_id = apple_web_connections.cleanup_request_id)
+            AND EXISTS(SELECT 1 FROM apple_web_cleanup_obligations WHERE request_id = excluded.cleanup_request_id AND connection_id = apple_web_connections.id)))
       RETURNING ${columns}`, bindings: [input.id, input.subjectDigest, input.browserHash, input.userId,
       input.serviceIssuer, input.instanceOrigin, input.clientId, input.grantId, input.generation,
       input.sealedCapability, input.sealedReceipt, input.cleanupRequestId, input.status, input.createdAt, input.updatedAt, input.userId, input.userId, input.userId, input.userId, identity?.subject ?? null,

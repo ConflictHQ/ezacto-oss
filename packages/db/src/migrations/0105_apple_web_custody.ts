@@ -43,6 +43,9 @@ export const appleWebCustodyMigration = [
     WHEN OLD.id IS NOT NEW.id OR OLD.subject_digest IS NOT NEW.subject_digest
       OR OLD.service_issuer IS NOT NEW.service_issuer OR OLD.instance_origin IS NOT NEW.instance_origin
       OR OLD.client_id IS NOT NEW.client_id OR OLD.created_at IS NOT NEW.created_at
-      OR (OLD.cleanup_request_id IS NOT NULL AND OLD.cleanup_request_id IS NOT NEW.cleanup_request_id)
+      OR (OLD.cleanup_request_id IS NOT NULL AND OLD.cleanup_request_id IS NOT NEW.cleanup_request_id
+        AND NOT (NEW.generation > OLD.generation
+          AND NOT EXISTS(SELECT 1 FROM apple_web_cleanup_requests WHERE request_id = OLD.cleanup_request_id)
+          AND EXISTS(SELECT 1 FROM apple_web_cleanup_obligations WHERE request_id = NEW.cleanup_request_id AND connection_id = OLD.id)))
     BEGIN SELECT RAISE(ABORT, 'web Apple custody identity is immutable'); END`,
 ] as const

@@ -1,3 +1,4 @@
+import { appleLifecycleMigration } from '../src/migrations/0104_apple_lifecycle.js'
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -13,7 +14,7 @@ const connection = (overrides: Partial<AppleWebConnection> = {}): AppleWebConnec
 })
 const schema = ['CREATE TABLE account_closure_security(id INTEGER PRIMARY KEY, secret TEXT NOT NULL)', "INSERT INTO account_closure_security VALUES(1,'" + 'ab'.repeat(32) + "')",
   'CREATE TABLE user_identities(user_id INTEGER, provider TEXT, provider_subject TEXT)', "INSERT INTO user_identities VALUES(1,'apple','subject-1'),(2,'apple','subject-2')",
-  "CREATE TABLE apple_identity_channels(subject_hash TEXT, user_id INTEGER, channel TEXT, known_from_first_link INTEGER, PRIMARY KEY(subject_hash,user_id,channel))",
+  appleLifecycleMigration[0],
   'CREATE TABLE users(id INTEGER PRIMARY KEY, is_active INTEGER NOT NULL) STRICT', 'INSERT INTO users VALUES(1,1),(2,1)', ...appleWebCustodyMigration]
 for (const runtime of ['container', 'D1'] as const) {
   describe(`web Apple custody (${runtime})`, () => {
@@ -79,6 +80,18 @@ for (const runtime of ['container', 'D1'] as const) {
       expect(await store.complete({ id: first.id, requestId: 'request_001', grantId: first.grantId, generation: 1, sealedReceipt: '{}', now })).toBe(false)
       expect(await store.complete({ id: first.id, requestId: 'request_001', grantId: rebound.grantId, generation: 2, sealedReceipt: '{"ciphertext":"receipt"}', now })).toBe(true)
       expect(await store.status('request_001')).toBe('revoked')
+    })
+    it('recovers a failed browser disconnect for a later account deletion only with newer request-bound custody', async () => {
+      const store = await harness(), first = connection()
+      await store.save(first)
+      await store.pending(first.id, 'browser_disconnect', now)
+      await store.begin(1, 'request_001', now)
+      expect(await store.status('request_001')).toBe('manual_required')
+      expect(await store.save({ ...first, userId: null, cleanupRequestId: 'request_001' })).toBeNull()
+      const recovered = await store.save({ ...first, userId: null, generation: 2, grantId: 'grant_0002', cleanupRequestId: 'request_001' })
+      expect(recovered?.cleanupRequestId).toBe('request_001')
+      expect(await store.status('request_001')).toBe('pending')
+      expect(await store.complete({ id: first.id, requestId: 'browser_disconnect', grantId: first.grantId, generation: 1, sealedReceipt: '{}', now })).toBe(false)
     })
     it('rejects a different Apple subject recovering a captured deletion request', async () => {
       const store = await harness(), first = connection()

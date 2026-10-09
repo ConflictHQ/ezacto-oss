@@ -1,3 +1,4 @@
+import { appleLifecycleMigration } from '../../db/src/migrations/0104_apple_lifecycle.js'
 import BetterSqlite3 from 'better-sqlite3'
 import { exportJWK, generateKeyPair, SignJWT } from 'jose'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -13,7 +14,8 @@ const setup = async (demo = false) => {
   const db = new BetterSqlite3(':memory:'); databases.push(db)
   db.pragma('foreign_keys = ON')
   db.exec('CREATE TABLE users(id INTEGER PRIMARY KEY, is_active INTEGER NOT NULL) STRICT; INSERT INTO users VALUES(1,1),(2,1)')
-  db.exec("CREATE TABLE account_closure_security(id INTEGER PRIMARY KEY, secret TEXT NOT NULL); INSERT INTO account_closure_security VALUES(1,'" + 'ab'.repeat(32) + "'); CREATE TABLE user_identities(user_id INTEGER, provider TEXT, provider_subject TEXT); INSERT INTO user_identities VALUES(1,'apple','private-apple-subject'); CREATE TABLE apple_identity_channels(subject_hash TEXT, user_id INTEGER, channel TEXT, known_from_first_link INTEGER, PRIMARY KEY(subject_hash,user_id,channel))")
+  db.exec("CREATE TABLE account_closure_security(id INTEGER PRIMARY KEY, secret TEXT NOT NULL); INSERT INTO account_closure_security VALUES(1,'" + 'ab'.repeat(32) + "'); CREATE TABLE user_identities(user_id INTEGER, provider TEXT, provider_subject TEXT); INSERT INTO user_identities VALUES(1,'apple','private-apple-subject')")
+  db.exec(appleLifecycleMigration[0])
   for (const sql of appleWebCustodyMigration) db.exec(sql)
   const store = createContainerAppleWebCustodyStore(db)
   const pair = await generateKeyPair('ES256')
