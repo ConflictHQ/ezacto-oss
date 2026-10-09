@@ -1,3 +1,5 @@
+import { createRuntimeAppleWeb } from '../../worker/src/apple-web.js'
+import { createContainerAppleWebCustodyStore } from '@ezacto/db'
 import { createPaymentRunsService } from '@ezacto/db'
 import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createStaffPaymentStore } from '@ezacto/db'
@@ -928,6 +930,7 @@ export const createContainerRuntime = async (
       senderIdentityVerifier: createSmtpSenderIdentityVerifier(config.smtp.from),
       outbox,
       identities: createContainerIdentityStore(database),
+      ...createRuntimeAppleWeb(config.appEnv, createContainerAppleWebCustodyStore(database)),
       oidcTransactions: createContainerOidcTransactionStore(database),
       oidcAppCodes: createContainerOidcAppCodeStore(database),
       // Same opt-in as portalAuth below: mounted only with a code-signing key,

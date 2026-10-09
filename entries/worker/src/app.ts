@@ -1,3 +1,4 @@
+import { appleWebConfiguration } from './apple-web.js'
 import { aggregateAppleCleanup, type AppleCleanupPort, type AppleLifecycleStore, type AppleWebCleanupPort } from '@ezacto/core'
 import type { AccountDeletionStore, AccountClosureStore, AccountRetentionReviewStore, AccountDeletionStatusStore } from '@ezacto/core'
 import type { PaymentRunsService } from '@ezacto/core'
@@ -43,6 +44,9 @@ import {
   installModuleSettingsRoutes,
   installAppleRoutes,
   installAppleLifecycleRoutes,
+
+  installAppleWebRoutes,
+  type AppleWebLifecyclePort,
   installSignInMethodRoutes,
   installAccountRetentionRoutes,
   type AccountRetentionService,
@@ -148,6 +152,7 @@ import {
   invoiceTabs,
   readDisplayPreferences,
   renderAppShell,
+  renderAppleDisconnect,
   reportKindTabs,
   webAssets,
   type DemoSignInAccount,
@@ -180,6 +185,11 @@ export type AppEnv = Env & {
    * `/auth/apple` route is configured off and answers 404.
    */
   APPLE_CLIENT_ID?: string
+  APPLE_WEB_ENABLED?: string
+  APPLE_WEB_SERVICES_ID?: string
+  APPLE_WEB_CAPABILITY_KEYS?: string
+  APPLE_WEB_ACTIVE_KEY_ID?: string
+  APPLE_WEB_ROUTING_SECRET?: string
   EZACTO_BOOTSTRAP_TOKEN?: string
   BRAND_NAME?: string
   BRAND_TAGLINE?: string
@@ -297,6 +307,7 @@ export type WorkerEnv = AppEnv & {
 }
 
 export interface RuntimeServices {
+  appleWebLifecycle?: AppleWebLifecyclePort
   bootstrap(input: InstanceBootstrapInput): Promise<InstanceBootstrapResult>
   enrollOwnerPassword(
     input: InstanceOwnerPasswordInput,
@@ -550,7 +561,7 @@ export const createApp = (
       brand,
       instanceTheme: themed !== null,
       signInProviders: configuredSignInProviders(env).filter((provider) =>
-        live(provider),
+        live(provider) && (provider !== 'apple' || services === undefined || services.appleWebLifecycle !== undefined),
       ),
       // The form is markup, and hiding markup is not a control -- the routes
       // refuse independently. This only stops the page offering a way in that
@@ -920,6 +931,17 @@ export const createApp = (
           identities: services.identities,
           sessions: services.sessions,
           provider: (env) => appleProvider(env),
+        })
+        installAppleWebRoutes(app, {
+          transactions: services.oidcTransactions,
+          identities: services.identities,
+          sessions: services.sessions,
+          provider: appleWebConfiguration,
+          lifecycle: () => services.appleWebLifecycle ?? null,
+          policy: signInPolicy,
+          clientKey: request => request.headers.get('cf-connecting-ip') ?? 'unknown-client',
+          demoAccount: env => demoDeployment(env) ? demoAccounts.find(account => account.label === 'Teammate')!.userId : null,
+          renderDisconnect: renderAppleDisconnect,
         })
         installPasswordAuthRoutes(app, {
           service: services.passwordAuth,
@@ -2227,6 +2249,7 @@ export const configuredSignInProviders = (
   } catch {
     // Same fail-closed policy as Google above.
   }
+  if (env.APPLE_WEB_ENABLED === 'true' && appleWebConfiguration(env) !== null) providers.push('apple')
   return providers
 }
 
@@ -2243,10 +2266,8 @@ export const deployedSignInMethods = (
     methods.push('magic_link')
   }
   for (const provider of configuredSignInProviders(env)) methods.push(provider)
-  // Apple is not in `configuredSignInProviders`: that list is the browser
-  // buttons the sign-in card draws, and Apple arrives through the native app
-  // prompt instead. It is still a way in, so the setting has to list it.
-  if (appleProvider(env) !== null) methods.push('apple')
+  // Either native or web configuration makes Apple an available method.
+  if (appleProvider(env) !== null && !methods.includes('apple')) methods.push('apple')
   return methods
 }
 

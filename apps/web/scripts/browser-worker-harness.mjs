@@ -1098,6 +1098,18 @@ await run(
 
 const proxyFetch = async (request, response) => {
   const url = new URL(request.url ?? '/', `http://${listenHost}:${listenPort}`)
+  // Test-only delivery handoff: mint a real one-time token without an external
+  // mail provider. The production Worker bundle never contains this endpoint.
+  if (url.pathname === '/__ezacto_browser_fixture__/password-reset') {
+    if (request.method !== 'POST' || request.headers['x-ezacto-browser-fixture-control'] !== fixtureControlHeader) {
+      response.writeHead(403); response.end(); return
+    }
+    const delivery = await createD1PasswordAuthService(database).requestPasswordReset(fixtureEmail, 'browser-recovery-fixture')
+    if (!delivery) throw new Error('password recovery fixture account is unavailable')
+    response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+    response.end(JSON.stringify({ token: delivery.token }))
+    return
+  }
   if (url.pathname === fixtureControlPath) {
     await fixtureControl(request, response)
     return

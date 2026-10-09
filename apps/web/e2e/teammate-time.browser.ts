@@ -73,7 +73,7 @@ test("[e2e:teammate-time] an administrator deletes a teammate's entry and it lea
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/')
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
   // Her week first, so the absence at the end is a change and not a week that

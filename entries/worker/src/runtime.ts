@@ -1,3 +1,5 @@
+import { createRuntimeAppleWeb } from './apple-web.js'
+import { createD1AppleWebCustodyStore } from '@ezacto/db'
 import { captureException } from '@sentry/cloudflare'
 import { createPaymentRunsService } from '@ezacto/db/d1'
 import { createWisePaymentProvider } from '@ezacto/integrations'
@@ -1303,6 +1305,7 @@ export const createRuntimeServices = async (
         setBillDelivery(drizzle, clientId, enabled),
     },
     identities,
+    ...createRuntimeAppleWeb(env, createD1AppleWebCustodyStore(database)),
     oidcTransactions: createD1OidcTransactionStore(database),
     oidcAppCodes: createD1OidcAppCodeStore(database),
     ...(magicLinkSigningKey === undefined
