@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-10-09T05:31:57.320672+00:00",
+  "checkedAt": "2026-10-09T05:55:00.203010+00:00",
   "scope": "Optional bounded ID selection for the native reminder processor and Worker/container service composition. Hosted daily checkpoint integration is separate.",
   "sourceSha256": [
     {
@@ -62,7 +62,16 @@
       "durationSeconds": 11.54
     },
     "dockerAcceptance": "passed actual first-run signup/SMTP/tracking and exclusive stopped-volume SQLite/attachment backup/restore",
-    "fullVerify": "Initial unconstrained run deliberately interrupted after a shared-host overlap warning; not accepted. Its entire owned process group was confirmed drained. Replacement uses VITEST_MAX_WORKERS=1 with the same npm run verify scope and unchanged timeouts; not yet accepted."
+    "fullVerify": "Initial unconstrained run deliberately interrupted after shared-host overlap warning; not accepted. Replacement uses VITEST_MAX_WORKERS=1 with unchanged npm run verify scope and timeouts. It has reported one 20-second timeout in the existing report API entry-grain/day-grain test; the same verification process is still running. This is not a green gate and no PR is opened.",
+    "observedVerificationFailure": {
+      "file": "packages/api/test/reports.test.ts",
+      "test": "[db] entry grain is one row per entry with its id and notes; day grain carries neither",
+      "reportedTestMilliseconds": 20010,
+      "reportedFileMilliseconds": 546489,
+      "fileCases": 143,
+      "fileFailures": 1,
+      "result": "Timeout observed; root cause and final full-suite result pending. Do not infer a regression or environmental cause from this alone."
+    }
   },
   "fixtureCorrections": [
     "Initial composition fixtures omitted required organizations.modules; corrected fixtures without changing schema checks.",
