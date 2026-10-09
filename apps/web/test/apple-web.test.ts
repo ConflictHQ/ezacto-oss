@@ -13,6 +13,7 @@ describe('Apple web sign-in presentation', () => {
     expect(document.querySelector('.apple-authorization-note')?.textContent).toContain('does not create a workspace account')
     expect(document.querySelector('.apple-authorization-note')?.textContent).toContain('securely retains your Apple authorization')
     expect(document.querySelector('.apple-authorization-note')?.textContent).toContain('iPhone app and other Ezacto sites')
+    expect(document.querySelector('.apple-authorization-note a[href^="https:"]')?.getAttribute('href')).toBe('https://ezacto.com/app-privacy.html#apple-web')
   })
 
   it('does not advertise an unconfigured Apple provider', () => {
@@ -32,6 +33,7 @@ describe('Apple web sign-in presentation', () => {
     expect(confirm.value).toBe('disconnect')
     expect(document.body.textContent).toContain('iPhone app and other Ezacto sites')
     expect(document.body.textContent).toContain('records are not deleted')
+    expect(document.querySelector('a[href^="https:"]')?.getAttribute('href')).toBe('https://ezacto.com/app-privacy.html#apple-web')
   })
 
   it('offers reauthorization when the independent browser recovery handle is missing', () => {
