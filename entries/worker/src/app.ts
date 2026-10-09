@@ -1,3 +1,4 @@
+import type { ReminderProcessOptions, ReminderProcessSummary } from '@ezacto/db/d1'
 import type { PaymentRunsService } from '@ezacto/core'
 import { installPaymentRunRoutes } from '@ezacto/api'
 import { installStaffPaymentRoutes } from '@ezacto/api'
@@ -414,7 +415,7 @@ export interface RuntimeServices {
    * only thing that turns a scheduled row into mail.
    */
   reminders?: {
-    processDue(now: string): Promise<{ examined: number; sent: number; scheduled: number }>
+    processDue(now: string, options?: ReminderProcessOptions): Promise<ReminderProcessSummary>
   }
   recurringRepair?: RecurringRepairService
   bill?: BillRuntime

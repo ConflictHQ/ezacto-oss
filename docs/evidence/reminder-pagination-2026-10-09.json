@@ -1,0 +1,76 @@
+{
+  "checkedAt": "2026-10-09T05:31:57.320672+00:00",
+  "scope": "Optional bounded ID selection for the native reminder processor and Worker/container service composition. Hosted daily checkpoint integration is separate.",
+  "sourceSha256": [
+    {
+      "path": "packages/db/src/reminders.ts",
+      "sha256": "1d71dbd2c5111f402690deb38777f435fcfc8da877c7cd8beaebdbc1c2153b1e"
+    },
+    {
+      "path": "packages/db/src/d1.ts",
+      "sha256": "6528a4040691ba612b6fb6691e8dfcce5f4e5a12f855f35628042ae9533949df"
+    },
+    {
+      "path": "entries/worker/src/app.ts",
+      "sha256": "767c24b9ad313305a4c1dbdaa3e7456d5fba5f9955f6ee1d9bd3e638c875f963"
+    },
+    {
+      "path": "entries/worker/src/runtime.ts",
+      "sha256": "c1e28ff84b440a46237ac8ad90a903fd53498224a2b1d2927488a4890996b91c"
+    },
+    {
+      "path": "entries/container/src/runtime.ts",
+      "sha256": "e13d9dbd70d89e78645bbdfc1228d827e08d02185c614b336ad15ed196098f08"
+    },
+    {
+      "path": "packages/db/test/reminders.test.ts",
+      "sha256": "d28c7ebe735d8eb8786bb47f7ab01ffb3a0bfe6fed71ad3bdb5e9c4a5221e9a0"
+    },
+    {
+      "path": "entries/worker/test/reminder-pagination.test.ts",
+      "sha256": "61a165ceb9a2eba285f90ebe11db1562324832d6512a7d4c3afa40d94547ed22"
+    },
+    {
+      "path": "entries/container/test/runtime.test.ts",
+      "sha256": "46e73c085ef61a78de03583df2a1c3ea780da2821091afb3002c9be4526f04d7"
+    }
+  ],
+  "checks": {
+    "reminderDatabase": {
+      "passed": 24,
+      "total": 24,
+      "durationSeconds": 160.23,
+      "runtimes": [
+        "SQLite",
+        "D1"
+      ]
+    },
+    "workerComposition": {
+      "passed": 1,
+      "total": 1,
+      "durationSeconds": 14.61
+    },
+    "containerComposition": {
+      "passed": 1,
+      "selected": 1,
+      "otherCasesNotSelected": 9,
+      "durationSeconds": 4.42
+    },
+    "affectedTypecheck": "passed for db, Worker and container",
+    "negativeRegression": {
+      "result": "Restoring original reminders.ts while retaining new tests fails both SQLite and D1 bounded-pass cases: default ordering delivers another row and no cursor is returned. Exact source restored afterward.",
+      "durationSeconds": 11.54
+    },
+    "dockerAcceptance": "passed actual first-run signup/SMTP/tracking and exclusive stopped-volume SQLite/attachment backup/restore",
+    "fullVerify": "Running; not yet accepted. Full verify must finish green before PR creation."
+  },
+  "fixtureCorrections": [
+    "Initial composition fixtures omitted required organizations.modules; corrected fixtures without changing schema checks.",
+    "Container background scheduler legitimately consumed currently due rows. The explicit-selection fixture now uses future due rows to isolate its caller from the automatic current-time tick; production scheduler remains unchanged."
+  ],
+  "remaining": [
+    "Complete full verify and branch-history secret scan before PR creation.",
+    "Independent review and green CI before merge.",
+    "Integrate the public upstream result into hosted and prove daily checkpoint/retry/provider behavior there."
+  ]
+}

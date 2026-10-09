@@ -1,3 +1,4 @@
+import type { ReminderProcessOptions } from '@ezacto/db'
 import { createPaymentRunsService } from '@ezacto/db'
 import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createStaffPaymentStore } from '@ezacto/db'
@@ -578,8 +579,9 @@ export const createContainerRuntime = async (
       },
       now: () => new Date().toISOString(),
     })
-    const processDueReminders = (now: string) =>
+    const processDueReminders = (now: string, options: ReminderProcessOptions = {}) =>
       reminders.processReminders({
+        ...options,
         now,
         send: async (reminder) => {
           const message = await reminderPort.prepare(reminder)

@@ -26,10 +26,21 @@ export interface ScheduledReminderRecord {
   updatedAt: string
 }
 
+/** Optional bounds for a resumable pass over a fixed set of reminder IDs.
+ * Capture throughId before the first batch and persist lastExaminedId with the
+ * caller's transaction. New follow-up reminders fall outside this pass.
+ */
+export interface ReminderProcessOptions {
+  limit?: number
+  selection?: { afterId: number; throughId: number }
+}
+
 export interface ReminderProcessSummary {
   examined: number
   sent: number
   scheduled: number
+  /** Present only when selection was supplied; includes failed/cancelled rows. */
+  lastExaminedId?: number
 }
 
 interface ReminderDatabase {
@@ -272,9 +283,8 @@ const createSubscriber = (database: ReminderDatabase): OutboxSubscriber => ({
 
 export interface ReminderScheduler {
   readonly subscriber: OutboxSubscriber
-  processReminders(options: {
+  processReminders(options: ReminderProcessOptions & {
     now: string
-    limit?: number
     send: (reminder: ScheduledReminderRecord) => Promise<void>
   }): Promise<ReminderProcessSummary>
   listPending(invoiceId?: number): Promise<ScheduledReminderRecord[]>
@@ -313,10 +323,16 @@ const createScheduler = (database: ReminderDatabase): ReminderScheduler => {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
         throw new RangeError('reminder process limit must be between 1 and 100')
       }
+      const selection = options.selection
+      if (selection !== undefined && (!Number.isSafeInteger(selection.afterId) || selection.afterId < 0 ||
+          !Number.isSafeInteger(selection.throughId) || selection.throughId < selection.afterId)) {
+        throw new RangeError('reminder selection must contain ordered nonnegative safe integer IDs')
+      }
       const summary: ReminderProcessSummary = {
         examined: 0,
         sent: 0,
         scheduled: 0,
+        ...(selection === undefined ? {} : { lastExaminedId: selection.afterId }),
       }
       const rows = await database.all<{
         id: number
@@ -335,12 +351,14 @@ const createScheduler = (database: ReminderDatabase): ReminderScheduler => {
           created_at AS "createdAt", updated_at AS "updatedAt"
         FROM scheduled_reminders
         WHERE status = 'pending' AND julianday(scheduled_at) <= julianday(?)
-        ORDER BY scheduled_at, id
+        ${selection === undefined ? '' : 'AND id > ? AND id <= ?'}
+        ORDER BY ${selection === undefined ? 'scheduled_at, id' : 'id'}
         LIMIT ?`,
-        [options.now, limit],
+        [options.now, ...(selection === undefined ? [] : [selection.afterId, selection.throughId]), limit],
       )
       for (const row of rows) {
         summary.examined += 1
+        if (selection !== undefined) summary.lastExaminedId = row.id
         const reminder: ScheduledReminderRecord = {
           ...row,
           status: row.status as 'pending' | 'sent' | 'cancelled',
