@@ -1,4 +1,4 @@
-import type { AccountDeletionStore } from '@ezacto/core'
+import type { AccountDeletionStore, AccountDeletionStatusStore } from '@ezacto/core'
 import { installAccountDeletionRequestRoutes } from './account-deletion-requests.js'
 import type { Hono } from 'hono'
 import type { ApiContext } from './context.js'
@@ -60,6 +60,7 @@ export interface AccountDeletionMailer {
 export interface ProfileRouteOptions {
   repository: ProfileRepositoryPort
   deletionStore?: AccountDeletionStore
+  deletionTracking?: AccountDeletionStatusStore
   clock: () => string
   /** Absent where the deployment sends no mail; the request is still recorded. */
   deletionMailer?: AccountDeletionMailer
@@ -143,6 +144,7 @@ export const installProfileRoutes = <Bindings extends object>(
    */
   if (options.deletionStore !== undefined) installAccountDeletionRequestRoutes(api, {
     store: options.deletionStore, clock: options.clock,
+    ...(options.deletionTracking === undefined ? {} : { tracking: options.deletionTracking }),
     ...(options.deletionMailer === undefined ? {} : { mailer: options.deletionMailer }),
   })
   else api.post('/profile/deletion-request', async (context) => {

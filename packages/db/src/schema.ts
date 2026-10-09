@@ -3875,3 +3875,38 @@ export const accountDeletionRequestUpdates = sqliteTable('account_deletion_reque
   occurredAt: text('occurred_at').notNull(),
   actorUserId: integer('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
 }, (table) => [primaryKey({ columns: [table.requestId, table.version] })])
+
+export const accountClosureSecurity = sqliteTable('account_closure_security', {
+  id: integer('id').primaryKey(),
+  secret: text('secret').notNull(),
+})
+export const accountClosures = sqliteTable('account_closures', {
+  requestId: text('request_id').primaryKey().references(() => accountDeletionRequests.id, { onDelete: 'restrict' }),
+  userId: integer('user_id').notNull().unique().references(() => users.id, { onDelete: 'restrict' }),
+  actorUserId: integer('actor_user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  closedAt: text('closed_at').notNull(),
+  policyVersion: integer('policy_version').notNull().references(() => accountRetentionPolicies.version, { onDelete: 'restrict' }),
+  policySnapshot: text('policy_snapshot').notNull(),
+  inventoryJson: text('inventory_json').notNull(),
+  replayKeys: text('replay_keys').notNull(),
+  retainedIdentity: integer('retained_identity', { mode: 'boolean' }).notNull(),
+  appleCleanup: text('apple_cleanup', { enum: ['not_linked', 'pending'] }).notNull(),
+})
+export const closedAccountSignInGuards = sqliteTable('closed_account_sign_in_guards', {
+  digest: text('digest').notNull(),
+  requestId: text('request_id').notNull().references(() => accountClosures.requestId, { onDelete: 'restrict' }),
+  kind: text('kind', { enum: ['email', 'provider'] }).notNull(),
+  createdAt: text('created_at').notNull(),
+}, (table) => [primaryKey({ columns: [table.digest, table.requestId] })])
+
+export const accountDeletionStatusAccess = sqliteTable('account_deletion_status_access', {
+  id: integer('id').primaryKey(),
+  requestId: text('request_id').notNull().references(() => accountDeletionRequests.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull().unique(),
+  issuedAt: text('issued_at').notNull(),
+  expiresAt: text('expires_at').notNull(),
+})
+export const accountDeletionStatusLimits = sqliteTable('account_deletion_status_limits', {
+  windowMinute: integer('window_minute').primaryKey(),
+  attempts: integer('attempts').notNull(),
+})

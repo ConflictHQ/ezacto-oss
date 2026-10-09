@@ -154,6 +154,9 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   'invoice_number_sequence',
   'email_template_versions',
   'email_template_heads',
+  // Instance security material is seeded once; keeping the migration ledger
+  // while deleting this row would permanently disable closure proofs.
+  'account_closure_security',
 ])
 
 /**

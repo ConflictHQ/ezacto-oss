@@ -29,6 +29,8 @@ import {
   createSignInMethodRepository,
   createAccountRetentionRepository,
   createAccountDeletionRequestRepository,
+  createAccountClosureRepository,
+  createAccountDeletionStatusRepository,
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
   createTeamRepository,
@@ -1070,6 +1072,8 @@ export const createRuntimeServices = async (
     signInMethods: createSignInMethodRepository(drizzle),
     accountRetention: createAccountRetentionRepository(drizzle),
     accountDeletionRequests: createAccountDeletionRequestRepository(drizzle),
+    accountClosure: createAccountClosureRepository(drizzle),
+    accountDeletionTracking: createAccountDeletionStatusRepository(drizzle),
     organizationName,
     ssoProvisioningDomains: createD1SsoProvisioningDomainStore(database),
     // The #520 organisation setting, read the same way the other two module

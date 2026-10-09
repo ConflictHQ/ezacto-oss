@@ -1,3 +1,4 @@
+import { createAccountClosureController } from './account-closure.js';
 import type { AccountDeletionRecord } from "@ezacto/core";
 import { EzactoApiError } from "@conflict-hq/ezacto-client";
 import type { SessionPresenter } from "../session.js";
@@ -37,6 +38,7 @@ export function createDeletionRequestsController(
   let next: string | null = null;
   let busy = false;
   const records = new Map<string, AccountDeletionRecord>();
+  const closure = createAccountClosureController(root, demo, () => reload(false));
   const writable = () =>
     session?.identity.profile === "administrator" &&
     !demo &&
@@ -76,6 +78,7 @@ export function createDeletionRequestsController(
   };
   const display = (record: AccountDeletionRecord) => {
     selected = record;
+    closure.select(session, record);
     detail.hidden = false;
     root.querySelector<HTMLElement>("[data-deletion-heading]")!.textContent =
       `User ${record.user_id} · ${record.status.replaceAll("_", " ")}`;
@@ -169,6 +172,7 @@ export function createDeletionRequestsController(
     refresh.disabled = more.disabled = true;
     if (!append) {
       selected = null;
+      closure.select(null, null);
       records.clear();
       detail.hidden = true;
     }
@@ -254,6 +258,7 @@ export function createDeletionRequestsController(
   return {
     clear() {
       session = null;
+      closure.select(null, null);
       selected = null;
       records.clear();
       next = null;

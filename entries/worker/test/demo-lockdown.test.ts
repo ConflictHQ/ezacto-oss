@@ -425,6 +425,7 @@ describe('the public demo (ENVIRONMENT=dev, DEMO_MODE=true)', () => {
       ['PATCH', '/api/v1/admin/sign-in-methods/password', { enabled: false }],
       ['PATCH', '/api/v1/admin/deletion-requests/example-request', { expected_version: 1, status: 'in_progress', message: 'Changed', expected_completion_at: null }],
       ['POST', '/api/v1/admin/deletion-requests/example-request/notification', {}],
+      ['POST', '/api/v1/admin/deletion-requests/example-request/closure', { expected_version: 1, expected_policy_version: 1, acknowledged: true }],
       ['POST', '/api/v1/settings/sso-domains', { domain: 'visitor.example' }],
       ['POST', '/api/v1/settings/sso-domains/1/verify', undefined],
       ['DELETE', '/api/v1/settings/sso-domains/1', undefined],
@@ -493,6 +494,7 @@ describe('the public demo (ENVIRONMENT=dev, DEMO_MODE=true)', () => {
     const request = await (await call(fixture, 'GET', '/api/v1/profile/deletion-request')).json() as { data: { id: string; status: string; version: number } }
     expect((await call(fixture, 'PATCH', `/api/v1/admin/deletion-requests/${request.data.id}`, { body: { expected_version: request.data.version, status: 'in_progress', message: 'Changed', expected_completion_at: null } })).status).toBe(403)
     expect((await call(fixture, 'POST', `/api/v1/admin/deletion-requests/${request.data.id}/notification`, { body: {} })).status).toBe(403)
+    expect((await call(fixture, 'POST', `/api/v1/admin/deletion-requests/${request.data.id}/closure`, { body: { expected_version: request.data.version, expected_policy_version: 1, acknowledged: true } })).status).toBe(403)
     const unchanged = await (await call(fixture, 'GET', '/api/v1/profile/deletion-request')).json() as { data: { status: string; version: number } }
     expect(unchanged.data).toMatchObject({ status: 'pending', version: request.data.version })
 

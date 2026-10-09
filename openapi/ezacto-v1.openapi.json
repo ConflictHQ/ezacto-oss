@@ -18206,6 +18206,215 @@
         }
       }
     },
+    "/account-deletion/requests/{id}/status": {
+      "post": {
+        "operationId": "readAccountDeletionTrackingStatus",
+        "summary": "Read minimal deletion status with its private tracking capability",
+        "tags": [
+          "profile"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDeletionTrackingEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/account-deletion/requests/:id/status",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountDeletionTrackingInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/deletion-requests/{id}/closure": {
+      "get": {
+        "operationId": "previewAccountClosure",
+        "summary": "Review actual account data before irreversible access closure",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountClosurePreviewEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/deletion-requests/:id/closure",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "closeAccountAccess",
+        "summary": "Erase local credentials and optional profile under reviewed retention decisions",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountClosureRecordEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/deletion-requests/:id/closure",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountClosureInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/deletion-requests": {
       "get": {
         "operationId": "listAccountDeletionRequests",
@@ -29261,6 +29470,464 @@
         },
         "additionalProperties": false
       },
+      "AccountClosureInventoryItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "location",
+          "count",
+          "category"
+        ],
+        "properties": {
+          "location": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "time_and_worker_attribution",
+              "billing_and_payments",
+              "audit_and_security",
+              "legal_hold"
+            ]
+          }
+        }
+      },
+      "AccountClosureRecord": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "user_id",
+          "actor_user_id",
+          "closed_at",
+          "policy_version",
+          "policy_snapshot",
+          "inventory",
+          "retained_identity",
+          "apple_cleanup"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "actor_user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "closed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "policy_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "policy_snapshot": {
+            "$ref": "#/components/schemas/AccountRetentionPolicy"
+          },
+          "inventory": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountClosureInventoryItem"
+            }
+          },
+          "retained_identity": {
+            "type": "boolean"
+          },
+          "apple_cleanup": {
+            "type": "string",
+            "enum": [
+              "not_linked",
+              "pending"
+            ]
+          }
+        }
+      },
+      "AccountClosurePreview": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "user_id",
+          "request_version",
+          "review_token",
+          "policy_version",
+          "policy_snapshot",
+          "inventory",
+          "uncovered_categories",
+          "owner_transfer_required",
+          "running_timer",
+          "closure"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "request_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "review_token": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "policy_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountRetentionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inventory": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountClosureInventoryItem"
+            }
+          },
+          "uncovered_categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "time_and_worker_attribution",
+                "billing_and_payments",
+                "audit_and_security",
+                "legal_hold"
+              ]
+            }
+          },
+          "owner_transfer_required": {
+            "type": "boolean"
+          },
+          "running_timer": {
+            "type": "boolean"
+          },
+          "closure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountClosureRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "AccountClosureInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expected_version",
+          "expected_policy_version",
+          "review_token",
+          "acknowledged"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "expected_policy_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "review_token": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "acknowledged": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      },
+      "AccountClosurePreviewEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AccountClosurePreview"
+          }
+        }
+      },
+      "AccountClosureRecordEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AccountClosureRecord"
+          }
+        }
+      },
+      "AccountDeletionStatusAccess": {
+        "type": "object",
+        "required": [
+          "token",
+          "expires_at",
+          "url"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "AccountDeletionTrackingInput": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 100
+          }
+        }
+      },
+      "AccountDeletionRetainedDisclosure": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "reason",
+          "period",
+          "review_after_days",
+          "review_due"
+        ],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "period": {
+            "type": "string"
+          },
+          "review_after_days": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "review_due": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AccountDeletionClosureDisclosure": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "retained_records",
+          "backup_handling",
+          "user_notice",
+          "operator_contact"
+        ],
+        "properties": {
+          "retained_records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountDeletionRetainedDisclosure"
+            }
+          },
+          "backup_handling": {
+            "type": "string"
+          },
+          "user_notice": {
+            "type": "string"
+          },
+          "operator_contact": {
+            "type": "string"
+          }
+        }
+      },
+      "AccountDeletionTrackingStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "status",
+          "requested_at",
+          "expected_completion_at",
+          "closed_at",
+          "completed_at",
+          "message",
+          "completion_confirmation",
+          "policy_version",
+          "policy_snapshot",
+          "policy_reviewed",
+          "closure_disclosure",
+          "operator_contact",
+          "expires_at"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in_progress",
+              "action_required",
+              "completed"
+            ]
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expected_completion_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "completion_confirmation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountRetentionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy_reviewed": {
+            "type": "boolean"
+          },
+          "closure_disclosure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountDeletionClosureDisclosure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "operator_contact": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AccountDeletionTrackingEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AccountDeletionTrackingStatus"
+          }
+        }
+      },
       "AccountDeletionSubmission": {
         "type": "object",
         "additionalProperties": false,
@@ -29562,6 +30229,9 @@
           },
           "links": {
             "$ref": "#/components/schemas/Links"
+          },
+          "status_access": {
+            "$ref": "#/components/schemas/AccountDeletionStatusAccess"
           }
         }
       },

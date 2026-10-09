@@ -4,6 +4,7 @@ import {
   hasAccountDeletionControlCharacters,
   type AccountDeletionRecord,
   type AccountDeletionStore,
+  type AccountDeletionStatusStore,
   type AccountDeletionUpdate,
 } from "@ezacto/core";
 import { requireApiScope, requireSessionPrincipal } from "./auth.js";
@@ -64,6 +65,7 @@ export function installAccountDeletionRequestRoutes<Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   options: {
     store: AccountDeletionStore;
+    tracking?: AccountDeletionStatusStore;
     clock(): string;
     mailer?: AccountDeletionMailer;
   },
@@ -149,9 +151,10 @@ export function installAccountDeletionRequestRoutes<Bindings extends object>(
                 number | null,
             }),
       });
+      const statusAccess = await options.tracking?.issue({ requestId: result.record.id, userId, now: options.clock() });
       if (result.created) await notify(result.record, userId);
       return context.json(
-        envelope(await options.store.readOwn(userId), ownPath),
+        { ...envelope((await options.store.readOwn(userId)) ?? result.record, ownPath), ...(statusAccess === undefined ? {} : { status_access: statusAccess }) },
         202,
         noStore,
       );
