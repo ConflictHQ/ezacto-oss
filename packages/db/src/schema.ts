@@ -3910,3 +3910,24 @@ export const accountDeletionStatusLimits = sqliteTable('account_deletion_status_
   windowMinute: integer('window_minute').primaryKey(),
   attempts: integer('attempts').notNull(),
 })
+
+export const appleNativeGrants = sqliteTable('apple_native_grants', {
+  subjectHash: text('subject_hash').primaryKey(), userId: integer('user_id').notNull().references(() => users.id, {onDelete:'restrict'}),
+  origin: text('origin').notNull(), grantId: text('grant_id').notNull(), generation: integer('generation').notNull(),
+  bindingJti: text('binding_jti').notNull().unique(), updatedAt: text('updated_at').notNull(),
+})
+export const appleDeletionSubjects = sqliteTable('apple_deletion_subjects', {
+  requestId: text('request_id').notNull().references(() => accountDeletionRequests.id, {onDelete:'restrict'}), subjectHash: text('subject_hash').notNull(),
+  origin: text('origin'), grantId: text('grant_id'), generation: integer('generation'), updatedAt: text('updated_at').notNull(),
+}, table => [primaryKey({columns:[table.requestId,table.subjectHash]})])
+export const appleDeletionUnknown = sqliteTable('apple_deletion_unknown', {
+  requestId: text('request_id').primaryKey().references(() => accountDeletionRequests.id, {onDelete:'restrict'}),
+})
+export const appleRevocationEvents = sqliteTable('apple_revocation_events', {
+  requestId: text('request_id').notNull(), subjectHash: text('subject_hash').notNull(), origin: text('origin').notNull(),
+  grantId: text('grant_id').notNull(), generation: integer('generation').notNull(), eventId: text('event_id').notNull().unique(),
+  revokedAt: text('revoked_at').notNull(), acceptedAt: text('accepted_at').notNull(),
+}, table => [primaryKey({columns:[table.requestId,table.subjectHash,table.generation]}),foreignKey({columns:[table.requestId,table.subjectHash],foreignColumns:[appleDeletionSubjects.requestId,appleDeletionSubjects.subjectHash]}).onDelete('restrict')])
+export const appleLifecycleLimits = sqliteTable('apple_lifecycle_limits', {
+  windowMinute: integer('window_minute').primaryKey(), attempts: integer('attempts').notNull(),
+})

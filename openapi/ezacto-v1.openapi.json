@@ -11,6 +11,246 @@
     }
   ],
   "paths": {
+    "/auth/apple/native-capabilities": {
+      "get": {
+        "operationId": "getNativeAppleCapabilities",
+        "summary": "Check explicit native Apple lifecycle protocol support",
+        "tags": [
+          "authentication"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeAppleCapabilities"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/auth/apple/native-capabilities",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/auth/apple": {
+      "post": {
+        "operationId": "signInNativeApple",
+        "summary": "Verify origin-bound Apple lifecycle custody and native identity before sign-in",
+        "tags": [
+          "authentication"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeAppleSignInEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/auth/apple",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeAppleSignInInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/apple/deletion-requests/{id}/binding": {
+      "post": {
+        "operationId": "rebindAppleCleanup",
+        "summary": "Bind fresh cleanup-purpose Apple custody to a pending deletion request",
+        "tags": [
+          "authentication"
+        ],
+        "security": [],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/auth/apple/deletion-requests/:id/binding",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppleLifecycleProofInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/apple/deletion-requests/{id}/revocation": {
+      "post": {
+        "operationId": "acceptAppleRevocation",
+        "summary": "Durably accept exact request-bound Apple invalidation evidence",
+        "tags": [
+          "authentication"
+        ],
+        "security": [],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/auth/apple/deletion-requests/:id/revocation",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppleLifecycleProofInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/auth/oidc/{provider}": {
       "get": {
         "operationId": "startOidcSignIn",
@@ -18415,6 +18655,81 @@
         }
       }
     },
+    "/api/v1/admin/deletion-requests/{id}/apple-cleanup": {
+      "post": {
+        "operationId": "retryAccountAppleCleanup",
+        "summary": "Retry server-managed Apple cleanup after local account closure",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppleCleanupStatusEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/deletion-requests/:id/apple-cleanup",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyObject"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/deletion-requests": {
       "get": {
         "operationId": "listAccountDeletionRequests",
@@ -29470,6 +29785,96 @@
         },
         "additionalProperties": false
       },
+      "NativeAppleCapabilities": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "available",
+          "lifecycle_version"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "lifecycle_version": {
+            "type": "integer",
+            "const": 1
+          }
+        }
+      },
+      "NativeAppleSignInInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "identityToken",
+          "bindingReceipt"
+        ],
+        "properties": {
+          "identityToken": {
+            "type": "string",
+            "maxLength": 16384
+          },
+          "bindingReceipt": {
+            "type": "string",
+            "maxLength": 16384
+          },
+          "fullName": {
+            "type": "object",
+            "properties": {
+              "givenName": {
+                "type": "string"
+              },
+              "familyName": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "NativeAppleSignInEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "ok"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "const": true
+              }
+            }
+          }
+        }
+      },
+      "AppleLifecycleProofInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "receipt"
+        ],
+        "properties": {
+          "receipt": {
+            "type": "string",
+            "maxLength": 16384
+          }
+        }
+      },
+      "AppleCleanupStatus": {
+        "type": "string",
+        "enum": [
+          "not_linked",
+          "pending",
+          "revoked",
+          "manual_required"
+        ]
+      },
       "AccountClosureInventoryItem": {
         "type": "object",
         "additionalProperties": false,
@@ -29544,11 +29949,7 @@
             "type": "boolean"
           },
           "apple_cleanup": {
-            "type": "string",
-            "enum": [
-              "not_linked",
-              "pending"
-            ]
+            "$ref": "#/components/schemas/AppleCleanupStatus"
           }
         }
       },
@@ -29569,6 +29970,9 @@
           "closure"
         ],
         "properties": {
+          "apple_cleanup_retry_available": {
+            "type": "boolean"
+          },
           "request_id": {
             "type": "string"
           },
@@ -29638,6 +30042,32 @@
                 "type": "null"
               }
             ]
+          }
+        }
+      },
+      "EmptyObject": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      },
+      "AppleCleanupStatusEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "apple_cleanup"
+            ],
+            "properties": {
+              "apple_cleanup": {
+                "$ref": "#/components/schemas/AppleCleanupStatus"
+              }
+            }
           }
         }
       },
@@ -29804,6 +30234,9 @@
           "expires_at"
         ],
         "properties": {
+          "apple_cleanup": {
+            "$ref": "#/components/schemas/AppleCleanupStatus"
+          },
           "request_id": {
             "type": "string"
           },
@@ -30008,6 +30441,9 @@
           "updated_at"
         ],
         "properties": {
+          "apple_cleanup": {
+            "$ref": "#/components/schemas/AppleCleanupStatus"
+          },
           "id": {
             "type": "string"
           },

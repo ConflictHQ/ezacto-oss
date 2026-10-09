@@ -11,6 +11,8 @@ import {
   type JWTPayload,
 } from 'jose'
 import type { ApiContext } from './context.js'
+import type { AppleLifecycleOptions } from './apple-lifecycle.js'
+import { appleInstanceOrigin, AppleProofUnavailable, createAppleLifecycleVerifier } from './apple-lifecycle-proof.js'
 import { ApiError, readJsonBody, validationError } from './errors.js'
 import {
   signInMethodUnavailable,
@@ -39,10 +41,13 @@ export type AppleFetch = (url: string, init: RequestInit) => Promise<Response>
  * Deployment configuration for native Sign in with Apple.
  *
  * `clientId` is the audience an identity token must carry: the iOS bundle
- * identifier the app ships under, and optionally a web Services ID beside it.
- * One value or several, separated by whitespace or commas -- a token is
- * accepted when its `aud` is any of them, which is how one Apple team serves an
- * app and a website at once.
+ * identifier the app ships under. One value or several, separated by
+ * whitespace or commas -- a token is accepted when its `aud` is any of them.
+ *
+ * The website's Services ID does not belong here. The browser flow
+ * (`apple-web.ts`) verifies its tokens against that ID itself, bound to a
+ * nonce; the native lifecycle proof and exact native audience must remain independent
+ * of the web flow (issues 768 and 975).
  */
 export interface AppleProviderConfig {
   clientId: string
@@ -70,11 +75,30 @@ export interface AppleAssertion {
   /** The verified address from the token; Apple issues one for every sign-in. */
   email: string
   emailVerified: boolean
+  /**
+   * Whether the address is one of Apple's private relay addresses (Hide My
+   * Email). It still verifies and still links, but it matches no account a
+   * person made under their own address, which is worth saying when it fails.
+   */
+  isPrivateEmail?: boolean
+}
+
+/** Claims a caller requires on top of the signature, issuer and audience. */
+export interface AppleTokenExpectations {
+  /**
+   * The exact `nonce` claim the token must carry. The browser flow binds every
+   * token to the transaction that asked for it this way; the native route has
+   * no transaction and passes nothing.
+   */
+  nonce?: string
 }
 
 export interface AppleIdentityTokenVerifier {
   /** Returns null for every malformed, unverifiable, expired, or unavailable token. */
-  verify(identityToken: string): Promise<AppleAssertion | null>
+  verify(
+    identityToken: string,
+    expected?: AppleTokenExpectations,
+  ): Promise<AppleAssertion | null>
 }
 
 export interface AppleIdentityResolver {
@@ -98,15 +122,16 @@ export interface AppleRouteOptions<Bindings extends object> {
    */
   verifier?: AppleIdentityTokenVerifier
   /**
-   * Issue 761. Apple draws no button on the sign-in card -- the app holds the
-   * platform prompt -- but it is a way in, so an operator switching it off has
-   * to stop the route rather than a control that was never there.
+   * Issue 761. This route has no button on the sign-in card -- the app holds
+   * the platform prompt -- but it is a way in, so an operator switching it off
+   * has to stop the route rather than a control that was never there.
    */
   policy?: SignInMethodPolicy
+  lifecycle?: AppleLifecycleOptions<Bindings>
 }
 
 const appleError = (
-  status: 400 | 401 | 403 | 404 | 503,
+  status: 400 | 401 | 403 | 404 | 409 | 429 | 503,
   code: string,
   message: string,
 ): ApiError => new ApiError({ status, code, message })
@@ -212,6 +237,24 @@ const appleEmail = (payload: JWTPayload): string | null => {
 const appleEmailVerified = (payload: JWTPayload): boolean =>
   payload.email_verified === true || payload.email_verified === 'true'
 
+/** Apple's relay domain, for a token that says nothing either way. */
+const PRIVATE_RELAY_DOMAIN = '@privaterelay.appleid.com'
+
+const applePrivateEmail = (payload: JWTPayload, email: string): boolean =>
+  payload.is_private_email === true ||
+  payload.is_private_email === 'true' ||
+  email.endsWith(PRIVATE_RELAY_DOMAIN)
+
+/** Compare every position instead of returning at the first different character. */
+const sameText = (left: string, right: string): boolean => {
+  let difference = left.length ^ right.length
+  const length = Math.max(left.length, right.length)
+  for (let index = 0; index < length; index += 1) {
+    difference |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0)
+  }
+  return difference === 0
+}
+
 /**
  * A verifier backed by Apple's published JWKS. The remote key set caches
  * successful keys and throttles unknown-key refreshes while still reloading
@@ -233,7 +276,7 @@ export const createAppleIdentityTokenVerifier = (
   })
 
   return {
-    verify: async (identityToken) => {
+    verify: async (identityToken, expected = {}) => {
       if (
         typeof identityToken !== 'string' ||
         identityToken.length < 1 ||
@@ -272,9 +315,20 @@ export const createAppleIdentityTokenVerifier = (
         ) {
           return null
         }
+        if (
+          expected.nonce !== undefined &&
+          (typeof payload.nonce !== 'string' || !sameText(payload.nonce, expected.nonce))
+        ) {
+          return null
+        }
         const email = appleEmail(payload)
         if (email === null) return null
-        return { subject: sub, email, emailVerified: appleEmailVerified(payload) }
+        return {
+          subject: sub,
+          email,
+          emailVerified: appleEmailVerified(payload),
+          isPrivateEmail: applePrivateEmail(payload, email),
+        }
       } catch {
         return null
       }
@@ -319,6 +373,7 @@ export const installAppleRoutes = <Bindings extends object>(
   // A single-organization deployment has one stable Apple audience, so the
   // JWKS-backed verifier is built once and reused; that is where jose's key
   // cache lives, and a fresh verifier per request would refetch every time.
+  const lifecycleVerifier = options.lifecycle?.verifier ?? createAppleLifecycleVerifier()
   let cached: { key: string; verifier: AppleIdentityTokenVerifier } | null = null
   const verifierFor = (
     config: AppleProviderConfig,
@@ -336,6 +391,18 @@ export const installAppleRoutes = <Bindings extends object>(
     }
     return cached.verifier
   }
+
+  app.get('/auth/apple/native-capabilities', async context => {
+    setResponseHeaders(context)
+    let available:boolean
+    try {
+      const configured=options.provider(context.env)
+      available=options.lifecycle!==undefined && appleInstanceOrigin(options.lifecycle.origin(context.env))!==null && configured!==null &&
+        normalizedConfig(configured).audiences.includes('com.ezacto.app') &&
+        (options.policy===undefined || await options.policy.isLive('apple',context.env))
+    } catch { available=false }
+    return context.json({available,lifecycle_version:1})
+  })
 
   app.post('/auth/apple', async (context) => {
     if (
@@ -384,7 +451,7 @@ export const installAppleRoutes = <Bindings extends object>(
       ])
     }
     const unknownFields = Object.keys(body).filter(
-      (field) => field !== 'identityToken' && field !== 'fullName',
+      (field) => field !== 'identityToken' && field !== 'fullName' && field !== 'bindingReceipt',
     )
     if (unknownFields.length > 0) {
       throw validationError(
@@ -407,9 +474,30 @@ export const installAppleRoutes = <Bindings extends object>(
     const firstName = optionalName(nameSource.givenName)
     const lastName = optionalName(nameSource.familyName)
 
-    const verifier = verifierFor(configured, normalized)
-    const assertion = await verifier.verify(body.identityToken)
-    if (assertion === null) throw authFailure()
+    const lifecycle = options.lifecycle
+    const origin = lifecycle === undefined ? null : appleInstanceOrigin(lifecycle.origin(context.env))
+    if (!lifecycle || !origin || !normalized.audiences.includes('com.ezacto.app'))
+      throw appleError(503, 'apple_lifecycle_unavailable', 'This server is not ready for the current native Apple sign-in protocol.')
+    if (typeof body.bindingReceipt !== 'string' || body.bindingReceipt.length > 16_384)
+      throw validationError([{field:'bindingReceipt',code:'required',message:'Use a current eZacto app with Apple credential lifecycle support.'}])
+    const now=lifecycle.clock()
+    if (!await lifecycle.store.allowProof(now)) {
+      context.header('retry-after','60')
+      throw appleError(429,'rate_limited','Try Apple sign-in again shortly.')
+    }
+    let proof
+    try { proof=await lifecycleVerifier.verify(body.bindingReceipt,origin) }
+    catch(error){
+      if(error instanceof AppleProofUnavailable)throw appleError(503,'apple_lifecycle_unavailable','Apple credential verification is temporarily unavailable.')
+      throw error
+    }
+    if(!proof || proof.type!=='apple_grant' || proof.purpose!=='sign-in')throw authFailure()
+    // The first-party lifecycle service is scoped to this exact native audience.
+    // A web Services ID never broadens the native route's verifier.
+    const nativeConfig={...configured,clientId:'com.ezacto.app'}
+    const verifier = verifierFor(nativeConfig, normalizedConfig(nativeConfig))
+    const assertion = await verifier.verify(body.identityToken, {nonce:proof.nonce})
+    if (assertion === null || assertion.subject!==proof.subject) throw authFailure()
 
     let identity: ProviderIdentityResolution
     try {
@@ -429,11 +517,10 @@ export const installAppleRoutes = <Bindings extends object>(
           'Apple did not return the profile required to create this user.',
         )
       }
-      throw error
+      throw appleError(503, 'apple_identity_unavailable', 'Apple sign-in is temporarily unavailable.')
     }
-    // An assertion that matched nobody and came from a domain this instance has
-    // not proven it owns gets no account -- the same rule the OIDC providers
-    // enforce, so an arbitrary Apple ID cannot provision itself a user.
+    // Keep native membership behavior unchanged; the web demo has a separate
+    // route that bypasses identity resolution altogether.
     if (identity.status === 'provisioning_not_permitted') {
       throw appleError(
         403,
@@ -444,6 +531,8 @@ export const installAppleRoutes = <Bindings extends object>(
     if (identity.status === 'disabled') {
       throw appleError(403, 'account_disabled', 'This ezacto user is disabled.')
     }
+    if (!await lifecycle.store.recordSignIn({...proof,userId:identity.userId,now}))
+      throw appleError(409,'apple_binding_not_accepted','The Apple authorization changed. Start a fresh Apple sign-in.')
     const session = await options.sessions.issue(identity.userId)
     context.header('set-cookie', session.setCookie, { append: true })
     setResponseHeaders(context)

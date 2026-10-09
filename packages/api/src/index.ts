@@ -439,3 +439,6 @@ export { installAccountDeletionRequestRoutes } from './account-deletion-requests
 export { installAccountClosureRoutes } from './account-closure.js'
 
 export { installAccountDeletionStatusRoutes } from './account-deletion-status.js'
+
+export * from './apple-lifecycle.js'
+export * from './apple-lifecycle-proof.js'

@@ -40,6 +40,7 @@ import {
   createAccountRetentionRepository,
   createAccountDeletionRequestRepository,
   createAccountClosureRepository,
+  createAppleLifecycleRepository,
   createAccountDeletionStatusRepository,
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
@@ -894,6 +895,7 @@ export const createContainerRuntime = async (
     accountRetention: createAccountRetentionRepository(drizzle),
     accountDeletionRequests: createAccountDeletionRequestRepository(drizzle),
     accountClosure: createAccountClosureRepository(drizzle),
+    nativeAppleLifecycle: createAppleLifecycleRepository(drizzle),
     accountDeletionTracking: createAccountDeletionStatusRepository(drizzle),
       organizationName,
       ssoProvisioningDomains:

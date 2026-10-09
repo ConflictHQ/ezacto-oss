@@ -3,6 +3,8 @@ import {
   AccountClosureError,
   type AccountClosurePreview,
   type AccountClosureStore,
+  type AccountClosureRecord,
+  type AppleCleanupPort,
 } from "@ezacto/core";
 import { createApiApp, installAccountClosureRoutes } from "../src/index.js";
 const preview: AccountClosurePreview = {
@@ -19,7 +21,10 @@ const preview: AccountClosurePreview = {
   closure: null,
 };
 const at = "2026-10-09T00:00:00.000Z";
-function harness() {
+function harness(cleanup?: {
+  appleCleanup: AppleCleanupPort;
+  performAppleCleanup(requestId: string): Promise<void>;
+}) {
   const store: AccountClosureStore = {
     preview: vi.fn(async () => preview),
     close: vi.fn(async () => {
@@ -44,15 +49,16 @@ function harness() {
       },
     },
     installApi: (api) =>
-      installAccountClosureRoutes(api, { store, clock: () => at }),
+      installAccountClosureRoutes(api, { store, clock: () => at, ...cleanup }),
   });
   const call = (
     method = "GET",
     body?: unknown,
     cookie = "admin",
     origin = "http://localhost",
+    suffix = "closure",
   ) =>
-    app.request("/api/v1/admin/deletion-requests/request-1/closure", {
+    app.request(`/api/v1/admin/deletion-requests/request-1/${suffix}`, {
       method,
       headers: { cookie, origin, "content-type": "application/json" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -122,5 +128,80 @@ describe("account closure API", () => {
     expect(await response.json()).toMatchObject({
       error: { code: "owner_transfer_required" },
     });
+  });
+});
+
+describe("post-closure Apple cleanup", () => {
+  const input = {
+    expected_version: 1,
+    expected_policy_version: 3,
+    review_token: "a".repeat(64),
+    acknowledged: true,
+  };
+  const closed = {
+    request_id: "request-1",
+    user_id: 2,
+    actor_user_id: 1,
+    closed_at: at,
+    policy_version: 3,
+    policy_snapshot: {frameworks:[],retained_records:[],response_target_days:14,operator_contact:"privacy@example.test",user_notice:"Close local access.",backup_handling:"Replay closure.",acknowledged:true},
+    inventory: [],
+    retained_identity: false,
+    apple_cleanup: "pending",
+  } as AccountClosureRecord;
+  const cleanup = () => ({
+    appleCleanup: {
+      begin: vi.fn(async () => {}),
+      status: vi.fn(async () => "pending" as const),
+    },
+    performAppleCleanup: vi.fn(async () => {}),
+  });
+  it("never revokes during review or when local closure rejects a stale authorization", async () => {
+    const ports = cleanup(),
+      { call, store } = harness(ports);
+    expect((await call()).status).toBe(200);
+    expect(ports.appleCleanup.begin).not.toHaveBeenCalled();
+    vi.mocked(store.close).mockRejectedValue(
+      new AccountClosureError("concurrent_change"),
+    );
+    expect((await call("POST", input)).status).toBe(409);
+    expect(ports.appleCleanup.begin).toHaveBeenCalledOnce();
+    expect(ports.performAppleCleanup).not.toHaveBeenCalled();
+  });
+  it("performs only after successful closure and preserves truthful local success if cleanup persistence fails", async () => {
+    const ports = cleanup(),
+      { call, store } = harness(ports);
+    vi.mocked(store.close).mockResolvedValue({ ...closed });
+    ports.performAppleCleanup.mockImplementation(async () => {
+      expect(store.close).toHaveBeenCalledOnce();
+      throw new Error("unavailable");
+    });
+    const result = await call("POST", input);
+    expect(result.status).toBe(200);
+    expect(await result.json()).toMatchObject({
+      data: { closed_at: at, apple_cleanup: "manual_required" },
+    });
+  });
+  it("requires existing closure, administrator and CSRF for explicit retry", async () => {
+    const ports = cleanup(),
+      { call, store } = harness(ports);
+    const retry = (
+      cookie = "admin",
+      origin = "http://localhost",
+      body: unknown = {},
+    ) => call("POST", body, cookie, origin, "apple-cleanup");
+    expect((await retry("member")).status).toBe(403);
+    expect((await retry("admin", "https://stranger.test")).status).toBe(403);
+    expect(
+      (await retry("admin", "http://localhost", { user_id: 2 })).status,
+    ).toBe(422);
+    expect((await retry()).status).toBe(409);
+    expect(ports.performAppleCleanup).not.toHaveBeenCalled();
+    vi.mocked(store.preview).mockResolvedValue({ ...preview, closure: closed });
+    const result = await retry();
+    expect(result.status).toBe(200);
+    expect(result.headers.get("cache-control")).toBe("no-store");
+    expect(await result.json()).toEqual({ data: { apple_cleanup: "pending" } });
+    expect(ports.performAppleCleanup).toHaveBeenCalledWith("request-1");
   });
 });

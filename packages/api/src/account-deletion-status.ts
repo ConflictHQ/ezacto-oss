@@ -1,10 +1,10 @@
 import type { Hono } from "hono";
-import type { AccountDeletionStatusStore } from "@ezacto/core";
+import type { AccountDeletionStatusStore, AppleCleanupPort } from "@ezacto/core";
 import type { ApiContext } from "./context.js";
 import { ApiError, readJsonBody, validationError } from "./errors.js";
 export function installAccountDeletionStatusRoutes<Bindings extends object>(
   app: Hono<ApiContext<Bindings>>,
-  options: { store: AccountDeletionStatusStore; clock(): string },
+  options: { store: AccountDeletionStatusStore; clock(): string; appleCleanup?: AppleCleanupPort },
 ): void {
   app.post("/account-deletion/requests/:id/status", async (context) => {
     context.header("cache-control", "no-store");
@@ -46,6 +46,6 @@ export function installAccountDeletionStatusRoutes<Bindings extends object>(
         message:
           "Tracking access expired or is unavailable. Contact the operator for the request outcome; this does not mean erasure completed.",
       });
-    return context.json({ data }, 200, { "cache-control": "no-store" });
+    return context.json({ data: options.appleCleanup===undefined ? data : {...data, apple_cleanup:await options.appleCleanup.status(data.request_id)} }, 200, { "cache-control": "no-store" });
   });
 }

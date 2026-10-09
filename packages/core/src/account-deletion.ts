@@ -1,3 +1,4 @@
+import type { AppleCleanupStatus } from './apple-lifecycle.js'
 import type { AccountRetentionPolicy } from "./account-retention.js";
 
 export type AccountDeletionStatus =
@@ -7,6 +8,7 @@ export type AccountDeletionNotification =
 
 /** No copied name/email: identity stays in the existing, access-controlled user directory. */
 export interface AccountDeletionRecord {
+  apple_cleanup?: AppleCleanupStatus;
   id: string;
   user_id: number;
   requested_at: string;
