@@ -32,6 +32,7 @@ import {
   createAccountRetentionRepository,
   createAccountDeletionRequestRepository,
   createAccountClosureRepository,
+  createAccountRetentionReviewRepository,
   createAppleLifecycleRepository,
   createAccountDeletionStatusRepository,
   createTimesheetApprovalRepository,
@@ -451,7 +452,9 @@ export const ensureRuntimeDatabaseReady = async (
   const pending = readiness.get(identity);
   if (pending !== undefined) return pending;
 
-  const migration = migrateD1(database).catch((error: unknown) => {
+  const migration = migrateD1(database).then(async()=>{
+    if(await database.prepare('SELECT 1 FROM account_restore_quarantine WHERE id=1 AND quarantined=1').first())throw new Error('Restored privacy evidence must be reconciled before this instance serves traffic.')
+  }).catch((error: unknown) => {
     if (readiness.get(identity) === migration) readiness.delete(identity);
     throw error;
   });
@@ -1076,6 +1079,7 @@ export const createRuntimeServices = async (
     accountRetention: createAccountRetentionRepository(drizzle),
     accountDeletionRequests: createAccountDeletionRequestRepository(drizzle),
     accountClosure: createAccountClosureRepository(drizzle),
+    accountRetentionReview: createAccountRetentionReviewRepository(drizzle),
     nativeAppleLifecycle: createAppleLifecycleRepository(drizzle),
     accountDeletionTracking: createAccountDeletionStatusRepository(drizzle),
     organizationName,

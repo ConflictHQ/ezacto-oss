@@ -33,3 +33,8 @@ export function createCanonicalTemporaryDirectory(
   prefix: string,
   parent?: string,
 ): Promise<string>;
+
+export function restorePhysicalSnapshot(
+  options: { bundle: string; volume: string; image: string },
+  execute?: (args: string[]) => Promise<{ stdout: string; stderr: string }>,
+): Promise<void>;

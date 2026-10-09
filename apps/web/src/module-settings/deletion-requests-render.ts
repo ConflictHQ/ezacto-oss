@@ -6,6 +6,16 @@ export const renderDeletionRequests = () => `
     <p role="status" aria-live="polite" data-deletion-status></p>
     <ul data-deletion-list></ul>
     <button type="button" data-deletion-more hidden>Load more requests</button>
+    <section aria-label="Retention and downstream review" data-retention-review>
+      <h4>Retention and downstream review</h4>
+      <p>Review due dates prompt follow-up; they do not delete data or establish a legal basis. Keep necessary worker, time, invoice and payment attribution until its justified retention ends.</p>
+      <button type="button" data-retention-due>Show due and overdue reviews</button>
+      <ul data-retention-due-list></ul>
+      <p data-retention-reference>Select a request to review its remaining obligations.</p>
+      <button type="button" data-retention-load disabled>Review retained records and cleanup</button>
+      <div data-retention-content></div>
+      <p role="status" aria-live="polite" data-retention-status></p>
+    </section>
     <section data-deletion-detail hidden>
       <h4 data-deletion-heading></h4>
       <div data-deletion-disclosure></div>

@@ -426,6 +426,8 @@ describe('the public demo (ENVIRONMENT=dev, DEMO_MODE=true)', () => {
       ['PATCH', '/api/v1/admin/deletion-requests/example-request', { expected_version: 1, status: 'in_progress', message: 'Changed', expected_completion_at: null }],
       ['POST', '/api/v1/admin/deletion-requests/example-request/notification', {}],
       ['POST', '/api/v1/admin/deletion-requests/example-request/apple-cleanup', {}],
+      ['PATCH', '/api/v1/admin/deletion-requests/example-request/retention-reviews/backups', { acknowledged: true }],
+      ['POST', '/api/v1/admin/deletion-requests/example-request/completion', { acknowledged: true }],
       ['POST', '/api/v1/admin/deletion-requests/example-request/closure', { expected_version: 1, expected_policy_version: 1, acknowledged: true }],
       ['POST', '/api/v1/settings/sso-domains', { domain: 'visitor.example' }],
       ['POST', '/api/v1/settings/sso-domains/1/verify', undefined],
