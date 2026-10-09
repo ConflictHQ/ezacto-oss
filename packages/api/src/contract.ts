@@ -1,3 +1,4 @@
+import { ACCOUNT_PRIVACY_FRAMEWORKS } from '@ezacto/core';
 import { paymentRunOperations, paymentRunSchemas } from './payment-run-contract.js'
 import { staffPaymentOperations, staffPaymentSchemas } from './staff-payment-contract.js';
 import { commercialTermFields, DETAILED_TIME_PDF_ROW_LIMIT, maximumBulkApprovalSelections } from "@ezacto/core";
@@ -1140,6 +1141,11 @@ const moduleSettingsOperations: ApiContractOperation[] = [
 
 // Issue 761. Which ways in the instance offers, as an administrator setting
 // rather than three separate deploy secrets.
+const accountRetentionOperations: ApiContractOperation[] = [
+  { method: "get", path: "/api/v1/profile/retention-policy", operationId: "getAccountRetentionPolicy", summary: "Read the operator's published erasure and retention disclosure", tag: "profile", responseStatus: 200, responseSchema: "AccountRetentionEnvelope", description: "Requires a staff session or a token with time_entries:read." },
+  { method: "post", path: "/api/v1/admin/retention-policy", operationId: "publishAccountRetentionPolicy", summary: "Publish an operator erasure and retention policy version", tag: "admin-modules", responseStatus: 200, responseSchema: "AccountRetentionEnvelope", requestSchema: "AccountRetentionPublication", requestRequired: true, sessionOnly: true },
+];
+
 const signInMethodOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -2901,6 +2907,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...reportOperations,
   ...moduleSettingsOperations,
   ...signInMethodOperations,
+  ...accountRetentionOperations,
   ...backupOperations,
   ...quickBooksOperations,
   ...wiseOperations,
@@ -8371,6 +8378,41 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       links: reference("Links"),
     },
     additionalProperties: false,
+  },
+  AccountRetentionRule: {
+    type: "object", additionalProperties: false,
+    required: ["category", "reason", "period", "review_after_days"],
+    properties: {
+      category: { type: "string", enum: ["time_and_worker_attribution", "billing_and_payments", "audit_and_security", "legal_hold"] },
+      reason: { type: "string", minLength: 1, maxLength: 2000 },
+      period: { type: "string", minLength: 1, maxLength: 1000 },
+      review_after_days: { type: "integer", minimum: 1, maximum: 365 },
+    },
+  },
+  AccountRetentionPolicy: {
+    type: "object", additionalProperties: false,
+    required: ["frameworks", "retained_records", "response_target_days", "operator_contact", "user_notice", "backup_handling", "acknowledged"],
+    properties: {
+      frameworks: { type: "array", uniqueItems: true, items: { type: "string", enum: [...ACCOUNT_PRIVACY_FRAMEWORKS] } },
+      retained_records: { type: "array", maxItems: 4, items: reference("AccountRetentionRule") },
+      response_target_days: { type: "integer", minimum: 1, maximum: 90 },
+      operator_contact: { type: "string", format: "email", maxLength: 254 },
+      user_notice: { type: "string", minLength: 1, maxLength: 5000 },
+      backup_handling: { type: "string", minLength: 1, maxLength: 5000 },
+      acknowledged: { type: "boolean", enum: [true] },
+    },
+  },
+  AccountRetentionPublication: {
+    type: "object", additionalProperties: false, required: ["expected_version", "policy"],
+    properties: { expected_version: { type: "integer", minimum: 0, maximum: 9007199254740990 }, policy: reference("AccountRetentionPolicy") },
+  },
+  AccountRetentionRecord: {
+    type: "object", additionalProperties: false, required: ["version", "policy", "published_at"],
+    properties: { version: { type: "integer", minimum: 1 }, policy: reference("AccountRetentionPolicy"), published_at: { type: "string", format: "date-time" } },
+  },
+  AccountRetentionEnvelope: {
+    type: "object", additionalProperties: false, required: ["data", "links"],
+    properties: { data: { anyOf: [reference("AccountRetentionRecord"), { type: "null" }] }, links: reference("Links") },
   },
   SignInMethodState: {
     type: "object",

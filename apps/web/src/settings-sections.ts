@@ -18,6 +18,7 @@ export interface SettingsSection {
 export const COMPANY_SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: 'modules', label: 'Modules' },
   { id: 'sign-in', label: 'Ways in' },
+  { id: 'erasure', label: 'Erasure and retention' },
   { id: 'time', label: 'Time' },
   { id: 'email', label: 'Email' },
   { id: 'invoices', label: 'Invoices' },
