@@ -42,3 +42,5 @@ export * from './payment-runs.js'
 export * from './payment-actuals.js'
 
 export * from './apple-lifecycle.js'
+
+export * from './apple-web-custody.js'
