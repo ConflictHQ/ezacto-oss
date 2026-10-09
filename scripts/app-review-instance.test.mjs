@@ -30,11 +30,26 @@ test("secrets only use review keys, ignoring inherited production integrations",
     API_CURSOR_SIGNING_KEY: "wrong",
     AWS_ACCESS_KEY_ID: "prod",
     STRIPE_API_KEY: "prod",
+    APPLE_CLIENT_ID: "unrelated.app",
+    APPLE_WEB_ENABLED: "true",
+    APPLE_WEB_SERVICES_ID: "unrelated.web",
+    APPLE_SIGN_IN_PRIVATE_KEY: "must-not-inherit",
+    OIDC_GOOGLE_CLIENT_SECRET: "prod",
+    SENTRY_DSN: "prod",
   });
   assert.equal(payload.API_CURSOR_SIGNING_KEY, env.REVIEW_CURSOR_SIGNING_KEY);
   assert.equal(payload.EZACTO_BOOTSTRAP_TOKEN, env.REVIEW_BOOTSTRAP_TOKEN);
+  assert.equal(payload.APPLE_CLIENT_ID, "com.ezacto.app");
+  assert.equal(reviewSecrets(env).APPLE_CLIENT_ID, "com.ezacto.app");
+  assert.equal("APPLE_SIGN_IN_PRIVATE_KEY" in payload, false);
   for (const [key, value] of Object.entries(payload)) {
-    if (!["API_CURSOR_SIGNING_KEY", "EZACTO_BOOTSTRAP_TOKEN"].includes(key))
+    if (
+      ![
+        "API_CURSOR_SIGNING_KEY",
+        "EZACTO_BOOTSTRAP_TOKEN",
+        "APPLE_CLIENT_ID",
+      ].includes(key)
+    )
       assert.equal(value, null, key);
   }
   for (const key of Object.keys(env))
