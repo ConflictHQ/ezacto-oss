@@ -466,7 +466,13 @@ const fs = require('node:fs')
 const source = '/restore'
 const target = '/data'
 if (fs.readdirSync(target).length !== 0) throw new Error('target volume is not empty')
-fs.writeFileSync(target + '/.privacy-restore-incomplete', 'Keep this restored volume offline until privacy quarantine is durable.\n', {mode:0o600,flag:'wx'})
+const marker = fs.openSync(target + '/.privacy-restore-incomplete', 'wx', 0o600)
+try {
+  fs.writeSync(marker, 'Keep this restored volume offline until privacy quarantine is durable.\n')
+  fs.fsyncSync(marker)
+} finally { fs.closeSync(marker) }
+const directory = fs.openSync(target, 'r')
+try { fs.fsyncSync(directory) } finally { fs.closeSync(directory) }
 const copy = (from, to) => {
   const metadata = fs.lstatSync(from)
   if (metadata.isSymbolicLink()) throw new Error('snapshot contains a symbolic link')
