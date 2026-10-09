@@ -3833,3 +3833,15 @@ export const scheduledReminders = sqliteTable(
     ),
   ],
 )
+
+/** Published operator policy history for explaining earlier disclosures. */
+export const accountRetentionPolicies = sqliteTable('account_retention_policies', {
+  version: integer('version').primaryKey(),
+  policyJson: text('policy_json').notNull(),
+  publishedByUserId: integer('published_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+  publishedAt: text('published_at').notNull(),
+}, (table) => [
+  check('account_retention_policy_published_at', sql`unixepoch(${table.publishedAt}) is not null`),
+  check('account_retention_policy_version', sql`${table.version} between 1 and 9007199254740991`),
+  check('account_retention_policy_json', sql`json_valid(${table.policyJson}) and json_type(${table.policyJson}) = 'object' and coalesce(json_type(${table.policyJson}, '$.acknowledged') = 'true', 0)`),
+])

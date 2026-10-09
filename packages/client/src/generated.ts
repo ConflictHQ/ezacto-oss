@@ -3126,6 +3126,39 @@ export type ModuleListEnvelope = {
   "links": Links;
 };
 
+export type AccountRetentionRule = {
+  "category": "time_and_worker_attribution" | "billing_and_payments" | "audit_and_security" | "legal_hold";
+  "reason": string;
+  "period": string;
+  "review_after_days": number;
+};
+
+export type AccountRetentionPolicy = {
+  "frameworks": Array<"gdpr" | "california_ccpa_cpra" | "texas_tdpsa" | "colorado_cpa" | "us_florida" | "other">;
+  "retained_records": Array<AccountRetentionRule>;
+  "response_target_days": number;
+  "operator_contact": string;
+  "user_notice": string;
+  "backup_handling": string;
+  "acknowledged": true;
+};
+
+export type AccountRetentionPublication = {
+  "expected_version": number;
+  "policy": AccountRetentionPolicy;
+};
+
+export type AccountRetentionRecord = {
+  "version": number;
+  "policy": AccountRetentionPolicy;
+  "published_at": string;
+};
+
+export type AccountRetentionEnvelope = {
+  "data": AccountRetentionRecord | null;
+  "links": Links;
+};
+
 export type SignInMethodState = {
   "method": "password" | "magic_link" | "google" | "github" | "apple";
   "configured": boolean;
@@ -5706,6 +5739,25 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<SignInMethodListEnvelope>("PATCH", "/api/v1/admin/sign-in-methods/:method".replace(":method", encodeURIComponent(String(args["method"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getAccountRetentionPolicy(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<AccountRetentionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountRetentionEnvelope>("GET", "/api/v1/profile/retention-policy", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async publishAccountRetentionPolicy(args: { body: AccountRetentionPublication; signal?: AbortSignal; headers?: HeadersInit }): Promise<AccountRetentionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AccountRetentionEnvelope>("POST", "/api/v1/admin/retention-policy", {
       body: args.body,
       signal: args.signal,
       headers,

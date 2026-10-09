@@ -41,6 +41,8 @@ import {
   installModuleSettingsRoutes,
   installAppleRoutes,
   installSignInMethodRoutes,
+  installAccountRetentionRoutes,
+  type AccountRetentionService,
   createSignInMethodPolicy,
   installGitHubRoutes,
   installMoneyResourceRoutes,
@@ -303,6 +305,7 @@ export interface RuntimeServices {
   isExpensesModuleEnabled(): Promise<boolean>
   moduleSettings: ModuleSettingsService
   /** Which ways in are switched on (issue 761). */
+  accountRetention?: AccountRetentionService
   signInMethods: SignInMethodService
   /** The domains SSO may provision a user for, and their DNS challenges (#270). */
   ssoProvisioningDomains: SsoProvisioningDomainService
@@ -731,6 +734,12 @@ export const createApp = (
               service: services.moduleSettings,
               clock: () => systemClock.now().instant,
             })
+            if (services.accountRetention !== undefined) {
+              installAccountRetentionRoutes(api, {
+                service: services.accountRetention,
+                clock: () => systemClock.now().instant,
+              })
+            }
             installSignInMethodRoutes(api, {
               service: services.signInMethods,
               configured: (bindings) => deployedSignInMethods(bindings as WorkerEnv),

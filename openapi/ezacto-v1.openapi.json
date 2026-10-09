@@ -18016,6 +18016,130 @@
         }
       }
     },
+    "/api/v1/profile/retention-policy": {
+      "get": {
+        "operationId": "getAccountRetentionPolicy",
+        "summary": "Read the operator's published erasure and retention disclosure",
+        "description": "Requires a staff session or a token with time_entries:read.",
+        "tags": [
+          "profile"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountRetentionEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/profile/retention-policy",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/admin/retention-policy": {
+      "post": {
+        "operationId": "publishAccountRetentionPolicy",
+        "summary": "Publish an operator erasure and retention policy version",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountRetentionEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/retention-policy",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountRetentionPublication"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/backup/status": {
       "get": {
         "operationId": "getBackupStatus",
@@ -38895,6 +39019,168 @@
           }
         },
         "additionalProperties": false
+      },
+      "AccountRetentionRule": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "reason",
+          "period",
+          "review_after_days"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "time_and_worker_attribution",
+              "billing_and_payments",
+              "audit_and_security",
+              "legal_hold"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "period": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "review_after_days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 365
+          }
+        }
+      },
+      "AccountRetentionPolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "frameworks",
+          "retained_records",
+          "response_target_days",
+          "operator_contact",
+          "user_notice",
+          "backup_handling",
+          "acknowledged"
+        ],
+        "properties": {
+          "frameworks": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "gdpr",
+                "california_ccpa_cpra",
+                "texas_tdpsa",
+                "colorado_cpa",
+                "us_florida",
+                "other"
+              ]
+            }
+          },
+          "retained_records": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "$ref": "#/components/schemas/AccountRetentionRule"
+            }
+          },
+          "response_target_days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 90
+          },
+          "operator_contact": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "user_notice": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 5000
+          },
+          "backup_handling": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 5000
+          },
+          "acknowledged": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        }
+      },
+      "AccountRetentionPublication": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expected_version",
+          "policy"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740990
+          },
+          "policy": {
+            "$ref": "#/components/schemas/AccountRetentionPolicy"
+          }
+        }
+      },
+      "AccountRetentionRecord": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "policy",
+          "published_at"
+        ],
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "policy": {
+            "$ref": "#/components/schemas/AccountRetentionPolicy"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AccountRetentionEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountRetentionRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        }
       },
       "SignInMethodState": {
         "type": "object",

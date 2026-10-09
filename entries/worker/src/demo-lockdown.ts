@@ -97,6 +97,7 @@ export const DEMO_ACCESS_ROUTES: readonly string[] = [
   'post /api/v1/two-factor/confirm',
   'delete /api/v1/two-factor',
   'patch /api/v1/admin/sign-in-methods/:method',
+  'post /api/v1/admin/retention-policy',
   'post /api/v1/settings/sso-domains',
   'post /api/v1/settings/sso-domains/:id/verify',
   'delete /api/v1/settings/sso-domains/:id',

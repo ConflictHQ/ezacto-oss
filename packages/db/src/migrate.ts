@@ -1,3 +1,4 @@
+import { accountRetentionPolicyMigration } from './migrations/0101_account_retention_policy.js'
 import { bandedInvoiceCreateMigration } from './migrations/0098_banded_invoice_create.js'
 import { invoiceSendingMigration } from './migrations/0099_invoice_sending.js'
 import { durationTimedEntriesMigration } from './migrations/0100_duration_timed_entries.js'
@@ -1554,6 +1555,7 @@ const migrations = [
   { id: '0098_banded_invoice_create', statements: bandedInvoiceCreateMigration },
   { id: '0099_invoice_sending', statements: invoiceSendingMigration },
   { id: '0100_duration_timed_entries', statements: durationTimedEntriesMigration },
+  { id: '0101_account_retention_policy', statements: accountRetentionPolicyMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges
