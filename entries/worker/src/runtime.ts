@@ -1,5 +1,5 @@
 import { createRuntimeAppleWeb } from './apple-web.js'
-import { createD1AppleWebCustodyStore } from '@ezacto/db'
+import { createD1AppleWebCustodyStore } from '@ezacto/db/d1'
 import { captureException } from '@sentry/cloudflare'
 import { createPaymentRunsService } from '@ezacto/db/d1'
 import { createWisePaymentProvider } from '@ezacto/integrations'
