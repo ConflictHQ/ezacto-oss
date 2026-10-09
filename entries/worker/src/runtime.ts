@@ -159,7 +159,7 @@ import { demoRefusal } from "./demo-lockdown.js";
 const cursorSecretPattern = /^[A-Za-z0-9_-]+$/;
 const cursorSecretBytes = 32;
 
-const readiness = new WeakMap<object, Promise<void>>();
+const readyDatabases = new WeakSet<object>();
 
 let cachedAccessVerifier:
   | {
@@ -442,21 +442,18 @@ const requireDatabase = (env: WorkerEnv): D1Database => {
 
 /**
  * D1 itself serializes each ledger-leading migration batch. The isolate cache
- * only removes repeat checks after success; failures are evicted and retried.
+ * only removes repeat checks after success. Pending D1 I/O belongs to the
+ * initiating request: sharing its promise can strand another request when that
+ * invocation ends. Concurrent cold requests run their own atomic ledger check;
+ * a failure or canceled request never marks the database ready.
  */
 export const ensureRuntimeDatabaseReady = async (
   database: D1Database,
 ): Promise<void> => {
   const identity = database as object;
-  const pending = readiness.get(identity);
-  if (pending !== undefined) return pending;
-
-  const migration = migrateD1(database).catch((error: unknown) => {
-    if (readiness.get(identity) === migration) readiness.delete(identity);
-    throw error;
-  });
-  readiness.set(identity, migration);
-  return migration;
+  if (readyDatabases.has(identity)) return;
+  await migrateD1(database);
+  readyDatabases.add(identity);
 };
 
 export const createR2AttachmentObjectStore = (
