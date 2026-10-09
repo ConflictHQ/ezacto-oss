@@ -30,9 +30,9 @@ does now.
 
 ## There is no connect button, and that is not an oversight
 
-BILL has no OAuth. There is no authorization code, no consent screen and no
-token to exchange, so there is nothing a button could start. The credential is
-deployment configuration, set once.
+This adapter uses deployment credentials. It has no authorization-code flow
+or OAuth consent screen, so there is no Connect button. Configure and rotate
+the credential through the deployment environment.
 
 ## Credentials
 
@@ -111,11 +111,11 @@ such contact is refused rather than sent to nobody.
 
 BILL's sandbox is free, standalone, and nothing in it touches the real book.
 Sandbox keys do not work in production and production needs a separate account
-at `bill.com/signup` (choose *Accounts Payable & Receivable*). Production is
-billed after a 30-day trial.
+at `bill.com/signup` (choose *Accounts Payable & Receivable*). Check BILL's current account terms directly before choosing a production plan.
 
-Point `BILL_ENVIRONMENT=sandbox` at it and send a test invoice before letting
-this near a real client.
+For the container, select `BILL_ENVIRONMENT=sandbox` and verify a disposable
+test invoice. For the Worker, first address the deployment caveat below; the
+stock workflow does not deliver that setting.
 
 ## What it will not do
 
@@ -138,3 +138,25 @@ The payment reconciliation is a poll. It sees every payment again on every pass,
 and is keyed on the payment and the invoice together, so the second pass records
 nothing — and a single BILL payment that settles several invoices is recorded as
 one row per invoice rather than its whole amount against one.
+
+
+## Deployment caveat and verification
+
+The container accepts `BILL_ENVIRONMENT=sandbox`. The current stock Worker
+workflow does not pass `BILL_ENVIRONMENT` through to the runtime: adding a GitHub
+secret alone is insufficient. Review an explicit configuration change before
+using a sandbox Worker. See [credential deployment](integrations.md).
+
+After deployment, inspect `GET /api/v1/integrations/bill` as an authorized user,
+confirm the intended company and environment, and verify the invoice-recipient
+contact on a disposable sandbox client. Enabling BILL for a client and sending
+its invoice are operational actions, not connection probes. Check the scheduled
+reconciliation/outbox processing and verify one receipt after an actual sandbox
+payment; do not infer settlement from invoice delivery.
+
+For authentication failures, verify the full credential set, selected BILL
+environment and account permissions. For missing receipts, inspect the existing
+invoice link and reconciliation result before manually recording a payment.
+Before rotation or disablement, review pending deliveries and outstanding
+invoices. Replace credentials through the authoritative environment and redeploy;
+removing credentials does not withdraw invoices already sent by BILL.
