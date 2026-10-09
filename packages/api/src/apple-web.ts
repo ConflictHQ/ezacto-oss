@@ -61,6 +61,7 @@ export interface AppleWebLifecyclePort {
     purpose: 'sign-in' | 'disconnect'
   }): Promise<AppleWebGrant>
   connected(request: Request): Promise<boolean>
+  recovery(request: Request): Promise<{ requestId: string | null; required: boolean }>
   /** Resolve only after Apple revocation succeeds; never on queue acceptance. */
   disconnect(request: Request): Promise<{ setCookie: string }>
 }
@@ -74,7 +75,7 @@ export interface AppleWebRouteOptions<Bindings extends object> {
   clientKey(request: Request): string
   /** null is an ordinary instance; a number is the published demo member. */
   demoAccount(bindings: Bindings): number | null
-  renderDisconnect(input: { connected: boolean; unavailable: boolean; disconnected?: boolean }): string
+  renderDisconnect(input: { connected: boolean; unavailable: boolean; disconnected?: boolean; recoveryRequestId?: string }): string
   policy?: SignInMethodPolicy
   verifier?: AppleIdentityTokenVerifier
   now?: () => Date
@@ -291,7 +292,9 @@ export const installAppleWebRoutes = <Bindings extends object>(
     try {
       const { lifecycle } = await configuration(context, false)
       const connected = await lifecycle.connected(context.req.raw)
-      return context.html(options.renderDisconnect({ connected, unavailable: context.req.query('failed') === '1' }))
+      const recovery = await lifecycle.recovery(context.req.raw)
+      return context.html(options.renderDisconnect({ connected, unavailable: recovery.required || context.req.query('failed') === '1',
+        ...(recovery.requestId === null ? {} : { recoveryRequestId: recovery.requestId }) }))
     } catch {
       return context.html(options.renderDisconnect({ connected: false, unavailable: true }), 503)
     }

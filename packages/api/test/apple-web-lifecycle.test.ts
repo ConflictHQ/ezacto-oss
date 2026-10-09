@@ -121,7 +121,7 @@ describe('Apple web lifecycle custody', () => {
 
   it('keeps cleanup unresolved on provider failure and completes only matching verified proof', async () => {
     const h = await setup(), grant = await h.exchange()
-    await grant.bindUser(1, { knownFromFirstLink: true })
+    const connection = await grant.bindUser(1, { knownFromFirstLink: true })
     h.fail(true)
     await h.lifecycle.begin(1, 'request_001')
     expect(h.requests.some(request => request.path === '/v1/apple/revocations')).toBe(false)
@@ -131,6 +131,7 @@ describe('Apple web lifecycle custody', () => {
     h.override({ request_id: 'wrong_request' })
     await h.lifecycle.perform('request_001')
     expect(await h.lifecycle.status('request_001')).not.toBe('revoked')
+    expect(await h.lifecycle.recovery(h.request(connection.setCookie))).toEqual({ requestId: 'request_001', required: true })
     h.override({})
     await h.lifecycle.perform('request_001')
     expect(await h.lifecycle.status('request_001')).toBe('revoked')

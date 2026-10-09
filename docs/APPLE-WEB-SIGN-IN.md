@@ -92,6 +92,8 @@ recovery handle offers fresh Apple authorization without creating or entering a
 workspace account. If account deletion is already pending, enter its original
 request reference to obtain request-bound cleanup proof. A newer verified receipt
 can replace custody for that same request and rotates the old browser handle.
+Failed or known-stale connections offer this recovery even when the old browser
+cookie still exists; the recovery link preserves its original request reference.
 Disconnecting Apple does not delete workspace records.
 
 Operator account closure first captures each known web obligation durably without

@@ -1214,6 +1214,7 @@ export const renderAppleDisconnect = (options: {
   connected: boolean
   unavailable: boolean
   disconnected?: boolean
+  recoveryRequestId?: string
 }): string => `<!doctype html>
 <html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="light">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1226,10 +1227,11 @@ export const renderAppleDisconnect = (options: {
 ${options.unavailable ? '<p class="auth-result" role="alert">Apple authorization could not be checked or disconnected. No successful disconnection has been confirmed. Please try again.</p>' : ''}
 ${options.disconnected === true ? '<p role="status">Your Apple authorization has been disconnected. Your workspace records have not been deleted.</p>' : options.connected ? `<form class="sign-in-form" method="post" action="/auth/apple/disconnect">
 <label class="apple-disconnect-confirm"><input type="checkbox" name="confirm" value="disconnect" required> I understand this may affect my Apple sign-in across Ezacto apps and sites.</label>
-<button class="primary-action" type="submit">Disconnect Apple</button></form>` : `<p>This browser does not have a verified Apple connection. Continue with Apple to recover access to your authorization, then return here to confirm disconnection. This does not create a workspace account or sign you in to a workspace.</p><a class="oidc-sign-in" data-oidc-provider="apple" href="/auth/apple/start?intent=disconnect"><img src="${appleSignInIcon}" alt="" width="40" height="40">Continue with Apple</a>
+<button class="primary-action" type="submit">Disconnect Apple</button></form>` : ''}
+${options.disconnected !== true && (!options.connected || options.unavailable) ? `<p>${options.connected ? 'The saved Apple connection could not complete disconnection.' : 'This browser does not have a verified Apple connection.'} Continue with Apple to recover access to your authorization, then return here to confirm disconnection. This does not create a workspace account or sign you in to a workspace.</p><a class="oidc-sign-in" data-oidc-provider="apple" href="/auth/apple/start?intent=disconnect${options.recoveryRequestId === undefined ? '' : '&amp;cleanup_request=' + encodeURIComponent(options.recoveryRequestId)}"><img src="${appleSignInIcon}" alt="" width="40" height="40">Continue with Apple</a>
 <form class="sign-in-form" method="get" action="/auth/apple/start">
 <input type="hidden" name="intent" value="disconnect">
-<label>Pending deletion request reference<input name="cleanup_request" pattern="[A-Za-z0-9_-]{8,128}" maxlength="128" required autocomplete="off"></label>
+<label>Pending deletion request reference<input name="cleanup_request" value="${escapeHtml(options.recoveryRequestId ?? '')}" pattern="[A-Za-z0-9_-]{8,128}" maxlength="128" required autocomplete="off"></label>
 <p>If you have already requested account deletion, use its request reference to finish Apple cleanup for that same request.</p>
-<button type="submit">Recover this deletion request with Apple</button></form>`}
+<button type="submit">Recover this deletion request with Apple</button></form>` : ''}
 <p><a href="/">Return to Ezacto</a></p></div></main></body></html>`

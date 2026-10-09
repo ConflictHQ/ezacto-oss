@@ -1,3 +1,4 @@
+import { renderAppleDisconnect } from '../../../apps/web/src/shell/render.js'
 import { describe, expect, it, vi } from 'vitest'
 import { createApiApp } from '../src/app.js'
 import { APPLE_WEB_STATE_COOKIE, installAppleWebRoutes } from '../src/apple-web.js'
@@ -5,7 +6,7 @@ import type { AppleAssertion, AppleIdentityResolver } from '../src/apple.js'
 import type { OidcTransactionStorePort, OidcTransaction } from '../src/oidc.js'
 
 const initialTime = Date.parse('2026-10-09T03:00:00.000Z')
-const setup = (options: { demo?: boolean; origin?: string; configured?: boolean; lifecycle?: boolean; live?: boolean } = {}) => {
+const setup = (options: { demo?: boolean; origin?: string; configured?: boolean; lifecycle?: boolean; live?: boolean; rendered?: boolean } = {}) => {
   const origin = options.origin ?? 'https://app.example.com'
   const servicesId = options.demo ? 'com.ezacto.web.demo' : 'com.ezacto.web'
   let time = initialTime
@@ -29,6 +30,7 @@ const setup = (options: { demo?: boolean; origin?: string; configured?: boolean;
   const connection = { setCookie: '__Host-ezacto_apple_connection=opaque; Path=/; Secure; HttpOnly; SameSite=Lax' }
   const grant = { subject: assertion.subject, bindUser: vi.fn<(userId: number) => Promise<typeof connection>>(async () => connection), bindBrowser: vi.fn(async () => connection) }
   const connected = vi.fn(async () => true)
+  const recovery = vi.fn(async () => ({ requestId: null as string | null, required: false }))
   const disconnect = vi.fn(async () => ({ setCookie: '__Host-ezacto_apple_connection=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0' }))
   const challenge = vi.fn(async () => ({ challengeId: 'c'.repeat(43), nonce: 'n'.repeat(43), expiresAt: new Date(time + 5 * 60 * 1000).toISOString() }))
   const exchange = vi.fn(async () => grant)
@@ -36,8 +38,8 @@ const setup = (options: { demo?: boolean; origin?: string; configured?: boolean;
     installAppleWebRoutes(app, {
       transactions, identities, sessions,
       provider: () => options.configured === false ? null : { servicesId, redirectOrigin: origin },
-      lifecycle: () => options.lifecycle === false ? null : { challenge, exchange, connected, disconnect },
-      renderDisconnect: (input) => JSON.stringify(input),
+      lifecycle: () => options.lifecycle === false ? null : { challenge, exchange, connected, recovery, disconnect },
+      renderDisconnect: options.rendered ? renderAppleDisconnect : (input) => JSON.stringify(input),
       clientKey: () => '198.51.100.1', demoAccount: () => options.demo ? 9006 : null,
       policy: { isLive: async () => options.live !== false }, verifier: { verify }, now: () => new Date(time),
     })
@@ -53,7 +55,7 @@ const setup = (options: { demo?: boolean; origin?: string; configured?: boolean;
       method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'https://appleid.apple.com', cookie },
       body: new URLSearchParams({ state, code: 'authorization-code', id_token: 'valid-token', ...fields }),
     })
-  return { app, origin, servicesId, start, callback, transactions, identities, sessions, exchange, grant, verify, assertion, connected, disconnect,
+  return { app, origin, servicesId, start, callback, transactions, identities, sessions, challenge, exchange, grant, verify, assertion, connected, recovery, disconnect,
     advance: (milliseconds: number) => { time += milliseconds } }
 }
 
@@ -194,6 +196,24 @@ describe('Apple web authorization', () => {
     expect(h.disconnect).toHaveBeenCalledOnce()
     expect(response.headers.get('set-cookie')).toContain('Max-Age=0')
     expect(h.sessions.issue).not.toHaveBeenCalled()
+  })
+
+  it('renders request-bound recovery after stale custody fails despite a saved browser handle', async () => {
+    const h = setup({ rendered: true })
+    h.recovery.mockResolvedValue({ requestId: 'original_request', required: false })
+    h.disconnect.mockRejectedValue(new Error('invalid_capability'))
+    const failed = await h.app.request(`${h.origin}/auth/apple/disconnect`, { method: 'POST', headers: { origin: h.origin, 'content-type': 'application/x-www-form-urlencoded' }, body: 'confirm=disconnect' })
+    const page = await h.app.request(h.origin + failed.headers.get('location'))
+    const html = await page.text()
+    expect(html).toContain('href="/auth/apple/start?intent=disconnect&amp;cleanup_request=original_request"')
+    expect(html).toContain('name="cleanup_request" value="original_request"')
+    expect(html).toContain('The saved Apple connection could not complete disconnection.')
+    expect(html).not.toContain('Your Apple authorization has been disconnected.')
+    const recoveryUrl = html.match(/href="(\/auth\/apple\/start[^"]+)"/)![1]!.replaceAll('&amp;', '&')
+    expect((await h.app.request(h.origin + recoveryUrl)).status).toBe(302)
+    expect(h.challenge).toHaveBeenLastCalledWith(expect.objectContaining({ purpose: 'disconnect', requestId: 'original_request' }))
+    h.recovery.mockResolvedValue({ requestId: 'original_request', required: true })
+    expect(await (await h.app.request(`${h.origin}/auth/apple/disconnect`)).text()).toContain('cleanup_request=original_request')
   })
 
   it.each([

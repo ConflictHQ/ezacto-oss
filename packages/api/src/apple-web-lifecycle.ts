@@ -163,6 +163,10 @@ export function createAppleWebLifecycle(options: {
       }
     },
     async connected(request) { return await browser(request) !== null },
+    async recovery(request) {
+      const connection = await browser(request)
+      return { requestId: connection?.cleanupRequestId ?? null, required: connection?.status === 'manual_required' }
+    },
     async disconnect(request) {
       const connection = await browser(request)
       if (connection === null) throw new Error('Apple browser recovery required')
