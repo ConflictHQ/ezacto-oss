@@ -1,7 +1,8 @@
 # Connecting ezacto to QuickBooks Online
 
-What an operator has to do at Intuit before the **Connect to QuickBooks** button
-can work, and why each step exists. Written from doing it, not from the API docs.
+Configure the Intuit app, connect the intended company, and verify the accounting
+round trip. Start from the [operator guide](operator-guide.md) for shared
+credential and deployment steps.
 
 The short version: **the callback URL has to be registered at Intuit first.**
 OAuth will not redirect anywhere it has not been told about in advance, so a
@@ -9,9 +10,9 @@ deployment whose callback is not on the list gets an Intuit error page instead o
 a connected company, and nothing in ezacto's logs explains it.
 
 Everything below is per *app*, and an app belongs to a workspace on
-[developer.intuit.com](https://developer.intuit.com). You need two of them
-eventually — one for development against a sandbox company, one for production —
-because Intuit issues a separate pair of keys per environment and a sandbox key
+[developer.intuit.com](https://developer.intuit.com). Use the separate development and production key sets for their corresponding
+environments. Separate apps may also be used for operational isolation; two apps
+are not inherently required just because there are two key sets. Sandbox keys
 cannot reach a real company's books.
 
 ---
@@ -225,3 +226,37 @@ accounting, and is not offered at all on a deployment without Intuit keys.
 against. A development-key connection can only reach these, which is the safety
 property that makes it reasonable to test the mirror at all: a bug writes an
 invoice into a sandbox rather than into somebody's books.
+
+
+## Verify and operate the connection
+
+Set `QUICKBOOKS_ENVIRONMENT=sandbox` explicitly for development. The current
+runtime treats any other value, including an omitted value, as production.
+Confirm the selected company/realm in **Settings → Integrations** after OAuth;
+a configured client ID is not a connected company.
+
+In a sandbox company and test instance, use a disposable client and invoice:
+confirm the sent invoice mirrors once, a payment recorded there returns through
+the signed webhook, and replay does not duplicate the receipt. Check the
+background outbox/scheduler as well as the OAuth connection. Do not send a real
+client an invoice just to prove configuration.
+
+| Symptom | Check |
+| --- | --- |
+| Intuit rejects the redirect | Exact callback URI saved under the matching key environment |
+| OAuth succeeds but the wrong company appears | Selected realm; disconnect deliberately and reconnect the intended company |
+| Invoice does not mirror | Outbox/scheduler, company mapping, provider response and stored sync outcome |
+| Webhook signature fails | Environment-specific verifier token and the raw request body |
+| Payment is accepted but skipped | Delivery reason, invoice mapping, already-recorded amount and remaining balance |
+| CloudEvents delivery is ignored | This handler expects the implemented legacy notification shape; use the matching subscription format |
+
+Use the integration's Disconnect action (the administrator API is
+`DELETE /api/v1/integrations/quickbooks`) to revoke/forget the connection rather
+than deleting database rows. Review pending mirror work first. Rotate app secrets
+through the authoritative environment and redeploy; reconnect if authorization
+was revoked. Preserve invoice/payment links and audit evidence for reconciliation.
+
+Provider references: [Intuit webhook configuration](https://static.developer.intuit.com/output_html/qbo/docs/develop/webhooks/configure-webhooks.html)
+and [OAuth authorization](https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0).
+Implementation reference: `packages/api/src/quickbooks.ts` and
+`packages/integrations/src/quickbooks/`.
