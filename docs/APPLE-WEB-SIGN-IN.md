@@ -10,6 +10,12 @@ Services ID.
 | Team | `com.ezacto.web` | `app.example.com` | `https://app.example.com/auth/apple/callback` |
 | Public demo | `com.ezacto.web` | `ezacto.io` | `https://ezacto.io/auth/apple/callback` |
 
+The public source mirror replaces the private team hostname with
+`app.example.com`. That hostname is illustrative: the central credential
+service does not accept it as a callback or offer independent operator
+onboarding through it. Publishing this source does not expand the service
+allowlist.
+
 ## Apple portal setup
 
 Under Team `H9G2335LXV`, associate the shared Services ID `com.ezacto.web` with
