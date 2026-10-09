@@ -2500,6 +2500,17 @@ test('[e2e:invoice-lines] adds, edits, and removes exact lines on the edit page 
   expect(seeded.status()).toBe(204)
 
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  // The instance says it keeps a write's answer under its key, as issue 952
+  // has every instance say on every answer. For the line route that was
+  // already true, since its command ledger replays a key's first result. The
+  // saying is what lets the shell send a write again by itself (issue 953).
+  await page.route(/\/api\/v1\//u, async (route) => {
+    const response = await route.fetch()
+    await route.fulfill({
+      response,
+      headers: { ...response.headers(), 'idempotency-key-lifetime': '86400' },
+    })
+  })
   await page.goto('/invoices/new')
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
   await page.locator('[data-sign-in-form]').getByLabel('Password').fill(fixturePassword)
@@ -2620,7 +2631,8 @@ test('[e2e:invoice-lines] adds, edits, and removes exact lines on the edit page 
       commandIds.push(request.headers()['idempotency-key'] ?? '')
     }
   })
-  // The line lands and its answer is lost on the way back.
+  // The line lands and its answer is lost on the way back. Once only: the
+  // shell's next attempt reaches the instance.
   await page.route(
     `**/api/v1/invoices/${draft.id}/line-items`,
     async (route) => {
@@ -2657,20 +2669,13 @@ test('[e2e:invoice-lines] adds, edits, and removes exact lines on the edit page 
   await expectNoPageOverflow(page)
   await expectEditorFits(page, 390)
 
-  await editor.getByRole('button', { name: 'Save invoice' }).click()
-  // Nothing before the line had to land, so the page says only what failed,
-  // keeps everything typed, and keeps the line's key for the retry.
-  await expect(editor.locator('[data-invoice-edit-result]')).toHaveAttribute(
-    'data-outcome',
-    'error',
-  )
-  await expect(editor).toBeVisible()
-  await expect(added.getByLabel('Description')).toHaveValue('Exact tenth-hour adjustment')
   const retried = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === `/api/v1/invoices/${draft.id}/line-items` &&
       response.request().method() === 'POST',
   )
+  // One click. The shell sends the line again under the key it held, so the
+  // page never says it failed (issue 953).
   await editor.getByRole('button', { name: 'Save invoice' }).click()
   expect((await retried).status()).toBe(201)
   // The same key twice: the second request is the ledger replaying the first,

@@ -1165,6 +1165,14 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   </dialog>
   <footer class="build-stamp">${escapeHtml(options.environment)} · ${escapeHtml(shortRelease)}</footer>
   </div>
+  <!--
+    A write that failed once and is being sent again (issue 953). Outside the
+    signed-in shell, so a sign-in being retried shows it as well.
+  -->
+  <aside class="write-status" data-write-status role="status" aria-live="polite" hidden>
+    <span class="write-status-spinner" aria-hidden="true"></span>
+    <span data-write-status-message>Saving… retrying</span>
+  </aside>
 </body>
 </html>`
 }
