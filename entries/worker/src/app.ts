@@ -21,6 +21,7 @@ import type {
   StripeService,
 } from "@ezacto/api";
 import type { PayoutAccountService } from "@ezacto/api";
+import type { IdempotencyStore } from "@ezacto/api";
 import {
   notFoundResponse,
   createApiApp,
@@ -360,6 +361,12 @@ export interface RuntimeServices {
   /** The organisation's name, read fresh: `GET /api/v1/brand` and the mailers. */
   organizationName(): Promise<string>
   cursorSigningKey: Uint8Array
+  /**
+   * Idempotency keys (issue 952): the store a keyed write is recorded in, and
+   * the secret its rows are found and sealed with. The entry wraps every data
+   * request in `withIdempotency`; the app itself never sees either.
+   */
+  idempotency: { readonly store: IdempotencyStore; readonly secret: Uint8Array }
   passwordAuth: PasswordAuthService
   sessions: ApiSessionService
   /** Composite browser resolver when an optional edge identity provider is configured. */

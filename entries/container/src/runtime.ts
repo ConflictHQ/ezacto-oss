@@ -104,6 +104,8 @@ import {
   readUserIdentity,
   readUserTimezone,
   updateUserTimezone,
+  createContainerIdempotencyStore,
+  createIdempotentSqlite,
 } from '@ezacto/db'
 import {
   createApiSessionService,
@@ -117,6 +119,7 @@ import {
   type AttachmentRouteOptions,
   type UserPrincipal,
   invoicePaymentUrlForMail,
+  deriveIdempotencySecret,
 } from '@ezacto/api'
 import {
   configuredEmailSender,
@@ -373,7 +376,10 @@ export const createContainerRuntime = async (
   await ensureDataDirectory(config.dataDirectory)
   await assertNoIncompletePrivacyRestore(config.dataDirectory)
   await assertDatabasePath(config.databasePath)
-  const database = new BetterSqlite3(config.databasePath, { timeout: 5_000 })
+  const handle = new BetterSqlite3(config.databasePath, { timeout: 5_000 })
+  // Every store below writes through this: in a request that carries an
+  // Idempotency-Key, each write commits with the key's claim (#952).
+  const database = createIdempotentSqlite(handle)
   let queue: ContainerEmailQueue | undefined
   let outboxScheduler: ContainerOutboxScheduler | undefined
   try {
@@ -929,6 +935,11 @@ export const createContainerRuntime = async (
       timesheetApprovals: createTimesheetApprovalRepository(drizzle),
       timesheetLockPolicy,
       cursorSigningKey: config.cursorSigningKey,
+      idempotency: {
+        // The handle itself: the store's own statements never carry a claim.
+        store: createContainerIdempotencyStore(handle),
+        secret: await deriveIdempotencySecret(config.cursorSigningKey),
+      },
       passwordAuth,
       userEmails: passwordAuth,
       sessions,

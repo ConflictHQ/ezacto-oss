@@ -161,6 +161,9 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // Instance security material is seeded once; keeping the migration ledger
   // while deleting this row would permanently disable closure proofs.
   'account_closure_security',
+  // The migration creates this singleton once. Authorization triggers update
+  // it in place, so deleting it would disable all subsequent revision changes.
+  'idempotency_authorization',
 ])
 
 /**
@@ -203,6 +206,9 @@ const wipeStatements = (objects: DemoSchemaObjects): readonly DemoSeedStatement[
   // needs a row to read, and reset because yesterday's demo took every number
   // below it and none of those invoices exist any more.
   { text: 'UPDATE invoice_number_sequence SET next_number = 1', bindings: [] },
+  // Authority changed while its triggers were lifted. Advance the preserved
+  // revision in the wipe transaction, even if bootstrap/seed never resumes.
+  { text: 'UPDATE idempotency_authorization SET revision = revision + 1 WHERE id = 1', bindings: [] },
   // Preserved, but not carried over either: a template version records who
   // saved it, and that person was a row in `users`, which this wipe has just
   // emptied. Deferred, the foreign key bites at commit and D1 rolls the whole

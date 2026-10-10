@@ -1,10 +1,29 @@
 export { createApiApp } from './app.js'
+export { createApiIdempotencyAuthorization } from './idempotency-auth.js'
 export {
   captureRequestActivity,
   type ActivityActor,
   type ActivityCaptureRequest,
   type ActivityRecorder,
 } from './activity-log.js'
+export {
+  deriveIdempotencySecret,
+  IDEMPOTENCY_KEY_HEADER,
+  IDEMPOTENCY_KEY_LIFETIME_HEADER,
+  IDEMPOTENCY_KEY_LIFETIME_SECONDS,
+  IDEMPOTENCY_LEASE_MS,
+  IDEMPOTENCY_WAIT_MS,
+  IDEMPOTENT_REPLAYED_HEADER,
+  MAX_STORED_RESPONSE_BYTES,
+  MAX_IDEMPOTENCY_REQUEST_BYTES,
+  withIdempotency,
+  type IdempotencyClaim,
+  type IdempotencyOptions,
+  type IdempotencyRecord,
+  type IdempotencyStore,
+  type IdempotentExecution,
+  type SealedIdempotentResponse,
+} from './idempotency.js'
 export {
   installBackupStatusRoutes,
   type BackupStatusReader,

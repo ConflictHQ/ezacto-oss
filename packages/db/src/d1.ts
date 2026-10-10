@@ -22,6 +22,17 @@ export {
 } from './attachments.js'
 
 export {
+  createD1IdempotencyStore,
+  createIdempotentD1,
+  runWithClaim,
+  type IdempotencyClaim,
+  type IdempotencyRecord,
+  type IdempotencyStore,
+  type IdempotentExecution,
+  type SealedIdempotentResponse,
+} from './idempotency.js'
+
+export {
   createApiTokenStore,
   type ApiTokenStore,
   type CreateApiTokenStoreOptions,

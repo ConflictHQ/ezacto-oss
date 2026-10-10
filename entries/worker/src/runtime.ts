@@ -102,8 +102,11 @@ import {
   setInvoiceThankYouPolicy,
   setOrganizationThankYouPolicy,
   setBillDelivery,
+  createD1IdempotencyStore,
+  createIdempotentD1,
 } from "@ezacto/db/d1";
 import { createPortalSessionService, type BandClaimBackfillPort } from "@ezacto/api";
+import { deriveIdempotencySecret } from "@ezacto/api";
 import {
   createApiSessionService,
   createCloudflareAccessSessionResolver,
@@ -610,7 +613,11 @@ export const createRuntimeServices = async (
     cloudflareAccessFetch?: CloudflareAccessFetch;
   } = {},
 ): Promise<RuntimeServices> => {
-  const database = requireDatabase(env);
+  const binding = requireDatabase(env);
+  // Every service below writes through this: in a request that carries an
+  // Idempotency-Key, each write commits with the key's claim (issue 952).
+  // Stable per binding, so the readiness cache below still keys on it.
+  const database = createIdempotentD1(binding);
   const demo = demoDeployment(env);
   const credentials = providerCredentials(env);
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY);
@@ -1112,6 +1119,11 @@ export const createRuntimeServices = async (
     timesheetLockPolicy,
     reports: createReportRepository(drizzle),
     cursorSigningKey,
+    idempotency: {
+      // The binding itself: the store's own statements never carry a claim.
+      store: createD1IdempotencyStore(binding),
+      secret: await deriveIdempotencySecret(cursorSigningKey),
+    },
     passwordAuth,
     userEmails: passwordAuth,
     sessions,

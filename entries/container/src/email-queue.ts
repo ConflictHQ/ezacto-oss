@@ -1,3 +1,4 @@
+import { outsideClaim } from '@ezacto/db'
 import {
   InProcessEmailQueue,
   processQueuedEmail,
@@ -49,7 +50,9 @@ export class ContainerEmailQueue implements EmailQueue {
   }
 
   private run(task: () => Promise<void>): void {
-    const pending = task()
+    // Delivery has its own durable mail claim; it must not inherit the HTTP
+    // request that scheduled it, which may already have returned its answer.
+    const pending = outsideClaim(task)
       .catch((error: unknown) => {
         const name = error instanceof Error ? error.name : 'UnknownError'
         console.error(`email queue task failed: ${name}`)

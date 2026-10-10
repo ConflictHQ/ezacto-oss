@@ -6,6 +6,7 @@
  * no credential version gating, no privilege rotation.
  */
 
+import { outsideClaim } from './idempotency.js'
 import type BetterSqlite3 from 'better-sqlite3'
 
 export const CONTACT_SESSION_IDLE_TTL_MS = 24 * 60 * 60 * 1_000
@@ -213,7 +214,9 @@ const createContactSessionStore = (
       throw new Error('contact session token selector collision retry exhausted')
     },
 
-    authenticate: async (token) => {
+    // The last-seen write is authentication's, not the request's own work: it
+    // must not claim an Idempotency-Key (#952).
+    authenticate: (token) => outsideClaim(async () => {
       const prepared = await prepareToken(token)
       if (prepared === null) return null
       const timestamp = now()
@@ -261,7 +264,7 @@ const createContactSessionStore = (
         clientId: row.clientId,
         session: metadata(row),
       }
-    },
+    }),
   }
 }
 

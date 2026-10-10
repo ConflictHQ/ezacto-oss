@@ -137,7 +137,7 @@ const payloadTooLarge = (maxBytes: number): ApiError =>
 export const readLimitedBody = async (
   body: ReadableStream<Uint8Array> | null,
   maxBytes: number,
-): Promise<Uint8Array> => {
+): Promise<Uint8Array<ArrayBuffer>> => {
   if (body === null) return new Uint8Array()
   const reader = body.getReader()
   const chunks: Uint8Array[] = []

@@ -1,3 +1,4 @@
+import { outsideClaim } from './idempotency.js'
 import type BetterSqlite3 from 'better-sqlite3'
 import type { ResolvedUserIdentity, UserProfile } from '@ezacto/core'
 
@@ -442,7 +443,9 @@ const createSessionStore = (
 
   return {
     issue,
-    authenticate,
+    // A session's last-seen write is authentication's, not the request's own
+    // work: it must not claim an Idempotency-Key (#952).
+    authenticate: (token: string) => outsideClaim(() => authenticate(token)),
     list: async (userId) => {
       if (!Number.isSafeInteger(userId) || userId < 1) return []
       const rows = await database.atomic([
