@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-10-09T05:55:00.203010+00:00",
+  "checkedAt": "2026-10-12T05:51:55Z",
   "scope": "Optional bounded ID selection for the native reminder processor and Worker/container service composition. Hosted daily checkpoint integration is separate.",
   "sourceSha256": [
     {
@@ -8,19 +8,19 @@
     },
     {
       "path": "packages/db/src/d1.ts",
-      "sha256": "6528a4040691ba612b6fb6691e8dfcce5f4e5a12f855f35628042ae9533949df"
+      "sha256": "6e935f22792b75414bd33868dfd4f2fa326e4a285138e3e5d89bcaf032795742"
     },
     {
       "path": "entries/worker/src/app.ts",
-      "sha256": "767c24b9ad313305a4c1dbdaa3e7456d5fba5f9955f6ee1d9bd3e638c875f963"
+      "sha256": "5e797058feca1835e237b73425a5d67964f9035895baf0d97cbf57a50b88b44e"
     },
     {
       "path": "entries/worker/src/runtime.ts",
-      "sha256": "c1e28ff84b440a46237ac8ad90a903fd53498224a2b1d2927488a4890996b91c"
+      "sha256": "6fef66f73d383698cdb3027e8c1d68bc86ff013a5ee0336ce649bed054b382da"
     },
     {
       "path": "entries/container/src/runtime.ts",
-      "sha256": "e13d9dbd70d89e78645bbdfc1228d827e08d02185c614b336ad15ed196098f08"
+      "sha256": "5e0513efc50a676b915dbbf1e0ef37604edc24b95c71092809cd5d7d33bb3981"
     },
     {
       "path": "packages/db/test/reminders.test.ts",
@@ -62,7 +62,7 @@
       "durationSeconds": 11.54
     },
     "dockerAcceptance": "passed actual first-run signup/SMTP/tracking and exclusive stopped-volume SQLite/attachment backup/restore",
-    "fullVerify": "Initial unconstrained run deliberately interrupted after shared-host overlap warning; not accepted. Replacement uses VITEST_MAX_WORKERS=1 with unchanged npm run verify scope and timeouts. It has reported one 20-second timeout in the existing report API entry-grain/day-grain test; the same verification process is still running. This is not a green gate and no PR is opened.",
+    "fullVerify": "Post-merge npm run verify passed with exit code 0: contract, typecheck, lint, theme checks, all workspace suites, 55 browser cases and final build. API 1067, DB 1792, Worker 423 and web unit 1232 cases passed. One DB case and three live Harvest migration cases were skipped by the repository's normal settings. The earlier timeout observation below belongs to a separate incomplete run.",
     "observedVerificationFailure": {
       "file": "packages/api/test/reports.test.ts",
       "test": "[db] entry grain is one row per entry with its id and notes; day grain carries neither",
@@ -70,7 +70,7 @@
       "reportedFileMilliseconds": 546489,
       "fileCases": 143,
       "fileFailures": 1,
-      "result": "Timeout observed; root cause and final full-suite result pending. Do not infer a regression or environmental cause from this alone."
+      "result": "Timeout occurred in an earlier incomplete run. The post-merge full verify passed this API suite (1067 cases) and all other required gates."
     }
   },
   "fixtureCorrections": [
@@ -78,7 +78,6 @@
     "Container background scheduler legitimately consumed currently due rows. The explicit-selection fixture now uses future due rows to isolate its caller from the automatic current-time tick; production scheduler remains unchanged."
   ],
   "remaining": [
-    "Complete full verify and branch-history secret scan before PR creation.",
     "Independent review and green CI before merge.",
     "Integrate the public upstream result into hosted and prove daily checkpoint/retry/provider behavior there."
   ]
