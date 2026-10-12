@@ -27,12 +27,14 @@ export interface ScheduledReminderRecord {
 }
 
 /** Optional bounds for a resumable pass over a fixed set of reminder IDs.
- * Capture throughId before the first batch and persist lastExaminedId with the
- * caller's transaction. New follow-up reminders fall outside this pass.
+ * Capture throughId and dueThrough before the first batch, then persist
+ * lastExaminedId with the caller's transaction. The processing clock may be
+ * later than the fixed due cutoff so newly booked overdue rows can be updated
+ * without giving them an updated_at before their created_at.
  */
 export interface ReminderProcessOptions {
   limit?: number
-  selection?: { afterId: number; throughId: number }
+  selection?: { afterId: number; throughId: number; dueThrough?: string }
 }
 
 export interface ReminderProcessSummary {
@@ -328,6 +330,12 @@ const createScheduler = (database: ReminderDatabase): ReminderScheduler => {
           !Number.isSafeInteger(selection.throughId) || selection.throughId < selection.afterId)) {
         throw new RangeError('reminder selection must contain ordered nonnegative safe integer IDs')
       }
+      if (selection?.dueThrough !== undefined) {
+        assertCanonicalTimestamp(selection.dueThrough, 'reminder due cutoff')
+        if (Date.parse(selection.dueThrough) > Date.parse(options.now)) {
+          throw new RangeError('reminder due cutoff cannot follow processing time')
+        }
+      }
       const summary: ReminderProcessSummary = {
         examined: 0,
         sent: 0,
@@ -354,7 +362,8 @@ const createScheduler = (database: ReminderDatabase): ReminderScheduler => {
         ${selection === undefined ? '' : 'AND id > ? AND id <= ?'}
         ORDER BY ${selection === undefined ? 'scheduled_at, id' : 'id'}
         LIMIT ?`,
-        [options.now, ...(selection === undefined ? [] : [selection.afterId, selection.throughId]), limit],
+        [selection?.dueThrough ?? options.now,
+          ...(selection === undefined ? [] : [selection.afterId, selection.throughId]), limit],
       )
       for (const row of rows) {
         summary.examined += 1

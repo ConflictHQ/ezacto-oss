@@ -515,6 +515,37 @@ for (const [runtime, factory] of factories) {
       expect(attempted).toEqual([1, 2, 1, 4])
     })
 
+    it('[integration] holds the due cutoff while updating a newly booked overdue row at processing time', async () => {
+      database = await factory()
+      await installFixture(database)
+      const created = '2026-09-20T04:00:00.000Z'
+      const processing = '2026-09-20T04:05:00.000Z'
+      const cutoff = '2026-09-20T03:00:00.000Z'
+      for (const id of [2, 3]) {
+        await database.run(`INSERT INTO invoices
+          (id, client_id, number, currency, issue_date, due_date, state, created_at, updated_at)
+          VALUES (?, 1, ?, 'USD', '2026-09-01', '2026-09-10', 'draft', ?, ?)`,
+        id, `REM-${id}`, created, created)
+      }
+      for (const [id, invoiceId, due] of [[1, 2, '2026-09-20T02:00:00.000Z'],
+        [2, 3, '2026-09-20T03:30:00.000Z']] as const) {
+        await database.run(`INSERT INTO scheduled_reminders
+          (id, invoice_id, scheduled_at, interval_days, status, template, causation_event_id, created_at, updated_at)
+          VALUES (?, ?, ?, 7, 'pending', 'reminder', ?, ?, ?)`,
+        id, invoiceId, due, `cutoff-${id}`, created, created)
+      }
+      const send = vi.fn(async () => undefined)
+      const scheduler = database.reminder()
+      expect(await scheduler.processReminders({ now: processing, limit: 3,
+        selection: { afterId: 0, throughId: 2, dueThrough: cutoff }, send }))
+        .toEqual({ examined: 1, sent: 0, scheduled: 0, lastExaminedId: 1 })
+      expect(send).not.toHaveBeenCalled()
+      expect(await database.rows('SELECT id, status, updated_at FROM scheduled_reminders ORDER BY id')).toEqual([
+        { id: 1, status: 'cancelled', updated_at: processing },
+        { id: 2, status: 'pending', updated_at: created },
+      ])
+    })
+
     it('[unit] validates selection bounds before attempting delivery and preserves the default summary', async () => {
       database = await factory()
       await installFixture(database)
@@ -525,6 +556,10 @@ for (const [runtime, factory] of factories) {
         { afterId: 0, throughId: Number.MAX_SAFE_INTEGER + 1 }, { afterId: NaN, throughId: 2 },
         { afterId: 0, throughId: Infinity },
       ]) await expect(scheduler.processReminders({ now: drainAt, selection, send })).rejects.toThrow('reminder selection')
+      for (const dueThrough of ['invalid', '2026-09-21T00:00:00.000Z']) {
+        await expect(scheduler.processReminders({ now: drainAt,
+          selection: { afterId: 0, throughId: 2, dueThrough }, send })).rejects.toThrow('reminder due cutoff')
+      }
       expect(send).not.toHaveBeenCalled()
       expect(await scheduler.processReminders({ now: drainAt, send })).toEqual({ examined: 0, sent: 0, scheduled: 0 })
       expect(await scheduler.processReminders({ now: drainAt, selection: { afterId: 0, throughId: 0 }, send }))
