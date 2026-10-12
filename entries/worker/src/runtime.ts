@@ -1,3 +1,4 @@
+import type { ReminderProcessOptions } from '@ezacto/db/d1'
 import { createRuntimeAppleWeb } from './apple-web.js'
 import { createD1AppleWebCustodyStore } from '@ezacto/db/d1'
 import { captureException } from '@sentry/cloudflare'
@@ -951,8 +952,9 @@ export const createRuntimeServices = async (
     },
     now: () => new Date().toISOString(),
   });
-  const processDueReminders = (now: string) =>
+  const processDueReminders = (now: string, options: ReminderProcessOptions = {}) =>
     reminders.processReminders({
+      ...options,
       now,
       send: async (reminder) => {
         const message = await reminderPort.prepare(reminder);

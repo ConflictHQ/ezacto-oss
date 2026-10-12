@@ -1,3 +1,4 @@
+import type { ReminderProcessOptions, ReminderProcessSummary } from '@ezacto/db/d1'
 import { appleWebConfiguration } from './apple-web.js'
 import { aggregateAppleCleanup, type AppleCleanupPort, type AppleLifecycleStore, type AppleWebCleanupPort } from '@ezacto/core'
 import type { AccountDeletionStore, AccountClosureStore, AccountRetentionReviewStore, AccountDeletionStatusStore } from '@ezacto/core'
@@ -444,7 +445,7 @@ export interface RuntimeServices {
    * only thing that turns a scheduled row into mail.
    */
   reminders?: {
-    processDue(now: string): Promise<{ examined: number; sent: number; scheduled: number }>
+    processDue(now: string, options?: ReminderProcessOptions): Promise<ReminderProcessSummary>
   }
   recurringRepair?: RecurringRepairService
   bill?: BillRuntime
