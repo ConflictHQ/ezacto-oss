@@ -9,6 +9,7 @@ import {
   type ProviderIdentityResolution,
   type UserProfile,
 } from '@ezacto/core'
+import { closedAccountProviderKey, accountClosureDigest } from './account-closure-sign-in.js'
 import { verifiedProvisioningDomainQuery } from './sso-provisioning-domains.js'
 
 export interface IdentityStore {
@@ -61,6 +62,7 @@ const emailQuery = `SELECT user.id AS userId, user.profile, user.manager_grants 
 const linkVerifiedEmail = (
   input: NormalizedProviderIdentityAssertion,
   timestamp: string,
+  blockedKeys: readonly string[],
 ): Operation => ({
   query: `INSERT INTO user_identities (
       user_id, provider, provider_subject, created_at, updated_at
@@ -70,6 +72,7 @@ const linkVerifiedEmail = (
     JOIN users user ON user.id = email.user_id
     WHERE ? = 1 AND lower(email.address) = lower(?)
       AND email.verified_at IS NOT NULL AND email.invalidated_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM closed_account_sign_in_guards WHERE digest IN (?,?))
       AND NOT EXISTS (
         SELECT 1 FROM user_identities identity
         WHERE identity.provider = ? AND identity.provider_subject = ?
@@ -84,6 +87,7 @@ const linkVerifiedEmail = (
     timestamp,
     input.emailVerified ? 1 : 0,
     input.email,
+    ...blockedKeys,
     input.provider,
     input.subject,
   ],
@@ -99,6 +103,7 @@ const createUser = (
   input: NormalizedProviderIdentityAssertion,
   userId: number,
   timestamp: string,
+  blockedKeys: readonly string[],
 ): Operation => {
   if (input.firstName === undefined || input.lastName === undefined) {
     throw new RangeError(
@@ -128,6 +133,7 @@ const createUser = (
       -- verified provisioning domain says the domain is ours, not that this
       -- claimant is who they say.
       AND ? = 1
+      AND NOT EXISTS (SELECT 1 FROM closed_account_sign_in_guards WHERE digest IN (?,?))
     RETURNING id AS userId`,
   bindings: [
     userId,
@@ -139,6 +145,7 @@ const createUser = (
     input.subject,
     input.provisioningDomain,
     input.emailVerified ? 1 : 0,
+    ...blockedKeys,
   ],
   }
 }
@@ -270,13 +277,16 @@ export const createContainerIdentityStore = (
       const input = normalizeProviderIdentityAssertion(assertion)
       const timestamp = now()
       assertCanonicalTimestamp(timestamp)
+      const secret = (database.prepare('SELECT secret FROM account_closure_security WHERE id=1').get() as {secret:string}).secret
+      const blockedKeys = [accountClosureDigest(secret,'provider',closedAccountProviderKey(input.provider,input.subject)),accountClosureDigest(secret,'email',input.email.toLowerCase())]
       const run = database.transaction((): ProviderIdentityResolution => {
+        if (database.prepare('SELECT 1 FROM closed_account_sign_in_guards WHERE digest IN (?,?) LIMIT 1').get(...blockedKeys)) return provisioningNotPermitted
         const existing = database.prepare(identityQuery).get(input.provider, input.subject) as
           IdentityRow | undefined
         if (existing !== undefined) return parseIdentity(existing, 'subject')
 
         const next = database.prepare(nextUserIdQuery).get() as { userId: number }
-        const link = linkVerifiedEmail(input, timestamp)
+        const link = linkVerifiedEmail(input, timestamp, blockedKeys)
         const linked = database.prepare(link.query).get(...link.bindings) as
           { userId: number } | undefined
         if (linked !== undefined) {
@@ -290,7 +300,7 @@ export const createContainerIdentityStore = (
           .get(input.provisioningDomain) as { permitted: number } | undefined
         if (permitted === undefined) return provisioningNotPermitted
 
-        const created = createUser(input, next.userId, timestamp)
+        const created = createUser(input, next.userId, timestamp, blockedKeys)
         const inserted = database.prepare(created.query).get(...created.bindings) as
           { userId: number } | undefined
         // The row read above can be gone by the time the INSERT runs its own
@@ -323,6 +333,10 @@ export const createD1IdentityStore = (
     const input = normalizeProviderIdentityAssertion(assertion)
     const timestamp = now()
     assertCanonicalTimestamp(timestamp)
+    const security = await database.prepare('SELECT secret FROM account_closure_security WHERE id=1').first<{secret:string}>()
+    if (!security) throw new Error('Missing account closure security configuration')
+    const blockedKeys = [accountClosureDigest(security.secret,'provider',closedAccountProviderKey(input.provider,input.subject)),accountClosureDigest(security.secret,'email',input.email.toLowerCase())]
+    if (await database.prepare('SELECT 1 FROM closed_account_sign_in_guards WHERE digest IN (?,?) LIMIT 1').bind(...blockedKeys).first()) return provisioningNotPermitted
 
     const existing = await database
       .prepare(identityQuery)
@@ -330,7 +344,7 @@ export const createD1IdentityStore = (
       .first<IdentityRow>()
     if (existing !== null) return parseIdentity(existing, 'subject')
 
-    const link = linkVerifiedEmail(input, timestamp)
+    const link = linkVerifiedEmail(input, timestamp, blockedKeys)
     const linked = await database
       .prepare(link.query)
       .bind(...link.bindings)
@@ -362,7 +376,7 @@ export const createD1IdentityStore = (
       const next = await database.prepare(nextUserIdQuery).first<{ userId: number }>()
       if (next === null) throw new Error('identity store could not allocate a user id')
       const operations = [
-        createUser(input, next.userId, timestamp),
+        createUser(input, next.userId, timestamp, blockedKeys),
         createEmail(input, next.userId, timestamp),
         linkCreatedUser(input, next.userId, timestamp),
       ]

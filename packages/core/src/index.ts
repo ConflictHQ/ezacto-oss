@@ -44,3 +44,13 @@ export * from './payment-actuals.js'
 export * from './account-retention.js'
 
 export { PRIVACY_FRAMEWORK_CATALOG, PRIVACY_REFERENCE_REVIEWED_ON } from './privacy-frameworks.js'
+
+export * from './account-deletion.js'
+
+export * from './account-closure.js'
+
+export * from './account-deletion-status.js'
+export * from './apple-lifecycle.js'
+
+export * from './account-retention-review.js'
+export * from './apple-web-custody.js'

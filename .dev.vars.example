@@ -14,11 +14,14 @@ ACCESS_POLICY_AUD=
 OIDC_GOOGLE_CLIENT_ID=
 OIDC_GOOGLE_CLIENT_SECRET=
 
-# --- Native identity: Sign in with Apple (mobile app) ---
-# The expected audience of the Apple identity token the app posts to
-# POST /auth/apple: the iOS bundle identifier, optionally a web Services ID
-# beside it (whitespace or comma separated). Not a secret pair -- Apple signs
-# the token. Absent means the route answers 404.
+# --- Native identity: Sign in with Apple (official mobile app) ---
+# Set APPLE_CLIENT_ID=com.ezacto.app and APP_BASE_URL to this instance's exact
+# canonical HTTPS origin (no trailing slash, path, query or credentials).
+# Current native sign-in requires an origin-bound lifecycle receipt from
+# https://apple-auth.ezacto.com. No Apple OAuth key or service capability belongs
+# on the OSS server. The web Services ID uses a separate browser flow.
+# See docs/apple-credential-lifecycle.md. Leaving this empty disables sign-in;
+# proof-only cleanup remains available when APP_BASE_URL is configured.
 APPLE_CLIENT_ID=
 
 # --- Mailer seam: AWS SES HTTP API (D14 / issue #46) ---

@@ -520,7 +520,7 @@ test('[e2e:track-week] uses one editor and submits 12-hour UI times as canonical
   expect(updateBody).not.toHaveProperty('seconds')
 })
 
-test('[e2e:track-week] persists start/end editor changes through the real worker and D1', async ({
+test('[e2e:track-week] recovers a lost time-edit response through the real worker and D1', async ({
   context,
   page,
 }) => {
@@ -552,13 +552,34 @@ test('[e2e:track-week] persists start/end editor changes through the real worker
 
     await editor.getByLabel('Start').fill('10:15 PM')
     await editor.getByLabel('End').fill('1:45 AM')
+    const writeKeys: string[] = []
+    let originalReply: string | null = null
+    await page.route('**/api/v1/time-entries/900', async (route) => {
+      if (route.request().method() !== 'PATCH') return route.continue()
+      writeKeys.push(route.request().headers()['idempotency-key'] ?? '')
+      const committed = await route.fetch()
+      expect(committed.status()).toBe(200)
+      expect(committed.headers()['idempotency-key-lifetime']).toBe('86400')
+      if (writeKeys.length === 1) {
+        originalReply = await committed.text()
+        await route.abort('failed')
+      } else {
+        await route.fulfill({ response: committed })
+      }
+    })
     const patched = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === '/api/v1/time-entries/900' &&
         response.request().method() === 'PATCH',
     )
     await editor.getByRole('button', { name: 'Save entry' }).click()
-    expect((await patched).ok()).toBe(true)
+    const replayed = await patched
+    expect(replayed.ok()).toBe(true)
+    expect(replayed.headers()['idempotent-replayed']).toBe('true')
+    expect(await replayed.text()).toBe(originalReply)
+    expect(writeKeys).toHaveLength(2)
+    expect(writeKeys[0]).not.toBe('')
+    expect(new Set(writeKeys).size).toBe(1)
     await expect(editor).toBeHidden()
 
     const persisted = await page.evaluate(async () => {
@@ -2177,6 +2198,8 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expectNoPageOverflow(page)
   const order: string[] = []
   let deliveryPayload: unknown = null
+  const deliveryKeys: string[] = []
+  const deliveryBodies: string[] = []
   page.on('request', (request) => {
     const path = new URL(request.url()).pathname
     if (request.method() !== 'POST') return
@@ -2186,6 +2209,8 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
     else if (/\/deliveries$/u.test(path)) {
       order.push('deliver')
       deliveryPayload = request.postDataJSON()
+      deliveryKeys.push(request.headers()['idempotency-key'] ?? '')
+      deliveryBodies.push(request.postData() ?? '')
     }
   })
   const preferred = page.waitForResponse(
@@ -2222,7 +2247,13 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(composer.locator('[data-invoice-composer-result]')).toContainText(
     'The sent status was recorded; submit again to retry the email alone.',
   )
-  expect(order).toEqual(['client', 'preference', 'send', 'deliver'])
+  // The real Worker advertises replay support. Unavailable mail retries four
+  // times under one key and body, without repeating the sent transition.
+  expect(order).toEqual(['client', 'preference', 'send', 'deliver', 'deliver', 'deliver', 'deliver'])
+  expect(deliveryKeys).toHaveLength(4)
+  expect(deliveryKeys[0]).not.toBe('')
+  expect(new Set(deliveryKeys).size).toBe(1)
+  expect(new Set(deliveryBodies).size).toBe(1)
   // One email: To accounts payable, Cc the rest, in the words typed -- the
   // server composes the body from them.
   expect(deliveryPayload).toEqual({
@@ -2266,7 +2297,13 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(page.locator('[data-invoice-payment-status]')).toHaveText(
     'The sent status was already recorded. The email was not sent.',
   )
-  expect(order).toEqual(['client', 'preference', 'send', 'deliver'])
+  // The real Worker advertises replay support. Unavailable mail retries four
+  // times under one key and body, without repeating the sent transition.
+  expect(order).toEqual(['client', 'preference', 'send', 'deliver', 'deliver', 'deliver', 'deliver'])
+  expect(deliveryKeys).toHaveLength(4)
+  expect(deliveryKeys[0]).not.toBe('')
+  expect(new Set(deliveryKeys).size).toBe(1)
+  expect(new Set(deliveryBodies).size).toBe(1)
   // The invoice was sent through the real worker, so D1 carries sent_at and
   // the document says Sent. Open would mean it still has to go out.
   await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Sent')
@@ -2382,7 +2419,10 @@ test('[e2e:invoice-banded] raises a flat fee covering tracked time, up to a limi
   })
 
   // The draft opens: the fee, then the hour past the limit at its rate.
-  // The draft opens at its number; its id comes from the number lookup.
+  // The URL pattern also matches /invoices/new. Wait for the rendered draft
+  // before reading its number or evaluating in its document (#984).
+  const detail = page.locator('[data-invoice-document]')
+  await expect(detail).toBeVisible()
   await expect(page).toHaveURL(/\/invoices\/[^/]+$/u)
   const bandNumber = decodeURIComponent(new URL(page.url()).pathname.split('/').pop()!)
   const invoiceId = (
@@ -2426,8 +2466,6 @@ test('[e2e:invoice-banded] raises a flat fee covering tracked time, up to a limi
     { description: 'July retainer', quantity: 1, unit_price_cents: 120_000, amount_cents: 120_000 },
     { description: overage, quantity: 2, unit_price_cents: 10_000, amount_cents: 20_000 },
   ])
-  const detail = page.locator('[data-invoice-document]')
-  await expect(detail).toBeVisible()
   await expect(detail.locator('[data-invoice-detail-lines]')).toContainText('July retainer')
   await expect(detail.locator('[data-invoice-detail-lines]')).toContainText(overage)
   await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$1,400.00')

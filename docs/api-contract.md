@@ -36,6 +36,98 @@ JSON readers enforce a byte ceiling while consuming the stream (1 MiB by default
 even if `Content-Length` is absent or falsely small. Oversized bodies receive the
 same envelope with `413 payload_too_large`.
 
+## Retries and `Idempotency-Key`
+
+Any write (POST, PUT, PATCH or DELETE) under the data paths may carry an
+`Idempotency-Key`.
+
+- **The key.** 1 to 255 visible ASCII characters. Make a fresh random UUID for
+  each logical write, before its first attempt, and send it unchanged on every
+  retry of that write.
+- **The first attempt** runs, and its response is kept for 24 hours.
+- **A retry** gets that response back with `idempotent-replayed: true`.
+  Nothing runs again. The retry may come after a dropped connection, a lost
+  response, or a restart of the client.
+
+Every data answer carries `Idempotency-Key-Lifetime: 86400`. That is how a
+client knows it may retry a write here; an instance that does not send it gets
+no blind retry of a write.
+
+A key binds the request it first carried: the method, the path and query, the
+content type and the body. For a multipart upload it binds the parts, not the
+boundary.
+
+Fingerprinting stops streamed requests at the largest supported upload size
+(25 MiB plus 64 KiB multipart overhead), including requests with absent or false
+`Content-Length`. Each route still enforces its own smaller limit. Responses
+above the 1 MiB replay limit stream to the original caller without buffering the
+entire response; their claim is retained and subsequent retries receive `409`.
+
+The stored answer goes back only to a retry that carries the same credentials
+as the first attempt: the bearer token, the session cookie or the Access
+assertion. A key alone, read out of a log say, is never enough to read what a
+write answered. A client that signed in again in between is told the write was
+done (`409`), and it reloads.
+
+Before executing a keyed API command or replaying its answer, the entry runs the
+same authentication and session-origin checks as the API. Revoked/expired
+credentials and disabled accounts receive an authentication refusal. A changed
+principal profile, grants, token scopes or money-visibility setting prevents
+replay (`409`). A database authorization revision also invalidates receipts when
+project/team assignments, resource ownership or organization access policy
+change, even if credentials stay valid or access is later restored. The revision
+advances atomically with those changes; ordinary time/expense writes and names
+or budgets do not invalidate unrelated receipts. Access-policy mutations may
+invalidate their own cached response. A release or demo-policy change also
+requires reloading instead of replaying an older representation. The committed
+claim survives every invalidation, so the write cannot run twice. Authorization
+is checked again after waiting for another attempt.
+If resolving a changed session rotates its cookie, `409 authentication_changed`
+delivers that replacement and asks the client to reload; this refusal does not
+mean the command ran. The key remains bound to its original credentials.
+
+Non-API data surfaces (authentication, portal, bootstrap and webhooks) use
+route-specific credentials. Their database writes still retain the key's claim,
+but this boundary does not cache their responses: a duplicate receives `409`
+instead of replaying a login cookie or bypassing a route's credential checks.
+
+
+| Answer | Meaning | What the client does |
+| --- | --- | --- |
+| `400 invalid_idempotency_key` | The key is not 1 to 255 visible ASCII characters. | Fix the client; do not retry. |
+| `422 idempotency_key_reused` | The key came with a different method, path, content type or body. | A client bug; do not retry. |
+| `409 idempotent_result_unavailable` | The write was done, but its response is not available. It was over 1 MiB, the server failed after the write landed, or the retry carries other credentials. | Treat it as done and reload. |
+| `503 idempotent_request_in_progress` | The first attempt is still running. The duplicate waits a few seconds for its answer before saying this. | Retry after `Retry-After`, with the same key. |
+
+**Clients.**
+- Retry network errors, 408, 429 and 5xx: up to 4 attempts, with exponential
+  backoff and full jitter.
+- Wait at least `Retry-After`.
+- Fail at once on any other 4xx, and on a replayed answer.
+
+**How it holds.** There is no transaction that spans a request on D1, so the key
+is claimed inside every write's own batch or transaction (`@ezacto/db`
+`idempotency.ts`):
+
+- once one attempt has written, no other attempt with that key can commit
+  anything;
+- the response is recorded straight after the request;
+- database writes already in flight settle before that response is recorded;
+  later writes inherited from a finished request are refused. Independent
+  queue consumers explicitly run outside the HTTP claim;
+- an attempt that stops between a write and that record leaves the key claimed.
+  After a one-minute lease its retries are answered `409`, so the work is
+  reloaded rather than done twice.
+
+Claim IDs remain stable when `API_CURSOR_SIGNING_KEY` rotates. Responses sealed
+under the previous secret become unavailable (`409`), but the write cannot run
+again during its original lifetime. Keys must be unguessable random values: the
+database stores their hashes, never the keys themselves.
+
+The money and upload routes that already take the header as their command id
+keep their own ledgers. A retry is answered from the stored response before it
+reaches them.
+
 ## Cursor pages
 
 Lists accept `per_page` (`1..200`, default `50`) and an opaque `cursor`. A page is:

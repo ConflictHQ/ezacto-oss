@@ -1,3 +1,4 @@
+import { outsideClaim } from './idempotency.js'
 import { sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
@@ -433,7 +434,9 @@ export const createApiTokenStore = (
     maxLifetimeMs,
   }: CreateApiTokenStoreOptions = {},
 ): ApiTokenStore => ({
-  authenticate: (token) => authenticateApiToken(database, token, now()),
+  // The last-use write is authentication's, not the request's own work: it
+  // must not claim an Idempotency-Key (#952).
+  authenticate: (token) => outsideClaim(() => authenticateApiToken(database, token, now())),
   issue: (input) => {
     const createdAt = now()
     // Spread rather than assigned: `exactOptionalPropertyTypes` makes an

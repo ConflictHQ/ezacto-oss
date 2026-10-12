@@ -6918,6 +6918,33 @@ dialog textarea {
   overflow-x: auto;
 }
 
+.data-table-scroll-hint {
+  display: none;
+}
+
+@media screen and (max-width: 720px) {
+  .data-table-wide:has(tbody tr[data-row]) {
+    min-width: 640px;
+  }
+  .data-table-wide tbody tr[data-row] > td:first-child {
+    min-width: 160px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    padding-block: 12px;
+  }
+  .data-table-scroll-hint {
+    display: block;
+    position: sticky;
+    left: 0;
+    width: fit-content;
+    max-width: 100%;
+    margin: 0 0 12px;
+    color: var(--ez-muted);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -7032,9 +7059,19 @@ dialog textarea {
   font-weight: 600;
 }
 
-.data-table-empty {
+.data-table tbody td.data-table-empty {
+  padding-block: 24px;
+  white-space: normal;
+  line-height: 1.6;
   color: var(--ez-muted);
 }
+
+.data-table-scroll:focus-visible,
+.data-table-overflow > summary:focus-visible {
+  outline: 3px solid var(--ez-data);
+  outline-offset: -3px;
+}
+
 
 .data-table-actions {
   text-align: right;
@@ -7122,6 +7159,23 @@ dialog textarea {
     transition: opacity 120ms ease;
   }
 }
+
+/* Touch has no hover to reveal row actions. Keep the full action surface
+   discoverable, including on tablets that still use the desktop table. */
+@media (hover: none), (pointer: coarse) {
+  .data-table-action,
+  .data-table-overflow > summary {
+    opacity: 1;
+    min-width: 48px;
+    min-height: 48px;
+    padding: 12px;
+  }
+  .data-table-menu button,
+  .data-table-sort {
+    min-height: 48px;
+  }
+}
+
 
 /* The home screen. Cards, not a report: each one is a single figure, the one
    line that says whether it needs anything, and the way into the section that
@@ -8572,3 +8626,22 @@ dialog textarea {
 .staff-payments .payment-tabs button[aria-selected='true'] { border-bottom-color: var(--ez-action); color: var(--ez-ink); font-weight: 700; }
 .staff-payments [role='tabpanel'] { padding-block: 20px; }
 .staff-payments .primary-action { background: var(--ez-action); color: var(--ez-action-fg); }
+
+.oidc-sign-in[data-oidc-provider="apple"] {
+  background: var(--ez-apple-sign-in-background);
+  color: var(--ez-apple-sign-in-foreground);
+  border-color: var(--ez-apple-sign-in-foreground);
+  padding: 0 12px 0 2px;
+  min-height: 44px;
+  font-size: 16px;
+  font-weight: 500;
+}
+.oidc-sign-in[data-oidc-provider="apple"] img {
+  flex: 0 0 40px;
+  object-fit: contain;
+}
+.apple-authorization-note { color: var(--ez-muted); font-size: 13px; line-height: 1.5; }
+.apple-disconnect { max-width: 640px; margin: 48px auto; padding: 24px; }
+.apple-disconnect .auth-card { max-width: none; }
+.apple-disconnect-confirm { display: flex; gap: 12px; align-items: start; }
+.apple-disconnect-confirm input { width: auto; flex: 0 0 auto; }

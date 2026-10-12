@@ -15,7 +15,7 @@
  * the write twice. An instance that has not said so is never sent a write again
  * after a dropped connection or a 5xx, because that write may already have
  * committed. It gets one only after an answer that says nothing was done: 408,
- * 429, or a 503 that names a time to come back.
+ * or 429. A 503 with Retry-After may still follow a committed write.
  */
 
 export const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key'
@@ -202,12 +202,12 @@ const originOf = (address: string): string => {
   }
 }
 
-// Password recovery uses one-time credentials and can trigger mail. The API's
-// general idempotency advertisement does not promise replay for these routes.
-const isPasswordRecovery = (address: string): boolean => {
+// Only API v1 mutations share the advertised idempotency contract. Sign-in,
+// one-time challenges and password recovery must not inherit that promise.
+const isApiMutation = (address: string): boolean => {
   try {
     const path = new URL(address, globalThis.location?.href).pathname
-    return path === '/auth/password/forgot' || path === '/auth/password/reset'
+    return path === '/api/v1' || path.startsWith('/api/v1/')
   } catch {
     return false
   }
@@ -240,10 +240,10 @@ const encodeOnce = async (
  * - Retried: a dropped connection, 408, 429 and 5xx. Answered at once: every
  *   other status, and an answer the instance says is a replay of the original.
  * - A write is retried after any of those only where its origin honours keys;
- *   elsewhere only after 408, 429, or a 503 with `Retry-After`.
+ *   elsewhere only after 408 or 429. Retry-After alone cannot prove refusal.
  * - The caller's abort stops it at once, mid-wait included.
- * - Password reset requests and confirmations are sent once, regardless of
- *   origin support: their one-time credentials and mail are outside that promise.
+ * - Writes outside API v1 are sent once, regardless of origin support:
+ *   authentication and recovery are outside the advertised replay contract.
  */
 export const createRetryingFetch = (
   options: RetryingFetchOptions = {},
@@ -269,7 +269,7 @@ export const createRetryingFetch = (
     // A stream can be read once, so a body that is one -- including the body a
     // Request carries -- is sent once. Anything else can be sent again as it is.
     const replayable =
-      !(write && isPasswordRecovery(address)) &&
+      (!write || isApiMutation(address)) &&
       !(init?.body instanceof ReadableStream) && (request === null || request.body === null)
 
     let attemptInit = init
@@ -308,10 +308,8 @@ export const createRetryingFetch = (
           return response
         }
         const wait = retryAfterMilliseconds(response.headers.get('retry-after'), now())
-        const refused =
-          response.status === 408 ||
-          response.status === 429 ||
-          (response.status === 503 && wait !== null)
+        // Retry-After controls timing, not whether a write already committed.
+        const refused = response.status === 408 || response.status === 429
         const again =
           replayable &&
           attempt < MAX_ATTEMPTS &&

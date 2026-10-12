@@ -75,7 +75,7 @@ jobs:
           done
           echo '::error::Review host did not serve the expected release'
           exit 1
-      - name: enroll and verify private owner
+      - name: enroll or verify private owner
         id: owner
         run: node scripts/bootstrap-app-review.mjs
       # Keep the first-run guard in place on failure. Removing it before owner

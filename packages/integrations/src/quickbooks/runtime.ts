@@ -278,6 +278,8 @@ export interface QuickBooksMirrorSource {
     realmId: string;
     /** QuickBooks' own id for the payment; the receipt's provider reference. */
     quickBooksPaymentId: string;
+    /** QuickBooks' id for the invoice this share of the payment settled. */
+    quickBooksInvoiceId: string;
   }): Promise<QuickBooksPaymentRecording>;
 }
 
@@ -695,7 +697,9 @@ export const createQuickBooksRuntime = (
         if (payment.providerTransactionId !== null) {
           payments.push({
             paymentId: payment.id,
-            quickBooksId: payment.providerTransactionId,
+            // Stored as `<payment>:<invoice>` since one payment can settle
+            // several invoices; the payment is the part before the colon.
+            quickBooksId: payment.providerTransactionId.split(":")[0] ?? payment.providerTransactionId,
             mirroredAt: payment.recordedAt,
           });
         }
@@ -934,6 +938,7 @@ export const createQuickBooksRuntime = (
             paidOn: row.paidOn,
             realmId: change.realmId,
             quickBooksPaymentId: row.quickBooksPaymentId,
+            quickBooksInvoiceId: row.quickBooksInvoiceId,
           });
           if (recording !== "recorded") {
             refusals.push(`invoice ${String(row.ezactoInvoiceId)}: ${notRecorded[recording]}`);

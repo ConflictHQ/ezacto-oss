@@ -35,6 +35,8 @@ export function reviewSecrets(env) {
   return deploySecretPayload({
     API_CURSOR_SIGNING_KEY: env.REVIEW_CURSOR_SIGNING_KEY,
     EZACTO_BOOTSTRAP_TOKEN: bootstrap,
+    // Fixed public audience for the official app, never inherited credentials.
+    APPLE_CLIENT_ID: "com.ezacto.app",
   });
 }
 

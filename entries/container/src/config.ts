@@ -223,6 +223,13 @@ export const readContainerConfig = (
     ...(appleClientId === undefined
       ? {}
       : { APPLE_CLIENT_ID: appleClientId }),
+    ...Object.fromEntries([
+      ['APPLE_WEB_ENABLED', optional(environment, 'APPLE_WEB_ENABLED', 5)],
+      ['APPLE_WEB_SERVICES_ID', optional(environment, 'APPLE_WEB_SERVICES_ID', 255)],
+      ['APPLE_WEB_CAPABILITY_KEYS', optional(environment, 'APPLE_WEB_CAPABILITY_KEYS', 4096)],
+      ['APPLE_WEB_ACTIVE_KEY_ID', optional(environment, 'APPLE_WEB_ACTIVE_KEY_ID', 32)],
+      ['APPLE_WEB_ROUTING_SECRET', optional(environment, 'APPLE_WEB_ROUTING_SECRET', 43)],
+    ].filter(([, value]) => value !== undefined)),
     ...(bootstrapToken === undefined
       ? {}
       : { EZACTO_BOOTSTRAP_TOKEN: bootstrapToken }),

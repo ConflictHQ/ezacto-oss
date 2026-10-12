@@ -1,4 +1,6 @@
 import type { ReminderProcessOptions } from '@ezacto/db/d1'
+import { createRuntimeAppleWeb } from './apple-web.js'
+import { createD1AppleWebCustodyStore } from '@ezacto/db/d1'
 import { captureException } from '@sentry/cloudflare'
 import { createPaymentRunsService } from '@ezacto/db/d1'
 import { createWisePaymentProvider } from '@ezacto/integrations'
@@ -29,6 +31,11 @@ import {
   createModuleSettingsRepository,
   createSignInMethodRepository,
   createAccountRetentionRepository,
+  createAccountDeletionRequestRepository,
+  createAccountClosureRepository,
+  createAccountRetentionReviewRepository,
+  createAppleLifecycleRepository,
+  createAccountDeletionStatusRepository,
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
   createTeamRepository,
@@ -96,8 +103,11 @@ import {
   setInvoiceThankYouPolicy,
   setOrganizationThankYouPolicy,
   setBillDelivery,
+  createD1IdempotencyStore,
+  createIdempotentD1,
 } from "@ezacto/db/d1";
 import { createPortalSessionService, type BandClaimBackfillPort } from "@ezacto/api";
+import { deriveIdempotencySecret } from "@ezacto/api";
 import {
   createApiSessionService,
   createCloudflareAccessSessionResolver,
@@ -154,7 +164,7 @@ import { demoRefusal } from "./demo-lockdown.js";
 const cursorSecretPattern = /^[A-Za-z0-9_-]+$/;
 const cursorSecretBytes = 32;
 
-const readiness = new WeakMap<object, Promise<void>>();
+const readyDatabases = new WeakSet<object>();
 
 let cachedAccessVerifier:
   | {
@@ -437,21 +447,25 @@ const requireDatabase = (env: WorkerEnv): D1Database => {
 
 /**
  * D1 itself serializes each ledger-leading migration batch. The isolate cache
- * only removes repeat checks after success; failures are evicted and retried.
+ * only removes repeat checks after success. Pending D1 I/O belongs to the
+ * initiating request: sharing its promise can strand another request when that
+ * invocation ends. Concurrent cold requests run their own atomic ledger check;
+ * a failure or canceled request never marks the database ready.
  */
 export const ensureRuntimeDatabaseReady = async (
   database: D1Database,
 ): Promise<void> => {
   const identity = database as object;
-  const pending = readiness.get(identity);
-  if (pending !== undefined) return pending;
-
-  const migration = migrateD1(database).catch((error: unknown) => {
-    if (readiness.get(identity) === migration) readiness.delete(identity);
-    throw error;
-  });
-  readiness.set(identity, migration);
-  return migration;
+  if (readyDatabases.has(identity)) return;
+  await migrateD1(database);
+  if (
+    await database
+      .prepare('SELECT 1 FROM account_restore_quarantine WHERE id=1 AND quarantined=1')
+      .first()
+  ) {
+    throw new Error('Restored privacy evidence must be reconciled before this instance serves traffic.');
+  }
+  readyDatabases.add(identity);
 };
 
 export const createR2AttachmentObjectStore = (
@@ -600,7 +614,11 @@ export const createRuntimeServices = async (
     cloudflareAccessFetch?: CloudflareAccessFetch;
   } = {},
 ): Promise<RuntimeServices> => {
-  const database = requireDatabase(env);
+  const binding = requireDatabase(env);
+  // Every service below writes through this: in a request that carries an
+  // Idempotency-Key, each write commits with the key's claim (issue 952).
+  // Stable per binding, so the readiness cache below still keys on it.
+  const database = createIdempotentD1(binding);
   const demo = demoDeployment(env);
   const credentials = providerCredentials(env);
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY);
@@ -1070,6 +1088,11 @@ export const createRuntimeServices = async (
     moduleSettings: createModuleSettingsRepository(drizzle),
     signInMethods: createSignInMethodRepository(drizzle),
     accountRetention: createAccountRetentionRepository(drizzle),
+    accountDeletionRequests: createAccountDeletionRequestRepository(drizzle),
+    accountClosure: createAccountClosureRepository(drizzle),
+    accountRetentionReview: createAccountRetentionReviewRepository(drizzle),
+    nativeAppleLifecycle: createAppleLifecycleRepository(drizzle),
+    accountDeletionTracking: createAccountDeletionStatusRepository(drizzle),
     organizationName,
     ssoProvisioningDomains: createD1SsoProvisioningDomainStore(database),
     // The #520 organisation setting, read the same way the other two module
@@ -1098,6 +1121,11 @@ export const createRuntimeServices = async (
     timesheetLockPolicy,
     reports: createReportRepository(drizzle),
     cursorSigningKey,
+    idempotency: {
+      // The binding itself: the store's own statements never carry a claim.
+      store: createD1IdempotencyStore(binding),
+      secret: await deriveIdempotencySecret(cursorSigningKey),
+    },
     passwordAuth,
     userEmails: passwordAuth,
     sessions,
@@ -1293,6 +1321,7 @@ export const createRuntimeServices = async (
         setBillDelivery(drizzle, clientId, enabled),
     },
     identities,
+    ...createRuntimeAppleWeb(env, createD1AppleWebCustodyStore(database)),
     oidcTransactions: createD1OidcTransactionStore(database),
     oidcAppCodes: createD1OidcAppCodeStore(database),
     ...(magicLinkSigningKey === undefined

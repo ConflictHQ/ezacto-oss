@@ -22,6 +22,17 @@ export {
 } from './attachments.js'
 
 export {
+  createD1IdempotencyStore,
+  createIdempotentD1,
+  runWithClaim,
+  type IdempotencyClaim,
+  type IdempotencyRecord,
+  type IdempotencyStore,
+  type IdempotentExecution,
+  type SealedIdempotentResponse,
+} from './idempotency.js'
+
+export {
   createApiTokenStore,
   type ApiTokenStore,
   type CreateApiTokenStoreOptions,
@@ -418,3 +429,14 @@ export { createStaffPaymentStore } from './staff-payments.js'
 export { createPaymentRunsService } from './payment-runs.js'
 
 export { createAccountRetentionRepository } from './account-retention.js'
+
+export * from './account-deletion-requests.js'
+
+export * from './account-closure.js'
+
+export * from './account-deletion-status.js'
+
+export * from './apple-lifecycle.js'
+
+export { createAccountRetentionReviewRepository } from './account-retention-review.js'
+export { createD1AppleWebCustodyStore } from './apple-web-custody.js'

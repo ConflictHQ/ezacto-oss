@@ -1,10 +1,29 @@
 export { createApiApp } from './app.js'
+export { createApiIdempotencyAuthorization } from './idempotency-auth.js'
 export {
   captureRequestActivity,
   type ActivityActor,
   type ActivityCaptureRequest,
   type ActivityRecorder,
 } from './activity-log.js'
+export {
+  deriveIdempotencySecret,
+  IDEMPOTENCY_KEY_HEADER,
+  IDEMPOTENCY_KEY_LIFETIME_HEADER,
+  IDEMPOTENCY_KEY_LIFETIME_SECONDS,
+  IDEMPOTENCY_LEASE_MS,
+  IDEMPOTENCY_WAIT_MS,
+  IDEMPOTENT_REPLAYED_HEADER,
+  MAX_STORED_RESPONSE_BYTES,
+  MAX_IDEMPOTENCY_REQUEST_BYTES,
+  withIdempotency,
+  type IdempotencyClaim,
+  type IdempotencyOptions,
+  type IdempotencyRecord,
+  type IdempotencyStore,
+  type IdempotentExecution,
+  type SealedIdempotentResponse,
+} from './idempotency.js'
 export {
   installBackupStatusRoutes,
   type BackupStatusReader,
@@ -309,6 +328,7 @@ export {
   type AppleFetch,
   type AppleIdentityResolver,
   type AppleIdentityTokenVerifier,
+  type AppleTokenExpectations,
   type AppleProviderConfig,
   type AppleRouteOptions,
   type AppleSessionIssuer,
@@ -433,3 +453,27 @@ export { installStaffPaymentRoutes } from './staff-payments.js'
 export { installPaymentRunRoutes } from './payment-runs.js'
 
 export * from './account-retention.js'
+
+export { installAccountDeletionRequestRoutes } from './account-deletion-requests.js'
+
+export { installAccountClosureRoutes } from './account-closure.js'
+
+export { installAccountDeletionStatusRoutes } from './account-deletion-status.js'
+
+export * from './apple-lifecycle.js'
+export * from './apple-lifecycle-proof.js'
+
+export { installAccountRetentionReviewRoutes } from './account-retention-review.js'
+export {
+  APPLE_WEB_START_PATH,
+  APPLE_WEB_CALLBACK_PATH,
+  APPLE_WEB_STATE_COOKIE,
+  assertValidAppleWebProviderConfig,
+  installAppleWebRoutes,
+  type AppleWebGrant,
+  type AppleWebLifecyclePort,
+  type AppleWebProviderConfig,
+  type AppleWebRouteOptions,
+} from './apple-web.js'
+
+export { createAppleWebLifecycle, assertAppleWebCustodyConfig, APPLE_WEB_CONNECTION_COOKIE, type AppleWebCustodyConfig } from './apple-web-lifecycle.js'

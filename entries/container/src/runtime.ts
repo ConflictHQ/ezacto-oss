@@ -1,4 +1,6 @@
 import type { ReminderProcessOptions } from '@ezacto/db'
+import { createRuntimeAppleWeb } from '../../worker/src/apple-web.js'
+import { createContainerAppleWebCustodyStore } from '@ezacto/db'
 import { createPaymentRunsService } from '@ezacto/db'
 import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createStaffPaymentStore } from '@ezacto/db'
@@ -39,6 +41,11 @@ import {
   createModuleSettingsRepository,
   createSignInMethodRepository,
   createAccountRetentionRepository,
+  createAccountDeletionRequestRepository,
+  createAccountClosureRepository,
+  createAccountRetentionReviewRepository,
+  createAppleLifecycleRepository,
+  createAccountDeletionStatusRepository,
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
   createTeamRepository,
@@ -98,6 +105,8 @@ import {
   readUserIdentity,
   readUserTimezone,
   updateUserTimezone,
+  createContainerIdempotencyStore,
+  createIdempotentSqlite,
 } from '@ezacto/db'
 import {
   createApiSessionService,
@@ -111,6 +120,7 @@ import {
   type AttachmentRouteOptions,
   type UserPrincipal,
   invoicePaymentUrlForMail,
+  deriveIdempotencySecret,
 } from '@ezacto/api'
 import {
   configuredEmailSender,
@@ -230,6 +240,7 @@ export const prepareContainerDatabase = (
   database.pragma('busy_timeout = 5000')
   database.pragma('wal_autocheckpoint = 1000')
   migrateContainer(database)
+  if(database.prepare('SELECT 1 FROM account_restore_quarantine WHERE id=1 AND quarantined=1').get())throw new Error('Restored privacy evidence must be reconciled before this instance serves traffic.')
 
   assertPragma(database, 'journal_mode', 'wal')
   assertPragma(database, 'synchronous', 2)
@@ -353,13 +364,23 @@ const assertDatabasePath = async (path: string): Promise<void> => {
   }
 }
 
+export const assertNoIncompletePrivacyRestore = async (directory: string): Promise<void> => {
+  try { await lstat(resolve(directory, '.privacy-restore-incomplete')) }
+  catch(error) { if(error instanceof Error && 'code' in error && error.code==='ENOENT') return; throw error }
+  throw new Error('Incomplete physical restore: privacy evidence must be reconciled before startup')
+}
+
 export const createContainerRuntime = async (
   config: ContainerConfig,
   options: ContainerRuntimeOptions = {},
 ): Promise<ContainerRuntime> => {
   await ensureDataDirectory(config.dataDirectory)
+  await assertNoIncompletePrivacyRestore(config.dataDirectory)
   await assertDatabasePath(config.databasePath)
-  const database = new BetterSqlite3(config.databasePath, { timeout: 5_000 })
+  const handle = new BetterSqlite3(config.databasePath, { timeout: 5_000 })
+  // Every store below writes through this: in a request that carries an
+  // Idempotency-Key, each write commits with the key's claim (#952).
+  const database = createIdempotentSqlite(handle)
   let queue: ContainerEmailQueue | undefined
   let outboxScheduler: ContainerOutboxScheduler | undefined
   try {
@@ -891,6 +912,11 @@ export const createContainerRuntime = async (
       moduleSettings: createModuleSettingsRepository(drizzle),
       signInMethods: createSignInMethodRepository(drizzle),
     accountRetention: createAccountRetentionRepository(drizzle),
+    accountDeletionRequests: createAccountDeletionRequestRepository(drizzle),
+    accountClosure: createAccountClosureRepository(drizzle),
+    accountRetentionReview: createAccountRetentionReviewRepository(drizzle),
+    nativeAppleLifecycle: createAppleLifecycleRepository(drizzle),
+    accountDeletionTracking: createAccountDeletionStatusRepository(drizzle),
       organizationName,
       ssoProvisioningDomains:
         createContainerSsoProvisioningDomainStore(database),
@@ -911,6 +937,11 @@ export const createContainerRuntime = async (
       timesheetApprovals: createTimesheetApprovalRepository(drizzle),
       timesheetLockPolicy,
       cursorSigningKey: config.cursorSigningKey,
+      idempotency: {
+        // The handle itself: the store's own statements never carry a claim.
+        store: createContainerIdempotencyStore(handle),
+        secret: await deriveIdempotencySecret(config.cursorSigningKey),
+      },
       passwordAuth,
       userEmails: passwordAuth,
       sessions,
@@ -919,6 +950,7 @@ export const createContainerRuntime = async (
       senderIdentityVerifier: createSmtpSenderIdentityVerifier(config.smtp.from),
       outbox,
       identities: createContainerIdentityStore(database),
+      ...createRuntimeAppleWeb(config.appEnv, createContainerAppleWebCustodyStore(database)),
       oidcTransactions: createContainerOidcTransactionStore(database),
       oidcAppCodes: createContainerOidcAppCodeStore(database),
       // Same opt-in as portalAuth below: mounted only with a code-signing key,
