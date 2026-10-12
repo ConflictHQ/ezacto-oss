@@ -1,10 +1,10 @@
 {
-  "checkedAt": "2026-10-12T05:51:55Z",
-  "scope": "Optional bounded ID selection for the native reminder processor and Worker/container service composition. Hosted daily checkpoint integration is separate.",
+  "checkedAt": "2026-10-12T07:19:17Z",
+  "scope": "Optional bounded ID and fixed due-time selection for the native reminder processor, with a separate processing clock for durable receipts. Worker/container composition is retained; hosted daily checkpoint integration is separate.",
   "sourceSha256": [
     {
       "path": "packages/db/src/reminders.ts",
-      "sha256": "1d71dbd2c5111f402690deb38777f435fcfc8da877c7cd8beaebdbc1c2153b1e"
+      "sha256": "921ca1fc2aa0a59db3c4e645b75ffc594653e8d730c1fb43f7b31462c1d492c8"
     },
     {
       "path": "packages/db/src/d1.ts",
@@ -24,7 +24,7 @@
     },
     {
       "path": "packages/db/test/reminders.test.ts",
-      "sha256": "d28c7ebe735d8eb8786bb47f7ab01ffb3a0bfe6fed71ad3bdb5e9c4a5221e9a0"
+      "sha256": "8a9459f1b8aee718f59313c5267ce39b4301ee883fa07379ccf00b1d0affcdf4"
     },
     {
       "path": "entries/worker/test/reminder-pagination.test.ts",
@@ -37,9 +37,9 @@
   ],
   "checks": {
     "reminderDatabase": {
-      "passed": 24,
-      "total": 24,
-      "durationSeconds": 160.23,
+      "passed": 26,
+      "total": 26,
+      "durationSeconds": 81.58,
       "runtimes": [
         "SQLite",
         "D1"
@@ -48,7 +48,7 @@
     "workerComposition": {
       "passed": 1,
       "total": 1,
-      "durationSeconds": 14.61
+      "durationSeconds": 7.47
     },
     "containerComposition": {
       "passed": 1,
@@ -62,7 +62,7 @@
       "durationSeconds": 11.54
     },
     "dockerAcceptance": "passed actual first-run signup/SMTP/tracking and exclusive stopped-volume SQLite/attachment backup/restore",
-    "fullVerify": "Post-merge npm run verify passed with exit code 0: contract, typecheck, lint, theme checks, all workspace suites, 55 browser cases and final build. API 1067, DB 1792, Worker 423 and web unit 1232 cases passed. One DB case and three live Harvest migration cases were skipped by the repository's normal settings. The earlier timeout observation below belongs to a separate incomplete run.",
+    "fullVerify": "Passed on prior branch head d356b323. After the due-cutoff follow-up, focused DB/Worker tests and affected typecheck/lint pass; current-head full CI is pending.",
     "observedVerificationFailure": {
       "file": "packages/api/test/reports.test.ts",
       "test": "[db] entry grain is one row per entry with its id and notes; day grain carries neither",
@@ -71,14 +71,15 @@
       "fileCases": 143,
       "fileFailures": 1,
       "result": "Timeout occurred in an earlier incomplete run. The post-merge full verify passed this API suite (1067 cases) and all other required gates."
-    }
+    },
+    "dueCutoffRegression": "An overdue reminder created after the due cutoff is updated at processing time; a second row due between cutoff and processing time stays pending. Invalid and future due cutoffs fail closed."
   },
   "fixtureCorrections": [
     "Initial composition fixtures omitted required organizations.modules; corrected fixtures without changing schema checks.",
     "Container background scheduler legitimately consumed currently due rows. The explicit-selection fixture now uses future due rows to isolate its caller from the automatic current-time tick; production scheduler remains unchanged."
   ],
   "remaining": [
-    "Independent review and green CI before merge.",
-    "Integrate the public upstream result into hosted and prove daily checkpoint/retry/provider behavior there."
+    "Independent review and current-head green CI before merge.",
+    "Publish the reviewed OSS result, pin it in hosted, and prove deployed scheduler/provider behavior."
   ]
 }
