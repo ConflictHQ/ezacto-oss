@@ -1399,6 +1399,7 @@
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
+  color: var(--ez-ink);
   box-shadow: 0 18px 48px color-mix(in srgb, var(--ez-shadow) 8%, transparent);
 }
 .invoice-document-heading {
