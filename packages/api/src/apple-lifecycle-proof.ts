@@ -53,7 +53,8 @@ export function createAppleLifecycleKeySet(
       try {
         if (String(url) !== APPLE_LIFECYCLE_JWKS)
           throw new Error("Untrusted key URL");
-        const response = await retrieve(url, { ...init, redirect: "error" });
+        // Workers reject redirect: "error"; manual leaves a 3xx to fail `ok` below.
+        const response = await retrieve(url, { ...init, redirect: "manual" });
         if (!response.ok || response.body === null)
           throw new Error("Key service unavailable");
         const reader = response.body.getReader();
