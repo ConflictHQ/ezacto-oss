@@ -54,10 +54,37 @@ function mount(profile = "administrator", demo = false) {
   return { controller, active, abort, select, form };
 }
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   document.body.replaceChildren();
 });
 describe("operator deletion request queue", () => {
+  it("retries a lost settings write under one key after the instance advertises replay support", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const advertised = { "idempotency-key-lifetime": "86400" };
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [record], links: { next: null } }), { headers: advertised }))
+      .mockRejectedValueOnce(new TypeError("response lost after commit"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { ...record, version: 2, message: "Reviewing." } }), { headers: { ...advertised, "idempotent-replayed": "true" } }));
+    vi.stubGlobal("fetch", fetch);
+    const { controller, active, select, form } = mount();
+    await controller.load(active);
+    select();
+    (form.elements.namedItem("message") as HTMLTextAreaElement).value = "Reviewing.";
+    form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+    await vi.waitFor(() => expect(document.querySelector("[data-deletion-result]")!.textContent).toContain("Request updated"));
+    expect(fetch).toHaveBeenCalledTimes(3);
+    const first = fetch.mock.calls[1]![1] as RequestInit;
+    const second = fetch.mock.calls[2]![1] as RequestInit;
+    const key = new Headers(first.headers).get("idempotency-key");
+    expect(key).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+    expect(new Headers(second.headers).get("idempotency-key")).toBe(key);
+    expect(first.method).toBe("PATCH");
+    expect(second.method).toBe("PATCH");
+    expect(first.body).toBe(second.body);
+    expect(first.credentials).toBe("same-origin");
+  });
   it("shows captured disclosure safely and distinguishes a response target from completion", async () => {
     vi.stubGlobal(
       "fetch",

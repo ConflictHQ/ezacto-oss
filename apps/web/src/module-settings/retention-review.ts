@@ -2,6 +2,7 @@ import type { AccountDeletionRecord, RetentionObligation } from "@ezacto/core";
 import type { SessionPresenter } from "../session.js";
 import { EzactoApiError } from "@conflict-hq/ezacto-client";
 import { apiErrorMessage } from "./model.js";
+import { shellFetch } from "../shell/net.js";
 type Active = SessionPresenter & {
   signal: AbortSignal;
   identity: { profile: string };
@@ -42,7 +43,7 @@ export function createRetentionReviewController(
     method = "GET",
     body?: unknown,
   ): Promise<T> => {
-    const result = await fetch(path, {
+    const result = await shellFetch(path, {
       method,
       credentials: "same-origin",
       signal: active.signal,

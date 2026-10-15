@@ -9,6 +9,7 @@ import {
 } from "@conflict-hq/ezacto-client";
 import type { SessionPresenter } from "../session.js";
 import { apiErrorMessage } from "./model.js";
+import { shellFetch } from "../shell/net.js";
 
 const frameworks = PRIVACY_FRAMEWORK_CATALOG;
 const renderFramework = ({
@@ -194,7 +195,7 @@ export function createRetentionController(root: HTMLElement, demo: boolean) {
     active: Active,
     body?: unknown,
   ): Promise<AccountRetentionRecord | null> => {
-    const response = await fetch(
+    const response = await shellFetch(
       body === undefined
         ? "/api/v1/profile/retention-policy"
         : "/api/v1/admin/retention-policy",

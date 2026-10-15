@@ -7,6 +7,7 @@ import type {
 import { EzactoApiError } from "@conflict-hq/ezacto-client";
 import type { SessionPresenter } from "../session.js";
 import { apiErrorMessage } from "./model.js";
+import { shellFetch } from "../shell/net.js";
 type Active = SessionPresenter & {
   signal: AbortSignal;
   identity: { profile: string };
@@ -35,7 +36,7 @@ export function createAccountClosureController(
     path: string,
     body?: unknown,
   ): Promise<T> => {
-    const response = await fetch(path, {
+    const response = await shellFetch(path, {
       method: body === undefined ? "GET" : "POST",
       credentials: "same-origin",
       signal: active.signal,
