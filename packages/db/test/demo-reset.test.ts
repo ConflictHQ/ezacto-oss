@@ -62,6 +62,56 @@ describe('demo reset', () => {
     expect([...filled].sort()).toEqual([...PRESERVED_TABLES].sort())
   })
 
+  it('[security] preserves the original account closure secret across a demo reset', async () => {
+    const { client, driver } = harness()
+    migrateContainer(client)
+    const before = client.prepare('SELECT secret FROM account_closure_security WHERE id = 1').get() as {
+      secret: string
+    }
+
+    await wipeAndSeedDemo(driver, { now, years, confirm: 'wipe-and-reload' })
+
+    // Compare inside SQLite so an assertion failure never prints key material.
+    const unchanged = client
+      .prepare('SELECT count(*) AS n FROM account_closure_security WHERE id = 1 AND secret = ?')
+      .get(before.secret) as { n: number }
+    expect(unchanged.n).toBe(1)
+    expect(count(client, 'account_closure_security')).toBe(1)
+  })
+
+  it('[security] keeps authorization revisions advancing after a demo reset', async () => {
+    const { client, driver } = harness()
+    migrateContainer(client)
+    client.exec('UPDATE idempotency_authorization SET revision = 1000 WHERE id = 1')
+    const revision = () => client
+      .prepare('SELECT revision FROM idempotency_authorization WHERE id = 1')
+      .get() as { revision: number } | undefined
+
+    await wipeAndSeedDemo(driver, { now, years, confirm: 'wipe-and-reload' })
+
+    const rebuilt = revision()
+    expect(rebuilt?.revision).toBeGreaterThan(1000)
+    const revoked = client.prepare(`UPDATE users SET is_active = 0 WHERE id = (
+      SELECT id FROM users WHERE is_active = 1 AND profile = 'member' ORDER BY id LIMIT 1
+    )`).run()
+    expect(revoked.changes).toBe(1)
+    expect(revision()?.revision).toBe(rebuilt!.revision + 1)
+  })
+
+  it('[security] invalidates pre-wipe authority even if rebuilding never starts', async () => {
+    const { client, driver } = harness()
+    migrateContainer(client)
+    client.exec('UPDATE idempotency_authorization SET revision = 1000 WHERE id = 1')
+
+    await expect(wipeAndSeedDemo({
+      ...driver,
+      bootstrap: async () => { throw new Error('interrupted before bootstrap') },
+    }, { now, years, confirm: 'wipe-and-reload' })).rejects.toThrow('interrupted before bootstrap')
+
+    expect(client.prepare('SELECT revision FROM idempotency_authorization WHERE id = 1').get())
+      .toEqual({ revision: 1001 })
+  })
+
   it('[security] puts the triggers back when the wipe fails halfway through', async () => {
     // The wipe drops every trigger before it empties anything, so if the drops
     // commit and the rest does not, what is left is a live database with no

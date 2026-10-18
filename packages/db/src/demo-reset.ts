@@ -57,7 +57,11 @@ import {
   InvoiceGenerationError,
   type InvoiceGenerationDatabase,
 } from './invoice-generation.js'
-import { executeInvoiceLifecycleCommand, recordInvoicePayment } from './invoice-state.js'
+import {
+  executeInvoiceLifecycleCommand,
+  InvoiceCommandOperationError,
+  recordInvoicePayment,
+} from './invoice-state.js'
 import { migrateD1 } from './migrate.js'
 
 /** The demo organisation. Invented; the sign-in page is where it says so. */
@@ -154,6 +158,12 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   'invoice_number_sequence',
   'email_template_versions',
   'email_template_heads',
+  // Instance security material is seeded once; keeping the migration ledger
+  // while deleting this row would permanently disable closure proofs.
+  'account_closure_security',
+  // The migration creates this singleton once. Authorization triggers update
+  // it in place, so deleting it would disable all subsequent revision changes.
+  'idempotency_authorization',
 ])
 
 /**
@@ -196,6 +206,9 @@ const wipeStatements = (objects: DemoSchemaObjects): readonly DemoSeedStatement[
   // needs a row to read, and reset because yesterday's demo took every number
   // below it and none of those invoices exist any more.
   { text: 'UPDATE invoice_number_sequence SET next_number = 1', bindings: [] },
+  // Authority changed while its triggers were lifted. Advance the preserved
+  // revision in the wipe transaction, even if bootstrap/seed never resumes.
+  { text: 'UPDATE idempotency_authorization SET revision = revision + 1 WHERE id = 1', bindings: [] },
   // Preserved, but not carried over either: a template version records who
   // saved it, and that person was a row in `users`, which this wipe has just
   // emptied. Deferred, the foreign key bites at commit and D1 rolls the whole
@@ -471,14 +484,26 @@ export const billDemoBacklog = async (
   for (const entry of outstanding) {
     if (attempted >= limit) break
     attempted += 1
-    const outcome = await billMonth(driver, {
-      clientId: entry.clientId,
-      projectIds: projectsOf.get(entry.clientId)!,
-      month: entry.month,
-      now,
-      messageId,
-      paymentId,
-    })
+    let outcome
+    try {
+      outcome = await billMonth(driver, {
+        clientId: entry.clientId,
+        projectIds: projectsOf.get(entry.clientId)!,
+        month: entry.month,
+        now,
+        messageId,
+        paymentId,
+      })
+    } catch (error) {
+      // Another tick got to this invoice first: a minute tick that ran long
+      // into the next, or the rebuild emptying the tables underneath. Every
+      // night it surfaced as a version conflict, a reused command id or a
+      // failed commit (EZACTO-SERVER-9/C/E/A/B/D). The other tick finishes the
+      // invoice and the next one resumes from the rows, so this one stops.
+      if (!(error instanceof InvoiceCommandOperationError)) throw error
+      console.warn('[demo] billing tick stopped: another tick holds the invoice', error)
+      break
+    }
     if (outcome === 'nothing') continue
     billed += 1
     messageId += 1

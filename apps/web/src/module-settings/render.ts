@@ -1,3 +1,4 @@
+import { renderRetentionSection } from './retention.js'
 import { iconMarkup } from '../components/icons.js'
 import { demoUnavailable } from '../demo.js'
 import { COMPANY_SETTINGS_SECTIONS } from '../settings-sections.js'
@@ -37,6 +38,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p class="form-result" data-settings-sign-in-status role="status" aria-live="polite">Loading sign-in methods&hellip;</p>
       <section class="module-settings-list" data-settings-sign-in-list aria-label="Sign-in methods" hidden></section>
     </section>
+    ${renderRetentionSection()}
     <section class="settings-section" data-settings-section="time" aria-labelledby="settings-time-title">
       <header><h2 id="settings-time-title">Time tracking</h2>
       <p>How the week grid reads and what a time entry has to say. The notes policy is enforced on every entry, including ones the API writes.</p></header>

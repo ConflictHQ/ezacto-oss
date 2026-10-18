@@ -16,7 +16,8 @@
   // Cloudflare's own logs, and Sentry -- is a column number nobody can act on.
   "upload_source_maps": true,
 
-  // Two environments, on purpose: our books, and the one everyone else sees.
+  // Two runtime templates: our books, and the one everyone else sees.
+  // The named App Review instance renders prod separately; see docs/app-review-instance.md.
   // No per-branch preview workers — deploy targets are hosts we own and name.
   // The runtime reads D1 as DB, R2 as ATTACHMENTS, and the mail producer as
   // EMAIL_QUEUE.

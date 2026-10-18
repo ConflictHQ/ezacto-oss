@@ -55,6 +55,7 @@ import type { EmailConfigurationApi } from '../email-config/model.js'
 import type { RecurringWorkspaceApi } from '../recurring/model.js'
 import type { EstimateWorkspaceApi } from '../estimates/model.js'
 import type { RetainerWorkspaceApi } from '../retainers/model.js'
+import { shellFetch } from './net.js'
 
 interface CursorPage<T> {
   readonly data: readonly T[]
@@ -109,6 +110,8 @@ export interface ShellApi
     input: { readonly code: string; readonly challenge?: string },
     signal?: AbortSignal,
   ): Promise<void>
+  requestPasswordReset?(email: string, signal?: AbortSignal): Promise<void>
+  resetPassword?(input: { token: string; password: string }, signal?: AbortSignal): Promise<void>
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
   listProjects(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listClients?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
@@ -237,7 +240,13 @@ export interface ShellApi
     signal?: AbortSignal,
   ): Promise<TimesheetSubmission>
   /** The signed-in user's own timezone, for the self-service control (issue 757). */
-  getProfile?(signal?: AbortSignal): Promise<{ user_id: number; timezone: string }>
+  getProfile?(signal?: AbortSignal): Promise<{
+    user_id: number
+    timezone: string
+    first_name?: string
+    last_name?: string
+    email?: string | null
+  }>
   updateProfile?(
     timezone: string,
     signal?: AbortSignal,
@@ -1098,6 +1107,12 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     })
+  },
+  requestPasswordReset: async (email, signal) => {
+    await client.requestPasswordReset({ body: { email }, ...withSignal(signal) })
+  },
+  resetPassword: async (input, signal) => {
+    await client.resetPassword({ body: input, ...withSignal(signal) })
   },
   logoutCurrentSession: async (signal) => {
     const current = (await client.listSessions(withSignal(signal))).data.find(
@@ -2382,17 +2397,21 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   },
 })
 
+/**
+ * The shell's API, on the page's own origin. Every request goes through
+ * `shellFetch`, which retries what it safely can and keys every write (issue
+ * 953).
+ */
 export const createSameOriginShellApi = (): ShellApi => ({
   ...createShellApi(
     new EzactoClient({
       baseUrl: globalThis.location.origin,
-      fetch: (input, init) =>
-        globalThis.fetch(input, { ...init, credentials: 'same-origin' }),
+      fetch: (input, init) => shellFetch(input, { ...init, credentials: 'same-origin' }),
     }),
   ),
   // A file, not JSON, so it is fetched here rather than through the client.
   downloadInvoiceHoursReport: async (id, format, detail, signal) => {
-    const response = await globalThis.fetch(
+    const response = await shellFetch(
       `/api/v1/invoices/${encodeURIComponent(String(id))}/hours-report?format=${format}&detail=${detail}`,
       { credentials: 'same-origin', ...(signal === undefined ? {} : { signal }) },
     )
@@ -2407,7 +2426,7 @@ export const createSameOriginShellApi = (): ShellApi => ({
   // The detailed time report as a file, for the same reason: the name the
   // server gives it -- period and client -- is in a header the client drops.
   downloadDetailedTimeReport: async (request, format, audience, signal) => {
-    const response = await globalThis.fetch(detailedTimeExportPath(request, format, audience), {
+    const response = await shellFetch(detailedTimeExportPath(request, format, audience), {
       credentials: 'same-origin',
       ...(signal === undefined ? {} : { signal }),
     })

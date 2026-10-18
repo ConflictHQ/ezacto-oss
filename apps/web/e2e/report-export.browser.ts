@@ -34,7 +34,7 @@ test('[e2e:report-export] downloads the detailed time report as the PDF a client
     '/reports?report=detailed-time&from=2026-08-01&to=2026-08-31&client_id=1&grain=entry&hours=all',
   )
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
   // The report first: the file is a second request for this table, so a page

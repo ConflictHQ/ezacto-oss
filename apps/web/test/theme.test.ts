@@ -300,6 +300,16 @@ describe('D16 theme token contract', () => {
     expect(unedged).toEqual([])
   })
 
+  it('[unit] spaces the report action buttons outside the mobile query', async () => {
+    // The gap was declared only inside the phone media query, so the Reports
+    // header buttons touched at desktop widths.
+    const stylesheet = await readFile(resolve(root, 'src', 'shell', 'shell.css'), 'utf8')
+    const base = stylesheet.replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/gu, '')
+    expect(base).toMatch(
+      /(?:^|\n)\.report-actions \{[^{}]*display: flex;[^{}]*flex-wrap: wrap;[^{}]*gap: 8px;/u,
+    )
+  })
+
   it('[unit] asks only for font weights the font request carries', async () => {
     // The request names its weights, and a weight between them is drawn in the
     // nearest one it has: the brand asked for 800 and was drawn at 900. Ask

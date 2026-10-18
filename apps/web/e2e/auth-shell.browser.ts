@@ -227,7 +227,15 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
       return
     }
     if (path === '/api/v1/profile') {
-      await fulfillJson(route, { data: { user_id: 1, timezone: 'UTC' } })
+      await fulfillJson(route, {
+        data: {
+          user_id: 1,
+          first_name: 'Robin',
+          last_name: 'Vale',
+          email: 'robin@example.test',
+          timezone: 'UTC',
+        },
+      })
       return
     }
     if (path === '/api/v1/timesheet-submissions') {
@@ -245,7 +253,7 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
   )
 
   const email = page.locator('[data-sign-in-form]').getByLabel('Email')
-  const password = page.getByLabel('Password')
+  const password = page.getByLabel('Password', { exact: true })
   const signIn = page.getByRole('button', { name: 'Sign in', exact: true })
   const authGateway = page.locator('[data-auth-gateway]')
   const authenticatedShell = page.locator('[data-authenticated-shell]')
@@ -291,7 +299,9 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
   await expect(authGateway).toBeHidden()
   await expect(authenticatedShell).toBeVisible()
   await expect(page).toHaveTitle('eZacto — Time')
-  await expect(identity).toContainText('User #7')
+  // The card leads with the person's name from the profile, the role under it.
+  await expect(page.locator('[data-current-name]')).toHaveText('Robin Vale')
+  await expect(identity).not.toContainText('User #')
   await expect(identity).toContainText('administrator')
   await expect(page.locator('[data-team-nav]:not([hidden])')).toHaveCount(0)
   await expectPhoneControl(signOut)
@@ -510,7 +520,7 @@ test('[e2e:track-week] uses one editor and submits 12-hour UI times as canonical
   expect(updateBody).not.toHaveProperty('seconds')
 })
 
-test('[e2e:track-week] persists start/end editor changes through the real worker and D1', async ({
+test('[e2e:track-week] recovers a lost time-edit response through the real worker and D1', async ({
   context,
   page,
 }) => {
@@ -527,7 +537,7 @@ test('[e2e:track-week] persists start/end editor changes through the real worker
     await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
     await page.goto('/?week=2026-08-29')
     await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-    await page.getByLabel('Password').fill(fixturePassword)
+    await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
     await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
     const cell = page.locator(
@@ -542,13 +552,34 @@ test('[e2e:track-week] persists start/end editor changes through the real worker
 
     await editor.getByLabel('Start').fill('10:15 PM')
     await editor.getByLabel('End').fill('1:45 AM')
+    const writeKeys: string[] = []
+    let originalReply: string | null = null
+    await page.route('**/api/v1/time-entries/900', async (route) => {
+      if (route.request().method() !== 'PATCH') return route.continue()
+      writeKeys.push(route.request().headers()['idempotency-key'] ?? '')
+      const committed = await route.fetch()
+      expect(committed.status()).toBe(200)
+      expect(committed.headers()['idempotency-key-lifetime']).toBe('86400')
+      if (writeKeys.length === 1) {
+        originalReply = await committed.text()
+        await route.abort('failed')
+      } else {
+        await route.fulfill({ response: committed })
+      }
+    })
     const patched = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === '/api/v1/time-entries/900' &&
         response.request().method() === 'PATCH',
     )
     await editor.getByRole('button', { name: 'Save entry' }).click()
-    expect((await patched).ok()).toBe(true)
+    const replayed = await patched
+    expect(replayed.ok()).toBe(true)
+    expect(replayed.headers()['idempotent-replayed']).toBe('true')
+    expect(await replayed.text()).toBe(originalReply)
+    expect(writeKeys).toHaveLength(2)
+    expect(writeKeys[0]).not.toBe('')
+    expect(new Set(writeKeys).size).toBe(1)
     await expect(editor).toBeHidden()
 
     const persisted = await page.evaluate(async () => {
@@ -609,7 +640,7 @@ test('[e2e:rate-change] adds a dated rate through the real worker and shows the 
       await expect(signIn.or(person).first()).toBeVisible()
       if (await signIn.isVisible()) {
         await signIn.getByLabel('Email').fill(fixtureEmail)
-        await signIn.getByLabel('Password').fill(fixturePassword)
+        await signIn.getByLabel('Password', { exact: true }).fill(fixturePassword)
         await signIn.getByRole('button', { name: 'Sign in', exact: true }).click()
       }
 
@@ -742,7 +773,7 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
     timeZone: 'America/Costa_Rica',
   })
   const email = page.locator('[data-sign-in-form]').getByLabel('Email')
-  const password = page.getByLabel('Password')
+  const password = page.getByLabel('Password', { exact: true })
   const signIn = page.getByRole('button', { name: 'Sign in', exact: true })
   const authGateway = page.locator('[data-auth-gateway]')
   const authenticatedShell = page.locator('[data-authenticated-shell]')
@@ -760,7 +791,9 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   const identity = page.locator('[data-current-identity]')
   await expect(authGateway).toBeHidden()
   await expect(authenticatedShell).toBeVisible()
-  await expect(identity).toContainText('User #1')
+  // The real worker's profile names the fixture owner.
+  await expect(page.locator('[data-current-name]')).toHaveText('Browser Owner')
+  await expect(identity).not.toContainText('User #')
   await expect(identity).toContainText('administrator')
   await expect(page.locator('[data-day-rows]')).toContainText('Browser Acceptance Project')
   await expect(page.locator('[data-day-rows]')).toContainText('Browser Acceptance Task')
@@ -1095,7 +1128,7 @@ test('[e2e:client-directory] persists hierarchy, bill-to, contacts, projects, an
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/clients')
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
   await expect(page.locator('[data-client-tree]')).toContainText(
@@ -1270,7 +1303,7 @@ test('[e2e:project-directory] creates selectable work, edits assignments, upload
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/projects')
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
   await expect(page.locator('[data-project-list]')).toContainText(
@@ -1468,7 +1501,7 @@ test('[e2e:task-admin] creates, edits, applies a default to a new project, and a
   })
   await page.goto('/tasks')
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
   await expect(page.locator('[data-task-list]')).toContainText(
@@ -1609,7 +1642,7 @@ test('[e2e:reports-ui] runs uninvoiced, client rollup, and project budget report
     '/reports?report=uninvoiced&from=2026-08-01&to=2026-08-30',
   )
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
   const reports = page.locator('[data-reports-page]')
@@ -1715,7 +1748,7 @@ test('[e2e:expense-categories] [e2e:expense-receipt] manages category availabili
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/expense-categories')
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
   const workspace = page.locator('[data-expense-categories-page]')
@@ -1933,7 +1966,7 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(page).toHaveTitle('eZacto — Sign in')
   await expect(page.locator('[data-invoice-new-dialog]')).toBeHidden()
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
   // One step, as in Harvest: /invoices/new is the list with the dialog open.
@@ -2165,6 +2198,8 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expectNoPageOverflow(page)
   const order: string[] = []
   let deliveryPayload: unknown = null
+  const deliveryKeys: string[] = []
+  const deliveryBodies: string[] = []
   page.on('request', (request) => {
     const path = new URL(request.url()).pathname
     if (request.method() !== 'POST') return
@@ -2174,6 +2209,8 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
     else if (/\/deliveries$/u.test(path)) {
       order.push('deliver')
       deliveryPayload = request.postDataJSON()
+      deliveryKeys.push(request.headers()['idempotency-key'] ?? '')
+      deliveryBodies.push(request.postData() ?? '')
     }
   })
   const preferred = page.waitForResponse(
@@ -2210,7 +2247,13 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(composer.locator('[data-invoice-composer-result]')).toContainText(
     'The sent status was recorded; submit again to retry the email alone.',
   )
-  expect(order).toEqual(['client', 'preference', 'send', 'deliver'])
+  // The real Worker advertises replay support. Unavailable mail retries four
+  // times under one key and body, without repeating the sent transition.
+  expect(order).toEqual(['client', 'preference', 'send', 'deliver', 'deliver', 'deliver', 'deliver'])
+  expect(deliveryKeys).toHaveLength(4)
+  expect(deliveryKeys[0]).not.toBe('')
+  expect(new Set(deliveryKeys).size).toBe(1)
+  expect(new Set(deliveryBodies).size).toBe(1)
   // One email: To accounts payable, Cc the rest, in the words typed -- the
   // server composes the body from them.
   expect(deliveryPayload).toEqual({
@@ -2254,7 +2297,13 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(page.locator('[data-invoice-payment-status]')).toHaveText(
     'The sent status was already recorded. The email was not sent.',
   )
-  expect(order).toEqual(['client', 'preference', 'send', 'deliver'])
+  // The real Worker advertises replay support. Unavailable mail retries four
+  // times under one key and body, without repeating the sent transition.
+  expect(order).toEqual(['client', 'preference', 'send', 'deliver', 'deliver', 'deliver', 'deliver'])
+  expect(deliveryKeys).toHaveLength(4)
+  expect(deliveryKeys[0]).not.toBe('')
+  expect(new Set(deliveryKeys).size).toBe(1)
+  expect(new Set(deliveryBodies).size).toBe(1)
   // The invoice was sent through the real worker, so D1 carries sent_at and
   // the document says Sent. Open would mean it still has to go out.
   await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Sent')
@@ -2297,7 +2346,7 @@ test('[e2e:invoice-banded] raises a flat fee covering tracked time, up to a limi
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/invoices/new')
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
   const wizard = page.locator('[data-invoice-new-dialog]')
@@ -2370,7 +2419,10 @@ test('[e2e:invoice-banded] raises a flat fee covering tracked time, up to a limi
   })
 
   // The draft opens: the fee, then the hour past the limit at its rate.
-  // The draft opens at its number; its id comes from the number lookup.
+  // The URL pattern also matches /invoices/new. Wait for the rendered draft
+  // before reading its number or evaluating in its document (#984).
+  const detail = page.locator('[data-invoice-document]')
+  await expect(detail).toBeVisible()
   await expect(page).toHaveURL(/\/invoices\/[^/]+$/u)
   const bandNumber = decodeURIComponent(new URL(page.url()).pathname.split('/').pop()!)
   const invoiceId = (
@@ -2414,8 +2466,6 @@ test('[e2e:invoice-banded] raises a flat fee covering tracked time, up to a limi
     { description: 'July retainer', quantity: 1, unit_price_cents: 120_000, amount_cents: 120_000 },
     { description: overage, quantity: 2, unit_price_cents: 10_000, amount_cents: 20_000 },
   ])
-  const detail = page.locator('[data-invoice-document]')
-  await expect(detail).toBeVisible()
   await expect(detail.locator('[data-invoice-detail-lines]')).toContainText('July retainer')
   await expect(detail.locator('[data-invoice-detail-lines]')).toContainText(overage)
   await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$1,400.00')
@@ -2488,9 +2538,20 @@ test('[e2e:invoice-lines] adds, edits, and removes exact lines on the edit page 
   expect(seeded.status()).toBe(204)
 
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  // The instance says it keeps a write's answer under its key, as issue 952
+  // has every instance say on every answer. For the line route that was
+  // already true, since its command ledger replays a key's first result. The
+  // saying is what lets the shell send a write again by itself (issue 953).
+  await page.route(/\/api\/v1\//u, async (route) => {
+    const response = await route.fetch()
+    await route.fulfill({
+      response,
+      headers: { ...response.headers(), 'idempotency-key-lifetime': '86400' },
+    })
+  })
   await page.goto('/invoices/new')
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.locator('[data-sign-in-form]').getByLabel('Password').fill(fixturePassword)
+  await page.locator('[data-sign-in-form]').getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
 
@@ -2608,7 +2669,8 @@ test('[e2e:invoice-lines] adds, edits, and removes exact lines on the edit page 
       commandIds.push(request.headers()['idempotency-key'] ?? '')
     }
   })
-  // The line lands and its answer is lost on the way back.
+  // The line lands and its answer is lost on the way back. Once only: the
+  // shell's next attempt reaches the instance.
   await page.route(
     `**/api/v1/invoices/${draft.id}/line-items`,
     async (route) => {
@@ -2645,20 +2707,13 @@ test('[e2e:invoice-lines] adds, edits, and removes exact lines on the edit page 
   await expectNoPageOverflow(page)
   await expectEditorFits(page, 390)
 
-  await editor.getByRole('button', { name: 'Save invoice' }).click()
-  // Nothing before the line had to land, so the page says only what failed,
-  // keeps everything typed, and keeps the line's key for the retry.
-  await expect(editor.locator('[data-invoice-edit-result]')).toHaveAttribute(
-    'data-outcome',
-    'error',
-  )
-  await expect(editor).toBeVisible()
-  await expect(added.getByLabel('Description')).toHaveValue('Exact tenth-hour adjustment')
   const retried = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === `/api/v1/invoices/${draft.id}/line-items` &&
       response.request().method() === 'POST',
   )
+  // One click. The shell sends the line again under the key it held, so the
+  // page never says it failed (issue 953).
   await editor.getByRole('button', { name: 'Save invoice' }).click()
   expect((await retried).status()).toBe(201)
   // The same key twice: the second request is the ledger replaying the first,
@@ -2803,7 +2858,7 @@ test('[e2e:recurring-editor] creates and edits a definition on its own page thro
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/invoices/recurring')
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.locator('[data-sign-in-form]').getByLabel('Password').fill(fixturePassword)
+  await page.locator('[data-sign-in-form]').getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
   // New is a page now, not a dialog over the list.
@@ -2981,7 +3036,7 @@ test('[e2e:invoice-cycle] records a final payment, restores the open balance on 
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/invoices/new')
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
 
@@ -3177,7 +3232,7 @@ for (const corrected of ['1', '2.5', '2:30']) {
     )
     await page.goto('/?week=2026-08-17')
     await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-    await page.getByLabel('Password').fill(fixturePassword)
+    await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
     await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
     const input = page.locator('[data-week-grid-rows] input[data-cell-key="1:1:2026-08-19"]')
@@ -3248,7 +3303,7 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/?week=2026-08-17')
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.locator('[data-day-label]')).toContainText('Monday, Aug 17')
   await page.getByRole('button', { name: 'Next day' }).click()
@@ -3639,7 +3694,7 @@ test('[e2e:timesheet-approval] submits and approves an expense-only week', async
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/?week=2026-08-09')
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.locator('[data-timesheet-status]')).toBeVisible()
   await expect(page.locator('[data-timesheet-status-label]')).toHaveText('Not submitted')
@@ -3696,7 +3751,7 @@ test('[e2e:keyboard #861] opens the command bar and the menu ready for the keybo
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/')
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   const logTime = page.locator('[data-time-log-time]')
   await expect(logTime).toBeEnabled()

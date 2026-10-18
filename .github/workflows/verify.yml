@@ -59,6 +59,8 @@ jobs:
       - name: contract is what the code emits
         run: npm run contract:check
       - run: npm run build
+      - name: install and exercise the packed public CLI outside the workspace
+        run: npm run test:package -w @conflict-hq/ezacto-cli
       - name: publish versioned OpenAPI artifact
         uses: actions/upload-artifact@v4
         with:

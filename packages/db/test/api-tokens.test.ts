@@ -238,6 +238,74 @@ for (const [runtime, factory] of factories) {
       expect(await authenticateApiToken(db.database, issued.token, revokedAt)).toBeNull()
     })
 
+    it('[security] records last use at most once per interval and still refuses a token revoked or disabled inside it (#951)', async () => {
+      const db = await setup()
+      // Row-level, so it counts rows an UPDATE rewrote on either runtime.
+      await db.run(`CREATE TABLE IF NOT EXISTS test_token_writes (token_id INTEGER NOT NULL)`)
+      await db.run(
+        `CREATE TRIGGER IF NOT EXISTS test_token_writes_log AFTER UPDATE ON api_tokens
+          BEGIN INSERT INTO test_token_writes (token_id) VALUES (NEW.id); END`,
+      )
+      await db.run(`DELETE FROM test_token_writes`)
+      const writes = async () =>
+        (await db.rows<{ writes: number }>(`SELECT count(*) AS writes FROM test_token_writes`))[0]!
+          .writes
+      const store = (at: string) => createApiTokenStore(db.database, { now: () => at })
+
+      const issued = await issue(db)
+      expect(await store('2026-08-28T12:01:00.000Z').authenticate(issued.token)).not.toBeNull()
+      expect(await writes()).toBe(1)
+      expect(await store('2026-08-28T12:03:00.000Z').authenticate(issued.token)).toMatchObject({
+        tokenId: issued.id,
+        profile: 'accounting',
+      })
+      expect(await store('2026-08-28T12:05:59.999Z').authenticate(issued.token)).not.toBeNull()
+      expect(await writes()).toBe(1)
+      expect((await listApiTokens(db.database, 7))[0]?.lastUsedAt).toBe('2026-08-28T12:01:00.000Z')
+      expect(await store('2026-08-28T12:06:00.000Z').authenticate(issued.token)).not.toBeNull()
+      expect(await writes()).toBe(2)
+      expect((await listApiTokens(db.database, 7))[0]?.lastUsedAt).toBe('2026-08-28T12:06:00.000Z')
+
+      // The read that replaces the write carries every condition it did.
+      await db.run(`UPDATE users SET profile = 'member', updated_at = ? WHERE id = 7`, usedAt)
+      expect(await store('2026-08-28T12:07:00.000Z').authenticate(issued.token)).toBeNull()
+      await db.run(
+        `UPDATE users SET profile = 'accounting', is_active = 0, updated_at = ? WHERE id = 7`,
+        usedAt,
+      )
+      expect(await store('2026-08-28T12:07:00.000Z').authenticate(issued.token)).toBeNull()
+      await db.run(`UPDATE users SET is_active = 1, updated_at = ? WHERE id = 7`, usedAt)
+      expect(await store('2026-08-28T12:07:00.000Z').authenticate(issued.token)).not.toBeNull()
+      await revokeApiToken(db.database, {
+        userId: 7,
+        tokenId: issued.id,
+        revokedAt: '2026-08-28T12:07:30.000Z',
+      })
+      expect(await store('2026-08-28T12:08:00.000Z').authenticate(issued.token)).toBeNull()
+
+      const expiring = await issueApiToken(db.database, {
+        userId: 7,
+        name: 'Expires inside the interval',
+        scopes: ['reports:read'],
+        createdAt,
+        expiresAt: '2026-08-28T12:02:00.000Z',
+      })
+      expect(await store('2026-08-28T12:01:00.000Z').authenticate(expiring.token)).not.toBeNull()
+      expect(await store('2026-08-28T12:02:00.000Z').authenticate(expiring.token)).toBeNull()
+
+      // Zero is the old behaviour: every authentication writes.
+      const everyRequest = await issue(db)
+      await db.run(`DELETE FROM test_token_writes`)
+      for (const at of ['2026-08-28T12:01:00.000Z', '2026-08-28T12:01:01.000Z']) {
+        expect(
+          await createApiTokenStore(db.database, { now: () => at, touchIntervalMs: 0 }).authenticate(
+            everyRequest.token,
+          ),
+        ).not.toBeNull()
+      }
+      expect(await writes()).toBe(2)
+    })
+
     it('[security] resolves current manager grants at authentication time', async () => {
       const db = await setup()
       const issued = await issue(db)

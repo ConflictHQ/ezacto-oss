@@ -22,6 +22,8 @@ const SERVICE_PATH_PREFIXES: readonly string[] = [
   '/__ezacto/bootstrap',
   '/api/v1',
   '/auth',
+  // Request-scoped tracking remains available after account credentials close.
+  '/account-deletion',
   // Followed by a contact from an emailed link; the session is what it issues.
   '/portal',
   // No session, by definition: a payment processor calling us. The signature is
