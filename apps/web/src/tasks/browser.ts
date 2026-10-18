@@ -205,14 +205,16 @@ export const createTaskAdminController = (
     }
     const columns: DataColumn<Readonly<GeneralResource>>[] = [
       { key: 'name', label: 'Task', render: (task) => taskName(task) },
-      { key: 'status', label: 'Status', render: (task) => (taskIsActive(task) ? 'Active' : 'Archived') },
+      { key: 'status', label: 'Status', fit: true, render: (task) => (taskIsActive(task) ? 'Active' : 'Archived') },
       {
         key: 'billable',
+        fit: true,
         label: 'Billable',
         render: (task) => (taskBoolean(task, 'billable_by_default') ? 'By default' : 'No'),
       },
       {
         key: 'default',
+        fit: true,
         label: 'New projects',
         render: (task) => (taskBoolean(task, 'is_default') ? 'Added' : 'Optional'),
       },

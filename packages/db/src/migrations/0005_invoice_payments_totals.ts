@@ -60,7 +60,7 @@ const tax2 = roundRate(`(${tax2Base} - ${tax2BaseDiscount})`, 'invoice.tax2_rate
 /**
  * The discount-first parallel-tax expressions, over a `line_bases` row and an
  * `invoice` row. Exported so a later migration that recomputes one invoice at a
- * time (0110) rounds with this text, not a retyped copy of it. Exporting them
+ * time (0111) rounds with this text, not a retyped copy of it. Exporting them
  * does not change any statement above or below, so this migration's checksum
  * is unaffected.
  */

@@ -35,7 +35,7 @@ gh secret set WISE_WEBHOOK_PUBLIC_KEY --env prod --repo YOUR_ORG/YOUR_REPO < /se
 
 Use a trusted local secret manager or protected files; never paste values into issues, logs or shell command arguments. Keep embedded `=` characters intact. Check secret **names** and update times with `gh secret list`, rather than printing values. A repository or environment secret can override an organization secret of the same name; verify which source your selected deployment resolves.
 
-Not every runtime setting is wired to the stock workflow. In particular, the current Worker runtime accepts `BILL_ENVIRONMENT`, but `deploy.yml` and the secret renderer do not pass it through. A GitHub secret with that name alone does not select BILL sandbox. Add and review an explicit deployment configuration path before using BILL sandbox on a Worker, or use the container's supported environment setting. Do not silently use production as a sandbox substitute.
+`BILL_ENVIRONMENT` reaches the Worker the same way `QUICKBOOKS_ENVIRONMENT` does: set a GitHub secret of that name to `sandbox` and redeploy. Anything else, including leaving it unset, is BILL's real book, so confirm the environment on `GET /api/v1/integrations/bill` after deploying. Not every other runtime setting is wired to the stock workflow; check `deploy.yml` before assuming one is.
 
 ## Container
 

@@ -3682,9 +3682,12 @@ export const timeEntryRateReprices = sqliteTable(
     costRateCents: integer('cost_rate_cents'),
     reason: text('reason').notNull(),
     repricedAt: text('repriced_at').notNull(),
+    runId: text('run_id'),
+    actorUserId: integer('actor_user_id').references(() => users.id, { onDelete: 'restrict' }),
   },
   (table) => [
     index('time_entry_rate_reprices_entry_id').on(table.timeEntryId, table.id),
+    index('time_entry_rate_reprices_run').on(table.runId, table.id),
     check(
       'time_entry_rate_reprices_previous_billable_nonnegative',
       sql`${table.previousBillableRateCents} is null or ${table.previousBillableRateCents} >= 0`,

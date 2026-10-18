@@ -225,6 +225,10 @@ export const deploySecretPayload = (environment) => {
     BILL_USERNAME: billUsername,
     BILL_PASSWORD: billPassword,
     BILL_REPLY_TO_USER_ID: optionalCredential(environment.BILL_REPLY_TO_USER_ID),
+    // `runtime.ts` reads this and nothing delivered it, so a Worker could only
+    // reach BILL's real book. Absent still means production; `sandbox` is the
+    // only value that selects the test organisation.
+    BILL_ENVIRONMENT: optionalCredential(environment.BILL_ENVIRONMENT),
     STRIPE_API_KEY: optionalCredential(environment.STRIPE_API_KEY),
     STRIPE_WEBHOOK_SECRET: optionalCredential(environment.STRIPE_WEBHOOK_SECRET),
     // Rendered because `secret bulk` replaces the Worker's whole secret set, so

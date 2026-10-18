@@ -21,7 +21,7 @@ import { projectsTimeMigration } from '../src/migrations/0002_projects_time.js'
 import { rateResolverMigration } from '../src/migrations/0003_rate_resolver.js'
 import { invoiceFoundationMigration } from '../src/migrations/0004_invoice_foundation.js'
 import { invoicePaymentsTotalsMigration } from '../src/migrations/0005_invoice_payments_totals.js'
-import { invoiceTotalsPerInvoiceMigration } from '../src/migrations/0110_invoice_totals_per_invoice.js'
+import { invoiceTotalsPerInvoiceMigration } from '../src/migrations/0111_invoice_totals_per_invoice.js'
 import type { InvoicePaymentOption } from '../src/schema.js'
 
 type OperationDatabase = Parameters<typeof recordInvoicePayment>[0]
@@ -141,15 +141,15 @@ const installThrough0004 = async (database: TestDatabase): Promise<void> => {
 // D21's raw-trigger unit cases install their owning migration exactly. On the
 // latest schema, mutations go through the D22 operation tests below instead.
 //
-// 0110 recreates 0005's totals triggers so that each recomputes one invoice
+// 0111 recreates 0005's totals triggers so that each recomputes one invoice
 // rather than the whole organization (issue 950). Every raw-trigger case runs
-// a second time with 0110's text installed on top, which holds the replacement
+// a second time with 0111's text installed on top, which holds the replacement
 // to exactly the invariants the original is held to. That pass records no
-// ledger row for 0110, because 0006-0109 are absent; none of those cases
+// ledger row for 0111, because 0006-0111 are absent; none of those cases
 // migrates again.
 const totalsTriggerSets = [
   { label: '', totals: [] as readonly string[] },
-  { label: ', 0110 totals triggers', totals: invoiceTotalsPerInvoiceMigration },
+  { label: ', 0111 totals triggers', totals: invoiceTotalsPerInvoiceMigration },
 ] as const
 
 const installThrough0005 = async (
