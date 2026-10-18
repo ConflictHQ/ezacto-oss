@@ -436,9 +436,12 @@ export {
 } from './wise.js'
 
 export * from './thank-you-subscriber.js'
+export * from './notification-mail.js'
 
 export * from './thank-you-preference.js'
 export * from './reminder-settings.js'
+export * from './notification-settings.js'
+export * from './notification-preferences.js'
 export * from './invoice-defaults.js'
 
 export * from './recurring-repair.js'

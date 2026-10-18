@@ -31,6 +31,8 @@ import {
   type IssuedApiToken,
   type TwoFactorEnrolment,
   type TwoFactorStatus,
+  type ProfileNotificationInput,
+  type TeamNotificationPreference,
 } from '@conflict-hq/ezacto-client'
 import type { InvoiceState } from '../invoices/model.js'
 import type { ActivityRow } from '../activity/browser.js'
@@ -97,6 +99,16 @@ export interface ShellApi
     Partial<TeamDirectoryApi>,
     Partial<CompanySettingsApi> {
   whoami(signal?: AbortSignal): Promise<Whoami>
+  /**
+   * Your own reminder preferences (issue 935), under Settings. Optional like
+   * the other settings reads: a shell built against an API without the route
+   * leaves the section hidden rather than offering a form that cannot save.
+   */
+  getProfileNotifications?(signal?: AbortSignal): Promise<TeamNotificationPreference>
+  updateProfileNotifications?(
+    input: ProfileNotificationInput,
+    signal?: AbortSignal,
+  ): Promise<TeamNotificationPreference>
   /**
    * Issue 731: an enrolled user is not signed in yet. The challenge answer
    * carries no principal, so the caller has to read the status rather than
@@ -1331,6 +1343,14 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     ).data
     return { policy: saved.reminder_policy, applied: saved.applied_to_open_invoices ?? 0 }
   },
+  getProfileNotifications: async (signal) =>
+    (await client.getProfileNotifications(withSignal(signal))).data,
+  updateProfileNotifications: async (input, signal) =>
+    (await client.updateProfileNotifications({ body: input, ...withSignal(signal) })).data,
+  getNotificationSettings: async (signal) =>
+    (await client.getNotificationSettings(withSignal(signal))).data,
+  updateNotificationSettings: async (patch, signal) =>
+    (await client.setNotificationSettings({ body: patch, ...withSignal(signal) })).data,
   getEmailHealth: async (signal) =>
     (await client.getEmailHealth(withSignal(signal))).data,
   getBackupStatus: async (signal) =>

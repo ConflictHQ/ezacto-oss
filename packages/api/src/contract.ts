@@ -1729,6 +1729,32 @@ const invoiceThankYouPreferenceOperations: ApiContractOperation[] = [
   },
 ];
 
+// Company settings for the mail the instance sends its own people (issue 934).
+const notificationSettingsOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/settings/notifications",
+    operationId: "getNotificationSettings",
+    summary: "Company settings for the mail the instance sends its own people",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "NotificationSettingsEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/notifications",
+    operationId: "setNotificationSettings",
+    summary: "Change the company settings for budget alerts and reminders",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "NotificationSettingsEnvelope",
+    requestSchema: "NotificationSettingsInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+];
+
 // Invoices › Configure: company information and default values.
 const invoiceDefaultsOperations: ApiContractOperation[] = [
   {
@@ -2495,7 +2521,7 @@ const teamOperations: ApiContractOperation[] = [
     method: "post",
     path: "/api/v1/team/people/:id/notifications",
     operationId: "updateTeamPersonNotifications",
-    summary: "Persist inactive notification preferences; delivery is unavailable",
+    summary: "Save a person's reminder and digest preferences",
     tag: "team",
     responseStatus: 200,
     responseSchema: "TeamCommandReceiptEnvelope",
@@ -2950,6 +2976,28 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     responseSchema: "ProfileEnvelope",
   },
   {
+    method: "get",
+    path: "/api/v1/profile/notifications",
+    operationId: "getProfileNotifications",
+    summary: "The signed-in user's own reminder and digest preferences",
+    tag: "profile",
+    responseStatus: 200,
+    responseSchema: "ProfileNotificationEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/profile/notifications",
+    operationId: "updateProfileNotifications",
+    summary: "Change the signed-in user's own reminder and digest preferences",
+    tag: "profile",
+    responseStatus: 200,
+    responseSchema: "ProfileNotificationEnvelope",
+    requestSchema: "ProfileNotificationInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+  {
     method: "patch",
     path: "/api/v1/profile",
     operationId: "updateProfile",
@@ -2996,6 +3044,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...invoiceTimeClaimOperations,
   ...invoiceDocumentPreferenceOperations,
   ...invoiceDefaultsOperations,
+  ...notificationSettingsOperations,
   ...invoiceThankYouPreferenceOperations,
   ...recurringRepairOperations,
   ...payoutAccountOperations,
@@ -4483,11 +4532,13 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: { email: booleanSchema, desktop: booleanSchema, slack: booleanSchema },
     additionalProperties: false,
   },
-  TeamInactiveNotificationChannels: {
+  // What can be set: mail is delivered (issue 935); desktop and Slack have no
+  // delivery, so the only value accepted for them is off.
+  TeamNotificationChannelsInput: {
     type: "object",
     required: ["email", "desktop", "slack"],
     properties: {
-      email: { type: "boolean", enum: [false] },
+      email: booleanSchema,
       desktop: { type: "boolean", enum: [false] },
       slack: { type: "boolean", enum: [false] },
     },
@@ -4501,7 +4552,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "include_in_team_reminders", "weekly_digest", "notify_project_deleted", "updated_at",
     ],
     properties: {
-      delivery_active: { type: "boolean", enum: [false] },
+      delivery_active: { type: "boolean", enum: [true] },
       daily_reminder_enabled: booleanSchema,
       reminder_time: nullable({ type: "string", pattern: "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" }),
       reminder_days: {
@@ -4627,18 +4678,46 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     ],
     properties: {
       expected_version: { type: "integer", minimum: 0 },
-      daily_reminder_enabled: { type: "boolean", enum: [false] },
+      daily_reminder_enabled: booleanSchema,
       reminder_time: nullable({ type: "string", pattern: "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" }),
       reminder_days: {
         type: "array",
         uniqueItems: true,
         items: { type: "string", enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] },
       },
-      channels: reference("TeamInactiveNotificationChannels"),
-      include_in_team_reminders: { type: "boolean", enum: [false] },
-      weekly_digest: { type: "boolean", enum: [false] },
+      channels: reference("TeamNotificationChannelsInput"),
+      include_in_team_reminders: booleanSchema,
+      weekly_digest: booleanSchema,
       notify_project_deleted: { type: "boolean", enum: [false] },
     },
+    additionalProperties: false,
+  },
+  // The same preferences set by the person themselves (issue 935).
+  ProfileNotificationInput: {
+    type: "object",
+    required: [
+      "daily_reminder_enabled", "reminder_time", "reminder_days",
+      "channels", "include_in_team_reminders", "weekly_digest", "notify_project_deleted",
+    ],
+    properties: {
+      daily_reminder_enabled: booleanSchema,
+      reminder_time: nullable({ type: "string", pattern: "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" }),
+      reminder_days: {
+        type: "array",
+        uniqueItems: true,
+        items: { type: "string", enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] },
+      },
+      channels: reference("TeamNotificationChannelsInput"),
+      include_in_team_reminders: booleanSchema,
+      weekly_digest: booleanSchema,
+      notify_project_deleted: { type: "boolean", enum: [false] },
+    },
+    additionalProperties: false,
+  },
+  ProfileNotificationEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("TeamNotificationPreference") },
     additionalProperties: false,
   },
   TeamRateInput: {
@@ -6669,6 +6748,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           "client_id",
           "company_name",
           "client_name",
+          "time_zone",
           "template_version",
           "subject",
           "message",
@@ -6685,6 +6765,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           client_id: integerSchema,
           company_name: stringSchema,
           client_name: stringSchema,
+          // The organization's zone, which `%send_weekday%` is read in.
+          time_zone: stringSchema,
           template_version: integerSchema,
           subject: stringSchema,
           message: stringSchema,
@@ -9113,6 +9195,43 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           // On a set only: how many open invoices with nothing pending the
           // new policy was booked for (issue 850).
           applied_to_open_invoices: { type: "integer", minimum: 0 },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  NotificationSettingsInput: {
+    type: "object",
+    properties: {
+      // Issue 934: copy administrators on every budget alert, not only when a
+      // project has no manager with an address.
+      budget_alerts_include_admins: { type: "boolean" },
+      // Issue 935: when everyone is reminded to submit last week's time, read
+      // on each person's own wall clock. Null switches it off.
+      submission_reminder: { anyOf: [{ $ref: "#/components/schemas/SubmissionReminderSchedule" }, { type: "null" }] },
+    },
+    additionalProperties: false,
+  },
+  SubmissionReminderSchedule: {
+    type: "object",
+    required: ["day", "time"],
+    properties: {
+      day: { type: "string", enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] },
+      time: { type: "string", pattern: "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" },
+    },
+    additionalProperties: false,
+  },
+  NotificationSettingsEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["budget_alerts_include_admins", "submission_reminder"],
+        properties: {
+          budget_alerts_include_admins: { type: "boolean" },
+          submission_reminder: { anyOf: [{ $ref: "#/components/schemas/SubmissionReminderSchedule" }, { type: "null" }] },
         },
         additionalProperties: false,
       },

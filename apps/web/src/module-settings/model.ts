@@ -68,6 +68,15 @@ export interface WisePayoutConnection {
   } | null
 }
 
+/** Company settings for the mail the instance sends its own people (issue 934). */
+export type NotificationSettingsState = {
+  readonly budget_alerts_include_admins: boolean
+  readonly submission_reminder: {
+    readonly day: 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday'
+    readonly time: string
+  } | null
+}
+
 /** The organisation default payment reminder policy, or null for off (issue 801). */
 export type ReminderPolicySetting = {
   readonly first_after_days: number
@@ -240,6 +249,16 @@ export interface CompanySettingsApi {
     policy: ReminderPolicySetting,
     signal?: AbortSignal,
   ): Promise<{ readonly policy: ReminderPolicySetting; readonly applied: number }>
+  /**
+   * Company settings for the mail the instance sends its own people (issues
+   * 934, 935). Optional like the reminder settings: only a build with the route
+   * serves them, and a section that cannot be saved says so.
+   */
+  getNotificationSettings?(signal?: AbortSignal): Promise<NotificationSettingsState>
+  updateNotificationSettings?(
+    patch: Partial<NotificationSettingsState>,
+    signal?: AbortSignal,
+  ): Promise<NotificationSettingsState>
   getEmailHealth(signal?: AbortSignal): Promise<EmailHealth>
   /**
    * Backup runs. Optional because only a deployment that composes a reader
