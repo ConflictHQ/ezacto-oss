@@ -215,3 +215,54 @@ for (const [runtime, factory] of factories) {
     })
   })
 }
+
+describe('contact session last-seen writes (#951)', () => {
+  it('[security] writes at most once per interval and still refuses a revoked session inside it', async () => {
+    const database = new BetterSqlite3(':memory:')
+    migrateContainer(database)
+    for (const statement of seedStatements) {
+      database.prepare(statement.query).run(...statement.bindings)
+    }
+    // Row-level: counts the rows an UPDATE actually rewrote.
+    database.exec(`CREATE TABLE test_contact_session_writes (session_id INTEGER NOT NULL);
+      CREATE TRIGGER test_contact_session_writes_log AFTER UPDATE ON contact_sessions
+        BEGIN INSERT INTO test_contact_session_writes (session_id) VALUES (NEW.id); END`)
+    const writes = () =>
+      (
+        database.prepare(`SELECT count(*) AS writes FROM test_contact_session_writes`).get() as {
+          writes: number
+        }
+      ).writes
+    let currentTime = '2026-09-12T00:00:00.000Z'
+    const sessions = createContainerContactSessionStore(database, {
+      now: () => currentTime,
+      idleTtlMs,
+      absoluteTtlMs,
+    })
+    try {
+      const issued = await sessions.issue(1, 1)
+      currentTime = '2026-09-12T00:04:59.999Z'
+      await expect(sessions.authenticate(issued.token)).resolves.toMatchObject({
+        contactId: 1,
+        session: { lastSeenAt: '2026-09-12T00:00:00.000Z' },
+      })
+      expect(writes()).toBe(0)
+      currentTime = '2026-09-12T00:05:00.000Z'
+      await expect(sessions.authenticate(issued.token)).resolves.toMatchObject({
+        session: {
+          lastSeenAt: '2026-09-12T00:05:00.000Z',
+          idleExpiresAt: '2026-09-13T00:05:00.000Z',
+        },
+      })
+      expect(writes()).toBe(1)
+
+      database
+        .prepare(`UPDATE contact_sessions SET revoked_at = ?, updated_at = ? WHERE id = ?`)
+        .run('2026-09-12T00:05:30.000Z', '2026-09-12T00:05:30.000Z', issued.session.id)
+      currentTime = '2026-09-12T00:06:00.000Z'
+      await expect(sessions.authenticate(issued.token)).resolves.toBeNull()
+    } finally {
+      database.close()
+    }
+  })
+})

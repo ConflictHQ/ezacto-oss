@@ -1399,6 +1399,7 @@
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
+  color: var(--ez-ink);
   box-shadow: 0 18px 48px color-mix(in srgb, var(--ez-shadow) 8%, transparent);
 }
 .invoice-document-heading {
@@ -3855,6 +3856,14 @@ a {
   gap: 24px;
   margin-bottom: 20px;
 }
+/* The Reports header buttons sat flush at desktop widths: the gap lived only in
+   the mobile query. Declared here it holds at every width, and wrapping keeps
+   the row clean on a narrow one. */
+.report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .context-row h1,
 .week-surface h2,
 dialog h2,
@@ -4176,6 +4185,20 @@ dialog h2,
   font-weight: 600;
   text-decoration: none;
 }
+/* Provider colors stay fixed across instance themes (Google neutral treatment). */
+.oidc-sign-in[data-oidc-provider="google"] {
+  background: var(--ez-google-sign-in-background);
+  color: var(--ez-google-sign-in-foreground);
+  border-color: transparent;
+  padding: 0 12px 0 2px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.oidc-sign-in[data-oidc-provider="google"] img {
+  flex: 0 0 40px;
+  object-fit: contain;
+}
 .auth-divider,
 .auth-build-stamp {
   color: var(--ez-muted);
@@ -4306,13 +4329,25 @@ dialog h2,
 }
 .identity-name {
   font-weight: 600;
-  text-transform: capitalize;
 }
 .identity-meta {
   color: var(--ez-muted);
   font:
     500 12px/1.3 var(--ez-font-body),
     sans-serif;
+}
+/*
+ * The person's name leads once the profile says it; until then, or on a server
+ * that does not send one, the role takes the name's place rather than leaving a
+ * blank line above it.
+ */
+.identity-role {
+  text-transform: capitalize;
+}
+.identity-name[hidden] + .identity-role {
+  color: var(--ez-ink);
+  font: inherit;
+  font-weight: 600;
 }
 /* Settings sits beside Sign out because that is where a person looks for their
    own account, and it is the only route into either half. */
@@ -5172,6 +5207,42 @@ button[data-auth-action]:disabled {
 .session-status[data-state="ready"] {
   border-color: var(--ez-action);
   color: var(--ez-ink);
+}
+/*
+ * A write being sent again after it failed (issue 953). Fixed to the corner, so
+ * it reads the same beside the sidebar and under the top bar, and stays in view
+ * while the page beneath it scrolls. Below the session check, which covers
+ * everything while it runs.
+ */
+.write-status {
+  position: fixed;
+  z-index: 950;
+  inset-block-end: 16px;
+  inset-inline-end: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-status-bg);
+  color: var(--ez-status-fg);
+  box-shadow: var(--ez-shadow-menu);
+}
+.write-status-spinner {
+  width: 14px;
+  aspect-ratio: 1;
+  flex: 0 0 auto;
+  border: 2px solid var(--ez-border);
+  border-top-color: var(--ez-action);
+  border-radius: 50%;
+  animation: auth-spin 900ms linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .write-status-spinner {
+    animation: none;
+  }
 }
 .week-surface {
   border: 1px solid var(--ez-border);
@@ -6152,44 +6223,79 @@ dialog textarea {
   color: var(--ez-muted);
   font-size: 24px;
 }
-.menu-dialog nav {
-  display: grid;
-  gap: 2px;
-  padding: 8px;
+.menu-dialog {
+  width: min(680px, calc((100vw - 32px) / var(--ez-zoom, 1)));
 }
-.menu-dialog nav + nav {
+/*
+ * The Menu's destinations are cards (2026-10): a mark, the section and one line
+ * of what lives there, two to a row, grouped under small headings. They are a
+ * component of their own -- `.menu-card`, never `.nav-label` -- so a collapsed
+ * sidebar, which hides `.nav-label`, cannot reach into the Menu.
+ */
+.menu-group {
+  padding: 16px 20px 4px;
+}
+.menu-group + .menu-group {
   border-top: 1px solid var(--ez-border);
 }
-.menu-dialog nav a {
+.menu-group-title {
+  margin: 0 0 10px;
+  color: var(--ez-muted);
+  font-size: var(--ez-label-size);
+  font-weight: var(--ez-label-weight);
+  letter-spacing: var(--ez-label-tracking);
+  text-transform: uppercase;
+}
+.menu-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding-bottom: 12px;
+}
+.menu-card {
   display: flex;
-  align-items: center;
-  min-height: 44px;
-  padding: 0 12px;
-  border-radius: var(--ez-radius);
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 64px;
+  padding: 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: calc(var(--ez-radius) * 1.5);
+  background: var(--ez-surface);
   color: var(--ez-ink);
-  font-weight: 500;
   text-decoration: none;
 }
-.menu-dialog nav a:hover,
-.menu-dialog nav a:focus-visible {
-  background: var(--ez-surface-2);
+.menu-card[hidden] {
+  display: none;
 }
-.menu-dialog nav a[aria-current="page"] {
-  background: var(--ez-status-bg);
-  box-shadow: inset 3px 0 0 var(--ez-data);
+.menu-card:hover {
+  border-color: var(--ez-data);
+  background: var(--ez-row-hover);
+}
+.menu-card:focus-visible {
+  outline: 2px solid var(--ez-data);
+  outline-offset: 2px;
+}
+.menu-card[aria-current='page'] {
+  border-color: var(--ez-data);
+  background: var(--ez-orange-tint);
+}
+.menu-card .ez-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--ez-data);
+}
+.menu-card-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.menu-card-title {
   font-weight: 600;
 }
-
-/*
- * The Menu's own navigation carries the section marks too, and the layout
- * switch sits under it, where somebody looking at the navigation would look
- * for a way to move it.
- */
-.menu-dialog nav a {
-  gap: 12px;
-}
-.menu-dialog nav .ez-icon {
+.menu-card-hint {
   color: var(--ez-muted);
+  font-size: 13px;
+  line-height: 1.35;
 }
 .menu-layout {
   display: flex;
@@ -6232,6 +6338,15 @@ dialog textarea {
     margin: 0;
     border-width: 0 1px 0 0;
     border-radius: 0;
+  }
+}
+/* In the drawer the cards stack: one column, still a card each. */
+@media (max-width: 899px) {
+  .menu-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .menu-card {
+    min-height: 56px;
   }
 }
 @media (max-width: 899px) and (prefers-reduced-motion: no-preference) {
@@ -6812,6 +6927,33 @@ dialog textarea {
   overflow-x: auto;
 }
 
+.data-table-scroll-hint {
+  display: none;
+}
+
+@media screen and (max-width: 720px) {
+  .data-table-wide:has(tbody tr[data-row]) {
+    min-width: 640px;
+  }
+  .data-table-wide tbody tr[data-row] > td:first-child {
+    min-width: 160px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    padding-block: 12px;
+  }
+  .data-table-scroll-hint {
+    display: block;
+    position: sticky;
+    left: 0;
+    width: fit-content;
+    max-width: 100%;
+    margin: 0 0 12px;
+    color: var(--ez-muted);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -6926,9 +7068,19 @@ dialog textarea {
   font-weight: 600;
 }
 
-.data-table-empty {
+.data-table tbody td.data-table-empty {
+  padding-block: 24px;
+  white-space: normal;
+  line-height: 1.6;
   color: var(--ez-muted);
 }
+
+.data-table-scroll:focus-visible,
+.data-table-overflow > summary:focus-visible {
+  outline: 3px solid var(--ez-data);
+  outline-offset: -3px;
+}
+
 
 .data-table-actions {
   text-align: right;
@@ -7016,6 +7168,23 @@ dialog textarea {
     transition: opacity 120ms ease;
   }
 }
+
+/* Touch has no hover to reveal row actions. Keep the full action surface
+   discoverable, including on tablets that still use the desktop table. */
+@media (hover: none), (pointer: coarse) {
+  .data-table-action,
+  .data-table-overflow > summary {
+    opacity: 1;
+    min-width: 48px;
+    min-height: 48px;
+    padding: 12px;
+  }
+  .data-table-menu button,
+  .data-table-sort {
+    min-height: 48px;
+  }
+}
+
 
 /* The home screen. Cards, not a report: each one is a single figure, the one
    line that says whether it needs anything, and the way into the section that
@@ -7132,6 +7301,7 @@ dialog textarea {
   .build-stamp,
   .data-quality,
   .session-check-overlay,
+  .write-status,
   dialog {
     display: none !important;
   }
@@ -8465,3 +8635,49 @@ dialog textarea {
 .staff-payments .payment-tabs button[aria-selected='true'] { border-bottom-color: var(--ez-action); color: var(--ez-ink); font-weight: 700; }
 .staff-payments [role='tabpanel'] { padding-block: 20px; }
 .staff-payments .primary-action { background: var(--ez-action); color: var(--ez-action-fg); }
+
+.oidc-sign-in[data-oidc-provider="apple"] {
+  background: var(--ez-apple-sign-in-background);
+  color: var(--ez-apple-sign-in-foreground);
+  border-color: var(--ez-apple-sign-in-foreground);
+  padding: 0 12px 0 2px;
+  min-height: 44px;
+  font-size: 16px;
+  font-weight: 500;
+}
+.oidc-sign-in[data-oidc-provider="apple"] img {
+  flex: 0 0 40px;
+  object-fit: contain;
+}
+.apple-authorization-note { color: var(--ez-muted); font-size: 13px; line-height: 1.5; }
+.apple-disconnect { max-width: 640px; margin: 48px auto; padding: 24px; }
+.apple-disconnect .auth-card { max-width: none; }
+.apple-disconnect-confirm { display: flex; gap: 12px; align-items: start; }
+.apple-disconnect-confirm input { width: auto; flex: 0 0 auto; }
+
+/* Week change in flight: the old rows stay put but cannot be edited, and a slow
+   answer swaps them for placeholders (apps/web/src/shell/browser.ts). */
+.week-grid-wrap[aria-busy='true'],
+.day-list[aria-busy='true'] {
+  opacity: 0.55;
+}
+.grid-skeleton {
+  display: block;
+  height: 36px;
+  border-radius: 6px;
+  background: var(--ez-border);
+}
+.day-skeleton {
+  margin: 12px 16px;
+  height: 56px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .grid-skeleton {
+    animation: ez-skeleton-pulse 1.2s ease-in-out infinite;
+  }
+}
+@keyframes ez-skeleton-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}

@@ -330,6 +330,7 @@ describe('the mirrors that discover a payment (#595)', () => {
       paidOn: '2026-09-20',
       realmId: 'realm-a',
       quickBooksPaymentId: 'qbp-1',
+      quickBooksInvoiceId: 'qbi-1',
     })
     expect(
       database
@@ -342,7 +343,7 @@ describe('the mirrors that discover a payment (#595)', () => {
       {
         provider: 'quickbooks',
         provider_shape: 'checkout',
-        provider_transaction_id: 'qbp-1',
+        provider_transaction_id: 'qbp-1:qbi-1',
         amount_cents: 100_000,
       },
     ])
@@ -386,6 +387,7 @@ describe('the mirrors that discover a payment (#595)', () => {
       paidOn: '2026-09-22',
       realmId: 'realm-a',
       quickBooksPaymentId: 'qbp-1',
+      quickBooksInvoiceId: 'qbi-1',
     })
     const quickBooksId = (
       database
@@ -416,7 +418,7 @@ describe('the mirrors that discover a payment (#595)', () => {
         amountCents: 40_000,
         paidOn: '2026-09-22',
         provider: 'quickbooks',
-        providerTransactionId: 'qbp-1',
+        providerTransactionId: 'qbp-1:qbi-1',
         recordedAt: paidAt,
       },
     ])
@@ -439,6 +441,7 @@ describe('the mirrors that discover a payment (#595)', () => {
       paidOn: '2026-09-20',
       realmId: 'realm-a',
       quickBooksPaymentId: 'qbp-1',
+      quickBooksInvoiceId: 'qbi-1',
     }
     await source.recordPayment(payment)
     await source.recordPayment(payment)
@@ -466,7 +469,7 @@ describe('the mirrors that discover a payment (#595)', () => {
         )
         .all(),
     ).toEqual([
-      { provider: 'bill_com', provider_shape: 'checkout', provider_transaction_id: '0rp1' },
+      { provider: 'bill_com', provider_shape: 'checkout', provider_transaction_id: '0rp1:00e001' },
     ])
     expect(
       (

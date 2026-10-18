@@ -1,3 +1,7 @@
+import type { ReminderProcessOptions, ReminderProcessSummary } from '@ezacto/db/d1'
+import { appleWebConfiguration } from './apple-web.js'
+import { aggregateAppleCleanup, type AppleCleanupPort, type AppleLifecycleStore, type AppleWebCleanupPort } from '@ezacto/core'
+import type { AccountDeletionStore, AccountClosureStore, AccountRetentionReviewStore, AccountDeletionStatusStore } from '@ezacto/core'
 import type { PaymentRunsService } from '@ezacto/core'
 import { installPaymentRunRoutes } from '@ezacto/api'
 import { installStaffPaymentRoutes } from '@ezacto/api'
@@ -18,6 +22,7 @@ import type {
   StripeService,
 } from "@ezacto/api";
 import type { PayoutAccountService } from "@ezacto/api";
+import type { IdempotencyStore } from "@ezacto/api";
 import {
   notFoundResponse,
   createApiApp,
@@ -40,7 +45,13 @@ import {
   installMagicLinkRoutes,
   installModuleSettingsRoutes,
   installAppleRoutes,
+  installAppleLifecycleRoutes,
+
+  installAppleWebRoutes,
+  type AppleWebLifecyclePort,
   installSignInMethodRoutes,
+  installAccountRetentionRoutes,
+  type AccountRetentionService,
   createSignInMethodPolicy,
   installGitHubRoutes,
   installMoneyResourceRoutes,
@@ -52,6 +63,9 @@ import {
   installPublicBrandAssetRoutes,
   installReportRoutes,
   installProfileRoutes,
+  installAccountClosureRoutes,
+  installAccountRetentionReviewRoutes,
+  installAccountDeletionStatusRoutes,
   installSessionRoutes,
   installSsoDomainRoutes,
   installTrackedResourceRoutes,
@@ -140,6 +154,7 @@ import {
   invoiceTabs,
   readDisplayPreferences,
   renderAppShell,
+  renderAppleDisconnect,
   reportKindTabs,
   webAssets,
   type DemoSignInAccount,
@@ -172,6 +187,11 @@ export type AppEnv = Env & {
    * `/auth/apple` route is configured off and answers 404.
    */
   APPLE_CLIENT_ID?: string
+  APPLE_WEB_ENABLED?: string
+  APPLE_WEB_SERVICES_ID?: string
+  APPLE_WEB_CAPABILITY_KEYS?: string
+  APPLE_WEB_ACTIVE_KEY_ID?: string
+  APPLE_WEB_ROUTING_SECRET?: string
   EZACTO_BOOTSTRAP_TOKEN?: string
   BRAND_NAME?: string
   BRAND_TAGLINE?: string
@@ -202,6 +222,14 @@ export type WorkerEnv = AppEnv & {
   /** Content-addressed attachment objects. Metadata remains in DB. */
   ATTACHMENTS?: R2Bucket
   API_CURSOR_SIGNING_KEY: string
+  /**
+   * How many seconds a session's last-seen time, or an API token's last-used
+   * time, may age before a signed-in request writes it again (#951). Unset is
+   * 300; 0 writes on every request; at most 3600. Inside the interval an
+   * authenticated read is a read, which is what keeps page views off the
+   * database's write path.
+   */
+  LAST_SEEN_INTERVAL_SECONDS?: string
   /**
    * Portal magic-link signing key. Absent means portal auth is off: the routes
    * hand out sessions, so an install with no key must not serve them rather
@@ -289,6 +317,7 @@ export type WorkerEnv = AppEnv & {
 }
 
 export interface RuntimeServices {
+  appleWebLifecycle?: AppleWebLifecyclePort
   bootstrap(input: InstanceBootstrapInput): Promise<InstanceBootstrapResult>
   enrollOwnerPassword(
     input: InstanceOwnerPasswordInput,
@@ -303,6 +332,13 @@ export interface RuntimeServices {
   isExpensesModuleEnabled(): Promise<boolean>
   moduleSettings: ModuleSettingsService
   /** Which ways in are switched on (issue 761). */
+  accountDeletionRequests?: AccountDeletionStore
+  accountClosure?: AccountClosureStore
+  accountRetentionReview?: AccountRetentionReviewStore
+  nativeAppleLifecycle?: AppleLifecycleStore
+  appleWebCleanup?: AppleWebCleanupPort
+  accountDeletionTracking?: AccountDeletionStatusStore
+  accountRetention?: AccountRetentionService
   signInMethods: SignInMethodService
   /** The domains SSO may provision a user for, and their DNS challenges (#270). */
   ssoProvisioningDomains: SsoProvisioningDomainService
@@ -334,6 +370,12 @@ export interface RuntimeServices {
   /** The organisation's name, read fresh: `GET /api/v1/brand` and the mailers. */
   organizationName(): Promise<string>
   cursorSigningKey: Uint8Array
+  /**
+   * Idempotency keys (issue 952): the store a keyed write is recorded in, and
+   * the secret its rows are found and sealed with. The entry wraps every data
+   * request in `withIdempotency`; the app itself never sees either.
+   */
+  idempotency: { readonly store: IdempotencyStore; readonly secret: Uint8Array }
   passwordAuth: PasswordAuthService
   sessions: ApiSessionService
   /** Composite browser resolver when an optional edge identity provider is configured. */
@@ -411,7 +453,7 @@ export interface RuntimeServices {
    * only thing that turns a scheduled row into mail.
    */
   reminders?: {
-    processDue(now: string): Promise<{ examined: number; sent: number; scheduled: number }>
+    processDue(now: string, options?: ReminderProcessOptions): Promise<ReminderProcessSummary>
   }
   recurringRepair?: RecurringRepairService
   bill?: BillRuntime
@@ -480,6 +522,11 @@ export const createApp = (
    */
   signInMethods?: { read(env: AppEnv): Promise<readonly SignInMethodState[] | null> },
 ) => {
+  const cleanupPorts = ([services?.nativeAppleLifecycle, services?.appleWebCleanup] as (AppleCleanupPort | undefined)[]).filter((port): port is AppleCleanupPort => port !== undefined)
+  const appleCleanup: AppleCleanupPort | undefined = cleanupPorts.length === 0 ? undefined : {
+    async begin(userId,requestId) { for(const port of cleanupPorts) await port.begin(userId,requestId) },
+    async status(requestId) { return aggregateAppleCleanup(await Promise.all(cleanupPorts.map(port=>port.status(requestId)))) },
+  }
   const shellBrand = async (env: AppEnv) => {
     const stored = brandAssets === undefined ? [] : await brandAssets.list(env)
     return brandFromSources(
@@ -530,7 +577,7 @@ export const createApp = (
       brand,
       instanceTheme: themed !== null,
       signInProviders: configuredSignInProviders(env).filter((provider) =>
-        live(provider),
+        live(provider) && (provider !== 'apple' || services === undefined || services.appleWebLifecycle !== undefined),
       ),
       // The form is markup, and hiding markup is not a control -- the routes
       // refuse independently. This only stops the page offering a way in that
@@ -571,11 +618,16 @@ export const createApp = (
             installSessionRoutes(api, services.sessions)
             installProfileRoutes(api, {
               repository: services.profile,
+              ...(appleCleanup === undefined ? {} : { appleCleanup }),
+              ...(services.accountDeletionTracking === undefined ? {} : { deletionTracking: services.accountDeletionTracking }),
+              ...(services.accountDeletionRequests === undefined ? {} : { deletionStore: services.accountDeletionRequests }),
               clock: () => systemClock.now().instant,
               ...(services.accountDeletionMailer === undefined
                 ? {}
                 : { deletionMailer: services.accountDeletionMailer }),
             })
+            if(services.accountRetentionReview) installAccountRetentionReviewRoutes(api,{store:services.accountRetentionReview,clock:()=>systemClock.now().instant,...(appleCleanup===undefined?{}:{appleCleanup})})
+            if (services.accountClosure) installAccountClosureRoutes(api, { store: services.accountClosure, clock: () => systemClock.now().instant, ...(appleCleanup === undefined ? {} : { appleCleanup }), ...(services.appleWebCleanup === undefined ? {} : {performAppleCleanup:(requestId:string)=>services.appleWebCleanup!.perform(requestId)}) })
             installEmailLogRoutes(api, services.emailLog)
             installEmailHealthRoutes(api, services.emailLog)
             installEmailConfigurationRoutes(api, {
@@ -731,6 +783,12 @@ export const createApp = (
               service: services.moduleSettings,
               clock: () => systemClock.now().instant,
             })
+            if (services.accountRetention !== undefined) {
+              installAccountRetentionRoutes(api, {
+                service: services.accountRetention,
+                clock: () => systemClock.now().instant,
+              })
+            }
             installSignInMethodRoutes(api, {
               service: services.signInMethods,
               configured: (bindings) => deployedSignInMethods(bindings as WorkerEnv),
@@ -880,11 +938,26 @@ export const createApp = (
         // token and gets the ordinary session back; it reuses the shared
         // identity resolver and session issuer, so it needs no store of its
         // own. Configured off (404) until APPLE_CLIENT_ID names an audience.
+        if (services.accountDeletionTracking) installAccountDeletionStatusRoutes(app, { store: services.accountDeletionTracking, clock: () => systemClock.now().instant, ...(appleCleanup === undefined ? {} : { appleCleanup }) })
+        const nativeLifecycle=services.nativeAppleLifecycle===undefined?undefined:{store:services.nativeAppleLifecycle,origin:(env:AppEnv)=>env.APP_BASE_URL,clock:()=>systemClock.now().instant}
+        if(nativeLifecycle)installAppleLifecycleRoutes(app,nativeLifecycle)
         installAppleRoutes(app, {
+          ...(nativeLifecycle === undefined ? {} : { lifecycle: nativeLifecycle }),
           policy: signInPolicy,
           identities: services.identities,
           sessions: services.sessions,
           provider: (env) => appleProvider(env),
+        })
+        installAppleWebRoutes(app, {
+          transactions: services.oidcTransactions,
+          identities: services.identities,
+          sessions: services.sessions,
+          provider: appleWebConfiguration,
+          lifecycle: () => services.appleWebLifecycle ?? null,
+          policy: signInPolicy,
+          clientKey: request => request.headers.get('cf-connecting-ip') ?? 'unknown-client',
+          demoAccount: env => demoDeployment(env) ? demoAccounts.find(account => account.label === 'Teammate')!.userId : null,
+          renderDisconnect: renderAppleDisconnect,
         })
         installPasswordAuthRoutes(app, {
           service: services.passwordAuth,
@@ -2192,6 +2265,7 @@ export const configuredSignInProviders = (
   } catch {
     // Same fail-closed policy as Google above.
   }
+  if (env.APPLE_WEB_ENABLED === 'true' && appleWebConfiguration(env) !== null) providers.push('apple')
   return providers
 }
 
@@ -2208,10 +2282,8 @@ export const deployedSignInMethods = (
     methods.push('magic_link')
   }
   for (const provider of configuredSignInProviders(env)) methods.push(provider)
-  // Apple is not in `configuredSignInProviders`: that list is the browser
-  // buttons the sign-in card draws, and Apple arrives through the native app
-  // prompt instead. It is still a way in, so the setting has to list it.
-  if (appleProvider(env) !== null) methods.push('apple')
+  // Either native or web configuration makes Apple an available method.
+  if (appleProvider(env) !== null && !methods.includes('apple')) methods.push('apple')
   return methods
 }
 

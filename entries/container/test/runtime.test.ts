@@ -701,3 +701,26 @@ describe('outbound mail and startup', () => {
     expect(reported).not.toContain('hunter2')
   }, 30_000)
 })
+
+it('passes fixed reminder bounds through the container service', async () => {
+  const root = await temporary()
+  const runtime = await createContainerRuntime(config(root), { emailProvider: provider([]) })
+  // Keep the automatic current-time scheduler outside this explicit future pass.
+  const at = '2099-10-08T03:00:00.000Z'
+  try {
+    runtime.database.prepare("INSERT INTO organizations (name, modules, created_at, updated_at) VALUES ('Fixture', '{}', ?, ?)").run(at, at)
+    runtime.database.prepare("INSERT INTO clients (id, name, currency, created_at, updated_at) VALUES (1, 'Fixture', 'USD', ?, ?)").run(at, at)
+    for (const id of [1, 2, 3]) {
+      runtime.database.prepare(`INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date, state, created_at, updated_at)
+        VALUES (?, 1, ?, 'USD', '2026-10-01', '2026-10-01', 'draft', ?, ?)`).run(id, `F${id}`, at, at)
+      runtime.database.prepare(`INSERT INTO scheduled_reminders
+        (id, invoice_id, scheduled_at, interval_days, status, template, causation_event_id, created_at, updated_at)
+        VALUES (?, ?, ?, 7, 'pending', 'reminder', ?, ?, ?)`).run(id, id, at, `fixture-${id}`, at, at)
+    }
+    expect(await runtime.services.reminders!.processDue(at, { limit: 1, selection: { afterId: 1, throughId: 2 } }))
+      .toEqual({ examined: 1, sent: 0, scheduled: 0, lastExaminedId: 2 })
+    expect(runtime.database.prepare('SELECT id, status FROM scheduled_reminders ORDER BY id').all()).toEqual([
+      { id: 1, status: 'pending' }, { id: 2, status: 'cancelled' }, { id: 3, status: 'pending' },
+    ])
+  } finally { await runtime.close() }
+})

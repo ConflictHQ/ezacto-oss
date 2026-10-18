@@ -2473,6 +2473,15 @@ for (const [runtime, createHarness] of factories) {
       expect(wildcard.data).toEqual([]);
       const blank = await harness.request("/clients?q=%20");
       expect(blank.status).toBe(422);
+
+      // Longer than the 50 bytes D1 allows a LIKE pattern, which is what a
+      // pasted timer description on the tasks box sent (EZACTO-SERVER-6).
+      const long = "Northwind Traders platform modernisation programme, phase two";
+      await data(await harness.request("/clients", json({ name: long })));
+      const found = await page(
+        await harness.request(`/clients?q=${encodeURIComponent(long.toLowerCase())}`),
+      );
+      expect(found.data.map((row) => row.name)).toEqual([long]);
     }, 20_000);
 
     it("[api] rejects unknown/non-combinable query inputs and translates DB constraints", async () => {

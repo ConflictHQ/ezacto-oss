@@ -443,6 +443,20 @@ try {
     image,
   ])
   await runContainer(secondName, appPort, smtpPort, restoredVolume)
+  let quarantineExit = false
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const state = await command('docker', ['inspect','--format','{{.State.Running}}',secondName])
+    if (state.stdout.trim() === 'false') { quarantineExit = true; break }
+    await new Promise(resolve => setTimeout(resolve,200))
+  }
+  if (!quarantineExit) throw new Error('quarantined restore unexpectedly started serving')
+  const quarantinedLogs = await command('docker',['logs',secondName],{allowFailure:true})
+  if (!(quarantinedLogs.stdout+quarantinedLogs.stderr).includes('privacy evidence must be reconciled')) throw new Error('restored startup did not refuse privacy quarantine')
+  await command('docker',['rm',secondName])
+  const privacyRestore = action => command('docker',['run','--rm','--network','none','--user','0:0','--mount',`type=volume,source=${restoredVolume},target=/data`,'--mount',`type=bind,source=${bundle},target=/restore,readonly`,'--entrypoint','node',image,'entries/container/dist/privacy-restore.js',action,'--database','/data/db.sqlite','--current-database','/restore/db.sqlite',...(action==='release'?['--evidence','Disposable acceptance fixture: current snapshot and attachment inventory verified; no later external cleanup exists.']:[])])
+  await privacyRestore('replay')
+  await privacyRestore('release')
+  await runContainer(secondName, appPort, smtpPort, restoredVolume)
   await waitForHealth(origin, secondName)
   const restored = await fetch(`${origin}/api/v1/time-entries/${entry.id}`, {
     headers: { cookie },

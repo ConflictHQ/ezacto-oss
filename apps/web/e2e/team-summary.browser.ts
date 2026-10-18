@@ -69,7 +69,7 @@ test('[e2e:team-summary] never prints two utilization figures over one another',
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.goto('/team')
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.getByLabel('Password').fill(fixturePassword)
+  await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 
   const summary = page.locator('[data-team-summary]')
