@@ -18,6 +18,27 @@ Set `SMTP_URL` and `SMTP_FROM` in the private container environment. Use your pr
 
 Restart/redeploy the container after configuration changes. Verify its scheduler is running so queued messages are processed. Test inbox delivery with an operator-owned recipient and confirm the configured sender is the one the organization intends to use.
 
+## Mail the instance sends its own people
+
+Three kinds of mail go from the instance to the people who work in it, on the
+same deployment sender and queue as the sign-in mail. Each one is recorded in
+the email log (Settings, Deliveries) and, on the public demo, held to the
+domains the demo may email.
+
+| Mail | Who gets it | When |
+| --- | --- | --- |
+| Budget alert | The project's managers; administrators too when Company settings, Notifications says so, or when the project has no manager with an address | Once each time a project with "Notify when over budget" crosses its threshold. Checked every minute. |
+| Daily time reminder | People who switched it on (Settings, You), by email | On their chosen days at their chosen time on their own clock, only if they have tracked less than a usual day (weekly capacity over the chosen days; a running timer counts) |
+| End-of-week submission reminder, and the manager digest | Everyone not opted out; people who approve timesheets and asked for it | Only while the Approval module is on and an administrator has set a day and time under Company settings, Notifications. About last week on a Monday to Thursday, about the week now ending after that. |
+
+Every decision is written to `notification_deliveries` before anything is
+queued, keyed by (kind, person, scope, period), so a retried event or a sweep
+that runs twice mails nobody twice. A reminder that is more than two hours
+late is skipped, not sent. A message the queue never picked up is queued again
+from its record. The Worker does this on the minute cron; the container on its
+outbox tick, at most once a minute. A deployment with no sender (`MAIL_FROM` on
+the Worker) records budget alerts in the activity log and sends nothing.
+
 ## Authentication and sender checks
 
 Email sign-in also requires `MAGIC_LINK_SIGNING_KEY`; configuring a transport alone does not enable every authentication route. Check Ways in and retain a working administrator recovery method while testing. For Apple relay recipients, follow [Apple sender registration](apple-setup.md) too.

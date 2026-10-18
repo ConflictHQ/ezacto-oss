@@ -174,7 +174,7 @@ Contacts are reassignable between clients (Harvest parity).
 | `cost_budget_cents` | int nullable | Money budgets. |
 | `budget_is_monthly` | bool | The ↻ resetting budget. |
 | `cost_budget_include_expenses` | bool | |
-| `notify_when_over_budget` / `over_budget_pct` / `over_budget_notified_on` | bool / real / date | |
+| `notify_when_over_budget` / `over_budget_pct` / `over_budget_notified_on` | bool / real / date | Alert when `spent / budget >= over_budget_pct` (100 when unset), read from the same figures the budget report shows; a monthly budget over the current month in the organization's zone, any other over the project's whole history. One alert per crossing (`project_budget_alerts`; usage falling back under the line closes it, the next crossing is a new alert). Mailed to the project's managers, plus administrators when `organizations.budget_alerts_include_admins` is on or when the project has no manager with an address. `over_budget_notified_on` is the local date of the last alert. |
 | `show_budget_to_all` | bool | |
 | `report_visibility` | enum `managers\|everyone` | UI 28 permissions radio. |
 | `starts_on`, `ends_on` | date nullable | Non-blocking (time can be tracked outside range). |
@@ -504,7 +504,14 @@ a saved report is a named URL state.
 
 Per user (UI 09f): daily reminder `{enabled, time, days[], channels{email, desktop,
 slack}}`, `include_in_team_reminders`, `weekly_digest`, `notify_project_deleted`.
-No pre-checked marketing opt-in — we are not doing that.
+No pre-checked marketing opt-in — we are not doing that. `include_in_team_reminders`
+(the end-of-week submission reminder) is operational rather than marketing and
+starts on, so that opting out is a choice a person can make; nothing is sent until an
+administrator sets the company schedule (`organizations.submission_reminder_day` /
+`_time`, both or neither). Delivered: the daily reminder, the email channel, team
+reminders and the weekly digest (a digest of who has not submitted, for people who
+approve timesheets). Desktop, Slack and `notify_project_deleted` have no delivery and are
+refused rather than stored. `notification_deliveries` is the once-only ledger.
 
 ---
 

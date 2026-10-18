@@ -154,6 +154,11 @@ for (const [runtime, factory] of factories) {
         taxRatePpm: 88_750,
         tax2RatePpm: null,
         dueAmountCents: 77_400,
+        // The context a send's message is composed from carries the period and
+        // the organization's zone too (issue 925); this invoice bills no period.
+        periodStart: null,
+        periodEnd: null,
+        organizationTimeZone: 'UTC',
         // Every payment against the invoice, summed.
         paidAmountCents: 100_000,
         organizationAddress: '100 Example Ave, STE 200\nSpringfield, IL, 62701',

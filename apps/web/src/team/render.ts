@@ -1,14 +1,5 @@
 import { iconMarkup } from '../components/icons.js'
-
-const weekdays = [
-  ['monday', 'Mon'],
-  ['tuesday', 'Tue'],
-  ['wednesday', 'Wed'],
-  ['thursday', 'Thu'],
-  ['friday', 'Fri'],
-  ['saturday', 'Sat'],
-  ['sunday', 'Sun'],
-] as const
+import { renderNotificationFields } from './notification-fields.js'
 
 export const renderTeamPages = (view?: string): string => `
   <main class="app-content team-workspace page--grid" data-team-list-page${view === 'team-list' ? '' : ' hidden'}>
@@ -146,23 +137,12 @@ export const renderTeamPages = (view?: string): string => `
       </section>
 
       <section class="team-person-panel" id="team-panel-notifications" role="tabpanel" aria-labelledby="team-tab-notifications" data-team-panel="notifications" hidden>
-        <header><div><p class="eyebrow">Inactive integration</p><h2>Notification preferences</h2></div></header>
-        <p class="hint" data-team-notification-status>Notification delivery is not active in this release. These preferences remain off until delivery workers are available.</p>
+        <header><div><p class="eyebrow">Reminders</p><h2>Notification preferences</h2></div></header>
+        <p class="hint" data-team-notification-status>Reminders are sent by email from this instance. People can also change their own under Settings.</p>
         <form data-team-notifications-form>
-          <label class="team-check"><input name="daily_reminder_enabled" type="checkbox">Daily time reminder preference (inactive)</label>
-          <label>Reminder time<input name="reminder_time" type="time"></label>
-          <fieldset><legend>Reminder days</legend><div class="team-weekdays">${weekdays.map(([value, label]) => `<label><input type="checkbox" name="reminder_days" value="${value}">${label}</label>`).join('')}</div></fieldset>
-          <fieldset><legend>Reminder channels</legend>
-            <label class="team-check"><input name="channel_email" type="checkbox">Mail channel preference (inactive)</label>
-            <label class="team-check"><input name="channel_desktop" type="checkbox">Desktop preference (inactive)</label>
-            <label class="team-check"><input name="channel_slack" type="checkbox">Slack preference (inactive)</label>
-            <p class="hint" data-team-slack-status>Slack is also unavailable because no connector is configured.</p>
-          </fieldset>
-          <label class="team-check"><input name="include_in_team_reminders" type="checkbox">Include in team reminders</label>
-          <label class="team-check"><input name="weekly_digest" type="checkbox">Weekly digest preference (inactive)</label>
-          <label class="team-check"><input name="notify_project_deleted" type="checkbox">Project-deletion preference (inactive)</label>
+          ${renderNotificationFields()}
           <p class="form-result" data-team-notifications-result role="status" aria-live="polite"></p>
-          <button class="primary-action" type="submit" data-team-notifications-submit hidden disabled>Save inactive preferences</button>
+          <button class="primary-action" type="submit" data-team-notifications-submit hidden disabled>Save notification preferences</button>
         </form>
       </section>
     </article>

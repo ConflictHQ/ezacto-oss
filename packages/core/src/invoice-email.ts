@@ -237,13 +237,66 @@ export interface InvoiceEmailInvoice {
   readonly paymentTerms: InvoicePaymentTerms;
   readonly purchaseOrder: string | null;
   readonly notes: string | null;
+  /** The billing period's calendar bounds; both null for a free-form invoice. */
+  readonly periodStart: string | null;
+  readonly periodEnd: string | null;
   readonly organizationName: string;
+  /** The IANA zone the organization keeps its days in. */
+  readonly organizationTimeZone: string;
   readonly clientName: string;
   readonly lineItems: readonly InvoiceEmailLine[];
 }
 
 const presentText = (value: string | null): string | null =>
   value === null || value.trim() === "" ? null : value.trim();
+
+const calendarDate = (value: string): Date | null => {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) return null;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.valueOf()) && date.toISOString().slice(0, 10) === value
+    ? date
+    : null;
+};
+
+const monthName = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC" });
+
+/**
+ * The billing period as a person writes it (issue 925): "September 2026" for a
+ * period inside one month, "August – September 2026" across months, and
+ * "December 2025 – January 2026" across a year end. Months rather than days,
+ * because that is how an invoice is talked about, and the exact days are on the
+ * document. Empty where the invoice has no period -- a free-form invoice -- and
+ * a period with one bound set reads as that bound's month.
+ */
+export const invoicePeriodLabel = (start: string | null, end: string | null): string => {
+  const from = calendarDate(start ?? end ?? "");
+  const to = calendarDate(end ?? start ?? "");
+  if (from === null || to === null) return "";
+  const fromYear = from.getUTCFullYear();
+  const toYear = to.getUTCFullYear();
+  if (fromYear === toYear && from.getUTCMonth() === to.getUTCMonth()) {
+    return `${monthName.format(from)} ${String(fromYear)}`;
+  }
+  return fromYear === toYear
+    ? `${monthName.format(from)} – ${monthName.format(to)} ${String(toYear)}`
+    : `${monthName.format(from)} ${String(fromYear)} – ${monthName.format(to)} ${String(toYear)}`;
+};
+
+/**
+ * The weekday an instant falls on in the organization's zone, in English
+ * (issue 925). A zone the runtime does not know reads as UTC rather than
+ * failing the send, which is the rule the time-entry repository applies to the
+ * same column.
+ */
+export const sendWeekday = (instant: string, timeZone: string): string => {
+  const at = new Date(instant);
+  if (!Number.isFinite(at.valueOf())) throw new RangeError("send instant is invalid");
+  try {
+    return new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone }).format(at);
+  } catch {
+    return new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "UTC" }).format(at);
+  }
+};
 
 /**
  * The variables an invoice email's subject and message can name, for one
@@ -255,9 +308,13 @@ const presentText = (value: string | null): string | null =>
 export const invoiceEmailValues = (
   invoice: InvoiceEmailInvoice,
   paymentUrl: string | null,
+  /** When the message is composed to go: the send, or the preview of it. */
+  sentAt: string,
 ): EmailTemplateVariableValues => {
   const issue = new Date(`${invoice.issueDate}T00:00:00.000Z`);
   return {
+    send_weekday: sendWeekday(sentAt, invoice.organizationTimeZone),
+    invoice_period: invoicePeriodLabel(invoice.periodStart, invoice.periodEnd),
     company_name: invoice.organizationName,
     invoice_id: String(invoice.invoiceId),
     invoice_issue_month_name: new Intl.DateTimeFormat("en-US", {
@@ -375,9 +432,11 @@ export const composeInvoiceEmail = (
     messageTemplate: string;
     paymentUrl: string | null;
     pdfAttached: boolean;
+    /** The instant the message is composed to go, which `%send_weekday%` reads. */
+    sentAt: string;
   }>,
 ): { readonly subject: string; readonly text: string } => {
-  const values = invoiceEmailValues(input.invoice, input.paymentUrl);
+  const values = invoiceEmailValues(input.invoice, input.paymentUrl, input.sentAt);
   const subject = interpolateEmailTemplate("invoice", input.subjectTemplate, values).trim();
   const message = interpolateEmailTemplate("invoice", input.messageTemplate, values);
   return {

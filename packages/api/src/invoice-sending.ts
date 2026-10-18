@@ -68,6 +68,8 @@ export interface InvoiceEmailDefaults {
   readonly clientId: number
   readonly companyName: string
   readonly clientName: string
+  /** The organization's zone, which `%send_weekday%` is read in (issue 925). */
+  readonly timeZone: string
   readonly templateVersion: number
   /** The organization's invoice template, as the dialog's starting point. */
   readonly subject: string
@@ -304,6 +306,7 @@ export const installInvoiceSendingRoutes = <Bindings extends object>(
           client_id: defaults.clientId,
           company_name: defaults.companyName,
           client_name: defaults.clientName,
+          time_zone: defaults.timeZone,
           template_version: defaults.templateVersion,
           subject: defaults.subject,
           message: defaults.message,

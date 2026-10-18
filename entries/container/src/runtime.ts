@@ -100,6 +100,13 @@ import {
   readOrganizationThankYouPolicy,
   setInvoiceThankYouPolicy,
   setOrganizationThankYouPolicy,
+  evaluateProjectBudgetAlerts,
+  prepareBudgetAlertMail,
+  prepareTimeReminders,
+  readUserNotifications,
+  updateUserNotifications,
+  readNotificationSettings,
+  updateNotificationSettings,
   setBillDelivery,
   createQuickBooksMirrorSource,
   createQuickBooksStore,
@@ -111,6 +118,10 @@ import {
 } from '@ezacto/db'
 import {
   createApiSessionService,
+  createBudgetAlertSubscriber,
+  createTimeReminderService,
+  createNotificationSettingsService,
+  createDeploymentNotificationMailer,
   createInvoiceEmailOutboxSubscriber,
   createInvoiceThankYouSubscriber,
   thankYouInvoiceFromDeliveryContext,
@@ -436,6 +447,23 @@ export const createContainerRuntime = async (
       smtp.name,
       config.smtp.from,
     )
+    // The mail the instance sends its own people (budget alerts, issue 934):
+    // the deployment sender, on the same queue as the rest. The container
+    // always has one.
+    const notificationMailer = createDeploymentNotificationMailer(config.smtp.from, queuedMailer)
+    // Time reminders and the week-end submission reminders (issue 935), on the
+    // same sender, with the instance's own address for the links.
+    const timeReminders = createTimeReminderService(
+      {
+        prepare: (now: string) =>
+          prepareTimeReminders(drizzle, {
+            now,
+            from: notificationMailer.from,
+            appUrl: config.appBaseUrl,
+          }),
+      },
+      notificationMailer,
+    )
     const reminders = createContainerReminderScheduler(database)
     // The same connection the Worker composes. A self-hoster's QuickBooks is
     // the same QuickBooks, and the only thing this needs that the Worker has is
@@ -653,6 +681,17 @@ export const createContainerRuntime = async (
       additionalSubscribers: [
         createInvoiceEmailOutboxSubscriber(moneyResources, organizationMailer),
         createInvoiceThankYouSubscriber(thankYou, organizationMailer),
+        createBudgetAlertSubscriber(
+          {
+            prepare: (alertId: number) =>
+              prepareBudgetAlertMail(drizzle, {
+                alertId,
+                from: notificationMailer.from,
+                now: new Date().toISOString(),
+              }),
+          },
+          notificationMailer,
+        ),
         reminders.subscriber,
         // Without this the container would connect to QuickBooks and never
         // mirror anything -- the routes would work and no invoice would move.
@@ -676,6 +715,28 @@ export const createContainerRuntime = async (
         console.error('[container] BILL reconciliation failed', error)
       },
     })
+    // Budget alerts (issue 934). The tick is every fifteen seconds and a pass
+    // reads each alerting project's time, so it is held to once a minute, the
+    // Worker's own cadence. A failed pass is reported and never stops the drain.
+    let lastMinutePass = 0
+    const minutePasses = async (): Promise<void> => {
+      const at = Date.now()
+      if (at - lastMinutePass < 60_000) return
+      lastMinutePass = at
+      const now = new Date(at).toISOString()
+      try {
+        await evaluateProjectBudgetAlerts(drizzle, now)
+      } catch (error) {
+        console.error('[container] budget alert evaluation failed', error)
+      }
+      // Time reminders (issue 935) are due on each person's own local minute,
+      // so they are looked at every minute too.
+      try {
+        await timeReminders.processDue(now)
+      } catch (error) {
+        console.error('[container] time reminders failed', error)
+      }
+    }
     outboxScheduler = new ContainerOutboxScheduler(outbox, {
       // Reminders that have come due go out on the same tick the outbox
       // drains, before it, so the sends they enqueue are drained in the same
@@ -683,6 +744,7 @@ export const createContainerRuntime = async (
       // it records are drained in the same pass too.
       beforeDrain: async () => {
         await paymentRuns.processDue(new Date().toISOString())
+        await minutePasses()
         await processDueReminders(new Date().toISOString())
         await reconcileBillPayments()
       },
@@ -876,6 +938,19 @@ export const createContainerRuntime = async (
           setOrganizationThankYouPolicy(drizzle, enabled),
       },
       reminders: { processDue: processDueReminders },
+      budgetAlerts: {
+        evaluate: (now: string) => evaluateProjectBudgetAlerts(drizzle, now),
+      },
+      timeReminders,
+      profileNotifications: {
+        read: (userId: number) => readUserNotifications(drizzle, userId),
+        update: (userId: number, patch) =>
+          updateUserNotifications(drizzle, userId, patch, new Date().toISOString()),
+      },
+      notificationSettings: createNotificationSettingsService({
+      read: () => readNotificationSettings(drizzle),
+      update: (patch) => updateNotificationSettings(drizzle, patch, new Date().toISOString()),
+    }),
       reminderSettings: createReminderSettings(drizzle, reminders, () => new Date().toISOString()),
       // Invoices › Configure: what every invoice prints and every draft starts with.
       invoiceDefaults: {

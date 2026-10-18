@@ -182,6 +182,8 @@ export const renderInvoiceComposerDialog = (): string => `
             <div><dt><code>%invoice_payment_terms%</code></dt><dd>Payment terms, e.g. Net 30</dd></div>
             <div><dt><code>%invoice_purchase_order%</code></dt><dd>Purchase order number</dd></div>
             <div><dt><code>%invoice_issue_month_name%</code></dt><dd>Month of the issue date</dd></div>
+            <div><dt><code>%invoice_period%</code></dt><dd>Billing period, e.g. September 2026</dd></div>
+            <div><dt><code>%send_weekday%</code></dt><dd>Weekday it is sent, e.g. Friday</dd></div>
             <div><dt><code>%invoice_line_items%</code></dt><dd>The lines, quantity, rate, and amount</dd></div>
           </dl>
         </aside>
