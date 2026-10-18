@@ -142,10 +142,10 @@ one row per invoice rather than its whole amount against one.
 
 ## Deployment caveat and verification
 
-The container accepts `BILL_ENVIRONMENT=sandbox`. The current stock Worker
-workflow does not pass `BILL_ENVIRONMENT` through to the runtime: adding a GitHub
-secret alone is insufficient. Review an explicit configuration change before
-using a sandbox Worker. See [credential deployment](integrations.md).
+The container and the Worker both accept `BILL_ENVIRONMENT=sandbox`. On the
+Worker, set a GitHub secret of that name and redeploy; the deploy workflow
+renders it with the other credentials. Unset means production. See
+[credential deployment](integrations.md).
 
 After deployment, inspect `GET /api/v1/integrations/bill` as an authorized user,
 confirm the intended company and environment, and verify the invoice-recipient
