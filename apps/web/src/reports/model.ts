@@ -355,6 +355,8 @@ export interface ReportWorkspaceApi {
     audience: DetailedTimeNotesAudience,
     signal?: AbortSignal,
   ): Promise<{ readonly blob: Blob; readonly filename: string }>
+  /** False when the Activity log module is off; the kind then leaves the strip. */
+  getActivityLogEnabled?(signal?: AbortSignal): Promise<boolean>
   getActivityLog?(
     range: { readonly from: string; readonly to: string },
     signal?: AbortSignal,

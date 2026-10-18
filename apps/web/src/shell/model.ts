@@ -128,6 +128,8 @@ export interface ShellApi
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
   listProjects(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listClients?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
+  /** Whether the Activity log module is on, so the surface is not offered when it is off. */
+  getActivityLogEnabled?(signal?: AbortSignal): Promise<boolean>
   /** The page size a caller may raise when it is walking, not browsing. */
   listActivityLog?(
     query: { readonly from?: string; readonly to?: string; readonly event_type?: string },
@@ -1748,6 +1750,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   archiveProjectUserAssignment: async (id, signal) => {
     await client.deleteUserAssignment({ id, ...withSignal(signal) })
   },
+  getActivityLogEnabled: async (signal) =>
+    (await client.getActivityLogStatus(withSignal(signal))).data.enabled,
   getActivityLog: async (range, signal) =>
     (
       await client.listActivityLog({

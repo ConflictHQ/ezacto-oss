@@ -898,6 +898,15 @@ export type TeamStatusEnvelope = {
   "links": Links;
 };
 
+export type ActivityLogStatus = {
+  "enabled": boolean;
+};
+
+export type ActivityLogStatusEnvelope = {
+  "data": ActivityLogStatus;
+  "links": Links;
+};
+
 export type TeamNamedRelation = {
   "id": number;
   "name": string;
@@ -3501,7 +3510,7 @@ export type ClientHierarchyListEnvelope = {
 };
 
 export type ModuleState = {
-  "module": "approval" | "expenses" | "own_money";
+  "module": "approval" | "expenses" | "own_money" | "activity_log";
   "enabled": boolean;
 };
 
@@ -4249,6 +4258,15 @@ export class EzactoClient {
     if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<EmailTestSendEnvelope>("POST", "/api/v1/sender-identities/:id/test-send".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getActivityLogStatus(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ActivityLogStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ActivityLogStatusEnvelope>("GET", "/api/v1/activity-log/status", {
       signal: args.signal,
       headers,
     });

@@ -163,7 +163,15 @@ const required = <ElementType extends Element>(selector: string): ElementType =>
   return element
 }
 
+const isModuleDisabled = (error: unknown): boolean => {
+  if (!(error instanceof EzactoApiError) || error.status !== 403) return false
+  if (typeof error.body !== 'object' || error.body === null) return false
+  const detail: unknown = Reflect.get(error.body, 'error')
+  return typeof detail === 'object' && detail !== null && Reflect.get(detail, 'code') === 'module_disabled'
+}
+
 const messageFor = (error: unknown): string => {
+  if (isModuleDisabled(error)) return 'The Activity log module is switched off.'
   if (error instanceof EzactoApiError) {
     if (error.status === 403) return 'Your profile does not have access to this report.'
     if (error.status === 404) return 'This report is unavailable or outside your project access.'
@@ -2883,6 +2891,13 @@ export const createReportsController = (
     kindTabs.set(tabKind, anchor)
   }
   const kindStrip = [...kindTabs.values()][0]?.parentElement ?? null
+  // The Activity log is a module: once the API says it is off, its kind leaves
+  // the strip the way a kind a profile cannot read does.
+  let activityLogOff = false
+  const hideActivityLogKind = (): void => {
+    activityLogOff = true
+    kindTabs.get('activity-log')?.remove()
+  }
   /**
    * The two From/To fields the card used to carry, as the shared control. An
    * arrow reloads immediately because stepping is navigation, not filtering:
@@ -3994,6 +4009,11 @@ export const createReportsController = (
       if (active.signal.aborted) return
       if (queuedLocationFilters !== null) return
       status.textContent = messageFor(error)
+      if (isModuleDisabled(error)) {
+        // A decision, not a failure: retrying would only be refused again.
+        if (filters.kind === 'activity-log') hideActivityLogKind()
+        return
+      }
       retry.hidden = false
       retryAction = () => void loadReport(filters, false)
     } finally {
@@ -4326,9 +4346,18 @@ export const createReportsController = (
       // second session in the same document gets the strip its profile earns.
       kindStrip?.replaceChildren(
         ...[...kindTabs]
-          .filter(([tabKind]) => canReadKind(tabKind, identity))
+          .filter(
+            ([tabKind]) =>
+              canReadKind(tabKind, identity) && !(activityLogOff && tabKind === 'activity-log'),
+          )
           .map(([, anchor]) => anchor),
       )
+      void api
+        .getActivityLogEnabled?.(signal)
+        .then((enabled) => {
+          if (!enabled) hideActivityLogKind()
+        })
+        .catch(() => {})
       if (api.listReportClients === undefined || api.listReportProjects === undefined) {
         status.textContent = 'Report filters are unavailable in this build.'
         run.disabled = true
