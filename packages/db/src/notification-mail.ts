@@ -201,10 +201,19 @@ interface QueuedLedgerRow {
  * `olderThan` keeps a pass from re-queueing a message another pass queued a
  * moment ago and the provider has not yet picked up. Re-queueing is harmless
  * (the log's lease and status make a second attempt a no-op), but it is noise.
+ * `newerThan` is the other end: a reminder that has sat unsent for hours is no
+ * longer the reminder it was, and is not queued again.
  */
 export const readStrandedNotifications = async (
   database: InvoiceStateDatabase,
-  filter: Readonly<{ kind: string; olderThan: string; scope?: string; period?: string }>,
+  filter: Readonly<{
+    kind: string
+    olderThan: string
+    /** Messages recorded before this are stale: not worth sending any more. */
+    newerThan?: string
+    scope?: string
+    period?: string
+  }>,
 ): Promise<readonly RecordedNotification[]> => {
   const rows = await database.all<QueuedLedgerRow>(
     sql`SELECT notification.delivery_id AS deliveryId, notification.user_id AS userId,
@@ -217,6 +226,7 @@ export const readStrandedNotifications = async (
         JOIN email_log log ON log.id = notification.delivery_id
         WHERE notification.kind = ${filter.kind} AND notification.outcome = 'queued'
           AND log.status = 'queued' AND notification.created_at <= ${filter.olderThan}
+          AND (${filter.newerThan ?? null} IS NULL OR notification.created_at >= ${filter.newerThan ?? null})
           AND (${filter.scope ?? null} IS NULL OR notification.scope = ${filter.scope ?? null})
           AND (${filter.period ?? null} IS NULL OR notification.period = ${filter.period ?? null})
         ORDER BY notification.delivery_id`,

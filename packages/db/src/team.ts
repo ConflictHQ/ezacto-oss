@@ -80,7 +80,7 @@ interface RateRow {
   updatedAt: string
 }
 
-interface NotificationRow {
+export interface NotificationRow {
   dailyReminderEnabled: number
   reminderTime: string | null
   reminderDays: string
@@ -205,8 +205,8 @@ const assignment = (row: AssignmentRow): TeamProjectAssignment => ({
   useDefaultRates: row.useDefaultRates === 1,
 })
 
-const notification = (row: NotificationRow): TeamNotificationPreference => ({
-  deliveryActive: false,
+export const notification = (row: NotificationRow): TeamNotificationPreference => ({
+  deliveryActive: true,
   dailyReminderEnabled: row.dailyReminderEnabled === 1,
   reminderTime: row.reminderTime,
   reminderDays: JSON.parse(row.reminderDays) as ReminderDay[],

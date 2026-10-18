@@ -246,7 +246,10 @@ export {
   readNotificationSettings,
   updateNotificationSettings,
   type NotificationSettings,
+  type SubmissionReminderSchedule,
 } from './notification-settings.js'
+export { prepareTimeReminders, type TimeReminderInput } from './time-reminders.js'
+export { readUserNotifications, updateUserNotifications } from './profile-notifications.js'
 export {
   evaluateProjectBudgetAlerts,
   prepareBudgetAlertMail,
