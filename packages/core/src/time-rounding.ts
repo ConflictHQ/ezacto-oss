@@ -110,7 +110,7 @@ export const roundTimeSeconds = (
 
 /**
  * The single enum the organization used to hold (`organizations.time_rounding`,
- * migration 0000), and the rule each value is now. Migration 0110 backfills the
+ * migration 0000), and the rule each value is now. Migration 0112 backfills the
  * new columns with exactly this mapping; the old column stays and is unused.
  */
 export const legacyTimeRoundings = [

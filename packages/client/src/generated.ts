@@ -1052,6 +1052,42 @@ export type TeamRateRemovalInput = {
   "kind": "billable" | "cost";
 };
 
+export type CostRateBackfillInput = {
+  "from": string;
+  "to": string;
+  "cost_rate_cents": number;
+  "reason": string;
+  "replace_captured"?: boolean;
+  "apply"?: boolean;
+};
+
+export type CostRateBackfillPeriod = {
+  "month": string;
+  "entry_count": number;
+  "seconds": number;
+  "cost_cents": number;
+};
+
+export type CostRateBackfill = {
+  "run_id": string;
+  "applied": boolean;
+  "user_id": number;
+  "from": string;
+  "to": string;
+  "cost_rate_cents": number;
+  "entry_count": number;
+  "seconds": number;
+  "cost_cents": number;
+  "periods": Array<CostRateBackfillPeriod>;
+  "captured_entry_count": number;
+  "running_entry_count": number;
+};
+
+export type CostRateBackfillEnvelope = {
+  "data": CostRateBackfill;
+  "links": Links;
+};
+
 export type TeamCommandReceipt = {
   "target_user_id": number;
   "version": number;
@@ -6915,6 +6951,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
     if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<TeamCommandReceiptEnvelope>("DELETE", "/api/v1/team/people/:id/rates/:rateId".replace(":id", encodeURIComponent(String(args["id"]))).replace(":rateId", encodeURIComponent(String(args["rateId"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async backfillTeamPersonCostRate(args: { "id": number; "Idempotency-Key": string; body: CostRateBackfillInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<CostRateBackfillEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<CostRateBackfillEnvelope>("POST", "/api/v1/team/people/:id/cost-rate-backfill".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
       signal: args.signal,
       headers,

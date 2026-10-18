@@ -85,7 +85,7 @@ export const createActivityController = (api: ActivityApi): ActivityController =
         rowKey: (row) => row.event_id,
         empty: 'Nothing matches these filters.',
         columns: [
-          { key: 'when', label: 'When', render: (row) => row.occurred_at },
+          { key: 'when', label: 'When', fit: true, render: (row) => row.occurred_at },
           { key: 'event', label: 'Event', render: (row) => eventLabel(row.event_type) },
           { key: 'who', label: 'Who', render: (row) => actorCell(row.actor) },
           {

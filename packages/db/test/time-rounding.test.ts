@@ -49,12 +49,12 @@ interface TestDatabase {
 }
 
 /** The migration before this one: a database as it stood without the new columns. */
-const before0110 = '0109_expense_delete_receipts'
+const before0112 = '0111_invoice_totals_per_invoice'
 
 const containerDatabase = async (upToDate: boolean): Promise<TestDatabase> => {
   const sqlite = new BetterSqlite3(':memory:')
   if (upToDate) migrateContainer(sqlite)
-  else migrateContainerThrough(sqlite, before0110)
+  else migrateContainerThrough(sqlite, before0112)
   return {
     orm: createContainerDatabase(sqlite),
     run: async (sql, ...params) => {
@@ -76,7 +76,7 @@ const d1Database = async (upToDate: boolean): Promise<TestDatabase> => {
   })
   const d1 = await miniflare.getD1Database('DB')
   if (upToDate) await migrateD1(d1)
-  else await migrateD1Through(d1, before0110)
+  else await migrateD1Through(d1, before0112)
   return {
     orm: createD1Database(d1),
     run: async (sql, ...params) => {
@@ -663,7 +663,7 @@ for (const [runtime, factory] of factories) {
   })
 }
 
-describe('migration 0110 (container)', { timeout: slowTimeout }, () => {
+describe('migration 0112 (container)', { timeout: slowTimeout }, () => {
   const legacy: ReadonlyArray<LegacyTimeRounding> = [
     'none',
     'nearest_6',
@@ -730,7 +730,7 @@ describe('migration 0110 (container)', { timeout: slowTimeout }, () => {
   })
 })
 
-describe('migration 0110 (D1)', { timeout: slowTimeout }, () => {
+describe('migration 0112 (D1)', { timeout: slowTimeout }, () => {
   it('[unit] backfills the old enum and rewrites no entry', async () => {
     const db = await d1Database(false)
     try {
