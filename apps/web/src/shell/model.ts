@@ -35,7 +35,7 @@ import {
   type TeamNotificationPreference,
 } from '@conflict-hq/ezacto-client'
 import type { InvoiceState } from '../invoices/model.js'
-import type { ActivityRow } from '../activity/browser.js'
+import type { ActivityQuery, ActivityRow } from '../activity/browser.js'
 import type { LogPageResult } from '../components/paged-log.js'
 import type {
   EmailLogQuery,
@@ -132,9 +132,12 @@ export interface ShellApi
   getActivityLogEnabled?(signal?: AbortSignal): Promise<boolean>
   /** The page size a caller may raise when it is walking, not browsing. */
   listActivityLog?(
-    query: { readonly from?: string; readonly to?: string; readonly event_type?: string },
+    query: ActivityQuery,
     signal?: AbortSignal,
-  ): Promise<{ readonly data: readonly ActivityRow[] }>
+  ): Promise<{
+    readonly data: readonly ActivityRow[]
+    readonly page?: { readonly next_cursor: string | null }
+  }>
   /**
    * The tokens you have issued, and issuing another (issue 485).
    *

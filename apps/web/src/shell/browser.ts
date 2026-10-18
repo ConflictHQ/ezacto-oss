@@ -94,6 +94,7 @@ import {
   paintNotificationFields,
   readNotificationFields,
 } from '../team/notification-fields.js'
+import { personLabel } from '../projects/model.js'
 import { teamCapabilities } from '../team/model.js'
 import { createExpenseCategoryDirectoryController } from '../expense-categories/browser.js'
 import { createEmailConfigurationController } from '../email-config/browser.js'
@@ -1554,6 +1555,22 @@ export const mountShell = async (
       api.listActivityLog === undefined
         ? { data: [] }
         : api.listActivityLog(query, signal),
+    // Everyone the directory lists, active or not: the log keeps the actions of
+    // people who have since been archived, and the picker must reach them too.
+    listActors: async (signal) => {
+      const listUsers = api.listDirectoryUsers
+      if (listUsers === undefined) return []
+      const people: GeneralResource[] = []
+      let cursor: string | undefined
+      do {
+        const page = await listUsers(cursor, signal)
+        people.push(...page.data)
+        cursor = page.page.next_cursor ?? undefined
+      } while (cursor !== undefined)
+      return people
+        .map((person) => ({ id: person.id, name: personLabel(person.id, people) }))
+        .sort((left, right) => left.name.localeCompare(right.name, 'en-US'))
+    },
   })
   // Same shape as the activity controller above: an install whose api does not
   // offer these still serves the page and says it cannot load, rather than the
@@ -4541,7 +4558,12 @@ export const mountShell = async (
         loadWeek(authenticated),
       ])
     } else if (document.querySelector('[data-activity-log-page]:not([hidden])') !== null) {
-      await Promise.all([activity.activate(authenticated.signal), loadWeek(authenticated)])
+      await Promise.all([
+        activity.activate(authenticated.signal, {
+          administrator: identity.profile === 'administrator',
+        }),
+        loadWeek(authenticated),
+      ])
     } else if (document.querySelector('[data-deliveries-page]:not([hidden])') !== null) {
       await Promise.all([deliveries.activate(authenticated.signal), loadWeek(authenticated)])
     } else if (document.documentElement.dataset.appView === 'staff-payments') {

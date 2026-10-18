@@ -1931,6 +1931,7 @@
       "get": {
         "operationId": "listActivityLog",
         "summary": "List activity recorded from delivered domain events (403 `module_disabled` when the module is off)",
+        "description": "Newest first, a page at a time, ordered by when each entry was recorded and then its event id. Every filter narrows together; a value that is not valid is a 422, never an empty page. aggregate_id needs aggregate_type. Sign-in, token and account-deletion events are left out unless the reader is an administrator.",
         "tags": [
           "activity"
         ],
@@ -1985,6 +1986,14 @@
         "x-ezacto-generate-client": true,
         "parameters": [
           {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "per_page",
             "in": "query",
             "required": false,
@@ -2022,6 +2031,23 @@
           },
           {
             "name": "actor_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "aggregate_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "aggregate_id",
             "in": "query",
             "required": false,
             "schema": {
@@ -28995,7 +29021,8 @@
         "type": "object",
         "required": [
           "data",
-          "links"
+          "links",
+          "page"
         ],
         "properties": {
           "data": {
@@ -29005,7 +29032,10 @@
             }
           },
           "links": {
-            "$ref": "#/components/schemas/Links"
+            "$ref": "#/components/schemas/PageLinks"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMetadata"
           }
         },
         "additionalProperties": false

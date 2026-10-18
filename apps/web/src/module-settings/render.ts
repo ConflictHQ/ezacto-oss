@@ -423,13 +423,27 @@ export const renderActivityLogPage = (view?: string): string => `
         <input id="ez-activity-to" type="date" data-activity-to>
       </label>
       <label for="ez-activity-type">Event
-        <select id="ez-activity-type" data-activity-type>
-          <option value="" selected>Every event</option>
+        <input id="ez-activity-type" type="text" list="ez-activity-type-options" placeholder="Every event" autocomplete="off" data-activity-type>
+        <datalist id="ez-activity-type-options" data-activity-type-options></datalist>
+      </label>
+      <label for="ez-activity-actor">Who
+        <select id="ez-activity-actor" data-activity-actor>
+          <option value="" selected>Anyone</option>
         </select>
       </label>
+      <label for="ez-activity-entity">About
+        <select id="ez-activity-entity" data-activity-entity>
+          <option value="" selected>Anything</option>
+        </select>
+      </label>
+      <label for="ez-activity-entity-id">Record number
+        <input id="ez-activity-entity-id" type="number" min="1" step="1" inputmode="numeric" data-activity-entity-id>
+      </label>
+      <button type="button" data-activity-clear>Clear filters</button>
     </div>
     <p class="form-result module-settings-status" data-activity-log-status role="status" aria-live="polite">Loading activity…</p>
     <div data-activity-log-list></div>
+    <p><button type="button" data-activity-more hidden>Load more</button></p>
   </main>
 
 `

@@ -748,7 +748,8 @@ export type ActivityLog = {
 
 export type ActivityLogPage = {
   "data": Array<ActivityLog>;
-  "links": Links;
+  "links": PageLinks;
+  "page": PageMetadata;
 };
 
 export type OutboxDelivery = {
@@ -4331,7 +4332,7 @@ export class EzactoClient {
     });
   }
 
-  async listActivityLog(args: { query?: { "per_page"?: number; "from"?: string; "to"?: string; "event_type"?: string; "actor_id"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ActivityLogPage> {
+  async listActivityLog(args: { query?: { "cursor"?: string; "per_page"?: number; "from"?: string; "to"?: string; "event_type"?: string; "actor_id"?: number; "aggregate_type"?: string; "aggregate_id"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ActivityLogPage> {
     const headers = new Headers(args.headers);
 
     return this.request<ActivityLogPage>("GET", "/api/v1/activity-log", {

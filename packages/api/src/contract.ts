@@ -2978,12 +2978,18 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     tag: "activity",
     responseStatus: 200,
     responseSchema: "ActivityLogPage",
+    description:
+      "Newest first, a page at a time, ordered by when each entry was recorded and then its event id. " +
+      "Every filter narrows together; a value that is not valid is a 422, never an empty page. " +
+      "aggregate_id needs aggregate_type. Sign-in, token and account-deletion events are left out unless the reader is an administrator.",
     parameters: [
-      query("per_page", { type: "integer", minimum: 1, maximum: 200 }),
+      ...pageParameters,
       query("from", dateSchema),
       query("to", dateSchema),
       query("event_type", stringSchema),
       query("actor_id", integerSchema),
+      query("aggregate_type", stringSchema),
+      query("aggregate_id", integerSchema),
     ],
   },
   {
@@ -4400,15 +4406,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
-  ActivityLogPage: {
-    type: "object",
-    required: ["data", "links"],
-    properties: {
-      data: { type: "array", items: reference("ActivityLog") },
-      links: reference("Links"),
-    },
-    additionalProperties: false,
-  },
+  ActivityLogPage: page("ActivityLog"),
   OutboxDelivery: {
     type: "object",
     required: [
