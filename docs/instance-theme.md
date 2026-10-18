@@ -164,3 +164,61 @@ matches the product they are paying for. It is a dashboard change rather than a
 code one, which is why it is recorded here — nothing in this repo can enforce
 it, and the next person to compare the two needs to know which side was
 considered right.
+
+## Brand surface audit (#1011)
+
+Where an instance's colours and marks reach, and where they do not. Each row is
+one surface, cites the source that decides it, and is exactly one of:
+
+- **delivered**: the source reads the instance brand today.
+- **gap**: the source does not, and the surface wears the built-in look.
+- **external**: set outside this repository.
+- **none**: nothing in this repository draws it.
+
+`packages/core/test/brand-surfaces.test.ts` holds this table to the source. A
+delivered row fails the build if its source stops reading the brand; a gap row
+fails the build once its source starts, so the row is flipped in the same change
+that closes the gap; and a new HTML page, PDF writer or email body builder that
+has no row fails until it gets one. A new surface cannot quietly bypass the
+instance brand.
+
+| Surface | What | Source | Status |
+| --- | --- | --- | --- |
+| `shell-colours` | App shell and sign-in link the instance stylesheet after the built-in one | `apps/web/src/shell/render.ts` | delivered |
+| `shell-marks` | Topbar and sign-in splash draw the dark-ground wordmark, falling back to the deployment name | `apps/web/src/shell/render.ts` | delivered |
+| `shell-favicon` | Tab icon from the `favicon` slot | `apps/web/src/shell/render.ts` | delivered |
+| `document-shell-marks` | Document shell draws the light-ground wordmark | `apps/web/src/shell/render.ts` | delivered |
+| `palette-stylesheet` | `GET /assets/instance-theme.css`, served without a session | `packages/api/src/instance-theme.ts` | delivered |
+| `portal-brand-api` | `GET /api/v1/brand`: name, marks and palette for a portal | `packages/api/src/brand-assets.ts` | delivered |
+| `invoice-pdf-logo` | Invoice PDF draws the `wordmark_light` mark, else the company name | `packages/db/src/money-resources.ts`, `entries/worker/src/invoice-documents.ts` | delivered |
+| `invoice-pdf-colours` | Invoice PDF is greyscale apart from the fixed watermark; no palette token reaches it | `packages/core/src/invoice-document.ts` | gap |
+| `report-pdf-name` | Detailed-time report header carries the nearest-ancestor report brand name | `packages/db/src/month-end-pack.ts`, `packages/core/src/report-document.ts` | delivered |
+| `report-pdf-logo-colours` | Report brands store a logo URL and two colours; the report PDF draws only the name | `packages/core/src/report-document.ts` | gap |
+| `email-body` | Invoice, estimate and reminder bodies use fixed inline colours and no mark | `packages/core/src/invoice-email.ts`, `packages/core/src/email-templates.ts` | gap |
+| `email-sender` | The mailer takes the provider From value and nothing from the brand; `emailSenderName` is read only by the demo | `packages/mailer/src/index.ts` | gap |
+| `apple-disconnect` | The standalone Apple disconnect page links neither the instance stylesheet nor a mark, and names the product in its title and copy | `apps/web/src/shell/render.ts` | gap |
+| `stripe-checkout` | Branded in Stripe's dashboard; see the note above | none | external |
+| `native-apps` | Mobile themes are owned by ConflictHQ/ezacto-mobile#25 | none | none |
+
+Not found anywhere: a product name an administrator sets (the deployment name
+comes from the `BRAND_NAME` variable, not from Settings), a footer line or
+signature text, and any use of the palette in a document.
+
+### Deliberately never branded
+
+These stay as they are whatever an instance configures, and this audit does not
+propose changing them:
+
+- **The legal and transactional sender.** The verified sender identity and the
+  provider From value on mail identify who is sending. A brand never replaces
+  or hides them.
+- **The AGPL notice and attribution.** `LICENSE` and `NOTICE` describe the
+  software as licensed; branding customer-facing surfaces does not alter those
+  obligations.
+- **Store listing identity.** The app store names, bundle identifiers and
+  listings of the native apps.
+- **Custom domains.** Owned by the hosted and portal work, not by this table.
+
+Product renaming, hiding the product name, and any pricing or entitlement for
+white-label are undecided and recorded as such in #1011. Nothing in this
+repository gates branding.
