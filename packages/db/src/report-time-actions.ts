@@ -1,8 +1,10 @@
+import { roundTimeSeconds } from '@ezacto/core'
 import { sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
 import { resolveEntryRates } from './rate-resolver.js'
+import { timeRoundingForProject } from './time-entries.js'
 
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 export type ReportTimeAction = 'mark_invoiced' | 'mark_uninvoiced' | 'move'
@@ -33,6 +35,8 @@ type Entry = {
   projectId: number
   taskId: number
   spentDate: string
+  seconds: number
+  roundedSeconds: number
   invoiceId: number | null
   timerStartedAt: string | null
   startedTime: string | null
@@ -97,7 +101,8 @@ export const executeReportTimeAction = async (
   const requested = sql.join(input.entryIds.map((id) => sql`${id}`), sql`, `)
   const entries = await database.all<Entry>(sql`
     SELECT id, user_id AS "userId", project_id AS "projectId", task_id AS "taskId",
-      spent_date AS "spentDate", invoice_id AS "invoiceId",
+      spent_date AS "spentDate", seconds AS "seconds", rounded_seconds AS "roundedSeconds",
+      invoice_id AS "invoiceId",
       timer_started_at AS "timerStartedAt", started_time AS "startedTime",
       ended_time AS "endedTime", approval_status AS "approvalStatus",
       updated_at AS "updatedAt"
@@ -151,10 +156,18 @@ export const executeReportTimeAction = async (
         taskAssignmentId: assignment.taskAssignmentId,
         spentDate: entry.spentDate,
       })
+      // Moved time is rounded by the rule of the project it moves to, as an
+      // edit that changes the project is (issue 949). A negative entry is an
+      // imported correction and keeps its source's figure.
+      const roundedSeconds =
+        entry.seconds >= 0
+          ? roundTimeSeconds(entry.seconds, await timeRoundingForProject(database, input.projectId!))
+          : entry.roundedSeconds
       await database.run(sql`UPDATE time_entries SET project_id = ${input.projectId!}, task_id = ${input.taskId!},
         user_assignment_id = ${assignment.userAssignmentId}, task_assignment_id = ${assignment.taskAssignmentId},
         billable = ${assignment.billable}, billable_rate_cents = ${rates.billableRateCents},
-        cost_rate_cents = ${rates.costRateCents}, updated_at = ${input.completedAt}
+        cost_rate_cents = ${rates.costRateCents}, rounded_seconds = ${roundedSeconds},
+        updated_at = ${input.completedAt}
         WHERE id = ${entry.id} AND invoice_id IS NULL AND ${stoppedSql}
           AND approval_status = 'unsubmitted' AND updated_at = ${entry.updatedAt}`)
       changed.push(entry.id)

@@ -13,6 +13,7 @@ import { idempotencyAuthorizationMigration } from './migrations/0108_idempotency
 import { expenseDeleteReceiptsMigration } from './migrations/0109_expense_delete_receipts.js'
 import { costRateBackfillMigration } from './migrations/0110_cost_rate_backfill.js'
 import { invoiceTotalsPerInvoiceMigration } from './migrations/0111_invoice_totals_per_invoice.js'
+import { timeRoundingSettingsMigration } from './migrations/0112_time_rounding_settings.js'
 import { projectBudgetAlertsMigration } from './migrations/0113_project_budget_alerts.js'
 import { timeRemindersMigration } from './migrations/0114_time_reminders.js'
 import { organizationInvoiceDefaultsMigration } from './migrations/0097_organization_invoice_defaults.js'
@@ -1579,6 +1580,7 @@ const migrations = [
   { id: '0109_expense_delete_receipts', statements: expenseDeleteReceiptsMigration },
   { id: '0110_cost_rate_backfill', statements: costRateBackfillMigration },
   { id: '0111_invoice_totals_per_invoice', statements: invoiceTotalsPerInvoiceMigration },
+  { id: '0112_time_rounding_settings', statements: timeRoundingSettingsMigration },
   { id: '0113_project_budget_alerts', statements: projectBudgetAlertsMigration },
   { id: '0114_time_reminders', statements: timeRemindersMigration },
 ] as const

@@ -1307,6 +1307,7 @@ describe('Reports Stage 1 browser controller', () => {
       time_format: 'decimal' as const,
       clock: '24h' as const,
       week_start_day: 'saturday' as const,
+      time_rounding: { mode: 'exact' as const, minutes: 15 as const },
     }))
     await createReportsController(
       baseApi({ getUninvoicedReport, getTimeEntrySettings }),

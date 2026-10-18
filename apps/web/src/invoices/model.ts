@@ -1,3 +1,4 @@
+import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 import { EzactoApiError } from '@conflict-hq/ezacto-client'
 import type {
   Attachment,
@@ -133,6 +134,13 @@ export interface InvoicePaymentApi {
    * nicety: the page reads without one, and says "Client #id" instead.
    */
   getDirectoryClient?(id: number, signal?: AbortSignal): Promise<GeneralResource>
+  /**
+   * The projects the lines are linked to and the organization's rounding rule,
+   * so the page can say which rounding applies to them (issue 949). Both are
+   * niceties: the page reads without them.
+   */
+  getDirectoryProject?(id: number, signal?: AbortSignal): Promise<GeneralResource>
+  getTimeEntrySettings?(signal?: AbortSignal): Promise<Pick<TimeEntrySettings, 'time_rounding'>>
   /** The hours this invoice billed, as a file (the work journal, issue 647). */
   downloadInvoiceHoursReport?(
     id: number,

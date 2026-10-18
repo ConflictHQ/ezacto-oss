@@ -380,7 +380,7 @@ describe('Projects V1 browser controller', () => {
     expect(form.elements.namedItem('cost_budget_cents')).toBeNull()
     expect(form.elements.namedItem('notes')).toBeNull()
     ;(form.elements.namedItem('name') as HTMLInputElement).value = 'Manager update'
-    for (const field of ['billing_method', 'bill_by', 'billing_currency']) expect(form.elements.namedItem(field)).toBeNull()
+    for (const field of ['billing_method', 'bill_by', 'billing_currency', 'time_rounding_mode', 'time_rounding_minutes']) expect(form.elements.namedItem(field)).toBeNull()
     form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
 
     await vi.waitFor(() => expect(updateDirectoryProject).toHaveBeenCalledTimes(1))
@@ -395,7 +395,57 @@ describe('Projects V1 browser controller', () => {
     expect(payload).not.toHaveProperty('fee_cents')
     expect(payload).not.toHaveProperty('cost_budget_cents')
     expect(payload).not.toHaveProperty('notes')
-    for (const field of ['billing_method', 'bill_by', 'billing_currency']) expect(payload).not.toHaveProperty(field)
+    for (const field of ['billing_method', 'bill_by', 'billing_currency', 'time_rounding_mode', 'time_rounding_minutes']) expect(payload).not.toHaveProperty(field)
+  })
+
+  it('[browser #949] sets a project rounding rule as a direction and an increment, or none', async () => {
+    writeDocument('project-detail', '/projects/7')
+    let stored: GeneralResource = { ...project, time_rounding_mode: null, time_rounding_minutes: null }
+    const updateDirectoryProject = vi.fn(async (_id, patch) => (stored = { ...stored, ...patch }))
+    const api = detailApi({ getDirectoryProject: vi.fn(async () => stored), updateDirectoryProject })
+    const controller = createProjectDirectoryController(api)
+
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+    const facts = (): string => document.querySelector('[data-project-facts]')?.textContent ?? ''
+    expect(facts()).toContain('Time rounding')
+    expect(facts()).toContain('Organization default')
+
+    document.querySelector<HTMLButtonElement>('[data-project-edit]')!.click()
+    const form = document.querySelector<HTMLFormElement>('[data-project-form]')!
+    const mode = form.elements.namedItem('time_rounding_mode') as HTMLSelectElement
+    const minutes = form.elements.namedItem('time_rounding_minutes') as HTMLSelectElement
+    // With no rule of its own there is nothing for an increment to belong to.
+    expect(mode.value).toBe('')
+    expect(minutes.disabled).toBe(true)
+    expect([...mode.options].map((option) => option.value)).toEqual(['', 'exact', 'up', 'down', 'nearest'])
+    expect([...minutes.options].map((option) => option.value)).toEqual(['6', '10', '15', '20', '30', '60'])
+
+    mode.value = 'up'
+    mode.dispatchEvent(new Event('change', { bubbles: true }))
+    expect(minutes.disabled).toBe(false)
+    minutes.value = '30'
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(updateDirectoryProject).toHaveBeenCalledTimes(1))
+    expect(updateDirectoryProject.mock.calls[0]![1]).toMatchObject({
+      time_rounding_mode: 'up',
+      time_rounding_minutes: 30,
+    })
+    await vi.waitFor(() => expect(facts()).toContain('rounded up to 30 min'))
+
+    // Back to the organization's rule: both null, never half a rule.
+    document.querySelector<HTMLButtonElement>('[data-project-edit]')!.click()
+    const again = document.querySelector<HTMLFormElement>('[data-project-form]')!
+    const againMode = again.elements.namedItem('time_rounding_mode') as HTMLSelectElement
+    expect(againMode.value).toBe('up')
+    expect((again.elements.namedItem('time_rounding_minutes') as HTMLSelectElement).value).toBe('30')
+    againMode.value = ''
+    againMode.dispatchEvent(new Event('change', { bubbles: true }))
+    again.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(updateDirectoryProject).toHaveBeenCalledTimes(2))
+    expect(updateDirectoryProject.mock.calls[1]![1]).toMatchObject({
+      time_rounding_mode: null,
+      time_rounding_minutes: null,
+    })
   })
 
   it('[browser] submits exact authorized project and task-assignment units', async () => {

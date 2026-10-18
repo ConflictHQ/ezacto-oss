@@ -1,3 +1,4 @@
+import { renderTimeRoundingSection } from './time-rounding-render.js'
 import { renderRetentionSection } from './retention.js'
 import { iconMarkup } from '../components/icons.js'
 import { demoUnavailable } from '../demo.js'
@@ -52,7 +53,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
         </label>
         <button class="primary-action" type="submit" data-note-settings-submit>Save notes policy</button>
       </form>
-      <p class="form-result" data-note-settings-result role="status" aria-live="polite"></p>
+      <p class="form-result" data-note-settings-result role="status" aria-live="polite"></p>${renderTimeRoundingSection()}
     </section>
     <section class="settings-section" data-settings-section="email" aria-labelledby="settings-email-title">
       <header><h2 id="settings-email-title">Email delivery</h2>

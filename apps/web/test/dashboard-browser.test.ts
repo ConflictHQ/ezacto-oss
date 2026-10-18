@@ -217,6 +217,7 @@ const dashboardApi = (
     time_format: 'decimal' as const,
     clock: '12h' as const,
     week_start_day: 'monday' as const,
+    time_rounding: { mode: 'exact' as const, minutes: 15 as const },
   })),
   listTimeEntries: vi.fn(async (query) => (query.is_running === true ? [] : [entry(10_800)])),
   createTimeEntry: vi.fn(),
@@ -583,6 +584,7 @@ describe('what the owed card is allowed to claim', () => {
       time_format: 'decimal' as const,
       clock: '12h' as const,
       week_start_day: 'monday' as const,
+      time_rounding: { mode: 'exact' as const, minutes: 15 as const },
     }))
     renderDashboard()
     await mountShell(
