@@ -49,6 +49,7 @@ import {
   installSessionRoutes,
   installSsoDomainRoutes,
   installTwoFactorRoutes,
+  installCalendarProposalRoutes,
   installTrackedResourceRoutes,
   installTeamRoutes,
   installTimesheetApprovalRoutes,
@@ -70,6 +71,7 @@ import {
   type MoneyResourceRouteOptions,
   type ReportReader,
   type SsoProvisioningDomainService,
+  type CalendarProposalRepository,
   type TrackedResourceRepository,
   type UserEmailService,
   type TimesheetApprovalService,
@@ -89,6 +91,10 @@ const trackedRepository = new Proxy(
   {},
   { get: () => unavailable },
 ) as TrackedResourceRepository;
+const calendarProposals = new Proxy(
+  {},
+  { get: () => unavailable },
+) as CalendarProposalRepository;
 const timesheetApprovals = new Proxy(
   {},
   { get: () => unavailable },
@@ -272,6 +278,17 @@ const documentedApp = () =>
           }),
         },
         isExpensesModuleEnabled: async () => true,
+      });
+      installCalendarProposalRoutes(api, {
+        repository: calendarProposals,
+        cursorSigningKey: new Uint8Array(32),
+        clock: {
+          now: () => ({
+            instant: "2026-08-28T12:00:00.000Z",
+            date: "2026-08-28",
+            time: "12:00",
+          }),
+        },
       });
       installTimesheetApprovalRoutes(api, {
         service: timesheetApprovals,

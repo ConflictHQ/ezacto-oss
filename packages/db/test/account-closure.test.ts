@@ -213,6 +213,30 @@ for (const runtime of ['SQLite', 'D1'])
         { is_active: 1, first_name: 'Jo' },
       ])
     })
+    it('erases the closed person’s calendar proposals (issue 428) and nobody else’s', async () => {
+      const { closure, rows, exec } = await setup()
+      // A meeting title is personal data and is not time worked, so unlike an
+      // accepted time entry it is not retained for attribution.
+      await exec(
+        `INSERT INTO calendar_proposals(user_id,provider,calendar_id,event_id,title,starts_at,ends_at,created_at,updated_at) VALUES
+        (2,'google','primary','e1','Pat’s 1:1','2026-10-08T14:00:00.000Z','2026-10-08T15:00:00.000Z','${at}','${at}'),
+        (3,'google','primary','e1','Jo’s 1:1','2026-10-08T14:00:00.000Z','2026-10-08T15:00:00.000Z','${at}','${at}')`,
+      )
+      const preview = await closure.preview(1, 'close-pat')
+      expect(JSON.stringify(preview)).not.toContain('calendar_proposals')
+      await closure.close({
+        actorUserId: 1,
+        id: 'close-pat',
+        reviewToken: preview.review_token,
+        expectedVersion: 1,
+        expectedPolicyVersion: 1,
+        now: later,
+        acknowledged: true as const,
+      })
+      expect(await rows('SELECT user_id,title FROM calendar_proposals ORDER BY id')).toEqual([
+        { user_id: 3, title: 'Jo’s 1:1' },
+      ])
+    })
     it('removes every local secret and refuses already-issued session, API, email and app-handoff credentials', async () => {
       const { closure, db, rows, exec, sessions, magic, codes } = await setup()
       const session = await sessions.issue(2)

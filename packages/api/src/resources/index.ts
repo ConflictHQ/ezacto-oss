@@ -24,6 +24,15 @@ export const installTrackedResourceRoutes = <Bindings extends object>(
 }
 
 export {
+  installCalendarProposalRoutes,
+  serializeCalendarProposal,
+  type AcceptCalendarProposalRequest,
+  type CalendarProposalFilters,
+  type CalendarProposalRecord,
+  type CalendarProposalRepository,
+  type CalendarProposalRouteOptions,
+} from './calendar-proposals.js'
+export {
   installExpenseRoutes,
   serializeExpense,
   type ExpenseRouteOptions,

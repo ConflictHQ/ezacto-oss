@@ -45,6 +45,7 @@ import {
   createD1SessionStore,
   lastSeenIntervalFromSeconds,
   createD1SsoProvisioningDomainStore,
+  DrizzleCalendarProposalRepository,
   DrizzleTrackedResourceRepository,
   countBackupRuns,
   getBackupRunsSnapshot,
@@ -658,6 +659,7 @@ export const createRuntimeServices = async (
   await ensureRuntimeDatabaseReady(database);
   const drizzle = createD1Database(database);
   const timesheetLockPolicy = createTimesheetLockPolicyRepository(drizzle);
+  const trackedResources = new DrizzleTrackedResourceRepository(drizzle, timesheetLockPolicy);
   const touchIntervalMs = lastSeenIntervalFromSeconds(env.LAST_SEEN_INTERVAL_SECONDS);
   const sessions = createApiSessionService(
     createD1SessionStore(database, { touchIntervalMs }),
@@ -1128,10 +1130,8 @@ export const createRuntimeServices = async (
         await captureActivityEvent(drizzle, request);
       },
     },
-    trackedResources: new DrizzleTrackedResourceRepository(
-      drizzle,
-      timesheetLockPolicy,
-    ),
+    trackedResources,
+    calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
     profile: {
       readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
       readIdentity: async (userId) => await readUserIdentity(drizzle, userId),

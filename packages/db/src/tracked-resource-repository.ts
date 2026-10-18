@@ -1014,7 +1014,16 @@ export class DrizzleTrackedResourceRepository {
     actor: TimeEntryActor,
     input: Readonly<CreateTimeEntryRequest>,
     boundary: TimeBoundary,
+    /**
+     * Statements that commit with a stopped entry or not at all, ahead of any
+     * audit. Accepting a calendar proposal marks it accepted in the same batch
+     * (issue 428), so a refusal here leaves the proposal open.
+     */
+    followUps: readonly CompiledQuery[] = [],
   ): Promise<TimeEntryRecord> {
+    if (followUps.length > 0 && input.seconds === undefined && input.endedTime === undefined) {
+      throw new Error('follow-up statements ride only with a stopped time entry')
+    }
     // Everything below is the owner's: their assignments, their timesheet,
     // their rates. Only the audit names the actor.
     const userId = input.userId ?? actor.userId
@@ -1093,7 +1102,7 @@ export class DrizzleTrackedResourceRepository {
               createdAt: boundary.instant,
               updatedAt: boundary.instant,
             },
-            onBehalfAudit(actor, userId, { action: 'create' }, boundary.instant),
+            [...followUps, ...onBehalfAudit(actor, userId, { action: 'create' }, boundary.instant)],
           )
         } catch (error) {
           return this.#translateApprovalPeriodWriteError(error, userId, input.spentDate, false)
@@ -1172,7 +1181,7 @@ export class DrizzleTrackedResourceRepository {
               createdAt: boundary.instant,
               updatedAt: boundary.instant,
             },
-            onBehalfAudit(actor, userId, { action: 'create' }, boundary.instant),
+            [...followUps, ...onBehalfAudit(actor, userId, { action: 'create' }, boundary.instant)],
           )
         } catch (error) {
           return this.#translateApprovalPeriodWriteError(error, userId, input.spentDate, false)

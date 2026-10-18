@@ -231,7 +231,7 @@ reproduces Harvest's inconsistency.
 | `approval_status` | enum `unsubmitted\|submitted\|approved` | Axis 1. |
 | `invoice_id` | fk nullable | Axis 2; `is_billed` ⇔ non-null. |
 | `external_ref` | json nullable | `{id, group_id, account_id, permalink}` + derived `{service, service_icon_url}` from a service registry keyed on permalink host. `id` indexed **as text**. |
-| `calendar_event_ref` | json nullable | UI 33/39 "Pull in a calendar event". |
+| `calendar_event_ref` | json nullable | UI 33/39 "Pull in a calendar event". Written by accepting a calendar proposal as `{provider, event_id, calendar_id}` (issue 428); the proposal itself is a separate `calendar_proposals` row, never a time entry. |
 
 `is_locked` and `locked_reason` are **derived, never stored** (§3.2).
 
