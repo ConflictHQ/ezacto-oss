@@ -11,19 +11,99 @@ export interface ActivityRow {
   readonly recorded_at: string
 }
 
+export interface ActivityQuery {
+  readonly from?: string
+  readonly to?: string
+  readonly event_type?: string
+  readonly actor_id?: number
+  readonly aggregate_type?: string
+  readonly aggregate_id?: number
+  /** Where the previous page ended; absent on the first page. */
+  readonly cursor?: string
+}
+
 export interface ActivityApi {
   listActivityLog(
-    query: {
-      readonly from?: string
-      readonly to?: string
-      readonly event_type?: string
-    },
+    query: ActivityQuery,
     signal?: AbortSignal,
-  ): Promise<{ readonly data: readonly ActivityRow[] }>
+  ): Promise<{
+    readonly data: readonly ActivityRow[]
+    readonly page?: { readonly next_cursor: string | null }
+  }>
+  /** The people the actor picker offers. Absent where the build cannot list them. */
+  listActors?(signal?: AbortSignal): Promise<readonly { readonly id: number; readonly name: string }[]>
+}
+
+export interface ActivityViewer {
+  /**
+   * Whether the reader may open the records the log points at. The records
+   * behind these links are an administrator's to open, so anyone else sees the
+   * subject named and no link to a page that would refuse them.
+   */
+  readonly administrator: boolean
 }
 
 export interface ActivityController {
-  activate(signal: AbortSignal): Promise<void>
+  activate(signal: AbortSignal, viewer?: ActivityViewer): Promise<void>
+}
+
+/** What the event picker suggests. A suggestion, not a limit: any event type can be typed. */
+export const KNOWN_ACTIVITY_EVENT_TYPES: readonly string[] = [
+  'auth.signed_in',
+  'auth.signed_out',
+  'api_token.created',
+  'api_token.revoked',
+  'backup.exported',
+  'backup.restored',
+  'account.deletion_requested',
+  'timesheet.submitted',
+  'timesheet.approved',
+  'timesheet.rejected',
+  'timesheet.withdrawn',
+  'timesheet.locked',
+  'timesheet.unlocked',
+  'invoice.created',
+]
+
+/** The kinds of record an entry can be about, with the words the picker uses. */
+export const ACTIVITY_ENTITY_KINDS: readonly (readonly [type: string, label: string])[] = [
+  ['invoice', 'Invoice'],
+  ['timesheet_submission', 'Timesheet approval'],
+  ['timesheet_lock', 'Timesheet lock'],
+  ['user_authentication', 'Sign-in'],
+  ['api_token', 'API token'],
+  ['backup_run', 'Backup'],
+  ['backup_restore', 'Restore'],
+  ['user_account', 'Account'],
+]
+
+/**
+ * Where a subject lives, for the kinds that have a page of their own. A
+ * timesheet approval is a row in the approvals queue and has no page per
+ * submission, so it points at the queue.
+ */
+export const subjectHref = (aggregate: { readonly type: string; readonly id: number }): string | null => {
+  switch (aggregate.type) {
+    case 'invoice':
+      return `/invoices/by-id/${aggregate.id}`
+    case 'timesheet_submission':
+      return '/approvals'
+    case 'user_authentication':
+    case 'user_account':
+      return `/team/${aggregate.id}`
+    default:
+      return null
+  }
+}
+
+const subjectCell = (aggregate: ActivityRow['aggregate'], linked: boolean): CellContent => {
+  const label = `${aggregate.type} #${aggregate.id}`
+  const href = linked ? subjectHref(aggregate) : null
+  if (href === null) return label
+  const link = document.createElement('a')
+  link.href = href
+  link.textContent = label
+  return link
 }
 
 const required = <ElementType extends Element>(selector: string): ElementType => {
@@ -81,8 +161,35 @@ export const createActivityController = (api: ActivityApi): ActivityController =
   // constrained to. Narrowed at the use site instead, which is the same check
   // one layer down and compiles under both lib sets.
   const type = required('[data-activity-type]') as unknown as HTMLInputElement
+  const typeSuggestions = required<HTMLElement>('[data-activity-type-options]')
+  const actor = required('[data-activity-actor]') as unknown as HTMLInputElement
+  const entity = required('[data-activity-entity]') as unknown as HTMLInputElement
+  const entityId = required<HTMLInputElement>('[data-activity-entity-id]')
+  const clear = required<HTMLButtonElement>('[data-activity-clear]')
+  const more = required<HTMLButtonElement>('[data-activity-more]')
+  const controls = [from, to, type, actor, entity, entityId, clear, more]
+
+  typeSuggestions.replaceChildren(
+    ...KNOWN_ACTIVITY_EVENT_TYPES.map((value) => {
+      const suggestion = document.createElement('option')
+      suggestion.value = value
+      return suggestion
+    }),
+  )
+  entity.replaceChildren(
+    ...[['', 'Anything'] as const, ...ACTIVITY_ENTITY_KINDS].map(([value, label]) => {
+      const choice = document.createElement('option')
+      choice.value = value
+      choice.textContent = label
+      return choice
+    }),
+  )
 
   let active: AbortSignal | null = null
+  let viewer: ActivityViewer = { administrator: false }
+  let shown: ActivityRow[] = []
+  let nextCursor: string | null = null
+  let actorsLoaded = false
 
   const render = (rows: readonly ActivityRow[]): void => {
     list.replaceChildren(
@@ -98,14 +205,51 @@ export const createActivityController = (api: ActivityApi): ActivityController =
           {
             key: 'subject',
             label: 'Subject',
-            render: (row) => `${row.aggregate.type} #${row.aggregate.id}`,
+            render: (row) => subjectCell(row.aggregate, viewer.administrator),
           },
         ],
       }),
     )
   }
 
-  const load = async (): Promise<void> => {
+  const filters = (): ActivityQuery => ({
+    ...(from.value === '' ? {} : { from: from.value }),
+    ...(to.value === '' ? {} : { to: to.value }),
+    ...(type.value.trim() === '' ? {} : { event_type: type.value.trim() }),
+    ...(actor.value === '' ? {} : { actor_id: Number(actor.value) }),
+    ...(entity.value === '' ? {} : { aggregate_type: entity.value }),
+    // An id with no kind names no record, so it is not sent on its own.
+    ...(entity.value === '' || entityId.value === ''
+      ? {}
+      : { aggregate_id: Number(entityId.value) }),
+  })
+
+  const loadActors = async (signal: AbortSignal): Promise<void> => {
+    if (actorsLoaded || api.listActors === undefined) return
+    actorsLoaded = true
+    try {
+      const people = await api.listActors(signal)
+      if (signal.aborted) return
+      const anyone = document.createElement('option')
+      anyone.value = ''
+      anyone.textContent = 'Anyone'
+      actor.replaceChildren(
+        anyone,
+        ...people.map((person) => {
+          const choice = document.createElement('option')
+          choice.value = String(person.id)
+          choice.textContent = person.name
+          return choice
+        }),
+      )
+    } catch {
+      // The picker stays at "Anyone"; the log itself is unaffected.
+      actorsLoaded = false
+    }
+  }
+
+  /** A new filter starts a new traversal; "Load more" continues the current one. */
+  const load = async (append = false): Promise<void> => {
     const signal = active
     if (signal === null) return
     status.textContent = 'Loading activity…'
@@ -114,29 +258,27 @@ export const createActivityController = (api: ActivityApi): ActivityController =
       // bound it is given, and "" is not a date, so sending it would turn an
       // untouched filter into a 422.
       const page = await api.listActivityLog(
-        {
-          ...(from.value === '' ? {} : { from: from.value }),
-          ...(to.value === '' ? {} : { to: to.value }),
-          ...(type.value === '' ? {} : { event_type: type.value }),
-        },
+        { ...filters(), ...(append && nextCursor !== null ? { cursor: nextCursor } : {}) },
         signal,
       )
       if (signal.aborted) return
-      render(page.data)
+      shown = append ? [...shown, ...page.data] : [...page.data]
+      nextCursor = page.page?.next_cursor ?? null
+      more.hidden = nextCursor === null
+      render(shown)
       status.textContent =
-        page.data.length === 0
-          ? ''
-          : `${page.data.length} ${page.data.length === 1 ? 'entry' : 'entries'}.`
+        shown.length === 0 ? '' : `${shown.length} ${shown.length === 1 ? 'entry' : 'entries'}.`
     } catch (error) {
       if (signal.aborted) return
       // The log is what you read when something has gone wrong, so a failure to
       // read it says so plainly rather than rendering an empty table that looks
       // like a quiet period.
       list.replaceChildren()
+      more.hidden = true
       // A switched-off module is a decision, not a failure, and its own words
       // say so; the filters have nothing left to filter.
       if (isModuleDisabled(error)) {
-        for (const control of [from, to, type]) control.disabled = true
+        for (const control of controls) control.disabled = true
         status.textContent = 'The Activity log module is switched off for this organization.'
         return
       }
@@ -145,15 +287,22 @@ export const createActivityController = (api: ActivityApi): ActivityController =
     }
   }
 
-  for (const control of [from, to, type]) {
+  for (const control of [from, to, type, actor, entity, entityId]) {
     control.addEventListener('change', () => void load())
   }
+  more.addEventListener('click', () => void load(true))
+  clear.addEventListener('click', () => {
+    for (const control of [from, to, type, entityId]) control.value = ''
+    for (const control of [actor, entity]) control.value = ''
+    void load()
+  })
 
   return {
-    async activate(signal) {
+    async activate(signal, presentedViewer) {
       active = signal
+      viewer = presentedViewer ?? { administrator: false }
       if (page.hidden) return
-      await load()
+      await Promise.all([load(), loadActors(signal)])
     },
   }
 }

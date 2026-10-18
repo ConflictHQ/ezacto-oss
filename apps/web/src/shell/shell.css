@@ -2982,7 +2982,8 @@
 }
 
 /* The clear button sits in the toolbar's last track, level with the controls. */
-.activity-log-toolbar > button {
+.activity-log-toolbar > button,
+[data-activity-more] {
   align-self: end;
   min-height: 44px;
   padding: 8px 16px;

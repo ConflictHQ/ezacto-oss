@@ -35,7 +35,7 @@ import {
   type TeamNotificationPreference,
 } from '@conflict-hq/ezacto-client'
 import type { InvoiceState } from '../invoices/model.js'
-import type { ActivityRow } from '../activity/browser.js'
+import type { ActivityQuery, ActivityRow } from '../activity/browser.js'
 import type { LogPageResult } from '../components/paged-log.js'
 import type {
   EmailLogQuery,
@@ -132,9 +132,12 @@ export interface ShellApi
   getActivityLogEnabled?(signal?: AbortSignal): Promise<boolean>
   /** The page size a caller may raise when it is walking, not browsing. */
   listActivityLog?(
-    query: { readonly from?: string; readonly to?: string; readonly event_type?: string },
+    query: ActivityQuery,
     signal?: AbortSignal,
-  ): Promise<{ readonly data: readonly ActivityRow[] }>
+  ): Promise<{
+    readonly data: readonly ActivityRow[]
+    readonly page?: { readonly next_cursor: string | null }
+  }>
   /**
    * The tokens you have issued, and issuing another (issue 485).
    *
@@ -1355,6 +1358,10 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getNotificationSettings(withSignal(signal))).data,
   updateNotificationSettings: async (patch, signal) =>
     (await client.setNotificationSettings({ body: patch, ...withSignal(signal) })).data,
+  getTimesheetAutoApproval: async (signal) =>
+    (await client.getTimesheetAutoApproval(withSignal(signal))).data,
+  updateTimesheetAutoApproval: async (patch, signal) =>
+    (await client.setTimesheetAutoApproval({ body: patch, ...withSignal(signal) })).data,
   getEmailHealth: async (signal) =>
     (await client.getEmailHealth(withSignal(signal))).data,
   getBackupStatus: async (signal) =>
@@ -1377,6 +1384,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       })
     ).data,
   disconnectQuickBooks: (signal) => client.disconnectQuickBooks(withSignal(signal)),
+  getQuickBooksReconciliation: async (signal) =>
+    (await client.getQuickBooksReconciliation(withSignal(signal))).data,
   // Bound here because this is the only place the real client reaches the
   // client screen. Issue 593 shipped a settings section reading four methods
   // nothing supplied, and the suite stayed green because the tests inject

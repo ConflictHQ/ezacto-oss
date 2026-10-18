@@ -220,6 +220,20 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
         Sentry.captureException(error)
       }
     }
+    if (controller.cron === '* * * * *' && services.timesheetAutoApprovalSweep !== undefined) {
+      // Automatic timesheet approval (issue 1009): a bounded batch of weeks the
+      // policy has made due. A no-op while the policy is off. A failure is
+      // reported and never stops the drain.
+      try {
+        const run = await services.timesheetAutoApprovalSweep.processDue(new Date().toISOString())
+        for (const failure of run.failed) {
+          console.error('[worker] automatic approval failed', failure.submissionId, failure.message)
+        }
+      } catch (error) {
+        console.error('[worker] automatic approval sweep failed', error)
+        Sentry.captureException(error)
+      }
+    }
     // Not on the demo (#931): its database is thrown away at this hour, and an
     // export would copy whatever visitors typed into it into the bucket, which
     // nothing ever empties.

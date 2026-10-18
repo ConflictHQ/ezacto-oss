@@ -108,9 +108,13 @@ import {
   readUserNotifications,
   updateUserNotifications,
   readNotificationSettings,
+  readTimesheetAutoApproval,
+  runTimesheetAutoApproval,
+  updateTimesheetAutoApproval,
   updateNotificationSettings,
   setBillDelivery,
   createQuickBooksMirrorSource,
+  createQuickBooksReconciliationSource,
   createQuickBooksStore,
   readUserIdentity,
   readUserTimezone,
@@ -123,6 +127,7 @@ import {
   createBudgetAlertSubscriber,
   createTimeReminderService,
   createNotificationSettingsService,
+  createTimesheetAutoApprovalService,
   createDeploymentNotificationMailer,
   createInvoiceEmailOutboxSubscriber,
   createInvoiceThankYouSubscriber,
@@ -486,6 +491,7 @@ export const createContainerRuntime = async (
             },
             store: createQuickBooksStore(drizzle),
             source: createQuickBooksMirrorSource(drizzle, () => new Date()),
+            reconciliation: createQuickBooksReconciliationSource(drizzle),
             fetch: (request: Request) => fetch(request),
             now: () => new Date(),
           })
@@ -741,6 +747,16 @@ export const createContainerRuntime = async (
       } catch (error) {
         console.error('[container] time reminders failed', error)
       }
+      // Automatic timesheet approval (issue 1009): a bounded batch of weeks the
+      // policy has made due; a no-op while the policy is off.
+      try {
+        const run = await runTimesheetAutoApproval(drizzle, now)
+        for (const failure of run.failed) {
+          console.error('[container] automatic approval failed', failure.submissionId, failure.message)
+        }
+      } catch (error) {
+        console.error('[container] automatic approval sweep failed', error)
+      }
     }
     outboxScheduler = new ContainerOutboxScheduler(outbox, {
       // Reminders that have come due go out on the same tick the outbox
@@ -954,6 +970,14 @@ export const createContainerRuntime = async (
         evaluate: (now: string) => evaluateProjectBudgetAlerts(drizzle, now),
       },
       timeReminders,
+      timesheetAutoApproval: createTimesheetAutoApprovalService({
+        read: () => readTimesheetAutoApproval(drizzle),
+        update: (actorUserId, patch) =>
+          updateTimesheetAutoApproval(drizzle, actorUserId, patch, new Date().toISOString()),
+      }),
+      timesheetAutoApprovalSweep: {
+        processDue: (now: string) => runTimesheetAutoApproval(drizzle, now),
+      },
       profileNotifications: {
         read: (userId: number) => readUserNotifications(drizzle, userId),
         update: (userId: number, patch) =>

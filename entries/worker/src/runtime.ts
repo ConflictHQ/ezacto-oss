@@ -21,6 +21,7 @@ import {
   createD1StaffUserDirectory,
   createD1OutboxService,
   createQuickBooksMirrorSource,
+  createQuickBooksReconciliationSource,
   createQuickBooksStore,
   createGeneralResourceRepository,
   createMoneyResourceRepository,
@@ -116,6 +117,9 @@ import {
   updateUserNotifications,
   readNotificationSettings,
   updateNotificationSettings,
+  readTimesheetAutoApproval,
+  runTimesheetAutoApproval,
+  updateTimesheetAutoApproval,
   setBillDelivery,
   createD1IdempotencyStore,
   createIdempotentD1,
@@ -129,6 +133,7 @@ import {
   createBudgetAlertSubscriber,
   createTimeReminderService,
   createNotificationSettingsService,
+  createTimesheetAutoApprovalService,
   createInvoiceEmailOutboxSubscriber,
   createInvoiceThankYouSubscriber,
   thankYouInvoiceFromDeliveryContext,
@@ -818,6 +823,7 @@ export const createRuntimeServices = async (
           },
           store: createQuickBooksStore(drizzle),
           source: createQuickBooksMirrorSource(drizzle, () => new Date()),
+          reconciliation: createQuickBooksReconciliationSource(drizzle),
           fetch: (request: Request) => fetch(request),
           now: () => new Date(),
         });
@@ -1105,6 +1111,14 @@ export const createRuntimeServices = async (
     reminders: { processDue: processDueReminders },
     budgetAlerts: { evaluate: (now: string) => evaluateProjectBudgetAlerts(drizzle, now) },
     ...(timeReminders === undefined ? {} : { timeReminders }),
+    timesheetAutoApproval: createTimesheetAutoApprovalService({
+      read: () => readTimesheetAutoApproval(drizzle),
+      update: (actorUserId, patch) =>
+        updateTimesheetAutoApproval(drizzle, actorUserId, patch, new Date().toISOString()),
+    }),
+    timesheetAutoApprovalSweep: {
+      processDue: (now: string) => runTimesheetAutoApproval(drizzle, now),
+    },
     profileNotifications: {
       read: (userId: number) => readUserNotifications(drizzle, userId),
       update: (userId: number, patch) =>

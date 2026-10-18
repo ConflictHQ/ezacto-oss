@@ -20,6 +20,7 @@ export const COMPANY_SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: 'sign-in', label: 'Ways in' },
   { id: 'erasure', label: 'Erasure and retention' },
   { id: 'time', label: 'Time' },
+  { id: 'approval', label: 'Approval' },
   { id: 'email', label: 'Email' },
   { id: 'invoices', label: 'Invoices' },
   { id: 'reminders', label: 'Reminders' },

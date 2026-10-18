@@ -1379,6 +1379,16 @@ const quickBooksOperations: ApiContractOperation[] = [
     responseStatus: 204,
     sessionOnly: true,
   },
+  {
+    method: "get",
+    path: "/api/v1/integrations/quickbooks/reconciliation",
+    operationId: "getQuickBooksReconciliation",
+    summary: "Differences between our invoices and the QuickBooks company, listed and never corrected",
+    tag: "integrations",
+    responseStatus: 200,
+    responseSchema: "QuickBooksReconciliationEnvelope",
+    sessionOnly: true,
+  },
   // Where one invoice stands with QuickBooks, and the button that mirrors it
   // now (issue 819). Gated with the connection routes: same keys, same
   // feature, and `entry-surface.ts` lists them together.
@@ -1822,6 +1832,32 @@ const notificationSettingsOperations: ApiContractOperation[] = [
     responseStatus: 200,
     responseSchema: "NotificationSettingsEnvelope",
     requestSchema: "NotificationSettingsInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+];
+
+// Issue 1009: the optional automatic approval of submitted timesheets.
+const timesheetAutoApprovalOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/settings/timesheet-auto-approval",
+    operationId: "getTimesheetAutoApproval",
+    summary: "The automatic timesheet approval policy",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "TimesheetAutoApprovalEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/timesheet-auto-approval",
+    operationId: "setTimesheetAutoApproval",
+    summary: "Turn automatic timesheet approval on or off, or change its window",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "TimesheetAutoApprovalEnvelope",
+    requestSchema: "TimesheetAutoApprovalInput",
     requestRequired: true,
     sessionOnly: true,
   },
@@ -3019,12 +3055,18 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     tag: "activity",
     responseStatus: 200,
     responseSchema: "ActivityLogPage",
+    description:
+      "Newest first, a page at a time, ordered by when each entry was recorded and then its event id. " +
+      "Every filter narrows together; a value that is not valid is a 422, never an empty page. " +
+      "aggregate_id needs aggregate_type. Sign-in, token and account-deletion events are left out unless the reader is an administrator.",
     parameters: [
-      query("per_page", { type: "integer", minimum: 1, maximum: 200 }),
+      ...pageParameters,
       query("from", dateSchema),
       query("to", dateSchema),
       query("event_type", stringSchema),
       query("actor_id", integerSchema),
+      query("aggregate_type", stringSchema),
+      query("aggregate_id", integerSchema),
     ],
   },
   {
@@ -3205,6 +3247,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...invoiceDocumentPreferenceOperations,
   ...invoiceDefaultsOperations,
   ...notificationSettingsOperations,
+  ...timesheetAutoApprovalOperations,
   ...invoiceThankYouPreferenceOperations,
   ...recurringRepairOperations,
   ...payoutAccountOperations,
@@ -4224,6 +4267,72 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: { allow_online_payment: { type: "boolean" } },
     additionalProperties: false,
   },
+  QuickBooksReconciliationEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["realm_id", "generated_at", "counts", "rows"],
+        properties: {
+          realm_id: stringSchema,
+          generated_at: timestampSchema,
+          // Rows per status, every status present (zero included).
+          counts: { type: "object", additionalProperties: integerSchema },
+          rows: {
+            type: "array",
+            items: {
+              type: "object",
+              required: [
+                "status",
+                "issues",
+                "invoice_id",
+                "number",
+                "quickbooks_id",
+                "linked",
+                "ezacto_amount_cents",
+                "quickbooks_amount_cents",
+                "ezacto_currency",
+                "quickbooks_currency",
+                "ezacto_paid_cents",
+                "quickbooks_paid_cents",
+                "detail",
+              ],
+              properties: {
+                status: {
+                  type: "string",
+                  enum: [
+                    "matched",
+                    "voided_in_quickbooks",
+                    "missing_in_quickbooks",
+                    "amount_differs",
+                    "currency_differs",
+                    "payments_differ",
+                    "missing_here",
+                  ],
+                },
+                issues: { type: "array", items: stringSchema },
+                invoice_id: nullable(integerSchema),
+                number: stringSchema,
+                quickbooks_id: nullable(stringSchema),
+                linked: booleanSchema,
+                ezacto_amount_cents: nullable(integerSchema),
+                quickbooks_amount_cents: nullable(integerSchema),
+                ezacto_currency: nullable(stringSchema),
+                quickbooks_currency: nullable(stringSchema),
+                ezacto_paid_cents: nullable(integerSchema),
+                quickbooks_paid_cents: nullable(integerSchema),
+                detail: stringSchema,
+              },
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
   InvoiceQuickBooksEnvelope: {
     type: "object",
     required: ["data"],
@@ -4375,15 +4484,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
-  ActivityLogPage: {
-    type: "object",
-    required: ["data", "links"],
-    properties: {
-      data: { type: "array", items: reference("ActivityLog") },
-      links: reference("Links"),
-    },
-    additionalProperties: false,
-  },
+  ActivityLogPage: page("ActivityLog"),
   OutboxDelivery: {
     type: "object",
     required: [
@@ -9483,6 +9584,34 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         properties: {
           budget_alerts_include_admins: { type: "boolean" },
           submission_reminder: { anyOf: [{ $ref: "#/components/schemas/SubmissionReminderSchedule" }, { type: "null" }] },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  TimesheetAutoApprovalInput: {
+    type: "object",
+    properties: {
+      enabled: { type: "boolean" },
+      // Calendar days from the week's submission. Needed once, to enable.
+      window_days: { type: "integer", minimum: 1, maximum: 60 },
+    },
+    additionalProperties: false,
+  },
+  TimesheetAutoApprovalEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["enabled", "window_days", "clock_starts_at", "effective_from", "approval_module_enabled"],
+        properties: {
+          enabled: { type: "boolean" },
+          window_days: { anyOf: [{ type: "integer", minimum: 1, maximum: 60 }, { type: "null" }] },
+          clock_starts_at: { type: "string", enum: ["submitted_at"] },
+          effective_from: { anyOf: [{ type: "string", format: "date-time" }, { type: "null" }] },
+          approval_module_enabled: { type: "boolean" },
         },
         additionalProperties: false,
       },

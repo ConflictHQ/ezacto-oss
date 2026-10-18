@@ -52,6 +52,7 @@ const harness = (
 ) => {
   const monitor: OutboxMonitor = {
     listActivity: vi.fn(async () => [activity]),
+    activitySnapshot: vi.fn(async () => activity.recordedAt),
     deliveriesSnapshot: vi.fn(async () => failedDelivery.createdAt),
     pageDeliveries: vi.fn(async (window: OutboxDeliveryPageWindow) =>
       [failedDelivery].slice(0, window.take),
@@ -105,12 +106,81 @@ describe('outbox observability API', () => {
     )
     expect(response.status).toBe(200)
     expect(monitor.listActivity).toHaveBeenCalledWith({
-      limit: 10,
+      limit: 11,
       from: '2026-09-01',
       to: '2026-09-08',
       eventType: 'auth.signed_in',
       actorId: 4,
+      after: null,
+      recordedThrough: activity.recordedAt,
     })
+  })
+
+  it('[api] narrows to one record and ANDs it with the other filters', async () => {
+    const { app, monitor } = harness('administrator')
+    const response = await app.request(
+      '/api/v1/activity-log?aggregate_type=timesheet_submission&aggregate_id=7&actor_id=3',
+    )
+    expect(response.status).toBe(200)
+    expect(monitor.listActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        aggregateType: 'timesheet_submission',
+        aggregateId: 7,
+        actorId: 3,
+      }),
+    )
+  })
+
+  it('[api] refuses a bad filter with a 422 rather than an empty page', async () => {
+    const { app, monitor } = harness('administrator')
+    for (const query of [
+      'actor_id=abc',
+      'actor_id=0',
+      'actor_id=1&actor_id=2',
+      'aggregate_id=7',
+      'aggregate_type=invoice&aggregate_id=-1',
+      'aggregate_type=bad%20type',
+      'event_type=x%27%3B--',
+      'from=2026-02-31',
+      'to=09/01/2026',
+      'from=2026-09-08&to=2026-09-01',
+      'cursor=forged',
+    ]) {
+      expect((await app.request(`/api/v1/activity-log?${query}`)).status, query).toBe(422)
+    }
+    expect(monitor.listActivity).not.toHaveBeenCalled()
+  })
+
+  it('[api] pages with a signed cursor on (recorded_at, event_id) and holds the snapshot', async () => {
+    const older: ActivityLogResource = {
+      ...activity,
+      id: 'event-older',
+      recordedAt: '2026-09-02T12:00:00.000Z',
+    }
+    const listActivity = vi.fn(async () => [activity, older])
+    const { app, monitor } = harness('administrator', { listActivity })
+    const first = (await (await app.request('/api/v1/activity-log?per_page=1')).json()) as {
+      data: { event_id: string }[]
+      page: { next_cursor: string | null }
+      links: { next: string | null }
+    }
+    expect(first.data.map((row) => row.event_id)).toEqual(['event-paid'])
+    expect(first.page.next_cursor).not.toBeNull()
+
+    listActivity.mockResolvedValueOnce([older])
+    const second = (await (await app.request(first.links.next!)).json()) as {
+      data: { event_id: string }[]
+    }
+    expect(second.data.map((row) => row.event_id)).toEqual(['event-older'])
+    expect(monitor.listActivity).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        after: { recordedAt: activity.recordedAt, eventId: 'event-paid' },
+        recordedThrough: activity.recordedAt,
+      }),
+    )
+    // A cursor is bound to the filters it was issued for.
+    const swapped = first.links.next!.replace('/activity-log?', '/activity-log?event_type=x&')
+    expect((await app.request(swapped)).status).toBe(422)
   })
 
   it('[api] omits a filter that was not asked for rather than sending undefined', async () => {
@@ -124,7 +194,7 @@ describe('outbox observability API', () => {
     // two apart -- which is the whole distinction being made here.
     const [call] = (monitor.listActivity as unknown as { mock: { calls: unknown[][] } }).mock
       .calls
-    expect(Object.keys(call![0] as object)).toEqual(['limit'])
+    expect(Object.keys(call![0] as object)).toEqual(['limit', 'after', 'recordedThrough'])
   })
 
   it('[api] exposes the applied activity stream to a money-report viewer', async () => {
@@ -149,11 +219,14 @@ describe('outbox observability API', () => {
           recorded_at: '2026-09-02T12:00:01.000Z',
         },
       ],
-      links: { self: '/api/v1/activity-log' },
+      links: { self: '/api/v1/activity-log?per_page=25', next: null },
+      page: { per_page: 25, next_cursor: null },
     })
     // A money-report viewer reads the log without the identity events (issue 740).
     expect(monitor.listActivity).toHaveBeenCalledWith({
-      limit: 25,
+      limit: 26,
+      after: null,
+      recordedThrough: activity.recordedAt,
       excludeEventTypes: expect.arrayContaining(['auth.signed_in', 'api_token.created']),
     })
   })
@@ -172,7 +245,7 @@ describe('outbox observability API', () => {
     }
     const foreign: ActivityLogResource = {
       ...activity,
-      id: 'event-foreign',
+      id: 'event-aaa-foreign',
       payload: {},
       actor: null,
     }
@@ -186,7 +259,7 @@ describe('outbox observability API', () => {
     expect(body.data.map(({ event_id, actor }) => ({ event_id, actor }))).toEqual([
       { event_id: 'event-paid', actor: { type: 'user', id: 4, name: 'Robin Vale' } },
       { event_id: 'event-exported', actor: { type: 'system', id: null, name: null } },
-      { event_id: 'event-foreign', actor: null },
+      { event_id: 'event-aaa-foreign', actor: null },
     ])
     expect(body.data[0]!.payload).toEqual(activity.payload)
 
@@ -219,6 +292,7 @@ describe('outbox observability API', () => {
       installApi(api) {
         installOutboxRoutes(api, {
           listActivity,
+          activitySnapshot: vi.fn(async () => activity.recordedAt),
           deliveriesSnapshot: vi.fn(),
           pageDeliveries: vi.fn(),
           countDeliveries: vi.fn(),
@@ -247,6 +321,7 @@ describe('outbox observability API', () => {
       'two_factor.email_enabled',
       'two_factor.email_disabled',
       'account.deletion_requested',
+      'timesheet_auto_approval.updated',
     ]
     const sessionRead = async (profile: UserProfile) => {
       const { app, monitor } = harness(profile)
@@ -275,6 +350,7 @@ describe('outbox observability API', () => {
             api,
             {
               listActivity,
+              activitySnapshot: vi.fn(async () => activity.recordedAt),
               deliveriesSnapshot: vi.fn(),
               pageDeliveries: vi.fn(),
               countDeliveries: vi.fn(),
@@ -365,6 +441,7 @@ describe('outbox observability API', () => {
       installApi(api) {
         installOutboxRoutes(api, {
           listActivity: vi.fn(),
+          activitySnapshot: vi.fn(),
           deliveriesSnapshot: vi.fn(),
           pageDeliveries: vi.fn(),
           countDeliveries: vi.fn(),
@@ -409,6 +486,7 @@ describe('outbox observability API', () => {
   it('[api] narrows deliveries by event type and by the days it spans in the organization timezone', async () => {
     const monitor: OutboxMonitor = {
       listActivity: vi.fn(),
+      activitySnapshot: vi.fn(),
       deliveriesSnapshot: vi.fn(async () => failedDelivery.createdAt),
       pageDeliveries: vi.fn(async () => []),
       countDeliveries: vi.fn(async () => 0),

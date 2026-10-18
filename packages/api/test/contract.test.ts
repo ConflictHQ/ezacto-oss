@@ -16,6 +16,7 @@ import {
   installThankYouPreferenceRoutes,
   installReminderSettingsRoutes,
   installNotificationSettingsRoutes,
+  installTimesheetAutoApprovalRoutes,
   installProfileNotificationRoutes,
   installInvoiceDefaultsRoutes,
   installRecurringRepairRoutes,
@@ -232,6 +233,7 @@ const documentedApp = () =>
         newState: () => "contract-fixture-state",
         sync: async () => null,
         syncState: async () => null,
+        reconcile: async () => null,
       });
       installWiseRoutes(api, {
         configured: () => true,
@@ -373,6 +375,10 @@ const documentedApp = () =>
       installNotificationSettingsRoutes(api, {
         read: async () => ({ budget_alerts_include_admins: false, submission_reminder: null }),
         update: async () => ({ budget_alerts_include_admins: false, submission_reminder: null }),
+      });
+      installTimesheetAutoApprovalRoutes(api, {
+        service: new Proxy({}, { get: () => unavailable }) as never,
+        clock: () => "2026-10-18T12:00:00.000Z",
       });
       installInvoiceDefaultsRoutes(api, {
         read: async () => ({ companyName: "Org", companyAddress: null, notes: null, subject: null }),

@@ -75,6 +75,7 @@ export const QUICKBOOKS_ROUTES: readonly string[] = [
   'post /api/v1/integrations/quickbooks/settings',
   'delete /api/v1/integrations/quickbooks',
   'post /api/v1/integrations/quickbooks/webhook',
+  'get /api/v1/integrations/quickbooks/reconciliation',
   'get /api/v1/invoices/:id/quickbooks',
   'post /api/v1/invoices/:id/quickbooks/sync',
 ]

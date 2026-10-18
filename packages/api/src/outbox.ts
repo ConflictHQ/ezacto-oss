@@ -11,6 +11,7 @@ import {
   withTotal,
 } from './log-paging.js'
 import { keysetCursorPage } from './pagination.js'
+import { isCanonicalDate } from './resources/support.js'
 
 export type OutboxDeliveryStatus = 'pending' | 'processing' | 'delivered' | 'failed'
 
@@ -83,8 +84,23 @@ export interface OutboxRouteOptions {
   isActivityLogModuleEnabled(): Promise<boolean>
 }
 
+export interface ActivityLogQuery {
+  limit?: number
+  from?: string
+  to?: string
+  eventType?: string
+  actorId?: number
+  excludeEventTypes?: readonly string[]
+  aggregateType?: string
+  aggregateId?: number
+  after?: { recordedAt: string; eventId: string } | null
+  recordedThrough?: string
+}
+
 export interface OutboxMonitor {
-  listActivity(input?: { limit?: number }): Promise<ActivityLogResource[]>
+  listActivity(input?: ActivityLogQuery): Promise<ActivityLogResource[]>
+  /** The latest instant an activity entry was recorded, or null when the log is empty. */
+  activitySnapshot(): Promise<string | null>
   /** The latest delivery creation instant, or null when there are none. */
   deliveriesSnapshot(): Promise<string | null>
   pageDeliveries(window: OutboxDeliveryPageWindow): Promise<OutboxDeliveryResource[]>
@@ -102,25 +118,6 @@ const statuses = new Set<OutboxDeliveryStatus>([
   'failed',
 ])
 
-const pageLimit = (presented: string | undefined): number => {
-  const limit = presented === undefined ? 100 : Number(presented)
-  if (
-    !Number.isSafeInteger(limit) ||
-    limit < 1 ||
-    limit > 200 ||
-    (presented !== undefined && !/^[1-9][0-9]*$/.test(presented))
-  ) {
-    throw validationError([
-      {
-        field: 'per_page',
-        code: 'invalid',
-        message: 'per_page must be an integer between 1 and 200',
-      },
-    ])
-  }
-  return limit
-}
-
 /**
  * Identity and credential events: who signed in, which API tokens were granted
  * or revoked, who asked for their account to be deleted. Closed on purpose, to
@@ -135,7 +132,39 @@ const ADMINISTRATOR_ONLY_ACTIVITY_EVENTS: readonly string[] = [
   'two_factor.email_enabled',
   'two_factor.email_disabled',
   'account.deletion_requested',
+  'timesheet_auto_approval.updated',
 ]
+
+const identifierQuery = (requestUrl: URL, name: string): string | undefined => {
+  const value = singleQuery(requestUrl, name)
+  if (value !== undefined && !/^[A-Za-z0-9._:-]{1,128}$/.test(value)) {
+    throw validationError([
+      { field: name, code: 'invalid', message: `${name} must use 1-128 safe identifier characters` },
+    ])
+  }
+  return value
+}
+
+const rowIdQuery = (requestUrl: URL, name: string): number | undefined => {
+  const value = singleQuery(requestUrl, name)
+  if (value === undefined) return undefined
+  if (!/^[1-9][0-9]{0,14}$/.test(value)) {
+    throw validationError([
+      { field: name, code: 'invalid', message: `${name} must be a positive integer` },
+    ])
+  }
+  return Number(value)
+}
+
+const calendarDateQuery = (requestUrl: URL, name: string): string | undefined => {
+  const value = singleQuery(requestUrl, name)
+  if (value !== undefined && !isCanonicalDate(value)) {
+    throw validationError([
+      { field: name, code: 'invalid', message: `${name} must be a calendar date (YYYY-MM-DD)` },
+    ])
+  }
+  return value
+}
 
 const requireAdministratorSession = <Bindings extends object>(
   context: Parameters<typeof requireSessionPrincipal<Bindings>>[0],
@@ -225,32 +254,68 @@ export const installOutboxRoutes = <Bindings extends object>(
     // The report audience reads the log, but the raw payloads of sign-ins,
     // token grants and account-deletion requests are an administrator's to see
     // (issue 740). Keyed on the profile, so a bearer token cannot widen it.
-    const administrator = context.get('principal').profile === 'administrator'
-    const limit = pageLimit(context.req.query('per_page'))
-    // Passed straight through. The repository validates each one and throws a
-    // RangeError the error middleware turns into a 422, so a bad date is a bad
-    // request here rather than an empty page that reads as "nothing happened".
-    const from = context.req.query('from')
-    const to = context.req.query('to')
-    const eventType = context.req.query('event_type')
-    const actor = context.req.query('actor_id')
-    return context.json(
-      {
-        data: (
-          await monitor.listActivity({
-            limit,
-            ...(from === undefined ? {} : { from }),
-            ...(to === undefined ? {} : { to }),
-            ...(eventType === undefined ? {} : { eventType }),
-            ...(actor === undefined ? {} : { actorId: Number(actor) }),
-            ...(administrator ? {} : { excludeEventTypes: ADMINISTRATOR_ONLY_ACTIVITY_EVENTS }),
-          })
-        ).map(activityData),
-        links: { self: '/api/v1/activity-log' },
+    const principal = context.get('principal')
+    const administrator = principal.profile === 'administrator'
+    const requestUrl = new URL(context.req.url)
+    // Each filter is validated here and refused with a 422 when it is not one:
+    // a bad value that quietly matched nothing would read as "nothing happened".
+    const from = calendarDateQuery(requestUrl, 'from')
+    const to = calendarDateQuery(requestUrl, 'to')
+    if (from !== undefined && to !== undefined && from > to) {
+      throw validationError([{ field: 'to', code: 'invalid', message: 'to must not be before from' }])
+    }
+    const eventType = identifierQuery(requestUrl, 'event_type')
+    const aggregateType = identifierQuery(requestUrl, 'aggregate_type')
+    const actorId = rowIdQuery(requestUrl, 'actor_id')
+    const aggregateId = rowIdQuery(requestUrl, 'aggregate_id')
+    if (aggregateId !== undefined && aggregateType === undefined) {
+      throw validationError([
+        {
+          field: 'aggregate_type',
+          code: 'required',
+          message: 'aggregate_type is required with aggregate_id',
+        },
+      ])
+    }
+    const filter: ActivityLogQuery = {
+      ...(from === undefined ? {} : { from }),
+      ...(to === undefined ? {} : { to }),
+      ...(eventType === undefined ? {} : { eventType }),
+      ...(actorId === undefined ? {} : { actorId }),
+      ...(aggregateType === undefined ? {} : { aggregateType }),
+      ...(aggregateId === undefined ? {} : { aggregateId }),
+      ...(administrator ? {} : { excludeEventTypes: ADMINISTRATOR_ONLY_ACTIVITY_EVENTS }),
+    }
+    type Row = { id: number; created_at: string; record: ActivityLogResource }
+    const page = await keysetCursorPage({
+      requestUrl,
+      cursorSigningKey: options.cursorSigningKey,
+      viewer: principal,
+      serializer: (row: Readonly<Row>) => activityData(row.record),
+      // Newest first, on when the entry was recorded and then its event id: the
+      // order the log is read in, and a total one, so a page boundary never
+      // splits or repeats an entry. The id satisfies the chassis check only.
+      order: logOrderFor<Row>('newest', ['string'], (row) => [
+        row.record.recordedAt,
+        row.record.id,
+      ]),
+      source: {
+        snapshot: () => monitor.activitySnapshot(),
+        list: async (window) =>
+          (
+            await monitor.listActivity({
+              ...filter,
+              limit: window.take,
+              after:
+                window.after === null
+                  ? null
+                  : { recordedAt: window.after[0], eventId: window.after[1] as string },
+              recordedThrough: window.createdThrough,
+            })
+          ).map((record) => ({ id: 1, created_at: record.recordedAt, record })),
       },
-      200,
-      { 'cache-control': 'no-store' },
-    )
+    })
+    return context.json(page, 200, { 'cache-control': 'no-store' })
   })
 
   api.get('/outbox-deliveries', async (context) => {

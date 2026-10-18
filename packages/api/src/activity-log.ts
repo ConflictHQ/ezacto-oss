@@ -24,6 +24,7 @@ export type ActivityEventType =
   | 'two_factor.email_disabled'
   | 'backup.exported'
   | 'backup.restored'
+  | 'timesheet_auto_approval.updated'
 
 export type ActivityActor =
   | { readonly type: 'user'; readonly id: number }

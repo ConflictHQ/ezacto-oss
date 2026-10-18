@@ -650,6 +650,31 @@ export type QuickBooksSettingsInput = {
   "allow_online_payment": boolean;
 };
 
+export type QuickBooksReconciliationEnvelope = {
+  "data": {
+  "realm_id": string;
+  "generated_at": string;
+  "counts": {
+  [key: string]: number;
+};
+  "rows": Array<{
+  "status": "matched" | "voided_in_quickbooks" | "missing_in_quickbooks" | "amount_differs" | "currency_differs" | "payments_differ" | "missing_here";
+  "issues": Array<string>;
+  "invoice_id": number | null;
+  "number": string;
+  "quickbooks_id": string | null;
+  "linked": boolean;
+  "ezacto_amount_cents": number | null;
+  "quickbooks_amount_cents": number | null;
+  "ezacto_currency": string | null;
+  "quickbooks_currency": string | null;
+  "ezacto_paid_cents": number | null;
+  "quickbooks_paid_cents": number | null;
+  "detail": string;
+}>;
+};
+};
+
 export type InvoiceQuickBooksEnvelope = {
   "data": {
   "connected": boolean;
@@ -723,7 +748,8 @@ export type ActivityLog = {
 
 export type ActivityLogPage = {
   "data": Array<ActivityLog>;
-  "links": Links;
+  "links": PageLinks;
+  "page": PageMetadata;
 };
 
 export type OutboxDelivery = {
@@ -3792,6 +3818,21 @@ export type NotificationSettingsEnvelope = {
 };
 };
 
+export type TimesheetAutoApprovalInput = {
+  "enabled"?: boolean;
+  "window_days"?: number;
+};
+
+export type TimesheetAutoApprovalEnvelope = {
+  "data": {
+  "enabled": boolean;
+  "window_days": number | null;
+  "clock_starts_at": "submitted_at";
+  "effective_from": string | null;
+  "approval_module_enabled": boolean;
+};
+};
+
 export type JournalFormats = Array<"pdf" | "csv" | "xlsx">;
 
 export type InvoiceDocumentPreferenceInput = {
@@ -4335,7 +4376,7 @@ export class EzactoClient {
     });
   }
 
-  async listActivityLog(args: { query?: { "per_page"?: number; "from"?: string; "to"?: string; "event_type"?: string; "actor_id"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ActivityLogPage> {
+  async listActivityLog(args: { query?: { "cursor"?: string; "per_page"?: number; "from"?: string; "to"?: string; "event_type"?: string; "actor_id"?: number; "aggregate_type"?: string; "aggregate_id"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ActivityLogPage> {
     const headers = new Headers(args.headers);
 
     return this.request<ActivityLogPage>("GET", "/api/v1/activity-log", {
@@ -6545,6 +6586,15 @@ export class EzactoClient {
     });
   }
 
+  async getQuickBooksReconciliation(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<QuickBooksReconciliationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<QuickBooksReconciliationEnvelope>("GET", "/api/v1/integrations/quickbooks/reconciliation", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
   async getInvoiceQuickBooks(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceQuickBooksEnvelope> {
     const headers = new Headers(args.headers);
 
@@ -6885,6 +6935,25 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<NotificationSettingsEnvelope>("POST", "/api/v1/settings/notifications", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getTimesheetAutoApproval(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimesheetAutoApprovalEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetAutoApprovalEnvelope>("GET", "/api/v1/settings/timesheet-auto-approval", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setTimesheetAutoApproval(args: { body: TimesheetAutoApprovalInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetAutoApprovalEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetAutoApprovalEnvelope>("POST", "/api/v1/settings/timesheet-auto-approval", {
       body: args.body,
       signal: args.signal,
       headers,

@@ -19,6 +19,7 @@ import { timeRemindersMigration } from './migrations/0114_time_reminders.js'
 import { endClientInvoicesMigration } from './migrations/0115_end_client_invoices.js'
 import { twoFactorChallengeEmailCodeMigration } from './migrations/0116_two_factor_challenge_email_code.js'
 import { calendarProposalsMigration } from './migrations/0117_calendar_proposals.js'
+import { timesheetAutoApprovalMigration } from './migrations/0118_timesheet_auto_approval.js'
 import { emailSecondFactorMigration } from './migrations/0121_email_second_factor.js'
 import { organizationInvoiceDefaultsMigration } from './migrations/0097_organization_invoice_defaults.js'
 import { journalFormatsInvoiceExtraMigration } from './migrations/0096_journal_formats_invoice_extra.js'
@@ -1593,6 +1594,7 @@ const migrations = [
     statements: twoFactorChallengeEmailCodeMigration,
   },
   { id: '0117_calendar_proposals', statements: calendarProposalsMigration },
+  { id: '0118_timesheet_auto_approval', statements: timesheetAutoApprovalMigration },
   { id: '0121_email_second_factor', statements: emailSecondFactorMigration },
 ] as const
 

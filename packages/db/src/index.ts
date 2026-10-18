@@ -61,6 +61,7 @@ export * from './notification-mail.js'
 export * from './notification-settings.js'
 export * from './project-budget-alerts.js'
 export * from './time-reminders.js'
+export * from './timesheet-auto-approval.js'
 export * from './profile-notifications.js'
 export * from './reminder-settings.js'
 export * from './release-invoiced-time.js'
@@ -93,7 +94,10 @@ export * from './team.js'
 export * from './team-access.js'
 export * from './demo-seed.js'
 export * from './demo-reset.js'
-export { createQuickBooksMirrorSource } from './quickbooks-source.js'
+export {
+  createQuickBooksMirrorSource,
+  createQuickBooksReconciliationSource,
+} from './quickbooks-source.js'
 
 export { createStaffPaymentStore } from './staff-payments.js'
 

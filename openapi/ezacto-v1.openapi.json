@@ -1993,6 +1993,7 @@
       "get": {
         "operationId": "listActivityLog",
         "summary": "List activity recorded from delivered domain events (403 `module_disabled` when the module is off)",
+        "description": "Newest first, a page at a time, ordered by when each entry was recorded and then its event id. Every filter narrows together; a value that is not valid is a 422, never an empty page. aggregate_id needs aggregate_type. Sign-in, token and account-deletion events are left out unless the reader is an administrator.",
         "tags": [
           "activity"
         ],
@@ -2047,6 +2048,14 @@
         "x-ezacto-generate-client": true,
         "parameters": [
           {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "per_page",
             "in": "query",
             "required": false,
@@ -2084,6 +2093,23 @@
           },
           {
             "name": "actor_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "aggregate_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "aggregate_id",
             "in": "query",
             "required": false,
             "schema": {
@@ -20528,6 +20554,61 @@
         }
       }
     },
+    "/api/v1/integrations/quickbooks/reconciliation": {
+      "get": {
+        "operationId": "getQuickBooksReconciliation",
+        "summary": "Differences between our invoices and the QuickBooks company, listed and never corrected",
+        "tags": [
+          "integrations"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuickBooksReconciliationEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/integrations/quickbooks/reconciliation",
+        "x-ezacto-generate-client": true
+      }
+    },
     "/api/v1/invoices/{id}/quickbooks": {
       "get": {
         "operationId": "getInvoiceQuickBooks",
@@ -22968,6 +23049,124 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/NotificationSettingsInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/timesheet-auto-approval": {
+      "get": {
+        "operationId": "getTimesheetAutoApproval",
+        "summary": "The automatic timesheet approval policy",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimesheetAutoApprovalEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/settings/timesheet-auto-approval",
+        "x-ezacto-generate-client": true
+      },
+      "post": {
+        "operationId": "setTimesheetAutoApproval",
+        "summary": "Turn automatic timesheet approval on or off, or change its window",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimesheetAutoApprovalEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/settings/timesheet-auto-approval",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TimesheetAutoApprovalInput"
               }
             }
           }
@@ -28668,6 +28867,177 @@
         },
         "additionalProperties": false
       },
+      "QuickBooksReconciliationEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "realm_id",
+              "generated_at",
+              "counts",
+              "rows"
+            ],
+            "properties": {
+              "realm_id": {
+                "type": "string"
+              },
+              "generated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "counts": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "status",
+                    "issues",
+                    "invoice_id",
+                    "number",
+                    "quickbooks_id",
+                    "linked",
+                    "ezacto_amount_cents",
+                    "quickbooks_amount_cents",
+                    "ezacto_currency",
+                    "quickbooks_currency",
+                    "ezacto_paid_cents",
+                    "quickbooks_paid_cents",
+                    "detail"
+                  ],
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "matched",
+                        "voided_in_quickbooks",
+                        "missing_in_quickbooks",
+                        "amount_differs",
+                        "currency_differs",
+                        "payments_differ",
+                        "missing_here"
+                      ]
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "invoice_id": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "number": {
+                      "type": "string"
+                    },
+                    "quickbooks_id": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "linked": {
+                      "type": "boolean"
+                    },
+                    "ezacto_amount_cents": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "quickbooks_amount_cents": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "ezacto_currency": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "quickbooks_currency": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "ezacto_paid_cents": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "quickbooks_paid_cents": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
       "InvoiceQuickBooksEnvelope": {
         "type": "object",
         "required": [
@@ -29007,7 +29377,8 @@
         "type": "object",
         "required": [
           "data",
-          "links"
+          "links",
+          "page"
         ],
         "properties": {
           "data": {
@@ -29017,7 +29388,10 @@
             }
           },
           "links": {
-            "$ref": "#/components/schemas/Links"
+            "$ref": "#/components/schemas/PageLinks"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMetadata"
           }
         },
         "additionalProperties": false
@@ -44538,6 +44912,77 @@
                     "type": "null"
                   }
                 ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimesheetAutoApprovalInput": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "window_days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 60
+          }
+        },
+        "additionalProperties": false
+      },
+      "TimesheetAutoApprovalEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "enabled",
+              "window_days",
+              "clock_starts_at",
+              "effective_from",
+              "approval_module_enabled"
+            ],
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "window_days": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 60
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "clock_starts_at": {
+                "type": "string",
+                "enum": [
+                  "submitted_at"
+                ]
+              },
+              "effective_from": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "approval_module_enabled": {
+                "type": "boolean"
               }
             },
             "additionalProperties": false

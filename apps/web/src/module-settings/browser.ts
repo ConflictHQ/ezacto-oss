@@ -47,6 +47,7 @@ import {
   type InstanceThemeView,
   type BackupRun,
   type NotificationSettingsState,
+  type TimesheetAutoApprovalState,
 } from './model.js'
 
 interface ModuleState {
@@ -403,6 +404,10 @@ export const createModuleSettingsController = (
   const quickBooksAllowPayment = required<HTMLInputElement>('[data-quickbooks-allow-payment]')
   const quickBooksDisconnect = required<HTMLButtonElement>('[data-quickbooks-disconnect]')
   const quickBooksResult = required<HTMLElement>('[data-settings-quickbooks-result]')
+  const quickBooksReconcilePanel = required<HTMLElement>('[data-quickbooks-reconcile-panel]')
+  const quickBooksReconcile = required<HTMLButtonElement>('[data-quickbooks-reconcile]')
+  const quickBooksReconcileResult = required<HTMLElement>('[data-quickbooks-reconcile-result]')
+  const quickBooksReconcileTable = required<HTMLElement>('[data-quickbooks-reconcile-table]')
   const refreshControls = document.querySelectorAll<HTMLButtonElement>('[data-settings-refresh]')
   const themeStatus = required<HTMLElement>('[data-settings-theme-status]')
   const themeSlots = required<HTMLElement>('[data-settings-theme-slots]')
@@ -477,6 +482,13 @@ export const createModuleSettingsController = (
   const notificationsTime = required<HTMLInputElement>('[data-notification-settings-time]')
   const notificationsSubmit = required<HTMLButtonElement>('[data-notification-settings-submit]')
   const notificationsResult = required<HTMLElement>('[data-notification-settings-result]')
+  const autoApprovalStatus = required<HTMLElement>('[data-auto-approval-status]')
+  const autoApprovalForm = required<HTMLFormElement>('[data-auto-approval-form]')
+  const autoApprovalEnabled = required<HTMLInputElement>('[data-auto-approval-enabled]')
+  const autoApprovalDays = required<HTMLInputElement>('[data-auto-approval-days]')
+  const autoApprovalSince = required<HTMLElement>('[data-auto-approval-since]')
+  const autoApprovalSubmit = required<HTMLButtonElement>('[data-auto-approval-submit]')
+  const autoApprovalResult = required<HTMLElement>('[data-auto-approval-result]')
 
   // The list is held rather than re-fetched after every action: add, verify and
   // remove all answer with what they changed, and a re-fetch would throw away
@@ -797,6 +809,51 @@ export const createModuleSettingsController = (
       })
     } finally {
       if (currentSession() === active) notificationsSubmit.disabled = false
+    }
+  })
+
+  const showAutoApproval = (settings: TimesheetAutoApprovalState): void => {
+    autoApprovalEnabled.checked = settings.enabled
+    autoApprovalDays.value = settings.window_days === null ? '' : String(settings.window_days)
+    autoApprovalSince.textContent = !settings.approval_module_enabled
+      ? 'Needs the Approval module, which is off.'
+      : settings.enabled && settings.effective_from !== null
+        ? `Applies to weeks submitted on or after ${settings.effective_from.slice(0, 10)}.`
+        : 'Turning this on does not approve weeks that are already waiting.'
+  }
+
+  autoApprovalForm.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    if (active === null || api.updateTimesheetAutoApproval === undefined) return
+    if (autoApprovalEnabled.checked && autoApprovalDays.value === '') {
+      autoApprovalResult.textContent = 'Choose how many days a week waits before it is approved.'
+      return
+    }
+    autoApprovalResult.textContent = 'Saving…'
+    autoApprovalSubmit.disabled = true
+    try {
+      const saved = await api.updateTimesheetAutoApproval(
+        {
+          enabled: autoApprovalEnabled.checked,
+          ...(autoApprovalDays.value === '' ? {} : { window_days: Number(autoApprovalDays.value) }),
+        },
+        active.signal,
+      )
+      active.present(() => {
+        showAutoApproval(saved)
+        autoApprovalResult.textContent = 'Saved.'
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        autoApprovalResult.textContent = messageFor(
+          error,
+          'Only administrators can change automatic approval.',
+          'Automatic approval could not be saved.',
+        )
+      })
+    } finally {
+      if (currentSession() === active) autoApprovalSubmit.disabled = false
     }
   })
 
@@ -1320,6 +1377,31 @@ export const createModuleSettingsController = (
     }
   }
 
+  const loadAutoApproval = async (active: ActiveSession): Promise<void> => {
+    if (api.getTimesheetAutoApproval === undefined) {
+      autoApprovalStatus.textContent = 'This build has no automatic approval endpoint.'
+      return
+    }
+    try {
+      const settings = await api.getTimesheetAutoApproval(active.signal)
+      active.present(() => {
+        showAutoApproval(settings)
+        autoApprovalForm.hidden = false
+        autoApprovalStatus.textContent = ''
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        sectionFailed(
+          'approval',
+          autoApprovalStatus,
+          error,
+          'Only administrators can read automatic approval.',
+          'Automatic approval could not be loaded.',
+        )
+      })
+    }
+  }
+
   const loadNotifications = async (active: ActiveSession): Promise<void> => {
     if (api.getNotificationSettings === undefined) {
       notificationsStatus.textContent = 'This build has no notification settings endpoint.'
@@ -1626,6 +1708,8 @@ export const createModuleSettingsController = (
         quickBooksConnect.hidden = connection !== null
         quickBooksDisconnect.hidden = connection === null
         quickBooksPaymentRow.hidden = connection === null
+        quickBooksReconcilePanel.hidden =
+          connection === null || api.getQuickBooksReconciliation === undefined
         if (connection === null) {
           quickBooksFacts.hidden = true
           quickBooksStatus.textContent = 'Not connected.'
@@ -1987,6 +2071,58 @@ export const createModuleSettingsController = (
       })
   })
 
+  // The reconciliation report (issue 1013): a read, shown as a table of what
+  // differs. There is no action on a row -- nothing here corrects anything.
+  quickBooksReconcile.addEventListener('click', () => {
+    const active = currentSession()
+    if (active === null || api.getQuickBooksReconciliation === undefined) return
+    quickBooksReconcile.disabled = true
+    quickBooksReconcileResult.textContent = 'Comparing…'
+    api
+      .getQuickBooksReconciliation(active.signal)
+      .then((report) => {
+        active.present(() => {
+          const differing = report.rows.filter((row) => row.status !== 'matched')
+          const matched = report.counts['matched'] ?? 0
+          quickBooksReconcileResult.textContent =
+            differing.length === 0
+              ? `Everything agrees (${String(matched)} invoices matched).`
+              : `${String(differing.length)} to look at, ${String(matched)} matched.`
+          const money = (cents: number | null): string =>
+            cents === null ? '—' : (cents / 100).toFixed(2)
+          quickBooksReconcileTable.replaceChildren(
+            renderDataTable({
+              caption: 'Differences between ezacto and QuickBooks',
+              rows: differing,
+              rowKey: (row) => `${row.status}:${row.number}`,
+              empty: 'No differences.',
+              columns: [
+                { key: 'number', label: 'Invoice', fit: true, render: (row) => row.number || '—' },
+                { key: 'status', label: 'Difference', fit: true, render: (row) => row.status.replaceAll('_', ' ') },
+                { key: 'ezacto', label: 'ezacto', numeric: true, render: (row) => money(row.ezacto_amount_cents) },
+                { key: 'quickbooks', label: 'QuickBooks', numeric: true, render: (row) => money(row.quickbooks_amount_cents) },
+                { key: 'detail', label: 'Detail', wrap: true, render: (row) => row.detail },
+              ],
+            }),
+          )
+          quickBooksReconcileTable.hidden = false
+        })
+      })
+      .catch((error: unknown) => {
+        active.presentFailure(error, () => {
+          quickBooksReconcileTable.hidden = true
+          quickBooksReconcileResult.textContent = messageFor(
+            error,
+            'The reconciliation is for administrators and accounting.',
+            'QuickBooks could not be compared.',
+          )
+        })
+      })
+      .finally(() => {
+        if (currentSession() === active) quickBooksReconcile.disabled = false
+      })
+  })
+
   themeSave.addEventListener('click', () => {
     const active = currentSession()
     if (active === null || themeBusy || api.setInstanceTheme === undefined) return
@@ -2218,6 +2354,7 @@ export const createModuleSettingsController = (
     email: (active) => loadEmail(active.identity, active),
     invoices: loadInvoiceDefaults,
     reminders: loadReminders,
+    approval: loadAutoApproval,
     notifications: loadNotifications,
     payouts: loadWiseConnection,
     backup: (active) => loadBackups(active.identity, active),

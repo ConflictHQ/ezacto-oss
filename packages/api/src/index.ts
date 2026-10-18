@@ -427,6 +427,8 @@ export {
   installQuickBooksWebhookRoute,
   type QuickBooksConnectionStatus,
   type QuickBooksInvoiceSyncState,
+  type QuickBooksReconciliation,
+  type QuickBooksReconciliationRow,
   type QuickBooksService,
   type QuickBooksSyncResult,
   type QuickBooksTokenSet,
@@ -452,6 +454,7 @@ export * from './notification-mail.js'
 export * from './thank-you-preference.js'
 export * from './reminder-settings.js'
 export * from './notification-settings.js'
+export * from './timesheet-auto-approval.js'
 export * from './notification-preferences.js'
 export * from './invoice-defaults.js'
 

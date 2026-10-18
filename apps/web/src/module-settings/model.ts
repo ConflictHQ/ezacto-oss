@@ -52,6 +52,19 @@ export interface QuickBooksConnectionView {
   } | null
 }
 
+/** The QuickBooks reconciliation report (issue 1013), as the API states it. */
+export interface QuickBooksReconciliationView {
+  generated_at: string
+  counts: Readonly<Record<string, number>>
+  rows: readonly {
+    status: string
+    number: string
+    detail: string
+    ezacto_amount_cents: number | null
+    quickbooks_amount_cents: number | null
+  }[]
+}
+
 /** The palette as `/api/v1/settings/theme` reports it; null is the built-in theme. */
 export type InstanceThemeView = {
   palette: Readonly<Record<string, string>>
@@ -84,6 +97,15 @@ export type NotificationSettingsState = {
     readonly day: 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday'
     readonly time: string
   } | null
+}
+
+/** The optional automatic approval of submitted timesheets (issue 1009). */
+export type TimesheetAutoApprovalState = {
+  readonly enabled: boolean
+  readonly window_days: number | null
+  readonly clock_starts_at: 'submitted_at'
+  readonly effective_from: string | null
+  readonly approval_module_enabled: boolean
 }
 
 /** The organisation default payment reminder policy, or null for off (issue 801). */
@@ -268,6 +290,12 @@ export interface CompanySettingsApi {
     patch: Partial<NotificationSettingsState>,
     signal?: AbortSignal,
   ): Promise<NotificationSettingsState>
+  /** Optional like the settings above: only a build with the route serves it. */
+  getTimesheetAutoApproval?(signal?: AbortSignal): Promise<TimesheetAutoApprovalState>
+  updateTimesheetAutoApproval?(
+    patch: { readonly enabled?: boolean; readonly window_days?: number },
+    signal?: AbortSignal,
+  ): Promise<TimesheetAutoApprovalState>
   getEmailHealth(signal?: AbortSignal): Promise<EmailHealth>
   /**
    * Backup runs. Optional because only a deployment that composes a reader
@@ -299,6 +327,8 @@ export interface CompanySettingsApi {
     signal?: AbortSignal,
   ): Promise<unknown>
   disconnectQuickBooks?(signal?: AbortSignal): Promise<void>
+  /** Reads QuickBooks and lists differences; changes nothing on either side. */
+  getQuickBooksReconciliation?(signal?: AbortSignal): Promise<QuickBooksReconciliationView>
 
   /**
    * The instance palette (#591). Optional for the same reason the two above

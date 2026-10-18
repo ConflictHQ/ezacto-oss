@@ -17,6 +17,7 @@ import type {
   ThankYouPreferenceService,
   ReminderSettingsService,
   NotificationSettingsService,
+  TimesheetAutoApprovalService,
   ProfileNotificationsPort,
   InvoiceDefaultsService,
   RecurringRepairService,
@@ -82,6 +83,7 @@ import {
   installThankYouPreferenceRoutes,
   installReminderSettingsRoutes,
   installNotificationSettingsRoutes,
+  installTimesheetAutoApprovalRoutes,
   installProfileNotificationRoutes,
   installInvoiceDefaultsRoutes,
   installRecurringRepairRoutes,
@@ -464,6 +466,19 @@ export interface RuntimeServices {
   reminderSettings?: ReminderSettingsService
   /** Company settings for the mail the instance sends its own people (issue 934). */
   notificationSettings?: NotificationSettingsService
+  /** The optional automatic approval of submitted timesheets (issue 1009). */
+  timesheetAutoApproval?: TimesheetAutoApprovalService
+  /**
+   * Approves the submitted weeks the policy above has made due, a bounded batch
+   * at a time. Called from the minute cron in the Worker and the outbox tick in
+   * the container; a no-op while the policy is off.
+   */
+  timesheetAutoApprovalSweep?: {
+    processDue(now: string): Promise<{
+      readonly approved: readonly number[]
+      readonly failed: readonly { readonly submissionId: number; readonly message: string }[]
+    }>
+  }
   invoiceDefaults?: InvoiceDefaultsService
   /**
    * Sends the reminders that have come due. Called from the daily cron in the
@@ -825,6 +840,13 @@ export const createApp = (
             }
             if (services.notificationSettings !== undefined) {
               installNotificationSettingsRoutes(api, services.notificationSettings)
+            }
+            if (services.timesheetAutoApproval !== undefined) {
+              installTimesheetAutoApprovalRoutes(api, {
+                service: services.timesheetAutoApproval,
+                clock: () => systemClock.now().instant,
+                ...(services.activity === undefined ? {} : { activity: services.activity }),
+              })
             }
             if (services.profileNotifications !== undefined) {
               installProfileNotificationRoutes(api, services.profileNotifications)

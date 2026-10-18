@@ -11,7 +11,10 @@ import {
 import { createContainerDatabase } from "../src/adapters.js";
 import { executeInvoiceLifecycleCommand, recordInvoicePayment } from "../src/invoice-state.js";
 import { migrateContainer } from "../src/migrate.js";
-import { createQuickBooksMirrorSource } from "../src/quickbooks-source.js";
+import {
+  createQuickBooksMirrorSource,
+  createQuickBooksReconciliationSource,
+} from "../src/quickbooks-source.js";
 import { createQuickBooksStore } from "../src/quickbooks.js";
 
 const t = (minute: number): string => `2026-09-11T12:${String(minute).padStart(2, "0")}:00.000Z`;
@@ -181,6 +184,7 @@ const runtime = async (
     },
     store,
     source: mirrorSource,
+    reconciliation: createQuickBooksReconciliationSource(createContainerDatabase(sqlite)),
     fetch: fetchImpl,
     now: () => new Date(t(1)),
     newState: () => "state-value-0123456789",
