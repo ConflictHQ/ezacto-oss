@@ -1095,6 +1095,72 @@
   background: var(--ez-ground);
   color: var(--ez-ink);
 }
+.filter-bar {
+  display: grid;
+  gap: 10px;
+  margin-block: 12px;
+}
+.filter-bar-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+.filter-bar-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.filter-bar-field label {
+  color: var(--ez-muted);
+  font-size: 12px;
+}
+.filter-bar-field select,
+.filter-bar-field input[type='search'] {
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.filter-bar-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+.filter-bar-toggle input {
+  width: 20px;
+  height: 20px;
+}
+.filter-bar-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.filter-bar-chip,
+.filter-bar-clear {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+  cursor: pointer;
+}
+.filter-bar-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.filter-bar-clear {
+  justify-self: start;
+}
 .report-detailed-active {
   display: flex;
   flex-direction: row;
@@ -7877,6 +7943,7 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
      test lifts the FIRST `@media print` it finds as the paper stylesheet, so a
      second block earlier in the file silently became the whole of it. */
   .report-detailed-controls,
+  .filter-bar,
   .report-entry-actions,
   .topbar,
   .tabstrip,

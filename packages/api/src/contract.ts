@@ -2089,6 +2089,9 @@ const detailedTimeParameters: readonly ApiContractParameter[] = [
     enum: ["all", "invoiced", "uninvoiced"],
   }),
   query("active_projects_only", booleanSchema),
+  // Entries whose note contains this text, case-insensitively. Under the
+  // `client` audience only notes a client may read are searched.
+  query("notes", { type: "string", maxLength: 200 }),
 ];
 
 const reportOperations: ApiContractOperation[] = [
@@ -2229,6 +2232,8 @@ const reportOperations: ApiContractOperation[] = [
     parameters: [
       { ...query("as_of", dateSchema), required: true },
       query("client_id", integerSchema),
+      // Per invoice, before the aging columns and totals are built.
+      query("due_state", { type: "string", enum: ["not_due", "past_due"] }),
     ],
   },
   {
@@ -7566,6 +7571,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "unclaimed_seconds",
       "time_entry_count",
       "currencies",
+      "facets",
       "rows",
     ],
     properties: {
@@ -7607,7 +7613,27 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         type: "array",
         items: reference("DetailedTimeCurrencyTotal"),
       },
+      facets: reference("DetailedTimeFacets"),
       rows: { type: "array", items: reference("DetailedTimeRow") },
+    },
+    additionalProperties: false,
+  },
+  DetailedTimeFacet: {
+    type: "object",
+    required: ["id", "name"],
+    properties: { id: integerSchema, name: { type: "string" } },
+    additionalProperties: false,
+  },
+  // What each picker can narrow the report to, each list computed with every
+  // filter but its own applied.
+  DetailedTimeFacets: {
+    type: "object",
+    required: ["people", "tasks", "roles", "tags"],
+    properties: {
+      people: { type: "array", items: reference("DetailedTimeFacet") },
+      tasks: { type: "array", items: reference("DetailedTimeFacet") },
+      roles: { type: "array", items: reference("DetailedTimeFacet") },
+      tags: { type: "array", items: reference("DetailedTimeFacet") },
     },
     additionalProperties: false,
   },

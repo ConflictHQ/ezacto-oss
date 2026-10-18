@@ -16785,6 +16785,18 @@
               "type": "integer",
               "minimum": 1
             }
+          },
+          {
+            "name": "due_state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "not_due",
+                "past_due"
+              ]
+            }
           }
         ]
       }
@@ -17781,6 +17793,15 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "notes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
           }
         ]
       }
@@ -18051,6 +18072,15 @@
             "required": false,
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "name": "notes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
             }
           },
           {
@@ -39050,6 +39080,7 @@
           "unclaimed_seconds",
           "time_entry_count",
           "currencies",
+          "facets",
           "rows"
         ],
         "properties": {
@@ -39184,10 +39215,66 @@
               "$ref": "#/components/schemas/DetailedTimeCurrencyTotal"
             }
           },
+          "facets": {
+            "$ref": "#/components/schemas/DetailedTimeFacets"
+          },
           "rows": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/DetailedTimeRow"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "DetailedTimeFacet": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DetailedTimeFacets": {
+        "type": "object",
+        "required": [
+          "people",
+          "tasks",
+          "roles",
+          "tags"
+        ],
+        "properties": {
+          "people": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DetailedTimeFacet"
+            }
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DetailedTimeFacet"
+            }
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DetailedTimeFacet"
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DetailedTimeFacet"
             }
           }
         },

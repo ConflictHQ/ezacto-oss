@@ -30,6 +30,7 @@ import {
   type Whoami,
 } from '@conflict-hq/ezacto-client'
 import { canManageTeammateTime } from '@ezacto/core'
+import { renderFilterBar, type FilterValue } from '../components/filter-bar.js'
 import { createPeriodControl } from '../components/period.js'
 import { invoiceIdentityCanWrite, invoicePagePath } from '../invoices/model.js'
 import { moneyText } from '../money-display.js'
@@ -799,7 +800,40 @@ const deltaLabel = (fraction: number | null): string => {
 const invoiceStateLabel = (state: InvoicedReport['rows'][number]['state']): string =>
   state === 'open' ? 'Sent' : state[0]!.toLocaleUpperCase('en-US') + state.slice(1)
 
-const renderInvoiced = (report: Readonly<InvoicedReport>): DocumentFragment => {
+const invoicedStatuses: readonly InvoicedReportStatus[] = ['draft', 'open', 'paid', 'closed']
+
+/**
+ * A footer row per currency, from the server's totals: they follow the same
+ * filters as the rows, and two currencies are never added together. A viewer
+ * who cannot see money gets no footer rather than an empty one.
+ */
+const totalsFooter = (
+  leading: number,
+  totals: readonly {
+    readonly currency: string
+    readonly values: readonly (number | undefined)[]
+  }[],
+): HTMLTableSectionElement | null => {
+  const visible = totals.filter((total) => total.values.every((value) => value !== undefined))
+  if (visible.length === 0) return null
+  const foot = element('tfoot')
+  for (const total of visible) {
+    const line = element('tr')
+    const label = textElement('th', `Total (${total.currency})`)
+    label.scope = 'row'
+    label.colSpan = leading
+    line.append(label)
+    for (const value of total.values) line.append(moneyCell(value, total.currency))
+    foot.append(line)
+  }
+  return foot
+}
+
+const renderInvoiced = (
+  report: Readonly<InvoicedReport>,
+  options: Readonly<InvoicedReportOptions>,
+  onOptions: (next: InvoicedReportOptions) => void,
+): DocumentFragment => {
   const fragment = document.createDocumentFragment()
   fragment.append(
     reportHeading(
@@ -807,8 +841,36 @@ const renderInvoiced = (report: Readonly<InvoicedReport>): DocumentFragment => {
       `${report.from} through ${report.to} · ${report.rows.length} ${report.rows.length === 1 ? 'invoice' : 'invoices'}`,
     ),
   )
+  fragment.append(
+    renderFilterBar({
+      label: 'Invoiced filters',
+      controls: [
+        {
+          kind: 'select',
+          id: 'ez-invoiced-status',
+          label: 'Status',
+          value: options.status ?? '',
+          neutral: '',
+          dataAttribute: 'data-report-invoice-status',
+          options: [
+            ['', 'All statuses'],
+            ...invoicedStatuses.map((status): [string, string] => [status, invoiceStateLabel(status)]),
+          ],
+        },
+      ],
+      onChange: (_id, value: FilterValue) =>
+        onOptions({ ...options, status: invoicedStatuses.find((status) => status === value) ?? null }),
+      onClear: () => onOptions({ ...options, status: null }),
+    }),
+  )
   if (report.rows.length === 0) {
-    fragment.append(textElement('p', 'No invoices were issued in this period.', 'report-empty'))
+    fragment.append(
+      textElement(
+        'p',
+        options.status === null ? 'No invoices were issued in this period.' : 'No invoices match these filters.',
+        'report-empty',
+      ),
+    )
     return fragment
   }
   const wrapper = element('div', 'report-table-wrap')
@@ -846,6 +908,14 @@ const renderInvoiced = (report: Readonly<InvoicedReport>): DocumentFragment => {
     body.append(line)
   }
   table.append(head, body)
+  const invoicedFoot = totalsFooter(
+    5,
+    report.totals.map((total) => ({
+      currency: total.currency,
+      values: [total.invoiced_cents, total.paid_cents, total.balance_cents],
+    })),
+  )
+  if (invoicedFoot !== null) table.append(invoicedFoot)
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
@@ -902,11 +972,47 @@ const renderPaymentsReceived = (
   return fragment
 }
 
-const renderReceivables = (report: Readonly<ReceivablesReport>): DocumentFragment => {
+const renderReceivables = (
+  report: Readonly<ReceivablesReport>,
+  options: Readonly<InvoicedReportOptions>,
+  onOptions: (next: InvoicedReportOptions) => void,
+): DocumentFragment => {
   const fragment = document.createDocumentFragment()
   fragment.append(reportHeading('Receivables', `Outstanding balances as of ${report.as_of}`))
+  const dueState = options.dueState ?? null
+  fragment.append(
+    renderFilterBar({
+      label: 'Receivables filters',
+      controls: [
+        {
+          kind: 'select',
+          id: 'ez-receivables-due-state',
+          label: 'Due state',
+          value: dueState ?? '',
+          neutral: '',
+          dataAttribute: 'data-report-due-state',
+          options: [
+            ['', 'All outstanding'],
+            ['not_due', 'Not yet due'],
+            ['past_due', 'Past due'],
+          ],
+        },
+      ],
+      onChange: (_id, value: FilterValue) =>
+        onOptions({ ...options, dueState: value === 'not_due' || value === 'past_due' ? value : null }),
+      onClear: () => onOptions({ ...options, dueState: null }),
+    }),
+  )
   if (report.rows.length === 0) {
-    fragment.append(textElement('p', 'No outstanding receivables as of this date.', 'report-empty'))
+    fragment.append(
+      textElement(
+        'p',
+        dueState === null
+          ? 'No outstanding receivables as of this date.'
+          : 'No outstanding receivables match these filters.',
+        'report-empty',
+      ),
+    )
     return fragment
   }
   const wrapper = element('div', 'report-table-wrap')
@@ -938,6 +1044,25 @@ const renderReceivables = (report: Readonly<ReceivablesReport>): DocumentFragmen
     body.append(line)
   }
   table.append(head, body)
+  const receivablesFoot = element('tfoot')
+  for (const total of report.totals) {
+    if (total.outstanding_cents === undefined) continue
+    const line = element('tr')
+    const label = textElement('th', `Total (${total.currency})`)
+    label.scope = 'row'
+    line.append(label, textElement('td', total.currency), textElement('td', String(total.invoice_count)))
+    line.append(
+      moneyCell(total.invoiced_cents, total.currency),
+      moneyCell(total.outstanding_cents, total.currency),
+      moneyCell(total.not_due_cents, total.currency),
+      moneyCell(total.days_1_to_30_cents, total.currency),
+      moneyCell(total.days_31_to_60_cents, total.currency),
+      moneyCell(total.days_61_to_90_cents, total.currency),
+      moneyCell(total.days_90_plus_cents, total.currency),
+    )
+    receivablesFoot.append(line)
+  }
+  if (receivablesFoot.childElementCount > 0) table.append(receivablesFoot)
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
@@ -1628,28 +1753,6 @@ const selectControl = (
   return field
 }
 
-const idControl = (
-  id: string,
-  label: string,
-  value: number | null,
-  onChange: (next: number | null) => void,
-): HTMLElement => {
-  const field = element('div', 'report-filter-field')
-  const caption = textElement('label', label)
-  caption.htmlFor = id
-  const input = element('input')
-  input.id = id
-  input.inputMode = 'numeric'
-  input.pattern = '[1-9][0-9]*'
-  input.value = value === null ? '' : String(value)
-  input.addEventListener('change', () => {
-    const parsed = Number(input.value)
-    onChange(Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null)
-  })
-  field.append(caption, input)
-  return field
-}
-
 /**
  * The filter recap Harvest puts opposite the totals. It is worth carrying over:
  * a row of collapsed dropdowns hides what a report actually covers, and this
@@ -1803,20 +1906,6 @@ const renderDetailedTime = (
   const controls = element('div', 'report-detailed-controls')
   controls.append(
     selectControl(
-      'ez-detailed-hours',
-      'Show',
-      [
-        ['all', 'All hours'],
-        ['billable', 'Billable hours'],
-        ['non_billable', 'Non-billable hours'],
-        ['uninvoiced', 'Uninvoiced billable hours'],
-        ['claimed', 'Claimed by an invoice'],
-        ['unclaimed', 'Not claimed yet'],
-      ],
-      options.hours,
-      (next) => handlers.onOptions({ ...options, hours: next as DetailedTimeHours }),
-    ),
-    selectControl(
       'ez-detailed-grain',
       'Rows',
       [
@@ -1826,28 +1915,6 @@ const renderDetailedTime = (
       options.grain,
       (next) => handlers.onOptions({ ...options, grain: next === 'entry' ? 'entry' : 'day' }),
     ),
-    selectControl(
-      'ez-detailed-invoice-state',
-      'Invoice state',
-      [
-        ['all', 'All entries'],
-        ['invoiced', 'Invoiced'],
-        ['uninvoiced', 'Uninvoiced'],
-      ],
-      options.invoiceState,
-      (next) => handlers.onOptions({
-        ...options,
-        invoiceState: next === 'invoiced' || next === 'uninvoiced' ? next : 'all',
-      }),
-    ),
-    idControl('ez-detailed-task', 'Task ID', options.taskId, (taskId) =>
-      handlers.onOptions({ ...options, taskId })),
-    ...(options.scope?.self ? [] : [idControl('ez-detailed-person', 'Person ID', options.userId, (userId) =>
-      handlers.onOptions({ ...options, userId }))]),
-    idControl('ez-detailed-role', 'Role ID', options.roleId, (roleId) =>
-      handlers.onOptions({ ...options, roleId })),
-    idControl('ez-detailed-tag', 'Tag ID', options.tagId, (tagId) =>
-      handlers.onOptions({ ...options, tagId })),
     selectControl(
       'ez-detailed-group',
       'Group by',
@@ -1865,17 +1932,117 @@ const renderDetailedTime = (
         handlers.onOptions({ ...options, grouping: next as DetailedTimeGrouping }),
     ),
   )
-  const activeField = element('div', 'report-filter-field report-detailed-active')
-  const activeInput = element('input')
-  activeInput.type = 'checkbox'
-  activeInput.id = 'ez-detailed-active'
-  activeInput.checked = options.activeProjectsOnly
-  activeInput.addEventListener('change', () =>
-    handlers.onOptions({ ...options, activeProjectsOnly: activeInput.checked }),
-  )
-  const activeLabel = textElement('label', 'Active projects only')
-  activeLabel.htmlFor = 'ez-detailed-active'
-  activeField.append(activeInput, activeLabel)
+  const named = (
+    facet: readonly { readonly id: number; readonly name: string }[],
+    selected: number | null,
+    fallback: string,
+  ): [string, string][] => {
+    const items: [string, string][] = facet.map((item) => [String(item.id), item.name])
+    // A filter the address names stays visible even when the other filters
+    // leave nothing for it, so it can be seen and taken off.
+    if (selected !== null && !items.some(([value]) => value === String(selected))) {
+      items.push([String(selected), `${fallback} #${selected}`])
+    }
+    return items
+  }
+  const idOf = (value: FilterValue): number | null => {
+    const parsed = Number(value)
+    return typeof value === 'string' && Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
+  }
+  const filterBar = renderFilterBar({
+    label: 'Detailed time filters',
+    controls: [
+      {
+        kind: 'select',
+        id: 'ez-detailed-hours',
+        label: 'Show',
+        value: options.hours,
+        neutral: 'all',
+        options: [
+          ['all', 'All hours'],
+          ['billable', 'Billable hours'],
+          ['non_billable', 'Non-billable hours'],
+          ['uninvoiced', 'Uninvoiced billable hours'],
+          ['claimed', 'Claimed by an invoice'],
+          ['unclaimed', 'Not claimed yet'],
+        ],
+      },
+      {
+        kind: 'select',
+        id: 'ez-detailed-invoice-state',
+        label: 'Invoice state',
+        value: options.invoiceState,
+        neutral: 'all',
+        options: [
+          ['all', 'All entries'],
+          ['invoiced', 'Invoiced'],
+          ['uninvoiced', 'Uninvoiced'],
+        ],
+      },
+      ...(options.scope?.self
+        ? []
+        : [{
+            kind: 'select' as const,
+            id: 'ez-detailed-person',
+            label: 'Person',
+            value: options.userId === null ? '' : String(options.userId),
+            neutral: '',
+            options: [['', 'All people'] as [string, string], ...named(report.facets.people, options.userId, 'Person')],
+          }]),
+      {
+        kind: 'select',
+        id: 'ez-detailed-task',
+        label: 'Task',
+        value: options.taskId === null ? '' : String(options.taskId),
+        neutral: '',
+        options: [['', 'All tasks'], ...named(report.facets.tasks, options.taskId, 'Task')],
+      },
+      {
+        kind: 'select',
+        id: 'ez-detailed-role',
+        label: 'Role',
+        value: options.roleId === null ? '' : String(options.roleId),
+        neutral: '',
+        options: [['', 'All roles'], ...named(report.facets.roles, options.roleId, 'Role')],
+      },
+      {
+        kind: 'select',
+        id: 'ez-detailed-tag',
+        label: 'Tag',
+        value: options.tagId === null ? '' : String(options.tagId),
+        neutral: '',
+        options: [['', 'All tags'], ...named(report.facets.tags, options.tagId, 'Tag')],
+      },
+      { kind: 'search', id: 'ez-detailed-notes', label: 'Notes contain', value: options.notes ?? '' },
+      { kind: 'toggle', id: 'ez-detailed-active', label: 'Active projects only', checked: options.activeProjectsOnly },
+    ],
+    onChange: (id, value) => {
+      if (id === 'ez-detailed-hours') handlers.onOptions({ ...options, hours: value as DetailedTimeHours })
+      else if (id === 'ez-detailed-invoice-state') {
+        handlers.onOptions({
+          ...options,
+          invoiceState: value === 'invoiced' || value === 'uninvoiced' ? value : 'all',
+        })
+      } else if (id === 'ez-detailed-person') handlers.onOptions({ ...options, userId: idOf(value) })
+      else if (id === 'ez-detailed-task') handlers.onOptions({ ...options, taskId: idOf(value) })
+      else if (id === 'ez-detailed-role') handlers.onOptions({ ...options, roleId: idOf(value) })
+      else if (id === 'ez-detailed-tag') handlers.onOptions({ ...options, tagId: idOf(value) })
+      else if (id === 'ez-detailed-notes') handlers.onOptions({ ...options, notes: String(value).slice(0, 200) })
+      else if (id === 'ez-detailed-active') handlers.onOptions({ ...options, activeProjectsOnly: value === true })
+    },
+    onClear: () =>
+      handlers.onOptions({
+        ...options,
+        hours: 'all',
+        invoiceState: 'all',
+        userId: options.scope?.self ? options.userId : null,
+        taskId: null,
+        roleId: null,
+        tagId: null,
+        notes: '',
+        activeProjectsOnly: false,
+      }),
+  })
   const actions = element('div', 'report-detailed-actions')
   const exportMenu = handlers.onExport === undefined ? null : detailedExportMenu(handlers.onExport)
   const printButton = textElement('button', 'Print')
@@ -1910,8 +2077,8 @@ const renderDetailedTime = (
       actions.append(button)
     }
   }
-  controls.append(activeField, actions)
-  fragment.append(controls)
+  controls.append(actions)
+  fragment.append(controls, filterBar)
 
   if (report.rows.length === 0) {
     if (exportMenu !== null) exportMenu.toggle.disabled = true
@@ -2507,8 +2674,6 @@ export const createReportsController = (
   const projectInput = required<HTMLSelectElement>('[data-report-project]')
   const fixedFeeField = required<HTMLElement>('[data-report-fixed-fee-field]')
   const fixedFeeInput = required<HTMLInputElement>('[data-report-fixed-fee]')
-  const invoiceStatusField = required<HTMLElement>('[data-report-invoice-status-field]')
-  const invoiceStatusInput = required<HTMLSelectElement>('[data-report-invoice-status]')
   const profitStatusField = required<HTMLElement>('[data-report-profit-status-field]')
   const profitStatusInput = required<HTMLSelectElement>('[data-report-profit-status]')
   const profitBillingField = required<HTMLElement>('[data-report-profit-billing-field]')
@@ -2866,7 +3031,6 @@ export const createReportsController = (
     clientInput.disabled = value
     projectInput.disabled = value
     fixedFeeInput.disabled = value
-    invoiceStatusInput.disabled = value
     profitStatusInput.disabled = value
     profitBillingInput.disabled = value
     profitManagerInput.disabled = value
@@ -2997,7 +3161,6 @@ export const createReportsController = (
     // absent one: the first person to move it waits for something to happen.
     catalogField.hidden = clientField.hidden && projectField.hidden
     fixedFeeField.hidden = kind !== 'time'
-    invoiceStatusField.hidden = kind !== 'invoiced'
     profitStatusField.hidden = kind !== 'profitability'
     profitBillingField.hidden = kind !== 'profitability'
     profitManagerField.hidden = kind !== 'profitability'
@@ -3158,7 +3321,8 @@ export const createReportsController = (
               next.userId === detailedOptions.userId &&
               next.roleId === detailedOptions.roleId &&
               next.tagId === detailedOptions.tagId &&
-              next.invoiceState === detailedOptions.invoiceState
+              next.invoiceState === detailedOptions.invoiceState &&
+              (next.notes ?? '') === (detailedOptions.notes ?? '')
             detailedOptions = next
             // Grouping is a re-fold of rows already here, so it re-renders
             // without a request; Show, Active projects only and Detail change
@@ -3280,11 +3444,21 @@ export const createReportsController = (
         ),
       )
     } else if (filters.kind === 'invoiced') {
-      results.replaceChildren(renderInvoiced(report as InvoicedReport))
+      results.replaceChildren(
+        renderInvoiced(report as InvoicedReport, invoicedOptions, (next) => {
+          invoicedOptions = next
+          void loadReport(filtersFromForm(), true)
+        }),
+      )
     } else if (filters.kind === 'payments-received') {
       results.replaceChildren(renderPaymentsReceived(report as PaymentsReceivedReport))
     } else if (filters.kind === 'receivables') {
-      results.replaceChildren(renderReceivables(report as ReceivablesReport))
+      results.replaceChildren(
+        renderReceivables(report as ReceivablesReport, invoicedOptions, (next) => {
+          invoicedOptions = next
+          void loadReport(filtersFromForm(), true)
+        }),
+      )
     } else if (filters.kind === 'activity-log') {
       results.replaceChildren(
         renderActivityLog(report as readonly ActivityLogEntry[], filters),
@@ -3460,6 +3634,7 @@ export const createReportsController = (
             ...(detailedOptions.tagId === null ? {} : { tag_id: detailedOptions.tagId }),
             invoice_state: detailedOptions.invoiceState,
             active_projects_only: detailedOptions.activeProjectsOnly,
+            ...(detailedOptions.notes === undefined || detailedOptions.notes === '' ? {} : { notes: detailedOptions.notes }),
           }
         : null
     try {
@@ -3495,6 +3670,7 @@ export const createReportsController = (
               {
                 as_of: filters.to,
                 ...(filters.clientId === null ? {} : { client_id: filters.clientId }),
+                ...(invoicedOptions.dueState == null ? {} : { due_state: invoicedOptions.dueState }),
               },
               active.signal,
             )
@@ -3599,7 +3775,6 @@ export const createReportsController = (
     expenseOptions = detailedExpenseOptionsFromUrl(location)
     contractorOnly = location.searchParams.get('contractor_only') === 'true'
     fixedFeeInput.checked = timeOptions.includeFixedFee
-    invoiceStatusInput.value = invoicedOptions.status ?? ''
     showProfitabilityOptions()
     showExpenseOptions()
     setKind(presentedKind(filters.kind, active.identity))
@@ -3633,14 +3808,6 @@ export const createReportsController = (
   form.addEventListener('submit', (event) => {
     event.preventDefault()
     timeOptions = { includeFixedFee: fixedFeeInput.checked }
-    const selectedStatus = invoiceStatusInput.value
-    invoicedOptions = {
-      status:
-        selectedStatus === 'draft' || selectedStatus === 'open' ||
-        selectedStatus === 'paid' || selectedStatus === 'closed'
-          ? selectedStatus as InvoicedReportStatus
-          : null,
-    }
     const selectedProjectStatus = profitStatusInput.value
     const selectedBillingMethod = profitBillingInput.value
     profitabilityOptions = {
@@ -3834,7 +4001,6 @@ export const createReportsController = (
       clientInput.disabled = false
       projectInput.disabled = false
       fixedFeeInput.disabled = false
-      invoiceStatusInput.disabled = false
       profitStatusInput.disabled = false
       profitBillingInput.disabled = false
       profitManagerInput.disabled = false
@@ -3891,7 +4057,6 @@ export const createReportsController = (
       expenseOptions = detailedExpenseOptionsFromUrl(initialLocation)
       contractorOnly = initialLocation.searchParams.get('contractor_only') === 'true'
       fixedFeeInput.checked = timeOptions.includeFixedFee
-      invoiceStatusInput.value = invoicedOptions.status ?? ''
       showProfitabilityOptions()
       showExpenseOptions()
       setKind(presentedKind(initial.kind, identity))

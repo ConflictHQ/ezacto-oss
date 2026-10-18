@@ -118,9 +118,17 @@ export interface PaymentsReceivedReportRecord extends ReportDateRange {
   rows: readonly PaymentReceivedReportRow[]
 }
 
+export type ReceivablesDueState = 'not_due' | 'past_due'
+
 export interface ReceivablesReportFilter {
   asOf: string
   clientId?: number
+  /**
+   * Keeps only invoices not yet due (due on or after `asOf`) or past due,
+   * decided per invoice before any row or total is built, so the aging columns
+   * and the totals cover only the invoices kept.
+   */
+  dueState?: ReceivablesDueState
 }
 
 export interface ReceivablesReportRow {
@@ -509,6 +517,12 @@ export interface DetailedTimeFilter extends ReportDateRange {
    * opposite reason: it answers what can still be billed.
    */
   activeProjectsOnly?: boolean
+  /**
+   * Entries whose note contains this text, case-insensitively. Under the
+   * `client` audience only a note a client may read is searched, so a search
+   * cannot confirm the content of a note the report withholds.
+   */
+  notes?: string
 }
 
 /**
@@ -588,6 +602,24 @@ export interface DetailedTimeCurrencyRecord {
   entriesWithoutBillableRate: number
 }
 
+/** What a detailed time picker can offer: a named id the report can narrow to. */
+export interface DetailedTimeFacet {
+  id: number
+  name: string
+}
+
+/**
+ * The values each picker can narrow the report to. Each list is computed with
+ * every filter but its own applied, so choosing a person does not empty the
+ * person picker.
+ */
+export interface DetailedTimeFacets {
+  people: readonly DetailedTimeFacet[]
+  tasks: readonly DetailedTimeFacet[]
+  roles: readonly DetailedTimeFacet[]
+  tags: readonly DetailedTimeFacet[]
+}
+
 export interface DetailedTimeReportRecord extends ReportDateRange {
   clientId: number | null
   projectId: number | null
@@ -613,6 +645,7 @@ export interface DetailedTimeReportRecord extends ReportDateRange {
   unclaimedSeconds: number
   timeEntryCount: number
   currencies: readonly DetailedTimeCurrencyRecord[]
+  facets: DetailedTimeFacets
   rows: readonly DetailedTimeRowRecord[]
 }
 
@@ -1044,6 +1077,7 @@ const receivablesReport = async (
   const grouped = new Map<string, ReceivablesReportRow>()
   const currencyTotals = new Map<string, ReceivablesReportRow>()
   for (const row of rows) {
+    if (filter.dueState !== undefined && (row.dueDate < filter.asOf) !== (filter.dueState === 'past_due')) continue
     const key = `${row.clientId}\u0000${row.currency}`
     const client = grouped.get(key) ?? emptyReceivable(row)
     addReceivable(client, row, filter.asOf)
@@ -2936,6 +2970,104 @@ const reportFilterNames = async (
   return { ...names, organizationName: names.organizationName }
 }
 
+/** The pickers a facet query leaves unapplied: each list ignores its own filter. */
+interface DetailedTimeOmit {
+  user?: boolean
+  task?: boolean
+  role?: boolean
+  tag?: boolean
+}
+
+/**
+ * The report's row conditions over `time_entries entry`, `project`, `client`,
+ * `task`, `person`, as one fragment. The report reads it whole; each facet
+ * reads it with its own picker left out.
+ */
+const detailedTimeConditions = (
+  f: Readonly<DetailedTimeFilter>,
+  omit: DetailedTimeOmit,
+  audience: ReportAudience,
+) => sql`
+      entry.spent_date BETWEEN ${f.from} AND ${f.to}
+      AND ${detailedTimeHoursFilter(f.hours ?? 'all')}
+      AND ${f.includeFixedFee === false ? sql`project.billing_method <> 'fixed_fee'` : sql`1`}
+      AND ${f.currency === undefined ? sql`1` : sql`upper(coalesce(project.billing_currency, client.currency)) = ${f.currency.toUpperCase()}`}
+      AND ${f.contractorsOnly === true ? sql`person.is_contractor = 1` : sql`1`}
+      AND ${f.projectStatus === 'active' ? sql`project.is_active = 1` : f.projectStatus === 'archived' ? sql`project.is_active = 0` : sql`1`}
+      AND ${f.billingMethod === undefined ? sql`1` : sql`project.billing_method = ${f.billingMethod}`}
+      AND ${f.managerId === undefined ? sql`1` : sql`EXISTS (
+        SELECT 1 FROM user_assignments manager
+        WHERE manager.project_id = project.id AND manager.user_id = ${f.managerId}
+          AND manager.is_project_manager = 1
+      )`}
+      AND ${f.directClientOnly === true && f.clientId !== undefined ? sql`project.client_id = ${f.clientId}` : sql`1`}
+      AND ${(f.activeProjectsOnly ?? false) ? sql`project.is_active = 1` : sql`1`}
+      AND ${f.projectId === undefined ? sql`1` : sql`project.id = ${f.projectId}`}
+      AND ${omit.task || f.taskId === undefined ? sql`1` : sql`task.id = ${f.taskId}`}
+      AND ${omit.user || f.userId === undefined ? sql`1` : sql`person.id = ${f.userId}`}
+      AND ${(f.invoiceState ?? 'all') === 'all'
+        ? sql`1`
+        : (f.invoiceState ?? 'all') === 'invoiced'
+          ? sql`entry.invoice_id IS NOT NULL`
+          : sql`entry.invoice_id IS NULL`}
+      AND ${omit.role || f.roleId === undefined ? sql`1` : sql`EXISTS (
+        SELECT 1 FROM user_roles role_filter
+        WHERE role_filter.user_id = person.id AND role_filter.role_id = ${f.roleId}
+      )`}
+      AND ${omit.tag || f.tagId === undefined ? sql`1` : sql`EXISTS (
+        SELECT 1 FROM project_tag_assignments tag_filter
+        WHERE tag_filter.project_id = project.id
+          AND tag_filter.project_tag_id = ${f.tagId}
+      )`}
+      AND ${clientFilter(f.clientId)}
+      AND ${f.notes === undefined || f.notes === ''
+        ? sql`1`
+        : sql`instr(lower(coalesce(entry.notes, '')), lower(${f.notes})) > 0`}
+      AND ${f.notes === undefined || f.notes === '' || audience === 'internal'
+        ? sql`1`
+        : sql`(entry.client_visible = 1 OR (entry.client_visible IS NULL AND coalesce(
+            (SELECT report_notes_client_visible_default FROM organizations ORDER BY id LIMIT 1), 1) <> 0))`}
+`
+
+const detailedTimeFacets = async (
+  database: Database,
+  filter: Readonly<DetailedTimeFilter>,
+  audience: ReportAudience,
+): Promise<DetailedTimeFacets> => {
+  const from = sql`
+    FROM time_entries entry
+    JOIN projects project ON project.id = entry.project_id
+    JOIN clients client ON client.id = project.client_id
+    JOIN tasks task ON task.id = entry.task_id
+    JOIN users person ON person.id = entry.user_id`
+  const people = await database.all<DetailedTimeFacet>(sql`
+    SELECT DISTINCT person.id AS "id",
+      trim(person.first_name || ' ' || person.last_name) AS "name"
+    ${from}
+    WHERE ${detailedTimeConditions(filter, { user: true }, audience)}
+    ORDER BY 2, 1`)
+  const tasks = await database.all<DetailedTimeFacet>(sql`
+    SELECT DISTINCT task.id AS "id", task.name AS "name"
+    ${from}
+    WHERE ${detailedTimeConditions(filter, { task: true }, audience)}
+    ORDER BY 2, 1`)
+  const roles = await database.all<DetailedTimeFacet>(sql`
+    SELECT DISTINCT role.id AS "id", role.name AS "name"
+    ${from}
+    JOIN user_roles membership ON membership.user_id = person.id
+    JOIN roles role ON role.id = membership.role_id
+    WHERE ${detailedTimeConditions(filter, { role: true }, audience)}
+    ORDER BY 2, 1`)
+  const tags = await database.all<DetailedTimeFacet>(sql`
+    SELECT DISTINCT tag.id AS "id", tag.name AS "name"
+    ${from}
+    JOIN project_tag_assignments tagging ON tagging.project_id = project.id
+    JOIN project_tags tag ON tag.id = tagging.project_tag_id
+    WHERE ${detailedTimeConditions(filter, { tag: true }, audience)}
+    ORDER BY 2, 1`)
+  return { people, tasks, roles, tags }
+}
+
 /**
  * Every tracked hour in a period, at the grain the report's table draws.
  *
@@ -2991,38 +3123,7 @@ const detailedTimeReport = async (
     JOIN tasks task ON task.id = entry.task_id
     JOIN users person ON person.id = entry.user_id
     LEFT JOIN invoices claim ON claim.id = entry.invoice_id
-    WHERE entry.spent_date BETWEEN ${filter.from} AND ${filter.to}
-      AND ${detailedTimeHoursFilter(hours)}
-      AND ${filter.includeFixedFee === false ? sql`project.billing_method <> 'fixed_fee'` : sql`1`}
-      AND ${filter.currency === undefined ? sql`1` : sql`upper(coalesce(project.billing_currency, client.currency)) = ${filter.currency.toUpperCase()}`}
-      AND ${filter.contractorsOnly === true ? sql`person.is_contractor = 1` : sql`1`}
-      AND ${filter.projectStatus === 'active' ? sql`project.is_active = 1` : filter.projectStatus === 'archived' ? sql`project.is_active = 0` : sql`1`}
-      AND ${filter.billingMethod === undefined ? sql`1` : sql`project.billing_method = ${filter.billingMethod}`}
-      AND ${filter.managerId === undefined ? sql`1` : sql`EXISTS (
-        SELECT 1 FROM user_assignments manager
-        WHERE manager.project_id = project.id AND manager.user_id = ${filter.managerId}
-          AND manager.is_project_manager = 1
-      )`}
-      AND ${filter.directClientOnly === true && filter.clientId !== undefined ? sql`project.client_id = ${filter.clientId}` : sql`1`}
-      AND ${activeProjectsOnly ? sql`project.is_active = 1` : sql`1`}
-      AND ${filter.projectId === undefined ? sql`1` : sql`project.id = ${filter.projectId}`}
-      AND ${filter.taskId === undefined ? sql`1` : sql`task.id = ${filter.taskId}`}
-      AND ${filter.userId === undefined ? sql`1` : sql`person.id = ${filter.userId}`}
-      AND ${invoiceState === 'all'
-        ? sql`1`
-        : invoiceState === 'invoiced'
-          ? sql`entry.invoice_id IS NOT NULL`
-          : sql`entry.invoice_id IS NULL`}
-      AND ${filter.roleId === undefined ? sql`1` : sql`EXISTS (
-        SELECT 1 FROM user_roles role_filter
-        WHERE role_filter.user_id = person.id AND role_filter.role_id = ${filter.roleId}
-      )`}
-      AND ${filter.tagId === undefined ? sql`1` : sql`EXISTS (
-        SELECT 1 FROM project_tag_assignments tag_filter
-        WHERE tag_filter.project_id = project.id
-          AND tag_filter.project_tag_id = ${filter.tagId}
-      )`}
-      AND ${clientFilter(filter.clientId)}
+    WHERE ${detailedTimeConditions(filter, {}, audience)}
     ORDER BY entry.spent_date, client.name, client.id, project.name, project.id,
       task.name, task.id, person.first_name, person.last_name, person.id, entry.id
     LIMIT ${DETAILED_TIME_ENTRY_LIMIT + 1}
@@ -3192,6 +3293,7 @@ const detailedTimeReport = async (
       currencies: [...currencies.values()].sort((left, right) =>
         left.currency.localeCompare(right.currency),
       ),
+      facets: await detailedTimeFacets(database, filter, audience),
       rows: [...lines.values()],
     },
   }

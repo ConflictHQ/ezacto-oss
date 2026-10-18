@@ -72,16 +72,6 @@ export const renderReportsPage = (view?: string): string => `
       <label class="report-filter-field report-check-field" data-report-fixed-fee-field hidden>
         <input type="checkbox" data-report-fixed-fee> Include fixed-fee project hours
       </label>
-      <div class="report-filter-field" data-report-invoice-status-field hidden>
-        <label for="ez-report-invoice-status">Status</label>
-        <select id="ez-report-invoice-status" data-report-invoice-status>
-          <option value="">All statuses</option>
-          <option value="draft">Draft</option>
-          <option value="open">Open</option>
-          <option value="paid">Paid</option>
-          <option value="closed">Closed</option>
-        </select>
-      </div>
       <div class="report-filter-field" data-report-profit-status-field hidden>
         <label for="ez-report-profit-status">Project status</label>
         <select id="ez-report-profit-status" data-report-profit-status>

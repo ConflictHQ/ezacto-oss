@@ -228,6 +228,7 @@ describe('Reports Stage 1 model', () => {
       roleId: null,
       tagId: null,
       invoiceState: 'all',
+      notes: '',
     })
     expect(reportFiltersUrl(filters, options)).toBe(
       '/reports?report=detailed-time&from=2026-08-01&to=2026-08-31&client_id=3&project_id=9&hours=uninvoiced&group=person&grain=day&active_only=true&invoice_state=all',
