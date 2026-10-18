@@ -1735,6 +1735,7 @@ describe('the Send dialog attachments', () => {
     client_id: 1,
     company_name: 'Example Studio LLC',
     client_name: 'Northwind Example Co',
+    time_zone: 'America/Costa_Rica',
     template_version: 2,
     subject: 'Invoice #%invoice_number% from %company_name%',
     message: 'Happy Friday! Please find this month\'s invoice below.\n\nAna',
@@ -1863,6 +1864,27 @@ describe('the Send dialog attachments', () => {
         confirmed: true,
       },
       expect.any(AbortSignal),
+    )
+  })
+
+  it('[e2e:invoice-email] records the send weekday in the organization zone, not a literal token (issue 925)', async () => {
+    const { api } = sending({ getInvoiceEmailDefaults: vi.fn(async () => defaults()) })
+    await openWithDefaults(api)
+    box('[data-invoice-composer-confirm]').click()
+    document.querySelector<HTMLInputElement>('[data-invoice-composer-subject]')!.value =
+      'Happy %send_weekday%!'
+    submit('[data-invoice-composer-form]')
+    const weekday = new Intl.DateTimeFormat('en-US', {
+      weekday: 'long',
+      timeZone: 'America/Costa_Rica',
+    }).format(new Date())
+    await vi.waitFor(() =>
+      expect(api.transitionInvoice).toHaveBeenCalledWith(
+        7,
+        expect.any(String),
+        expect.objectContaining({ subject: `Happy ${weekday}!` }),
+        expect.any(AbortSignal),
+      ),
     )
   })
 

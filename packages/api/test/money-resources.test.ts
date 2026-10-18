@@ -901,6 +901,56 @@ for (const [runtime, factory] of factories) {
       expect(response.status).toBe(202);
     }, slowRuntimeTimeout);
 
+    /**
+     * Issue 925. The weekday is read in the organization's zone at the moment
+     * the message is composed, and the period comes from the invoice's own
+     * period rather than its issue date, for the preview and the send alike.
+     */
+    it("[api] fills the send weekday and the billing period in the preview and in the sent body", async () => {
+      const mailer = {
+        assertAvailable: vi.fn(async () => undefined),
+        enqueue: vi.fn(),
+      } satisfies SenderBoundQueuedMailer;
+      const test = await setup(undefined, undefined, mailer, {
+        textTemplate: "Happy %send_weekday%! Invoice %invoice_number% covers [%invoice_period%].",
+      });
+      await seedInvoiceDeliveryConfiguration(test.database);
+      await test.database.run(`UPDATE organizations SET timezone = 'America/Costa_Rica'`);
+      // The period is derived from generated lines; stamped directly here.
+      await test.database.run("DROP TRIGGER invoice_period_d22_derived_update");
+      await test.database.run(
+        `UPDATE invoices SET period_start = '2026-08-15', period_end = '2026-09-14' WHERE id = 1`,
+      );
+      // Saturday 02:00 in UTC, still Friday evening in Costa Rica.
+      test.setTime("2026-10-10T02:00:00.000Z");
+      const preview = await test.request(
+        "/api/v1/invoices/1/deliveries/preview",
+        jsonRequest("POST", {
+          expected_version: 0,
+          recipients: [{ name: "Client", email: "client@example.net" }],
+        }),
+      );
+      expect(preview.status).toBe(200);
+      const { data } = (await preview.json()) as { data: { text: string } };
+      expect(data.text).toContain("Happy Friday! Invoice INV-DRAFT covers [August – September 2026].");
+
+      const sent = await test.request(
+        "/api/v1/invoices/1/deliveries",
+        jsonRequest("POST", {
+          expected_version: 0,
+          recipients: [{ name: "Client", email: "client@example.net" }],
+          confirmed: true,
+        }, "invoice-delivery-weekday"),
+      );
+      expect(sent.status).toBe(202);
+      const [intent] = await test.database.rows<{ text_body: string }>(
+        "SELECT text_body FROM invoice_email_intents",
+      );
+      expect(intent?.text_body).toContain(
+        "Happy Friday! Invoice INV-DRAFT covers [August – September 2026].",
+      );
+    }, slowRuntimeTimeout);
+
     it("[security] a provider that fails does not stop the invoice going out", async () => {
       // Minting a convenience must never be why a client does not get billed.
       const mailer = {
