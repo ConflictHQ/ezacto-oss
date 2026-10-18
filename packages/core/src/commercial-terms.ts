@@ -4,7 +4,7 @@ import { canViewMoneyField, type ActingUserAuthority } from './money-permissions
 /** Non-cents fields that disclose or change commercial pricing arrangements. */
 export const commercialTermFields: Partial<Readonly<Record<GeneralResourceKind, readonly string[]>>> = {
   clients: ['paymentTerms', 'defaultTaxPct', 'defaultTax2Pct', 'defaultDiscountPct'],
-  projects: ['billingMethod', 'billBy', 'billingCurrency'],
+  projects: ['billingMethod', 'billBy', 'billingCurrency', 'timeRoundingMode', 'timeRoundingMinutes'],
   contacts: ['invoiceRecipientStatus'],
 }
 

@@ -2,7 +2,13 @@ import {
   canManageTeammateTime,
   canViewMoneyField,
   maximumTimeEntryNoteLength,
+  timeRoundingIncrements,
+  timeRoundingModes,
   type ApprovalStatus,
+  type EffectiveTimeRounding,
+  type TimeRoundingPolicy,
+  type TimeRoundingRecalculationPreview,
+  type TimeRoundingRecalculationScope,
 } from '@ezacto/core'
 import type { Hono } from 'hono'
 import { requireApiScope, requireSessionPrincipal } from '../auth.js'
@@ -43,6 +49,7 @@ import type {
   TrackedResourceRepository,
   UpdateTimeEntryRequest,
   UpdateOrganizationTimeEntryNoteSettings,
+  UpdateOrganizationTimeRounding,
 } from './tracked-repository.js'
 
 export interface TimeEntryRouteOptions {
@@ -335,6 +342,93 @@ const selfLink = (id: number) => `/api/v1/time-entries/${id}`
 
 const optionKeys = new Set(['user_id'])
 
+const serializeRounding = (rule: Readonly<TimeRoundingPolicy>) => ({
+  mode: rule.mode,
+  minutes: rule.minutes,
+})
+
+const serializeEffectiveRounding = (rule: Readonly<EffectiveTimeRounding>) => ({
+  ...serializeRounding(rule),
+  source: rule.source,
+})
+
+const roundingBodyKeys = new Set(['mode', 'minutes'])
+
+const roundingSettingsInput = (
+  body: Record<string, unknown>,
+): UpdateOrganizationTimeRounding => {
+  const errors = unknownFieldErrors(body, roundingBodyKeys)
+  if (!Object.keys(body).some((key) => roundingBodyKeys.has(key))) {
+    errors.push({
+      field: 'body',
+      code: 'empty',
+      message: 'at least one writable field is required',
+    })
+  }
+  const mode = body['mode']
+  if (mode !== undefined && !(timeRoundingModes as readonly unknown[]).includes(mode)) {
+    errors.push({
+      field: 'mode',
+      code: 'invalid_enum',
+      message: `mode must be one of ${timeRoundingModes.join(', ')}`,
+    })
+  }
+  const minutes = body['minutes']
+  if (minutes !== undefined && !(timeRoundingIncrements as readonly unknown[]).includes(minutes)) {
+    errors.push({
+      field: 'minutes',
+      code: 'invalid_integer',
+      message: `minutes must be one of ${timeRoundingIncrements.join(', ')}`,
+    })
+  }
+  assertFields(errors)
+  return body as UpdateOrganizationTimeRounding
+}
+
+const recalculationKeys = new Set(['project_id', 'from', 'to'])
+
+const serializeRecalculationScope = (scope: Readonly<TimeRoundingRecalculationScope>) => ({
+  project_id: scope.projectId ?? null,
+  from: scope.from ?? null,
+  to: scope.to ?? null,
+})
+
+const serializeRecalculation = (preview: Readonly<TimeRoundingRecalculationPreview>) => ({
+  scope: serializeRecalculationScope(preview.scope),
+  open_entries: preview.openEntries,
+  changed_entries: preview.changedEntries,
+  rounded_seconds_before: preview.roundedSecondsBefore,
+  rounded_seconds_after: preview.roundedSecondsAfter,
+  earliest_spent_date: preview.earliestSpentDate,
+  latest_spent_date: preview.latestSpentDate,
+  projects: preview.projects.map((project) => ({
+    project_id: project.projectId,
+    project_name: project.projectName,
+    time_rounding: serializeEffectiveRounding(project.timeRounding),
+    changed_entries: project.changedEntries,
+    rounded_seconds_before: project.roundedSecondsBefore,
+    rounded_seconds_after: project.roundedSecondsAfter,
+  })),
+  kept: preview.kept,
+  fingerprint: preview.fingerprint,
+})
+
+const recalculationScope = (
+  projectId: number | undefined,
+  from: string | undefined,
+  to: string | undefined,
+  errors: FieldError[],
+): TimeRoundingRecalculationScope => {
+  if (from !== undefined && to !== undefined && from > to) {
+    errors.push({ field: 'from', code: 'out_of_order', message: 'from must not be after to' })
+  }
+  return {
+    ...(projectId !== undefined ? { projectId } : {}),
+    ...(from !== undefined ? { from } : {}),
+    ...(to !== undefined ? { to } : {}),
+  }
+}
+
 const serializeTimeEntrySettings = (
   settings: Readonly<OrganizationTimeEntrySettings>,
 ) => ({
@@ -342,6 +436,7 @@ const serializeTimeEntrySettings = (
   time_format: settings.timeFormat,
   clock: settings.clock,
   week_start_day: settings.weekStartDay,
+  time_rounding: serializeRounding(settings.timeRounding),
 })
 
 const noteSettingsBodyKeys = new Set(['required', 'minimum_length'])
@@ -382,6 +477,18 @@ const serializeNoteSettings = (
   required: settings.required,
   minimum_length: settings.minimumLength,
 })
+
+// Like the notes policy: the organization's rule decides what every invoice
+// bills, so it is an administrator's, and a token never reaches it.
+const requireRoundingAuthority = (principal: Readonly<UserPrincipal>): void => {
+  if (principal.profile !== 'executive_manager' && principal.profile !== 'administrator') {
+    throw new ApiError({
+      status: 403,
+      code: 'profile_forbidden',
+      message: 'Only executive managers and administrators can change or recalculate time rounding.',
+    })
+  }
+}
 
 export const installTimeEntryRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
@@ -442,6 +549,95 @@ export const installTimeEntryRoutes = <Bindings extends object>(
     )
   })
 
+  api.patch('/time-entry-rounding-settings', async (context) => {
+    requireApiScope(context, 'time_entries:write')
+    requireRoundingAuthority(requireSessionPrincipal(context))
+    const rule = await options.repository.updateTimeRoundingSettings(
+      roundingSettingsInput(await readObjectBody(context)),
+      options.clock.now().instant,
+    )
+    return context.json(
+      {
+        data: serializeRounding(rule),
+        links: { self: '/api/v1/time-entry-rounding-settings' },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  // Re-rounding open time under today's rules: a preview, then an apply that
+  // names the preview it was shown (issue 949).
+  api.get('/time-rounding-recalculation', async (context) => {
+    requireApiScope(context, 'time_entries:read')
+    requireRoundingAuthority(requireSessionPrincipal(context))
+    const params = strictSearchParams(new URL(context.req.url), recalculationKeys)
+    const errors: FieldError[] = []
+    const scope = recalculationScope(
+      queryPositiveInteger(params, 'project_id', errors),
+      queryDate(params, 'from', errors),
+      queryDate(params, 'to', errors),
+      errors,
+    )
+    assertFields(errors)
+    return context.json(
+      {
+        data: serializeRecalculation(
+          await options.repository.previewTimeRoundingRecalculation(scope),
+        ),
+        links: { self: '/api/v1/time-rounding-recalculation' },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  api.post('/time-rounding-recalculation', async (context) => {
+    requireApiScope(context, 'time_entries:write')
+    requireRoundingAuthority(requireSessionPrincipal(context))
+    const body = await readObjectBody(context)
+    const errors = unknownFieldErrors(body, new Set([...recalculationKeys, 'fingerprint']))
+    const scope = recalculationScope(
+      optionalPositiveInteger(body, 'project_id', errors),
+      optionalDate(body, 'from', errors),
+      optionalDate(body, 'to', errors),
+      errors,
+    )
+    const fingerprint = body['fingerprint']
+    if (typeof fingerprint !== 'string' || !/^[0-9a-f]{64}$/u.test(fingerprint)) {
+      errors.push({
+        field: 'fingerprint',
+        code: 'invalid',
+        message: 'fingerprint must be the one a preview returned',
+      })
+    }
+    assertFields(errors)
+    const result = await options.repository.applyTimeRoundingRecalculation(
+      scope,
+      fingerprint as string,
+      options.clock.now().instant,
+    )
+    if (result.status === 'stale') {
+      throw new ApiError({
+        status: 409,
+        code: 'preview_stale',
+        message:
+          'The open entries changed since this preview. Preview again before recalculating.',
+      })
+    }
+    return context.json(
+      {
+        data: {
+          recalculated_entries: result.recalculatedEntries,
+          preview: serializeRecalculation(result.preview),
+        },
+        links: { self: '/api/v1/time-rounding-recalculation' },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
   api.get('/time-entry-options', async (context) => {
     requireApiScope(context, 'time_entries:read')
     const principal = context.get('principal')
@@ -460,6 +656,7 @@ export const installTimeEntryRoutes = <Bindings extends object>(
             project_id: row.projectId,
             task_id: row.taskId,
             minimum_note_length: row.noteMinimumLength,
+            time_rounding: serializeEffectiveRounding(row.timeRounding),
           })),
           links: { self: '/api/v1/time-entry-options' },
         },

@@ -194,8 +194,8 @@ const factories = [
 const seed = async (database: TestDatabase): Promise<void> => {
   await database.run(
     `INSERT INTO organizations (
-      name, time_entry_mode, time_rounding, modules, created_at, updated_at
-    ) VALUES ('Sanitized Organization', 'duration', 'up_6', ?, ?, ?)`,
+      name, time_entry_mode, time_rounding_mode, time_rounding_minutes, modules, created_at, updated_at
+    ) VALUES ('Sanitized Organization', 'duration', 'up', 6, ?, ?, ?)`,
     modules,
     timestamp,
     timestamp,
@@ -604,6 +604,7 @@ for (const [runtime, factory] of factories) {
           time_format: 'decimal',
           clock: '12h',
           week_start_day: 'monday',
+          time_rounding: { mode: 'up', minutes: 6 },
         },
         links: { self: '/api/v1/time-entry-settings' },
       })
@@ -620,6 +621,7 @@ for (const [runtime, factory] of factories) {
         time_format: 'hours_minutes',
         clock: '24h',
         week_start_day: 'monday',
+        time_rounding: { mode: 'up', minutes: 6 },
       })
     })
 
@@ -636,6 +638,7 @@ for (const [runtime, factory] of factories) {
           project_id: number
           task_id: number
           minimum_note_length: number
+          time_rounding: { mode: string; minutes: number; source: string }
         }[]
       > => {
         const response = await test.request('/api/v1/time-entry-options')
@@ -649,8 +652,8 @@ for (const [runtime, factory] of factories) {
 
       const initial = await options()
       expect(initial).toEqual([
-        { project_id: 1, task_id: 1, minimum_note_length: 0 },
-        { project_id: 1, task_id: 2, minimum_note_length: 0 },
+        { project_id: 1, task_id: 1, minimum_note_length: 0, time_rounding: { mode: 'up', minutes: 6, source: 'organization' } },
+        { project_id: 1, task_id: 2, minimum_note_length: 0, time_rounding: { mode: 'up', minutes: 6, source: 'organization' } },
       ])
       expect(initial).not.toContainEqual({ project_id: 1, task_id: 3 })
       expect(initial).not.toContainEqual({ project_id: 2, task_id: 1 })
@@ -667,7 +670,7 @@ for (const [runtime, factory] of factories) {
         `UPDATE task_assignments SET is_active = 0 WHERE id = 1`,
       )
       await expect(options()).resolves.toEqual([
-        { project_id: 1, task_id: 2, minimum_note_length: 0 },
+        { project_id: 1, task_id: 2, minimum_note_length: 0, time_rounding: { mode: 'up', minutes: 6, source: 'organization' } },
       ])
       await test.database.run(
         `UPDATE task_assignments SET is_active = 1 WHERE id = 1`,
@@ -675,7 +678,7 @@ for (const [runtime, factory] of factories) {
 
       await test.database.run(`UPDATE tasks SET is_active = 0 WHERE id = 1`)
       await expect(options()).resolves.toEqual([
-        { project_id: 1, task_id: 2, minimum_note_length: 0 },
+        { project_id: 1, task_id: 2, minimum_note_length: 0, time_rounding: { mode: 'up', minutes: 6, source: 'organization' } },
       ])
       await test.database.run(`UPDATE tasks SET is_active = 1 WHERE id = 1`)
 
@@ -738,6 +741,163 @@ for (const [runtime, factory] of factories) {
       expect(invalid.status).toBe(422)
     }, slowRuntimeTimeout)
 
+    it('[api] sets the organization rounding rule for administrators and rewrites nothing', async () => {
+      const test = await setup()
+      const admin = asProfile('administrator')
+      await test.database.run(
+        `INSERT INTO time_entries (
+          id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+          spent_date, seconds, seconds_without_timer, rounded_seconds,
+          billable, created_at, updated_at
+        ) VALUES (50, 1, 1, 1, 1, 1, '2026-08-28', 420, 420, 720, 1, ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      const patch = (body: Record<string, unknown>, actor: RequestInit) =>
+        test.request('/api/v1/time-entry-rounding-settings', actingAs(actor, jsonRequest('PATCH', body)))
+
+      expect((await patch({ mode: 'down' }, asProfile('member'))).status).toBe(403)
+      expect((await patch({ mode: 'down' }, asProfile('accounting'))).status).toBe(403)
+
+      const first = await patch({ mode: 'down' }, admin)
+      expect(first.status).toBe(200)
+      expect(first.headers.get('cache-control')).toBe('no-store')
+      expect(await first.json()).toEqual({
+        data: { mode: 'down', minutes: 6 },
+        links: { self: '/api/v1/time-entry-rounding-settings' },
+      })
+      expect(await data(await patch({ minutes: 10 }, admin))).toEqual({ mode: 'down', minutes: 10 })
+      expect(await data(await patch({ mode: 'nearest', minutes: 60 }, admin))).toEqual({
+        mode: 'nearest',
+        minutes: 60,
+      })
+      expect(
+        await data(await test.request('/api/v1/time-entry-settings')),
+      ).toMatchObject({ time_rounding: { mode: 'nearest', minutes: 60 } })
+
+      for (const bad of [{}, { mode: 'sideways' }, { minutes: 7 }, { minutes: '15' }, { mode: 'up', extra: 1 }]) {
+        expect((await patch(bad, admin)).status, JSON.stringify(bad)).toBe(422)
+      }
+      expect(
+        await test.database.rows(
+          `SELECT time_rounding_mode AS mode, time_rounding_minutes AS minutes FROM organizations`,
+        ),
+      ).toEqual([{ mode: 'nearest', minutes: 60 }])
+      // Saved time keeps the figure it was saved with.
+      expect(
+        await test.database.rows(`SELECT rounded_seconds FROM time_entries WHERE id = 50`),
+      ).toEqual([{ rounded_seconds: 720 }])
+    }, slowRuntimeTimeout)
+
+    it('[api] previews a recalculation and applies exactly that preview', async () => {
+      const test = await setup()
+      const admin = asProfile('administrator')
+      const insert = (id: number, date: string, rounded: number) =>
+        test.database.run(
+          `INSERT INTO time_entries (
+            id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+            spent_date, seconds, seconds_without_timer, rounded_seconds,
+            billable, created_at, updated_at
+          ) VALUES (?, 1, 1, 1, 1, 1, ?, 420, 420, ?, 1, ?, ?)`,
+          id,
+          date,
+          rounded,
+          timestamp,
+          timestamp,
+        )
+      // The organization rounds up to 6 minutes: 420 s is 720. Two entries hold
+      // something else, one already holds it.
+      await insert(60, '2026-08-27', 900)
+      await insert(61, '2026-08-28', 360)
+      await insert(62, '2026-08-29', 720)
+
+      const preview = '/api/v1/time-rounding-recalculation'
+      expect((await test.request(preview, asProfile('member'))).status).toBe(403)
+      expect((await test.request(preview, asProfile('accounting'))).status).toBe(403)
+      const response = await test.request(preview, admin)
+      expect(response.status).toBe(200)
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      const read = await data<{
+        open_entries: number
+        changed_entries: number
+        rounded_seconds_before: number
+        rounded_seconds_after: number
+        earliest_spent_date: string
+        latest_spent_date: string
+        projects: { project_name: string; time_rounding: unknown }[]
+        kept: unknown
+        fingerprint: string
+      }>(response)
+      expect(read).toMatchObject({
+        scope: { project_id: null, from: null, to: null },
+        open_entries: 3,
+        changed_entries: 2,
+        rounded_seconds_before: 1_260,
+        rounded_seconds_after: 1_440,
+        earliest_spent_date: '2026-08-27',
+        latest_spent_date: '2026-08-28',
+        kept: { invoiced: 0, approved: 0, locked: 0, other: 0 },
+      })
+      expect(read.projects).toEqual([
+        expect.objectContaining({
+          project_name: 'Assigned Project',
+          time_rounding: { mode: 'up', minutes: 6, source: 'organization' },
+        }),
+      ])
+      expect(read.fingerprint).toMatch(/^[0-9a-f]{64}$/)
+      // Looking changes nothing.
+      expect(
+        await test.database.rows(`SELECT id, rounded_seconds FROM time_entries WHERE id >= 60 ORDER BY id`),
+      ).toEqual([
+        { id: 60, rounded_seconds: 900 },
+        { id: 61, rounded_seconds: 360 },
+        { id: 62, rounded_seconds: 720 },
+      ])
+
+      // A scope narrows it; a bad one is named.
+      expect(
+        await data(await test.request(`${preview}?project_id=1&from=2026-08-28&to=2026-08-29`, admin)),
+      ).toMatchObject({ open_entries: 2, changed_entries: 1 })
+      for (const query of ['from=2026-08-30&to=2026-08-01', 'from=yesterday', 'project_id=0', 'other=1']) {
+        expect((await test.request(`${preview}?${query}`, admin)).status, query).toBe(422)
+      }
+
+      const apply = (body: Record<string, unknown>, actor: RequestInit = admin) =>
+        test.request(preview, actingAs(actor, jsonRequest('POST', body)))
+      expect((await apply({ fingerprint: read.fingerprint }, asProfile('member'))).status).toBe(403)
+      for (const bad of [{}, { fingerprint: 'nope' }, { fingerprint: read.fingerprint, extra: 1 }]) {
+        expect((await apply(bad)).status, JSON.stringify(bad)).toBe(422)
+      }
+      // Well formed, but not this preview's.
+      const stale = await apply({ fingerprint: 'f'.repeat(64) })
+      expect(stale.status).toBe(409)
+      expect(await stale.json()).toMatchObject({ error: { code: 'preview_stale' } })
+      // And a preview for another scope is not this scope's.
+      expect((await apply({ fingerprint: read.fingerprint, project_id: 1, from: '2026-08-29' })).status).toBe(409)
+      expect(
+        await test.database.rows(`SELECT id, rounded_seconds FROM time_entries WHERE id >= 60 ORDER BY id`),
+      ).toEqual([
+        { id: 60, rounded_seconds: 900 },
+        { id: 61, rounded_seconds: 360 },
+        { id: 62, rounded_seconds: 720 },
+      ])
+
+      const applied = await apply({ fingerprint: read.fingerprint })
+      expect(applied.status).toBe(200)
+      expect(await data(applied)).toMatchObject({
+        recalculated_entries: 2,
+        preview: { changed_entries: 2, fingerprint: read.fingerprint },
+      })
+      expect(
+        await test.database.rows(`SELECT id, rounded_seconds FROM time_entries WHERE id >= 60 ORDER BY id`),
+      ).toEqual([
+        { id: 60, rounded_seconds: 720 },
+        { id: 61, rounded_seconds: 720 },
+        { id: 62, rounded_seconds: 720 },
+      ])
+      expect(await data(await test.request(preview, admin))).toMatchObject({ changed_entries: 0 })
+    }, slowRuntimeTimeout)
+
     it('[api] enforces the strongest scoped note rule on every native write path', async () => {
       const test = await setup()
       await test.database.run(
@@ -758,8 +918,8 @@ for (const [runtime, factory] of factories) {
       expect(
         await data<unknown[]>(await test.request('/api/v1/time-entry-options')),
       ).toEqual([
-        { project_id: 1, task_id: 1, minimum_note_length: 7 },
-        { project_id: 1, task_id: 2, minimum_note_length: 7 },
+        { project_id: 1, task_id: 1, minimum_note_length: 7, time_rounding: { mode: 'up', minutes: 6, source: 'organization' } },
+        { project_id: 1, task_id: 2, minimum_note_length: 7, time_rounding: { mode: 'up', minutes: 6, source: 'organization' } },
       ])
 
       const sixCodePoints = '😀😀😀😀😀😀'
@@ -1625,8 +1785,8 @@ for (const [runtime, factory] of factories) {
       // The teammate's project/task pairs, which are what a teammate's entry
       // may be logged against; the administrator holds no assignment at all.
       expect(await data(await test.request('/api/v1/time-entry-options?user_id=2', admin))).toEqual([
-        { project_id: 1, task_id: 1, minimum_note_length: 0 },
-        { project_id: 1, task_id: 2, minimum_note_length: 0 },
+        { project_id: 1, task_id: 1, minimum_note_length: 0, time_rounding: { mode: 'up', minutes: 6, source: 'organization' } },
+        { project_id: 1, task_id: 2, minimum_note_length: 0, time_rounding: { mode: 'up', minutes: 6, source: 'organization' } },
       ])
       expect(await data(await test.request('/api/v1/time-entry-options', admin))).toEqual([])
       expect(

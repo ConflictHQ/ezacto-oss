@@ -122,8 +122,8 @@ const policyKey = (subject: Readonly<PolicySubject>): string =>
  */
 const installFixture = async (db: TestDatabase, mode: Mode): Promise<void> => {
   await db.run(
-    `INSERT INTO organizations (name, time_entry_mode, time_rounding, modules, created_at, updated_at)
-     VALUES ('Fictional Studio', ?, 'up_15', ?, ?, ?)`,
+    `INSERT INTO organizations (name, time_entry_mode, time_rounding_mode, time_rounding_minutes, modules, created_at, updated_at)
+     VALUES ('Fictional Studio', ?, 'up', 15, ?, ?, ?)`,
     mode,
     JSON.stringify({ expenses: true, invoices: true, approval: true }),
     ...stamps(2),
