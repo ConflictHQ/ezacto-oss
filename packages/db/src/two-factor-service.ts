@@ -50,10 +50,24 @@ export const TWO_FACTOR_CHALLENGE_TTL_MS = 5 * 60 * 1_000
 export const TWO_FACTOR_MAX_ATTEMPTS = 5
 export const TWO_FACTOR_LOCK_MS = 15 * 60 * 1_000
 
+/**
+ * Wrong mailed codes one challenge absorbs before it stops answering. The code
+ * lives as long as its challenge, so the 5 minute challenge life is also the
+ * code's life. Per challenge rather than per user: a fresh challenge costs a
+ * password attempt, which is already rate-limited.
+ */
+export const TWO_FACTOR_EMAIL_CODE_MAX_ATTEMPTS = 5
+
 export interface TwoFactorChallengeOffer {
   /** Bearer material. The caller stores it, and it is never written down here. */
   token: string
   expiresAt: string
+  /**
+   * The six digits to hand to the mailer, present only when a code was asked
+   * for. It exists between generation and the mailer, and nowhere else: the
+   * store keeps a keyed hash, and nothing here logs it.
+   */
+  emailCode?: string
 }
 
 export interface TwoFactorServiceOptions {
@@ -66,6 +80,12 @@ export interface TwoFactorServiceOptions {
   accountName: (userId: number) => Promise<string>
   /** Deployment brand, the heading the authenticator groups entries under. */
   issuer: string
+  /**
+   * HMAC key for mailed codes, so a database leak alone cannot brute-force six
+   * digits. Required to issue or redeem an emailed code, and nothing else.
+   */
+  emailCodeKey?: Uint8Array
+  emailCodeMaxAttempts?: number
   now?: () => Date
   maxAttempts?: number
   lockMs?: number
@@ -87,6 +107,7 @@ export type TwoFactorChallengeVerdict =
   | { status: 'unknown_challenge' }
 
 const CHALLENGE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/
+const EMAIL_CODE_PATTERN = /^[0-9]{6}$/
 
 const base64Url = (bytes: Uint8Array): string => {
   let binary = ''
@@ -101,10 +122,37 @@ const sha256Hex = async (value: string): Promise<string> => {
   return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
+const hmacHex = async (value: string, key: Uint8Array): Promise<string> => {
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    key as Uint8Array<ArrayBuffer>,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const signature = new Uint8Array(
+    await crypto.subtle.sign(
+      'HMAC',
+      cryptoKey,
+      new TextEncoder().encode(value) as Uint8Array<ArrayBuffer>,
+    ),
+  )
+  return [...signature].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+const generateEmailCode = (): string => {
+  // 000000-999999 by modular reduction over a 32-bit draw; the bias is
+  // immaterial next to the per-challenge attempt ceiling.
+  const [value] = crypto.getRandomValues(new Uint32Array(1))
+  return (value! % 1_000_000).toString().padStart(6, '0')
+}
+
 export const createTwoFactorService = ({
   store,
   accountName,
   issuer,
+  emailCodeKey,
+  emailCodeMaxAttempts = TWO_FACTOR_EMAIL_CODE_MAX_ATTEMPTS,
   now = () => new Date(),
   maxAttempts = TWO_FACTOR_MAX_ATTEMPTS,
   lockMs = TWO_FACTOR_LOCK_MS,
@@ -192,19 +240,29 @@ export const createTwoFactorService = ({
      * once and only its digest is stored, so a database leak yields challenges
      * nobody can present -- the same bargain the session store makes.
      */
-    async issueChallenge(userId: number): Promise<TwoFactorChallengeOffer> {
+    async issueChallenge(
+      userId: number,
+      { emailCode = false }: { emailCode?: boolean } = {},
+    ): Promise<TwoFactorChallengeOffer> {
+      if (emailCode && emailCodeKey === undefined) {
+        throw new Error('an emailed two-factor code needs emailCodeKey')
+      }
       const issuedAt = now().toISOString()
       const expiresAt = new Date(Date.parse(issuedAt) + challengeTtlMs).toISOString()
       for (let attempt = 0; attempt < 4; attempt += 1) {
         const token = base64Url(crypto.getRandomValues(new Uint8Array(32)))
+        const code = emailCode ? generateEmailCode() : undefined
         const created = await store.createChallenge({
           userId,
           tokenHash: await sha256Hex(token),
           expiresAt,
           createdAt: issuedAt,
           cleanupBefore: new Date(Date.parse(issuedAt) - challengeTtlMs).toISOString(),
+          ...(code === undefined ? {} : { codeHash: await hmacHex(code, emailCodeKey!) }),
         })
-        if (created === 'created') return { token, expiresAt }
+        if (created === 'created') {
+          return code === undefined ? { token, expiresAt } : { token, expiresAt, emailCode: code }
+        }
       }
       throw new Error('could not issue a two-factor challenge')
     },
@@ -232,6 +290,37 @@ export const createTwoFactorService = ({
       const consumed = await store.consumeChallenge(tokenHash, now().toISOString())
       if (consumed === null) return { status: 'unknown_challenge' }
       return { status: 'accepted', userId: consumed.userId }
+    },
+
+    /**
+     * The second half of a sign-in for a challenge that carries a mailed code.
+     *
+     * The count is the challenge's own, not the enrolment's: an email-only user
+     * has no enrolment row. A malformed code is rejected without touching the
+     * store, so it costs no guess -- it could never have matched.
+     */
+    async redeemEmailCode(token: string, code: string): Promise<TwoFactorChallengeVerdict> {
+      if (emailCodeKey === undefined) {
+        throw new Error('an emailed two-factor code needs emailCodeKey')
+      }
+      if (!CHALLENGE_TOKEN_PATTERN.test(token)) return { status: 'unknown_challenge' }
+      if (!EMAIL_CODE_PATTERN.test(code)) return { status: 'rejected' }
+      const verdict = await store.redeemChallengeCode(
+        await sha256Hex(token),
+        await hmacHex(code, emailCodeKey),
+        now().toISOString(),
+        emailCodeMaxAttempts,
+      )
+      switch (verdict.status) {
+        case 'accepted':
+          return { status: 'accepted', userId: verdict.userId }
+        case 'rejected':
+          return { status: 'rejected' }
+        case 'exhausted':
+          return { status: 'locked' }
+        case 'unknown':
+          return { status: 'unknown_challenge' }
+      }
     },
 
     /**
