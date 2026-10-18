@@ -468,14 +468,16 @@ export const createRecurringWorkspaceController = (
             label: 'Subject',
             render: (definition) => definition.subject_template,
           },
-          { key: 'cadence', label: 'Cadence', render: recurringCadenceLabel },
+          { key: 'cadence', label: 'Cadence', fit: true, render: recurringCadenceLabel },
           {
             key: 'next',
+            fit: true,
             label: 'Next issue',
             render: (definition) => definition.next_issue_on,
           },
           {
             key: 'due',
+            fit: true,
             label: 'Status',
             render: (definition) => {
               const state = recurringDueState(definition, today)
@@ -486,7 +488,7 @@ export const createRecurringWorkspaceController = (
               return pill
             },
           },
-          { key: 'basis', label: 'Bills', render: recurringBasisLabel },
+          { key: 'basis', label: 'Bills', fit: true, render: recurringBasisLabel },
           {
             key: 'amount',
             label: 'Amount',

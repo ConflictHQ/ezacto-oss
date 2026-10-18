@@ -24,12 +24,49 @@ import {
 } from './notification-preferences.js'
 import { queryDate, resourceId, strictSearchParams } from './resources/support.js'
 
+/**
+ * Pricing the cost of hours tracked before a person had a cost rate (#750).
+ *
+ * A port, like the band claim backfill: the API package holds no dependency on
+ * the database package. `apply` defaults to false everywhere.
+ */
+export interface CostRateBackfillPort {
+  backfill(input: {
+    userId: number
+    from: string
+    to: string
+    costRateCents: number
+    reason: string
+    actorUserId: number
+    runId: string
+    occurredAt: string
+    replaceCaptured: boolean
+    apply: boolean
+  }): Promise<{
+    runId: string
+    applied: boolean
+    userId: number
+    from: string
+    to: string
+    costRateCents: number
+    entryCount: number
+    seconds: number
+    costCents: number
+    periods: readonly { month: string; entryCount: number; seconds: number; costCents: number }[]
+    capturedEntryCount: number
+    runningEntryCount: number
+  }>
+}
+
 export interface TeamRouteOptions {
   repository: TeamRepository
+  costRateBackfill?: CostRateBackfillPort
   cursorSigningKey: Uint8Array
   isTeamModuleEnabled(): Promise<boolean>
   clock?: () => string
 }
+
+type ResolvedTeamOptions = Required<Omit<TeamRouteOptions, 'costRateBackfill'>>
 
 const idempotencyPattern = /^[A-Za-z0-9._:-]{1,128}$/u
 const canonicalDate = /^\d{4}-\d{2}-\d{2}$/u
@@ -55,7 +92,7 @@ const viewer = (principal: Readonly<UserPrincipal>): TeamViewer => ({
   managerGrants: principal.managerGrants,
 })
 
-const requireEnabled = async (options: Readonly<Required<TeamRouteOptions>>): Promise<void> => {
+const requireEnabled = async (options: Readonly<ResolvedTeamOptions>): Promise<void> => {
   if (await options.isTeamModuleEnabled()) return
   throw new ApiError({
     status: 403,
@@ -384,7 +421,7 @@ const command = (
 })
 
 const ensureVisible = async (
-  options: Readonly<Required<TeamRouteOptions>>,
+  options: Readonly<ResolvedTeamOptions>,
   principal: Readonly<UserPrincipal>,
   userId: number,
 ): Promise<TeamPersonRecord> => {
@@ -404,7 +441,7 @@ export const installTeamRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   supplied: TeamRouteOptions,
 ): void => {
-  const options: Required<TeamRouteOptions> = {
+  const options: ResolvedTeamOptions = {
     ...supplied,
     clock: supplied.clock ?? (() => new Date().toISOString()),
   }
@@ -689,6 +726,98 @@ export const installTeamRoutes = <Bindings extends object>(
       )
       return context.json(receiptEnvelope(receipt), 201)
     } catch (error) {
+      return translate(error)
+    }
+  })
+
+  /**
+   * Rehearse or apply a cost rate over hours tracked before the person had one
+   * (#750). Rehearsal is the default: nothing is written unless the call says
+   * `apply`. The rate and the range are the caller's -- nothing here guesses
+   * what a person cost in a year the data cannot speak for. The actor comes from
+   * the session, so the audit rows name who really did it, and the idempotency
+   * key names the run so what it wrote can be read back together.
+   */
+  api.post('/team/people/:id/cost-rate-backfill', async (context) => {
+    const principal = requireSessionPrincipal(context)
+    await requireEnabled(options)
+    const userId = resourceId(context.req.param('id'), 'person')
+    await ensureVisible(options, principal, userId)
+    // The authority that may set a cost rate at all.
+    if (principal.profile !== 'administrator') {
+      throw new ApiError({ status: 403, code: 'profile_forbidden', message: 'The acting user profile cannot change a cost rate.' })
+    }
+    if (supplied.costRateBackfill === undefined) {
+      throw new ApiError({ status: 503, code: 'service_unavailable', message: 'Cost rate backfill is not available in this deployment.' })
+    }
+    const body = await objectBody(context)
+    const errors: FieldError[] = []
+    noUnknown(body, new Set(['from', 'to', 'cost_rate_cents', 'reason', 'replace_captured', 'apply']), errors)
+    for (const field of ['from', 'to'] as const) {
+      const value = body[field]
+      if (typeof value !== 'string' || !isCanonicalDate(value)) {
+        errors.push({ field, code: 'invalid_date', message: `${field} must be a real date; the range is always named` })
+      }
+    }
+    if (typeof body.from === 'string' && typeof body.to === 'string' && body.from > body.to) {
+      errors.push({ field: 'to', code: 'invalid_range', message: 'to must not be before from' })
+    }
+    if (!Number.isSafeInteger(body.cost_rate_cents) || (body.cost_rate_cents as number) < 0) {
+      errors.push({ field: 'cost_rate_cents', code: 'invalid_integer', message: 'cost_rate_cents must be a non-negative safe integer' })
+    }
+    if (typeof body.reason !== 'string' || body.reason.trim().length === 0 || body.reason.length > 500) {
+      errors.push({ field: 'reason', code: 'invalid', message: 'reason must be 1 to 500 characters' })
+    }
+    for (const field of ['replace_captured', 'apply'] as const) {
+      if (body[field] !== undefined && typeof body[field] !== 'boolean') {
+        errors.push({ field, code: 'invalid', message: `${field} must be true or false` })
+      }
+    }
+    const runId = commandId(context)
+    if (errors.length > 0) throw validationError(errors)
+    try {
+      const report = await supplied.costRateBackfill.backfill({
+        userId,
+        from: body.from as string,
+        to: body.to as string,
+        costRateCents: body.cost_rate_cents as number,
+        reason: body.reason as string,
+        actorUserId: principal.userId,
+        runId,
+        occurredAt: options.clock(),
+        replaceCaptured: body.replace_captured === true,
+        apply: body.apply === true,
+      })
+      return context.json(
+        {
+          data: {
+            run_id: report.runId,
+            applied: report.applied,
+            user_id: report.userId,
+            from: report.from,
+            to: report.to,
+            cost_rate_cents: report.costRateCents,
+            entry_count: report.entryCount,
+            seconds: report.seconds,
+            cost_cents: report.costCents,
+            periods: report.periods.map((period) => ({
+              month: period.month,
+              entry_count: period.entryCount,
+              seconds: period.seconds,
+              cost_cents: period.costCents,
+            })),
+            captured_entry_count: report.capturedEntryCount,
+            running_entry_count: report.runningEntryCount,
+          },
+        },
+        200,
+        { 'cache-control': 'no-store' },
+      )
+    } catch (error) {
+      // The backfill states its own refusals as TypeErrors: a scope it will not accept.
+      if (error instanceof TypeError) {
+        throw validationError([{ field: 'body', code: 'invalid', message: error.message }])
+      }
       return translate(error)
     }
   })

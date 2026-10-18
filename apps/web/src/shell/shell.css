@@ -3324,6 +3324,12 @@
 .lock-policy-form button,
 .manual-lock-form button {
   min-height: 44px;
+  padding: 0 14px;
+}
+.org-timezone-form button,
+.manual-lock-form button {
+  justify-self: start;
+  align-self: start;
 }
 .lock-policy-form input:not([type='checkbox']),
 .lock-policy-form select,
@@ -3556,6 +3562,26 @@ textarea {
 }
 button {
   cursor: pointer;
+}
+/* A baseline for a button no screen has styled. Buttons here are styled per
+   screen, and a screen that sets only min-height left the browser's grey
+   default showing -- "Saved reports" beside a styled "New report". :where()
+   has no specificity, so any rule that sets its own border or background wins
+   and nothing deliberately styled changes. */
+:where(button) {
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+:where(button:hover:not(:disabled)) {
+  background: var(--ez-surface-2);
+}
+:where(select, textarea, input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'], [type='button'], [type='submit'])) {
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
 }
 button:focus-visible,
 a:focus-visible,
@@ -3864,6 +3890,15 @@ a {
   flex-wrap: wrap;
   gap: 8px;
 }
+.report-actions button {
+  min-height: 44px;
+  padding: 0 14px;
+}
+.report-actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
 .context-row h1,
 .week-surface h2,
 dialog h2,
@@ -3909,6 +3944,17 @@ dialog h2,
   box-shadow: var(--ez-shadow-primary);
   color: var(--ez-action-fg);
   font-weight: 600;
+}
+/* A screen's own button rule outranks the lone class above, so a primary button
+   inside it turned white: "Add expense", "Apply filters", "Add project", "Add
+   client". Those rules are an element or attribute plus a container class, so
+   the element and the class twice beats them. A rule that names a container and
+   this class explicitly still wins, which is how a screen picks its own. */
+button.primary-action.primary-action {
+  border-color: var(--ez-action-edge);
+  background: var(--ez-action);
+  box-shadow: var(--ez-shadow-primary);
+  color: var(--ez-action-fg);
 }
 .authenticated-shell[hidden],
 .auth-gateway[hidden],
@@ -4374,17 +4420,25 @@ dialog h2,
 
 /* The company page's section strip: the same segmented control the calendar
    uses for its view modes, because it is the same thing -- one screen, one
-   part of it at a time -- and not a second level of navigation. */
-.settings-sections {
+   part of it at a time -- and not a second level of navigation. It keeps to
+   one line: wrapped, thirteen segments left the last one stranded on a row of
+   its own. Where the width runs out it scrolls sideways, as the tab strip
+   above it does, and segments a size smaller than the calendar's hold that
+   off until a window narrower than about 1300px beside the sidebar. The
+   padding is room for a focused segment's ring, which the scroller would
+   otherwise clip; the negative margin keeps the segments where they stood. */
+.tabstrip.settings-sections {
   height: auto;
-  padding: 0;
-  margin-bottom: 8px;
+  margin: -6px -6px 2px;
+  padding: 6px;
   border-bottom: 0;
-  flex-wrap: wrap;
-  row-gap: 8px;
+  scrollbar-width: thin;
 }
-.settings-sections a {
+.tabstrip.settings-sections a {
+  flex: none;
   min-height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
 }
 
 .settings-facts {
@@ -4408,14 +4462,21 @@ dialog h2,
 }
 
 /* One section per thing an operator configures. The rules between them are the
-   only thing saying where one setting ends and the next begins. */
+   only thing saying where one setting ends and the next begins. Inside, its
+   parts -- the heading, a status line, the facts, a form, the line a save
+   answers on -- stand one under another a set distance apart, so every
+   section keeps the same rhythm whatever it holds. */
 .settings-section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 16px;
   padding: 24px 0;
   border-top: 1px solid var(--ez-border);
 }
 
 .settings-section > header {
-  margin-bottom: 16px;
+  margin-bottom: 4px;
 }
 
 .settings-section > header h2 {
@@ -4423,9 +4484,24 @@ dialog h2,
 }
 
 .settings-section > header p {
-  margin: 4px 0 0;
+  margin: 6px 0 0;
   max-width: 68ch;
   color: var(--ez-muted);
+  line-height: 1.5;
+}
+
+/* A status or result line with nothing to say leaves the flow rather than
+   holding a gap open. Out of the flow rather than `display: none`, so it is
+   still the live region it was when its words arrive. */
+.settings-section > .form-result:empty {
+  position: absolute;
+}
+
+/* What a save, an upload or a switch answered, in the ink of the page rather
+   than the muted grey of a hint, under the control that asked. */
+.settings-section > :is(.settings-form, .settings-actions, .settings-brand-slots) + .form-result {
+  margin-top: -4px;
+  color: var(--ez-ink);
 }
 
 /* A section reads what another system holds, or failed to (issue 809): the
@@ -4459,7 +4535,7 @@ dialog h2,
 .settings-theme {
   display: grid;
   gap: 16px;
-  margin-bottom: 12px;
+  max-width: 720px;
 }
 .theme-group {
   margin: 0;
@@ -4510,7 +4586,7 @@ dialog h2,
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
   color: var(--ez-ink);
-  font-family: var(--ez-font-mono);
+  font-family: var(--ez-font-mono), monospace;
   font-size: 13px;
 }
 
@@ -4518,7 +4594,6 @@ dialog h2,
   display: grid;
   gap: 16px;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  margin-bottom: 12px;
 }
 .brand-slot {
   display: flex;
@@ -4573,44 +4648,40 @@ dialog h2,
   align-items: center;
   gap: 8px;
 }
+/* Every form on the company page is a document form, not a row of switches:
+   the shape Settings › Invoices set for itself, now the shape of all of them.
+   Each field is full width with its label over it and its hint beneath it, a
+   checkbox sits beside its words, and the button that saves them comes last,
+   on one measure. As a wrapping row, the Time section set a checkbox above
+   its words beside an unstyled number field and a button. */
 .settings-form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 16px;
-  margin-bottom: 12px;
+  display: grid;
+  gap: 14px;
+  max-width: 720px;
 }
 
 .settings-form label {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   color: var(--ez-muted);
+  font-size: 13px;
 }
-
-/* Settings › Invoices is a document form, not a row of switches: company
-   information, then default values, each field full width with its hint
-   beneath it, so the wrapping row above does not apply. */
-.settings-form.invoice-defaults-form {
-  display: grid;
-  gap: 14px;
-  align-items: stretch;
-  max-width: 720px;
-}
-.invoice-defaults-form h3 {
+.settings-form h3 {
   margin: 12px 0 0;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--ez-border);
   font-size: 16px;
 }
-.invoice-defaults-form h3:first-child {
+.settings-form h3:first-child {
   margin-top: 0;
 }
-.invoice-defaults-form label {
-  gap: 6px;
-  font-size: 13px;
-}
-.invoice-defaults-form input,
-.invoice-defaults-form textarea {
+/* A field's words are the body's size, not its label's: a phone zooms the
+   page into any field set smaller than 16px the moment it takes focus, and
+   the 14px desk size applies only where there is a pointer, as the body's
+   does. */
+.settings-form input:not([type='checkbox']):not([type='radio']),
+.settings-form select,
+.settings-form textarea {
   width: 100%;
   min-height: 44px;
   padding: 8px 12px;
@@ -4619,48 +4690,69 @@ dialog h2,
   background: var(--ez-ground);
   color: var(--ez-ink);
   font: inherit;
+  font-size: 16px;
 }
-.invoice-defaults-form textarea {
+@media (pointer: fine) {
+  .settings-form input:not([type='checkbox']):not([type='radio']),
+  .settings-form select,
+  .settings-form textarea {
+    font-size: var(--ez-text-size);
+  }
+}
+/* A count of days or a date is a few characters, and a field the width of
+   the form reads as one asking for a sentence. */
+.settings-form input[type='number'] {
+  max-width: 10rem;
+}
+.settings-form input[type='date'] {
+  max-width: 14rem;
+}
+/* Greyed rather than hidden: what a switched-off policy would be when it is
+   switched back on is still worth reading. */
+.settings-form input:not([type='checkbox']):not([type='radio']):disabled,
+.settings-form select:disabled,
+.settings-form textarea:disabled {
+  background: var(--ez-surface-2);
+  color: var(--ez-muted);
+  cursor: not-allowed;
+}
+.settings-form textarea {
   resize: vertical;
   line-height: 1.45;
 }
-.invoice-defaults-form .hint {
+.settings-form .hint {
   margin: -6px 0 0;
   font-size: 13px;
 }
-.invoice-defaults-form > button {
+.settings-form button {
   justify-self: start;
   min-height: 44px;
+}
+.settings-form > button {
   margin-top: 6px;
 }
-/* A checkbox row in the invoice settings form: the box beside its words, not
-   above them, however the form lays out its other fields. Specific enough to
-   hold against the form's own label and input rules. */
-.settings-form.invoice-defaults-form label.invoice-defaults-check {
+/* A checkbox row: the box beside its words, not above them, however the form
+   lays out its other fields, and the whole row is what a click lands on. A
+   row long enough to wrap keeps the box on its first line. Specific enough to
+   hold against the form's own label rule. */
+.settings-form label:is(.settings-toggle, .invoice-defaults-check) {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 10px;
   min-height: 44px;
+  padding-block: 12px;
   color: var(--ez-ink);
+  font-size: 14px;
+  line-height: 20px;
+  cursor: pointer;
 }
-.settings-form.invoice-defaults-form .invoice-defaults-check input {
+.settings-form :is(.settings-toggle, .invoice-defaults-check) input {
   flex: none;
   width: 18px;
   height: 18px;
-  min-height: 0;
-  margin: 0;
-  padding: 0;
+  margin: 1px 0 0;
   accent-color: var(--ez-action);
-}
-.settings-form.invoice-defaults-form .invoice-defaults-select {
-  width: 100%;
-  min-height: 44px;
-  padding: 8px 12px;
-  border: 1px solid var(--ez-border);
-  border-radius: var(--ez-radius);
-  background: var(--ez-ground);
-  color: var(--ez-ink);
-  font: inherit;
+  cursor: inherit;
 }
 .settings-form.invoice-defaults-form .invoice-defaults-formats {
   display: flex;
@@ -4815,6 +4907,411 @@ dialog h2,
   font-family: var(--ez-font-mono), monospace;
   font-size: 12px;
   word-break: break-all;
+}
+
+/*
+ * Company settings, the parts the browser was still drawing (the 2026-10
+ * styling pass). Everything here is scoped to that page's sections and built
+ * from the shell's own pieces: the 44px control, the surface card with its
+ * hairline rows, the secondary and primary buttons, the muted hint.
+ */
+
+/* A row of buttons that act on what is above them -- save the colours, undo
+   them, go back to the built-in theme; connect, disconnect -- rather than a
+   form of fields. */
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Every button in a section is the 44px the app's other controls are. On its
+   own the destructive class only paints, so it is given the primary button's
+   shape here. */
+.settings-section .primary-action,
+.settings-section .danger-action {
+  min-height: 44px;
+}
+.settings-section .danger-action {
+  padding: 0 16px;
+  border: 1px solid;
+  border-radius: var(--ez-radius);
+  font-weight: 600;
+}
+.settings-section :is(.editor-secondary, .danger-action):disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.settings-section .editor-secondary:disabled {
+  background: var(--ez-ground);
+}
+.settings-section > .settings-table {
+  margin-bottom: 0;
+}
+/* The DNS record wraps (it is what an operator copies), but not into a column
+   a character wide: below this the table scrolls in its own box instead. */
+[data-settings-sso-domains] .data-table td[data-column='record'] {
+  min-width: 16rem;
+}
+
+/* Modules and Ways in: one card with a row per switch, the shape the
+   Appearance section's colour groups have. The row's heading names the
+   switch, the hint under it says what flipping it does, and the card keeps
+   the form measure so the switch stays within reach of the words. */
+.module-settings-list {
+  max-width: 720px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+/* The cards' side padding narrows with the window, as the page's own does,
+   so a phone keeps its width for the words. */
+.module-settings-card {
+  display: grid;
+  gap: 2px;
+  padding: 12px clamp(12px, 3vw, 20px) 16px;
+}
+.module-settings-card + .module-settings-card {
+  border-top: 1px solid var(--ez-border);
+}
+.module-settings-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0 16px;
+}
+.module-settings-card-header h3 {
+  flex: 1 1 12rem;
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.module-settings-warning {
+  margin: 0;
+  max-width: 68ch;
+  color: var(--ez-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.module-settings-card .form-result {
+  margin-top: 6px;
+}
+.module-settings-card .form-result:empty {
+  position: absolute;
+}
+
+/* The switch. Both lists change the moment it moves, which is what a switch
+   says and a checkbox beside a Save button does not. Its state word comes
+   first, so the switch itself holds still at the row's end when the word
+   changes. Off is an outline in the muted ink; on is the action fill, edged
+   as every blue fill is, with the knob in the colour labels take on it. */
+.module-toggle {
+  display: inline-flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  color: var(--ez-ink);
+  font-size: 14px;
+  cursor: pointer;
+}
+.module-toggle input {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  border: 1px solid var(--ez-muted);
+  border-radius: 999px;
+  background: var(--ez-ground);
+  cursor: inherit;
+}
+.module-toggle input::before {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ez-muted);
+  content: '';
+}
+.module-toggle input:checked {
+  border-color: var(--ez-action-edge);
+  background: var(--ez-action);
+}
+.module-toggle input:checked::before {
+  background: var(--ez-action-fg);
+  transform: translateX(16px);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .module-toggle input::before {
+    transition: transform 120ms ease;
+  }
+}
+/* A method this deployment has no credentials for: shown, and not movable. */
+.module-toggle:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+/* High-contrast modes repaint backgrounds, which is all the switch is drawn
+   with, so there it is drawn in the system's own colours instead. */
+@media (forced-colors: active) {
+  .module-toggle input,
+  .module-toggle input::before {
+    forced-color-adjust: none;
+  }
+  .module-toggle input {
+    border-color: CanvasText;
+    background: Canvas;
+  }
+  .module-toggle input::before {
+    background: CanvasText;
+  }
+  .module-toggle input:checked {
+    border-color: Highlight;
+    background: Highlight;
+  }
+  .module-toggle input:checked::before {
+    background: HighlightText;
+  }
+}
+
+/* Brand: the picker is a secondary button over a file input that is there
+   for the keyboard and the screen reader and drawn nowhere, and each card's
+   buttons sit at its foot, level with the cards beside it. */
+.brand-slot-picker {
+  position: relative;
+}
+.brand-slot-picker input[type='file'] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.brand-slot-picker:has(input:focus-visible) {
+  outline: 3px solid var(--ez-data);
+  outline-offset: 2px;
+}
+.brand-slot-picker:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.brand-slot-actions {
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+/*
+ * Erasure and retention: the operator's policy, and the desk where requests
+ * are worked under it. The policy's two groups are cards in the Appearance
+ * section's shape -- a bordered panel with its legend on the border -- and a
+ * category inside one is a card of its own on the page ground, so the nesting
+ * reads as nesting. The fields are the settings form's; only the frame is
+ * set here.
+ */
+[data-retention-form] fieldset {
+  min-width: 0;
+  margin: 0;
+}
+[data-retention-editable] {
+  display: grid;
+  gap: 14px;
+  padding: 0;
+  border: 0;
+}
+[data-retention-editable] > legend {
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--ez-border);
+  color: var(--ez-ink);
+  font-size: 16px;
+  font-weight: 700;
+}
+[data-retention-editable] > fieldset,
+[data-retention-category] {
+  display: grid;
+  gap: 8px;
+  padding: 8px clamp(12px, 3vw, 16px) 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+[data-retention-editable] > fieldset {
+  background: var(--ez-surface);
+}
+[data-retention-category] {
+  gap: 0;
+  background: var(--ez-ground);
+}
+[data-retention-category] > [data-retention-details] {
+  margin-top: 8px;
+}
+[data-retention-editable] > fieldset > legend,
+[data-retention-category] > legend {
+  padding: 0 6px;
+  color: var(--ez-ink);
+  font-weight: 600;
+}
+[data-retention-editable] > fieldset > p {
+  margin: 0;
+  max-width: 68ch;
+  color: var(--ez-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+/* A checkbox's note hangs under its words rather than under its box. */
+:is([data-privacy-framework], [data-retention-category]) > .hint {
+  margin: -10px 0 4px;
+  padding-left: 28px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+[data-retention-details] {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+}
+[data-retention-details] > legend {
+  margin-bottom: 8px;
+  padding: 0;
+  color: var(--ez-muted);
+  font:
+    var(--ez-label-weight) var(--ez-label-size) / 1.4 var(--ez-font-body),
+    sans-serif;
+  letter-spacing: var(--ez-label-tracking);
+  text-transform: uppercase;
+}
+[data-privacy-states] > summary {
+  padding-block: 12px;
+  color: var(--ez-ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+[data-privacy-states] > :not(summary) {
+  margin: 12px 0 0;
+}
+[data-privacy-states] > p {
+  max-width: 68ch;
+  color: var(--ez-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+[data-privacy-states] > p:empty {
+  position: absolute;
+}
+
+/* The request desk: a heading over the list of requests, then the review
+   queue and the request being worked, each a card of its own. */
+[data-deletion-requests],
+[data-retention-review],
+[data-deletion-detail],
+[data-account-closure] {
+  display: grid;
+  gap: 12px;
+}
+[data-deletion-requests] {
+  max-width: 720px;
+  margin-top: 8px;
+  padding-top: 24px;
+  border-top: 1px solid var(--ez-border);
+}
+[data-deletion-requests] h3,
+[data-deletion-requests] h4 {
+  margin: 0;
+}
+[data-deletion-requests] h3 {
+  font-size: 16px;
+}
+[data-deletion-requests] h4 {
+  font-size: 15px;
+}
+[data-deletion-requests] p {
+  margin: 0;
+  max-width: 68ch;
+  color: var(--ez-muted);
+  line-height: 1.5;
+}
+[data-deletion-requests] :is([data-deletion-disclosure], [data-closure-inventory]) p {
+  color: var(--ez-ink);
+}
+[data-deletion-requests] p:empty {
+  position: absolute;
+}
+[data-deletion-requests] :is([data-deletion-list], [data-retention-due-list], [data-retention-content], [data-deletion-disclosure], [data-closure-inventory]):empty {
+  display: none;
+}
+[data-deletion-requests] button {
+  justify-self: start;
+}
+[data-deletion-list],
+[data-retention-due-list] {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* A request is picked from a list of rows, not a stack of default buttons. */
+:is([data-deletion-list], [data-retention-due-list]) button {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+:is([data-deletion-list], [data-retention-due-list]) button:hover {
+  background: var(--ez-surface-2);
+}
+[data-retention-review],
+[data-deletion-detail] {
+  padding: 16px clamp(12px, 3vw, 20px);
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+[data-account-closure] {
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ez-border);
+}
+[data-deletion-disclosure],
+[data-closure-inventory],
+[data-retention-content] {
+  display: grid;
+  gap: 8px;
+}
+[data-retention-content] details {
+  padding: 0 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+}
+[data-retention-content] details[open] {
+  padding-bottom: 16px;
+}
+[data-retention-content] summary {
+  padding-block: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+[data-retention-content] details > p {
+  margin-bottom: 12px;
 }
 
 .identity-signout {
@@ -7022,6 +7519,26 @@ dialog textarea {
 
 .data-table .is-numeric {
   text-align: right;
+}
+
+/* Numbers and short facts take their content's width and no more, so the name
+   column gets the slack. Every body cell carries max-width:0, which shares the
+   width out equally: "Storefro..." clipped beside three half-empty money
+   columns. width:1% with nowrap is the shrink-to-content idiom for a cell. */
+.data-table th.is-numeric,
+.data-table td.is-numeric,
+.data-table th.is-fit,
+.data-table td.is-fit {
+  width: 1%;
+  max-width: none;
+  overflow: visible;
+  white-space: nowrap;
+}
+.data-table tbody td.is-wrap {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 /* Grouping is a band, not an indent — the label owns the full width. */

@@ -29,6 +29,7 @@ import {
   createContainerSsoProvisioningDomainStore,
   createContainerTwoFactorStore,
   backfillBandClaims,
+  backfillCostRates,
   requestAccountDeletion,
   createRecurringInvoiceEngine,
   createContainerReminderScheduler,
@@ -145,6 +146,7 @@ import { SmtpMailer } from '@ezacto/mailer/smtp'
 import type {
   BandClaimBackfillPort,
   BrandAssetSurface,
+  CostRateBackfillPort,
   InstanceThemeSurface,
 } from '@ezacto/api'
 import type { AppEnv, RuntimeServices } from '../../worker/src/app.js'
@@ -981,6 +983,11 @@ export const createContainerRuntime = async (
       bandClaimBackfill: {
         backfill: (input: Parameters<BandClaimBackfillPort['backfill']>[0]) =>
           backfillBandClaims(drizzle, input),
+      },
+      // #750. Carried for the same reason as the claim backfill above.
+      costRateBackfill: {
+        backfill: (input: Parameters<CostRateBackfillPort['backfill']>[0]) =>
+          backfillCostRates(drizzle, input),
       },
       activity: {
         capture: async (request) => {

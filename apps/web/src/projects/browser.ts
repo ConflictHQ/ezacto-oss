@@ -588,6 +588,7 @@ export const createProjectDirectoryController = (
         },
         ...(currentSession()?.capabilities.canManageCommercialTerms ? [{
           key: 'billing',
+          fit: true,
           label: 'Billing',
           render: (project: GeneralResource) => projectEnumLabel(projectText(project, 'billing_method')),
         }] : []),
@@ -603,6 +604,7 @@ export const createProjectDirectoryController = (
           : []),
         {
           key: 'status',
+          fit: true,
           label: 'Status',
           render: (project) => {
             if (projectIsActive(project)) return 'Active'

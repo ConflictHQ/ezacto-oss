@@ -310,6 +310,21 @@ describe('D16 theme token contract', () => {
     )
   })
 
+  it('[unit] gives an unstyled control a baseline, and keeps a primary button blue inside any screen', async () => {
+    // A screen that set only min-height left the browser's grey default showing
+    // ("Saved reports" beside a styled "New report"), and a screen's own
+    // `.form button` rule outranked the lone `.primary-action` class and turned
+    // "Add project" white. The baseline must carry no specificity, so it never
+    // overrides a screen's own styling; the primary rule must out-rank them.
+    const stylesheet = await readFile(resolve(root, 'src', 'shell', 'shell.css'), 'utf8')
+    expect(stylesheet).toMatch(
+      /:where\(button\) \{[^{}]*border: 1px solid var\(--ez-border\);[^{}]*background: var\(--ez-ground\);/u,
+    )
+    expect(stylesheet).toMatch(
+      /button\.primary-action\.primary-action \{[^{}]*background: var\(--ez-action\);/u,
+    )
+  })
+
   it('[unit] asks only for font weights the font request carries', async () => {
     // The request names its weights, and a weight between them is drawn in the
     // nearest one it has: the brand asked for 800 and was drawn at 900. Ask

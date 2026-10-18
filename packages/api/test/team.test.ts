@@ -6,6 +6,7 @@ import {
   createD1Database,
 } from "../../db/src/adapters.js";
 import { migrateContainer, migrateD1 } from "../../db/src/migrate.js";
+import { backfillCostRates } from "../../db/src/cost-rate-backfill.js";
 import { createTeamRepository } from "../../db/src/team.js";
 import {
   createApiApp,
@@ -183,10 +184,12 @@ const createHarness = async (kind: "SQLite" | "D1"): Promise<Harness> => {
   let run: (sql: string, params: readonly unknown[]) => Promise<void>;
   let rows: <Row>(sql: string, params: readonly unknown[]) => Promise<Row[]>;
   let repository: ReturnType<typeof createTeamRepository>;
+  let drizzle: Parameters<typeof backfillCostRates>[0];
   if (kind === "SQLite") {
     const sqlite = new BetterSqlite3(":memory:");
     migrateContainer(sqlite);
-    repository = createTeamRepository(createContainerDatabase(sqlite));
+    drizzle = createContainerDatabase(sqlite);
+    repository = createTeamRepository(drizzle);
     run = async (sql, params) => {
       sqlite.prepare(sql).run(...params);
     };
@@ -203,7 +206,8 @@ const createHarness = async (kind: "SQLite" | "D1"): Promise<Harness> => {
     });
     const d1 = await miniflare.getD1Database("DB");
     await migrateD1(d1);
-    repository = createTeamRepository(createD1Database(d1));
+    drizzle = createD1Database(d1);
+    repository = createTeamRepository(drizzle);
     run = async (sql, params) => {
       await d1.prepare(sql).bind(...params).run();
     };
@@ -217,6 +221,7 @@ const createHarness = async (kind: "SQLite" | "D1"): Promise<Harness> => {
     installApi: (api) =>
       installTeamRoutes(api, {
         repository,
+        costRateBackfill: { backfill: (input) => backfillCostRates(drizzle, input) },
         cursorSigningKey: signingKey,
         isTeamModuleEnabled: async () => {
           const result = await rows<{ enabled: number | boolean }>(
@@ -645,6 +650,63 @@ for (const [runtime, factory] of factories) {
         managerGrants: ["billable_rates_manager"],
       });
       expect(refused.status).toBe(403);
+    });
+
+    it("[money] rehearses, then applies, a cost rate over unpriced history, once", async () => {
+      // #750. Entries 1 and 2 were tracked before the person had a cost rate.
+      harness = await factory();
+      const body = {
+        from: "2026-08-01",
+        to: "2026-09-30",
+        cost_rate_cents: 6000,
+        reason: "Opening cost rate for history before the rate existed",
+      };
+      const post = (extra: Record<string, unknown>, key: string, init = {}) =>
+        harness!.request("/team/people/4/cost-rate-backfill", {
+          method: "POST",
+          body: { ...body, ...extra },
+          idempotencyKey: key,
+          ...init,
+        });
+
+      const rehearsal = await post({}, "cost.run.1");
+      expect(rehearsal.status, await rehearsal.clone().text()).toBe(200);
+      expect(((await rehearsal.json()) as { data: unknown }).data).toMatchObject({
+        applied: false,
+        entry_count: 2,
+        seconds: 5400,
+        cost_cents: 9000,
+        periods: [
+          { month: "2026-08", entry_count: 1, seconds: 3600, cost_cents: 6000 },
+          { month: "2026-09", entry_count: 1, seconds: 1800, cost_cents: 3000 },
+        ],
+      });
+      expect(
+        await harness.rows("SELECT id FROM time_entries WHERE cost_rate_cents IS NOT NULL"),
+      ).toEqual([]);
+
+      const applied = await post({ apply: true }, "cost.run.2");
+      expect(applied.status, await applied.clone().text()).toBe(200);
+      expect(
+        await harness.rows(
+          "SELECT run_id, actor_user_id, cost_rate_cents FROM time_entry_rate_reprices ORDER BY id",
+        ),
+      ).toEqual([
+        { run_id: "cost.run.2", actor_user_id: 1, cost_rate_cents: 6000 },
+        { run_id: "cost.run.2", actor_user_id: 1, cost_rate_cents: 6000 },
+      ]);
+
+      const again = await post({ apply: true }, "cost.run.3");
+      expect(((await again.json()) as { data: { entry_count: number } }).data.entry_count).toBe(0);
+
+      // Cost rates are an administrator's, and the range is never defaulted.
+      expect((await post({}, "cost.run.4", { profile: "people_admin", userId: 2 })).status).toBe(403);
+      const unbounded = await harness.request("/team/people/4/cost-rate-backfill", {
+        method: "POST",
+        body: { cost_rate_cents: 6000, reason: "no range" },
+        idempotencyKey: "cost.run.5",
+      });
+      expect(unbounded.status).toBe(422);
     });
 
     it("allows exactly one same-version command even when timestamps are identical", async () => {

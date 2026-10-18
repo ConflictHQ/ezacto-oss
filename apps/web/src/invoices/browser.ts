@@ -206,11 +206,11 @@ export const renderInvoiceListItems = (
       rowKey: (invoice) => String(invoice.id),
       empty,
       columns: [
-        { key: 'status', label: 'Status', render: invoiceStatePill },
-        { key: 'number', label: 'Invoice', render: invoiceNumberLink },
+        { key: 'status', label: 'Status', fit: true, render: invoiceStatePill },
+        { key: 'number', label: 'Invoice', fit: true, render: invoiceNumberLink },
         { key: 'client', label: 'Client', render: (invoice) => clientLabel(invoice.client_id) },
-        { key: 'issued', label: 'Issued', render: (invoice) => dateLabel(invoice.issue_date) },
-        { key: 'due-date', label: 'Due', render: invoiceDueLabel },
+        { key: 'issued', label: 'Issued', fit: true, render: (invoice) => dateLabel(invoice.issue_date) },
+        { key: 'due-date', label: 'Due', fit: true, render: invoiceDueLabel },
         {
           key: 'amount',
           label: 'Amount',

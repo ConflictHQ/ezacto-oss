@@ -405,7 +405,7 @@ export {
   type SsoProvisioningDomain,
   type SsoProvisioningDomainService,
 } from './sso-domains.js'
-export { installTeamRoutes, type TeamRouteOptions } from './team.js'
+export { installTeamRoutes, type CostRateBackfillPort, type TeamRouteOptions } from './team.js'
 export {
   installUserEmailRoutes,
   type UserEmailRouteOptions,
