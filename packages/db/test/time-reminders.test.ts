@@ -3,7 +3,12 @@ import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import type { InvoiceStateDatabase } from '../src/invoice-state.js'
-import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import {
+  migrateContainer,
+  migrateContainerThrough,
+  migrateD1,
+  migrateD1Through,
+} from '../src/migrate.js'
 import { prepareTimeReminders } from '../src/time-reminders.js'
 
 /**
@@ -386,7 +391,7 @@ for (const [name, factory] of [
       expect(await ledger(test)).toEqual([])
     })
 
-    it('[unit] new people start opted in, and an existing opt-out is kept', async () => {
+    it('[unit] new people start opted in to team reminders', async () => {
       const test = await open()
       expect(
         await test.rows('SELECT user_id, include_in_team_reminders AS v FROM notification_preferences ORDER BY user_id'),
@@ -436,6 +441,110 @@ for (const [name, factory] of [
       } finally {
         await quiet.close()
       }
+    })
+  })
+}
+
+/**
+ * Migration 0114 on a database that already has people, which is every
+ * deployment it will run on. The cases above only see people added after it,
+ * through the trigger it recreates.
+ */
+const before0114 = '0113_project_budget_alerts'
+
+interface UpgradeHarness {
+  run(statement: string, ...bindings: unknown[]): Promise<void>
+  rows<T>(statement: string): Promise<T[]>
+  /** Applies what is pending, the way a deploy does. */
+  upgrade(): Promise<void>
+  close(): Promise<void>
+}
+
+const containerBefore0114 = async (): Promise<UpgradeHarness> => {
+  const sqlite = new BetterSqlite3(':memory:')
+  migrateContainerThrough(sqlite, before0114)
+  return {
+    run: async (statement, ...bindings) => void sqlite.prepare(statement).run(...bindings),
+    rows: async <T>(statement: string) => sqlite.prepare(statement).all() as T[],
+    upgrade: async () => migrateContainer(sqlite),
+    close: async () => void sqlite.close(),
+  }
+}
+
+const d1Before0114 = async (): Promise<UpgradeHarness> => {
+  const miniflare = new Miniflare({
+    modules: true,
+    script: 'export default { fetch() { return new Response("ok") } }',
+    d1Databases: ['DB'],
+  })
+  const database = await miniflare.getD1Database('DB')
+  await migrateD1Through(database, before0114)
+  return {
+    run: async (statement, ...bindings) =>
+      void (await database.prepare(statement).bind(...bindings).run()),
+    rows: async <T>(statement: string) =>
+      ((await database.prepare(statement).all()).results ?? []) as T[],
+    upgrade: () => migrateD1(database),
+    close: async () => miniflare.dispose(),
+  }
+}
+
+for (const [name, factory] of [
+  ['SQLite', containerBefore0114],
+  ['real D1', d1Before0114],
+] as const) {
+  describe(`migration 0114 (${name})`, () => {
+    let db: UpgradeHarness | undefined
+    afterEach(async () => db?.close())
+
+    it('[unit] opts in the people already there, and switches nothing else on', async () => {
+      db = await factory()
+      await db.run(
+        `INSERT INTO organizations (name, modules, created_at, updated_at)
+         VALUES ('CONFLICT', '{"approval":true}', ?, ?)`,
+        seedAt,
+        seedAt,
+      )
+      await db.run(
+        `INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at) VALUES
+           (1, 'Ada', 'Admin', 'administrator', '[]', ?, ?),
+           (2, 'Mo', 'Member', 'member', '[]', ?, ?)`,
+        ...Array.from({ length: 4 }, () => seedAt),
+      )
+      const preferences = () =>
+        db!.rows(
+          `SELECT user_id, include_in_team_reminders AS team, daily_reminder_enabled AS daily,
+             email_enabled AS email, weekly_digest AS digest
+           FROM notification_preferences ORDER BY user_id`,
+        )
+      // Before it: the zero the delivery-unavailable rule forced on everybody.
+      expect(await preferences()).toEqual([
+        { user_id: 1, team: 0, daily: 0, email: 0, digest: 0 },
+        { user_id: 2, team: 0, daily: 0, email: 0, digest: 0 },
+      ])
+
+      await db.upgrade()
+
+      // In, so that opting out is a choice somebody makes; nothing else is on.
+      expect(await preferences()).toEqual([
+        { user_id: 1, team: 1, daily: 0, email: 0, digest: 0 },
+        { user_id: 2, team: 1, daily: 0, email: 0, digest: 0 },
+      ])
+      // No schedule until an administrator sets one: the upgrade alone
+      // reminds nobody.
+      expect(
+        await db.rows(
+          'SELECT submission_reminder_day AS day, submission_reminder_time AS time FROM organizations',
+        ),
+      ).toEqual([{ day: null, time: null }])
+      // Somebody added afterwards starts in as well, through the new trigger.
+      await db.run(
+        `INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+         VALUES (3, 'Lee', 'Member', 'member', '[]', ?, ?)`,
+        seedAt,
+        seedAt,
+      )
+      expect((await preferences()).at(-1)).toEqual({ user_id: 3, team: 1, daily: 0, email: 0, digest: 0 })
     })
   })
 }

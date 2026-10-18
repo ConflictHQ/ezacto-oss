@@ -71,8 +71,8 @@ const seed = async (
   const organizationAddress = options.addresses ? `'100 Example Ave, STE 200' || char(10) || 'Springfield, IL, 62701'` : 'NULL'
   const clientAddress = options.addresses ? `'13031 W. Jefferson Blvd.' || char(10) || 'LA, CA 90094'` : 'NULL'
   for (const statement of [
-    `INSERT INTO organizations (id, name, modules, address, created_at, updated_at)
-       VALUES (1, 'CONFLICT LLC', '{}', ${organizationAddress}, '${at}', '${at}')`,
+    `INSERT INTO organizations (id, name, modules, address, timezone, created_at, updated_at)
+       VALUES (1, 'CONFLICT LLC', '{}', ${organizationAddress}, 'America/Chicago', '${at}', '${at}')`,
     `INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
        VALUES (1, 'Leo', 'Mata', 'administrator', '[]', '${at}', '${at}')`,
     `INSERT INTO clients (id, name, address, currency, created_at, updated_at)
@@ -80,10 +80,10 @@ const seed = async (
     `INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date, state, subject,
        purchase_order, notes, payment_terms, discount_rate_ppm, tax_rate_ppm, tax2_rate_ppm,
        amount_cents, due_amount_cents, discount_amount_cents, tax_amount_cents, tax2_amount_cents,
-       created_at, updated_at)
+       period_start, period_end, created_at, updated_at)
        VALUES (1, 1, '771', 'USD', '2017-05-01', '2017-06-15', 'open', 'DevOps support retainer',
        '4500000001', 'Beneficiary:' || char(10) || '*CONFLICT LLC*', 'net_45', 200000, 88750, NULL,
-       177400, 77400, 40000, 17400, 0, '${at}', '${at}')`,
+       177400, 77400, 40000, 17400, 0, '2017-04-01', '2017-04-30', '${at}', '${at}')`,
     // Written out of order: the document reads lines by position.
     `INSERT INTO invoice_line_items (id, invoice_id, position, kind, description, quantity,
        unit_price_cents, amount_cents, created_at, updated_at)
@@ -154,11 +154,11 @@ for (const [runtime, factory] of factories) {
         taxRatePpm: 88_750,
         tax2RatePpm: null,
         dueAmountCents: 77_400,
-        // The context a send's message is composed from carries the period and
-        // the organization's zone too (issue 925); this invoice bills no period.
-        periodStart: null,
-        periodEnd: null,
-        organizationTimeZone: 'UTC',
+        // The delivery context's own fields, which the email's %invoice_period%
+        // and %send_weekday% read (issue 925): the document is a superset of it.
+        periodStart: '2017-04-01',
+        periodEnd: '2017-04-30',
+        organizationTimeZone: 'America/Chicago',
         // Every payment against the invoice, summed.
         paidAmountCents: 100_000,
         organizationAddress: '100 Example Ave, STE 200\nSpringfield, IL, 62701',
