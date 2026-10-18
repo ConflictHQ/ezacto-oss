@@ -2862,9 +2862,18 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   },
   {
     method: "get",
+    path: "/api/v1/activity-log/status",
+    operationId: "getActivityLogStatus",
+    summary: "Get Activity log module availability for navigation",
+    tag: "activity",
+    responseStatus: 200,
+    responseSchema: "ActivityLogStatusEnvelope",
+  },
+  {
+    method: "get",
     path: "/api/v1/activity-log",
     operationId: "listActivityLog",
-    summary: "List activity recorded from delivered domain events",
+    summary: "List activity recorded from delivered domain events (403 `module_disabled` when the module is off)",
     tag: "activity",
     responseStatus: 200,
     responseSchema: "ActivityLogPage",
@@ -4467,6 +4476,13 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   TeamStatusEnvelope: envelope("TeamStatus"),
+  ActivityLogStatus: {
+    type: "object",
+    required: ["enabled"],
+    properties: { enabled: booleanSchema },
+    additionalProperties: false,
+  },
+  ActivityLogStatusEnvelope: envelope("ActivityLogStatus"),
   TeamNamedRelation: {
     type: "object",
     required: ["id", "name"],
@@ -8767,7 +8783,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: ["module", "enabled"],
     properties: {
-      module: { type: "string", enum: ["approval", "expenses", "own_money"] },
+      module: { type: "string", enum: ["approval", "expenses", "own_money", "activity_log"] },
       enabled: booleanSchema,
     },
     additionalProperties: false,

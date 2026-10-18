@@ -256,6 +256,7 @@ export {
   type OutboxDeliveryResource,
   type OutboxDeliveryStatus,
   type OutboxMonitor,
+  type OutboxRouteOptions,
 } from './outbox.js'
 export {
   createCompositeSessionResolver,

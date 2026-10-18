@@ -218,6 +218,24 @@ for (const [runtime, factory] of factories) {
       ).toEqual([{ published_at: drainAt, attempt_count: 1, last_error: null }])
     })
 
+    it('[unit] keeps capturing while the activity_log module is off: hiding is not stopping the evidence', async () => {
+      database = await factory()
+      await installFixture(database)
+      await database.run(
+        `UPDATE organizations SET modules = json_set(modules, '$.activity_log', json('false'))`,
+      )
+      await sendInvoice(database)
+      const service = database.outbox({
+        now: () => drainAt,
+        createAttemptId: () => 'activity-attempt-off',
+      })
+
+      await expect(service.drain()).resolves.toMatchObject({ delivered: 1, failed: 0 })
+      expect(await service.listActivity()).toEqual([
+        expect.objectContaining({ id: 'outbox-event-sent', eventType: 'invoice.sent' }),
+      ])
+    })
+
     it('[unit] preserves aggregate order and never invents missing import history', async () => {
       database = await factory()
       await installFixture(database)

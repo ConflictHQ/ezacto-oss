@@ -2195,8 +2195,32 @@ export const mountShell = async (
     for (const tab of document.querySelectorAll<HTMLElement>(
       '[data-staff-payments-nav], [data-settings-company-tab], [data-settings-activity-tab], [data-settings-templates-tab], [data-settings-roles-tab], [data-settings-deliveries-tab]',
     )) {
-      tab.hidden = !visible
+      // The Activity log is also a module: an administrator who switched it
+      // off does not get its tab back every time this runs.
+      tab.hidden = !visible || (activityLogOff && tab.matches('[data-settings-activity-tab]'))
     }
+  }
+
+  let activityLogOff = false
+
+  /**
+   * Only an administrator is offered the Activity tab, so only an administrator
+   * asks whether its module is on. The route itself refuses when it is off; this
+   * keeps the link from promising a page that answers with that refusal.
+   */
+  const hideActivityLogWhenOff = (
+    identity: Readonly<Whoami>,
+    operation: AuthOperation,
+  ): void => {
+    if (identity.profile !== 'administrator' || api.getActivityLogEnabled === undefined) return
+    void api
+      .getActivityLogEnabled(operation.signal)
+      .then((enabled) => {
+        if (enabled || !isSessionCurrent(operation)) return
+        activityLogOff = true
+        revealCompanySettings(identity)
+      })
+      .catch(() => {})
   }
 
   /**
@@ -4367,6 +4391,7 @@ export const mountShell = async (
         })
     }
     void loadTeamNavigation(identity, authenticated)
+    hideActivityLogWhenOff(identity, authenticated)
     if (invoiceGenerationPage) {
       openInvoiceDialog(authenticated)
       await Promise.all([loadInvoiceList(authenticated), loadWeek(authenticated)])

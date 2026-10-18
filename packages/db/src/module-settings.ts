@@ -8,19 +8,20 @@ type ModuleSettingsDatabase =
   | DrizzleD1Database<typeof schema>
 type NativeClient = BetterSqlite3.Database | D1Database
 
-export type ModuleName = 'approval' | 'expenses' | 'own_money'
+export type ModuleName = 'approval' | 'expenses' | 'own_money' | 'activity_log'
 
 export interface ModuleState {
   module: ModuleName
   enabled: boolean
 }
 
-const knownModules: readonly ModuleName[] = ['approval', 'expenses', 'own_money']
+const knownModules: readonly ModuleName[] = ['approval', 'expenses', 'own_money', 'activity_log']
 
 interface RawModulesRow {
   approval: number
   expenses: number
   own_money: number
+  activity_log: number
 }
 
 const nativeClient = (database: ModuleSettingsDatabase): NativeClient =>
@@ -40,7 +41,10 @@ const first = async <Row>(
 const modulesSelect = `SELECT
   COALESCE(json_extract(modules, '$.approval'), 0) AS approval,
   COALESCE(json_extract(modules, '$.expenses'), 0) AS expenses,
-  COALESCE(json_extract(modules, '$.own_money'), 0) AS own_money
+  COALESCE(json_extract(modules, '$.own_money'), 0) AS own_money,
+  -- On when the key is absent: the log was always there, and an organization
+  -- written before the switch existed must not lose it to an upgrade.
+  COALESCE(json_extract(modules, '$.activity_log'), 1) AS activity_log
 FROM organizations WHERE id = 1`
 
 const toModuleStates = (row: RawModulesRow): readonly ModuleState[] =>
@@ -65,7 +69,7 @@ export class ModuleSettingsRepository {
   async get(module: ModuleName): Promise<boolean> {
     const row = await first<{ enabled: number }>(
       this.#client,
-      `SELECT COALESCE(json_extract(modules, '$.${module}'), 0) AS enabled
+      `SELECT COALESCE(json_extract(modules, '$.${module}'), ${module === 'activity_log' ? 1 : 0}) AS enabled
        FROM organizations WHERE id = 1`,
     )
     return row?.enabled === 1

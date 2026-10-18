@@ -1179,6 +1179,15 @@ export const createRuntimeServices = async (
         .first<{ enabled: number | boolean }>();
       return row?.enabled === 1 || row?.enabled === true;
     },
+    isActivityLogModuleEnabled: async () => {
+      const row = await database
+        .prepare(
+          `SELECT COALESCE(json_extract(modules, '$.activity_log'), 1) AS enabled
+           FROM organizations WHERE id = 1`,
+        )
+        .first<{ enabled: number | boolean }>();
+      return row === null || row.enabled === 1 || row.enabled === true;
+    },
     isTeamModuleEnabled: async () => {
       const row = await database
         .prepare(

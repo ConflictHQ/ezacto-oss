@@ -138,12 +138,46 @@ const deliveryData = (record: OutboxDeliveryResource) => ({
   updated_at: record.updatedAt,
 })
 
+export interface OutboxRouteOptions {
+  /**
+   * The `activity_log` module switch. Switching it off hides the surface and
+   * refuses the read; capture is not gated here, so the evidence keeps being
+   * recorded while nobody is looking at it.
+   */
+  isActivityLogModuleEnabled(): Promise<boolean>
+}
+
+const requireActivityLogModule = async (options: OutboxRouteOptions): Promise<void> => {
+  if (await options.isActivityLogModuleEnabled()) return
+  throw new ApiError({
+    status: 403,
+    code: 'module_disabled',
+    message: 'The activity log module is not enabled for this organization.',
+  })
+}
+
 export const installOutboxRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   monitor: OutboxMonitor,
+  options: OutboxRouteOptions,
 ): void => {
+  // Not module-gated: the browser asks it to decide whether to offer the
+  // surface at all, the same way /team/status does for Team.
+  api.get('/activity-log/status', async (context) => {
+    requireApiScope(context, 'reports:read')
+    return context.json(
+      {
+        data: { enabled: await options.isActivityLogModuleEnabled() },
+        links: { self: '/api/v1/activity-log/status' },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
   api.get('/activity-log', async (context) => {
     requireApiScope(context, 'reports:read')
+    await requireActivityLogModule(options)
     const limit = pageLimit(context.req.query('per_page'))
     // Passed straight through. The repository validates each one and throws a
     // RangeError the error middleware turns into a 422, so a bad date is a bad

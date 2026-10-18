@@ -241,7 +241,7 @@ const documentedApp = () =>
         service: emailConfiguration,
         clock: () => "2026-08-28T12:00:00.000Z",
       });
-      installOutboxRoutes(api, outbox);
+      installOutboxRoutes(api, outbox, { isActivityLogModuleEnabled: async () => true });
       installGeneralResourceRoutes(api, {
         repository: generalRepository,
         cursorSigningKey: new Uint8Array(32),

@@ -139,6 +139,11 @@ const moduleDescriptions: Readonly<Record<string, { label: string; warning: stri
     warning:
       'Disabling hides the Expenses navigation link and returns 404 from expense API endpoints. Existing expense records are preserved.',
   },
+  activity_log: {
+    label: 'Activity log',
+    warning:
+      'Disabling hides the Activity log from Settings and Reports and refuses the activity log API with module_disabled. Nothing stops being recorded: events keep being captured while it is off, and appear again when it is switched back on.',
+  },
   own_money: {
     label: 'Your own rates and take-home',
     warning:

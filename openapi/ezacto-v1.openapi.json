@@ -1804,10 +1804,68 @@
         }
       }
     },
+    "/api/v1/activity-log/status": {
+      "get": {
+        "operationId": "getActivityLogStatus",
+        "summary": "Get Activity log module availability for navigation",
+        "tags": [
+          "activity"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityLogStatusEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/activity-log/status",
+        "x-ezacto-generate-client": true
+      }
+    },
     "/api/v1/activity-log": {
       "get": {
         "operationId": "listActivityLog",
-        "summary": "List activity recorded from delivered domain events",
+        "summary": "List activity recorded from delivered domain events (403 `module_disabled` when the module is off)",
         "tags": [
           "activity"
         ],
@@ -28935,6 +28993,34 @@
         },
         "additionalProperties": false
       },
+      "ActivityLogStatus": {
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ActivityLogStatusEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ActivityLogStatus"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
       "TeamNamedRelation": {
         "type": "object",
         "required": [
@@ -42343,7 +42429,8 @@
             "enum": [
               "approval",
               "expenses",
-              "own_money"
+              "own_money",
+              "activity_log"
             ]
           },
           "enabled": {
