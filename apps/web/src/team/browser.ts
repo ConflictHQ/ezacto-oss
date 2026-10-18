@@ -2,6 +2,11 @@ import { renderDataTable } from '../components/data-table.js'
 import { demoUnavailable, isDemoDeployment } from '../demo.js'
 import { markMoney } from '../money-display.js'
 import {
+  notificationFieldsProblem,
+  paintNotificationFields,
+  readNotificationFields,
+} from './notification-fields.js'
+import {
   payoutFailure,
   payoutSummary,
   type PayoutDestinationState,
@@ -11,7 +16,6 @@ import {
   EzactoApiError,
   type TeamCatalog,
   type TeamCommandReceipt,
-  type TeamNotificationInput,
   type TeamPerson,
   type TeamPersonPatch,
   type TeamPersonSummary,
@@ -178,7 +182,6 @@ export const createTeamDirectoryController = (
   const demo = isDemoDeployment()
   const notificationsForm = required<HTMLFormElement>('[data-team-notifications-form]')
   const notificationsResult = required<HTMLElement>('[data-team-notifications-result]')
-  const slackStatus = required<HTMLElement>('[data-team-slack-status]')
   const rateDialog = required<HTMLDialogElement>('[data-team-rate-dialog]')
   const rateForm = required<HTMLFormElement>('[data-team-rate-form]')
   const rateTitle = required<HTMLElement>('[data-team-rate-title]')
@@ -347,7 +350,6 @@ export const createTeamDirectoryController = (
     statusAction.textContent = ''
     statusAction.hidden = true
     ownerProfileNote.hidden = true
-    slackStatus.textContent = 'Slack is unavailable because no connector is configured.'
     infoResult.textContent = ''
     projectsResult.textContent = ''
     permissionsResult.textContent = ''
@@ -1110,39 +1112,18 @@ export const createTeamDirectoryController = (
     }
   }
 
-  const renderNotifications = (value: TeamPerson): void => {
-    const preferences = value.notifications
-    formInput(notificationsForm, 'daily_reminder_enabled').checked =
-      preferences.daily_reminder_enabled
-    formInput(notificationsForm, 'reminder_time').value = preferences.reminder_time ?? ''
-    for (const day of notificationsForm.querySelectorAll<HTMLInputElement>(
-      '[name="reminder_days"]',
-    )) {
-      day.checked = preferences.reminder_days.includes(
-        day.value as TeamNotificationInput['reminder_days'][number],
-      )
-    }
-    formInput(notificationsForm, 'channel_email').checked = preferences.channels.email
-    formInput(notificationsForm, 'channel_desktop').checked = preferences.channels.desktop
-    const slack = formInput(notificationsForm, 'channel_slack')
-    slack.checked = preferences.channels.slack
-    slack.disabled = true
-    slackStatus.textContent = preferences.channels.slack
-      ? 'An inactive Slack preference was imported. Slack remains unavailable because no connector is configured.'
-      : 'Slack is unavailable because no connector is configured.'
-    formInput(notificationsForm, 'include_in_team_reminders').checked =
-      preferences.include_in_team_reminders
-    formInput(notificationsForm, 'weekly_digest').checked = preferences.weekly_digest
-    formInput(notificationsForm, 'notify_project_deleted').checked =
-      preferences.notify_project_deleted
-    for (const control of notificationsForm.elements) {
-      if (control instanceof HTMLInputElement && control !== slack) {
-        control.disabled = true
-      }
-    }
+  const renderNotifications = (active: ActiveSession, value: TeamPerson): void => {
+    // Whoever may edit a person may edit their reminders; everybody else who can
+    // see the person sees what is set. The person can always change their own
+    // under Settings.
+    const editable = active.capabilities.canManagePeople && !demo
+    paintNotificationFields(notificationsForm, value.notifications, editable)
     const submit = required<HTMLButtonElement>('[data-team-notifications-submit]')
-    submit.hidden = true
-    submit.disabled = true
+    submit.hidden = !active.capabilities.canManagePeople
+    submit.disabled = !editable || mutationPending
+    if (demo && active.capabilities.canManagePeople) {
+      notificationsResult.textContent = demoUnavailable('Changing reminder preferences')
+    }
   }
 
   const syncInfoControls = (active: ActiveSession, value: TeamPerson): void => {
@@ -1304,7 +1285,7 @@ export const createTeamDirectoryController = (
     renderRates(active, value)
     renderProjects(active, value)
     renderProfiles(active, value)
-    renderNotifications(value)
+    renderNotifications(active, value)
     // Not awaited. The payout destination is a second request and a slow or
     // refusing one must not keep the rest of the person off the screen.
     void loadPayout(active, value.id)
@@ -1643,17 +1624,40 @@ export const createTeamDirectoryController = (
     )
   })
 
-  const slack = formInput(notificationsForm, 'channel_slack')
-  slack.addEventListener('change', () => {
-    if (slack.checked) slack.checked = false
-    slack.disabled = true
-    slackStatus.textContent = 'Slack delivery is unavailable because no connector is configured.'
-  })
   notificationsForm.addEventListener('input', () => resetCommand('notifications'))
   notificationsForm.addEventListener('submit', (event) => {
     event.preventDefault()
-    notificationsResult.textContent =
-      'Notification delivery is not active in this release.'
+    const active = currentSession()
+    const current = person
+    if (
+      active === null ||
+      current === null ||
+      demo ||
+      !active.capabilities.canManagePeople ||
+      api.updateTeamPersonNotifications === undefined
+    ) {
+      return
+    }
+    const preferences = readNotificationFields(notificationsForm)
+    const problem = notificationFieldsProblem(preferences)
+    if (problem !== null) {
+      notificationsResult.textContent = problem
+      return
+    }
+    void mutate(
+      active,
+      'notifications',
+      notificationsResult,
+      'Saving notification preferences…',
+      'Notification preferences saved.',
+      (id) =>
+        api.updateTeamPersonNotifications!(
+          current.id,
+          id,
+          { expected_version: current.version, ...preferences },
+          active.signal,
+        ),
+    )
   })
 
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-team-add-rate]')) {

@@ -8,6 +8,8 @@ import {
   invoiceEmailValues,
   invoiceNotesPlainText,
   invoicePaymentTermsLabel,
+  invoicePeriodLabel,
+  sendWeekday,
   type InvoiceEmailInvoice,
 } from "../src/index.js";
 
@@ -27,7 +29,10 @@ const invoice = (over: Partial<InvoiceEmailInvoice> = {}): InvoiceEmailInvoice =
   purchaseOrder: "PO-778812",
   notes:
     "*Beneficiary:* Example Studio LLC\n100 Example Street, Example City, EX 00000\n\nBank: Example Federal Bank\nAccount: 000123456789\n\n_Wire:_ SWIFT EXAMPLEXX",
+  periodStart: "2026-09-01",
+  periodEnd: "2026-09-30",
   organizationName: "Example Studio LLC",
+  organizationTimeZone: "America/Chicago",
   clientName: "Northwind Example Co",
   lineItems: [
     {
@@ -149,6 +154,7 @@ describe("composing the invoice email from the Send dialog", () => {
         "Hello %client_name%,\n\nInvoice %invoice_number% under %invoice_purchase_order% is due %invoice_payment_terms%.",
       paymentUrl: null,
       pdfAttached: true,
+      sentAt: "2026-10-09T15:00:00.000Z",
     });
     expect(email.subject).toBe("Invoice #4021 from Example Studio LLC");
     expect(
@@ -169,15 +175,18 @@ describe("composing the invoice email from the Send dialog", () => {
         messageTemplate: "",
         paymentUrl: null,
         pdfAttached: false,
+        sentAt: "2026-10-09T15:00:00.000Z",
       }),
     ).toThrow(EmailTemplateVariableError);
   });
 
   it("[unit] gives every invoice variable a value, empty where the invoice has none", () => {
     const values = invoiceEmailValues(
-      invoice({ purchaseOrder: null, paymentTerms: "custom" }),
+      invoice({ purchaseOrder: null, paymentTerms: "custom", periodStart: null, periodEnd: null }),
       null,
+      "2026-10-09T15:00:00.000Z",
     );
+    expect(values.invoice_period).toBe("");
     expect(values.invoice_purchase_order).toBe("");
     expect(values.invoice_payment_terms).toBe("");
     expect(values.invoice_payment_url).toBe("");
@@ -194,6 +203,80 @@ describe("composing the invoice email from the Send dialog", () => {
         (error) => error.code,
       ),
     ).toEqual(["variable_not_allowed"]);
+  });
+});
+
+describe("the send weekday and the billing period (issue 925)", () => {
+  it("[unit] names the period in months, across a month and a year end, and empty without one", () => {
+    expect(invoicePeriodLabel("2026-09-01", "2026-09-30")).toBe("September 2026");
+    expect(invoicePeriodLabel("2026-08-15", "2026-09-14")).toBe("August – September 2026");
+    expect(invoicePeriodLabel("2025-12-01", "2026-01-31")).toBe("December 2025 – January 2026");
+    // A period with one bound set reads as that bound's month.
+    expect(invoicePeriodLabel(null, "2026-09-30")).toBe("September 2026");
+    expect(invoicePeriodLabel("2026-09-01", null)).toBe("September 2026");
+    // A free-form invoice has no period, and the variable reads as nothing.
+    expect(invoicePeriodLabel(null, null)).toBe("");
+  });
+
+  it("[unit] reads the weekday in the organization's zone, not the server's", () => {
+    // 02:00 UTC on a Saturday is 21:00 on the Friday in Chicago.
+    expect(sendWeekday("2026-10-10T02:00:00.000Z", "UTC")).toBe("Saturday");
+    expect(sendWeekday("2026-10-10T02:00:00.000Z", "America/Chicago")).toBe("Friday");
+    // A zone the runtime does not know reads as UTC rather than failing a send.
+    expect(sendWeekday("2026-10-10T02:00:00.000Z", "Not/AZone")).toBe("Saturday");
+  });
+
+  it("[unit] fills both in the subject and the message, from the period rather than the issue date", () => {
+    // Issued in October for September: the issue month would say October.
+    const email = composeInvoiceEmail({
+      invoice: invoice({ issueDate: "2026-10-01" }),
+      subjectTemplate: "Invoice %invoice_number% for %invoice_period%",
+      messageTemplate:
+        "Happy %send_weekday%! Here is the invoice for %invoice_period%, issued in %invoice_issue_month_name%.",
+      paymentUrl: null,
+      pdfAttached: false,
+      sentAt: "2026-10-10T02:00:00.000Z",
+    });
+    expect(email.subject).toBe("Invoice 4021 for September 2026");
+    expect(
+      email.text.startsWith(
+        "Happy Friday! Here is the invoice for September 2026, issued in October.",
+      ),
+    ).toBe(true);
+  });
+
+  it("[unit] leaves the period empty on a free-form invoice instead of refusing the send", () => {
+    const email = composeInvoiceEmail({
+      invoice: invoice({ periodStart: null, periodEnd: null }),
+      subjectTemplate: "Invoice %invoice_number%",
+      messageTemplate: "Period: [%invoice_period%]",
+      paymentUrl: null,
+      pdfAttached: false,
+      sentAt: "2026-10-09T15:00:00.000Z",
+    });
+    expect(email.text.startsWith("Period: []")).toBe(true);
+  });
+
+  it("[unit] still refuses a variable that is not in the vocabulary", () => {
+    expect(() =>
+      composeInvoiceEmail({
+        invoice: invoice(),
+        subjectTemplate: "Happy %send_day%!",
+        messageTemplate: "",
+        paymentUrl: null,
+        pdfAttached: false,
+        sentAt: "2026-10-09T15:00:00.000Z",
+      }),
+    ).toThrowError(expect.objectContaining({ code: "unknown_variable", variable: "send_day" }));
+  });
+
+  it("[unit] offers both to invoice templates only", () => {
+    expect(inspectEmailTemplateVariables("invoice", "%send_weekday% %invoice_period%")).toEqual([]);
+    expect(
+      inspectEmailTemplateVariables("reminder", "%send_weekday% %invoice_period%").map(
+        (error) => error.code,
+      ),
+    ).toEqual(["variable_not_allowed", "variable_not_allowed"]);
   });
 });
 

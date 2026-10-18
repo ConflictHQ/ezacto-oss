@@ -44,6 +44,7 @@ import {
   type OrganizationInvoiceSendingSetting,
   type InstanceThemeView,
   type BackupRun,
+  type NotificationSettingsState,
 } from './model.js'
 
 interface ModuleState {
@@ -459,6 +460,14 @@ export const createModuleSettingsController = (
   const remindersEvery = required<HTMLInputElement>('[data-reminder-settings-every]')
   const remindersSubmit = required<HTMLButtonElement>('[data-reminder-settings-submit]')
   const remindersResult = required<HTMLElement>('[data-reminder-settings-result]')
+  const notificationsStatus = required<HTMLElement>('[data-settings-notifications-status]')
+  const notificationsForm = required<HTMLFormElement>('[data-notification-settings-form]')
+  const notificationsAdmins = required<HTMLInputElement>('[data-notification-settings-admins]')
+  // Not `required<HTMLSelectElement>`: see the note on `type` above.
+  const notificationsDay = required('[data-notification-settings-day]') as unknown as HTMLInputElement
+  const notificationsTime = required<HTMLInputElement>('[data-notification-settings-time]')
+  const notificationsSubmit = required<HTMLButtonElement>('[data-notification-settings-submit]')
+  const notificationsResult = required<HTMLElement>('[data-notification-settings-result]')
 
   // The list is held rather than re-fetched after every action: add, verify and
   // remove all answer with what they changed, and a re-fetch would throw away
@@ -725,6 +734,60 @@ export const createModuleSettingsController = (
       })
     } finally {
       if (currentSession() === active) remindersSubmit.disabled = false
+    }
+  })
+
+  const showNotificationSettings = (settings: NotificationSettingsState): void => {
+    notificationsAdmins.checked = settings.budget_alerts_include_admins
+    notificationsDay.value = settings.submission_reminder?.day ?? ''
+    notificationsTime.value = settings.submission_reminder?.time ?? ''
+  }
+
+  notificationsForm.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    if (active === null || api.updateNotificationSettings === undefined) return
+    // A day with no time (or the reverse) is half a schedule: say so rather
+    // than guess which half was meant.
+    if ((notificationsDay.value === '') !== (notificationsTime.value === '')) {
+      notificationsResult.textContent =
+        notificationsDay.value === ''
+          ? 'Choose a day for the submission reminder, or clear the time.'
+          : 'Choose a time for the submission reminder.'
+      return
+    }
+    notificationsResult.textContent = 'Saving…'
+    notificationsSubmit.disabled = true
+    try {
+      const saved = await api.updateNotificationSettings(
+        {
+          budget_alerts_include_admins: notificationsAdmins.checked,
+          submission_reminder:
+            notificationsDay.value === ''
+              ? null
+              : {
+                  day: notificationsDay.value as NonNullable<
+                    NotificationSettingsState['submission_reminder']
+                  >['day'],
+                  time: notificationsTime.value,
+                },
+        },
+        active.signal,
+      )
+      active.present(() => {
+        showNotificationSettings(saved)
+        notificationsResult.textContent = 'Saved.'
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        notificationsResult.textContent = messageFor(
+          error,
+          'Only administrators can change notification settings.',
+          'Notification settings could not be saved.',
+        )
+      })
+    } finally {
+      if (currentSession() === active) notificationsSubmit.disabled = false
     }
   })
 
@@ -1243,6 +1306,31 @@ export const createModuleSettingsController = (
           error,
           'Only administrators and accounting can read payment reminder settings.',
           'Payment reminder settings could not be loaded.',
+        )
+      })
+    }
+  }
+
+  const loadNotifications = async (active: ActiveSession): Promise<void> => {
+    if (api.getNotificationSettings === undefined) {
+      notificationsStatus.textContent = 'This build has no notification settings endpoint.'
+      return
+    }
+    try {
+      const settings = await api.getNotificationSettings(active.signal)
+      active.present(() => {
+        showNotificationSettings(settings)
+        notificationsForm.hidden = false
+        notificationsStatus.textContent = ''
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        sectionFailed(
+          'notifications',
+          notificationsStatus,
+          error,
+          'Only administrators can read notification settings.',
+          'Notification settings could not be loaded.',
         )
       })
     }
@@ -2057,6 +2145,7 @@ export const createModuleSettingsController = (
     email: (active) => loadEmail(active.identity, active),
     invoices: loadInvoiceDefaults,
     reminders: loadReminders,
+    notifications: loadNotifications,
     payouts: loadWiseConnection,
     backup: (active) => loadBackups(active.identity, active),
     brand: (active) => loadBrandAssets(active.identity, active),

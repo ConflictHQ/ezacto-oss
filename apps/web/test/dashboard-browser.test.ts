@@ -172,7 +172,7 @@ const person = (weeklyCapacity: number): TeamPerson =>
     departments: [],
     project_assignments: [],
     notifications: {
-      delivery_active: false,
+      delivery_active: true,
       daily_reminder_enabled: false,
       reminder_time: null,
       reminder_days: [],
