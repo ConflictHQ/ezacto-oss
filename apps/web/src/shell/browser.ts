@@ -302,7 +302,7 @@ const setActiveTimeFormat = (format: 'decimal' | 'hours_minutes'): void => {
 }
 
 /**
- * Every total on this screen — row, tfoot, week, day strip, timer chip — reads
+ * Every total on this screen — row, tfoot, week, day strip — reads
  * beside a cell rendered from the same seconds, so it renders through the same
  * function the cell does rather than a second one that rounded differently.
  * Unlike `formatCellHours` a total of zero still prints: an empty cell means
@@ -1096,6 +1096,11 @@ const renderPhoneDay = (grid: WeekGrid, selectedDay: number, handlers: GridHandl
 
 let timerInterval: ReturnType<typeof globalThis.setInterval> | undefined
 
+// Whole minutes elapsed, floored: a clock never reads ahead of the time passed,
+// and 20m32s is 0:20 on the app.
+const clockElapsed = (seconds: number): string =>
+  formatDuration(Math.floor(seconds / 60) * 60, 'hours_minutes')
+
 const renderTimer = (running: DisplayTimeEntry | null): void => {
   const chip = required<HTMLButtonElement>('[data-timer-chip]')
   const label = required<HTMLElement>('[data-timer-label]')
@@ -1104,16 +1109,16 @@ const renderTimer = (running: DisplayTimeEntry | null): void => {
   if (running === null) {
     chip.dataset.state = 'stopped'
     label.textContent = 'Start timer'
-    // The idle placeholder sits in the same column of numbers as the totals, so
-    // it follows the setting too: a hardcoded 0:00 beside a 2.25 row total is
-    // the same mismatch, just at zero.
-    elapsed.textContent = formatSeconds(0)
+    elapsed.textContent = formatDuration(0, 'hours_minutes')
     return
   }
   chip.dataset.state = 'running'
   label.textContent = `${running.project_label} / ${running.task_label}`
   const update = (): void => {
-    elapsed.textContent = formatSeconds(runningElapsedSeconds(running))
+    // A running clock reads as a clock on every client, whatever the
+    // organization's time format: 0.3422 ticking up is unreadable and looks
+    // like the app and the web disagree (issue 1003). Totals still follow it.
+    elapsed.textContent = clockElapsed(runningElapsedSeconds(running))
   }
   update()
   timerInterval = globalThis.setInterval(update, 1_000)
