@@ -2494,6 +2494,23 @@ const teamOperations: ApiContractOperation[] = [
     sessionOnly: true,
     parameters: [path("id"), path("rateId"), header("Idempotency-Key")],
   },
+  {
+    // Pricing the cost of hours tracked before a person had a cost rate (#750).
+    // Rehearsal is the default: a call writes nothing unless it says `apply`.
+    // The rate and the range are always the caller's; the idempotency key names
+    // the run recorded on every reprice row it writes.
+    method: "post",
+    path: "/api/v1/team/people/:id/cost-rate-backfill",
+    operationId: "backfillTeamPersonCostRate",
+    summary: "Rehearse or apply a cost rate over hours tracked before the person had one",
+    tag: "team",
+    responseStatus: 200,
+    responseSchema: "CostRateBackfillEnvelope",
+    requestSchema: "CostRateBackfillInput",
+    requestRequired: true,
+    sessionOnly: true,
+    parameters: [path("id"), header("Idempotency-Key")],
+  },
 ];
 
 export const apiContractOperations: readonly ApiContractOperation[] = [
@@ -4611,6 +4628,70 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  CostRateBackfillInput: {
+    type: "object",
+    required: ["from", "to", "cost_rate_cents", "reason"],
+    properties: {
+      // Both ends are required: "all of history" is something somebody chooses.
+      from: dateSchema,
+      to: dateSchema,
+      // The effective rate for the whole range. Nothing in the data can say what
+      // a person cost in a past year, so it is supplied, never inferred.
+      cost_rate_cents: { type: "integer", minimum: 0 },
+      reason: { type: "string", minLength: 1, maxLength: 500 },
+      // Also restamp entries carrying a different cost rate. Absent leaves them.
+      replace_captured: booleanSchema,
+      // Absent rehearses. A run writes nothing unless it says so.
+      apply: booleanSchema,
+    },
+    additionalProperties: false,
+  },
+  CostRateBackfillPeriod: {
+    type: "object",
+    required: ["month", "entry_count", "seconds", "cost_cents"],
+    properties: {
+      month: stringSchema,
+      entry_count: { type: "integer", minimum: 0 },
+      seconds: signedIntegerSchema,
+      cost_cents: signedIntegerSchema,
+    },
+    additionalProperties: false,
+  },
+  CostRateBackfill: {
+    type: "object",
+    required: [
+      "run_id",
+      "applied",
+      "user_id",
+      "from",
+      "to",
+      "cost_rate_cents",
+      "entry_count",
+      "seconds",
+      "cost_cents",
+      "periods",
+      "captured_entry_count",
+      "running_entry_count",
+    ],
+    properties: {
+      run_id: stringSchema,
+      applied: booleanSchema,
+      user_id: integerSchema,
+      from: dateSchema,
+      to: dateSchema,
+      cost_rate_cents: { type: "integer", minimum: 0 },
+      // What the run stamps, or in a rehearsal would stamp.
+      entry_count: { type: "integer", minimum: 0 },
+      seconds: signedIntegerSchema,
+      cost_cents: signedIntegerSchema,
+      periods: { type: "array", items: reference("CostRateBackfillPeriod") },
+      // In range but left alone: already priced, or the timer is still running.
+      captured_entry_count: { type: "integer", minimum: 0 },
+      running_entry_count: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  CostRateBackfillEnvelope: envelope("CostRateBackfill"),
   TeamCommandReceipt: {
     type: "object",
     required: ["target_user_id", "version", "resource_id", "occurred_at"],
