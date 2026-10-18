@@ -249,6 +249,8 @@ describe('Reports Stage 1 model', () => {
       roleId: null,
       tagId: null,
       invoiceState: 'all',
+      // The notes search (issue 930) defaults to empty, which is no filter.
+      notes: '',
     })
     // The other kinds carry none of it: a client rollup has no Show control,
     // and an address implying one would be a control that does not exist.
