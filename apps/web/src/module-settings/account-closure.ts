@@ -79,6 +79,7 @@ export function createAccountClosureController(
       ) {
         const retry = document.createElement("button");
         retry.type = "button";
+        retry.className = "editor-secondary";
         retry.textContent = "Retry server-managed Apple cleanup";
         retry.addEventListener("click", () => {
           const active = session,

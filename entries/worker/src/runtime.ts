@@ -56,6 +56,7 @@ import {
   createMagicLinkService,
   createD1TwoFactorStore,
   backfillBandClaims,
+  backfillCostRates,
   requestAccountDeletion,
   createRecurringInvoiceEngine,
   createD1ReminderScheduler,
@@ -110,7 +111,7 @@ import {
   createD1IdempotencyStore,
   createIdempotentD1,
 } from "@ezacto/db/d1";
-import { createPortalSessionService, type BandClaimBackfillPort } from "@ezacto/api";
+import { createPortalSessionService, type BandClaimBackfillPort, type CostRateBackfillPort } from "@ezacto/api";
 import { deriveIdempotencySecret } from "@ezacto/api";
 import {
   createApiSessionService,
@@ -1050,6 +1051,11 @@ export const createRuntimeServices = async (
     bandClaimBackfill: {
       backfill: (input: Parameters<BandClaimBackfillPort['backfill']>[0]) =>
         backfillBandClaims(drizzle, input),
+    },
+    // #750. Same adaptation, for pricing the cost of hours tracked before a rate.
+    costRateBackfill: {
+      backfill: (input: Parameters<CostRateBackfillPort['backfill']>[0]) =>
+        backfillCostRates(drizzle, input),
     },
     // Sign-ins, token grants and revocations, exports and restores. Without
     // this the activity log can answer what happened to an invoice and not who

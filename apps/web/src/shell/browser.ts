@@ -58,10 +58,14 @@ import {
   type MoneyDisplay,
 } from '../money-display.js'
 import {
+  billsAsText,
   contextLabel,
+  projectTimeRounding,
+  roundingWithSource,
   formatTimeForClock,
   modeForEntryDraft,
   parseTimeForClock,
+  secondsBetweenTimes,
   type EntryEditorContext,
   type TimeEntryMode,
 } from '../components/time-entry-editor.js'
@@ -1435,6 +1439,7 @@ export const mountShell = async (
   const entryStart = required<HTMLInputElement>('[data-entry-start]')
   const entryEnd = required<HTMLInputElement>('[data-entry-end]')
   const entryRunning = required<HTMLElement>('[data-entry-running]')
+  const entryBilling = required<HTMLElement>('[data-entry-billing]')
   const entryNoteInput = required<HTMLTextAreaElement>('[data-entry-note-input]')
   const entryNoteHint = required<HTMLElement>('[data-entry-note-hint]')
   const entryResult = required<HTMLElement>('[data-entry-result]')
@@ -3695,6 +3700,18 @@ export const mountShell = async (
         const waiting = document.createElement('small')
         waiting.dataset.projectUninvoiced = String(project.id)
         label.append(input, name, waiting)
+        // The rule these hours will be billed under (issue 949). A project
+        // record that does not carry one is not asked about it.
+        const rule =
+          snapshot === null
+            ? undefined
+            : projectTimeRounding(project, snapshot.timeEntrySettings.time_rounding)
+        if (rule !== undefined) {
+          const rounding = document.createElement('small')
+          rounding.className = 'project-rounding'
+          rounding.textContent = `Time ${roundingWithSource(rule)}`
+          label.append(rounding)
+        }
         return label
       }),
     )
@@ -4807,6 +4824,7 @@ export const mountShell = async (
     // can only refuse is worse than no control beside a sentence that already
     // explains itself (issue 496).
     deleteEntry.hidden = next.entry === null || running || next.entry.is_locked
+    updateEntryBilling()
     entryResult.textContent = message
     open(entryDialog)
     // A locked entry disables every field and hides both actions, so the usual
@@ -5499,11 +5517,49 @@ export const mountShell = async (
     configureNoteInput(entryNoteInput, entryNoteHint, option.minimum_note_length)
   }
 
+  /**
+   * What the entry on screen will bill as, under the rule of the project it is
+   * filed against (issue 949). It follows the duration or the times as they are
+   * typed, and says nothing while they do not parse: a half-typed "1h" is not
+   * an error to report, only a figure not to show yet.
+   */
+  const updateEntryBilling = (): void => {
+    const editor = activeEntry
+    entryBilling.hidden = true
+    entryBilling.textContent = ''
+    if (editor === null || snapshot === null || editor.timer || editor.entry?.is_running === true) return
+    const projectId = editorResourceId('project', entryProject.value, editor.projectId)
+    const taskId = editorResourceId('task', entryTask.value, editor.taskId)
+    const option = editorOptions().find(
+      (candidate) => candidate.project_id === projectId && candidate.task_id === taskId,
+    )
+    if (option === undefined) return
+    let seconds: number
+    try {
+      seconds =
+        editor.mode === 'duration'
+          ? parseCellSeconds(entryDurationInput.value)
+          : secondsBetweenTimes(
+              parseTimeForClock(entryStart.value, snapshot.timeEntrySettings.clock),
+              parseTimeForClock(entryEnd.value, snapshot.timeEntrySettings.clock),
+            )
+    } catch {
+      return
+    }
+    if (!Number.isSafeInteger(seconds) || seconds < 1) return
+    entryBilling.textContent = billsAsText(seconds, option.time_rounding)
+    entryBilling.hidden = false
+  }
+
   for (const control of [entryProject, entryTask]) {
     control.addEventListener('change', () => {
       entryResult.textContent = ''
       syncAssignmentNoteRule()
+      updateEntryBilling()
     })
+  }
+  for (const control of [entryDurationInput, entryStart, entryEnd]) {
+    control.addEventListener('input', updateEntryBilling)
   }
 
   for (const input of entryForm.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
@@ -6611,13 +6667,26 @@ export const mountShell = async (
   if (moduleSettingsPage) {
     const sections = [...document.querySelectorAll<HTMLElement>('[data-settings-section]')]
     const links = [...document.querySelectorAll<HTMLElement>('[data-settings-section-link]')]
+    const strip = document.querySelector<HTMLElement>('[data-settings-sections]')
     const unavailable = (section: HTMLElement): boolean =>
       section.hasAttribute('data-settings-unavailable')
+    // The strip is one line that scrolls sideways where the width runs out, so
+    // the segment a link opened on may start past its edge: bring it in, by
+    // the strip's own scroll alone and never the page's.
+    const keepCurrentInStrip = (): void => {
+      const link = links.find((candidate) => candidate.getAttribute('aria-current') === 'page')
+      if (strip === null || link === undefined) return
+      const bounds = strip.getBoundingClientRect()
+      const segment = link.getBoundingClientRect()
+      if (segment.left < bounds.left) strip.scrollLeft -= bounds.left - segment.left + 24
+      else if (segment.right > bounds.right) strip.scrollLeft += segment.right - bounds.right + 24
+    }
     const showSection = (): void => {
       let current = resolveSettingsSection(globalThis.location.hash)
       const chosen = sections.find((section) => section.dataset.settingsSection === current)
       if (chosen !== undefined && unavailable(chosen)) current = DEFAULT_COMPANY_SETTINGS_SECTION
       applySettingsSection(current, sections, links, unavailable)
+      keepCurrentInStrip()
     }
     showSection()
     globalThis.addEventListener('hashchange', showSection)

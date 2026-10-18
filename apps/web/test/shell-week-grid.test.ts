@@ -330,6 +330,7 @@ describe('week-grid browser behavior', () => {
         timesheet_deadline: null,
         timezone: 'Pacific/Kiritimati',
         week_start_day: 'monday' as const,
+        time_rounding: { mode: 'exact' as const, minutes: 15 as const },
         updated_at: timestamp,
       })),
     })
@@ -452,6 +453,7 @@ describe('week-grid browser behavior', () => {
       time_format: api.timeFormat,
       clock: api.clock,
       week_start_day: 'saturday' as const,
+      time_rounding: { mode: 'exact' as const, minutes: 15 as const },
     }))
     await mountShell(api)
 
@@ -1177,6 +1179,105 @@ describe('week-grid browser behavior', () => {
       expect.any(AbortSignal),
     )
     expect(vi.mocked(api.createTimeEntry).mock.lastCall?.[0]).not.toHaveProperty('seconds')
+  })
+
+  it('[browser #949] says what a duration will bill as, and follows what is typed', async () => {
+    renderBrowserShell()
+    const api = browserApi()
+    api.entries.splice(
+      0,
+      api.entries.length,
+      timeEntry(1, { project_id: 1, task_id: 1, spent_date: '2026-08-28', seconds: 3_600 }),
+    )
+    vi.mocked(api.listTimeEntryOptions).mockResolvedValue([
+      {
+        project_id: 1,
+        task_id: 1,
+        minimum_note_length: 0,
+        time_rounding: { mode: 'up', minutes: 15, source: 'project' },
+      },
+      {
+        project_id: 2,
+        task_id: 2,
+        minimum_note_length: 0,
+        time_rounding: { mode: 'exact', minutes: 15, source: 'organization' },
+      },
+    ])
+    await mountShell(api)
+
+    document
+      .querySelector<HTMLButtonElement>('[data-week-grid] [data-cell-key="1:1:2026-08-28"] .cell-note')!
+      .click()
+    const billing = document.querySelector<HTMLElement>('[data-entry-billing]')!
+    expect(billing.hidden).toBe(false)
+    expect(billing.textContent).toBe('Bills as 1.00 h · rounded up to 15 min (project setting)')
+
+    const duration = document.querySelector<HTMLInputElement>('[data-entry-duration-input]')!
+    duration.value = '1.1'
+    duration.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(billing.textContent).toBe('Bills as 1.25 h · rounded up to 15 min (project setting)')
+
+    // Something that does not parse says nothing rather than something wrong.
+    duration.value = 'abc'
+    duration.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(billing.hidden).toBe(true)
+    expect(billing.textContent).toBe('')
+
+    // And the rule follows the project the entry is filed against.
+    duration.value = '1.1'
+    duration.dispatchEvent(new Event('input', { bubbles: true }))
+    const project = document.querySelector<HTMLSelectElement>('[data-entry-project]')!
+    const other = [...project.options].find((option) => option.value !== project.value)!
+    project.value = other.value
+    project.dispatchEvent(new Event('change', { bubbles: true }))
+    // Its task is the other project's own, so the pair is picked as a person would.
+    const task = document.querySelector<HTMLSelectElement>('[data-entry-task]')!
+    task.value = [...task.options].find((option) => option.value !== '')!.value
+    task.dispatchEvent(new Event('change', { bubbles: true }))
+    expect(billing.textContent).toBe('Bills as 1.10 h · not rounded (organization setting)')
+  })
+
+  it('[browser #949] says what start and end times will bill as, past midnight too', async () => {
+    renderBrowserShell()
+    const api = browserApi()
+    api.timeEntryMode = 'start_end'
+    api.clock = '12h'
+    api.entries.splice(
+      0,
+      api.entries.length,
+      timeEntry(1, {
+        project_id: 1,
+        task_id: 1,
+        spent_date: '2026-08-28',
+        started_time: '09:00',
+        ended_time: '10:05',
+      }),
+    )
+    vi.mocked(api.listTimeEntryOptions).mockResolvedValue([
+      {
+        project_id: 1,
+        task_id: 1,
+        minimum_note_length: 0,
+        time_rounding: { mode: 'nearest', minutes: 30, source: 'organization' },
+      },
+    ])
+    await mountShell(api)
+
+    document
+      .querySelector<HTMLButtonElement>('[data-week-grid] [data-cell-key="1:1:2026-08-28"] .cell-note')!
+      .click()
+    const billing = document.querySelector<HTMLElement>('[data-entry-billing]')!
+    expect(billing.textContent).toBe(
+      'Bills as 1.00 h · rounded to the nearest 30 min (organization setting)',
+    )
+    const start = document.querySelector<HTMLInputElement>('[data-entry-start]')!
+    const end = document.querySelector<HTMLInputElement>('[data-entry-end]')!
+    start.value = '11:00 PM'
+    end.value = '1:20 AM'
+    end.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(billing.textContent).toBe(
+      'Bills as 2.50 h · rounded to the nearest 30 min (organization setting)',
+    )
   })
 
   it('[e2e:track-week] preserves exact sub-minute duration on note-only and no-op saves', async () => {

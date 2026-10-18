@@ -121,6 +121,7 @@ import {
   type StaffMagicLinkMailer,
   type AccountDeletionMailer,
   type BandClaimBackfillPort,
+  type CostRateBackfillPort,
   type StaffMagicLinkStorePort,
   type StaffUserDirectory,
   type PasswordAuthService,
@@ -367,6 +368,7 @@ export interface RuntimeServices {
    */
   recurringInvoices: RecurringInvoiceEngine
   bandClaimBackfill: BandClaimBackfillPort
+  costRateBackfill: CostRateBackfillPort
   reports: ReportReader
   /** The organisation's name, read fresh: `GET /api/v1/brand` and the mailers. */
   organizationName(): Promise<string>
@@ -662,6 +664,7 @@ export const createApp = (
             installClientTreeRoutes(api, services.clientTree)
             installTeamRoutes(api, {
               repository: services.team,
+              costRateBackfill: services.costRateBackfill,
               cursorSigningKey: services.cursorSigningKey,
               isTeamModuleEnabled: services.isTeamModuleEnabled,
             })

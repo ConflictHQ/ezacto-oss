@@ -13,6 +13,11 @@ import {
   type SsoDomainCheck,
   type TimeEntryNoteSettings,
   type TimeEntryNoteSettingsPatch,
+  type TimeRounding,
+  type TimeRoundingPatch,
+  type TimeRoundingRecalculationApplied,
+  type TimeRoundingRecalculationPreview,
+  type TimeRoundingRecalculationRequest,
 } from '@conflict-hq/ezacto-client'
 import type { LogPageResult } from '../components/paged-log.js'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
@@ -189,6 +194,18 @@ export const invoiceAlwaysCcChange = (
   return unchanged ? null : chosen
 }
 
+export interface TimeRoundingApi {
+  updateTimeEntryRoundingSettings(patch: TimeRoundingPatch, signal?: AbortSignal): Promise<TimeRounding>
+  previewTimeRoundingRecalculation(
+    scope: { from?: string; to?: string },
+    signal?: AbortSignal,
+  ): Promise<TimeRoundingRecalculationPreview>
+  applyTimeRoundingRecalculation(
+    request: TimeRoundingRecalculationRequest,
+    signal?: AbortSignal,
+  ): Promise<TimeRoundingRecalculationApplied>
+}
+
 export interface CompanySettingsApi {
   /** Optional: a build without the route hides nothing it cannot save. */
   getInvoiceDefaults?(signal?: AbortSignal): Promise<InvoiceDefaultsSetting>
@@ -214,6 +231,13 @@ export interface CompanySettingsApi {
     patch: TimeEntryNoteSettingsPatch,
     signal?: AbortSignal,
   ): Promise<TimeEntryNoteSettings>
+  /**
+   * Time rounding (issue 949), under the same heading. Optional: a client of
+   * an older build has no such routes, and the controls then stay hidden.
+   */
+  updateTimeEntryRoundingSettings?: TimeRoundingApi['updateTimeEntryRoundingSettings']
+  previewTimeRoundingRecalculation?: TimeRoundingApi['previewTimeRoundingRecalculation']
+  applyTimeRoundingRecalculation?: TimeRoundingApi['applyTimeRoundingRecalculation']
   /**
    * The organisation's default payment reminder policy (issue 801). `null` is
    * reminders off. Optional because only a build with the reminder routes

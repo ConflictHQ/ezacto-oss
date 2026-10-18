@@ -4,6 +4,8 @@ import {
   isCommercialTermField,
   GeneralResourceError,
   maximumTimeEntryNoteLength,
+  timeRoundingIncrements,
+  timeRoundingModes,
   TeamError,
   type GeneralMutationInput,
   type GeneralResourceFilters,
@@ -52,10 +54,13 @@ type FieldType =
   | "string-array"
   | "positive-int-array"
   | "enum"
+  | "nullable-enum"
+  | "nullable-integer-in"
   | "nullable-date";
 interface FieldSpec {
   type: FieldType;
   values?: readonly string[];
+  integers?: readonly number[];
   maximum?: number;
 }
 interface ResourceRouteDefinition {
@@ -108,6 +113,16 @@ const valueEnum = (...values: string[]): FieldSpec => ({
   type: "enum",
   values,
 });
+// A project's own rounding, or null for the organization's (issue 949). The two
+// fields are one rule, so they travel together: see `parseMutation`.
+const nullableRoundingMode: FieldSpec = {
+  type: "nullable-enum",
+  values: timeRoundingModes,
+};
+const nullableRoundingMinutes: FieldSpec = {
+  type: "nullable-integer-in",
+  integers: timeRoundingIncrements,
+};
 
 const routeDefinitions: Readonly<
   Record<GeneralResourceKind, ResourceRouteDefinition>
@@ -198,6 +213,8 @@ const routeDefinitions: Readonly<
       notes: nullableString,
       billing_currency: nullableCurrencyCode,
       time_entry_notes_minimum_length: nullableTimeEntryNoteMinimumLength,
+      time_rounding_mode: nullableRoundingMode,
+      time_rounding_minutes: nullableRoundingMinutes,
     },
     required: new Set(["client_id", "name"]),
     filters: {
@@ -493,6 +510,18 @@ const parseField = (
     return typeof value === "string" && spec.values?.includes(value)
       ? value
       : invalid("invalid_enum", `${field} is not an accepted value`);
+  if (spec.type === "nullable-enum")
+    return value === null || (typeof value === "string" && spec.values?.includes(value))
+      ? (value as string | null)
+      : invalid("invalid_enum", `${field} is not an accepted value`);
+  if (spec.type === "nullable-integer-in")
+    return value === null ||
+      (typeof value === "number" && spec.integers?.includes(value))
+      ? (value as number | null)
+      : invalid(
+          "invalid_integer",
+          `${field} must be one of ${spec.integers?.join(", ")} or null`,
+        );
   if (spec.type === "nullable-date")
     return value === null || (typeof value === "string" && canonicalDate(value))
       ? (value as string | null)
@@ -544,6 +573,21 @@ const parseMutation = async <Bindings extends object>(
     const value = parseField(field, body[field], spec, errors);
     if (value !== undefined) output[camel(field)] = value;
   }
+  // A project's rounding rule is a direction and an increment, both set or
+  // both null: half of one would be a rule nobody chose.
+  if (
+    (Object.hasOwn(body, "time_rounding_mode") ||
+      Object.hasOwn(body, "time_rounding_minutes")) &&
+    (!Object.hasOwn(body, "time_rounding_mode") ||
+      !Object.hasOwn(body, "time_rounding_minutes") ||
+      (body["time_rounding_mode"] === null) !== (body["time_rounding_minutes"] === null))
+  )
+    errors.push({
+      field: "time_rounding_mode",
+      code: "incomplete_rule",
+      message:
+        "time_rounding_mode and time_rounding_minutes are set together, or both null for the organization's rule",
+    });
   if (create)
     for (const field of definition.required)
       if (!Object.hasOwn(body, field))

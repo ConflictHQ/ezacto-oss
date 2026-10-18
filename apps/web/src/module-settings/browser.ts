@@ -1,5 +1,6 @@
 import { createDeletionRequestsController } from './deletion-requests.js'
 import { createRetentionController } from './retention.js'
+import { createTimeRoundingController } from './time-rounding.js'
 import {
   EzactoApiError,
   type InvoiceRecipient,
@@ -323,13 +324,18 @@ const renderSignInMethodCard = (state: SignInMethodState, demo: boolean): string
       ? 'Live. People can sign in this way.'
       : 'Switched off. The routes refuse it.'
     : 'Not configured in this deployment, so it cannot be switched on here.'
+  // The switch is named by the method's heading as well as its state word, so
+  // a screen reader hears "Google Enabled" rather than five switches all
+  // called "Enabled". The span stays the label's first: the change handler
+  // below rewrites the state word through it.
+  const id = `settings-sign-in-${state.method}`
   return (
     `<article class="module-settings-card" data-sign-in-card="${state.method}">` +
     `<header class="module-settings-card-header">` +
-    `<div><h2>${label}</h2><p class="module-code">${state.method}</p></div>` +
-    `<label class="module-toggle"><input type="checkbox" data-sign-in-toggle="${state.method}"${state.enabled ? ' checked' : ''}${state.configured && !demo ? '' : ' disabled'}><span>${state.enabled ? 'Enabled' : 'Disabled'}</span></label>` +
+    `<h3 id="${id}-title">${label}</h3>` +
+    `<label class="module-toggle"><input type="checkbox" data-sign-in-toggle="${state.method}" aria-labelledby="${id}-title ${id}-state" aria-describedby="${id}-note"${state.enabled ? ' checked' : ''}${state.configured && !demo ? '' : ' disabled'}><span id="${id}-state">${state.enabled ? 'Enabled' : 'Disabled'}</span></label>` +
     `</header>` +
-    `<p class="module-settings-warning">${note}</p>` +
+    `<p class="module-settings-warning" id="${id}-note">${note}</p>` +
     `<p class="form-result" data-sign-in-result="${state.method}" role="status" aria-live="polite"></p>` +
     `</article>`
   )
@@ -339,13 +345,15 @@ const renderModuleCard = (state: ModuleState): string => {
   const description = moduleDescriptions[state.module]
   const label = description?.label ?? state.module
   const warning = description?.warning ?? ''
+  // Named and described the way a sign-in method's switch is, above.
+  const id = `settings-module-${state.module}`
   return (
     `<article class="module-settings-card" data-module-card="${state.module}">` +
     `<header class="module-settings-card-header">` +
-    `<div><h2>${label}</h2><p class="module-code">${state.module}</p></div>` +
-    `<label class="module-toggle"><input type="checkbox" data-module-toggle="${state.module}"${state.enabled ? ' checked' : ''}><span>${state.enabled ? 'Enabled' : 'Disabled'}</span></label>` +
+    `<h3 id="${id}-title">${label}</h3>` +
+    `<label class="module-toggle"><input type="checkbox" data-module-toggle="${state.module}" aria-labelledby="${id}-title ${id}-state" aria-describedby="${id}-note"${state.enabled ? ' checked' : ''}><span id="${id}-state">${state.enabled ? 'Enabled' : 'Disabled'}</span></label>` +
     `</header>` +
-    `<p class="module-settings-warning">${warning}</p>` +
+    `<p class="module-settings-warning" id="${id}-note">${warning}</p>` +
     `<p class="form-result" data-module-result="${state.module}" role="status" aria-live="polite"></p>` +
     `</article>`
   )
@@ -808,15 +816,19 @@ export const createModuleSettingsController = (
         rowKey: (domain) => String(domain.id),
         empty:
           'No domain is provisioned, so single sign-on creates nobody. Add the email domain your directory signs in with.',
+        // The domain, its status and the date take their own width; the record
+        // is what an operator copies into a zone file, so it takes the rest and
+        // wraps rather than ending in an ellipsis on a narrow window.
         columns: [
-          { key: 'domain', label: 'Domain', render: (domain) => domain.domain },
-          { key: 'status', label: 'Status', render: (domain) => ssoDomainStatus(domain) },
+          { key: 'domain', label: 'Domain', fit: true, render: (domain) => domain.domain },
+          { key: 'status', label: 'Status', fit: true, render: (domain) => ssoDomainStatus(domain) },
           {
             key: 'checked',
             label: 'Last checked',
+            fit: true,
             render: (domain) => ssoLastCheckedLabel(domain),
           },
-          { key: 'record', label: 'DNS record', render: (domain) => ssoRecordCell(domain) },
+          { key: 'record', label: 'DNS record', wrap: true, render: (domain) => ssoRecordCell(domain) },
         ],
         // The demo refuses both (issue 931), so neither is offered as if it worked.
         actions: (domain) => [
@@ -876,8 +888,12 @@ export const createModuleSettingsController = (
           preview.append(image)
         }
 
+        // A button-shaped label over a visually hidden file input: the upload
+        // starts the moment a file is chosen, so the browser's own "No file
+        // chosen" box had nothing to say, and it squeezed the label beside it
+        // into three lines.
         const picker = document.createElement('label')
-        picker.className = 'brand-slot-picker'
+        picker.className = 'brand-slot-picker editor-secondary'
         picker.append(stored === undefined ? 'Upload an image' : 'Replace')
         const input = document.createElement('input')
         input.type = 'file'
@@ -896,6 +912,7 @@ export const createModuleSettingsController = (
         if (stored !== undefined) {
           const remove = document.createElement('button')
           remove.type = 'button'
+          remove.className = 'editor-secondary'
           remove.textContent = 'Remove'
           remove.disabled = brandBusy
           remove.addEventListener('click', () => void discardBrandAsset(copy.segment))
@@ -1058,6 +1075,11 @@ export const createModuleSettingsController = (
    */
   const deletionRequests = createDeletionRequestsController(required<HTMLElement>('[data-module-settings-page]'), demo)
   const retention = createRetentionController(required<HTMLElement>('[data-module-settings-page]'), demo)
+  const timeRounding = createTimeRoundingController(
+    required<HTMLElement>('[data-settings-section="time"]'),
+    api,
+    () => session,
+  )
 
   const clearPrivatePresentation = (): void => {
     // The previous session stops owning the page here, before anything is
@@ -1078,6 +1100,7 @@ export const createModuleSettingsController = (
     emailReputation.hidden = true
     timeFacts.replaceChildren()
     noteForm.hidden = true
+    timeRounding.clear()
     // The result line sits outside the form, so hiding the form leaves the
     // previous session's "Saved." or its 403 on screen under the next
     // person's notice.
@@ -1121,6 +1144,7 @@ export const createModuleSettingsController = (
         noteRequired.checked = notes.required
         noteMinimum.value = String(notes.minimum_length)
         noteForm.hidden = false
+        timeRounding.show(active, settings.time_rounding)
         timeStatus.textContent = ''
       })
     } catch (error) {

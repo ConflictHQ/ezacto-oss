@@ -74,10 +74,10 @@ const teamApi = (profile: Whoami['profile'] = 'administrator') => {
   )
   const listTimeEntryOptions = vi.fn(async (_signal?: AbortSignal, userId?: number) =>
     userId === 7
-      ? [{ project_id: 1, task_id: 1, minimum_note_length: 0 }]
+      ? [{ project_id: 1, task_id: 1, minimum_note_length: 0, time_rounding: { mode: 'exact' as const, minutes: 15 as const, source: 'organization' as const } }]
       : [
-          { project_id: 1, task_id: 1, minimum_note_length: 0 },
-          { project_id: 2, task_id: 2, minimum_note_length: 0 },
+          { project_id: 1, task_id: 1, minimum_note_length: 0, time_rounding: { mode: 'exact' as const, minutes: 15 as const, source: 'organization' as const } },
+          { project_id: 2, task_id: 2, minimum_note_length: 0, time_rounding: { mode: 'exact' as const, minutes: 15 as const, source: 'organization' as const } },
         ],
   )
   const createTimeEntry = vi.fn(async (input: TimeEntryInput) => {

@@ -125,11 +125,22 @@ export const organizations = sqliteTable(
       .$type<Array<{ name: string; email: string }>>()
       .notNull()
       .default([]),
+    /**
+     * The single rounding enum before issue 949. Still in the table -- dropping
+     * it would mean a rebuild -- and read by nothing: migration 0112 copied it
+     * into the two columns below.
+     */
     timeRounding: text('time_rounding', {
       enum: ['none', 'nearest_6', 'nearest_15', 'nearest_30', 'up_6', 'up_15', 'up_30'],
     })
       .notNull()
       .default('none'),
+    // Migration 0112 (issue 949): how time is rounded unless a project says
+    // otherwise. Validated by triggers, not CHECKs.
+    timeRoundingMode: text('time_rounding_mode', { enum: ['exact', 'up', 'down', 'nearest'] })
+      .notNull()
+      .default('exact'),
+    timeRoundingMinutes: integer('time_rounding_minutes').notNull().default(15),
     modules: text('modules', { mode: 'json' }).$type<Record<string, boolean>>().notNull(),
     require2fa: integer('require_2fa', { mode: 'boolean' }).notNull().default(false),
     requireSso: integer('require_sso', { mode: 'boolean' }).notNull().default(false),
@@ -914,6 +925,10 @@ export const projects = sqliteTable(
     notes: text('notes'),
     billingCurrency: text('billing_currency'),
     timeEntryNotesMinimumLength: integer('time_entry_notes_minimum_length'),
+    // Migration 0112 (issue 949): this project's own rounding, or both null for
+    // the organization's.
+    timeRoundingMode: text('time_rounding_mode', { enum: ['exact', 'up', 'down', 'nearest'] }),
+    timeRoundingMinutes: integer('time_rounding_minutes'),
     ...timestamps,
   },
   (table) => [
@@ -1667,7 +1682,12 @@ export const invoiceLineItems = sqliteTable(
   (table) => [
     uniqueIndex('invoice_line_items_harvest_id_unique').on(table.harvestId),
     uniqueIndex('invoice_line_items_invoice_position_unique').on(table.invoiceId, table.position),
-    index('invoice_line_items_invoice_id').on(table.invoiceId),
+    index('invoice_line_items_invoice_totals').on(
+      table.invoiceId,
+      table.amountCents,
+      table.taxed,
+      table.taxed2,
+    ),
     index('invoice_line_items_project_id').on(table.projectId),
     check('invoice_line_items_position_nonnegative', sql`${table.position} >= 0`),
     check('invoice_line_items_taxed_boolean', sql`${table.taxed} in (0, 1)`),
@@ -3677,9 +3697,12 @@ export const timeEntryRateReprices = sqliteTable(
     costRateCents: integer('cost_rate_cents'),
     reason: text('reason').notNull(),
     repricedAt: text('repriced_at').notNull(),
+    runId: text('run_id'),
+    actorUserId: integer('actor_user_id').references(() => users.id, { onDelete: 'restrict' }),
   },
   (table) => [
     index('time_entry_rate_reprices_entry_id').on(table.timeEntryId, table.id),
+    index('time_entry_rate_reprices_run').on(table.runId, table.id),
     check(
       'time_entry_rate_reprices_previous_billable_nonnegative',
       sql`${table.previousBillableRateCents} is null or ${table.previousBillableRateCents} >= 0`,

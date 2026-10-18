@@ -417,6 +417,7 @@ export {
   type RecurringInvoiceEngine,
 } from './recurring-invoice-engine.js'
 export { backfillBandClaims } from './band-claim-backfill.js'
+export { backfillCostRates } from './cost-rate-backfill.js'
 export { captureActivityEvent } from './activity-log.js'
 export { requestAccountDeletion } from './account-deletion.js'
 export { createD1ReminderScheduler, type ReminderProcessOptions, type ReminderProcessSummary } from './reminders.js'

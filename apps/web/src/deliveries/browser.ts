@@ -291,6 +291,7 @@ export const createDeliveriesController = (api: DeliveriesApi): DeliveriesContro
           {
             key: 'when',
             label: whenLabel(),
+            fit: true,
             render: (row) => when(row.created_at),
             sortValue: (row) => row.created_at,
           },
@@ -314,8 +315,8 @@ export const createDeliveriesController = (api: DeliveriesApi): DeliveriesContro
             render: (row) =>
               row.subject === '' ? deliveryLabel(row.template) : row.subject,
           },
-          { key: 'status', label: 'Status', render: (row) => deliveryLabel(row.status) },
-          { key: 'attempts', label: 'Attempts', render: (row) => String(row.attempt_count) },
+          { key: 'status', label: 'Status', fit: true, render: (row) => deliveryLabel(row.status) },
+          { key: 'attempts', label: 'Attempts', fit: true, render: (row) => String(row.attempt_count) },
           {
             key: 'why',
             label: 'Why',
@@ -353,13 +354,14 @@ export const createDeliveriesController = (api: DeliveriesApi): DeliveriesContro
           {
             key: 'when',
             label: whenLabel(),
+            fit: true,
             render: (row) => when(row.created_at),
             sortValue: (row) => row.created_at,
           },
           { key: 'event', label: 'Event', render: (row) => deliveryLabel(row.event_type) },
           { key: 'subscriber', label: 'Subscriber', render: (row) => row.subscriber_id },
-          { key: 'status', label: 'Status', render: (row) => deliveryLabel(row.status) },
-          { key: 'attempts', label: 'Attempts', render: (row) => String(row.attempt_count) },
+          { key: 'status', label: 'Status', fit: true, render: (row) => deliveryLabel(row.status) },
+          { key: 'attempts', label: 'Attempts', fit: true, render: (row) => String(row.attempt_count) },
           { key: 'why', label: 'Why', render: (row) => failureText(row.last_error_code, null) },
         ],
         // Only where there is something to retry. A Retry beside a delivered

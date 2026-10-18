@@ -1,4 +1,5 @@
 import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { projectTimeRounding, roundingWithSource } from '../components/time-entry-editor.js'
 import { DEMO_MAIL_NOTE, isDemoDeployment, isDemoMailRestricted } from '../demo.js'
 import { markMoney, moneyText } from '../money-display.js'
 import {
@@ -206,11 +207,11 @@ export const renderInvoiceListItems = (
       rowKey: (invoice) => String(invoice.id),
       empty,
       columns: [
-        { key: 'status', label: 'Status', render: invoiceStatePill },
-        { key: 'number', label: 'Invoice', render: invoiceNumberLink },
+        { key: 'status', label: 'Status', fit: true, render: invoiceStatePill },
+        { key: 'number', label: 'Invoice', fit: true, render: invoiceNumberLink },
         { key: 'client', label: 'Client', render: (invoice) => clientLabel(invoice.client_id) },
-        { key: 'issued', label: 'Issued', render: (invoice) => dateLabel(invoice.issue_date) },
-        { key: 'due-date', label: 'Due', render: invoiceDueLabel },
+        { key: 'issued', label: 'Issued', fit: true, render: (invoice) => dateLabel(invoice.issue_date) },
+        { key: 'due-date', label: 'Due', fit: true, render: invoiceDueLabel },
         {
           key: 'amount',
           label: 'Amount',
@@ -1436,12 +1437,50 @@ export const createInvoicePaymentController = (
     notes.textContent = ''
     required<HTMLElement>('[data-invoice-detail-notes-section]').hidden = true
     required<HTMLElement>('[data-invoice-detail-lines]').replaceChildren()
+    required<HTMLElement>('[data-invoice-rounding-fact]').hidden = true
     required<HTMLElement>('[data-invoice-detail-payments]').replaceChildren()
     required<HTMLElement>('[data-invoice-detail-messages]').replaceChildren()
     const reminderLine = required<HTMLElement>('[data-invoice-reminder-line]')
     reminderLine.textContent = ''
     reminderLine.hidden = true
     syncControls()
+  }
+
+  /**
+   * Which rounding the projects on this invoice's lines are under (issue 949).
+   * A project the reader cannot see the rule of, or cannot read at all, is left
+   * out rather than guessed at, and with nothing to say the row stays hidden.
+   */
+  const loadRounding = async (session: ActiveSession, shown: Readonly<Invoice>): Promise<void> => {
+    const fact = required<HTMLElement>('[data-invoice-rounding-fact]')
+    const text = required<HTMLElement>('[data-invoice-detail-rounding]')
+    fact.hidden = true
+    text.textContent = ''
+    const getProject = api.getDirectoryProject
+    const getSettings = api.getTimeEntrySettings
+    if (getProject === undefined || getSettings === undefined) return
+    const projectIds = [
+      ...new Set(shown.line_items.flatMap((line) => (line.project_id === null ? [] : [line.project_id]))),
+    ]
+    if (projectIds.length === 0) return
+    try {
+      const organization = (await getSettings(session.signal)).time_rounding
+      const projects = await Promise.all(
+        projectIds.map((id) => getProject(id, session.signal).catch(() => null)),
+      )
+      if (current() !== session || invoice?.id !== shown.id) return
+      const parts = projects.flatMap((project) => {
+        if (project === null) return []
+        const rule = projectTimeRounding(project, organization)
+        const name = typeof project['name'] === 'string' ? project['name'] : `Project #${project.id}`
+        return rule === undefined ? [] : [`${name}: ${roundingWithSource(rule)}`]
+      })
+      if (parts.length === 0) return
+      text.textContent = parts.join('; ')
+      fact.hidden = false
+    } catch {
+      // A nicety: the invoice is complete without it.
+    }
   }
 
   const loadDetail = async (
@@ -1553,6 +1592,7 @@ export const createInvoicePaymentController = (
       attachmentReadonly.hidden = demo || canWrite || api.uploadInvoiceAttachment === undefined
       attachmentDemo.hidden = !demo || api.uploadInvoiceAttachment === undefined
       attachmentSubmit.disabled = false
+      void loadRounding(session, loadedInvoice)
       void loadAttachments(session, invoiceId!)
       void loadQuickBooks(session, invoiceId!)
       void loadReminders(session, invoiceId!)

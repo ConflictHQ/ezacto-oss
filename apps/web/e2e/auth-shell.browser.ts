@@ -207,6 +207,7 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
           time_format: 'decimal',
           clock: '12h',
           week_start_day: 'monday',
+          time_rounding: { mode: 'exact', minutes: 15 },
         },
         links: { self: '/api/v1/time-entry-settings' },
       })
@@ -413,7 +414,14 @@ test('[e2e:track-week] uses one editor and submits 12-hour UI times as canonical
     }
     if (url.pathname === '/api/v1/time-entry-options') {
       await fulfillJson(route, {
-        data: [{ project_id: 1, task_id: 1, minimum_note_length: 0 }],
+        data: [
+          {
+            project_id: 1,
+            task_id: 1,
+            minimum_note_length: 0,
+            time_rounding: { mode: 'exact', minutes: 15, source: 'organization' },
+          },
+        ],
         links: { self: '/api/v1/time-entry-options' },
       })
       return
@@ -425,6 +433,7 @@ test('[e2e:track-week] uses one editor and submits 12-hour UI times as canonical
           time_format: 'hours_minutes',
           clock: '12h',
           week_start_day: 'monday',
+          time_rounding: { mode: 'exact', minutes: 15 },
         },
         links: { self: '/api/v1/time-entry-settings' },
       })
