@@ -3727,6 +3727,53 @@ export const calendarProposals = sqliteTable(
   ],
 )
 
+/**
+ * One application of a CSV time file (issue 1012): the file's sha-256 under a
+ * source id, with the mapping it was applied through. The same file is the same
+ * run however often it is applied.
+ */
+export const csvImportRuns = sqliteTable(
+  'csv_import_runs',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    sourceId: text('source_id').notNull(),
+    fileSha256: text('file_sha256').notNull(),
+    mappingJson: text('mapping_json').notNull(),
+    mappingSha256: text('mapping_sha256').notNull(),
+    status: text('status', { enum: ['partial', 'aborted', 'complete'] }).notNull(),
+    totalRows: integer('total_rows').notNull(),
+    rejectedRows: integer('rejected_rows').notNull().default(0),
+    lastError: text('last_error'),
+    ...timestamps,
+    finishedAt: text('finished_at'),
+  },
+  (table) => [uniqueIndex('csv_import_runs_identity').on(table.sourceId, table.fileSha256)],
+)
+
+/** The source key of one CSV row and the time entry it became. */
+export const csvImportEntries = sqliteTable(
+  'csv_import_entries',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    runId: integer('run_id')
+      .notNull()
+      .references(() => csvImportRuns.id, { onDelete: 'restrict' }),
+    sourceId: text('source_id').notNull(),
+    sourceKey: text('source_key').notNull(),
+    timeEntryId: integer('time_entry_id').references(() => timeEntries.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('csv_import_entries_source_key').on(table.sourceId, table.sourceKey),
+    uniqueIndex('csv_import_entries_time_entry')
+      .on(table.timeEntryId)
+      .where(sql`${table.timeEntryId} is not null`),
+    index('csv_import_entries_run').on(table.runId),
+  ],
+)
+
 export const timeEntryRateReprices = sqliteTable(
   'time_entry_rate_reprices',
   {

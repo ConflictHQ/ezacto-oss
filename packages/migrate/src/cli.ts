@@ -11,6 +11,7 @@ import { reconciliationExitCode, runReconcile } from './reconcile.js'
 import { runSync, syncExitCode } from './sync.js'
 import { runVerify } from './verify.js'
 import { runCutoverPreflight } from './cutover-preflight.js'
+import { runCsvImport } from './csv-run.js'
 import { runInvoiceDelta } from './invoice-delta.js'
 import {
   applyRecurringInvoiceWorksheet,
@@ -36,6 +37,9 @@ Commands:
            freshly loaded one, through the same importer the load uses. For an
            instance that has moved on since its cutover, where reloading would
            take its own work with it.
+  import-csv Read a vendor-neutral time CSV (docs/csv-import.md) into --database.
+           With --dry-run it reports what would happen and changes nothing; without
+           it, it applies the file, and running it again adds nothing.
   finish-retainers Generate or apply the missing Harvest retainer-balance worksheet
   finish-recurring-invoices Generate or apply the missing recurring-invoice worksheet
 
@@ -46,6 +50,10 @@ Options:
   --input <path>       Completed worksheet JSON, or wrangler query JSON for preflight-migrations
   --organization-currency <code>  ISO currency when Company/client data is ambiguous
   --organization-address <text>   Organization address (Company API omits it)
+  --file <path>        import-csv: the CSV file
+  --mapping <path>     import-csv: JSON mapping of people, clients, projects and tasks
+  --source-id <id>     import-csv: a stable name for the system the file came from (default: csv)
+  --skip-rejected      import-csv: apply the rows that can be applied; the rest stay listed
   --force              Re-stamp a snapshot dir that holds a different account
   --upgrade            preflight-migrations: an ordinary deploy. Permits pending
                        migrations (the build is ahead of the database, which is what a
@@ -138,6 +146,10 @@ const main = async (): Promise<number> => {
       source: { type: 'string' },
       only: { type: 'string', multiple: true },
       'dry-run': { type: 'boolean' },
+      file: { type: 'string' },
+      mapping: { type: 'string' },
+      'source-id': { type: 'string' },
+      'skip-rejected': { type: 'boolean' },
     upgrade: { type: 'boolean' },
     },
   })
@@ -153,7 +165,8 @@ const main = async (): Promise<number> => {
     command !== 'preflight-migrations' &&
     command !== 'finish-retainers' &&
     command !== 'finish-recurring-invoices' &&
-    command !== 'carry-invoices'
+    command !== 'carry-invoices' &&
+    command !== 'import-csv'
   ) {
     process.stdout.write(USAGE)
     return 1
@@ -195,6 +208,25 @@ const main = async (): Promise<number> => {
         `${result.anomalies.length} anomaly(s); snapshot ${result.snapshotSha256}`,
     )
     return 0
+  }
+
+  if (command === 'import-csv') {
+    if (!values.database) throw new Error('--database is required for import-csv')
+    if (!values.file) throw new Error('--file is required for import-csv')
+    // Aborting stops further rows; it never rolls back what was written.
+    const controller = new AbortController()
+    process.once('SIGINT', () => controller.abort())
+    const { text, exitCode } = await runCsvImport({
+      databasePath: values.database,
+      filePath: values.file,
+      mappingPath: values.mapping,
+      sourceId: values['source-id'] ?? 'csv',
+      dryRun: values['dry-run'] === true,
+      skipRejected: values['skip-rejected'] === true,
+      signal: controller.signal,
+    })
+    console.log(text)
+    return exitCode
   }
 
   if (command === 'carry-invoices') {
