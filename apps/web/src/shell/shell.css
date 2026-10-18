@@ -8646,3 +8646,30 @@ dialog textarea {
 .apple-disconnect .auth-card { max-width: none; }
 .apple-disconnect-confirm { display: flex; gap: 12px; align-items: start; }
 .apple-disconnect-confirm input { width: auto; flex: 0 0 auto; }
+
+/* Week change in flight: the old rows stay put but cannot be edited, and a slow
+   answer swaps them for placeholders (apps/web/src/shell/browser.ts). */
+.week-grid-wrap[aria-busy='true'],
+.day-list[aria-busy='true'] {
+  opacity: 0.55;
+}
+.grid-skeleton {
+  display: block;
+  height: 36px;
+  border-radius: 6px;
+  background: var(--ez-border);
+}
+.day-skeleton {
+  margin: 12px 16px;
+  height: 56px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .grid-skeleton {
+    animation: ez-skeleton-pulse 1.2s ease-in-out infinite;
+  }
+}
+@keyframes ez-skeleton-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}

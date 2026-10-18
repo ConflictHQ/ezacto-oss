@@ -789,14 +789,7 @@ const rowStopButton = (entryId: number, label: string, className: string, handle
   return button
 }
 
-/**
- * `today` is the day the server files a timer on -- the operator's zone, then
- * the organization's -- not the browser's clock. The column marked today and
- * the cell a row's Start aims at are the same date, so they take it from the
- * same place: marked from one clock and started from another, the highlighted
- * column would stay empty while the timer landed a day over.
- */
-const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string): void => {
+const renderGridHead = (dates: readonly string[], today: string): void => {
   const head = required<HTMLTableSectionElement>('[data-week-grid-head]')
   const heading = document.createElement('tr')
   const projectHeading = document.createElement('th')
@@ -806,7 +799,7 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
   // Which column is today is the first thing you look for in a week grid, and
   // nothing said. The cells carry it too, so the marker runs the column's
   // height rather than sitting only in its header.
-  for (const date of grid.dates) {
+  for (const date of dates) {
     const th = document.createElement('th')
     th.scope = 'col'
     const [weekday, day] = dayHeadingParts(date)
@@ -825,6 +818,17 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
   totalHeading.textContent = 'Total'
   heading.append(totalHeading)
   head.replaceChildren(heading)
+}
+
+/**
+ * `today` is the day the server files a timer on -- the operator's zone, then
+ * the organization's -- not the browser's clock. The column marked today and
+ * the cell a row's Start aims at are the same date, so they take it from the
+ * same place: marked from one clock and started from another, the highlighted
+ * column would stay empty while the timer landed a day over.
+ */
+const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string): void => {
+  renderGridHead(grid.dates, today)
 
   const body = required<HTMLTableSectionElement>('[data-week-grid-rows]')
   if (grid.rows.length === 0) {
@@ -1878,6 +1882,7 @@ export const mountShell = async (
     required<HTMLElement>('[data-current-profile]').textContent = '—'
     required<HTMLElement>('[data-timer-label]').textContent = 'Timer'
     required<HTMLElement>('[data-timer-elapsed]').textContent = '—'
+    endWeekLoading()
     required<HTMLElement>('[data-week-total]').textContent = '—'
     required<HTMLElement>('[data-week-grid-rows]').replaceChildren()
     required<HTMLElement>('[data-week-grid-totals]').replaceChildren()
@@ -1985,6 +1990,7 @@ export const mountShell = async (
     required<HTMLButtonElement>('[data-timer-chip]').dataset.state = 'signed-out'
     required<HTMLElement>('[data-timer-label]').textContent = 'Sign in required'
     required<HTMLElement>('[data-timer-elapsed]').textContent = '—'
+    endWeekLoading()
     weekPeriod.setRange(weekRange(within, weekStartDay))
     required<HTMLElement>('[data-week-total]').textContent = '—'
     const unavailable = document.createElement('tr')
@@ -2001,7 +2007,69 @@ export const mountShell = async (
     required<HTMLElement>('[data-day-rows]').replaceChildren(phoneUnavailable)
   }
 
+  // A week change keeps the old week's rows on screen until the new one answers,
+  // so the grid is marked busy and inert at once and swaps to placeholders only
+  // if the answer is slow: a fast one would otherwise flash a skeleton.
+  const weekLoadSkeletonDelayMs = 150
+  let weekLoadSeq = 0
+  let weekLoadTimer: ReturnType<typeof globalThis.setTimeout> | undefined
+  const setWeekBusy = (busy: boolean): void => {
+    for (const selector of ['[data-week-grid]', '[data-day-list]']) {
+      const surface = required<HTMLElement>(selector)
+      surface.setAttribute('aria-busy', String(busy))
+      surface.toggleAttribute('inert', busy)
+    }
+  }
+  const renderWeekSkeleton = (): void => {
+    const rows = Array.from({ length: 4 }, () => {
+      const row = document.createElement('tr')
+      row.className = 'grid-skeleton-row'
+      const cell = document.createElement('td')
+      cell.colSpan = 9
+      const bar = document.createElement('span')
+      bar.className = 'grid-skeleton'
+      cell.append(bar)
+      row.append(cell)
+      return row
+    })
+    required<HTMLElement>('[data-week-grid-rows]').replaceChildren(...rows)
+    required<HTMLElement>('[data-week-grid-totals]').replaceChildren()
+    const blocks = Array.from({ length: 3 }, () => {
+      const block = document.createElement('div')
+      block.className = 'grid-skeleton day-skeleton'
+      return block
+    })
+    required<HTMLElement>('[data-day-rows]').replaceChildren(...blocks)
+  }
+  const endWeekLoading = (): void => {
+    globalThis.clearTimeout(weekLoadTimer)
+    weekLoadTimer = undefined
+    setWeekBusy(false)
+  }
+  /** Returns the token of this load; only the latest token may end the state. */
+  const beginWeekLoading = (): number => {
+    const token = ++weekLoadSeq
+    globalThis.clearTimeout(weekLoadTimer)
+    setWeekBusy(true)
+    const dates = weekDates(within, weekStartDay)
+    weekPeriod.setRange({ from: dates[0]!, to: dates.at(-1)! })
+    renderGridHead(
+      dates,
+      filingDate([
+        ...(profileZone === null ? [] : [profileZone]),
+        ...(lockPolicy === null ? [] : [lockPolicy.timezone]),
+      ]),
+    )
+    required<HTMLElement>('[data-day-label]').textContent = dayLabel(dates[selectedDay]!)
+    required<HTMLElement>('[data-week-total]').textContent = '—'
+    weekLoadTimer = globalThis.setTimeout(() => {
+      if (token === weekLoadSeq) renderWeekSkeleton()
+    }, weekLoadSkeletonDelayMs)
+    return token
+  }
+
   const renderWeekLoadFailure = (): void => {
+    endWeekLoading()
     snapshot = null
     grid = null
     cellStates.clear()
@@ -3559,6 +3627,8 @@ export const mountShell = async (
     lockPolicy = policy.policy
     profileZone = zone
     activeTimesheetLocks = policy.locks
+    // The latest requested week is on screen: nothing superseded gets this far.
+    endWeekLoading()
     render()
     focusCell(focus)
     return true
@@ -5913,6 +5983,30 @@ export const mountShell = async (
     approvalHistoryLoadMore.hidden = true
   })
 
+  const loadChangedWeek = (operation: AuthOperation): void => {
+    setSessionStatus('Loading week…', 'loading')
+    const token = beginWeekLoading()
+    void refresh(operation)
+      .then((loaded) => {
+        if (token !== weekLoadSeq) return
+        endWeekLoading()
+        if (!loaded || !isSessionCurrent(operation)) return
+        setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready')
+      })
+      .catch((error: unknown) => {
+        if (token !== weekLoadSeq) return
+        if (handleSessionFailure(error, operation)) {
+          endWeekLoading()
+          return
+        }
+        renderWeekLoadFailure()
+        setSessionStatus(
+          'Signed in, but your week could not load. Check the connection and retry.',
+          'error',
+          true,
+        )
+      })
+  }
   function moveWeekTo(nextWithin: string): void {
     const operation = sessionOperation()
     if (operation === null || operation.userId === null) return
@@ -5921,21 +6015,7 @@ export const mountShell = async (
     selectedDay = 0
     cellStates.clear()
     setWeekUrl(within, weekStartDay)
-    setSessionStatus('Loading week…', 'loading')
-    void refresh(operation)
-      .then((loaded) => {
-        if (!loaded || !isSessionCurrent(operation)) return
-        setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready')
-      })
-      .catch((error: unknown) => {
-        if (handleSessionFailure(error, operation)) return
-        renderWeekLoadFailure()
-        setSessionStatus(
-          'Signed in, but your week could not load. Check the connection and retry.',
-          'error',
-          true,
-        )
-      })
+    loadChangedWeek(operation)
   }
   /**
    * Kept for the callers that still think in days rather than in periods: the
@@ -5950,7 +6030,7 @@ export const mountShell = async (
     selectedDay = Math.max(0, weekDates(within, weekStartDay).indexOf(localDate()))
     cellStates.clear()
     setWeekUrl(within, weekStartDay)
-    void loadWeek(operation)
+    loadChangedWeek(operation)
   })
   const selectDay = (index: number): void => {
     if (currentIdentity === null || index < 0 || index > 6 || index === selectedDay) return
