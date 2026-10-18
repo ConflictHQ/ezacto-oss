@@ -522,6 +522,11 @@ Axes are independent; conflating them is the classic clone mistake.
 1. **Approval**: `approval_status` — `unsubmitted → submitted → approved`
    (module-gated; when approval module is off, everything stays `unsubmitted` and the
    axis is invisible).
+   Optional automatic approval (`organizations.auto_approval_*`, issue 1009): off by
+   default; when on, the sweep approves a `submitted` week once `submitted_at` plus
+   the window (calendar days) has passed, only for weeks submitted on or after
+   `auto_approval_effective_from`, and only through the version-checked bulk
+   approval path. A resubmission rewrites `submitted_at`, so it restarts the clock.
 2. **Invoicing**: `invoice_id` nullable. `is_billed` is `invoice_id IS NOT NULL`.
 3. **Editability**: `locked = derived(entry)` — true when invoiced, approved,
    an already-computed policy-lock fact is present, or any parent

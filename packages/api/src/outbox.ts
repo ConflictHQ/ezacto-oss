@@ -130,6 +130,7 @@ const ADMINISTRATOR_ONLY_ACTIVITY_EVENTS: readonly string[] = [
   'api_token.created',
   'api_token.revoked',
   'account.deletion_requested',
+  'timesheet_auto_approval.updated',
 ]
 
 const identifierQuery = (requestUrl: URL, name: string): string | undefined => {

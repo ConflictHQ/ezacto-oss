@@ -47,6 +47,7 @@ import {
   type InstanceThemeView,
   type BackupRun,
   type NotificationSettingsState,
+  type TimesheetAutoApprovalState,
 } from './model.js'
 
 interface ModuleState {
@@ -481,6 +482,13 @@ export const createModuleSettingsController = (
   const notificationsTime = required<HTMLInputElement>('[data-notification-settings-time]')
   const notificationsSubmit = required<HTMLButtonElement>('[data-notification-settings-submit]')
   const notificationsResult = required<HTMLElement>('[data-notification-settings-result]')
+  const autoApprovalStatus = required<HTMLElement>('[data-auto-approval-status]')
+  const autoApprovalForm = required<HTMLFormElement>('[data-auto-approval-form]')
+  const autoApprovalEnabled = required<HTMLInputElement>('[data-auto-approval-enabled]')
+  const autoApprovalDays = required<HTMLInputElement>('[data-auto-approval-days]')
+  const autoApprovalSince = required<HTMLElement>('[data-auto-approval-since]')
+  const autoApprovalSubmit = required<HTMLButtonElement>('[data-auto-approval-submit]')
+  const autoApprovalResult = required<HTMLElement>('[data-auto-approval-result]')
 
   // The list is held rather than re-fetched after every action: add, verify and
   // remove all answer with what they changed, and a re-fetch would throw away
@@ -801,6 +809,51 @@ export const createModuleSettingsController = (
       })
     } finally {
       if (currentSession() === active) notificationsSubmit.disabled = false
+    }
+  })
+
+  const showAutoApproval = (settings: TimesheetAutoApprovalState): void => {
+    autoApprovalEnabled.checked = settings.enabled
+    autoApprovalDays.value = settings.window_days === null ? '' : String(settings.window_days)
+    autoApprovalSince.textContent = !settings.approval_module_enabled
+      ? 'Needs the Approval module, which is off.'
+      : settings.enabled && settings.effective_from !== null
+        ? `Applies to weeks submitted on or after ${settings.effective_from.slice(0, 10)}.`
+        : 'Turning this on does not approve weeks that are already waiting.'
+  }
+
+  autoApprovalForm.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    if (active === null || api.updateTimesheetAutoApproval === undefined) return
+    if (autoApprovalEnabled.checked && autoApprovalDays.value === '') {
+      autoApprovalResult.textContent = 'Choose how many days a week waits before it is approved.'
+      return
+    }
+    autoApprovalResult.textContent = 'Saving…'
+    autoApprovalSubmit.disabled = true
+    try {
+      const saved = await api.updateTimesheetAutoApproval(
+        {
+          enabled: autoApprovalEnabled.checked,
+          ...(autoApprovalDays.value === '' ? {} : { window_days: Number(autoApprovalDays.value) }),
+        },
+        active.signal,
+      )
+      active.present(() => {
+        showAutoApproval(saved)
+        autoApprovalResult.textContent = 'Saved.'
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        autoApprovalResult.textContent = messageFor(
+          error,
+          'Only administrators can change automatic approval.',
+          'Automatic approval could not be saved.',
+        )
+      })
+    } finally {
+      if (currentSession() === active) autoApprovalSubmit.disabled = false
     }
   })
 
@@ -1319,6 +1372,31 @@ export const createModuleSettingsController = (
           error,
           'Only administrators and accounting can read payment reminder settings.',
           'Payment reminder settings could not be loaded.',
+        )
+      })
+    }
+  }
+
+  const loadAutoApproval = async (active: ActiveSession): Promise<void> => {
+    if (api.getTimesheetAutoApproval === undefined) {
+      autoApprovalStatus.textContent = 'This build has no automatic approval endpoint.'
+      return
+    }
+    try {
+      const settings = await api.getTimesheetAutoApproval(active.signal)
+      active.present(() => {
+        showAutoApproval(settings)
+        autoApprovalForm.hidden = false
+        autoApprovalStatus.textContent = ''
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        sectionFailed(
+          'approval',
+          autoApprovalStatus,
+          error,
+          'Only administrators can read automatic approval.',
+          'Automatic approval could not be loaded.',
         )
       })
     }
@@ -2276,6 +2354,7 @@ export const createModuleSettingsController = (
     email: (active) => loadEmail(active.identity, active),
     invoices: loadInvoiceDefaults,
     reminders: loadReminders,
+    approval: loadAutoApproval,
     notifications: loadNotifications,
     payouts: loadWiseConnection,
     backup: (active) => loadBackups(active.identity, active),

@@ -1837,6 +1837,32 @@ const notificationSettingsOperations: ApiContractOperation[] = [
   },
 ];
 
+// Issue 1009: the optional automatic approval of submitted timesheets.
+const timesheetAutoApprovalOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/settings/timesheet-auto-approval",
+    operationId: "getTimesheetAutoApproval",
+    summary: "The automatic timesheet approval policy",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "TimesheetAutoApprovalEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/timesheet-auto-approval",
+    operationId: "setTimesheetAutoApproval",
+    summary: "Turn automatic timesheet approval on or off, or change its window",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "TimesheetAutoApprovalEnvelope",
+    requestSchema: "TimesheetAutoApprovalInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+];
+
 // Invoices › Configure: company information and default values.
 const invoiceDefaultsOperations: ApiContractOperation[] = [
   {
@@ -3170,6 +3196,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...invoiceDocumentPreferenceOperations,
   ...invoiceDefaultsOperations,
   ...notificationSettingsOperations,
+  ...timesheetAutoApprovalOperations,
   ...invoiceThankYouPreferenceOperations,
   ...recurringRepairOperations,
   ...payoutAccountOperations,
@@ -9506,6 +9533,34 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         properties: {
           budget_alerts_include_admins: { type: "boolean" },
           submission_reminder: { anyOf: [{ $ref: "#/components/schemas/SubmissionReminderSchedule" }, { type: "null" }] },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  TimesheetAutoApprovalInput: {
+    type: "object",
+    properties: {
+      enabled: { type: "boolean" },
+      // Calendar days from the week's submission. Needed once, to enable.
+      window_days: { type: "integer", minimum: 1, maximum: 60 },
+    },
+    additionalProperties: false,
+  },
+  TimesheetAutoApprovalEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["enabled", "window_days", "clock_starts_at", "effective_from", "approval_module_enabled"],
+        properties: {
+          enabled: { type: "boolean" },
+          window_days: { anyOf: [{ type: "integer", minimum: 1, maximum: 60 }, { type: "null" }] },
+          clock_starts_at: { type: "string", enum: ["submitted_at"] },
+          effective_from: { anyOf: [{ type: "string", format: "date-time" }, { type: "null" }] },
+          approval_module_enabled: { type: "boolean" },
         },
         additionalProperties: false,
       },
