@@ -176,6 +176,13 @@ export const rememberSort = (table: string, sort: TableSort): void => {
   }
 }
 
+/**
+ * What a Load-more list adds to its status line while more pages remain: the
+ * browser sorts the rows it has, and the rest are not in them (issue 852).
+ * Their search says the same of itself.
+ */
+export const loadedRowsSortNotice = ' Sorting covers only the rows loaded so far; load more to include the rest.'
+
 export interface SortHeaderOptions {
   /** The column's key, carried as `data-sort-column` on the button. */
   readonly column: string

@@ -1,7 +1,7 @@
 import type BetterSqlite3 from 'better-sqlite3'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
-import type { InvoiceListPosition } from '@ezacto/core'
+import { defaultInvoiceListSort, type InvoiceListPosition, type InvoiceListSort } from '@ezacto/core'
 import type * as schema from './schema.js'
 import {
   deleteInvoicePayment,
@@ -83,6 +83,11 @@ export interface InvoiceListWindow {
    * index, so the page is that invoice or nothing.
    */
   number?: string
+  /**
+   * The column the page is ordered by, or undefined for newest first. The
+   * window's `after` is a position in this order, and the page is read in it.
+   */
+  sort?: InvoiceListSort
 }
 
 export type InvoiceState = 'draft' | 'open' | 'paid' | 'closed'
@@ -668,7 +673,41 @@ const invoiceNumberOrderKey = (column: string): string => `(CASE
  */
 const createdInstant = `strftime('%Y-%m-%dT%H:%M:%fZ', created_at)`
 
-const invoiceListOrder = `issue_date DESC, ${invoiceNumberOrderKey('number')} DESC, id DESC`
+/**
+ * The column a sort ranks first, as SQL, or null for the number sort, which
+ * ranks by the number alone. `due_amount_cents` is the stored balance.
+ */
+const invoiceSortColumn = (sort: InvoiceListSort): string | null =>
+  sort.field === 'issue_date'
+    ? 'issue_date'
+    : sort.field === 'due_date'
+      ? 'due_date'
+      : sort.field === 'amount'
+        ? 'amount_cents'
+        : sort.field === 'balance'
+          ? 'due_amount_cents'
+          : null
+
+/** The value a cursor position carries for the sort's first column. */
+const invoiceSortPositionValue = (
+  sort: InvoiceListSort,
+  after: InvoiceListPosition,
+): string | number | undefined =>
+  sort.field === 'issue_date'
+    ? after.issueDate
+    : sort.field === 'due_date'
+      ? after.dueDate
+      : sort.field === 'amount'
+        ? after.amountCents
+        : sort.field === 'balance'
+          ? after.balanceCents
+          : undefined
+
+const invoiceListOrder = (sort: InvoiceListSort): string => {
+  const direction = sort.descending ? 'DESC' : 'ASC'
+  const column = invoiceSortColumn(sort)
+  return `${column === null ? '' : `${column} ${direction}, `}${invoiceNumberOrderKey('number')} ${direction}, id ${direction}`
+}
 
 /**
  * The ids on one page of the invoice list, newest first, as a common table
@@ -681,8 +720,11 @@ const invoiceListOrder = `issue_date DESC, ${invoiceNumberOrderKey('number')} DE
  * key is computed from its number by the same expression, inside the query,
  * so the database never compares against a key worked out anywhere else.
  */
-const invoicePageFor = (window: Readonly<InvoiceListWindow>): string =>
-  `WITH page AS (
+const invoicePageFor = (window: Readonly<InvoiceListWindow>): string => {
+  const sort = window.sort ?? defaultInvoiceListSort
+  const column = invoiceSortColumn(sort)
+  const compare = sort.descending ? '<' : '>'
+  return `WITH page AS (
     SELECT id FROM invoices
     WHERE ${createdInstant} <= ?${inClause('state', window.states)}${inClause(
       'client_id',
@@ -691,14 +733,15 @@ const invoicePageFor = (window: Readonly<InvoiceListWindow>): string =>
       window.after === null
         ? ''
         : `
-      AND (issue_date, ${invoiceNumberOrderKey('number')}, id) < (
-        SELECT resume.issue_date, ${invoiceNumberOrderKey('resume.number')}, resume.id
-        FROM (SELECT ? AS issue_date, ? AS number, ? AS id) AS resume
+      AND (${column === null ? '' : `${column}, `}${invoiceNumberOrderKey('number')}, id) ${compare} (
+        SELECT ${column === null ? '' : 'resume.sort_value, '}${invoiceNumberOrderKey('resume.number')}, resume.id
+        FROM (SELECT ${column === null ? '' : '? AS sort_value, '}? AS number, ? AS id) AS resume
       )`
     }
-    ORDER BY ${invoiceListOrder}
+    ORDER BY ${invoiceListOrder(sort)}
     LIMIT ?
   )`
+}
 
 // The order here is the order the placeholders appear in `invoicePageFor`;
 // the two must be read together, or the take binds to a filter slot and the
@@ -710,7 +753,13 @@ const invoicePageParams = (window: Readonly<InvoiceListWindow>): unknown[] => [
   ...(window.number === undefined ? [] : [window.number]),
   ...(window.after === null
     ? []
-    : [window.after.issueDate, window.after.number, window.after.id]),
+    : [
+        ...(invoiceSortColumn(window.sort ?? defaultInvoiceListSort) === null
+          ? []
+          : [invoiceSortPositionValue(window.sort ?? defaultInvoiceListSort, window.after)]),
+        window.after.number,
+        window.after.id,
+      ]),
   window.take,
 ]
 
@@ -726,6 +775,10 @@ const assertInvoiceListWindow = (window: Readonly<InvoiceListWindow>): void => {
     }
     if (typeof window.after.number !== 'string' || window.after.number === '') {
       throw new RangeError('after.number must be a nonblank string')
+    }
+    const sort = window.sort ?? defaultInvoiceListSort
+    if (invoiceSortColumn(sort) !== null && invoiceSortPositionValue(sort, window.after) === undefined) {
+      throw new RangeError(`after must carry the ${sort.field} the page is sorted by`)
     }
   }
 }
@@ -927,7 +980,7 @@ const readConsistentInvoicePage = async (
   const page = invoicePageFor(window)
   const params = invoicePageParams(window)
   const headerSelect = `${page}
-  ${invoiceSelect} WHERE id IN (SELECT id FROM page) ORDER BY ${invoiceListOrder}`
+  ${invoiceSelect} WHERE id IN (SELECT id FROM page) ORDER BY ${invoiceListOrder(window.sort ?? defaultInvoiceListSort)}`
   const linesSelect = `${page}
   ${invoiceLineSelect} WHERE invoice_id IN (SELECT id FROM page)
   ORDER BY invoice_id, position, id`

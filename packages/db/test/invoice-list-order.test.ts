@@ -1,7 +1,13 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
-import { compareInvoiceListPositions, type InvoiceListPosition } from '@ezacto/core'
+import {
+  compareInvoiceListPositions,
+  compareInvoiceListPositionsBy,
+  invoiceListSortFields,
+  type InvoiceListPosition,
+  type InvoiceListSort,
+} from '@ezacto/core'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import {
@@ -86,6 +92,9 @@ interface SeedInvoice {
   clientId?: number
   state?: 'draft' | 'open' | 'paid' | 'closed'
   createdAt?: string
+  dueDate?: string
+  amountCents?: number
+  balanceCents?: number
 }
 
 const fixture = async (
@@ -111,32 +120,40 @@ const insertInvoice = async (database: TestDatabase, invoice: SeedInvoice): Prom
   await database.run(
     `INSERT INTO invoices (
        id, client_id, number, currency, issue_date, due_date, state, paid_at,
-       created_at, updated_at
-     ) VALUES (?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?)`,
+       amount_cents, due_amount_cents, created_at, updated_at
+     ) VALUES (?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?, ?, ?)`,
     invoice.id,
     invoice.clientId ?? 1,
     invoice.number,
     invoice.issueDate,
-    invoice.issueDate,
+    invoice.dueDate ?? invoice.issueDate,
     state,
     // The shape trigger wants a paid invoice to carry exactly one paid stamp.
     state === 'paid' ? seededAt : null,
+    invoice.amountCents ?? 0,
+    invoice.balanceCents ?? invoice.amountCents ?? 0,
     invoice.createdAt ?? seededAt,
     invoice.createdAt ?? seededAt,
   )
 }
 
-const positionOf = (invoice: Pick<InvoiceResource, 'issue_date' | 'number' | 'id'>) => ({
+const positionOf = (
+  invoice: Pick<InvoiceResource, 'issue_date' | 'number' | 'id'> &
+    Partial<Pick<InvoiceResource, 'due_date' | 'amount_cents' | 'due_amount_cents'>>,
+): InvoiceListPosition => ({
   issueDate: invoice.issue_date,
   number: invoice.number,
   id: invoice.id,
+  ...(invoice.due_date === undefined ? {} : { dueDate: invoice.due_date }),
+  ...(invoice.amount_cents === undefined ? {} : { amountCents: invoice.amount_cents }),
+  ...(invoice.due_amount_cents === undefined ? {} : { balanceCents: invoice.due_amount_cents }),
 })
 
 /** Every page of the list, `take` at a time, as the endpoint walks it. */
 const walk = async (
   database: TestDatabase,
   take: number,
-  narrowing: Pick<InvoiceListWindow, 'states' | 'clientIds' | 'number'> = {},
+  narrowing: Pick<InvoiceListWindow, 'states' | 'clientIds' | 'number' | 'sort'> = {},
 ): Promise<InvoiceResource[]> => {
   const money = createMoneyResourceRepository(database.orm)
   const createdThrough = await money.invoiceListSnapshot()
@@ -209,7 +226,9 @@ describe.each(factories)('the invoice list on %s', (_runtime, factory) => {
       ...invoices,
     ]
     const database = await fixture(factory, plain)
-    const listed = (await walk(database, 500)).map(positionOf)
+    const listed = (await walk(database, 500))
+      .map(positionOf)
+      .map(({ issueDate, number, id }) => ({ issueDate, number, id }))
     const expected = plain
       .map(({ id, number, issueDate }) => ({ id, number, issueDate }))
       .sort(compareInvoiceListPositions)
@@ -233,6 +252,33 @@ describe.each(factories)('the invoice list on %s', (_runtime, factory) => {
     expect(positions).toEqual([...positions].sort(compareInvoiceListPositions))
     for (const take of [1, 2, 3, 5, 22, 23, 24]) {
       expect((await walk(database, take)).map(positionOf)).toEqual(positions)
+    }
+  })
+
+  it('[api] sorts by each column, both ways, and pages the same order at every page size', async () => {
+    // Ties on every column, so the number and the id have to finish the order
+    // and a cursor has to resume inside a run of equal values.
+    const invoices = Array.from({ length: 19 }, (_, index) => ({
+      id: 500 - index * 13,
+      number: String(((index * 5) % 19) + 1),
+      issueDate: `2026-09-${String(10 + (index % 4)).padStart(2, '0')}`,
+      dueDate: `2026-10-${String(1 + (index % 3)).padStart(2, '0')}`,
+      amountCents: ((index * 7) % 5) * 10_000,
+      balanceCents: ((index * 3) % 4) * 5_000,
+    }))
+    const database = await fixture(factory, invoices)
+    for (const field of invoiceListSortFields) {
+      for (const descending of [false, true]) {
+        const sort: InvoiceListSort = { field, descending }
+        const whole = (await walk(database, 500, { sort })).map(positionOf)
+        expect(whole, `${descending ? '-' : ''}${field}`).toHaveLength(19)
+        expect(whole, `${descending ? '-' : ''}${field}`).toEqual(
+          [...whole].sort(compareInvoiceListPositionsBy(sort)),
+        )
+        for (const take of [1, 4, 18, 19]) {
+          expect((await walk(database, take, { sort })).map(positionOf), `${field} by ${take}`).toEqual(whole)
+        }
+      }
     }
   })
 

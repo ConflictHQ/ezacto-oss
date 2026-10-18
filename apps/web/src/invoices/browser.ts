@@ -1,4 +1,5 @@
-import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { renderDataTable, type CellContent, type DataTableSort } from '../components/data-table.js'
+import { rememberedSort, resolveSort } from '../components/table-sort.js'
 import { projectTimeRounding, roundingWithSource } from '../components/time-entry-editor.js'
 import { DEMO_MAIL_NOTE, isDemoDeployment, isDemoMailRestricted } from '../demo.js'
 import { markMoney, moneyText } from '../money-display.js'
@@ -193,11 +194,42 @@ const columnTotal = (
   )
 }
 
+/**
+ * The columns the server can order the invoice list by (issue 852), and the
+ * `sort` word each one is. Client and Status are absent on purpose: a client's
+ * display name and the derived overdue pill cannot be ordered consistently with
+ * the cursor, so they are not offered rather than offered and wrong.
+ */
+const invoiceServerSorts: Readonly<Record<string, string>> = {
+  number: 'number',
+  issued: 'issue_date',
+  'due-date': 'due_date',
+  amount: 'amount',
+  balance: 'balance',
+}
+
+const invoiceDefaultSort: DataTableSort = { column: 'issued', direction: 'descending' }
+
+/** The sort the list shows: the one just chosen, else the one remembered, else newest first. */
+export const invoiceListSort = (chosen: DataTableSort | null): DataTableSort =>
+  resolveSort(
+    [chosen, rememberedSort('invoices')],
+    (column) => column in invoiceServerSorts,
+    invoiceDefaultSort,
+  )!
+
+/** The `sort` parameter for a sort, or undefined for newest first, which is what absent means. */
+export const invoiceSortParameter = (sort: DataTableSort): string | undefined =>
+  sort.column === invoiceDefaultSort.column && sort.direction === invoiceDefaultSort.direction
+    ? undefined
+    : `${sort.direction === 'descending' ? '-' : ''}${invoiceServerSorts[sort.column]}`
+
 export const renderInvoiceListItems = (
   invoices: readonly Invoice[],
   // A filtered list that empties is not an account with no invoices in it, and
   // the table is the only thing that says so to someone mid-search.
   empty = 'No invoices have been created or imported yet.',
+  sorting?: { readonly sort: DataTableSort | null; readonly onSort: (sort: DataTableSort) => void },
 ): number => {
   const list = required<HTMLElement>('[data-invoice-list]')
   list.replaceChildren(
@@ -206,16 +238,41 @@ export const renderInvoiceListItems = (
       rows: invoices,
       rowKey: (invoice) => String(invoice.id),
       empty,
+      // The server ordered these rows; the headers ask for another order and
+      // the list is fetched again, so Load more continues in it.
+      table: 'invoices',
+      serverSort: true,
+      defaultSort: invoiceDefaultSort,
+      ...(sorting === undefined ? {} : { sort: invoiceListSort(sorting.sort), onSort: sorting.onSort }),
       columns: [
         { key: 'status', label: 'Status', fit: true, render: invoiceStatePill },
-        { key: 'number', label: 'Invoice', fit: true, render: invoiceNumberLink },
+        {
+          key: 'number',
+          label: 'Invoice',
+          fit: true,
+          render: invoiceNumberLink,
+          sortValue: (invoice) => invoice.number,
+        },
         { key: 'client', label: 'Client', render: (invoice) => clientLabel(invoice.client_id) },
-        { key: 'issued', label: 'Issued', fit: true, render: (invoice) => dateLabel(invoice.issue_date) },
-        { key: 'due-date', label: 'Due', fit: true, render: invoiceDueLabel },
+        {
+          key: 'issued',
+          label: 'Issued',
+          fit: true,
+          render: (invoice) => dateLabel(invoice.issue_date),
+          sortValue: (invoice) => invoice.issue_date,
+        },
+        {
+          key: 'due-date',
+          label: 'Due',
+          fit: true,
+          render: invoiceDueLabel,
+          sortValue: (invoice) => invoice.due_date,
+        },
         {
           key: 'amount',
           label: 'Amount',
           numeric: true,
+          sortValue: (invoice) => invoice.amount_cents,
           render: (invoice) => moneyText(money(invoice.amount_cents, invoice.currency)),
           total: (rows) => columnTotal(rows, (invoice) => invoice.amount_cents),
         },
@@ -223,6 +280,7 @@ export const renderInvoiceListItems = (
           key: 'balance',
           label: 'Balance',
           numeric: true,
+          sortValue: (invoice) => invoice.due_amount_cents,
           render: (invoice) => moneyText(money(invoice.due_amount_cents, invoice.currency)),
           total: (rows) => columnTotal(rows, (invoice) => invoice.due_amount_cents),
         },

@@ -1,4 +1,5 @@
 import { renderDataTable } from '../components/data-table.js'
+import { loadedRowsSortNotice } from '../components/table-sort.js'
 import { moneyText } from '../money-display.js'
 import { EzactoApiError, type Estimate, type GeneralResource } from '@conflict-hq/ezacto-client'
 import {
@@ -117,6 +118,7 @@ export const createEstimateWorkspaceController = (
             key: 'number',
             fit: true,
             label: 'Number',
+            sortValue: (estimate) => estimate.number,
             render: (estimate) => {
               const link = document.createElement('a')
               link.href = `/invoices/estimates?estimate=${String(estimate.id)}`
@@ -125,19 +127,37 @@ export const createEstimateWorkspaceController = (
               return link
             },
           },
-          { key: 'client', label: 'Client', render: (estimate) => clientName(estimate) },
-          { key: 'subject', label: 'Subject', render: (estimate) => estimate.subject ?? '—' },
+          {
+            key: 'client',
+            label: 'Client',
+            render: (estimate) => clientName(estimate),
+            sortValue: (estimate) => clientName(estimate),
+          },
+          {
+            key: 'subject',
+            label: 'Subject',
+            render: (estimate) => estimate.subject ?? '—',
+            sortValue: (estimate) => estimate.subject?.trim() || null,
+          },
           {
             key: 'state',
             fit: true,
             label: 'Status',
             render: (estimate) => estimateStateLabel(estimate.state),
+            sortValue: (estimate) => estimateStateLabel(estimate.state),
           },
-          { key: 'issued', label: 'Issued', fit: true, render: (estimate) => estimate.issue_date ?? '—' },
+          {
+            key: 'issued',
+            label: 'Issued',
+            fit: true,
+            render: (estimate) => estimate.issue_date ?? '—',
+            sortValue: (estimate) => estimate.issue_date,
+          },
           {
             key: 'amount',
             label: 'Total',
             numeric: true,
+            sortValue: (estimate) => [estimate.currency, estimate.amount_cents],
             render: (estimate) =>
               moneyText(estimateMoney(estimate.amount_cents, estimate.currency)),
           },
@@ -259,7 +279,9 @@ export const createEstimateWorkspaceController = (
       cursor = page_.page.next_cursor
       loadMore.hidden = cursor === null
       listStatus.textContent =
-        loaded.length === 0 ? 'No estimates yet.' : `${String(loaded.length)} loaded.`
+        loaded.length === 0
+          ? 'No estimates yet.'
+          : `${String(loaded.length)} loaded.${cursor === null ? '' : loadedRowsSortNotice}`
       renderList()
     } catch (error) {
       if (signal.aborted) return

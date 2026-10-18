@@ -1,4 +1,5 @@
 import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { loadedRowsSortNotice } from '../components/table-sort.js'
 import { moneyText } from '../money-display.js'
 import { EzactoApiError, type ExpenseCategory, type Whoami } from '@conflict-hq/ezacto-client'
 import {
@@ -255,10 +256,16 @@ export const createExpenseCategoryDirectoryController = (
         rowKey: (category) => String(category.id),
         empty: 'No expense categories yet.',
         columns: [
-          { key: 'name', label: 'Category', render: (category) => category.name },
+          {
+            key: 'name',
+            label: 'Category',
+            render: (category) => category.name,
+            sortValue: (category) => category.name,
+          },
           {
             key: 'pricing',
             label: 'Pricing',
+            sortValue: (category) => expenseCategoryPricingLabel(category),
             render: (category): CellContent => {
               const label = expenseCategoryPricingLabel(category)
               // A priced category states a unit price, and the unit it is per
@@ -274,6 +281,7 @@ export const createExpenseCategoryDirectoryController = (
           {
             key: 'status',
             label: 'Status',
+            sortValue: (category) => (category.is_active ? 'Active' : 'Archived'),
             render: (category) => {
               if (category.is_active) return 'Active'
               const pill = document.createElement('span')
@@ -321,7 +329,7 @@ export const createExpenseCategoryDirectoryController = (
           : {}),
       }),
     )
-    status.textContent = `${categories.length} ${categories.length === 1 ? 'category' : 'categories'} loaded${nextCursor === null ? '.' : '; more are available.'}`
+    status.textContent = `${categories.length} ${categories.length === 1 ? 'category' : 'categories'} loaded${nextCursor === null ? '.' : `; more are available.${loadedRowsSortNotice}`}`
   }
 
   const openEdit = (category: ExpenseCategory): void => {

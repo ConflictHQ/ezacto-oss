@@ -43,7 +43,7 @@ import {
   createColorSchemeRuntime,
   createThemeRuntime,
 } from '../theme-preference.js'
-import { renderDataTable } from '../components/data-table.js'
+import { renderDataTable, type DataTableSort } from '../components/data-table.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import {
   payoutFailure,
@@ -73,7 +73,7 @@ import { createPeriodControl, isCalendarDay } from '../components/period.js'
 import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
 import { createActivityController } from '../activity/browser.js'
-import { setSortPreferenceOwner } from '../components/table-sort.js'
+import { focusSortHeader, setSortPreferenceOwner } from '../components/table-sort.js'
 import { createDeliveriesController } from '../deliveries/browser.js'
 import { createCalendarController } from '../calendar/browser.js'
 import { createDashboardController } from '../dashboard/browser.js'
@@ -97,6 +97,8 @@ import { demoUnavailable, isDemoDeployment } from '../demo.js'
 import {
   createInvoicePaymentController,
   invoiceMatchesSearch,
+  invoiceListSort,
+  invoiceSortParameter,
   renderInvoiceListItems,
   setInvoiceClientNames,
 } from '../invoices/browser.js'
@@ -1687,6 +1689,9 @@ export const mountShell = async (
   let invoiceListRows: readonly Invoice[] = []
   /** Which states the list is asking the server for. Outstanding is the open question. */
   let invoiceFilter: 'outstanding' | 'overdue' | 'paid' | 'closed' | 'all' = 'outstanding'
+  // The column the person last sorted the invoice list by (issue 852). The list
+  // is ordered by the server, so choosing one fetches the list again.
+  let invoiceSort: DataTableSort | null = null
   let invoiceClientNamesLoaded = false
   let invoiceListCount = 0
   let approvalModuleAvailable = false
@@ -4149,6 +4154,20 @@ export const mountShell = async (
         : overdue
           ? complete ? 'No past-due invoices.' : 'No past-due invoices in the loaded pages.'
           : undefined,
+      {
+        sort: invoiceSort,
+        onSort: (next) => {
+          const operation = sessionOperation()
+          if (operation === null) return
+          invoiceSort = next
+          invoiceNextCursor = null
+          invoiceListRows = []
+          invoiceLoadMore.hidden = true
+          void loadInvoiceList(operation).then(() => {
+            focusSortHeader(invoiceList, next.column)
+          })
+        },
+      },
     )
     invoiceListStatus.textContent = searching
       ? `${invoiceListCount} of ${invoiceListRows.length} loaded ${invoiceListRows.length === 1 ? 'invoice matches' : 'invoices match'}${complete ? '.' : '; load more to search the rest.'}`
@@ -4180,12 +4199,15 @@ export const mountShell = async (
       return
     }
     const append = cursor !== undefined
+    const invoiceSortWord = invoiceSortParameter(invoiceListSort(invoiceSort))
     invoiceList.setAttribute('aria-busy', 'true')
     invoiceLoadMore.disabled = true
     invoiceListStatus.textContent = append ? 'Loading more invoices…' : 'Loading invoices…'
     try {
       const [page] = await Promise.all([
-        listInvoices(cursor, operation.signal, undefined, invoiceStatesFor(invoiceFilter)),
+        invoiceSortWord === undefined
+          ? listInvoices(cursor, operation.signal, undefined, invoiceStatesFor(invoiceFilter))
+          : listInvoices(cursor, operation.signal, undefined, invoiceStatesFor(invoiceFilter), invoiceSortWord),
         ensureInvoiceClientNames(operation),
       ])
       if (!isSessionCurrent(operation)) return

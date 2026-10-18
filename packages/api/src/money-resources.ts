@@ -1,6 +1,10 @@
 import {
   calculateInvoiceLineAmountCents,
-  compareInvoiceListPositions,
+  compareInvoiceListPositionsBy,
+  defaultInvoiceListSort,
+  invoiceListSortFields,
+  parseInvoiceListSort,
+  type InvoiceListSort,
   composeInvoiceEmail,
   EmailTemplateVariableError,
   invoiceEmailCopies,
@@ -55,6 +59,9 @@ interface InvoiceResource extends IdentifiedResource {
   currency: string;
   number: string;
   issue_date: string;
+  due_date: string;
+  amount_cents: number;
+  due_amount_cents: number;
   created_at: string;
 }
 
@@ -390,6 +397,8 @@ export interface InvoiceListWindow extends KeysetWindow<InvoiceListPosition> {
   states?: readonly InvoiceState[];
   clientIds?: readonly number[];
   number?: string;
+  /** Absent is newest first. */
+  sort?: InvoiceListSort;
 }
 
 export interface RetainerCursorWindow extends CursorWindow {
@@ -1827,20 +1836,37 @@ const canonicalDatePattern = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * The invoice list's order, as the keyset chassis needs it: where a row sits,
- * how two places compare, and how a place travels in a cursor -- issue date,
- * number and id, which is the whole sort key and names exactly one row.
+ * how two places compare, and how a place travels in a cursor. The default is
+ * issue date, number and id, newest first; a `sort` ranks its own column first
+ * and then the number and id in the same direction, which is the whole sort key
+ * and names exactly one row.
+ *
+ * The cursor is signed over the request's address, `sort` included, so a cursor
+ * from one sort is refused under another: it names a place in a different list.
  */
-const invoiceListOrder: KeysetOrder<InvoiceResource, InvoiceListPosition> = {
+const invoiceListOrder = (
+  sort: InvoiceListSort,
+): KeysetOrder<InvoiceResource, InvoiceListPosition> => ({
   positionOf: (invoice) => ({
     issueDate: invoice.issue_date,
     number: invoice.number,
     id: invoice.id,
+    dueDate: invoice.due_date,
+    amountCents: invoice.amount_cents,
+    balanceCents: invoice.due_amount_cents,
   }),
-  compare: compareInvoiceListPositions,
-  encode: (position) => [position.issueDate, position.number, position.id],
+  compare: compareInvoiceListPositionsBy(sort),
+  encode: (position) => {
+    const base = [position.issueDate, position.number, position.id];
+    if (sort.field === "due_date") return [...base, position.dueDate];
+    if (sort.field === "amount") return [...base, position.amountCents];
+    if (sort.field === "balance") return [...base, position.balanceCents];
+    return base;
+  },
   decode: (value) => {
-    if (!Array.isArray(value) || value.length !== 3) return null;
-    const [issueDate, number, id] = value as unknown[];
+    const extra = ["due_date", "amount", "balance"].includes(sort.field) ? 1 : 0;
+    if (!Array.isArray(value) || value.length !== 3 + extra) return null;
+    const [issueDate, number, id, key] = value as unknown[];
     if (
       typeof issueDate !== "string" ||
       !canonicalDatePattern.test(issueDate) ||
@@ -1852,8 +1878,38 @@ const invoiceListOrder: KeysetOrder<InvoiceResource, InvoiceListPosition> = {
     ) {
       return null;
     }
+    if (sort.field === "due_date") {
+      if (typeof key !== "string" || !canonicalDatePattern.test(key)) return null;
+      return { issueDate, number, id, dueDate: key };
+    }
+    if (sort.field === "amount" || sort.field === "balance") {
+      if (typeof key !== "number" || !Number.isSafeInteger(key)) return null;
+      return sort.field === "amount"
+        ? { issueDate, number, id, amountCents: key }
+        : { issueDate, number, id, balanceCents: key };
+    }
     return { issueDate, number, id };
   },
+});
+
+/**
+ * The `sort` query parameter: one of the list's sortable columns, `-` in front
+ * for descending. Absent is `-issue_date`, newest first.
+ */
+const invoiceSortParameter = (requestUrl: URL): InvoiceListSort => {
+  const raw = requestUrl.searchParams.getAll("sort");
+  if (raw.length === 0) return defaultInvoiceListSort;
+  const parsed = raw.length === 1 ? parseInvoiceListSort(raw[0]!) : null;
+  if (parsed === null) {
+    throw validationError([
+      {
+        field: "sort",
+        code: "invalid",
+        message: `sort must be one of ${invoiceListSortFields.join(", ")}, with - in front for descending`,
+      },
+    ]);
+  }
+  return parsed;
 };
 
 const installInvoiceReads = <Bindings extends object>(
@@ -1866,6 +1922,7 @@ const installInvoiceReads = <Bindings extends object>(
     const states = invoiceStateFilter(requestUrl);
     const clientIds = clientIdFilter(requestUrl);
     const number = invoiceNumberFilter(requestUrl);
+    const sort = invoiceSortParameter(requestUrl);
     return context.json(
       await keysetCursorPage({
         requestUrl,
@@ -1874,7 +1931,7 @@ const installInvoiceReads = <Bindings extends object>(
         serializer: (invoice: Readonly<InvoiceResource>) => ({ ...invoice }),
         // Newest first. By id, ascending, a new invoice sat behind every page
         // of an imported book, whose ids run newest first.
-        order: invoiceListOrder,
+        order: invoiceListOrder(sort),
         source: {
           // The snapshot stays the whole collection's. It bounds the
           // traversal against later inserts; it is not a count of what
@@ -1887,6 +1944,7 @@ const installInvoiceReads = <Bindings extends object>(
               ...(states === undefined ? {} : { states }),
               ...(clientIds === undefined ? {} : { clientIds }),
               ...(number === undefined ? {} : { number }),
+              sort,
             }),
         },
       }),

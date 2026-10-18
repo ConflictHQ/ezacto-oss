@@ -163,7 +163,7 @@ describe('Report filters in the browser', () => {
 
     document.querySelector<HTMLButtonElement>('.filter-bar-clear')!.click()
     await vi.waitFor(() => expect(getDetailedTimeReport).toHaveBeenCalledTimes(3))
-    expect(getDetailedTimeReport.mock.calls[2]![0]).not.toHaveProperty('notes')
+    expect((getDetailedTimeReport.mock.calls as unknown[][])[2]![0]).not.toHaveProperty('notes')
     expect(window.location.search).not.toContain('notes=')
     session.abort()
   })

@@ -162,6 +162,7 @@ export interface ShellApi
     signal?: AbortSignal,
     perPage?: number,
     states?: readonly InvoiceState[],
+    sort?: string,
   ): Promise<CursorPage<Invoice>>
   listTasks(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   /**
@@ -1790,11 +1791,12 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     client.listOutboxDeliveries({ query, ...withSignal(signal) }),
   retryOutboxDelivery: (subscriberId, eventId, signal) =>
     client.retryOutboxDelivery({ subscriberId, eventId, ...withSignal(signal) }),
-  listInvoices: (cursor, signal, perPage, states) =>
+  listInvoices: (cursor, signal, perPage, states, sort) =>
     client.listInvoices({
       query: {
         per_page: perPage ?? 50,
         ...(cursor === undefined ? {} : { cursor }),
+        ...(sort === undefined ? {} : { sort }),
         // Empty means "every state", which is the absent parameter, not a
         // request for nothing.
         ...(states === undefined || states.length === 0

@@ -1,4 +1,5 @@
 import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { loadedRowsSortNotice } from '../components/table-sort.js'
 import { markMoney, moneyText } from '../money-display.js'
 import {
   EzactoApiError,
@@ -480,12 +481,20 @@ export const createRetainerWorkspaceController = (
             key: 'project',
             label: 'Scope',
             render: (retainer) => retainerProjectLabel(retainer, projects),
+            sortValue: (retainer) => retainerProjectLabel(retainer, projects),
           },
-          { key: 'basis', label: 'Basis', fit: true, render: retainerBasisLabel },
+          {
+            key: 'basis',
+            label: 'Basis',
+            fit: true,
+            render: retainerBasisLabel,
+            sortValue: (retainer) => retainerBasisLabel(retainer),
+          },
           {
             key: 'commitment',
             label: 'On retainer',
             numeric: true,
+            sortValue: (retainer) => retainerCommitment(retainer),
             render: (retainer) =>
               denominated(
                 retainerCommitmentLabel(retainer, retainerCurrency(retainer, clients)),
@@ -498,6 +507,7 @@ export const createRetainerWorkspaceController = (
             key: 'balance',
             label: 'Remaining',
             numeric: true,
+            sortValue: (retainer) => retainer.balance,
             render: (retainer) =>
               denominated(
                 retainerBalanceLabel(retainer, retainerCurrency(retainer, clients)),
@@ -508,12 +518,14 @@ export const createRetainerWorkspaceController = (
             key: 'share',
             label: 'Remaining share',
             numeric: true,
+            sortValue: (retainer) => retainerRemainingShare(retainer),
             render: retainerRemainingShareLabel,
           },
           {
             key: 'state',
             fit: true,
             label: 'State',
+            sortValue: (retainer) => retainerStateLabel(retainer),
             render: (retainer) => {
               const pill = document.createElement('span')
               pill.className = 'invoice-state'
@@ -531,7 +543,7 @@ export const createRetainerWorkspaceController = (
         ],
       }),
     )
-    listStatus.textContent = `${rows.length} ${rows.length === 1 ? 'retainer' : 'retainers'} loaded${nextCursor === null ? '.' : '; more are available.'}`
+    listStatus.textContent = `${rows.length} ${rows.length === 1 ? 'retainer' : 'retainers'} loaded${nextCursor === null ? '.' : `; more are available.${loadedRowsSortNotice}`}`
   }
 
   const renderLedger = (

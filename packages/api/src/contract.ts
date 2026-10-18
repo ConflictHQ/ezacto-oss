@@ -759,7 +759,8 @@ const moneyOperations: ApiContractOperation[] = [
       "Newest first: by issue_date, latest first; then by number, highest first -- compared as a number when it is made of digits alone (leading zeros ignored) and as text, by Unicode code point, otherwise, with all-digit numbers ahead of the rest on a day that has both; then by id, highest first, so no two invoices tie. " +
       "The first page fixes the traversal to the invoices that existed when it was read: an invoice created after it does not appear on later pages of the same traversal, and is listed by a new one. " +
       "Editing an invoice's issue_date or number moves it in the order, so a traversal already under way may miss it or list it twice. " +
-      "The number parameter narrows the list to the invoice with exactly that number, compared as text, so 089 is not 89; numbers are unique, so the page holds that invoice or nothing.",
+      "The number parameter narrows the list to the invoice with exactly that number, compared as text, so 089 is not 89; numbers are unique, so the page holds that invoice or nothing. " +
+      "The sort parameter orders by issue_date, due_date, number, amount or balance, with - in front for descending (the default is -issue_date, the order above). The chosen column ranks first, then the number, then the id, all in the one direction. A cursor belongs to the sort it was issued under and is refused under another.",
     tag: "invoices",
     responseStatus: 200,
     responseSchema: "InvoicePage",
@@ -776,6 +777,13 @@ const moneyOperations: ApiContractOperation[] = [
       // One number, exactly: how a page addressed by an invoice number finds
       // the record behind it.
       query("number", { type: "string", minLength: 1, maxLength: 64 }),
+      // Server-side, so Load more continues in the chosen order. Client and
+      // status are not sortable here: a client's display name and the derived
+      // overdue pill cannot be ordered consistently with the cursor.
+      query("sort", {
+        type: "string",
+        pattern: "^-?(issue_date|due_date|number|amount|balance)$",
+      }),
     ],
   },
   {
