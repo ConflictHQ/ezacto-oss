@@ -7,10 +7,17 @@ import {
   type ApprovalStatus,
   type TrackedState,
   type TeamViewer,
+  assertTimeRoundingPolicy,
   canManageTeammateTime,
   dateInTimeZone,
+  effectiveTimeRounding,
   effectiveTimeZone,
+  roundTimeSeconds,
   timeInTimeZone,
+  type EffectiveTimeRounding,
+  type TimeRoundingMinutes,
+  type TimeRoundingMode,
+  type TimeRoundingPolicy,
 } from '@ezacto/core'
 import {
   computeExpenseTotalCents,
@@ -22,9 +29,9 @@ import {
   createStoppedTimeEntry,
   elapsedWallClockSeconds,
   restartTimeEntry,
-  roundSeconds,
   startTimeEntry,
   stopTimeEntry,
+  timeRoundingForProject,
   type TimeBoundary,
   type TimeEntry,
 } from './time-entries.js'
@@ -35,6 +42,14 @@ import {
 } from './time-entry-note-requirements.js'
 import { resolveEntryRates } from './rate-resolver.js'
 import { timeEntryOnBehalfEvent, type TimeEntryChange } from './time-entry-audit.js'
+import {
+  applyTimeRoundingRecalculation,
+  previewTimeRoundingRecalculation,
+  type LockedDates,
+  type TimeRoundingRecalculationPreview,
+  type TimeRoundingRecalculationResult,
+  type TimeRoundingRecalculationScope,
+} from './time-rounding-recalculation.js'
 import {
   clients,
   expenseCategories,
@@ -262,6 +277,23 @@ export interface OrganizationTimeEntrySettings {
   timeFormat: 'decimal' | 'hours_minutes'
   clock: '12h' | '24h'
   weekStartDay: 'saturday' | 'sunday' | 'monday'
+  /** The organization's rounding rule; a project may have its own (issue 949). */
+  timeRounding: TimeRoundingPolicy
+}
+
+/** One half or both; the other keeps what is stored. */
+export interface UpdateOrganizationTimeRounding {
+  mode?: TimeRoundingMode
+  minutes?: TimeRoundingMinutes
+}
+
+/** A project/task pair a person may log against, and what logging there means. */
+export interface TimeEntryOptionRecord {
+  projectId: number
+  taskId: number
+  noteMinimumLength: number
+  /** How time on this pair is rounded, and whose rule that is (issue 949). */
+  timeRounding: EffectiveTimeRounding
 }
 
 export interface UpdateOrganizationTimeEntryNoteSettings {
@@ -339,14 +371,31 @@ type TimeSettings = Pick<
   | 'timeEntryMode'
   | 'timeFormat'
   | 'clock'
-  | 'timeRounding'
   | 'weekStartDay'
+  | 'timeRoundingMode'
+  | 'timeRoundingMinutes'
   // Issue 651: a running timer is filed against the organization's today, not
   // UTC's.
   | 'timezone'
 >
 
 const moneyUpperBound = 9_000_000_000_000
+
+const organizationTimeRounding = (
+  settings: Pick<typeof organizations.$inferSelect, 'timeRoundingMode' | 'timeRoundingMinutes'>,
+): TimeRoundingPolicy =>
+  assertTimeRoundingPolicy({ mode: settings.timeRoundingMode, minutes: settings.timeRoundingMinutes })
+
+/** A project's own rule, or null where it takes the organization's. */
+const projectTimeRounding = (
+  project: Pick<typeof projects.$inferSelect, 'timeRoundingMode' | 'timeRoundingMinutes'>,
+): TimeRoundingPolicy | null =>
+  project.timeRoundingMode === null
+    ? null
+    : assertTimeRoundingPolicy({
+        mode: project.timeRoundingMode,
+        minutes: project.timeRoundingMinutes,
+      })
 
 const mapReturnedTimeEntry = (row: Record<string, unknown>): TimeEntry =>
   Object.fromEntries(
@@ -446,7 +495,71 @@ export class DrizzleTrackedResourceRepository {
       timeFormat: settings.timeFormat,
       clock: settings.clock,
       weekStartDay: settings.weekStartDay,
+      timeRounding: organizationTimeRounding(settings),
     }
+  }
+
+  /**
+   * Sets the organization's rule (issue 949). Nothing already saved changes:
+   * the new rule rounds time saved from now on, and open time is re-rounded
+   * only by the recalculation below, after a preview.
+   */
+  async updateTimeRoundingSettings(
+    input: Readonly<UpdateOrganizationTimeRounding>,
+    updatedAt: string,
+  ): Promise<TimeRoundingPolicy> {
+    const current = organizationTimeRounding(await this.#timeSettings())
+    const next = assertTimeRoundingPolicy({
+      mode: input.mode ?? current.mode,
+      minutes: input.minutes ?? current.minutes,
+    })
+    const [organization] = await this.#database
+      .update(organizations)
+      .set({ timeRoundingMode: next.mode, timeRoundingMinutes: next.minutes, updatedAt })
+      .where(eq(organizations.id, 1))
+      .returning()
+    if (!organization) throw new Error('organization must exist before serving tracked resources')
+    return organizationTimeRounding(organization)
+  }
+
+  /** What re-rounding open time under today's rules would change (issue 949). */
+  async previewTimeRoundingRecalculation(
+    scope: Readonly<TimeRoundingRecalculationScope>,
+  ): Promise<TimeRoundingRecalculationPreview> {
+    return previewTimeRoundingRecalculation(this.#database, scope, this.#lockedDates())
+  }
+
+  /** Applies exactly the preview the fingerprint names, or answers `stale`. */
+  async applyTimeRoundingRecalculation(
+    scope: Readonly<TimeRoundingRecalculationScope>,
+    fingerprint: string,
+    updatedAt: string,
+  ): Promise<TimeRoundingRecalculationResult> {
+    return applyTimeRoundingRecalculation(
+      this.#database,
+      scope,
+      fingerprint,
+      updatedAt,
+      this.#lockedDates(),
+    )
+  }
+
+  /**
+   * The lock policy's answer for many dates at once where it offers one, else
+   * one date at a time: the same question `isLocked` answers for a single edit.
+   */
+  #lockedDates(): LockedDates {
+    const policy = this.#policy
+    if (policy.lockedDates !== undefined) return (dates) => policy.lockedDates!(dates)
+    return async (dates) =>
+      new Map(
+        await Promise.all(
+          dates.map(
+            async (spentDate) =>
+              [spentDate, await policy.isLocked({ entityType: 'tracked_date', spentDate })] as const,
+          ),
+        ),
+      )
   }
 
   async timeEntryNoteSettings(): Promise<OrganizationTimeEntryNoteSettings> {
@@ -756,9 +869,8 @@ export class DrizzleTrackedResourceRepository {
     return conditions
   }
 
-  async timeEntryOptions(
-    userId: number,
-  ): Promise<readonly { projectId: number; taskId: number; noteMinimumLength: number }[]> {
+  async timeEntryOptions(userId: number): Promise<readonly TimeEntryOptionRecord[]> {
+    const organization = organizationTimeRounding(await this.#timeSettings())
     const rows = await this.#database
       .select()
       .from(userAssignments)
@@ -789,6 +901,7 @@ export class DrizzleTrackedResourceRepository {
               row.user_assignments.projectId,
             )
           )?.minimumLength ?? 0,
+        timeRounding: effectiveTimeRounding(organization, projectTimeRounding(row.projects)),
       })),
     )
   }
@@ -1080,7 +1193,6 @@ export class DrizzleTrackedResourceRepository {
     // else's time is held to that person's assignments, timesheet and note
     // requirement, and the entry stays theirs (#917).
     const userId = entry.userId
-    const settings = await this.#timeSettings()
     const timingOrAssignmentChange =
       input.projectId !== undefined ||
       input.taskId !== undefined ||
@@ -1160,9 +1272,16 @@ export class DrizzleTrackedResourceRepository {
         seconds = elapsedWallClockSeconds(0, spentDate, startedTime, spentDate, endedTime, true)
       }
     }
-    if (timingChanged) {
-      secondsWithoutTimer = seconds
-      roundedSeconds = roundSeconds(seconds, settings.timeRounding)
+    if (timingChanged) secondsWithoutTimer = seconds
+    // Rounded under the rule of the project it ends up on (issue 949): a new
+    // duration, and a move to a project that rounds differently, both re-round.
+    // A negative duration is an imported correction and keeps its source's
+    // figure, whichever project it is filed under.
+    if ((timingChanged || projectId !== entry.projectId) && seconds >= 0) {
+      roundedSeconds = roundTimeSeconds(
+        seconds,
+        await timeRoundingForProject(this.#database, projectId),
+      )
     }
 
     const rates =

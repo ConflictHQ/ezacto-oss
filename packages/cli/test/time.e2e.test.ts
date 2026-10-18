@@ -69,8 +69,8 @@ describe('ez time commands against the native API', () => {
     // security test at the bottom of this file could not tell them apart.
     sqlite.exec(`
       INSERT INTO organizations (
-        name, time_entry_mode, time_rounding, modules, created_at, updated_at
-      ) VALUES ('Test organization', 'duration', 'nearest_6', '{}', '${now}', '${now}');
+        name, time_entry_mode, time_rounding_mode, time_rounding_minutes, modules, created_at, updated_at
+      ) VALUES ('Test organization', 'duration', 'nearest', 6, '{}', '${now}', '${now}');
       INSERT INTO users (
         id, first_name, last_name, profile, manager_grants, created_at, updated_at
       ) VALUES (1, 'CLI', 'User', 'member', '[]', '${now}', '${now}');

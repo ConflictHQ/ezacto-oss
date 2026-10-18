@@ -1,4 +1,15 @@
-import type { ApprovalStatus, TrackedState, TeamViewer } from '@ezacto/core'
+import type {
+  ApprovalStatus,
+  EffectiveTimeRounding,
+  TimeRoundingMinutes,
+  TimeRoundingMode,
+  TimeRoundingPolicy,
+  TimeRoundingRecalculationPreview,
+  TimeRoundingRecalculationResult,
+  TimeRoundingRecalculationScope,
+  TrackedState,
+  TeamViewer,
+} from '@ezacto/core'
 import type { CursorSource } from '../pagination.js'
 
 export interface ResourceTimeBoundary {
@@ -62,6 +73,8 @@ export interface TimeEntryOption {
   projectId: number
   taskId: number
   noteMinimumLength: number
+  /** How time on this pair is rounded, and whose rule that is. */
+  timeRounding: EffectiveTimeRounding
 }
 
 export interface OrganizationTimeEntryNoteSettings {
@@ -74,6 +87,12 @@ export interface OrganizationTimeEntrySettings {
   timeFormat: 'decimal' | 'hours_minutes'
   clock: '12h' | '24h'
   weekStartDay: 'saturday' | 'sunday' | 'monday'
+  timeRounding: TimeRoundingPolicy
+}
+
+export interface UpdateOrganizationTimeRounding {
+  mode?: TimeRoundingMode
+  minutes?: TimeRoundingMinutes
 }
 
 export interface UpdateOrganizationTimeEntryNoteSettings {
@@ -185,6 +204,18 @@ export interface TrackedResourceRepository {
     input: Readonly<UpdateOrganizationTimeEntryNoteSettings>,
     updatedAt: string,
   ): Promise<OrganizationTimeEntryNoteSettings>
+  updateTimeRoundingSettings(
+    input: Readonly<UpdateOrganizationTimeRounding>,
+    updatedAt: string,
+  ): Promise<TimeRoundingPolicy>
+  previewTimeRoundingRecalculation(
+    scope: Readonly<TimeRoundingRecalculationScope>,
+  ): Promise<TimeRoundingRecalculationPreview>
+  applyTimeRoundingRecalculation(
+    scope: Readonly<TimeRoundingRecalculationScope>,
+    fingerprint: string,
+    updatedAt: string,
+  ): Promise<TimeRoundingRecalculationResult>
   timeEntryOptions(userId: number): Promise<readonly TimeEntryOption[]>
   timeEntries(
     actor: TimeEntryActor,
