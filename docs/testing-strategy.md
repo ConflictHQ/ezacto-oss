@@ -50,6 +50,30 @@ into Harvest's 429 backoff against production. Asking for the sweep *without*
 credentials still fails loudly rather than skipping, and a skipped live suite
 prints the reason it skipped.
 
+## CI failure ledger
+
+A red `verify` job is compared against known causes before it is investigated
+(issue 745). `scripts/ci-failure-ledger.mjs` does two things:
+
+- `node scripts/ci-failure-ledger.mjs --repo OWNER/NAME --runs 50` lists failed
+  job attempts of `ci.yml` and `deploy.yml` from the Actions REST API, with the
+  run, attempt, failed step, cause class, and whether a re-run of that job went
+  green. Jobs that failed with no steps (a billing outage) and cancelled jobs are
+  left out. A log that matches nothing is reported as `unclassified`.
+- In `verify`, a failed test job is annotated with the matched class and a link
+  to the ledger issue.
+
+| Class | Signature | Disposition |
+|---|---|---|
+| `miniflare-proxy-heap` | `proxy.worker.ts:150` | Upstream; the narrow retry in the migrate resume test covers it |
+| `miniflare-fetch-sync` | `fetch-sync.ts:147` | Upstream; no retry, re-run the job and record it |
+| `vitest-timeout` | `Test timed out in Nms`, `Hook timed out in Nms` | Budget against a loaded runner; compare the green duration before touching it |
+| `registry-reset` | `ECONNRESET` and similar network errors | Infrastructure; not ours, re-run the job |
+
+Anything else is `unclassified`: investigate it, and add a row here and a
+signature in the script if it recurs. A test keeps this table and the script
+equal.
+
 ## Standing rules
 
 Red gate = fix, never bypass (PROCESS.md). A bug fix ships with the test that

@@ -1,4 +1,4 @@
-import type { ActivityLogActor } from '@conflict-hq/ezacto-client'
+import { EzactoApiError, type ActivityLogActor } from '@conflict-hq/ezacto-client'
 import { renderDataTable, type CellContent } from '../components/data-table.js'
 
 export interface ActivityRow {
@@ -60,6 +60,13 @@ const actorCell = (actor: ActivityLogActor | null): CellContent => {
 const eventLabel = (eventType: string): string => {
   const words = eventType.replace(/[._]/gu, ' ')
   return words.charAt(0).toLocaleUpperCase('en-US') + words.slice(1)
+}
+
+export const isModuleDisabled = (error: unknown): boolean => {
+  if (!(error instanceof EzactoApiError) || error.status !== 403) return false
+  if (typeof error.body !== 'object' || error.body === null) return false
+  const detail: unknown = Reflect.get(error.body, 'error')
+  return typeof detail === 'object' && detail !== null && Reflect.get(detail, 'code') === 'module_disabled'
 }
 
 export const createActivityController = (api: ActivityApi): ActivityController => {
@@ -126,6 +133,13 @@ export const createActivityController = (api: ActivityApi): ActivityController =
       // read it says so plainly rather than rendering an empty table that looks
       // like a quiet period.
       list.replaceChildren()
+      // A switched-off module is a decision, not a failure, and its own words
+      // say so; the filters have nothing left to filter.
+      if (isModuleDisabled(error)) {
+        for (const control of [from, to, type]) control.disabled = true
+        status.textContent = 'The Activity log module is switched off for this organization.'
+        return
+      }
       status.textContent =
         error instanceof Error ? error.message : 'Activity could not be loaded.'
     }

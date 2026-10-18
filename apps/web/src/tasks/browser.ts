@@ -1,4 +1,5 @@
 import { renderDataTable, type DataColumn } from '../components/data-table.js'
+import { loadedRowsSortNotice } from '../components/table-sort.js'
 import { moneyText } from '../money-display.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
 import { EzactoApiError, type GeneralResource, type Whoami } from '@conflict-hq/ezacto-client'
@@ -165,7 +166,7 @@ export const createTaskAdminController = (
         : filter === 'archived'
           ? 'No archived tasks found.'
           : 'No tasks found.'
-      : `${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'} loaded${nextCursor === null ? '.' : '; more are available.'}`
+      : `${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'} loaded${nextCursor === null ? '.' : `; more are available.${loadedRowsSortNotice}`}`
 
   const renderList = (): void => {
     const active = currentSession()
@@ -204,19 +205,27 @@ export const createTaskAdminController = (
       return
     }
     const columns: DataColumn<Readonly<GeneralResource>>[] = [
-      { key: 'name', label: 'Task', render: (task) => taskName(task) },
-      { key: 'status', label: 'Status', fit: true, render: (task) => (taskIsActive(task) ? 'Active' : 'Archived') },
+      { key: 'name', label: 'Task', render: (task) => taskName(task), sortValue: (task) => taskName(task) },
+      {
+        key: 'status',
+        label: 'Status',
+        fit: true,
+        render: (task) => (taskIsActive(task) ? 'Active' : 'Archived'),
+        sortValue: (task) => (taskIsActive(task) ? 'Active' : 'Archived'),
+      },
       {
         key: 'billable',
         fit: true,
         label: 'Billable',
         render: (task) => (taskBoolean(task, 'billable_by_default') ? 'By default' : 'No'),
+        sortValue: (task) => (taskBoolean(task, 'billable_by_default') ? 0 : 1),
       },
       {
         key: 'default',
         fit: true,
         label: 'New projects',
         render: (task) => (taskBoolean(task, 'is_default') ? 'Added' : 'Optional'),
+        sortValue: (task) => (taskBoolean(task, 'is_default') ? 0 : 1),
       },
     ]
     // The rate column is a permission, not a preference — it must not appear at
@@ -226,6 +235,7 @@ export const createTaskAdminController = (
         key: 'rate',
         label: 'Rate',
         numeric: true,
+        sortValue: (task) => taskRateCents(task),
         render: (task) => {
           const cents = taskRateCents(task)
           // "No default rate" is a statement about the task, not an amount, so

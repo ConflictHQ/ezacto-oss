@@ -82,6 +82,7 @@ for (const runtime of runtimes) {
         { module: 'approval', enabled: false },
         { module: 'expenses', enabled: false },
         { module: 'own_money', enabled: false },
+        { module: 'activity_log', enabled: true },
       ])
     })
 
@@ -103,6 +104,7 @@ for (const runtime of runtimes) {
         { module: 'approval', enabled: true },
         { module: 'expenses', enabled: false },
         { module: 'own_money', enabled: false },
+        { module: 'activity_log', enabled: true },
       ])
       expect(await repo.get('approval')).toBe(true)
     })
@@ -122,6 +124,7 @@ for (const runtime of runtimes) {
         { module: 'approval', enabled: false },
         { module: 'expenses', enabled: false },
         { module: 'own_money', enabled: true },
+        { module: 'activity_log', enabled: true },
       ])
       expect(await repo.get('own_money')).toBe(true)
       // The neighbours are untouched: this writes one key, not the document.
@@ -133,6 +136,7 @@ for (const runtime of runtimes) {
         { module: 'approval', enabled: false },
         { module: 'expenses', enabled: false },
         { module: 'own_money', enabled: false },
+        { module: 'activity_log', enabled: true },
       ])
       expect(await repo.get('own_money')).toBe(false)
     })
@@ -147,6 +151,7 @@ for (const runtime of runtimes) {
         { module: 'approval', enabled: false },
         { module: 'expenses', enabled: false },
         { module: 'own_money', enabled: false },
+        { module: 'activity_log', enabled: true },
       ])
       expect(await repo.get('approval')).toBe(false)
     })
@@ -162,6 +167,7 @@ for (const runtime of runtimes) {
         { module: 'approval', enabled: true },
         { module: 'expenses', enabled: true },
         { module: 'own_money', enabled: false },
+        { module: 'activity_log', enabled: true },
       ])
     })
 
@@ -185,7 +191,23 @@ for (const runtime of runtimes) {
         { module: 'approval', enabled: true },
         { module: 'expenses', enabled: true },
         { module: 'own_money', enabled: false },
+        { module: 'activity_log', enabled: true },
       ])
+    })
+
+    it('keeps activity_log on when the key is absent and switches it off and on by name', async () => {
+      // The log existed before its switch did, so an absent key is on: an
+      // upgrade must not make the evidence disappear from the app.
+      db = await databaseFactory[runtime]()
+      await seedOrganization(db)
+      const repo = createModuleSettingsRepository(db.orm)
+      expect(await repo.get('activity_log')).toBe(true)
+      const off = await repo.setEnabled('activity_log', false, '2024-06-01T12:00:00.000Z')
+      expect(off).toContainEqual({ module: 'activity_log', enabled: false })
+      expect(await repo.get('activity_log')).toBe(false)
+      expect(await repo.get('approval')).toBe(false)
+      const on = await repo.setEnabled('activity_log', true, '2024-06-02T12:00:00.000Z')
+      expect(on).toContainEqual({ module: 'activity_log', enabled: true })
     })
 
     it('updates updated_at on toggle', async () => {

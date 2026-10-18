@@ -232,6 +232,7 @@ const detailedTimeReport = (
   unclaimed_seconds: 0,
   time_entry_count: 0,
   currencies: [],
+  facets: { people: [], tasks: [], roles: [], tags: [] },
   rows: [],
   ...fields,
 })

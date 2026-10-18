@@ -11,6 +11,7 @@ import {
   resolveSidebarState,
   type SidebarState,
 } from '../nav-layout.js'
+import { type CalendarLayout, resolveCalendarLayout } from '../calendar/layout.js'
 import { type DeploymentBrand, defaultBrand, resolveDeploymentBrand } from '../brand.js'
 import { renderClientDirectoryPages } from '../clients/render.js'
 import { renderRoleAdminPage } from '../roles/render.js'
@@ -71,6 +72,12 @@ export interface AppShellOptions {
    */
   readonly navLayout?: NavLayout
   readonly sidebar?: SidebarState
+  /**
+   * The calendar's Week or Day layout (issue 943), from the same kind of
+   * cookie, so the calendar opens in it rather than switching after a script
+   * runs. Absent means Week.
+   */
+  readonly timeLayout?: CalendarLayout
   readonly activeSection?:
     // 'Settings' matches no nav item on purpose. Without it the default lands
     // on 'Time', so the module settings page marked Time as the page you were
@@ -533,6 +540,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const instancePalette = options.instanceTheme === true
   const navLayout = resolveNavLayout(options.navLayout)
   const sidebar = resolveSidebarState(options.sidebar)
+  const timeLayout = resolveCalendarLayout(options.timeLayout)
   const navLink = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
     `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Payments' ? ' data-staff-payments-nav hidden' : ''}${section === 'Expenses' ? ' data-expenses-nav' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${iconMarkup(sectionIcons[section])}<span class="nav-label">${section}</span></a>`
   const navigation = sections.map(navLink).join('')
@@ -551,7 +559,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const menuFoldedNavigation = foldedSections.map(menuCard).join('')
 
   return `<!doctype html>
-<html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="${colorScheme}"${instancePalette ? ' data-ez-palette="instance"' : ''} data-ez-nav="${navLayout}" data-ez-sidebar="${sidebar}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
+<html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="${colorScheme}"${instancePalette ? ' data-ez-palette="instance"' : ''} data-ez-nav="${navLayout}" data-ez-sidebar="${sidebar}" data-ez-time-layout="${timeLayout}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -766,9 +774,27 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <tfoot data-week-grid-totals></tfoot>
         </table>
       </div>
-      <section class="calendar-week" data-calendar-week aria-label="Calendar">
+      <!--
+        The calendar is where time is drawn rather than typed (issue 943): drag on
+        the clock to add an entry, drag one to move it, drag its edges to change
+        when it starts and ends. Every drag has a key path, said here so it can be
+        found and linked from each control by aria-describedby.
+      -->
+      <section class="calendar-week" data-calendar-week aria-labelledby="calendar-heading">
+        <header class="calendar-toolbar">
+          <h2 class="visually-hidden" id="calendar-heading">Calendar</h2>
+          <div class="calendar-hint" id="calendar-keys">
+            <p>Drag on the clock to add time. Drag an entry to move it, or its top or bottom edge to change when it starts or ends. On a touch screen, press and hold first.</p>
+            <p>Keyboard: Tab to a day, then <kbd>↑</kbd> <kbd>↓</kbd> choose a time, <kbd>Shift</kbd> with them sets the length, and <kbd>Enter</kbd> adds. On an entry, the arrows move it, <kbd>Shift</kbd> moves its end, <kbd>Alt</kbd>+<kbd>Shift</kbd> its start; <kbd>Enter</kbd> saves and <kbd>Esc</kbd> puts it back.</p>
+          </div>
+          <div class="calendar-layout" role="group" aria-label="Calendar layout">
+            <button type="button" data-calendar-layout-choice="week" aria-pressed="${timeLayout === 'week' ? 'true' : 'false'}">Week</button>
+            <button type="button" data-calendar-layout-choice="day" aria-pressed="${timeLayout === 'day' ? 'true' : 'false'}">Day</button>
+          </div>
+        </header>
         <p class="form-result" data-calendar-status role="status" aria-live="polite">Loading calendar…</p>
-        <div data-calendar-grid></div>
+        <p class="visually-hidden" data-calendar-live aria-live="polite"></p>
+        <div class="calendar-surface" data-calendar-grid></div>
       </section>
       <div class="day-list" data-day-list data-view="phone">
         <header class="day-switcher">

@@ -128,6 +128,8 @@ export interface ShellApi
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
   listProjects(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listClients?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
+  /** Whether the Activity log module is on, so the surface is not offered when it is off. */
+  getActivityLogEnabled?(signal?: AbortSignal): Promise<boolean>
   /** The page size a caller may raise when it is walking, not browsing. */
   listActivityLog?(
     query: { readonly from?: string; readonly to?: string; readonly event_type?: string },
@@ -174,6 +176,7 @@ export interface ShellApi
     signal?: AbortSignal,
     perPage?: number,
     states?: readonly InvoiceState[],
+    sort?: string,
   ): Promise<CursorPage<Invoice>>
   listTasks(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   /**
@@ -890,6 +893,41 @@ export const filingDate = (zones: readonly string[], now = new Date()): string =
     }
   }
   return localDate(now)
+}
+
+/**
+ * The filing day and the minute of it, read in the same zone `filingDate`
+ * would choose: where the calendar measures a running entry to and draws its
+ * line for now (issue 943). A clock read in another zone would put that line
+ * on the right day at the wrong hour.
+ */
+export const filingClock = (
+  zones: readonly string[],
+  now = new Date(),
+): { readonly date: string; readonly minutes: number } => {
+  for (const timeZone of zones) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+      }).formatToParts(now)
+      const part = (type: Intl.DateTimeFormatPartTypes): string =>
+        parts.find((candidate) => candidate.type === type)?.value ?? ''
+      return {
+        date: `${part('year')}-${part('month')}-${part('day')}`,
+        minutes: (Number(part('hour')) % 24) * 60 + Number(part('minute')),
+      }
+    } catch {
+      // Not a zone this engine knows; the next candidate is what the server
+      // would use too.
+    }
+  }
+  return { date: localDate(now), minutes: now.getHours() * 60 + now.getMinutes() }
 }
 
 export const weekRange = (
@@ -1712,6 +1750,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   archiveProjectUserAssignment: async (id, signal) => {
     await client.deleteUserAssignment({ id, ...withSignal(signal) })
   },
+  getActivityLogEnabled: async (signal) =>
+    (await client.getActivityLogStatus(withSignal(signal))).data.enabled,
   getActivityLog: async (range, signal) =>
     (
       await client.listActivityLog({
@@ -1810,11 +1850,12 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     client.listOutboxDeliveries({ query, ...withSignal(signal) }),
   retryOutboxDelivery: (subscriberId, eventId, signal) =>
     client.retryOutboxDelivery({ subscriberId, eventId, ...withSignal(signal) }),
-  listInvoices: (cursor, signal, perPage, states) =>
+  listInvoices: (cursor, signal, perPage, states, sort) =>
     client.listInvoices({
       query: {
         per_page: perPage ?? 50,
         ...(cursor === undefined ? {} : { cursor }),
+        ...(sort === undefined ? {} : { sort }),
         // Empty means "every state", which is the absent parameter, not a
         // request for nothing.
         ...(states === undefined || states.length === 0

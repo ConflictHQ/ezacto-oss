@@ -339,7 +339,7 @@ describe('Expense category browser controller', () => {
         (item) => item.hidden,
       ),
     ).toBe(true)
-    expect(document.querySelector('[data-expense-category-list] button')).toBeNull()
+    expect(document.querySelector('[data-expense-category-list] tbody button')).toBeNull()
     expect(api.createDirectoryExpenseCategory).not.toHaveBeenCalled()
     expect(api.updateDirectoryExpenseCategory).not.toHaveBeenCalled()
     expect(api.archiveDirectoryExpenseCategory).not.toHaveBeenCalled()
@@ -370,7 +370,7 @@ describe('Expense category browser controller', () => {
         (item) => item.hidden,
       ),
     ).toBe(true)
-    expect(document.querySelector('[data-expense-category-list] button')).toBeNull()
+    expect(document.querySelector('[data-expense-category-list] tbody button')).toBeNull()
     expect(api.createDirectoryExpenseCategory).not.toHaveBeenCalled()
     expect(api.updateDirectoryExpenseCategory).not.toHaveBeenCalled()
     expect(api.archiveDirectoryExpenseCategory).not.toHaveBeenCalled()

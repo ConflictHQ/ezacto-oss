@@ -898,6 +898,15 @@ export type TeamStatusEnvelope = {
   "links": Links;
 };
 
+export type ActivityLogStatus = {
+  "enabled": boolean;
+};
+
+export type ActivityLogStatusEnvelope = {
+  "data": ActivityLogStatus;
+  "links": Links;
+};
+
 export type TeamNamedRelation = {
   "id": number;
   "name": string;
@@ -2803,7 +2812,20 @@ export type DetailedTimeReport = {
   "unclaimed_seconds": number;
   "time_entry_count": number;
   "currencies": Array<DetailedTimeCurrencyTotal>;
+  "facets": DetailedTimeFacets;
   "rows": Array<DetailedTimeRow>;
+};
+
+export type DetailedTimeFacet = {
+  "id": number;
+  "name": string;
+};
+
+export type DetailedTimeFacets = {
+  "people": Array<DetailedTimeFacet>;
+  "tasks": Array<DetailedTimeFacet>;
+  "roles": Array<DetailedTimeFacet>;
+  "tags": Array<DetailedTimeFacet>;
 };
 
 export type DetailedTimeReportEnvelope = {
@@ -3488,7 +3510,7 @@ export type ClientHierarchyListEnvelope = {
 };
 
 export type ModuleState = {
-  "module": "approval" | "expenses" | "own_money";
+  "module": "approval" | "expenses" | "own_money" | "activity_log";
   "enabled": boolean;
 };
 
@@ -4236,6 +4258,15 @@ export class EzactoClient {
     if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<EmailTestSendEnvelope>("POST", "/api/v1/sender-identities/:id/test-send".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getActivityLogStatus(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ActivityLogStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ActivityLogStatusEnvelope>("GET", "/api/v1/activity-log/status", {
       signal: args.signal,
       headers,
     });
@@ -5200,7 +5231,7 @@ export class EzactoClient {
     });
   }
 
-  async listInvoices(args: { query?: { "cursor"?: string; "per_page"?: number; "state"?: string; "client_id"?: string; "number"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<InvoicePage> {
+  async listInvoices(args: { query?: { "cursor"?: string; "per_page"?: number; "state"?: string; "client_id"?: string; "number"?: string; "sort"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<InvoicePage> {
     const headers = new Headers(args.headers);
 
     return this.request<InvoicePage>("GET", "/api/v1/invoices", {
@@ -6034,7 +6065,7 @@ export class EzactoClient {
     });
   }
 
-  async getReceivablesReport(args: { query: { "as_of": string; "client_id"?: number }; signal?: AbortSignal; headers?: HeadersInit }): Promise<ReceivablesReportEnvelope> {
+  async getReceivablesReport(args: { query: { "as_of": string; "client_id"?: number; "due_state"?: "not_due" | "past_due" }; signal?: AbortSignal; headers?: HeadersInit }): Promise<ReceivablesReportEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<ReceivablesReportEnvelope>("GET", "/api/v1/reports/receivables", {
@@ -6123,7 +6154,7 @@ export class EzactoClient {
     });
   }
 
-  async getDetailedTimeReport(args: { query: { "self"?: boolean; "include_fixed_fee"?: boolean; "direct_client_only"?: boolean; "contractors_only"?: boolean; "currency"?: string; "project_status"?: "all" | "active" | "archived"; "billing_method"?: "non_billable" | "time_materials" | "fixed_fee"; "manager_id"?: number; "from": string; "to": string; "client_id"?: number; "project_id"?: number; "task_id"?: number; "user_id"?: number; "role_id"?: number; "tag_id"?: number; "hours"?: "all" | "billable" | "non_billable" | "uninvoiced" | "claimed" | "unclaimed"; "grain"?: "day" | "entry"; "audience"?: "internal" | "client"; "invoice_state"?: "all" | "invoiced" | "uninvoiced"; "active_projects_only"?: boolean }; signal?: AbortSignal; headers?: HeadersInit }): Promise<DetailedTimeReportEnvelope> {
+  async getDetailedTimeReport(args: { query: { "self"?: boolean; "include_fixed_fee"?: boolean; "direct_client_only"?: boolean; "contractors_only"?: boolean; "currency"?: string; "project_status"?: "all" | "active" | "archived"; "billing_method"?: "non_billable" | "time_materials" | "fixed_fee"; "manager_id"?: number; "from": string; "to": string; "client_id"?: number; "project_id"?: number; "task_id"?: number; "user_id"?: number; "role_id"?: number; "tag_id"?: number; "hours"?: "all" | "billable" | "non_billable" | "uninvoiced" | "claimed" | "unclaimed"; "grain"?: "day" | "entry"; "audience"?: "internal" | "client"; "invoice_state"?: "all" | "invoiced" | "uninvoiced"; "active_projects_only"?: boolean; "notes"?: string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<DetailedTimeReportEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<DetailedTimeReportEnvelope>("GET", "/api/v1/reports/detailed-time", {
@@ -6133,7 +6164,7 @@ export class EzactoClient {
     });
   }
 
-  async downloadDetailedTimeReport(args: { query: { "self"?: boolean; "include_fixed_fee"?: boolean; "direct_client_only"?: boolean; "contractors_only"?: boolean; "currency"?: string; "project_status"?: "all" | "active" | "archived"; "billing_method"?: "non_billable" | "time_materials" | "fixed_fee"; "manager_id"?: number; "from": string; "to": string; "client_id"?: number; "project_id"?: number; "task_id"?: number; "user_id"?: number; "role_id"?: number; "tag_id"?: number; "hours"?: "all" | "billable" | "non_billable" | "uninvoiced" | "claimed" | "unclaimed"; "grain"?: "day" | "entry"; "audience"?: "internal" | "client"; "invoice_state"?: "all" | "invoiced" | "uninvoiced"; "active_projects_only"?: boolean; "format": "pdf" | "csv" | "xlsx" }; signal?: AbortSignal; headers?: HeadersInit }): Promise<ArrayBuffer> {
+  async downloadDetailedTimeReport(args: { query: { "self"?: boolean; "include_fixed_fee"?: boolean; "direct_client_only"?: boolean; "contractors_only"?: boolean; "currency"?: string; "project_status"?: "all" | "active" | "archived"; "billing_method"?: "non_billable" | "time_materials" | "fixed_fee"; "manager_id"?: number; "from": string; "to": string; "client_id"?: number; "project_id"?: number; "task_id"?: number; "user_id"?: number; "role_id"?: number; "tag_id"?: number; "hours"?: "all" | "billable" | "non_billable" | "uninvoiced" | "claimed" | "unclaimed"; "grain"?: "day" | "entry"; "audience"?: "internal" | "client"; "invoice_state"?: "all" | "invoiced" | "uninvoiced"; "active_projects_only"?: boolean; "notes"?: string; "format": "pdf" | "csv" | "xlsx" }; signal?: AbortSignal; headers?: HeadersInit }): Promise<ArrayBuffer> {
     const headers = new Headers(args.headers);
 
     return this.request<ArrayBuffer>("GET", "/api/v1/reports/detailed-time/export", {

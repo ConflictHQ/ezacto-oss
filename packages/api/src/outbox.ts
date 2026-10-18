@@ -75,6 +75,12 @@ export interface OutboxRouteOptions {
   cursorSigningKey: Uint8Array
   /** The organization's timezone, which decides where a calendar day begins. */
   timezone(): Promise<string>
+  /**
+   * The `activity_log` module switch. Switching it off hides the surface and
+   * refuses the read; capture is not gated here, so the evidence keeps being
+   * recorded while nobody is looking at it.
+   */
+  isActivityLogModuleEnabled(): Promise<boolean>
 }
 
 export interface OutboxMonitor {
@@ -183,13 +189,37 @@ const deliveryData = (record: OutboxDeliveryResource) => ({
   updated_at: record.updatedAt,
 })
 
+const requireActivityLogModule = async (options: OutboxRouteOptions): Promise<void> => {
+  if (await options.isActivityLogModuleEnabled()) return
+  throw new ApiError({
+    status: 403,
+    code: 'module_disabled',
+    message: 'The activity log module is not enabled for this organization.',
+  })
+}
+
 export const installOutboxRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   monitor: OutboxMonitor,
   options: OutboxRouteOptions,
 ): void => {
+  // Not module-gated: the browser asks it to decide whether to offer the
+  // surface at all, the same way /team/status does for Team.
+  api.get('/activity-log/status', async (context) => {
+    requireApiScope(context, 'reports:read')
+    return context.json(
+      {
+        data: { enabled: await options.isActivityLogModuleEnabled() },
+        links: { self: '/api/v1/activity-log/status' },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
   api.get('/activity-log', async (context) => {
     requireApiScope(context, 'reports:read')
+    await requireActivityLogModule(options)
     // The report audience reads the log, but the raw payloads of sign-ins,
     // token grants and account-deletion requests are an administrator's to see
     // (issue 740). Keyed on the profile, so a bearer token cannot widen it.

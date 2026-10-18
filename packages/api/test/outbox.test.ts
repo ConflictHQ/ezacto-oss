@@ -48,6 +48,7 @@ const routeOptions = (timezone: string) => ({
 const harness = (
   profile: UserProfile,
   monitorOverrides: Partial<OutboxMonitor> = {},
+  activityLogEnabled = true,
 ) => {
   const monitor: OutboxMonitor = {
     listActivity: vi.fn(async () => [activity]),
@@ -82,7 +83,10 @@ const harness = (
       },
     },
     installApi(api) {
-      installOutboxRoutes(api, monitor, routeOptions('UTC'))
+      installOutboxRoutes(api, monitor, {
+        ...routeOptions('UTC'),
+        isActivityLogModuleEnabled: async () => activityLogEnabled,
+      })
     },
   })
   return { app, monitor }
@@ -219,7 +223,10 @@ describe('outbox observability API', () => {
           pageDeliveries: vi.fn(),
           countDeliveries: vi.fn(),
           retryFailed: vi.fn(),
-        }, routeOptions('UTC'))
+        }, {
+          ...routeOptions('UTC'),
+          isActivityLogModuleEnabled: async () => true,
+        })
       },
     })
     expect(
@@ -271,7 +278,7 @@ describe('outbox observability API', () => {
               countDeliveries: vi.fn(),
               retryFailed: vi.fn(),
             },
-            routeOptions('UTC'),
+            { ...routeOptions('UTC'), isActivityLogModuleEnabled: async () => true },
           )
         },
       })
@@ -317,6 +324,23 @@ describe('outbox observability API', () => {
     expect(monitor.retryFailed).toHaveBeenCalledWith('activity_log', 'event-paid')
   })
 
+  it('[api] refuses the activity log with module_disabled when the module is off, without reading it', async () => {
+    const { app, monitor } = harness('administrator', {}, false)
+    const response = await app.request('/api/v1/activity-log?per_page=25')
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchObject({ error: { code: 'module_disabled' } })
+    expect(monitor.listActivity).not.toHaveBeenCalled()
+  })
+
+  it('[api] answers the status route in both states so the browser can hide the surface', async () => {
+    const off = await harness('administrator', {}, false).app.request('/api/v1/activity-log/status')
+    expect(off.status).toBe(200)
+    expect(await off.json()).toMatchObject({ data: { enabled: false } })
+    const on = await harness('administrator').app.request('/api/v1/activity-log/status')
+    expect(await on.json()).toMatchObject({ data: { enabled: true } })
+    expect((await harness('member').app.request('/api/v1/activity-log/status')).status).toBe(403)
+  })
+
   it('[security] keeps delivery failure internals session-only and administrator-only', async () => {
     expect(
       (await harness('accounting').app.request('/api/v1/outbox-deliveries')).status,
@@ -343,7 +367,10 @@ describe('outbox observability API', () => {
           pageDeliveries: vi.fn(),
           countDeliveries: vi.fn(),
           retryFailed: vi.fn(),
-        }, routeOptions('UTC'))
+        }, {
+          ...routeOptions('UTC'),
+          isActivityLogModuleEnabled: async () => true,
+        })
       },
     })
     const response = await app.request('/api/v1/outbox-deliveries', {
@@ -398,7 +425,10 @@ describe('outbox observability API', () => {
         },
       },
       installApi(api) {
-        installOutboxRoutes(api, monitor, routeOptions('Asia/Tokyo'))
+        installOutboxRoutes(api, monitor, {
+          ...routeOptions('Asia/Tokyo'),
+          isActivityLogModuleEnabled: async () => true,
+        })
       },
     })
     const response = await app.request(

@@ -164,6 +164,7 @@ const reportReader: ReportReader = {
       unclaimedSeconds: 0,
       timeEntryCount: 0,
       currencies: [],
+      facets: { people: [], tasks: [], roles: [], tags: [] },
       rows: [],
     },
   }),

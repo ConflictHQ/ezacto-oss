@@ -815,6 +815,15 @@ export const createContainerRuntime = async (
           .get() as { enabled: number } | undefined
         return row?.enabled === 1
       },
+      isActivityLogModuleEnabled: async () => {
+        const row = database
+          .prepare(
+            `SELECT COALESCE(json_extract(modules, '$.activity_log'), 1) AS enabled
+             FROM organizations WHERE id = 1`,
+          )
+          .get() as { enabled: number } | undefined
+        return row === undefined || row.enabled === 1
+      },
       isTeamModuleEnabled: async () => {
         const row = database
           .prepare(

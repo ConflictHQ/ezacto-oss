@@ -30,6 +30,9 @@ import {
   type Whoami,
 } from '@conflict-hq/ezacto-client'
 import { canManageTeammateTime } from '@ezacto/core'
+import { renderFilterBar, type FilterValue } from '../components/filter-bar.js'
+import { sortReportTable, type ReportSortColumn } from '../components/report-table-sort.js'
+import { sortToken, type SortValue, type TableSort } from '../components/table-sort.js'
 import { createPeriodControl } from '../components/period.js'
 import { invoiceIdentityCanWrite, invoicePagePath } from '../invoices/model.js'
 import { moneyText } from '../money-display.js'
@@ -56,6 +59,7 @@ import {
   groupDetailedTimeRows,
   isReportKind,
   invoicedReportOptionsFromUrl,
+  reportSortFromUrl,
   profitabilityOptionsFromUrl,
   reportFiltersFromUrl,
   reportFiltersUrl,
@@ -109,13 +113,65 @@ const canReadKind = (
     ? canReadCostReports(identity)
     : openToEveryProfile.has(kind) || canReadFinancialReports(identity.profile)
 
+/**
+ * The sort the report's address asks for, and what to do when a header changes
+ * it (issue 852). Set by the controller before it draws; the render functions
+ * below are plain functions of the report, so the sort reaches them here.
+ */
+let reportSortAddress: TableSort | null = null
+let reportSortChanged: (sort: TableSort) => void = () => undefined
+let reportSortKind: ReportKind | null = null
+
+/** A sortable column: its key, and the value of each row in the order drawn. */
+const sortBy = (key: string, values: readonly SortValue[]): ReportSortColumn => ({
+  key,
+  value: (index) => values[index] ?? null,
+})
+
+/** Money sorts by currency and then amount; two currencies are never added. */
+const sortMoney = (currency: string, cents: number | null | undefined): SortValue =>
+  cents === null || cents === undefined ? null : [currency, cents]
+
+/** The report's address with the sort it is showing, where it has been chosen. */
+const withSort = (address: string): string => {
+  if (reportSortAddress === null) return address
+  const url = new URL(address, 'https://ezacto.invalid')
+  url.searchParams.set('sort', sortToken(reportSortAddress))
+  return `${url.pathname}${url.search}`
+}
+
+const sortReport = (
+  table: HTMLTableElement,
+  name: string,
+  columns: Readonly<Record<string, ReportSortColumn>>,
+  defaultSort: TableSort | null,
+  unit?: (index: number) => string | number,
+): void => {
+  sortReportTable(table, {
+    table: name,
+    columns,
+    defaultSort,
+    address: reportSortAddress,
+    onSort: (sort) => reportSortChanged(sort),
+    ...(unit === undefined ? {} : { unit }),
+  })
+}
+
 const required = <ElementType extends Element>(selector: string): ElementType => {
   const element = document.querySelector<ElementType>(selector)
   if (element === null) throw new Error(`reports element missing: ${selector}`)
   return element
 }
 
+const isModuleDisabled = (error: unknown): boolean => {
+  if (!(error instanceof EzactoApiError) || error.status !== 403) return false
+  if (typeof error.body !== 'object' || error.body === null) return false
+  const detail: unknown = Reflect.get(error.body, 'error')
+  return typeof detail === 'object' && detail !== null && Reflect.get(detail, 'code') === 'module_disabled'
+}
+
 const messageFor = (error: unknown): string => {
+  if (isModuleDisabled(error)) return 'The Activity log module is switched off.'
   if (error instanceof EzactoApiError) {
     if (error.status === 403) return 'Your profile does not have access to this report.'
     if (error.status === 404) return 'This report is unavailable or outside your project access.'
@@ -370,6 +426,19 @@ const renderMyHours = (report: Readonly<MyHoursReport>): DocumentFragment => {
   )
   foot.append(totalRow)
   table.append(head, body, foot)
+  sortReport(
+    table,
+    'my-hours',
+    {
+      Client: sortBy('client', report.projects.map((project) => project.client_name)),
+      Project: sortBy('project', report.projects.map((project) => project.project_name)),
+      Tracked: sortBy('tracked', report.projects.map((project) => project.seconds)),
+      Rounded: sortBy('rounded', report.projects.map((project) => project.rounded_seconds)),
+      Billable: sortBy('billable', report.projects.map((project) => project.billable_seconds)),
+      Entries: sortBy('entries', report.projects.map((project) => project.time_entry_count)),
+    },
+    null,
+  )
   wrapper.append(table)
   fragment.append(facts, wrapper)
   return fragment
@@ -415,8 +484,11 @@ const renderUninvoicedProjects = (
     }
     head.append(header)
     const body = element('tbody')
+    // One row per project and currency, in the order drawn, for the sort.
+    const lines: { project: (typeof projects)[number]; total: (typeof projects)[number]['totals'][number] }[] = []
     for (const project of projects) {
       for (const [index, total] of project.totals.entries()) {
+        lines.push({ project, total })
         const row = element('tr')
         row.dataset.projectId = String(project.project_id)
         const projectCell = textElement(
@@ -445,6 +517,23 @@ const renderUninvoicedProjects = (
       }
     }
     table.append(head, body)
+    const projectName = (line: (typeof lines)[number]): string =>
+      `${line.project.project_name}${line.project.project_code === '' ? '' : ` (${line.project.project_code})`}`
+    sortReport(
+      table,
+      'uninvoiced',
+      {
+        Project: sortBy('project', lines.map(projectName)),
+        Currency: sortBy('currency', lines.map((line) => line.total.currency)),
+        Time: sortBy('time', lines.map((line) => sortMoney(line.total.currency, line.total.time_cents))),
+        Expenses: sortBy('expenses', lines.map((line) => sortMoney(line.total.currency, line.total.expense_cents))),
+        Total: sortBy('total', lines.map((line) => sortMoney(line.total.currency, line.total.total_cents))),
+      },
+      null,
+      // A project's second currency sits under a name printed once, so a
+      // project's rows move together.
+      (index) => lines[index]!.project.project_id,
+    )
     wrapper.append(table)
     section.append(wrapper)
     clients.append(section)
@@ -781,6 +870,16 @@ const renderActivityLog = (
     body.append(row)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'activity',
+    {
+      When: sortBy('when', ordered.map((entry) => entry.occurred_at)),
+      Event: sortBy('event', ordered.map((entry) => activityEventLabel(entry.event_type))),
+      Subject: sortBy('subject', ordered.map((entry) => activitySubjectLabel(entry.aggregate))),
+    },
+    { column: 'when', direction: 'descending' },
+  )
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
@@ -799,7 +898,40 @@ const deltaLabel = (fraction: number | null): string => {
 const invoiceStateLabel = (state: InvoicedReport['rows'][number]['state']): string =>
   state === 'open' ? 'Sent' : state[0]!.toLocaleUpperCase('en-US') + state.slice(1)
 
-const renderInvoiced = (report: Readonly<InvoicedReport>): DocumentFragment => {
+const invoicedStatuses: readonly InvoicedReportStatus[] = ['draft', 'open', 'paid', 'closed']
+
+/**
+ * A footer row per currency, from the server's totals: they follow the same
+ * filters as the rows, and two currencies are never added together. A viewer
+ * who cannot see money gets no footer rather than an empty one.
+ */
+const totalsFooter = (
+  leading: number,
+  totals: readonly {
+    readonly currency: string
+    readonly values: readonly (number | undefined)[]
+  }[],
+): HTMLTableSectionElement | null => {
+  const visible = totals.filter((total) => total.values.every((value) => value !== undefined))
+  if (visible.length === 0) return null
+  const foot = element('tfoot')
+  for (const total of visible) {
+    const line = element('tr')
+    const label = textElement('th', `Total (${total.currency})`)
+    label.scope = 'row'
+    label.colSpan = leading
+    line.append(label)
+    for (const value of total.values) line.append(moneyCell(value, total.currency))
+    foot.append(line)
+  }
+  return foot
+}
+
+const renderInvoiced = (
+  report: Readonly<InvoicedReport>,
+  options: Readonly<InvoicedReportOptions>,
+  onOptions: (next: InvoicedReportOptions) => void,
+): DocumentFragment => {
   const fragment = document.createDocumentFragment()
   fragment.append(
     reportHeading(
@@ -807,8 +939,36 @@ const renderInvoiced = (report: Readonly<InvoicedReport>): DocumentFragment => {
       `${report.from} through ${report.to} · ${report.rows.length} ${report.rows.length === 1 ? 'invoice' : 'invoices'}`,
     ),
   )
+  fragment.append(
+    renderFilterBar({
+      label: 'Invoiced filters',
+      controls: [
+        {
+          kind: 'select',
+          id: 'ez-invoiced-status',
+          label: 'Status',
+          value: options.status ?? '',
+          neutral: '',
+          dataAttribute: 'data-report-invoice-status',
+          options: [
+            ['', 'All statuses'],
+            ...invoicedStatuses.map((status): [string, string] => [status, invoiceStateLabel(status)]),
+          ],
+        },
+      ],
+      onChange: (_id, value: FilterValue) =>
+        onOptions({ ...options, status: invoicedStatuses.find((status) => status === value) ?? null }),
+      onClear: () => onOptions({ ...options, status: null }),
+    }),
+  )
   if (report.rows.length === 0) {
-    fragment.append(textElement('p', 'No invoices were issued in this period.', 'report-empty'))
+    fragment.append(
+      textElement(
+        'p',
+        options.status === null ? 'No invoices were issued in this period.' : 'No invoices match these filters.',
+        'report-empty',
+      ),
+    )
     return fragment
   }
   const wrapper = element('div', 'report-table-wrap')
@@ -846,6 +1006,29 @@ const renderInvoiced = (report: Readonly<InvoicedReport>): DocumentFragment => {
     body.append(line)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'invoiced',
+    {
+      Status: sortBy('status', report.rows.map((row) => invoiceStateLabel(row.state))),
+      'Issue date': sortBy('issued', report.rows.map((row) => row.issue_date)),
+      'Due date': sortBy('due', report.rows.map((row) => row.due_date)),
+      Invoice: sortBy('invoice', report.rows.map((row) => row.number)),
+      Client: sortBy('client', report.rows.map((row) => row.client_name)),
+      Invoiced: sortBy('invoiced', report.rows.map((row) => sortMoney(row.currency, row.invoiced_cents))),
+      Paid: sortBy('paid', report.rows.map((row) => sortMoney(row.currency, row.paid_cents))),
+      Balance: sortBy('balance', report.rows.map((row) => sortMoney(row.currency, row.balance_cents))),
+    },
+    { column: 'issued', direction: 'descending' },
+  )
+  const invoicedFoot = totalsFooter(
+    5,
+    report.totals.map((total) => ({
+      currency: total.currency,
+      values: [total.invoiced_cents, total.paid_cents, total.balance_cents],
+    })),
+  )
+  if (invoicedFoot !== null) table.append(invoicedFoot)
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
@@ -897,16 +1080,65 @@ const renderPaymentsReceived = (
     body.append(line)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'payments-received',
+    {
+      'Payment date': sortBy('paid', report.rows.map((row) => row.payment_date)),
+      Invoice: sortBy('invoice', report.rows.map((row) => row.invoice_number)),
+      Client: sortBy('client', report.rows.map((row) => row.client_name)),
+      Provider: sortBy('provider', report.rows.map((row) => row.provider)),
+      'Invoice total': sortBy('invoice-total', report.rows.map((row) => sortMoney(row.currency, row.invoice_total_cents))),
+      Payment: sortBy('payment', report.rows.map((row) => sortMoney(row.currency, row.payment_cents))),
+    },
+    { column: 'paid', direction: 'descending' },
+  )
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
 }
 
-const renderReceivables = (report: Readonly<ReceivablesReport>): DocumentFragment => {
+const renderReceivables = (
+  report: Readonly<ReceivablesReport>,
+  options: Readonly<InvoicedReportOptions>,
+  onOptions: (next: InvoicedReportOptions) => void,
+): DocumentFragment => {
   const fragment = document.createDocumentFragment()
   fragment.append(reportHeading('Receivables', `Outstanding balances as of ${report.as_of}`))
+  const dueState = options.dueState ?? null
+  fragment.append(
+    renderFilterBar({
+      label: 'Receivables filters',
+      controls: [
+        {
+          kind: 'select',
+          id: 'ez-receivables-due-state',
+          label: 'Due state',
+          value: dueState ?? '',
+          neutral: '',
+          dataAttribute: 'data-report-due-state',
+          options: [
+            ['', 'All outstanding'],
+            ['not_due', 'Not yet due'],
+            ['past_due', 'Past due'],
+          ],
+        },
+      ],
+      onChange: (_id, value: FilterValue) =>
+        onOptions({ ...options, dueState: value === 'not_due' || value === 'past_due' ? value : null }),
+      onClear: () => onOptions({ ...options, dueState: null }),
+    }),
+  )
   if (report.rows.length === 0) {
-    fragment.append(textElement('p', 'No outstanding receivables as of this date.', 'report-empty'))
+    fragment.append(
+      textElement(
+        'p',
+        dueState === null
+          ? 'No outstanding receivables as of this date.'
+          : 'No outstanding receivables match these filters.',
+        'report-empty',
+      ),
+    )
     return fragment
   }
   const wrapper = element('div', 'report-table-wrap')
@@ -938,6 +1170,42 @@ const renderReceivables = (report: Readonly<ReceivablesReport>): DocumentFragmen
     body.append(line)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'receivables',
+    {
+      Client: sortBy('client', report.rows.map((row) => row.client_name)),
+      Currency: sortBy('currency', report.rows.map((row) => row.currency)),
+      Invoices: sortBy('invoices', report.rows.map((row) => row.invoice_count)),
+      Total: sortBy('total', report.rows.map((row) => sortMoney(row.currency, row.invoiced_cents))),
+      Outstanding: sortBy('outstanding', report.rows.map((row) => sortMoney(row.currency, row.outstanding_cents))),
+      'Not due': sortBy('not-due', report.rows.map((row) => sortMoney(row.currency, row.not_due_cents))),
+      '1–30 days': sortBy('days-1-30', report.rows.map((row) => sortMoney(row.currency, row.days_1_to_30_cents))),
+      '31–60 days': sortBy('days-31-60', report.rows.map((row) => sortMoney(row.currency, row.days_31_to_60_cents))),
+      '61–90 days': sortBy('days-61-90', report.rows.map((row) => sortMoney(row.currency, row.days_61_to_90_cents))),
+      '90+ days': sortBy('days-90-plus', report.rows.map((row) => sortMoney(row.currency, row.days_90_plus_cents))),
+    },
+    { column: 'client', direction: 'ascending' },
+  )
+  const receivablesFoot = element('tfoot')
+  for (const total of report.totals) {
+    if (total.outstanding_cents === undefined) continue
+    const line = element('tr')
+    const label = textElement('th', `Total (${total.currency})`)
+    label.scope = 'row'
+    line.append(label, textElement('td', total.currency), textElement('td', String(total.invoice_count)))
+    line.append(
+      moneyCell(total.invoiced_cents, total.currency),
+      moneyCell(total.outstanding_cents, total.currency),
+      moneyCell(total.not_due_cents, total.currency),
+      moneyCell(total.days_1_to_30_cents, total.currency),
+      moneyCell(total.days_31_to_60_cents, total.currency),
+      moneyCell(total.days_61_to_90_cents, total.currency),
+      moneyCell(total.days_90_plus_cents, total.currency),
+    )
+    receivablesFoot.append(line)
+  }
+  if (receivablesFoot.childElementCount > 0) table.append(receivablesFoot)
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
@@ -1165,6 +1433,22 @@ const renderProfitability = (
     body.append(line)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'profitability',
+    {
+      [dimensionLabel]: sortBy('name', ordered.map((row) => row.dimension_name)),
+      Hours: sortBy('hours', ordered.map((row) => row.rounded_seconds)),
+      Revenue: sortBy('revenue', ordered.map((row) => sortMoney(row.currency, row.revenue_cents))),
+      Cost: sortBy('cost', ordered.map((row) => sortMoney(currency, row.cost_cents))),
+      'Revenue fees': sortBy('fees', ordered.map((row) => sortMoney(row.currency, row.revenue_fee_cents))),
+      Profit: sortBy('profit', ordered.map((row) => sortMoney(currency, row.profit_cents))),
+      'Return on cost': sortBy('return', ordered.map((row) => row.return_on_cost_ppm)),
+    },
+    // Worst margin first, as the rows arrive: the report is opened to find what
+    // is losing money. A blank margin sorts last either way.
+    { column: 'profit', direction: 'ascending' },
+  )
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
@@ -1297,6 +1581,20 @@ const renderDetailedExpense = (
     body.append(line)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'detailed-expense',
+    {
+      Date: sortBy('date', report.rows.map((row) => row.spent_date)),
+      Client: sortBy('client', report.rows.map((row) => row.client_name)),
+      Project: sortBy('project', report.rows.map((row) => row.project_name)),
+      Category: sortBy('category', report.rows.map((row) => row.category_name)),
+      Person: sortBy('person', report.rows.map((row) => row.user_name)),
+      Notes: sortBy('notes', report.rows.map((row) => row.notes?.trim() || null)),
+      Amount: sortBy('amount', report.rows.map((row) => sortMoney(row.currency, row.total_cost_cents))),
+    },
+    null,
+  )
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
@@ -1464,6 +1762,20 @@ const renderContractorCost = (
     )
     foot.append(totalRow)
     table.append(head, body, foot)
+    sortReport(
+      table,
+      'contractor-cost',
+      {
+        Person: sortBy('person', rows.map((row) => row.name)),
+        'Payroll email': sortBy('email', rows.map((row) => row.payroll_email)),
+        Hours: sortBy('hours', rows.map((row) => row.rounded_seconds)),
+        Utilization: sortBy('utilization', rows.map((row) => row.utilization_ppm)),
+        Rate: sortBy('rate', rows.map((row) => (row.cost_rate_is_mixed ? null : row.cost_rate_cents))),
+        Entries: sortBy('entries', rows.map((row) => row.entry_count)),
+        Cost: sortBy('cost', rows.map((row) => row.cost_cents)),
+      },
+      null,
+    )
     wrapper.append(table)
     section.append(wrapper)
     if (entriesWithoutRate > 0) {
@@ -1628,28 +1940,6 @@ const selectControl = (
   return field
 }
 
-const idControl = (
-  id: string,
-  label: string,
-  value: number | null,
-  onChange: (next: number | null) => void,
-): HTMLElement => {
-  const field = element('div', 'report-filter-field')
-  const caption = textElement('label', label)
-  caption.htmlFor = id
-  const input = element('input')
-  input.id = id
-  input.inputMode = 'numeric'
-  input.pattern = '[1-9][0-9]*'
-  input.value = value === null ? '' : String(value)
-  input.addEventListener('change', () => {
-    const parsed = Number(input.value)
-    onChange(Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null)
-  })
-  field.append(caption, input)
-  return field
-}
-
 /**
  * The filter recap Harvest puts opposite the totals. It is worth carrying over:
  * a row of collapsed dropdowns hides what a report actually covers, and this
@@ -1803,20 +2093,6 @@ const renderDetailedTime = (
   const controls = element('div', 'report-detailed-controls')
   controls.append(
     selectControl(
-      'ez-detailed-hours',
-      'Show',
-      [
-        ['all', 'All hours'],
-        ['billable', 'Billable hours'],
-        ['non_billable', 'Non-billable hours'],
-        ['uninvoiced', 'Uninvoiced billable hours'],
-        ['claimed', 'Claimed by an invoice'],
-        ['unclaimed', 'Not claimed yet'],
-      ],
-      options.hours,
-      (next) => handlers.onOptions({ ...options, hours: next as DetailedTimeHours }),
-    ),
-    selectControl(
       'ez-detailed-grain',
       'Rows',
       [
@@ -1826,28 +2102,6 @@ const renderDetailedTime = (
       options.grain,
       (next) => handlers.onOptions({ ...options, grain: next === 'entry' ? 'entry' : 'day' }),
     ),
-    selectControl(
-      'ez-detailed-invoice-state',
-      'Invoice state',
-      [
-        ['all', 'All entries'],
-        ['invoiced', 'Invoiced'],
-        ['uninvoiced', 'Uninvoiced'],
-      ],
-      options.invoiceState,
-      (next) => handlers.onOptions({
-        ...options,
-        invoiceState: next === 'invoiced' || next === 'uninvoiced' ? next : 'all',
-      }),
-    ),
-    idControl('ez-detailed-task', 'Task ID', options.taskId, (taskId) =>
-      handlers.onOptions({ ...options, taskId })),
-    ...(options.scope?.self ? [] : [idControl('ez-detailed-person', 'Person ID', options.userId, (userId) =>
-      handlers.onOptions({ ...options, userId }))]),
-    idControl('ez-detailed-role', 'Role ID', options.roleId, (roleId) =>
-      handlers.onOptions({ ...options, roleId })),
-    idControl('ez-detailed-tag', 'Tag ID', options.tagId, (tagId) =>
-      handlers.onOptions({ ...options, tagId })),
     selectControl(
       'ez-detailed-group',
       'Group by',
@@ -1865,17 +2119,117 @@ const renderDetailedTime = (
         handlers.onOptions({ ...options, grouping: next as DetailedTimeGrouping }),
     ),
   )
-  const activeField = element('div', 'report-filter-field report-detailed-active')
-  const activeInput = element('input')
-  activeInput.type = 'checkbox'
-  activeInput.id = 'ez-detailed-active'
-  activeInput.checked = options.activeProjectsOnly
-  activeInput.addEventListener('change', () =>
-    handlers.onOptions({ ...options, activeProjectsOnly: activeInput.checked }),
-  )
-  const activeLabel = textElement('label', 'Active projects only')
-  activeLabel.htmlFor = 'ez-detailed-active'
-  activeField.append(activeInput, activeLabel)
+  const named = (
+    facet: readonly { readonly id: number; readonly name: string }[],
+    selected: number | null,
+    fallback: string,
+  ): [string, string][] => {
+    const items: [string, string][] = facet.map((item) => [String(item.id), item.name])
+    // A filter the address names stays visible even when the other filters
+    // leave nothing for it, so it can be seen and taken off.
+    if (selected !== null && !items.some(([value]) => value === String(selected))) {
+      items.push([String(selected), `${fallback} #${selected}`])
+    }
+    return items
+  }
+  const idOf = (value: FilterValue): number | null => {
+    const parsed = Number(value)
+    return typeof value === 'string' && Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
+  }
+  const filterBar = renderFilterBar({
+    label: 'Detailed time filters',
+    controls: [
+      {
+        kind: 'select',
+        id: 'ez-detailed-hours',
+        label: 'Show',
+        value: options.hours,
+        neutral: 'all',
+        options: [
+          ['all', 'All hours'],
+          ['billable', 'Billable hours'],
+          ['non_billable', 'Non-billable hours'],
+          ['uninvoiced', 'Uninvoiced billable hours'],
+          ['claimed', 'Claimed by an invoice'],
+          ['unclaimed', 'Not claimed yet'],
+        ],
+      },
+      {
+        kind: 'select',
+        id: 'ez-detailed-invoice-state',
+        label: 'Invoice state',
+        value: options.invoiceState,
+        neutral: 'all',
+        options: [
+          ['all', 'All entries'],
+          ['invoiced', 'Invoiced'],
+          ['uninvoiced', 'Uninvoiced'],
+        ],
+      },
+      ...(options.scope?.self
+        ? []
+        : [{
+            kind: 'select' as const,
+            id: 'ez-detailed-person',
+            label: 'Person',
+            value: options.userId === null ? '' : String(options.userId),
+            neutral: '',
+            options: [['', 'All people'] as [string, string], ...named(report.facets.people, options.userId, 'Person')],
+          }]),
+      {
+        kind: 'select',
+        id: 'ez-detailed-task',
+        label: 'Task',
+        value: options.taskId === null ? '' : String(options.taskId),
+        neutral: '',
+        options: [['', 'All tasks'], ...named(report.facets.tasks, options.taskId, 'Task')],
+      },
+      {
+        kind: 'select',
+        id: 'ez-detailed-role',
+        label: 'Role',
+        value: options.roleId === null ? '' : String(options.roleId),
+        neutral: '',
+        options: [['', 'All roles'], ...named(report.facets.roles, options.roleId, 'Role')],
+      },
+      {
+        kind: 'select',
+        id: 'ez-detailed-tag',
+        label: 'Tag',
+        value: options.tagId === null ? '' : String(options.tagId),
+        neutral: '',
+        options: [['', 'All tags'], ...named(report.facets.tags, options.tagId, 'Tag')],
+      },
+      { kind: 'search', id: 'ez-detailed-notes', label: 'Notes contain', value: options.notes ?? '' },
+      { kind: 'toggle', id: 'ez-detailed-active', label: 'Active projects only', checked: options.activeProjectsOnly },
+    ],
+    onChange: (id, value) => {
+      if (id === 'ez-detailed-hours') handlers.onOptions({ ...options, hours: value as DetailedTimeHours })
+      else if (id === 'ez-detailed-invoice-state') {
+        handlers.onOptions({
+          ...options,
+          invoiceState: value === 'invoiced' || value === 'uninvoiced' ? value : 'all',
+        })
+      } else if (id === 'ez-detailed-person') handlers.onOptions({ ...options, userId: idOf(value) })
+      else if (id === 'ez-detailed-task') handlers.onOptions({ ...options, taskId: idOf(value) })
+      else if (id === 'ez-detailed-role') handlers.onOptions({ ...options, roleId: idOf(value) })
+      else if (id === 'ez-detailed-tag') handlers.onOptions({ ...options, tagId: idOf(value) })
+      else if (id === 'ez-detailed-notes') handlers.onOptions({ ...options, notes: String(value).slice(0, 200) })
+      else if (id === 'ez-detailed-active') handlers.onOptions({ ...options, activeProjectsOnly: value === true })
+    },
+    onClear: () =>
+      handlers.onOptions({
+        ...options,
+        hours: 'all',
+        invoiceState: 'all',
+        userId: options.scope?.self ? options.userId : null,
+        taskId: null,
+        roleId: null,
+        tagId: null,
+        notes: '',
+        activeProjectsOnly: false,
+      }),
+  })
   const actions = element('div', 'report-detailed-actions')
   const exportMenu = handlers.onExport === undefined ? null : detailedExportMenu(handlers.onExport)
   const printButton = textElement('button', 'Print')
@@ -1910,8 +2264,8 @@ const renderDetailedTime = (
       actions.append(button)
     }
   }
-  controls.append(activeField, actions)
-  fragment.append(controls)
+  controls.append(actions)
+  fragment.append(controls, filterBar)
 
   if (report.rows.length === 0) {
     if (exportMenu !== null) exportMenu.toggle.disabled = true
@@ -1929,10 +2283,13 @@ const renderDetailedTime = (
   const entryActions =
     report.grain === 'entry' &&
     (handlers.onEditEntry !== undefined || handlers.onDeleteEntry !== undefined)
+  // Grouped by date, the band already says the date. Grouped by anything
+  // else it does not, and rows could not be ordered by date without a column.
+  const dated = options.grouping !== 'date'
   const headers =
     options.grain === 'entry'
-      ? [...(selectable ? ['Select'] : []), 'Client', 'Project', 'Task', 'Roles', 'Person', 'Notes', 'Claimed by', 'Hours']
-      : ['Client', 'Project', 'Task', 'Roles', 'Person', 'Hours']
+      ? [...(selectable ? ['Select'] : []), ...(dated ? ['Date'] : []), 'Client', 'Project', 'Task', 'Roles', 'Person', 'Notes', 'Claimed by', 'Hours']
+      : [...(dated ? ['Date'] : []), 'Client', 'Project', 'Task', 'Roles', 'Person', 'Hours']
   if (showRounded) headers.push('Rounded hours')
   // Last, after the figures, so the band and total rows keep their hours under
   // the hours column and only gain an empty cell at the end.
@@ -1947,7 +2304,8 @@ const renderDetailedTime = (
   }
   head.append(headerRow)
   const body = element('tbody')
-  for (const band of groupDetailedTimeRows(report.rows, options.grouping)) {
+  const bands = groupDetailedTimeRows(report.rows, options.grouping)
+  for (const band of bands) {
     const bandRow = element('tr', 'report-band-row')
     const bandLabel = textElement('th', band.label)
     bandLabel.colSpan = headers.length - figureColumns
@@ -1995,6 +2353,7 @@ const renderDetailedTime = (
           ...scope, project_id: row.project_id, task_id: row.task_id, user_id: row.user_id,
           invoice_state: row.claimed ? 'invoiced' : 'uninvoiced',
         })
+      if (dated) line.append(textElement('td', row.spent_date))
       line.append(...detailedTimeCells(row, options.grain, href, showRounded))
       if (entryActions) line.append(entryActionsCell(row, handlers))
       body.append(line)
@@ -2010,6 +2369,26 @@ const renderDetailedTime = (
   if (entryActions) totalRow.append(element('td', 'report-entry-actions'))
   foot.append(totalRow)
   table.append(head, body, foot)
+  // Rows sort inside their bands, and a row is the same element after the sort,
+  // so a ticked row stays ticked.
+  const drawn = bands.flatMap((band) => band.rows)
+  sortReport(
+    table,
+    'detailed-time',
+    {
+      Date: sortBy('date', drawn.map((row) => row.spent_date)),
+      Client: sortBy('client', drawn.map((row) => row.client_name)),
+      Project: sortBy('project', drawn.map((row) => detailedTimeProjectLabel(row))),
+      Task: sortBy('task', drawn.map((row) => row.task_name)),
+      Roles: sortBy('roles', drawn.map((row) => row.roles.join(', ') || null)),
+      Person: sortBy('person', drawn.map((row) => row.user_name)),
+      Notes: sortBy('notes', drawn.map((row) => row.notes?.trim() || null)),
+      'Claimed by': sortBy('claimed-by', drawn.map((row) => row.invoice_number ?? null)),
+      Hours: sortBy('hours', drawn.map((row) => row.seconds)),
+      'Rounded hours': sortBy('rounded-hours', drawn.map((row) => row.rounded_seconds)),
+    },
+    dated ? { column: 'date', direction: 'ascending' } : null,
+  )
   wrapper.append(table)
   fragment.append(wrapper)
 
@@ -2176,6 +2555,8 @@ const amountCell = (
  */
 interface TimeTableColumn<Row> {
   readonly label: string
+  /** The column's key and the value it sorts by (issue 852). */
+  readonly sort: { readonly key: string; readonly value: (row: Row) => SortValue }
   readonly cell: (row: Row) => HTMLTableCellElement
   /** The total row's cell, where the column has one. */
   readonly total?: HTMLTableCellElement
@@ -2263,6 +2644,33 @@ const timeTable = <Row extends TimeRowFigures>(
   for (const column of trailing) totalRow.append(column.total ?? element('td'))
   foot.append(totalRow)
   table.append(head, body, foot)
+  // Rows sort inside their groups -- employees and contractors stay apart.
+  const shown = groups.filter((group) => group.rows.length > 0).flatMap((group) => group.rows)
+  const named = (column: TimeTableColumn<Row>): [string, ReportSortColumn] => [
+    column.label,
+    sortBy(column.sort.key, shown.map((row) => column.sort.value(row))),
+  ]
+  sortReport(
+    table,
+    'time',
+    {
+      ...Object.fromEntries([...leading, ...trailing].map(named)),
+      Hours: sortBy('hours', shown.map((row) => row.rounded_seconds)),
+      'Billable hours': sortBy('billable-hours', shown.map((row) => row.billable_seconds)),
+      ...(showMoney
+        ? {
+            'Billable amount': sortBy(
+              'billable-amount',
+              shown.map((row) => {
+                const amount = row.amounts?.[0]
+                return amount === undefined ? null : sortMoney(amount.currency, amount.billable_cents)
+              }),
+            ),
+          }
+        : {}),
+    },
+    null,
+  )
   wrapper.append(table)
   return wrapper
 }
@@ -2326,6 +2734,7 @@ const renderTimeReport = (
         [
           {
             label: 'Name',
+            sort: { key: 'name', value: (row) => row.client_name },
             cell: (row) => nameCell(`/clients/${row.client_id}`, row.client_name),
           },
         ],
@@ -2342,10 +2751,12 @@ const renderTimeReport = (
         [
           {
             label: 'Name',
+            sort: { key: 'name', value: (row) => projectLabel(row) },
             cell: (row) => nameCell(`/projects/${row.project_id}`, projectLabel(row)),
           },
           {
             label: 'Clients',
+            sort: { key: 'clients', value: (row) => row.client_name },
             cell: (row) => {
               const cell = element('td')
               cell.append(linkElement(`/clients/${row.client_id}`, row.client_name))
@@ -2366,6 +2777,7 @@ const renderTimeReport = (
         [
           {
             label: 'Name',
+            sort: { key: 'name', value: (row) => row.task_name },
             cell: (row) => {
               const cell = element('th')
               cell.scope = 'row'
@@ -2389,6 +2801,7 @@ const renderTimeReport = (
         [
           {
             label: 'Name',
+            sort: { key: 'name', value: (row) => row.user_name },
             // Plain text where the viewer cannot read Team, which is what the
             // Tasks tab already does for the same reason: a dead link is worse
             // than no link, because it looks like a way in.
@@ -2401,6 +2814,7 @@ const renderTimeReport = (
         [
           {
             label: 'Utilization',
+            sort: { key: 'utilization', value: (row) => row.utilization_ppm },
             cell: (row) => {
               const cell = element('td')
               cell.textContent = teamUtilization(row.utilization_ppm)
@@ -2477,6 +2891,13 @@ export const createReportsController = (
     kindTabs.set(tabKind, anchor)
   }
   const kindStrip = [...kindTabs.values()][0]?.parentElement ?? null
+  // The Activity log is a module: once the API says it is off, its kind leaves
+  // the strip the way a kind a profile cannot read does.
+  let activityLogOff = false
+  const hideActivityLogKind = (): void => {
+    activityLogOff = true
+    kindTabs.get('activity-log')?.remove()
+  }
   /**
    * The two From/To fields the card used to carry, as the shared control. An
    * arrow reloads immediately because stepping is navigation, not filtering:
@@ -2507,8 +2928,6 @@ export const createReportsController = (
   const projectInput = required<HTMLSelectElement>('[data-report-project]')
   const fixedFeeField = required<HTMLElement>('[data-report-fixed-fee-field]')
   const fixedFeeInput = required<HTMLInputElement>('[data-report-fixed-fee]')
-  const invoiceStatusField = required<HTMLElement>('[data-report-invoice-status-field]')
-  const invoiceStatusInput = required<HTMLSelectElement>('[data-report-invoice-status]')
   const profitStatusField = required<HTMLElement>('[data-report-profit-status-field]')
   const profitStatusInput = required<HTMLSelectElement>('[data-report-profit-status]')
   const profitBillingField = required<HTMLElement>('[data-report-profit-billing-field]')
@@ -2866,7 +3285,6 @@ export const createReportsController = (
     clientInput.disabled = value
     projectInput.disabled = value
     fixedFeeInput.disabled = value
-    invoiceStatusInput.disabled = value
     profitStatusInput.disabled = value
     profitBillingInput.disabled = value
     profitManagerInput.disabled = value
@@ -2997,7 +3415,6 @@ export const createReportsController = (
     // absent one: the first person to move it waits for something to happen.
     catalogField.hidden = clientField.hidden && projectField.hidden
     fixedFeeField.hidden = kind !== 'time'
-    invoiceStatusField.hidden = kind !== 'invoiced'
     profitStatusField.hidden = kind !== 'profitability'
     profitBillingField.hidden = kind !== 'profitability'
     profitManagerField.hidden = kind !== 'profitability'
@@ -3158,7 +3575,8 @@ export const createReportsController = (
               next.userId === detailedOptions.userId &&
               next.roleId === detailedOptions.roleId &&
               next.tagId === detailedOptions.tagId &&
-              next.invoiceState === detailedOptions.invoiceState
+              next.invoiceState === detailedOptions.invoiceState &&
+              (next.notes ?? '') === (detailedOptions.notes ?? '')
             detailedOptions = next
             // Grouping is a re-fold of rows already here, so it re-renders
             // without a request; Show, Active projects only and Detail change
@@ -3167,7 +3585,7 @@ export const createReportsController = (
               globalThis.history.pushState(
                 null,
                 '',
-                reportFiltersUrl({ ...filters, kind: 'detailed-time' }, detailedOptions),
+                withSort(reportFiltersUrl({ ...filters, kind: 'detailed-time' }, detailedOptions)),
               )
               renderDetailed(report)
               return
@@ -3238,7 +3656,7 @@ export const createReportsController = (
     timeTab = tab
     const filters = filtersFromForm()
     syncKindHrefs(filters)
-    globalThis.history.pushState(null, '', reportFiltersUrl(filters, detailedOptions, timeOptions))
+    globalThis.history.pushState(null, '', withSort(reportFiltersUrl(filters, detailedOptions, timeOptions)))
     if (lastTimeReport === null) return
     results.replaceChildren(
       renderTimeReport(lastTimeReport, filters, showTimeTab, timeOptions, canOpenTeam()),
@@ -3280,11 +3698,21 @@ export const createReportsController = (
         ),
       )
     } else if (filters.kind === 'invoiced') {
-      results.replaceChildren(renderInvoiced(report as InvoicedReport))
+      results.replaceChildren(
+        renderInvoiced(report as InvoicedReport, invoicedOptions, (next) => {
+          invoicedOptions = next
+          void loadReport(filtersFromForm(), true)
+        }),
+      )
     } else if (filters.kind === 'payments-received') {
       results.replaceChildren(renderPaymentsReceived(report as PaymentsReceivedReport))
     } else if (filters.kind === 'receivables') {
-      results.replaceChildren(renderReceivables(report as ReceivablesReport))
+      results.replaceChildren(
+        renderReceivables(report as ReceivablesReport, invoicedOptions, (next) => {
+          invoicedOptions = next
+          void loadReport(filtersFromForm(), true)
+        }),
+      )
     } else if (filters.kind === 'activity-log') {
       results.replaceChildren(
         renderActivityLog(report as readonly ActivityLogEntry[], filters),
@@ -3298,13 +3726,15 @@ export const createReportsController = (
           globalThis.history.pushState(
             null,
             '',
-            reportFiltersUrl(
-              filtersFromForm(),
-              detailedOptions,
-              timeOptions,
-              invoicedOptions,
-              profitabilityOptions,
-              expenseOptions,
+            withSort(
+              reportFiltersUrl(
+                filtersFromForm(),
+                detailedOptions,
+                timeOptions,
+                invoicedOptions,
+                profitabilityOptions,
+                expenseOptions,
+              ),
             ),
           )
           if (lastProfitabilityReport !== null) {
@@ -3416,14 +3846,20 @@ export const createReportsController = (
     }
     syncKindHrefs(filters)
     if (updateUrl) {
-      const nextUrl = reportFiltersUrl(
+      // A sort belongs to the report it was chosen on: another kind has other
+      // columns, and carrying the word over would only be ignored.
+      if (filters.kind !== reportSortKind) {
+        reportSortAddress = null
+        reportSortKind = filters.kind
+      }
+      const nextUrl = withSort(reportFiltersUrl(
         filters,
         detailedOptions,
         timeOptions,
         invoicedOptions,
         profitabilityOptions,
         expenseOptions,
-      )
+      ))
       globalThis.history.pushState(
         null,
         '',
@@ -3460,6 +3896,7 @@ export const createReportsController = (
             ...(detailedOptions.tagId === null ? {} : { tag_id: detailedOptions.tagId }),
             invoice_state: detailedOptions.invoiceState,
             active_projects_only: detailedOptions.activeProjectsOnly,
+            ...(detailedOptions.notes === undefined || detailedOptions.notes === '' ? {} : { notes: detailedOptions.notes }),
           }
         : null
     try {
@@ -3495,6 +3932,7 @@ export const createReportsController = (
               {
                 as_of: filters.to,
                 ...(filters.clientId === null ? {} : { client_id: filters.clientId }),
+                ...(invoicedOptions.dueState == null ? {} : { due_state: invoicedOptions.dueState }),
               },
               active.signal,
             )
@@ -3571,6 +4009,11 @@ export const createReportsController = (
       if (active.signal.aborted) return
       if (queuedLocationFilters !== null) return
       status.textContent = messageFor(error)
+      if (isModuleDisabled(error)) {
+        // A decision, not a failure: retrying would only be refused again.
+        if (filters.kind === 'activity-log') hideActivityLogKind()
+        return
+      }
       retry.hidden = false
       retryAction = () => void loadReport(filters, false)
     } finally {
@@ -3593,13 +4036,14 @@ export const createReportsController = (
       canReadFinancialReports(active.identity.profile),
     )
     detailedOptions = detailedTimeOptionsFromUrl(location)
+    reportSortAddress = reportSortFromUrl(location)
+    reportSortKind = filters.kind
     timeOptions = timeReportOptionsFromUrl(location)
     invoicedOptions = invoicedReportOptionsFromUrl(location)
     profitabilityOptions = profitabilityOptionsFromUrl(location)
     expenseOptions = detailedExpenseOptionsFromUrl(location)
     contractorOnly = location.searchParams.get('contractor_only') === 'true'
     fixedFeeInput.checked = timeOptions.includeFixedFee
-    invoiceStatusInput.value = invoicedOptions.status ?? ''
     showProfitabilityOptions()
     showExpenseOptions()
     setKind(presentedKind(filters.kind, active.identity))
@@ -3633,14 +4077,6 @@ export const createReportsController = (
   form.addEventListener('submit', (event) => {
     event.preventDefault()
     timeOptions = { includeFixedFee: fixedFeeInput.checked }
-    const selectedStatus = invoiceStatusInput.value
-    invoicedOptions = {
-      status:
-        selectedStatus === 'draft' || selectedStatus === 'open' ||
-        selectedStatus === 'paid' || selectedStatus === 'closed'
-          ? selectedStatus as InvoicedReportStatus
-          : null,
-    }
     const selectedProjectStatus = profitStatusInput.value
     const selectedBillingMethod = profitBillingInput.value
     profitabilityOptions = {
@@ -3797,6 +4233,14 @@ export const createReportsController = (
   retry.addEventListener('click', () => {
     retryAction?.()
   })
+  reportSortChanged = (sort) => {
+    reportSortAddress = sort
+    // The address names the sort so a shared or saved report reopens in the
+    // same order; replacing the entry keeps Back for the filters, not the clicks.
+    const address = new URL(globalThis.location.href)
+    address.searchParams.set('sort', sortToken(sort))
+    globalThis.history.replaceState(null, '', `${address.pathname}${address.search}`)
+  }
   return {
     async activate(identity, signal, onSessionFailure) {
       if (!reportsPage) return
@@ -3834,7 +4278,6 @@ export const createReportsController = (
       clientInput.disabled = false
       projectInput.disabled = false
       fixedFeeInput.disabled = false
-      invoiceStatusInput.disabled = false
       profitStatusInput.disabled = false
       profitBillingInput.disabled = false
       profitManagerInput.disabled = false
@@ -3891,7 +4334,6 @@ export const createReportsController = (
       expenseOptions = detailedExpenseOptionsFromUrl(initialLocation)
       contractorOnly = initialLocation.searchParams.get('contractor_only') === 'true'
       fixedFeeInput.checked = timeOptions.includeFixedFee
-      invoiceStatusInput.value = invoicedOptions.status ?? ''
       showProfitabilityOptions()
       showExpenseOptions()
       setKind(presentedKind(initial.kind, identity))
@@ -3904,9 +4346,18 @@ export const createReportsController = (
       // second session in the same document gets the strip its profile earns.
       kindStrip?.replaceChildren(
         ...[...kindTabs]
-          .filter(([tabKind]) => canReadKind(tabKind, identity))
+          .filter(
+            ([tabKind]) =>
+              canReadKind(tabKind, identity) && !(activityLogOff && tabKind === 'activity-log'),
+          )
           .map(([, anchor]) => anchor),
       )
+      void api
+        .getActivityLogEnabled?.(signal)
+        .then((enabled) => {
+          if (!enabled) hideActivityLogKind()
+        })
+        .catch(() => {})
       if (api.listReportClients === undefined || api.listReportProjects === undefined) {
         status.textContent = 'Report filters are unavailable in this build.'
         run.disabled = true

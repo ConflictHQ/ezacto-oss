@@ -1,4 +1,5 @@
 import { renderDataTable } from '../components/data-table.js'
+import { loadedRowsSortNotice } from '../components/table-sort.js'
 import { isDemoDeployment } from '../demo.js'
 import { moneyText } from '../money-display.js'
 import { icon } from '../components/icons.js'
@@ -538,12 +539,24 @@ export const createExpenseWorkflowController = (
         // read: one heading, then the days under it.
         groupBy: (expense) => expenseWeekLabel(expense.spent_date, weekStartDay),
         empty: 'No expenses match these filters.',
+        // Rows sort inside their weeks (issue 852). The list arrives newest
+        // first, so Date descending is the order it already has.
+        table: 'expenses',
+        defaultSort: { column: 'date', direction: 'descending' },
         columns: [
-          { key: 'date', label: 'Date', fit: true, render: expenseDateLink },
+          {
+            key: 'date',
+            label: 'Date',
+            fit: true,
+            render: expenseDateLink,
+            sortValue: (expense) => [expense.spent_date, expense.id],
+          },
           {
             key: 'work',
             label: 'Client / Project',
             render: (expense) =>
+              `${expenseClientLabel(expense.project_id, catalog.projects, catalog.clients)} · ${expenseProjectLabel(expense.project_id, catalog.projects)}`,
+            sortValue: (expense) =>
               `${expenseClientLabel(expense.project_id, catalog.projects, catalog.clients)} · ${expenseProjectLabel(expense.project_id, catalog.projects)}`,
           },
           {
@@ -551,11 +564,14 @@ export const createExpenseWorkflowController = (
             label: 'Category',
             render: (expense) =>
               expenseCategoryLabel(expense.expense_category_id, catalog.categories),
+            sortValue: (expense) =>
+              expenseCategoryLabel(expense.expense_category_id, catalog.categories),
           },
           {
             key: 'notes',
             label: 'Notes',
             render: (expense) => expense.notes?.trim() || 'No notes',
+            sortValue: (expense) => expense.notes?.trim() || null,
           },
           {
             key: 'billing',
@@ -563,11 +579,22 @@ export const createExpenseWorkflowController = (
             label: 'Billing',
             render: expenseBillingCell,
           },
-          { key: 'status', label: 'Status', fit: true, render: expenseStatusPill },
+          {
+            key: 'status',
+            label: 'Status',
+            fit: true,
+            render: expenseStatusPill,
+            sortValue: (expense) => expenseApprovalDisplay(expense).label,
+          },
           {
             key: 'amount',
             label: 'Amount',
             numeric: true,
+            // A currency and then an amount: two currencies are never added.
+            sortValue: (expense) => [
+              expenseCurrency(expense.project_id, catalog.projects, catalog.clients),
+              expense.total_cost_cents,
+            ],
             render: (expense) =>
               moneyText(
                 expenseMoney(
@@ -636,7 +663,7 @@ export const createExpenseWorkflowController = (
       const expenseCount = list.querySelectorAll('tbody tr[data-row]').length
       listStatus.textContent = expenseCount === 0
         ? 'No expenses match these filters.'
-        : `${expenseCount} ${expenseCount === 1 ? 'expense' : 'expenses'} shown by week.`
+        : `${expenseCount} ${expenseCount === 1 ? 'expense' : 'expenses'} shown by week.${nextCursor === null ? '' : loadedRowsSortNotice}`
     } catch (error) {
       if (current() !== session || requestGeneration !== listRequestGeneration) return
       if (sessionFailure(error, session)) return

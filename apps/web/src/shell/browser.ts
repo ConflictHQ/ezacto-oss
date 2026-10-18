@@ -43,7 +43,7 @@ import {
   createColorSchemeRuntime,
   createThemeRuntime,
 } from '../theme-preference.js'
-import { renderDataTable } from '../components/data-table.js'
+import { renderDataTable, type DataTableSort } from '../components/data-table.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import {
   payoutFailure,
@@ -73,9 +73,15 @@ import { createPeriodControl, isCalendarDay } from '../components/period.js'
 import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
 import { createActivityController } from '../activity/browser.js'
-import { setSortPreferenceOwner } from '../components/table-sort.js'
+import { focusSortHeader, setSortPreferenceOwner } from '../components/table-sort.js'
 import { createDeliveriesController } from '../deliveries/browser.js'
-import { createCalendarController } from '../calendar/browser.js'
+import { createCalendarController, type CalendarPlacement } from '../calendar/browser.js'
+import {
+  CALENDAR_LAYOUT_COOKIE,
+  type CalendarLayout,
+  calendarLayouts,
+  createCalendarLayoutRuntime,
+} from '../calendar/layout.js'
 import { createDashboardController } from '../dashboard/browser.js'
 import { createReportsController } from '../reports/browser.js'
 import { canReadFinancialReports } from '../reports/model.js'
@@ -102,6 +108,8 @@ import { demoUnavailable, isDemoDeployment } from '../demo.js'
 import {
   createInvoicePaymentController,
   invoiceMatchesSearch,
+  invoiceListSort,
+  invoiceSortParameter,
   renderInvoiceListItems,
   setInvoiceClientNames,
 } from '../invoices/browser.js'
@@ -139,6 +147,7 @@ import {
   createSameOriginShellApi,
   hydratePendingTimesheetDetails,
   loadShellSnapshot,
+  filingClock,
   filingDate,
   localDate,
   navigationDestination,
@@ -232,6 +241,8 @@ interface ActiveEntryEditor {
   readonly minimumNoteLength: number
   readonly initialDurationValue?: string
   readonly durationWasEditedBeforeOpen?: boolean
+  /** A new entry's start and end, canonical, when the calendar drew them (issue 943). */
+  readonly times?: { readonly started: string; readonly ended: string }
   /**
    * Whose time the editor writes when it is not the signed-in person's (issue 917):
    * the teammate an administrator has open on Time, or the owner of a report
@@ -1519,7 +1530,21 @@ export const mountShell = async (
   const taskAdmin = createTaskAdminController(api)
   const roleAdmin = createRoleAdminController(api)
   const teamDirectory = createTeamDirectoryController(api)
-  const calendar = createCalendarController()
+  const calendarLayout = createCalendarLayoutRuntime({
+    store: browserCookieStore(
+      document,
+      CALENDAR_LAYOUT_COOKIE,
+      globalThis.location.protocol === 'https:',
+    ),
+    target: document.documentElement,
+  })
+  const calendar = createCalendarController({
+    openEntry: (entryId) => openCalendarEntry(entryId),
+    createEntry: (placement) => createCalendarEntry(placement),
+    moveEntry: (entryId, placement) => moveCalendarEntry(entryId, placement),
+    stepDay: (offset) => moveDay(offset),
+    now: () => calendarNow(),
+  })
   const staffPayments = createStaffPaymentsController(api)
   const dashboard = createDashboardController(api)
   // Reads only when the api offers the endpoint; an install without it still
@@ -1692,6 +1717,9 @@ export const mountShell = async (
   let invoiceListRows: readonly Invoice[] = []
   /** Which states the list is asking the server for. Outstanding is the open question. */
   let invoiceFilter: 'outstanding' | 'overdue' | 'paid' | 'closed' | 'all' = 'outstanding'
+  // The column the person last sorted the invoice list by (issue 852). The list
+  // is ordered by the server, so choosing one fetches the list again.
+  let invoiceSort: DataTableSort | null = null
   let invoiceClientNamesLoaded = false
   let invoiceListCount = 0
   let approvalModuleAvailable = false
@@ -1915,6 +1943,7 @@ export const mountShell = async (
     required<HTMLElement>('[data-week-grid-rows]').replaceChildren()
     required<HTMLElement>('[data-week-grid-totals]').replaceChildren()
     required<HTMLElement>('[data-day-rows]').replaceChildren()
+    calendar.clear()
     invoiceClient.replaceChildren()
     invoiceProjects.replaceChildren()
     invoiceResult.textContent = ''
@@ -2208,8 +2237,32 @@ export const mountShell = async (
     for (const tab of document.querySelectorAll<HTMLElement>(
       '[data-staff-payments-nav], [data-settings-company-tab], [data-settings-activity-tab], [data-settings-templates-tab], [data-settings-roles-tab], [data-settings-deliveries-tab]',
     )) {
-      tab.hidden = !visible
+      // The Activity log is also a module: an administrator who switched it
+      // off does not get its tab back every time this runs.
+      tab.hidden = !visible || (activityLogOff && tab.matches('[data-settings-activity-tab]'))
     }
+  }
+
+  let activityLogOff = false
+
+  /**
+   * Only an administrator is offered the Activity tab, so only an administrator
+   * asks whether its module is on. The route itself refuses when it is off; this
+   * keeps the link from promising a page that answers with that refusal.
+   */
+  const hideActivityLogWhenOff = (
+    identity: Readonly<Whoami>,
+    operation: AuthOperation,
+  ): void => {
+    if (identity.profile !== 'administrator' || api.getActivityLogEnabled === undefined) return
+    void api
+      .getActivityLogEnabled(operation.signal)
+      .then((enabled) => {
+        if (enabled || !isSessionCurrent(operation)) return
+        activityLogOff = true
+        revealCompanySettings(identity)
+      })
+      .catch(() => {})
   }
 
   /**
@@ -3465,7 +3518,6 @@ export const mountShell = async (
     }
     // The same data the grid draws, laid out on whichever axis the
     // organization's tracking mode makes true.
-    calendar.render(grid.dates, snapshot.entries, snapshot.timeEntrySettings.time_entry_mode)
     // The server's today, as near as the shell can get: the person's own zone,
     // then the organization's where the session can read it (the lock policy
     // is an administrator's), then the browser's clock. The browser's clock
@@ -3476,6 +3528,15 @@ export const mountShell = async (
       ...(profileZone === null ? [] : [profileZone]),
       ...(lockPolicy === null ? [] : [lockPolicy.timezone]),
     ])
+    calendar.render({
+      dates: grid.dates,
+      entries: snapshot.entries,
+      layout: calendarLayout.current(),
+      selectedDate: grid.dates[selectedDay]!,
+      now: calendarNow(),
+      clock: snapshot.timeEntrySettings.clock,
+      formatSeconds,
+    })
     renderDayTotals(grid, selectedDay, selectDay, today)
     renderDesktopGrid(grid, handlers, today)
     renderPhoneDay(grid, selectedDay, handlers)
@@ -4289,6 +4350,20 @@ export const mountShell = async (
         : overdue
           ? complete ? 'No past-due invoices.' : 'No past-due invoices in the loaded pages.'
           : undefined,
+      {
+        sort: invoiceSort,
+        onSort: (next) => {
+          const operation = sessionOperation()
+          if (operation === null) return
+          invoiceSort = next
+          invoiceNextCursor = null
+          invoiceListRows = []
+          invoiceLoadMore.hidden = true
+          void loadInvoiceList(operation).then(() => {
+            focusSortHeader(invoiceList, next.column)
+          })
+        },
+      },
     )
     invoiceListStatus.textContent = searching
       ? `${invoiceListCount} of ${invoiceListRows.length} loaded ${invoiceListRows.length === 1 ? 'invoice matches' : 'invoices match'}${complete ? '.' : '; load more to search the rest.'}`
@@ -4320,12 +4395,15 @@ export const mountShell = async (
       return
     }
     const append = cursor !== undefined
+    const invoiceSortWord = invoiceSortParameter(invoiceListSort(invoiceSort))
     invoiceList.setAttribute('aria-busy', 'true')
     invoiceLoadMore.disabled = true
     invoiceListStatus.textContent = append ? 'Loading more invoices…' : 'Loading invoices…'
     try {
       const [page] = await Promise.all([
-        listInvoices(cursor, operation.signal, undefined, invoiceStatesFor(invoiceFilter)),
+        invoiceSortWord === undefined
+          ? listInvoices(cursor, operation.signal, undefined, invoiceStatesFor(invoiceFilter))
+          : listInvoices(cursor, operation.signal, undefined, invoiceStatesFor(invoiceFilter), invoiceSortWord),
         ensureInvoiceClientNames(operation),
       ])
       if (!isSessionCurrent(operation)) return
@@ -4382,6 +4460,7 @@ export const mountShell = async (
         })
     }
     void loadTeamNavigation(identity, authenticated)
+    hideActivityLogWhenOff(identity, authenticated)
     if (invoiceGenerationPage) {
       openInvoiceDialog(authenticated)
       await Promise.all([loadInvoiceList(authenticated), loadWeek(authenticated)])
@@ -4895,6 +4974,114 @@ export const mountShell = async (
       : null
   }
 
+  /** The local moment the calendar measures running entries to and draws its line at. */
+  function calendarNow(): { readonly date: string; readonly minutes: number } {
+    return filingClock([
+      ...(profileZone === null ? [] : [profileZone]),
+      ...(lockPolicy === null ? [] : [lockPolicy.timezone]),
+    ])
+  }
+
+  const calendarOwner = (): Pick<ActiveEntryEditor, 'owner'> =>
+    viewedPerson === null || snapshot === null
+      ? {}
+      : { owner: { userId: viewedPerson.id, options: snapshot.catalog.timeEntryOptions } }
+
+  /** A click, a tap or Enter on an entry drawn on the calendar. */
+  function openCalendarEntry(entryId: number): void {
+    const entry = snapshot?.entries.find((candidate) => candidate.id === entryId)
+    if (currentIdentity === null || snapshot === null || entry === undefined) return
+    configureEntryEditor(
+      {
+        context: 'edit',
+        entry,
+        projectId: entry.project_id,
+        taskId: entry.task_id,
+        spentDate: entry.spent_date,
+        seconds: entry.seconds,
+        notes: entry.notes ?? null,
+        mode: modeForEntryDraft(entry, snapshot.timeEntrySettings.time_entry_mode),
+        timer: false,
+        minimumNoteLength: entry.minimum_note_length,
+        ...calendarOwner(),
+      },
+      entry.is_locked === true
+        ? `This entry cannot be changed: ${entry.locked_reason ?? 'it is locked'}.`
+        : '',
+    )
+  }
+
+  /**
+   * A span drawn on the calendar becomes an entry that carries its start and
+   * end in either organization mode. It opens prefilled with the project and
+   * task of the person's most recent entry, falling back to the first pair they
+   * can log to when that one is no longer offered.
+   */
+  function createCalendarEntry(placement: CalendarPlacement): void {
+    if (currentIdentity === null || snapshot === null) {
+      calendar.clearDraft()
+      return
+    }
+    const options = snapshot.catalog.timeEntryOptions
+    const latest = snapshot.entries.reduce<DisplayTimeEntry | null>(
+      (best, entry) =>
+        best === null ||
+        entry.spent_date > best.spent_date ||
+        (entry.spent_date === best.spent_date && entry.id > best.id)
+          ? entry
+          : best,
+      null,
+    )
+    const chosen =
+      options.find(
+        (option) => option.project_id === latest?.project_id && option.task_id === latest?.task_id,
+      ) ?? options[0]
+    if (chosen === undefined) {
+      calendar.clearDraft()
+      setSessionStatus('There is no project and task to log time to yet.', 'ready')
+      return
+    }
+    configureEntryEditor({
+      context: 'calendar',
+      entry: null,
+      projectId: chosen.project_id,
+      taskId: chosen.task_id,
+      spentDate: placement.date,
+      seconds: 0,
+      notes: null,
+      mode: 'start_end',
+      timer: false,
+      minimumNoteLength: chosen.minimum_note_length,
+      times: { started: placement.startedTime, ended: placement.endedTime },
+      ...calendarOwner(),
+    })
+  }
+
+  /** A drag or a key move released on the calendar: the entry's new day and times. */
+  async function moveCalendarEntry(
+    entryId: number,
+    placement: CalendarPlacement,
+  ): Promise<void> {
+    const operation = sessionOperation()
+    if (operation === null) throw new Error('Sign in again to move this entry.')
+    try {
+      await api.updateTimeEntry(
+        entryId,
+        {
+          spent_date: placement.date,
+          started_time: placement.startedTime,
+          ended_time: placement.endedTime,
+        } satisfies TimeEntryPatch,
+        operation.signal,
+      )
+      if (!isSessionCurrent(operation)) return
+      await refresh(operation)
+    } catch (error) {
+      if (handleSessionFailure(error, operation)) return
+      throw new Error(messageFor(error), { cause: error })
+    }
+  }
+
   const configureEntryEditor = (
     next: ActiveEntryEditor,
     message = '',
@@ -4923,14 +5110,12 @@ export const mountShell = async (
     })
     entryDate.value = next.spentDate
     entryDurationInput.value = initialDurationValue
+    const shownStart = next.entry?.started_time ?? next.times?.started ?? null
+    const shownEnd = next.entry?.ended_time ?? next.times?.ended ?? null
     entryStart.value =
-      next.entry?.started_time === null || next.entry?.started_time === undefined
-        ? ''
-        : formatTimeForClock(next.entry.started_time, snapshot.timeEntrySettings.clock)
+      shownStart === null ? '' : formatTimeForClock(shownStart, snapshot.timeEntrySettings.clock)
     entryEnd.value =
-      next.entry?.ended_time === null || next.entry?.ended_time === undefined
-        ? ''
-        : formatTimeForClock(next.entry.ended_time, snapshot.timeEntrySettings.clock)
+      shownEnd === null ? '' : formatTimeForClock(shownEnd, snapshot.timeEntrySettings.clock)
     entryStart.placeholder = snapshot.timeEntrySettings.clock === '12h' ? '9:00 AM' : '09:00'
     entryEnd.placeholder = snapshot.timeEntrySettings.clock === '12h' ? '5:00 PM' : '17:00'
     entryNoteInput.value = next.notes ?? ''
@@ -4972,6 +5157,12 @@ export const mountShell = async (
     // leaving the keyboard behind the modal.
     if (next.entry?.is_locked === true) {
       entryDialog.querySelector<HTMLButtonElement>('[data-dialog-close]')?.focus()
+      return
+    }
+    // A span drawn on the calendar arrives with its times set: the note is the
+    // one thing left to say, and Enter in it saves.
+    if (next.context === 'calendar') {
+      entryNoteInput.focus()
       return
     }
     ;(running ||
@@ -5502,6 +5693,23 @@ export const mountShell = async (
     paletteIndex = 0
     renderPalette()
     refreshPaletteEntities(commandInput.value)
+  })
+
+  // The calendar's new entry is a draft until it is saved; closing the editor
+  // any other way (Esc, Cancel) discards it.
+  entryDialog.addEventListener('close', () => {
+    calendar.clearDraft()
+  })
+  entryNoteInput.addEventListener('keydown', (event) => {
+    if (
+      activeEntry?.context !== 'calendar' ||
+      event.key !== 'Enter' ||
+      event.shiftKey ||
+      event.isComposing
+    )
+      return
+    event.preventDefault()
+    entryForm.requestSubmit()
   })
 
   entryForm.addEventListener('submit', (event) => {
@@ -6927,6 +7135,25 @@ export const mountShell = async (
       const chosen = button.dataset.navLayoutChoice
       if (chosen === undefined || !(navLayouts as readonly string[]).includes(chosen)) return
       syncNavLayoutChoice(navLayout.set(chosen as NavLayout))
+    })
+  }
+  // Week or Day on the calendar: remembered the same way, and redrawn in place.
+  const syncCalendarLayoutChoice = (current: CalendarLayout): void => {
+    for (const button of document.querySelectorAll<HTMLButtonElement>(
+      '[data-calendar-layout-choice]',
+    )) {
+      button.setAttribute('aria-pressed', String(button.dataset.calendarLayoutChoice === current))
+    }
+  }
+  syncCalendarLayoutChoice(calendarLayout.start())
+  for (const button of document.querySelectorAll<HTMLButtonElement>(
+    '[data-calendar-layout-choice]',
+  )) {
+    button.addEventListener('click', () => {
+      const chosen = button.dataset.calendarLayoutChoice
+      if (chosen === undefined || !(calendarLayouts as readonly string[]).includes(chosen)) return
+      syncCalendarLayoutChoice(calendarLayout.set(chosen as CalendarLayout))
+      render()
     })
   }
   const sidebarState = createSidebarRuntime({

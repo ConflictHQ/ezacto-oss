@@ -1095,6 +1095,72 @@
   background: var(--ez-ground);
   color: var(--ez-ink);
 }
+.filter-bar {
+  display: grid;
+  gap: 10px;
+  margin-block: 12px;
+}
+.filter-bar-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+.filter-bar-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.filter-bar-field label {
+  color: var(--ez-muted);
+  font-size: 12px;
+}
+.filter-bar-field select,
+.filter-bar-field input[type='search'] {
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.filter-bar-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+.filter-bar-toggle input {
+  width: 20px;
+  height: 20px;
+}
+.filter-bar-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.filter-bar-chip,
+.filter-bar-clear {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+  cursor: pointer;
+}
+.filter-bar-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.filter-bar-clear {
+  justify-self: start;
+}
 .report-detailed-active {
   display: flex;
   flex-direction: row;
@@ -7880,6 +7946,7 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
      test lifts the FIRST `@media print` it finds as the paper stylesheet, so a
      second block earlier in the file silently became the whole of it. */
   .report-detailed-controls,
+  .filter-bar,
   .report-entry-actions,
   .topbar,
   .tabstrip,
@@ -9052,56 +9119,332 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   background: var(--ez-orange-tint);
 }
 
-/* The calendar. Height is minutes: a two-hour block is twice a one-hour block
-   in either mode, and only where the column starts differs between them. */
-.calendar-table {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
+/* The calendar (issue 943). Height is minutes: --cal-start and --cal-span are
+   minutes from midnight, so one rule places a block, a draft, the cursor and
+   the line for now, and the hour height is the only number that scales them. */
+.calendar-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
 }
-.calendar-table caption {
-  padding: 0 0 10px;
+.calendar-hint {
+  flex: 1 1 320px;
+  color: var(--ez-muted);
+  font-size: 12px;
+}
+.calendar-hint p {
+  margin: 0 0 4px;
+}
+.calendar-hint kbd {
+  padding: 0 4px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  font: inherit;
+}
+.calendar-layout {
+  display: inline-flex;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  overflow: hidden;
+}
+.calendar-layout button {
+  padding: 6px 14px;
+  border: 0;
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+  font: inherit;
+  cursor: pointer;
+}
+.calendar-layout button[aria-pressed='true'] {
+  background: var(--ez-action);
+  color: var(--ez-action-fg);
+}
+.calendar-surface {
+  --cal-hour: 48px;
+  --cal-ruler: 56px;
+}
+.cal[data-layout='day'] {
+  --cal-hour: 72px;
+}
+.cal-scroll {
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+/* Seven columns do not fit a phone; the week scrolls sideways there rather
+   than squeezing a block narrower than a thumb. */
+.cal[data-layout='week'] .cal-grid {
+  min-width: 720px;
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: var(--cal-ruler) repeat(var(--cal-days), minmax(0, 1fr));
+}
+.cal-corner,
+.cal-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--ez-surface-2);
+  border-bottom: 1px solid var(--ez-border);
+}
+.cal-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px;
+  border-left: 1px solid var(--ez-border);
+  font-size: 13px;
+}
+.cal-head[data-today='true'] .cal-head-number {
+  color: var(--ez-data);
+  font-weight: 700;
+}
+.cal-head-weekday {
+  margin-right: 4px;
+  color: var(--ez-muted);
+}
+.cal-head-total,
+.cal-dayhead-total {
+  color: var(--ez-muted);
+}
+.cal-dayhead {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px;
+  border-bottom: 1px solid var(--ez-border);
+}
+.cal-dayhead-date {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  flex: 1;
+}
+.cal-dayhead-number {
+  font-family: var(--ez-font-display);
+  font-size: 40px;
+  line-height: 1;
+}
+.cal-dayhead-date[data-today='true'] .cal-dayhead-number {
+  color: var(--ez-data);
+}
+.cal-dayhead-words {
+  display: flex;
+  flex-direction: column;
+}
+.cal-dayhead-month {
   color: var(--ez-muted);
   font-size: 13px;
-  text-align: left;
 }
-.calendar-table th,
-.calendar-table td {
+.cal-dayhead-total {
+  margin: 0;
+}
+.cal-step {
   padding: 6px;
   border: 1px solid var(--ez-border);
-  vertical-align: top;
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+  cursor: pointer;
+}
+.cal-band-label {
+  grid-column: 1;
+  padding: 6px 8px;
+  color: var(--ez-muted);
+  font-size: 12px;
+  border-bottom: 1px solid var(--ez-border);
+}
+.cal-band {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border-left: 1px solid var(--ez-border);
+  border-bottom: 1px solid var(--ez-border);
   min-width: 0;
 }
-.calendar-column {
-  position: relative;
-  min-height: 120px;
-}
-.calendar-block {
-  position: absolute;
-  top: calc(var(--calendar-offset) * 0.5px);
-  left: 0;
-  right: 0;
-  /* A floor, so a six-minute entry is still a target you can hit rather than a
-     hairline nobody can click. */
-  min-height: 18px;
-  height: calc(var(--calendar-minutes) * 0.5px);
-  padding: 2px 4px;
-  overflow: hidden;
+.cal-chip {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-status-bg);
   color: var(--ez-status-fg);
+  font: inherit;
   font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.cal-chip-name {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.calendar-untimed,
-.calendar-total {
-  margin: 6px 0 0;
-  color: var(--ez-muted);
-  font-size: 12px;
+.cal-ruler,
+.cal-col {
+  position: relative;
+  height: calc(var(--cal-hour) * 24);
 }
-.calendar-total {
+.cal-ruler-hour {
+  position: absolute;
+  top: calc(var(--cal-start) / 60 * var(--cal-hour));
+  right: 6px;
+  color: var(--ez-muted);
+  font-size: 11px;
+  transform: translateY(-50%);
+}
+.cal-ruler-hour:first-child {
+  transform: none;
+}
+.cal-col {
+  border-left: 1px solid var(--ez-border);
+  background-image: linear-gradient(var(--ez-border) 1px, transparent 1px);
+  background-size: 100% var(--cal-hour);
+  touch-action: pan-y;
+  cursor: crosshair;
+}
+.cal-col[data-today='true'] {
+  background-color: var(--ez-orange-tint);
+}
+.cal-block,
+.cal-cursor,
+.cal-guide {
+  position: absolute;
+  top: calc(var(--cal-start) / 60 * var(--cal-hour));
+  height: calc(var(--cal-span) / 60 * var(--cal-hour));
+  left: calc(var(--cal-lane, 0) / var(--cal-lanes, 1) * 100%);
+  width: calc(100% / var(--cal-lanes, 1));
+  box-sizing: border-box;
+}
+.cal-block {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 18px;
+  padding: 2px 6px;
+  overflow: hidden;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-status-bg);
+  color: var(--ez-status-fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: grab;
+  touch-action: pan-y;
+}
+.cal-block[data-state='running'] {
+  border-style: dashed;
+}
+.cal-block[data-state='locked'] {
+  cursor: not-allowed;
+  background: var(--ez-surface-2);
+  color: var(--ez-muted);
+}
+.cal-block[data-state='moving'],
+.cal-block[data-state='draft'] {
+  z-index: 2;
+  border-color: var(--ez-action);
+  box-shadow: var(--ez-shadow);
+}
+.cal-block[data-state='draft'] {
+  pointer-events: none;
+}
+.cal-block[data-state='saving'] {
+  opacity: 0.6;
+}
+.cal-block:focus-visible,
+.cal-cursor:focus-visible,
+.cal-chip:focus-visible,
+.cal-step:focus-visible {
+  outline: 2px solid var(--ez-action);
+  outline-offset: 1px;
+}
+.cal-block-title {
   font-weight: 600;
+}
+.cal-block-title,
+.cal-block-task,
+.cal-block-time,
+.cal-block-hours {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cal-block-lock {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+.cal-handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 8px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.cal-handle[data-calendar-handle='start'] {
+  top: 0;
+}
+.cal-handle[data-calendar-handle='end'] {
+  bottom: 0;
+}
+.cal-cursor {
+  z-index: 1;
+  border: 1px dashed var(--ez-action);
+  border-radius: var(--ez-radius);
+  background: transparent;
+  color: var(--ez-ink);
+  opacity: 0;
+  pointer-events: none;
+}
+.cal-cursor:focus {
+  opacity: 1;
+}
+.cal-cursor-label {
+  padding: 2px 6px;
+  font-size: 11px;
+}
+.cal-guide {
+  height: calc(15 / 60 * var(--cal-hour));
+  left: 0;
+  width: 100%;
+  border-top: 1px solid var(--ez-action);
+  pointer-events: none;
+}
+.cal-guide::after {
+  content: attr(data-time);
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  color: var(--ez-data);
+  font-size: 10px;
+}
+.cal-now {
+  position: absolute;
+  top: calc(var(--cal-start) / 60 * var(--cal-hour));
+  left: 0;
+  right: 0;
+  border-top: 2px solid var(--ez-red);
+  pointer-events: none;
+}
+.calendar-surface[data-dragging] {
+  user-select: none;
+  cursor: grabbing;
 }
 
 /* Issue 757. The organization timezone is its own setting rather than a field on

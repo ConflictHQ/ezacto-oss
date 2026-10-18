@@ -354,6 +354,8 @@ export interface RuntimeServices {
    */
   userEmails: UserEmailService
   isTeamModuleEnabled(): Promise<boolean>
+  /** The `activity_log` switch; absent key means on, so evidence is never hidden by an upgrade. */
+  isActivityLogModuleEnabled(): Promise<boolean>
   /**
    * Whether this organization lets a person read their own rates and take-home
    * (#520). Composed into `authentication` rather than a route's options: the
@@ -676,6 +678,7 @@ export const createApp = (
               clock: () => systemClock.now().instant,
             })
             installOutboxRoutes(api, services.outbox, {
+              isActivityLogModuleEnabled: services.isActivityLogModuleEnabled,
               cursorSigningKey: services.cursorSigningKey,
               timezone: organizationTimezone,
             })

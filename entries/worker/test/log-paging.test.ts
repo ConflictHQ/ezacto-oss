@@ -60,7 +60,11 @@ const setup = async () => {
     },
     installApi(api) {
       installEmailLogRoutes(api, services.emailLog, { cursorSigningKey, timezone })
-      installOutboxRoutes(api, services.outbox, { cursorSigningKey, timezone })
+      installOutboxRoutes(api, services.outbox, {
+        cursorSigningKey,
+        timezone,
+        isActivityLogModuleEnabled: async () => true,
+      })
       installBackupStatusRoutes(api, services.backupStatus!, { cursorSigningKey })
     },
   })

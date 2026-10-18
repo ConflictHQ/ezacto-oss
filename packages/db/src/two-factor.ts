@@ -77,7 +77,21 @@ export interface CreateTwoFactorChallengeInput {
   createdAt: string
   /** Expired or already-consumed rows at or before this instant are swept first. */
   cleanupBefore: string
+  /**
+   * Keyed hash of a code mailed with this challenge. Giving one supersedes every
+   * other unspent challenge the user holds, so a resend leaves exactly one live
+   * code and the earlier one stops working.
+   */
+  codeHash?: string
 }
+
+export type TwoFactorCodeRedemption =
+  | { status: 'accepted'; userId: number }
+  | { status: 'rejected' }
+  /** The challenge's guesses are spent; even the right code is refused now. */
+  | { status: 'exhausted' }
+  /** Unknown, carries no code, already spent, or expired. */
+  | { status: 'unknown' }
 
 export interface TwoFactorStore {
   enrolment(userId: number): Promise<TotpEnrolment | null>
@@ -122,6 +136,17 @@ export interface TwoFactorStore {
    * sessions. Null when the token is unknown, already spent, or expired.
    */
   consumeChallenge(tokenHash: string, now: string): Promise<TwoFactorChallenge | null>
+  /**
+   * Redeems a mailed code: verify, count and consume in one batch, so one
+   * challenge cannot become two sessions and a wrong code burns exactly one of
+   * `maxAttempts` guesses. Once they are gone the right code is refused too.
+   */
+  redeemChallengeCode(
+    tokenHash: string,
+    codeHash: string,
+    now: string,
+    maxAttempts: number,
+  ): Promise<TwoFactorCodeRedemption>
   /** The challenge's user without spending it, for the code check that precedes the spend. */
   challengeHolder(tokenHash: string, now: string): Promise<TwoFactorChallenge | null>
 }
@@ -433,7 +458,14 @@ const createTwoFactorStore = (database: PortableDatabase): TwoFactorStore => ({
     ])
   },
 
-  createChallenge: async ({ userId, tokenHash, expiresAt, createdAt, cleanupBefore }) => {
+  createChallenge: async ({
+    userId,
+    tokenHash,
+    expiresAt,
+    createdAt,
+    cleanupBefore,
+    codeHash,
+  }) => {
     const created = assertCanonicalTimestamp(createdAt)
     const expires = assertCanonicalTimestamp(expiresAt)
     const sweep = assertCanonicalTimestamp(cleanupBefore)
@@ -448,16 +480,29 @@ const createTwoFactorStore = (database: PortableDatabase): TwoFactorStore => ({
           RETURNING id`,
         bindings: [created, sweep],
       },
+      // A mailed code is the only thing a resend replaces. Deleting the user's
+      // other unspent challenges here, in the same batch as the insert, is what
+      // makes the older code stop working the moment the newer one exists.
+      ...(codeHash === undefined
+        ? []
+        : [
+            {
+              query: `DELETE FROM two_factor_challenges
+                WHERE user_id = ? AND consumed_at IS NULL AND token_hash <> ?
+                RETURNING id`,
+              bindings: [userId, tokenHash],
+            },
+          ]),
       {
         query: `INSERT INTO two_factor_challenges
-            (user_id, token_hash, expires_at, consumed_at, created_at, updated_at)
-          VALUES (?, ?, ?, NULL, ?, ?)
+            (user_id, token_hash, code_hash, expires_at, consumed_at, created_at, updated_at)
+          VALUES (?, ?, ?, ?, NULL, ?, ?)
           ON CONFLICT(token_hash) DO NOTHING
           RETURNING id`,
-        bindings: [userId, tokenHash, expires, created, created],
+        bindings: [userId, tokenHash, codeHash ?? null, expires, created, created],
       },
     ])
-    return rows[1]?.length === 1 ? 'created' : 'collision'
+    return rows[rows.length - 1]?.length === 1 ? 'created' : 'collision'
   },
 
   consumeChallenge: async (tokenHash, now) => {
@@ -472,6 +517,43 @@ const createTwoFactorStore = (database: PortableDatabase): TwoFactorStore => ({
       },
     ])
     return challenge(rows[0]?.[0] as unknown as ChallengeRow | undefined)
+  },
+
+  redeemChallengeCode: async (tokenHash, codeHash, now, maxAttempts) => {
+    const timestamp = assertCanonicalTimestamp(now)
+    const ceiling = assertCeiling(maxAttempts)
+    const live = `token_hash = ? AND consumed_at IS NULL AND code_hash IS NOT NULL
+      AND julianday(expires_at) > julianday(?) AND code_attempts < ?`
+    const rows = await database.atomic([
+      // Consumed only when the code matches and guesses remain.
+      {
+        query: `UPDATE two_factor_challenges SET consumed_at = ?, updated_at = ?
+          WHERE ${live} AND code_hash = ?
+          RETURNING user_id AS userId`,
+        bindings: [timestamp, timestamp, tokenHash, timestamp, ceiling, codeHash],
+      },
+      // A wrong code (nothing consumed above) burns one guess. A consumed row
+      // no longer matches, so a success never increments.
+      {
+        query: `UPDATE two_factor_challenges SET code_attempts = code_attempts + 1,
+            updated_at = ?
+          WHERE ${live}
+          RETURNING id`,
+        bindings: [timestamp, tokenHash, timestamp, ceiling],
+      },
+      // What is left, to tell a spent budget from a challenge that is gone.
+      {
+        query: `SELECT code_attempts AS attempts FROM two_factor_challenges
+          WHERE token_hash = ? AND consumed_at IS NULL AND code_hash IS NOT NULL
+            AND julianday(expires_at) > julianday(?)`,
+        bindings: [tokenHash, timestamp],
+      },
+    ])
+    const accepted = challenge(rows[0]?.[0] as unknown as ChallengeRow | undefined)
+    if (accepted !== null) return { status: 'accepted', userId: accepted.userId }
+    const remaining = rows[2]?.[0] as { attempts: number } | undefined
+    if (remaining === undefined) return { status: 'unknown' }
+    return remaining.attempts >= ceiling ? { status: 'exhausted' } : { status: 'rejected' }
   },
 
   challengeHolder: async (tokenHash, now) =>

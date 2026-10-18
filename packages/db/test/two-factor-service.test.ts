@@ -3,6 +3,7 @@ import { createTwoFactorService } from '../src/two-factor-service.js'
 import {
   RECOVERY_CODE_DECOY,
   type BeginEnrolmentInput,
+  type CreateTwoFactorChallengeInput,
   type TwoFactorStore,
 } from '../src/two-factor.js'
 import {
@@ -85,6 +86,7 @@ const store = (
     createChallenge: async () => 'created',
     consumeChallenge: async () => null,
     challengeHolder: async () => null,
+    redeemChallengeCode: async () => ({ status: 'unknown' }),
     ...overrides,
   }
 }
@@ -206,5 +208,136 @@ describe('two-factor verification', () => {
       pendingConfirmation: false,
       recoveryCodesRemaining: 8,
     })
+  })
+})
+
+describe('emailed code on a challenge (issue 770)', () => {
+  const emailCodeKey = new Uint8Array(32).fill(7)
+
+  interface Captured {
+    created: CreateTwoFactorChallengeInput[]
+    redeemed: { tokenHash: string; codeHash: string; maxAttempts: number }[]
+  }
+
+  const capturing = (
+    overrides: Partial<TwoFactorStore> = {},
+  ): TwoFactorStore & { captured: Captured } => {
+    const captured: Captured = { created: [], redeemed: [] }
+    return {
+      ...store({
+        createChallenge: async (input) => {
+          captured.created.push(input)
+          return 'created'
+        },
+        redeemChallengeCode: async (tokenHash, codeHash, _now, maxAttempts) => {
+          captured.redeemed.push({ tokenHash, codeHash, maxAttempts })
+          return { status: 'accepted', userId: 1 }
+        },
+        ...overrides,
+      }),
+      captured,
+    }
+  }
+
+  it('[security] returns the plain code once and persists only a keyed hash', async () => {
+    const backing = capturing()
+    const service = createTwoFactorService({
+      store: backing,
+      ...label,
+      emailCodeKey,
+      now: () => at,
+    })
+
+    const offer = await service.issueChallenge(1, { emailCode: true })
+
+    expect(offer.emailCode).toMatch(/^[0-9]{6}$/)
+    const stored = backing.captured.created[0]!
+    expect(stored.codeHash).toMatch(/^[0-9a-f]{64}$/)
+    // Nothing handed to the store contains the digits or the bearer token.
+    expect(JSON.stringify(stored)).not.toContain(offer.emailCode!)
+    expect(JSON.stringify(stored)).not.toContain(offer.token)
+    // The hash is keyed: the bare digest of six digits is not what is stored.
+    const bare = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(offer.emailCode!))
+    expect(stored.codeHash).not.toBe(
+      [...new Uint8Array(bare)].map((b) => b.toString(16).padStart(2, '0')).join(''),
+    )
+  })
+
+  it('[unit] issues no code unless one is asked for', async () => {
+    const backing = capturing()
+    const service = createTwoFactorService({ store: backing, ...label, now: () => at })
+
+    const offer = await service.issueChallenge(1)
+
+    expect(offer.emailCode).toBeUndefined()
+    expect(backing.captured.created[0]!.codeHash).toBeUndefined()
+  })
+
+  it('[unit] refuses to mail a code it has no key to hash', async () => {
+    const service = createTwoFactorService({ store: capturing(), ...label, now: () => at })
+
+    await expect(service.issueChallenge(1, { emailCode: true })).rejects.toThrow(/emailCodeKey/)
+    await expect(service.redeemEmailCode('A'.repeat(43), '123456')).rejects.toThrow(
+      /emailCodeKey/,
+    )
+  })
+
+  it('[security] redeems with the hash of what was typed, under the ceiling', async () => {
+    const backing = capturing()
+    const service = createTwoFactorService({
+      store: backing,
+      ...label,
+      emailCodeKey,
+      now: () => at,
+    })
+    const offer = await service.issueChallenge(1, { emailCode: true })
+
+    expect(await service.redeemEmailCode(offer.token, offer.emailCode!)).toEqual({
+      status: 'accepted',
+      userId: 1,
+    })
+    expect(backing.captured.redeemed).toEqual([
+      {
+        tokenHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+        codeHash: backing.captured.created[0]!.codeHash,
+        maxAttempts: 5,
+      },
+    ])
+  })
+
+  it('[security] maps the store verdicts, and exhaustion reads as locked', async () => {
+    const verdicts = {
+      rejected: { status: 'rejected' },
+      exhausted: { status: 'locked' },
+      unknown: { status: 'unknown_challenge' },
+    } as const
+    for (const [status, expected] of Object.entries(verdicts)) {
+      const service = createTwoFactorService({
+        store: capturing({
+          redeemChallengeCode: async () => ({ status: status as keyof typeof verdicts }),
+        }),
+        ...label,
+        emailCodeKey,
+        now: () => at,
+      })
+      expect(await service.redeemEmailCode('A'.repeat(43), '123456')).toEqual(expected)
+    }
+  })
+
+  it('[security] does not spend a guess on input that could never match', async () => {
+    const backing = capturing()
+    const service = createTwoFactorService({
+      store: backing,
+      ...label,
+      emailCodeKey,
+      now: () => at,
+    })
+
+    expect(await service.redeemEmailCode('short', '123456')).toEqual({
+      status: 'unknown_challenge',
+    })
+    expect(await service.redeemEmailCode('A'.repeat(43), '12345')).toEqual({ status: 'rejected' })
+    expect(await service.redeemEmailCode('A'.repeat(43), '12345a')).toEqual({ status: 'rejected' })
+    expect(backing.captured.redeemed).toEqual([])
   })
 })
