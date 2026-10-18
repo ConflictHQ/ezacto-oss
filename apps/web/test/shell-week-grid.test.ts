@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EzactoApiError } from '@conflict-hq/ezacto-client'
 import {
   browserApi,
+  deferred,
   desktopInputs,
   edit,
   mountShell,
@@ -400,6 +401,10 @@ describe('week-grid browser behavior', () => {
     expect(days(back, forward)).toBe(7)
 
     // A cell has focus, so the key belongs to the cell and not to the week.
+    // The grid is inert while a week loads, so wait for that to finish first.
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-week-grid]')?.getAttribute('aria-busy')).toBe('false'),
+    )
     desktopInputs()[0]!.focus()
     press(']')
     expect(week()).toBe(back)
@@ -1693,5 +1698,76 @@ describe('week-grid browser behavior', () => {
     expect(document.querySelector<HTMLButtonElement>('[data-entry-delete]')!.hidden).toBe(true)
     expect(api.deleteTimeEntry).not.toHaveBeenCalled()
     expect(api.entries).toHaveLength(1)
+  })
+
+  it('[browser oss#4] marks the grid busy and inert while another week loads, and clears it on success and failure', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    vi.setSystemTime(new Date('2026-08-28T12:00:00'))
+    renderBrowserShell()
+    const api = browserApi()
+    const list = api.listTimeEntries
+    await mountShell(api)
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-week-grid-rows] tr')).not.toBeNull(),
+    )
+    const surfaces = () => [
+      document.querySelector<HTMLElement>('[data-week-grid]')!,
+      document.querySelector<HTMLElement>('[data-day-list]')!,
+    ]
+    for (const surface of surfaces()) expect(surface.getAttribute('aria-busy')).not.toBe('true')
+    const heading = () => document.querySelector('[data-week-grid-head]')!.textContent
+    const before = heading()
+
+    // Hold every week read open so the load is observably in flight.
+    const gates: ReturnType<typeof deferred<unknown>>[] = []
+    api.listTimeEntries = vi.fn(async (query) => {
+      const gate = deferred<unknown>()
+      gates.push(gate)
+      await gate.promise
+      return list(query)
+    })
+    const next = () =>
+      document.querySelector<HTMLButtonElement>('[data-week-period] [data-period-next]')!
+    next().click()
+    next().click()
+    next().click()
+
+    // At once: the headings already name the new week, and nothing is editable.
+    expect(heading()).not.toBe(before)
+    for (const surface of surfaces()) {
+      expect(surface.getAttribute('aria-busy')).toBe('true')
+      expect(surface.hasAttribute('inert')).toBe(true)
+    }
+    // Quick answers never flash a skeleton; a slow one swaps the old rows out.
+    expect(document.querySelector('.grid-skeleton')).toBeNull()
+    await vi.advanceTimersByTimeAsync(200)
+    expect(document.querySelector('[data-week-grid-rows] .grid-skeleton')).not.toBeNull()
+    expect(document.querySelector('[data-day-rows] .grid-skeleton')).not.toBeNull()
+
+    // Rapid clicks: answering the superseded weeks does not end the busy state.
+    for (const gate of gates.slice(0, -1)) gate.resolve(undefined)
+    await vi.advanceTimersByTimeAsync(0)
+    for (const surface of surfaces()) expect(surface.getAttribute('aria-busy')).toBe('true')
+    gates.at(-1)!.resolve(undefined)
+    await vi.waitFor(() => {
+      for (const surface of surfaces()) expect(surface.getAttribute('aria-busy')).toBe('false')
+    })
+    for (const surface of surfaces()) expect(surface.hasAttribute('inert')).toBe(false)
+    expect(document.querySelector('.grid-skeleton')).toBeNull()
+
+    // A failed load hands over to the failure state instead of sticking.
+    api.listTimeEntries = vi.fn(async () => {
+      throw new Error('offline')
+    })
+    next().click()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-week-grid-rows]')?.textContent).toContain(
+        'Your week could not load',
+      ),
+    )
+    for (const surface of surfaces()) {
+      expect(surface.getAttribute('aria-busy')).toBe('false')
+      expect(surface.hasAttribute('inert')).toBe(false)
+    }
   })
 })
