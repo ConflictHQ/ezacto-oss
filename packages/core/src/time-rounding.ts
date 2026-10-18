@@ -181,3 +181,61 @@ export const describeTimeRounding = (policy: TimeRoundingPolicy): string => {
       return `rounded to the nearest ${increment}`;
   }
 };
+
+/**
+ * Re-rounding open time under the rules as they stand now. The preview says
+ * what would change; its fingerprint names exactly that set, and an apply
+ * that no longer matches it is refused as `stale`.
+ */
+export interface TimeRoundingRecalculationScope {
+  readonly projectId?: number
+  /** Inclusive, on `spent_date`. */
+  readonly from?: string
+  /** Inclusive, on `spent_date`. */
+  readonly to?: string
+}
+
+export interface TimeRoundingRecalculationProject {
+  readonly projectId: number
+  readonly projectName: string
+  readonly timeRounding: EffectiveTimeRounding
+  readonly changedEntries: number
+  readonly roundedSecondsBefore: number
+  readonly roundedSecondsAfter: number
+}
+
+export interface TimeRoundingRecalculationPreview {
+  readonly scope: TimeRoundingRecalculationScope
+  /** Entries in scope that could be recalculated at all. */
+  readonly openEntries: number
+  /** Of those, the ones whose rounded figure the current rules change. */
+  readonly changedEntries: number
+  readonly roundedSecondsBefore: number
+  readonly roundedSecondsAfter: number
+  readonly earliestSpentDate: string | null
+  readonly latestSpentDate: string | null
+  readonly projects: readonly TimeRoundingRecalculationProject[]
+  /** Entries in scope left exactly as they are, and why. */
+  readonly kept: {
+    readonly invoiced: number
+    readonly approved: number
+    readonly locked: number
+    /** Running timers, archived clients, projects or tasks, and corrections. */
+    readonly other: number
+  }
+  readonly fingerprint: string
+}
+
+export type TimeRoundingRecalculationResult =
+  | {
+      readonly status: 'applied'
+      readonly recalculatedEntries: number
+      /** What was applied: the preview the fingerprint named. */
+      readonly preview: TimeRoundingRecalculationPreview
+    }
+  | {
+      readonly status: 'stale'
+      /** What would change now. */
+      readonly preview: TimeRoundingRecalculationPreview
+    }
+

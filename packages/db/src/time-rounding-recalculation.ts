@@ -4,12 +4,22 @@ import {
   roundTimeSeconds,
   type EffectiveTimeRounding,
   type TimeRoundingPolicy,
+  type TimeRoundingRecalculationPreview,
+  type TimeRoundingRecalculationResult,
+  type TimeRoundingRecalculationScope,
 } from '@ezacto/core'
 import type BetterSqlite3 from 'better-sqlite3'
 import { sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
+
+export type {
+  TimeRoundingRecalculationPreview,
+  TimeRoundingRecalculationProject,
+  TimeRoundingRecalculationResult,
+  TimeRoundingRecalculationScope,
+} from '@ezacto/core'
 
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 type NativeClient = BetterSqlite3.Database | D1Database
@@ -32,58 +42,6 @@ type NativeClient = BetterSqlite3.Database | D1Database
  * the set and refuses if the fingerprint no longer matches, so what is written
  * is what was shown and nothing else.
  */
-
-export interface TimeRoundingRecalculationScope {
-  readonly projectId?: number
-  /** Inclusive, on `spent_date`. */
-  readonly from?: string
-  /** Inclusive, on `spent_date`. */
-  readonly to?: string
-}
-
-export interface TimeRoundingRecalculationProject {
-  readonly projectId: number
-  readonly projectName: string
-  readonly timeRounding: EffectiveTimeRounding
-  readonly changedEntries: number
-  readonly roundedSecondsBefore: number
-  readonly roundedSecondsAfter: number
-}
-
-export interface TimeRoundingRecalculationPreview {
-  readonly scope: TimeRoundingRecalculationScope
-  /** Entries in scope that could be recalculated at all. */
-  readonly openEntries: number
-  /** Of those, the ones whose rounded figure the current rules change. */
-  readonly changedEntries: number
-  readonly roundedSecondsBefore: number
-  readonly roundedSecondsAfter: number
-  readonly earliestSpentDate: string | null
-  readonly latestSpentDate: string | null
-  readonly projects: readonly TimeRoundingRecalculationProject[]
-  /** Entries in scope left exactly as they are, and why. */
-  readonly kept: {
-    readonly invoiced: number
-    readonly approved: number
-    readonly locked: number
-    /** Running timers, archived clients, projects or tasks, and corrections. */
-    readonly other: number
-  }
-  readonly fingerprint: string
-}
-
-export type TimeRoundingRecalculationResult =
-  | {
-      readonly status: 'applied'
-      readonly recalculatedEntries: number
-      /** What was applied: the preview the fingerprint named. */
-      readonly preview: TimeRoundingRecalculationPreview
-    }
-  | {
-      readonly status: 'stale'
-      /** What would change now. */
-      readonly preview: TimeRoundingRecalculationPreview
-    }
 
 export type LockedDates = (spentDates: readonly string[]) => Promise<ReadonlyMap<string, boolean>>
 
