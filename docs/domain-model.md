@@ -86,7 +86,7 @@ Harvest's `company` + the Preferences/Modules settings surface (UI inventory §3
 | `reminder_policy` | json | Offsets + capacity-threshold %, per UI 30b. |
 | `auto_lock` / `auto_submit` | bool | Harvest "NEW" prefs. |
 | `time_entry_notes_required` | bool | |
-| `time_rounding` | enum `none\|nearest_6\|nearest_15\|nearest_30\|up_6\|up_15\|up_30` | The complete setting set evidenced by [Harvest's Preferences controls](https://support.getharvest.com/hc/en-us/articles/360048179912-Customizing-account-preferences). Drives native `rounded_seconds` (§3.4). |
+| `time_rounding_mode` / `time_rounding_minutes` | enum `exact\|up\|down\|nearest` / int `6\|10\|15\|20\|30\|60` | The organization's rounding rule: a direction and an increment (issue 949). Drives native `rounded_seconds` (§3.4). A project may carry its own pair; the old `time_rounding` enum (`none\|nearest_6\|nearest_15\|nearest_30\|up_6\|up_15\|up_30`, the set [Harvest's Preferences controls](https://support.getharvest.com/hc/en-us/articles/360048179912-Customizing-account-preferences) evidence) was copied into the pair by migration 0110 and is no longer read. |
 | `modules` | json | Feature flags: `expenses, invoices, estimates, approval, team, client_portal, activity_log`. Disabled modules disappear from nav (UI §38 Modules — keep this). |
 | `require_2fa` / `require_sso` | bool | Commercial-tier enforcement; columns exist in OSS, enforcement is Identity-seam concern (D4). |
 
@@ -540,20 +540,39 @@ verbatim. Import never re-resolves them.
 
 ### 3.4 Rounding
 
-The supported settings are exactly:
+Rounding is a direction and an increment, chosen for the organization and
+overridable per project (`projects.time_rounding_mode` / `time_rounding_minutes`,
+both null for the organization's rule, otherwise both set).
 
-`none | nearest_6 | nearest_15 | nearest_30 | up_6 | up_15 | up_30`
+- direction: `exact | up | down | nearest`
+- increment: `6 | 10 | 15 | 20 | 30 | 60` minutes
 
 For a non-negative native duration `s` and increment `q = minutes × 60`:
 
-- `none`: `s`
+- `exact`: `s`
 - `up`: `ceil(s / q) × q`
+- `down`: `floor(s / q) × q`
 - `nearest`: `floor((s + q / 2) / q) × q`
 
 At an exact positive midpoint, `nearest` therefore rounds upward. This midpoint
 half-up behavior is the proposed ezacto-native rule; Harvest's official controls
 establish the available modes and increments, not its undocumented tie behavior.
 Tests and documentation must not describe the tie rule as confirmed Harvest parity.
+
+The figure is stored per entry in `rounded_seconds` when the entry is saved: when a
+stopped entry is created, when a timer stops (including the stop-previous trigger),
+and when an edit changes the timing or the project. The rule is the entry's
+project's where it has one, else the organization's. Moving an entry to another
+project, including the report Move action, rounds it by that project's rule.
+
+Changing a setting rewrites nothing. **Recalculate open entries** is the explicit,
+previewed way to apply the current rules to earlier time. "Open" is what a single edit
+allows: stopped, not invoiced, not approved, on an unlocked date, under an active
+client, project and task. Negative entries (imported corrections) are left as
+imported. The preview reports how many entries change, their hours before and after,
+a breakdown by project, the date span and what is left alone; the apply sends back the
+preview's fingerprint and is refused (409 `preview_stale`) if anything has changed
+since.
 
 Imported `rounded_hours` is converted and stored verbatim as `rounded_seconds`; it is
 not recomputed using the native rule. Invoices and summary reports consume the stored

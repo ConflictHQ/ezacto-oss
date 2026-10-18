@@ -1,3 +1,12 @@
+import {
+  describeTimeRounding,
+  timeRoundingIncrementLabel,
+  timeRoundingIncrements,
+  timeRoundingModes,
+  timeRoundingModeLabels,
+  type TimeRoundingMinutes,
+  type TimeRoundingMode,
+} from '@ezacto/core'
 import { EzactoApiError, type Attachment, type GeneralResource, type Whoami } from '@conflict-hq/ezacto-client'
 
 import { renderDataTable, type CellContent } from '../components/data-table.js'
@@ -215,6 +224,21 @@ const centsValue = (resource: GeneralResource | null, field: string): string => 
 const hoursValue = (resource: GeneralResource | null, field: string): string => {
   const value = resource === null ? null : projectNumber(resource, field)
   return value === null ? '' : String(value / 3_600)
+}
+
+/**
+ * A project's own rounding rule, or none. A rule is a direction and an
+ * increment together (issue 949), so the two fields are read as one.
+ */
+const projectRoundingRule = (
+  project: Readonly<GeneralResource>,
+): { mode: TimeRoundingMode; minutes: TimeRoundingMinutes } | null => {
+  const mode = project['time_rounding_mode']
+  const minutes = project['time_rounding_minutes']
+  return (timeRoundingModes as readonly unknown[]).includes(mode) &&
+    (timeRoundingIncrements as readonly unknown[]).includes(minutes)
+    ? { mode: mode as TimeRoundingMode, minutes: minutes as TimeRoundingMinutes }
+    : null
 }
 
 const valueFor = (resource: GeneralResource | null, field: string): string => {
@@ -668,6 +692,10 @@ export const createProjectDirectoryController = (
         fact('Billing method', projectEnumLabel(projectText(currentProject, 'billing_method'))),
         fact('Bill by', projectEnumLabel(projectText(currentProject, 'bill_by'))),
         fact('Billing currency', projectText(currentProject, 'billing_currency') ?? 'Organization default'),
+        fact('Time rounding', (() => {
+          const rule = projectRoundingRule(currentProject)
+          return rule === null ? 'Organization default' : describeTimeRounding(rule)
+        })()),
       ] : []),
       ...(active.capabilities.canViewBillableMoney
         ? [
@@ -1043,6 +1071,25 @@ export const createProjectDirectoryController = (
     billingCurrency.minLength = 3
     billingCurrency.maxLength = 3
     billingCurrency.pattern = '[A-Za-z]{3}'
+    const roundingMode = select('time_rounding_mode', [
+      ['', 'Organization default'],
+      ...timeRoundingModes.map((mode): [string, string] => [mode, timeRoundingModeLabels[mode]]),
+    ])
+    const roundingMinutes = select(
+      'time_rounding_minutes',
+      timeRoundingIncrements.map((minutes): [string, string] => [
+        String(minutes),
+        timeRoundingIncrementLabel(minutes),
+      ]),
+    )
+    // The increment is half of a rule; with no rule of its own there is nothing
+    // for it to be the increment of.
+    const syncRoundingMinutes = (): void => {
+      roundingMinutes.disabled = roundingMode.value === ''
+    }
+    roundingMode.addEventListener('change', syncRoundingMinutes)
+    roundingMinutes.value = '15'
+    syncRoundingMinutes()
     const budgetHours = input('budget_seconds', { type: 'number', min: '0', step: '0.01' })
     const overBudget = input('over_budget_pct', { type: 'number', min: '0', step: '0.01' })
     const starts = input('starts_on', { type: 'date' })
@@ -1076,7 +1123,12 @@ export const createProjectDirectoryController = (
             label('Cost budget', input('cost_budget_cents', { type: 'number', min: '0', step: '0.01' })),
           ]
         : []),
-      ...(active.capabilities.canManageCommercialTerms ? [label('Billing currency', billingCurrency)] : []),
+      ...(active.capabilities.canManageCommercialTerms
+        ? [
+            label('Billing currency', billingCurrency),
+            pair(label('Time rounding', roundingMode), label('Round to', roundingMinutes)),
+          ]
+        : []),
       label('Report visibility', reportVisibility),
       pair(label('Starts on', starts), label('Ends on', ends)),
       label('Minimum time-entry note length', noteMinimum),
@@ -1118,6 +1170,12 @@ export const createProjectDirectoryController = (
       formField(projectForm, fieldName).value = valueFor(project, fieldName)
     }
     formField(projectForm, 'budget_seconds').value = hoursValue(project, 'budget_seconds')
+    if (active.capabilities.canManageCommercialTerms) {
+      const rule = projectRoundingRule(project)
+      roundingMode.value = rule?.mode ?? ''
+      roundingMinutes.value = String(rule?.minutes ?? 15)
+      syncRoundingMinutes()
+    }
     if (active.capabilities.canViewBillableMoney) {
       formField(projectForm, 'hourly_rate_cents').value = centsValue(project, 'hourly_rate_cents')
       formField(projectForm, 'fee_cents').value = centsValue(project, 'fee_cents')
@@ -1261,6 +1319,12 @@ export const createProjectDirectoryController = (
       payload.billing_method = String(data.get('billing_method'))
       payload.bill_by = String(data.get('bill_by'))
       payload.billing_currency = optionalText(data, 'billing_currency')?.toLocaleUpperCase('en-US') ?? null
+      // Both or neither: a disabled field is not in the form data, so the
+      // increment is read from the control, not from FormData.
+      const roundingChoice = String(data.get('time_rounding_mode') ?? '')
+      payload.time_rounding_mode = roundingChoice === '' ? null : roundingChoice
+      payload.time_rounding_minutes =
+        roundingChoice === '' ? null : Number(formField(projectForm, 'time_rounding_minutes').value)
     }
     if (active.capabilities.canViewBillableMoney) {
       payload.hourly_rate_cents = moneyCents(data, 'hourly_rate_cents')
