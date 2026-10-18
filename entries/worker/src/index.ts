@@ -197,6 +197,17 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
     const services = await createRuntimeServices(env)
     if (controller.cron === '* * * * *')
       await services.paymentRuns?.processDue(new Date().toISOString())
+    if (controller.cron === '* * * * *' && services.budgetAlerts !== undefined) {
+      // Budget alerts (issue 934): a pass over the projects that asked to be
+      // told, before the drain below so the event it writes is mailed in the
+      // same invocation. A failed pass is reported and never stops the drain.
+      try {
+        await services.budgetAlerts.evaluate(new Date().toISOString())
+      } catch (error) {
+        console.error('[worker] budget alert evaluation failed', error)
+        Sentry.captureException(error)
+      }
+    }
     // Not on the demo (#931): its database is thrown away at this hour, and an
     // export would copy whatever visitors typed into it into the bucket, which
     // nothing ever empties.

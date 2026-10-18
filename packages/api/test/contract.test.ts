@@ -15,6 +15,7 @@ import {
   installInvoiceHoursReportRoutes,
   installThankYouPreferenceRoutes,
   installReminderSettingsRoutes,
+  installNotificationSettingsRoutes,
   installInvoiceDefaultsRoutes,
   installRecurringRepairRoutes,
   installInvoiceTimeClaimRoutes,
@@ -333,6 +334,10 @@ const documentedApp = () =>
         setOrganizationReminderPolicy: async () => 0,
         readInvoiceReminders: async () => null,
         setInvoiceReminders: async () => false,
+      });
+      installNotificationSettingsRoutes(api, {
+        read: async () => ({ budget_alerts_include_admins: false }),
+        update: async () => ({ budget_alerts_include_admins: false }),
       });
       installInvoiceDefaultsRoutes(api, {
         read: async () => ({ companyName: "Org", companyAddress: null, notes: null, subject: null }),

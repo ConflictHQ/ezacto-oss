@@ -103,6 +103,10 @@ import {
   readOrganizationThankYouPolicy,
   setInvoiceThankYouPolicy,
   setOrganizationThankYouPolicy,
+  evaluateProjectBudgetAlerts,
+  prepareBudgetAlertMail,
+  readNotificationSettings,
+  updateNotificationSettings,
   setBillDelivery,
   createD1IdempotencyStore,
   createIdempotentD1,
@@ -113,6 +117,8 @@ import {
   createApiSessionService,
   createCloudflareAccessSessionResolver,
   createCloudflareAccessVerifier,
+  createBudgetAlertSubscriber,
+  createNotificationSettingsService,
   createInvoiceEmailOutboxSubscriber,
   createInvoiceThankYouSubscriber,
   thankYouInvoiceFromDeliveryContext,
@@ -157,6 +163,7 @@ import {
   createCloudflareEmailQueue,
   createWorkerDeploymentAuthMailer,
   createWorkerAccountDeletionMailer,
+  createWorkerNotificationMailer,
   createWorkerOrganizationMailer,
   createWorkerStaffMagicLinkMailer,
 } from "./email-queue.js";
@@ -737,6 +744,14 @@ export const createRuntimeServices = async (
           emailProvider.name,
           emailConfiguration,
         );
+  // The mail the instance sends its own people (budget alerts, issue 934). On
+  // the deployment sender, so it needs the same From and queue the sign-in mail
+  // does; without them the alert is still recorded and shown in the activity
+  // log, and there is simply nobody to mail it through.
+  const notificationMailer =
+    !emailQueueReady || mailFrom === undefined
+      ? undefined
+      : createWorkerNotificationMailer(emailQueue!, emailLog, mailFrom);
   // One service behind two ports: the password routes take it whole, the
   // add-an-address route takes only `addEmail`.
   const passwordAuth = createD1PasswordAuthService(database);
@@ -1010,6 +1025,21 @@ export const createRuntimeServices = async (
         invoiceDocuments,
       ),
       createInvoiceThankYouSubscriber(thankYou, organizationMailer),
+      ...(notificationMailer === undefined
+        ? []
+        : [
+            createBudgetAlertSubscriber(
+              {
+                prepare: (alertId: number) =>
+                  prepareBudgetAlertMail(drizzle, {
+                    alertId,
+                    from: notificationMailer.from,
+                    now: new Date().toISOString(),
+                  }),
+              },
+              notificationMailer,
+            ),
+          ]),
       reminders.subscriber,
       ...(quickBooks === null ? [] : [createQuickBooksMirrorSubscriber(quickBooks)]),
       createBillMirrorSubscriber(bill),
@@ -1035,6 +1065,11 @@ export const createRuntimeServices = async (
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     recurringInvoices: createRecurringInvoiceEngine(drizzle),
     reminders: { processDue: processDueReminders },
+    budgetAlerts: { evaluate: (now: string) => evaluateProjectBudgetAlerts(drizzle, now) },
+    notificationSettings: createNotificationSettingsService({
+      read: () => readNotificationSettings(drizzle),
+      update: (patch) => updateNotificationSettings(drizzle, patch, new Date().toISOString()),
+    }),
     reminderSettings: createReminderSettings(drizzle, reminders, () => new Date().toISOString()),
     // Invoices › Configure: what every invoice prints and every draft starts with.
     invoiceDefaults: {

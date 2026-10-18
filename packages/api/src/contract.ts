@@ -1688,6 +1688,32 @@ const invoiceThankYouPreferenceOperations: ApiContractOperation[] = [
   },
 ];
 
+// Company settings for the mail the instance sends its own people (issue 934).
+const notificationSettingsOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/settings/notifications",
+    operationId: "getNotificationSettings",
+    summary: "Company settings for the mail the instance sends its own people",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "NotificationSettingsEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/notifications",
+    operationId: "setNotificationSettings",
+    summary: "Change the company settings for budget alerts and reminders",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "NotificationSettingsEnvelope",
+    requestSchema: "NotificationSettingsInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+];
+
 // Invoices › Configure: company information and default values.
 const invoiceDefaultsOperations: ApiContractOperation[] = [
   {
@@ -2938,6 +2964,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...invoiceTimeClaimOperations,
   ...invoiceDocumentPreferenceOperations,
   ...invoiceDefaultsOperations,
+  ...notificationSettingsOperations,
   ...invoiceThankYouPreferenceOperations,
   ...recurringRepairOperations,
   ...payoutAccountOperations,
@@ -8872,6 +8899,30 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           // On a set only: how many open invoices with nothing pending the
           // new policy was booked for (issue 850).
           applied_to_open_invoices: { type: "integer", minimum: 0 },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  NotificationSettingsInput: {
+    type: "object",
+    properties: {
+      // Issue 934: copy administrators on every budget alert, not only when a
+      // project has no manager with an address.
+      budget_alerts_include_admins: { type: "boolean" },
+    },
+    additionalProperties: false,
+  },
+  NotificationSettingsEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["budget_alerts_include_admins"],
+        properties: {
+          budget_alerts_include_admins: { type: "boolean" },
         },
         additionalProperties: false,
       },

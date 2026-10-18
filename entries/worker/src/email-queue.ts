@@ -16,11 +16,13 @@ import {
   type SenderIdentityResolver,
 } from '@ezacto/mailer'
 import {
+  createDeploymentNotificationMailer,
   createQueuedAccountDeletionMailer,
   createQueuedAuthMailer,
   createQueuedStaffMagicLinkMailer,
   type AccountDeletionMailer,
   type AuthMailer,
+  type NotificationMailer,
   type StaffMagicLinkMailer,
 } from '@ezacto/api'
 
@@ -142,3 +144,14 @@ export const createWorkerOrganizationMailer = (
   identities: SenderIdentityResolver,
 ): SenderBoundQueuedMailer =>
   createSenderBoundQueuedMailer(identities, createQueuedMailer(log, queue), provider)
+
+/**
+ * The mail the instance sends its own people -- budget alerts, time reminders --
+ * on the deployment sender and the same queue as the rest, so the demo's
+ * allowlist holds it too.
+ */
+export const createWorkerNotificationMailer = (
+  queue: EmailQueue,
+  log: EmailLogStore,
+  from: string,
+): NotificationMailer => createDeploymentNotificationMailer(from, createQueuedMailer(log, queue))

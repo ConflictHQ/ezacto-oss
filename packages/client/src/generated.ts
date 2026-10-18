@@ -3577,6 +3577,16 @@ export type OrganizationInvoiceRemindersEnvelope = {
 };
 };
 
+export type NotificationSettingsInput = {
+  "budget_alerts_include_admins"?: boolean;
+};
+
+export type NotificationSettingsEnvelope = {
+  "data": {
+  "budget_alerts_include_admins": boolean;
+};
+};
+
 export type JournalFormats = Array<"pdf" | "csv" | "xlsx">;
 
 export type InvoiceDocumentPreferenceInput = {
@@ -6525,6 +6535,25 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<InvoiceDefaultsEnvelope>("POST", "/api/v1/settings/invoice-defaults", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getNotificationSettings(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<NotificationSettingsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<NotificationSettingsEnvelope>("GET", "/api/v1/settings/notifications", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setNotificationSettings(args: { body: NotificationSettingsInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<NotificationSettingsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<NotificationSettingsEnvelope>("POST", "/api/v1/settings/notifications", {
       body: args.body,
       signal: args.signal,
       headers,
