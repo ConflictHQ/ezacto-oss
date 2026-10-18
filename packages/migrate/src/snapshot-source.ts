@@ -12,15 +12,17 @@
  * `_ezacto_load_progress` checkpoints a byte offset and a row index. Anything
  * wider would be inventing a shape for a consumer that does not exist yet.
  *
- * What this does NOT cover, recorded here because it is the rest of the work
- * and is easy to discover too late: the loader also uses its snapshot directory
- * as scratch. It keeps a child-index cache under `raw/.load-index`, takes a
- * lock through an `owner.json` beside it, and calls `stat()` to size the raw
- * files. Those are local-disk assumptions a queue consumer does not satisfy,
- * and they are a separate piece of work from reading the rows.
+ * Every raw read the loader makes, rows and lineage alike, and the sizing of
+ * those files, goes through this port. A lineage file is the resource named
+ * `<resource>.lineage`. What this does NOT cover, recorded here because it is
+ * the rest of the work and is easy to discover too late: the loader still keeps
+ * a child-index cache under `raw/.load-index` and takes a lock through an
+ * `owner.json` beside it, on local disk, keyed by the snapshot directory. A
+ * queue consumer does not satisfy those, and they are separate work.
  */
 
 import { createReadStream } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 
@@ -33,6 +35,12 @@ export interface SnapshotSource {
    * be O(n) on every restart of a 296,282-row load.
    */
   openRaw(resource: string, byteOffset: number): AsyncIterable<string>
+  /**
+   * The byte length of one resource's JSONL. The loader compares it with the
+   * end of the last indexed row, so it must be the object's own size and not a
+   * count of anything read.
+   */
+  size(resource: string): Promise<number>
   /** Named for error messages, so a failure says which snapshot it was reading. */
   describe(resource: string): string
 }
@@ -46,6 +54,7 @@ export const fileSnapshotSource = (snapshotDir: string): SnapshotSource => ({
       ),
       crlfDelay: Infinity,
     }),
+  size: async (resource) => (await stat(join(snapshotDir, 'raw', `${resource}.jsonl`))).size,
   describe: (resource) => join(snapshotDir, 'raw', `${resource}.jsonl`),
 })
 
@@ -55,6 +64,7 @@ export interface SnapshotBucket {
     key: string,
     options?: { range?: { offset: number } },
   ): Promise<{ body: ReadableStream<Uint8Array> } | null>
+  head(key: string): Promise<{ size: number } | null>
 }
 
 /**
@@ -113,10 +123,11 @@ export const r2SnapshotSource = (
       if (object === null) throw new Error(`${key(resource)} is not in the snapshot bucket`)
       yield* linesFromStream(object.body)
     },
+    size: async (resource) => {
+      const object = await bucket.head(key(resource))
+      if (object === null) throw new Error(`${key(resource)} is not in the snapshot bucket`)
+      return object.size
+    },
     describe: key,
   }
 }
-
-/** Accepts what the loader already threads, so its call sites do not change. */
-export const asSnapshotSource = (source: SnapshotSource | string): SnapshotSource =>
-  typeof source === 'string' ? fileSnapshotSource(source) : source
