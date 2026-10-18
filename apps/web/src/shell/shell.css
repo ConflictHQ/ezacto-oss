@@ -3856,6 +3856,14 @@ a {
   gap: 24px;
   margin-bottom: 20px;
 }
+/* The Reports header buttons sat flush at desktop widths: the gap lived only in
+   the mobile query. Declared here it holds at every width, and wrapping keeps
+   the row clean on a narrow one. */
+.report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .context-row h1,
 .week-surface h2,
 dialog h2,
