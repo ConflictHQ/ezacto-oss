@@ -8,7 +8,7 @@ import { projectsTimeMigration } from '../src/migrations/0002_projects_time.js'
 import { rateResolverMigration } from '../src/migrations/0003_rate_resolver.js'
 import { invoiceFoundationMigration } from '../src/migrations/0004_invoice_foundation.js'
 import { invoicePaymentsTotalsMigration } from '../src/migrations/0005_invoice_payments_totals.js'
-import { invoiceTotalsPerInvoiceMigration } from '../src/migrations/0101_invoice_totals_per_invoice.js'
+import { invoiceTotalsPerInvoiceMigration } from '../src/migrations/0110_invoice_totals_per_invoice.js'
 
 /**
  * Invoice totals recompute one invoice per row, not the organization (issue 950).
@@ -16,7 +16,7 @@ import { invoiceTotalsPerInvoiceMigration } from '../src/migrations/0101_invoice
  * 0005's triggers read `invoice_financial_calculation` with a correlated key
  * that SQLite does not push into the view's organization-wide GROUP BY, so
  * every inserted line aggregated every invoice twice. A 100-line invoice on a
- * long history spent over a second inside SQLite. 0101 keys each recompute on
+ * long history spent over a second inside SQLite. 0110 keys each recompute on
  * the row's own invoice. These cases pin three things:
  *
  * - The stored totals still equal the canonical view after every kind of

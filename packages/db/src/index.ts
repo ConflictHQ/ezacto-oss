@@ -8,6 +8,7 @@ export * from './email-log.js'
 export * from './email-configuration.js'
 export * from './estimates.js'
 export * from './general-resources.js'
+export * from './idempotency.js'
 export * from './identity.js'
 export * from './instance-bootstrap.js'
 export * from './invoice-state.js'
@@ -89,3 +90,16 @@ export { createQuickBooksMirrorSource } from './quickbooks-source.js'
 export { createStaffPaymentStore } from './staff-payments.js'
 
 export { createPaymentRunsService } from './payment-runs.js'
+
+export * from './account-retention.js'
+
+export * from './account-deletion-requests.js'
+
+export * from './account-closure.js'
+
+export * from './account-deletion-status.js'
+
+export * from './apple-lifecycle.js'
+
+export { createAccountRetentionReviewRepository } from './account-retention-review.js'
+export * from './apple-web-custody.js'

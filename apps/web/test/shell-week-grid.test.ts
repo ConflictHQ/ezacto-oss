@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EzactoApiError } from '@conflict-hq/ezacto-client'
 import {
   browserApi,
+  deferred,
   desktopInputs,
   edit,
   mountShell,
@@ -400,6 +401,10 @@ describe('week-grid browser behavior', () => {
     expect(days(back, forward)).toBe(7)
 
     // A cell has focus, so the key belongs to the cell and not to the week.
+    // The grid is inert while a week loads, so wait for that to finish first.
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-week-grid]')?.getAttribute('aria-busy')).toBe('false'),
+    )
     desktopInputs()[0]!.focus()
     press(']')
     expect(week()).toBe(back)
@@ -1018,9 +1023,29 @@ describe('week-grid browser behavior', () => {
       '0',
       '2.2583',
     ])
-    // The idle chip is a duration in the same column of numbers as the rest, so
-    // its placeholder follows the setting rather than reading 0:00 beside 2.25.
-    expect(durations.timerElapsed).toBe('0')
+    // The timer chip is a clock, not a total: it reads H:MM whatever the setting.
+    expect(durations.timerElapsed).toBe('0:00')
+  })
+
+  it('[browser] shows a running timer as a clock even when the organisation tracks decimal hours', async () => {
+    // 1,232s is 0.3422 hours; the chip read that and kept incrementing it while
+    // the app showed 0:20 (issue 1003). Totals around it stay decimal.
+    renderBrowserShell()
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-08-28T12:00:00Z'))
+    const api = browserApi()
+    api.timeFormat = 'decimal'
+    api.entries.splice(0, api.entries.length, {
+      ...timeEntry(1, { project_id: 1, task_id: 1, spent_date: '2026-08-28', seconds: 0 }),
+      is_running: true,
+      timer_started_at: '2026-08-28T11:39:28Z',
+    })
+    await mountShell(api)
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-timer-chip]')!.getAttribute('data-state')).toBe('running'),
+    )
+    expect(document.querySelector('[data-timer-elapsed]')!.textContent).toBe('0:20')
   })
 
   it('[browser] agrees with itself on the roundest hour a timesheet carries', async () => {
@@ -1236,12 +1261,57 @@ describe('week-grid browser behavior', () => {
     )
   })
 
-  it('[e2e:track-week] adds and focuses a row with explicit duplicate and invalid outcomes', async () => {
+  it('opens the timer chip on the entry that is running now, not the one the page loaded with (issue 1005)', async () => {
+    // The page was opened while entry 1 ran. The timer was then stopped and a
+    // new one started elsewhere (the CLI), so the loaded snapshot named a
+    // stopped entry. The modal said "Running timer" over that entry's date and
+    // note, and Save note would have written to it.
     renderBrowserShell()
-    window.history.replaceState(null, '', '/?week=2026-08-28')
     const api = browserApi()
-
+    api.entries[0] = timeEntry(1, {
+      project_id: 1,
+      task_id: 1,
+      spent_date: '2026-08-27',
+      notes: 'Long note of a different day',
+    })
     await mountShell(api)
+
+    api.entries[0] = { ...api.entries[0]!, is_running: false, seconds: 3_333 }
+    api.entries.push(
+      timeEntry(3, {
+        project_id: 2,
+        task_id: 2,
+        spent_date: '2026-08-28',
+        notes: 'The running one',
+      }),
+    )
+
+    document.querySelector<HTMLButtonElement>('[data-timer-chip]')!.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLTextAreaElement>('[data-entry-note-input]')!.value).toBe(
+        'The running one',
+      ),
+    )
+    expect(document.querySelector<HTMLInputElement>('[data-entry-date]')!.value).toBe(
+      '2026-08-28',
+    )
+    document.querySelector<HTMLTextAreaElement>('[data-entry-note-input]')!.value = 'Edited'
+    document
+      .querySelector<HTMLFormElement>('[data-entry-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(api.updateTimeEntry).toHaveBeenCalled())
+    expect(api.updateTimeEntry).toHaveBeenLastCalledWith(
+      3,
+      { notes: 'Edited' },
+      expect.any(AbortSignal),
+    )
+  })
+
+  // Keep each outcome within the normal test budget: parsing the full shell is
+  // expensive on CI, and a second parse plus all outcomes exceeded five seconds.
+  it('[e2e:track-week] adds, focuses and persists a row', async () => {
+    renderBrowserShell()
+    await mountShell(browserApi())
     const openAddRow = (): void => {
       document.querySelector<HTMLButtonElement>('[data-add-row-trigger]')!.click()
     }
@@ -1266,12 +1336,22 @@ describe('week-grid browser behavior', () => {
     expect(document.activeElement).toBe(added)
     expect(document.querySelector('[data-session-message]')?.textContent).toContain('row added')
 
-    renderBrowserShell({ preserveStorage: true })
-    window.history.replaceState(null, '', '/?week=2026-08-28')
-    await mountShell(api)
-    expect(
-      document.querySelector('[data-week-grid] input[data-cell-key="2:2:2026-08-24"]'),
-    ).not.toBeNull()
+    expect(JSON.parse(globalThis.localStorage.getItem('ezacto:user:1:week-rows:2026-08-24')!)).toEqual([{ projectId: 2, taskId: 2 }])
+  })
+
+  it('[e2e:track-week] restores a saved row and reports a duplicate without adding another', async () => {
+    renderBrowserShell()
+    globalThis.localStorage.setItem('ezacto:user:1:week-rows:2026-08-24', JSON.stringify([{ projectId: 2, taskId: 2 }]))
+    await mountShell(browserApi())
+    expect(document.querySelectorAll('[data-week-grid] input[data-cell-key="2:2:2026-08-24"]')).toHaveLength(1)
+    const openAddRow = (): void => {
+      document.querySelector<HTMLButtonElement>('[data-add-row-trigger]')!.click()
+    }
+    const submitRow = (): void => {
+      document
+        .querySelector<HTMLFormElement>('[data-row-form]')!
+        .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    }
 
     openAddRow()
     document.querySelector<HTMLSelectElement>('[data-row-project]')!.value = '2'
@@ -1287,6 +1367,22 @@ describe('week-grid browser behavior', () => {
     expect(document.querySelector('[data-row-result]')?.textContent).toContain(
       'already on this week',
     )
+
+    expect(document.querySelectorAll('[data-week-grid] input[data-cell-key="2:2:2026-08-24"]')).toHaveLength(1)
+  })
+
+  it('[e2e:track-week] rejects an invalid row without changing saved rows', async () => {
+    renderBrowserShell()
+    globalThis.localStorage.setItem('ezacto:user:1:week-rows:2026-08-24', JSON.stringify([{ projectId: 2, taskId: 2 }]))
+    await mountShell(browserApi())
+    const openAddRow = (): void => {
+      document.querySelector<HTMLButtonElement>('[data-add-row-trigger]')!.click()
+    }
+    const submitRow = (): void => {
+      document
+        .querySelector<HTMLFormElement>('[data-row-form]')!
+        .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    }
 
     openAddRow()
     const storageKey = 'ezacto:user:1:week-rows:2026-08-24'
@@ -1668,5 +1764,76 @@ describe('week-grid browser behavior', () => {
     expect(document.querySelector<HTMLButtonElement>('[data-entry-delete]')!.hidden).toBe(true)
     expect(api.deleteTimeEntry).not.toHaveBeenCalled()
     expect(api.entries).toHaveLength(1)
+  })
+
+  it('[browser oss#4] marks the grid busy and inert while another week loads, and clears it on success and failure', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    vi.setSystemTime(new Date('2026-08-28T12:00:00'))
+    renderBrowserShell()
+    const api = browserApi()
+    const list = api.listTimeEntries
+    await mountShell(api)
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-week-grid-rows] tr')).not.toBeNull(),
+    )
+    const surfaces = () => [
+      document.querySelector<HTMLElement>('[data-week-grid]')!,
+      document.querySelector<HTMLElement>('[data-day-list]')!,
+    ]
+    for (const surface of surfaces()) expect(surface.getAttribute('aria-busy')).not.toBe('true')
+    const heading = () => document.querySelector('[data-week-grid-head]')!.textContent
+    const before = heading()
+
+    // Hold every week read open so the load is observably in flight.
+    const gates: ReturnType<typeof deferred<unknown>>[] = []
+    api.listTimeEntries = vi.fn(async (query) => {
+      const gate = deferred<unknown>()
+      gates.push(gate)
+      await gate.promise
+      return list(query)
+    })
+    const next = () =>
+      document.querySelector<HTMLButtonElement>('[data-week-period] [data-period-next]')!
+    next().click()
+    next().click()
+    next().click()
+
+    // At once: the headings already name the new week, and nothing is editable.
+    expect(heading()).not.toBe(before)
+    for (const surface of surfaces()) {
+      expect(surface.getAttribute('aria-busy')).toBe('true')
+      expect(surface.hasAttribute('inert')).toBe(true)
+    }
+    // Quick answers never flash a skeleton; a slow one swaps the old rows out.
+    expect(document.querySelector('.grid-skeleton')).toBeNull()
+    await vi.advanceTimersByTimeAsync(200)
+    expect(document.querySelector('[data-week-grid-rows] .grid-skeleton')).not.toBeNull()
+    expect(document.querySelector('[data-day-rows] .grid-skeleton')).not.toBeNull()
+
+    // Rapid clicks: answering the superseded weeks does not end the busy state.
+    for (const gate of gates.slice(0, -1)) gate.resolve(undefined)
+    await vi.advanceTimersByTimeAsync(0)
+    for (const surface of surfaces()) expect(surface.getAttribute('aria-busy')).toBe('true')
+    gates.at(-1)!.resolve(undefined)
+    await vi.waitFor(() => {
+      for (const surface of surfaces()) expect(surface.getAttribute('aria-busy')).toBe('false')
+    })
+    for (const surface of surfaces()) expect(surface.hasAttribute('inert')).toBe(false)
+    expect(document.querySelector('.grid-skeleton')).toBeNull()
+
+    // A failed load hands over to the failure state instead of sticking.
+    api.listTimeEntries = vi.fn(async () => {
+      throw new Error('offline')
+    })
+    next().click()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-week-grid-rows]')?.textContent).toContain(
+        'Your week could not load',
+      ),
+    )
+    for (const surface of surfaces()) {
+      expect(surface.getAttribute('aria-busy')).toBe('false')
+      expect(surface.hasAttribute('inert')).toBe(false)
+    }
   })
 })

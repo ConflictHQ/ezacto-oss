@@ -233,3 +233,12 @@ the moment the off-site copy is worth most.
 
 The S3 bucket blocks public access and encrypts at rest, and the object on top of
 that is encrypted with the passphrase above.
+
+## Account erasure and retention
+
+Operators can publish their applicable-framework assessment, justified retained
+record categories, review intervals, user disclosure and backup handling under
+Settings → Company → Erasure and retention. See
+[the operator guide](account-erasure-retention.md) for configuration, API access
+and legal references. These settings do not execute account closure or delete
+backup copies; recording a request or archiving a user is not completed erasure.

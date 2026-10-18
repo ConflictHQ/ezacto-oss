@@ -42,7 +42,7 @@ const signIn = async (page: Page): Promise<void> => {
   })
   expect(reset.status()).toBe(204)
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
-  await page.locator('[data-sign-in-form]').getByLabel('Password').fill(fixturePassword)
+  await page.locator('[data-sign-in-form]').getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.locator('[data-authenticated-shell]:not([inert])')).toBeVisible()
 }
@@ -95,6 +95,37 @@ test('[e2e:scheme] paints a chosen scheme without a script, so there is nothing 
       await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme),
     ).toBe('dark')
   }
+})
+
+test('[e2e:invoice-theme] keeps document ink readable on white paper in a dark app', async ({
+  page,
+  context,
+}) => {
+  await prefer(context, 'ezacto_scheme', 'dark')
+  await page.goto('/invoices')
+
+  const colors = await page.locator('[data-invoice-document]').evaluate((invoice) => {
+    const application = getComputedStyle(document.documentElement)
+    const documentStyle = getComputedStyle(invoice)
+    return {
+      applicationBackground: application.backgroundColor,
+      applicationText: application.color,
+      documentBackground: documentStyle.backgroundColor,
+      documentText: documentStyle.color,
+    }
+  })
+
+  expect(colors.applicationBackground).not.toBe(lightGround)
+  expect(colors.documentBackground).toBe(lightGround)
+  expect(colors.documentText).toBe('rgb(26, 26, 46)')
+  expect(colors.documentText).not.toBe(colors.applicationText)
+
+  await page.emulateMedia({ media: 'print' })
+  const printed = await page.locator('[data-invoice-document]').evaluate((invoice) => {
+    const style = getComputedStyle(invoice)
+    return { background: style.backgroundColor, text: style.color }
+  })
+  expect(printed).toEqual({ background: lightGround, text: colors.documentText })
 })
 
 test('[e2e:scheme] keeps an instance palette under System and gives way to an explicit Dark', async ({

@@ -35,6 +35,8 @@ jobs:
           done
       - run: npm run build -w @ezacto/core -w @conflict-hq/ezacto-client -w @conflict-hq/ezacto-cli
       - run: npm test -w @conflict-hq/ezacto-client -w @conflict-hq/ezacto-cli
+      - name: install and exercise release tarballs before publishing either package
+        run: npm run test:package -w @conflict-hq/ezacto-cli
       - name: Refuse to publish without a token
         run: test -n "${NODE_AUTH_TOKEN}"
         env:

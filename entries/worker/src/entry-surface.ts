@@ -51,6 +51,10 @@ export const UNDOCUMENTED_ROUTES: readonly string[] = [
   // surface to document, out of the document too. Always mounted; answers 404
   // until a deployment sets APPLE_CLIENT_ID.
   'post /auth/apple',
+  'get /auth/apple/start',
+  'post /auth/apple/callback',
+  'get /auth/apple/disconnect',
+  'post /auth/apple/disconnect',
 ]
 
 /**
@@ -132,7 +136,7 @@ export const STAFF_MAGIC_LINK_ROUTES: readonly string[] = [
 ]
 
 /**
- * Every API, auth and portal route an app composes, in the form the lists above
+ * Every API, auth, account-deletion and portal route an app composes, in the form the lists above
  * use. `/portal` is in the sweep because leaving it out is how three routes
  * stayed unreachable in every deployment without either half of the guard
  * noticing.
@@ -147,6 +151,7 @@ export const mountedApiRoutes = (
           route.method !== 'ALL' &&
           (route.path.startsWith('/api/v1') ||
             route.path.startsWith('/auth') ||
+            route.path.startsWith('/account-deletion') ||
             route.path.startsWith('/portal')),
       )
       .map((route) => `${route.method.toLowerCase()} ${route.path}`),

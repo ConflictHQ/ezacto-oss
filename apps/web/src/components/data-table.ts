@@ -140,6 +140,14 @@ const actionsCell = (actions: readonly RowAction[]): HTMLTableCellElement => {
       })
       menu.appendChild(button)
     }
+    details.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && details.open) {
+        event.preventDefault()
+        event.stopPropagation()
+        details.open = false
+        summary.focus()
+      }
+    })
     details.appendChild(summary)
     details.appendChild(menu)
     cell.appendChild(details)
@@ -191,7 +199,7 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
           return 0
         })
   const table = document.createElement('table')
-  table.className = 'data-table'
+  table.className = columns.length > 4 ? 'data-table data-table-wide' : 'data-table'
 
   const captionElement = document.createElement('caption')
   captionElement.className = 'visually-hidden'
@@ -346,6 +354,15 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
   // page itself must not scroll sideways on a phone.
   const scroll = document.createElement('div')
   scroll.className = 'data-table-scroll'
+  scroll.tabIndex = 0
+  scroll.setAttribute('role', 'region')
+  scroll.setAttribute('aria-label', caption)
+  if (columns.length > 4 && rows.length > 0) {
+    const hint = document.createElement('p')
+    hint.className = 'data-table-scroll-hint'
+    hint.textContent = 'Scroll horizontally to see all columns and actions.'
+    scroll.appendChild(hint)
+  }
   scroll.appendChild(table)
   return scroll
 }

@@ -28,6 +28,16 @@ describe('container configuration', () => {
     expect(config.appEnv).not.toHaveProperty('SMTP_URL')
   })
 
+  it('[unit] reads how often a signed-in request records last-seen (#951)', () => {
+    expect(readContainerConfig(valid()).lastSeenIntervalMs).toBe(300_000)
+    expect(
+      readContainerConfig({ ...valid(), LAST_SEEN_INTERVAL_SECONDS: '0' }).lastSeenIntervalMs,
+    ).toBe(0)
+    expect(
+      readContainerConfig({ ...valid(), LAST_SEEN_INTERVAL_SECONDS: '900' }).lastSeenIntervalMs,
+    ).toBe(900_000)
+  })
+
   it('[unit] permits explicit localhost HTTP for a direct self-host development run', () => {
     const config = readContainerConfig({
       ...valid(),
@@ -51,6 +61,8 @@ describe('container configuration', () => {
     ['relative data path', { EZACTO_DATA_DIR: 'data' }],
     ['root data path', { EZACTO_DATA_DIR: '/' }],
     ['invalid port', { PORT: '65536' }],
+    ['malformed last-seen interval', { LAST_SEEN_INTERVAL_SECONDS: '5m' }],
+    ['last-seen interval over an hour', { LAST_SEEN_INTERVAL_SECONDS: '3601' }],
   ])('[security] fails closed for %s', (_name, override) => {
     expect(() => readContainerConfig({ ...valid(), ...override })).toThrow()
   })

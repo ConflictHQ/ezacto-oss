@@ -1,5 +1,6 @@
 import * as Sentry from '@sentry/cloudflare'
 import type { QueuedEmailJob } from '@ezacto/mailer'
+import { createApiIdempotencyAuthorization, withIdempotency } from '@ezacto/api'
 import { createApp, demoDeployment, demoMailDomains, type WorkerEnv } from './app.js'
 import { isDataRequest } from './data-request.js'
 import { workerBrandAssetSurface } from './brand-assets.js'
@@ -134,17 +135,34 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
     }
     try {
       const services = await createRuntimeServices(env)
+      const app = createApp(
+        services,
+        workerBrandAssetSurface,
+        workerInstanceThemeSurface,
+        workerSignInMethodSurface,
+      )
+      // A write with an Idempotency-Key runs once and is replayed after that
+      // (#952). Every data answer says so in Idempotency-Key-Lifetime, which is
+      // what lets a client retry a write here at all.
       return withStrictTransport(
         request,
-        await createApp(
-          services,
-          workerBrandAssetSurface,
-          workerInstanceThemeSurface,
-          workerSignInMethodSurface,
-        ).fetch(
+        await withIdempotency(
           request,
-          env,
-          executionContext,
+          (incoming) => Promise.resolve(app.fetch(incoming, env, executionContext)),
+          {
+            store: services.idempotency.store,
+            authorize: createApiIdempotencyAuthorization({
+              tokens: services.tokens,
+              sessions: services.authenticationSessions ?? services.sessions,
+              ownMoneyVisible: services.isOwnMoneyVisible,
+            }, async () => JSON.stringify([await services.idempotency.store.authorizationRevision(), env.RELEASE, demoDeployment(env)])),
+            secret: services.idempotency.secret,
+            waitUntil: (promise) => executionContext.waitUntil(promise),
+            report: (error) => {
+              console.error('[worker] idempotent response not recorded', error)
+              Sentry.captureException(error)
+            },
+          },
         ),
       )
     } catch {

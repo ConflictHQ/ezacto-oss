@@ -69,6 +69,14 @@ describe('demo deployment', () => {
     }
   })
 
+  it('[reliability] bills the demo on the minute cron only, not the hourly one too', async () => {
+    // Both fire on the hour. Billing on each started two ticks on the same
+    // backlog, which raced every night (EZACTO-SERVER-9/C/E/A/B/D).
+    expect(
+      await runDemoMaintenance(envRefusingItsDatabase({ ENVIRONMENT: 'dev', DEMO_MODE: 'true' }), '0 * * * *'),
+    ).toEqual({ ran: 'nothing' })
+  })
+
   it('[unit] marks every page it serves as the demo, and no other deployment’s', async () => {
     // Issue #931: the screens read this to say what the demo refuses before a
     // click rather than after. Presentation only; the routes refuse either way.
