@@ -35,6 +35,19 @@ export interface DataColumn<Row> {
    * identifiers and dates are not, however many digits they contain.
    */
   readonly numeric?: boolean
+  /**
+   * Shrink to the content, so the free-text column takes the slack. A status,
+   * a date or an invoice number needs its own width and no more; without this
+   * every column shares the width equally and the name is the one that gets
+   * clipped while its neighbours sit half empty. Numeric columns do this already.
+   */
+  readonly fit?: boolean
+  /**
+   * Let a long free-text column wrap onto further lines instead of ending in an
+   * ellipsis the person cannot read past. Use sparingly: it gives up the
+   * one-line row.
+   */
+  readonly wrap?: boolean
   readonly render: (row: Row) => CellContent
   /** Enables sorting by underlying values. Nulls stay last in both directions. */
   readonly sortValue?: (row: Row) => DataSortValue
@@ -249,6 +262,8 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
       cell.replaceChildren(button)
     }
     if (column.numeric === true) cell.classList.add('is-numeric')
+    if (column.fit === true) cell.classList.add('is-fit')
+    if (column.wrap === true) cell.classList.add('is-wrap')
     headRow.appendChild(cell)
   }
   if (actions !== undefined) {
@@ -287,6 +302,8 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
       const cell = document.createElement('td')
       cell.dataset.column = column.key
       if (column.numeric === true) cell.classList.add('is-numeric')
+      if (column.fit === true) cell.classList.add('is-fit')
+      if (column.wrap === true) cell.classList.add('is-wrap')
       if (column.total !== undefined) put(cell, column.total(members))
       else if (index === 0) cell.textContent = 'Total'
       row.appendChild(cell)
@@ -321,6 +338,8 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
       const cell = document.createElement('td')
       cell.dataset.column = column.key
       if (column.numeric === true) cell.classList.add('is-numeric')
+      if (column.fit === true) cell.classList.add('is-fit')
+      if (column.wrap === true) cell.classList.add('is-wrap')
       put(cell, column.render(row))
       element.appendChild(cell)
     }
@@ -341,6 +360,8 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
       const cell = document.createElement('td')
       cell.dataset.column = column.key
       if (column.numeric === true) cell.classList.add('is-numeric')
+      if (column.fit === true) cell.classList.add('is-fit')
+      if (column.wrap === true) cell.classList.add('is-wrap')
       if (column.total !== undefined) put(cell, column.total(rows))
       else if (index === 0) cell.textContent = 'Total'
       totalRow.appendChild(cell)

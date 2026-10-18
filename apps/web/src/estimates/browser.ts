@@ -115,6 +115,7 @@ export const createEstimateWorkspaceController = (
         columns: [
           {
             key: 'number',
+            fit: true,
             label: 'Number',
             render: (estimate) => {
               const link = document.createElement('a')
@@ -128,10 +129,11 @@ export const createEstimateWorkspaceController = (
           { key: 'subject', label: 'Subject', render: (estimate) => estimate.subject ?? '—' },
           {
             key: 'state',
+            fit: true,
             label: 'Status',
             render: (estimate) => estimateStateLabel(estimate.state),
           },
-          { key: 'issued', label: 'Issued', render: (estimate) => estimate.issue_date ?? '—' },
+          { key: 'issued', label: 'Issued', fit: true, render: (estimate) => estimate.issue_date ?? '—' },
           {
             key: 'amount',
             label: 'Total',
