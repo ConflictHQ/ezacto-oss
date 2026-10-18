@@ -318,24 +318,27 @@ for (const [runtime, factory] of factories) {
         ...Object.keys(steps).filter((name) => name !== 'addLine'),
       ]
       for (let invoice = 0; invoice < 4; invoice++) await addInvoice()
+      // Not vacuous: somewhere in the walk there were real discounts, taxes and
+      // balances. Seen at any step, not at the last, which may be a deletion.
+      const seen = { discounted: 0, taxed: 0, taxed2: 0, part_paid: 0 }
       for (let step = 0; step < 240; step++) {
         const name = pick(weighted)
         await steps[name]!()
         expect(await db.rows(divergentTotals), `after ${name} (step ${step})`).toEqual([])
+        const [shape] = await db.rows<typeof seen>(
+          `SELECT coalesce(sum(discount_amount_cents <> 0), 0) AS discounted,
+             coalesce(sum(tax_amount_cents <> 0), 0) AS taxed,
+             coalesce(sum(tax2_amount_cents <> 0), 0) AS taxed2,
+             coalesce(sum(due_amount_cents <> amount_cents), 0) AS part_paid
+           FROM invoices`,
+        )
+        for (const key of Object.keys(seen) as Array<keyof typeof seen>)
+          seen[key] = Math.max(seen[key], shape![key])
       }
-      // Not vacuous: the walk produced real discounts, taxes and balances.
-      const [shape] = await db.rows<Record<string, number>>(
-        `SELECT count(*) AS invoices,
-           sum(discount_amount_cents <> 0) AS discounted,
-           sum(tax_amount_cents <> 0) AS taxed,
-           sum(tax2_amount_cents <> 0) AS taxed2,
-           sum(due_amount_cents <> amount_cents) AS part_paid
-         FROM invoices`,
-      )
-      expect(shape!['discounted']).toBeGreaterThan(0)
-      expect(shape!['taxed']).toBeGreaterThan(0)
-      expect(shape!['taxed2']).toBeGreaterThan(0)
-      expect(shape!['part_paid']).toBeGreaterThan(0)
+      expect(seen.discounted).toBeGreaterThan(0)
+      expect(seen.taxed).toBeGreaterThan(0)
+      expect(seen.taxed2).toBeGreaterThan(0)
+      expect(seen.part_paid).toBeGreaterThan(0)
     })
 
     it('[unit] reads one invoice through the covering index and never the organization-wide view', async () => {
