@@ -73,6 +73,7 @@ import { createPeriodControl, isCalendarDay } from '../components/period.js'
 import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
 import { createActivityController } from '../activity/browser.js'
+import { setSortPreferenceOwner } from '../components/table-sort.js'
 import { createDeliveriesController } from '../deliveries/browser.js'
 import { createCalendarController } from '../calendar/browser.js'
 import { createDashboardController } from '../dashboard/browser.js'
@@ -1137,6 +1138,13 @@ const renderTimer = (running: DisplayTimeEntry | null): void => {
   timerInterval = globalThis.setInterval(update, 1_000)
 }
 
+/** What an install whose api offers no log says: an empty page, not a failure. */
+const emptyLogPage = {
+  data: [],
+  links: { next: null },
+  page: { per_page: 0, next_cursor: null, total: 0 },
+} as const
+
 type WeekStartDay = 'saturday' | 'sunday' | 'monday'
 
 const storageKey = (userId: number, within: string, weekStartDay: WeekStartDay): string =>
@@ -1527,11 +1535,15 @@ export const mountShell = async (
   // shell failing to construct.
   const deliveries = createDeliveriesController({
     listEmailLog: async (query, signal) =>
-      api.listEmailLog === undefined ? { data: [] } : api.listEmailLog(query, signal),
+      api.listEmailLog === undefined ? emptyLogPage : api.listEmailLog(query, signal),
     listOutboxDeliveries: async (query, signal) =>
       api.listOutboxDeliveries === undefined
-        ? { data: [] }
+        ? emptyLogPage
         : api.listOutboxDeliveries(query, signal),
+    organizationTimezone: async (signal) =>
+      api.getTimesheetLockPolicy === undefined
+        ? null
+        : (await api.getTimesheetLockPolicy(signal)).timezone,
     retryOutboxDelivery: async (subscriberId, eventId, signal) =>
       api.retryOutboxDelivery === undefined
         ? undefined
@@ -1803,6 +1815,7 @@ export const mountShell = async (
   }
 
   const showSignedOutScreen = (): void => {
+    setSortPreferenceOwner(null)
     passwordRecovery?.clear()
     sessionCheckOverlay.hidden = true
     authenticatedShell.hidden = true
@@ -4342,6 +4355,8 @@ export const mountShell = async (
     const identity = cached ?? (await api.whoami(operation.signal))
     if (!isGenerationCurrent(operation)) return
     rememberIdentity(identity)
+    // Whose sorted tables are remembered (issue 852).
+    setSortPreferenceOwner(identity.user_id)
     const authenticated = showAuthenticated(identity)
     if (cached !== undefined) {
       // Nothing is granted on the cache's say-so: every protected load below is

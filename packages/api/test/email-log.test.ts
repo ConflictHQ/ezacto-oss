@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { EmailLogRecord } from '@ezacto/mailer'
+import type { EmailLogPageWindow, EmailLogRecord } from '@ezacto/mailer'
 import { createApiApp, installEmailLogRoutes } from '../src/index.js'
 
 const delivery: EmailLogRecord = {
@@ -24,8 +24,23 @@ const delivery: EmailLogRecord = {
   updatedAt: '2026-08-28T20:15:00.000Z',
 }
 
-const harness = (profile: 'administrator' | 'member') => {
-  const list = vi.fn(async () => [delivery])
+const cursorSigningKey = new Uint8Array(32).fill(9)
+
+/** A pager over one row, which records what the route asked it for. */
+const pagerOver = (rows: EmailLogRecord[], timezone = 'UTC') => {
+  const page = vi.fn(async (window: EmailLogPageWindow) => rows.slice(0, window.take))
+  const count = vi.fn(async () => rows.length)
+  const pager = {
+    snapshot: async () => rows.map((row) => row.createdAt).sort().at(-1) ?? null,
+    page,
+    count,
+  }
+  return { pager, page, count, options: { cursorSigningKey, timezone: async () => timezone } }
+}
+
+const harness = (profile: 'administrator' | 'member', timezone = 'UTC') => {
+  const { pager, page, count, options } = pagerOver([delivery], timezone)
+  const list = page
   const app = createApiApp({
     authentication: {
       sessions: {
@@ -39,10 +54,10 @@ const harness = (profile: 'administrator' | 'member') => {
       },
     },
     installApi(api) {
-      installEmailLogRoutes(api, { list })
+      installEmailLogRoutes(api, pager, options)
     },
   })
-  return { app, list }
+  return { app, list, count }
 }
 
 describe('email log API', () => {
@@ -75,9 +90,95 @@ describe('email log API', () => {
           updated_at: '2026-08-28T20:15:00.000Z',
         },
       ],
-      links: { self: '/api/v1/email-log' },
+      links: { self: '/api/v1/email-log?status=failed&per_page=25', next: null },
+      page: { per_page: 25, next_cursor: null, total: 1 },
     })
-    expect(list).toHaveBeenCalledWith({ status: 'failed', limit: 25 })
+    // One more than the page, which is how the chassis learns there is a next one.
+    expect(list).toHaveBeenCalledWith({
+      status: 'failed',
+      order: 'newest',
+      after: null,
+      createdThrough: '2026-08-28T20:00:00.000Z',
+      take: 26,
+    })
+  })
+
+  it('[api] turns days into the instants they span in the organization timezone', async () => {
+    const { app, list } = harness('administrator', 'America/Costa_Rica')
+    const response = await app.request(
+      '/api/v1/email-log?from=2026-09-08&to=2026-09-09&kind=reminder&q=%20Acme%20&order=oldest',
+    )
+    expect(response.status).toBe(200)
+    expect(list).toHaveBeenCalledWith({
+      kind: 'reminder',
+      // The 8th began at 06:00 UTC for UTC-6, and the 9th ends where the 10th begins.
+      createdFrom: '2026-09-08T06:00:00.000Z',
+      createdBefore: '2026-09-10T06:00:00.000Z',
+      recipient: 'Acme',
+      order: 'oldest',
+      after: null,
+      createdThrough: '2026-08-28T20:00:00.000Z',
+      take: 51,
+    })
+  })
+
+  it('[api] walks pages with a signed cursor that belongs to its own filters', async () => {
+    const rows = [3, 2, 1].map((id) => ({
+      ...delivery,
+      id,
+      createdAt: `2026-08-28T20:00:0${String(id)}.000Z`,
+    }))
+    const { pager, options } = pagerOver(rows)
+    const app = createApiApp({
+      authentication: {
+        sessions: {
+          resolve: async () => ({
+            type: 'user' as const,
+            userId: 1,
+            profile: 'administrator' as const,
+            managerGrants: [],
+            authentication: { kind: 'session' as const, sessionId: 'session-1' },
+          }),
+        },
+      },
+      installApi(api) {
+        installEmailLogRoutes(
+          api,
+          {
+            ...pager,
+            page: async (window) =>
+              rows
+                .filter(
+                  (row) =>
+                    window.after === null ||
+                    row.createdAt < window.after.createdAt ||
+                    (row.createdAt === window.after.createdAt && row.id < window.after.id),
+                )
+                .slice(0, window.take),
+          },
+          options,
+        )
+      },
+    })
+    const first = (await (await app.request('/api/v1/email-log?per_page=2')).json()) as {
+      data: { id: number }[]
+      links: { next: string }
+      page: { next_cursor: string; total: number }
+    }
+    expect(first.data.map((row) => row.id)).toEqual([3, 2])
+    expect(first.page.total).toBe(3)
+    const second = (await (await app.request(first.links.next)).json()) as {
+      data: { id: number }[]
+      page: { next_cursor: string | null }
+    }
+    expect(second.data.map((row) => row.id)).toEqual([1])
+    expect(second.page.next_cursor).toBeNull()
+
+    // The same cursor under another filter is refused rather than half-honoured.
+    const replayed = await app.request(
+      `/api/v1/email-log?status=sent&per_page=2&cursor=${first.page.next_cursor}`,
+    )
+    expect(replayed.status).toBe(422)
   })
 
   it('[security] requires an administrator session and rejects bearer tokens', async () => {
@@ -99,7 +200,7 @@ describe('email log API', () => {
         },
       },
       installApi(api) {
-        installEmailLogRoutes(api, { list: async () => [delivery] })
+        installEmailLogRoutes(api, pagerOver([delivery]).pager, pagerOver([delivery]).options)
       },
     })
     const response = await bearerOnly.request('/api/v1/email-log', {
@@ -115,6 +216,10 @@ describe('email log API', () => {
     const { app, list } = harness('administrator')
     expect((await app.request('/api/v1/email-log?status=delivered')).status).toBe(422)
     expect((await app.request('/api/v1/email-log?per_page=0')).status).toBe(422)
+    expect((await app.request('/api/v1/email-log?kind=newsletter')).status).toBe(422)
+    expect((await app.request('/api/v1/email-log?from=2026-02-30')).status).toBe(422)
+    expect((await app.request('/api/v1/email-log?from=2026-09-09&to=2026-09-08')).status).toBe(422)
+    expect((await app.request('/api/v1/email-log?status=sent&status=failed')).status).toBe(422)
     expect(list).not.toHaveBeenCalled()
   })
 })
