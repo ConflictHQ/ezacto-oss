@@ -26,8 +26,11 @@ export {
 } from './idempotency.js'
 export {
   installBackupStatusRoutes,
+  type BackupRunFilter,
+  type BackupRunPageWindow,
   type BackupStatusReader,
   type BackupStatusRecord,
+  type BackupStatusRouteOptions,
 } from './backup-status.js'
 export {
   installClientTreeRoutes,
@@ -233,6 +236,7 @@ export {
 export {
   installEmailLogRoutes,
   type EmailLogReader,
+  type EmailLogRouteOptions,
 } from './email-log.js'
 export {
   installEmailHealthRoutes,
@@ -253,6 +257,8 @@ export {
   installOutboxRoutes,
   type ActivityLogActor,
   type ActivityLogResource,
+  type OutboxDeliveryFilter,
+  type OutboxDeliveryPageWindow,
   type OutboxDeliveryResource,
   type OutboxDeliveryStatus,
   type OutboxMonitor,

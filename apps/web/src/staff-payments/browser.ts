@@ -97,9 +97,11 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   let generation = 0
   let busy = false
   let command: StaffPaymentCommand | null = null
-  let registerSort: DataTableSort = { column: 'name', direction: 'ascending' }
-  let historySort: DataTableSort = { column: 'when', direction: 'descending' }
-  let providerSort: DataTableSort = { column: 'when', direction: 'descending' }
+  // Undefined until somebody sorts in this visit: a table then starts from the
+  // sort they last chose for it, else from its default (issue 852).
+  let registerSort: DataTableSort | undefined
+  let historySort: DataTableSort | undefined
+  let providerSort: DataTableSort | undefined
   const tabs = createPaymentTabs(page)
   const runs = createPaymentRunsController(
     api,
@@ -196,7 +198,9 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     history.replaceChildren(
       renderDataTable({
         caption: 'Payment history',
-        sort: historySort,
+        table: 'staff-payments-history',
+        defaultSort: { column: 'when', direction: 'descending' },
+        ...(historySort === undefined ? {} : { sort: historySort }),
         onSort: (sort) => {
           historySort = sort
         },
@@ -271,7 +275,9 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     list.replaceChildren(
       renderDataTable({
         caption: 'Monthly staff payment register',
-        sort: registerSort,
+        table: 'staff-payments-register',
+        defaultSort: { column: 'name', direction: 'ascending' },
+        ...(registerSort === undefined ? {} : { sort: registerSort }),
         onSort: (sort) => {
           registerSort = sort
         },
@@ -431,7 +437,9 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     providerHistory.replaceChildren(
       renderDataTable({
         caption: 'Provider settings history (all dates)',
-        sort: providerSort,
+        table: 'staff-payments-provider-history',
+        defaultSort: { column: 'when', direction: 'descending' },
+        ...(providerSort === undefined ? {} : { sort: providerSort }),
         onSort: (sort) => {
           providerSort = sort
         },

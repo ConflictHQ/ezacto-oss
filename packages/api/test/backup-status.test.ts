@@ -3,6 +3,7 @@ import {
   createApiApp,
   installBackupStatusRoutes,
   type ApiAuthentication,
+  type BackupRunFilter,
   type BackupStatusReader,
   type BackupStatusRecord,
   type UserProfile,
@@ -66,17 +67,42 @@ const failedRun: BackupStatusRecord = {
   error_message: 'D1 connection lost',
 }
 
-const createApp = (runs: BackupStatusRecord[]) => {
-  const reader: BackupStatusReader = {
+const cursorSigningKey = new Uint8Array(32).fill(7)
+
+/** A reader over runs in memory that filters, orders and pages as the store does. */
+const readerOver = (runs: BackupStatusRecord[]): BackupStatusReader => {
+  const matching = (filter: BackupRunFilter) =>
+    runs.filter(
+      (run) =>
+        (filter.status === undefined || run.status === filter.status) &&
+        (filter.trigger === undefined || run.trigger === filter.trigger),
+    )
+  return {
     latestRuns: async () => runs,
+    runsSnapshot: async () =>
+      runs.length === 0 ? null : runs.map((run) => run.started_at).sort().at(-1)!,
+    pageRuns: async (window) =>
+      matching(window)
+        .filter((run) => run.started_at <= window.startedThrough)
+        .filter(
+          (run) =>
+            window.after === null ||
+            run.started_at < window.after.startedAt ||
+            (run.started_at === window.after.startedAt && run.id < window.after.id),
+        )
+        .sort((a, b) => (a.started_at === b.started_at ? b.id - a.id : a.started_at < b.started_at ? 1 : -1))
+        .slice(0, window.take),
+    countRuns: async (filter) => matching(filter).length,
   }
-  return createApiApp({
+}
+
+const createApp = (runs: BackupStatusRecord[]) =>
+  createApiApp({
     authentication,
     installApi(api) {
-      installBackupStatusRoutes(api, reader)
+      installBackupStatusRoutes(api, readerOver(runs), { cursorSigningKey })
     },
   })
-}
 
 describe('backup status API', () => {
   it('[api] surfaces a completed nightly backup', async () => {
@@ -146,5 +172,55 @@ describe('backup status API', () => {
     expect(body.data.last_failed).toBeNull()
     expect(body.data.recent_runs).toHaveLength(0)
     expect(body.data.has_failure).toBe(false)
+  })
+
+  it('[api] pages the run history newest first, with a total, and walks it by cursor', async () => {
+    const runs = [1, 2, 3, 4, 5].map(
+      (id): BackupStatusRecord => ({
+        ...completedRun,
+        id,
+        trigger: id % 2 === 0 ? 'manual' : 'nightly',
+        started_at: `2026-09-0${String(id)}T03:00:00.000Z`,
+      }),
+    )
+    const app = createApp(runs)
+    const get = async (path: string) =>
+      (await app.request(path, { headers: { 'x-test-profile': 'administrator' } })).json() as Promise<{
+        data: { id: number }[]
+        links: { next: string | null }
+        page: { per_page: number; next_cursor: string | null; total: number }
+      }>
+    const first = await get('/api/v1/backup/runs?per_page=2')
+    expect(first.data.map((run) => run.id)).toEqual([5, 4])
+    expect(first.page).toMatchObject({ per_page: 2, total: 5 })
+    const second = await get(first.links.next!)
+    expect(second.data.map((run) => run.id)).toEqual([3, 2])
+    const third = await get(second.links.next!)
+    expect(third.data.map((run) => run.id)).toEqual([1])
+    expect(third.page.next_cursor).toBeNull()
+
+    const manual = await get('/api/v1/backup/runs?trigger=manual&per_page=10')
+    expect(manual.data.map((run) => run.id)).toEqual([4, 2])
+    expect(manual.page.total).toBe(2)
+  })
+
+  it('[api] refuses a cursor from another filter, an unknown filter value and a non-administrator', async () => {
+    const app = createApp([completedRun, failedRun])
+    const admin = { 'x-test-profile': 'administrator' }
+    const first = (await (
+      await app.request('/api/v1/backup/runs?per_page=1', { headers: admin })
+    ).json()) as { page: { next_cursor: string } }
+    const replayed = await app.request(
+      `/api/v1/backup/runs?status=failed&per_page=1&cursor=${first.page.next_cursor}`,
+      { headers: admin },
+    )
+    expect(replayed.status).toBe(422)
+    expect(
+      (await app.request('/api/v1/backup/runs?status=unknown', { headers: admin })).status,
+    ).toBe(422)
+    expect(
+      (await app.request('/api/v1/backup/runs', { headers: { 'x-test-profile': 'accounting' } }))
+        .status,
+    ).toBe(403)
   })
 })

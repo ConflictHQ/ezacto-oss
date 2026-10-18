@@ -134,6 +134,59 @@ export type EmailFailureCode =
   | 'provider_timeout'
   | 'provider_rejected'
 
+/** The kinds of mail the log can be narrowed to (issue 929). */
+export const EMAIL_LOG_KINDS = [
+  'invoice',
+  'invoice_preview',
+  'reminder',
+  'thank_you',
+  'sign_in',
+  'account',
+] as const
+export type EmailLogKind = (typeof EMAIL_LOG_KINDS)[number]
+
+/**
+ * Which template names make up each kind. A template is recorded as
+ * `<name>:<version>`, so a kind is a set of names, matched whole.
+ */
+export const EMAIL_LOG_KIND_TEMPLATES: Readonly<Record<EmailLogKind, readonly string[]>> = {
+  invoice: ['invoice'],
+  invoice_preview: ['invoice_preview'],
+  reminder: ['reminder'],
+  thank_you: ['thank_you'],
+  sign_in: ['staff_magic_link_signin'],
+  account: ['auth_email_verification', 'auth_password_reset', 'account_deletion_request'],
+}
+
+export interface EmailLogFilter {
+  status?: EmailDeliveryStatus
+  kind?: EmailLogKind
+  /** First instant included. */
+  createdFrom?: string
+  /** First instant excluded. */
+  createdBefore?: string
+  /** Part of an address or a name, in To or Cc. Case does not matter. */
+  recipient?: string
+}
+
+export interface EmailLogPageWindow extends EmailLogFilter {
+  order: 'newest' | 'oldest'
+  /** Where the previous page ended in `order`; null on the first page. */
+  after: { createdAt: string; id: number } | null
+  /** Rows created later than this are left out, so a traversal holds still. */
+  createdThrough: string
+  take: number
+}
+
+/** Keyset reads of the log, in either direction. */
+export interface EmailLogPager {
+  /** The latest creation instant in the whole log, or null when it is empty. */
+  snapshot(): Promise<string | null>
+  page(window: EmailLogPageWindow): Promise<EmailLogRecord[]>
+  /** How many rows the filter matches, whatever page it is read from. */
+  count(filter: EmailLogFilter): Promise<number>
+}
+
 export interface EmailLogStore {
   createQueued(message: EmailMessage): Promise<EmailLogRecord>
   get(deliveryId: number): Promise<EmailLogRecord | null>

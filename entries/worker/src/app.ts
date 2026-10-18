@@ -166,6 +166,7 @@ import {
   type SignInProvider,
 } from '@ezacto/web'
 import type {
+  EmailLogPager,
   EmailLogStore,
   QueuedEmailJob,
   SenderBoundQueuedMailer,
@@ -388,7 +389,7 @@ export interface RuntimeServices {
   sessions: ApiSessionService
   /** Composite browser resolver when an optional edge identity provider is configured. */
   authenticationSessions?: ApiSessionResolver
-  emailLog: EmailLogStore
+  emailLog: EmailLogStore & EmailLogPager
   emailConfiguration: EmailConfigurationRouteOptions['service']
   senderIdentityVerifier?: EmailConfigurationRouteOptions['verifier']
   organizationMailer?: SenderBoundQueuedMailer
@@ -657,7 +658,14 @@ export const createApp = (
             })
             if(services.accountRetentionReview) installAccountRetentionReviewRoutes(api,{store:services.accountRetentionReview,clock:()=>systemClock.now().instant,...(appleCleanup===undefined?{}:{appleCleanup})})
             if (services.accountClosure) installAccountClosureRoutes(api, { store: services.accountClosure, clock: () => systemClock.now().instant, ...(appleCleanup === undefined ? {} : { appleCleanup }), ...(services.appleWebCleanup === undefined ? {} : {performAppleCleanup:(requestId:string)=>services.appleWebCleanup!.perform(requestId)}) })
-            installEmailLogRoutes(api, services.emailLog)
+            // The organization's timezone decides where a calendar day begins,
+            // for the logs a day range narrows.
+            const organizationTimezone = async (): Promise<string> =>
+              (await services.timesheetLockPolicy.settings()).timezone
+            installEmailLogRoutes(api, services.emailLog, {
+              cursorSigningKey: services.cursorSigningKey,
+              timezone: organizationTimezone,
+            })
             installEmailHealthRoutes(api, services.emailLog)
             installEmailConfigurationRoutes(api, {
               service: services.emailConfiguration,
@@ -671,6 +679,8 @@ export const createApp = (
             })
             installOutboxRoutes(api, services.outbox, {
               isActivityLogModuleEnabled: services.isActivityLogModuleEnabled,
+              cursorSigningKey: services.cursorSigningKey,
+              timezone: organizationTimezone,
             })
             installGeneralResourceRoutes(api, {
               repository: services.generalResources,
@@ -743,7 +753,9 @@ export const createApp = (
               installStaffPaymentRoutes(api, services.staffPayments)
             }
             if (services.backupStatus !== undefined) {
-              installBackupStatusRoutes(api, services.backupStatus)
+              installBackupStatusRoutes(api, services.backupStatus, {
+                cursorSigningKey: services.cursorSigningKey,
+              })
             }
             if (services.quickBooks !== undefined) {
               installQuickBooksRoutes(api, services.quickBooks)

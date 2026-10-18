@@ -1249,6 +1249,24 @@ const backupOperations: ApiContractOperation[] = [
     responseSchema: "BackupStatusEnvelope",
     sessionOnly: true,
   },
+  {
+    method: "get",
+    path: "/api/v1/backup/runs",
+    operationId: "listBackupRuns",
+    summary: "List backup runs, newest first, a page at a time",
+    description:
+      "The history behind the backup status, which holds only the latest runs. " +
+      "page.total counts everything the filters match, not only this page.",
+    tag: "backup",
+    responseStatus: 200,
+    responseSchema: "BackupRunPage",
+    sessionOnly: true,
+    parameters: [
+      ...pageParameters,
+      query("status", { type: "string", enum: ["running", "completed", "failed"] }),
+      query("trigger", { type: "string", enum: ["nightly", "manual"] }),
+    ],
+  },
 ];
 
 /**
@@ -2706,16 +2724,30 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     path: "/api/v1/email-log",
     operationId: "listEmailLog",
     summary: "List outbound email delivery outcomes",
+    description:
+      "Newest first, or oldest first with order=oldest, a page at a time. " +
+      "The first page fixes the traversal to the mail that existed when it was read: mail sent after it does not appear on later pages of the same traversal. " +
+      "The filters combine. from and to are calendar days in the organization's timezone, both included. " +
+      "q matches part of a recipient's address or name in To or Cc, ignoring case. " +
+      "page.total counts everything the filters match, not only this page.",
     tag: "email",
     responseStatus: 200,
     responseSchema: "EmailLogPage",
     sessionOnly: true,
     parameters: [
+      ...pageParameters,
       query("status", {
         type: "string",
         enum: ["queued", "sent", "bounced", "complained", "failed"],
       }),
-      query("per_page", { type: "integer", minimum: 1, maximum: 200 }),
+      query("kind", {
+        type: "string",
+        enum: ["invoice", "invoice_preview", "reminder", "thank_you", "sign_in", "account"],
+      }),
+      query("from", dateSchema),
+      query("to", dateSchema),
+      query("q", { type: "string", minLength: 1, maxLength: 200 }),
+      query("order", { type: "string", enum: ["newest", "oldest"] }),
     ],
   },
   {
@@ -2890,16 +2922,24 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     path: "/api/v1/outbox-deliveries",
     operationId: "listOutboxDeliveries",
     summary: "List domain-event subscriber delivery outcomes",
+    description:
+      "Newest first, or oldest first with order=oldest, a page at a time, by when the delivery was created. " +
+      "from and to are calendar days in the organization's timezone, both included. " +
+      "page.total counts everything the filters match, not only this page.",
     tag: "operations",
     responseStatus: 200,
     responseSchema: "OutboxDeliveryPage",
     sessionOnly: true,
     parameters: [
+      ...pageParameters,
       query("status", {
         type: "string",
         enum: ["pending", "processing", "delivered", "failed"],
       }),
-      query("per_page", { type: "integer", minimum: 1, maximum: 200 }),
+      query("event_type", stringSchema),
+      query("from", dateSchema),
+      query("to", dateSchema),
+      query("order", { type: "string", enum: ["newest", "oldest"] }),
     ],
   },
   {
@@ -3086,6 +3126,18 @@ const page = (name: string): JsonSchema => ({
     data: { type: "array", items: reference(name) },
     links: reference("PageLinks"),
     page: reference("PageMetadata"),
+  },
+  additionalProperties: false,
+});
+
+/** A page that also says how many rows its filters match (issue 929). */
+const countedPage = (name: string): JsonSchema => ({
+  type: "object",
+  required: ["data", "links", "page"],
+  properties: {
+    data: { type: "array", items: reference(name) },
+    links: reference("PageLinks"),
+    page: reference("CountedPageMetadata"),
   },
   additionalProperties: false,
 });
@@ -3529,15 +3581,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
-  EmailLogPage: {
-    type: "object",
-    required: ["data", "links"],
-    properties: {
-      data: { type: "array", items: reference("EmailLog") },
-      links: reference("Links"),
-    },
-    additionalProperties: false,
-  },
+  EmailLogPage: countedPage("EmailLog"),
   EmailReputationSnapshot: {
     type: "object",
     required: [
@@ -3814,6 +3858,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  BackupRunPage: countedPage("BackupRun"),
   BackupStatusEnvelope: {
     type: "object",
     required: ["data", "links"],
@@ -4268,15 +4313,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
-  OutboxDeliveryPage: {
-    type: "object",
-    required: ["data", "links"],
-    properties: {
-      data: { type: "array", items: reference("OutboxDelivery") },
-      links: reference("Links"),
-    },
-    additionalProperties: false,
-  },
+  OutboxDeliveryPage: countedPage("OutboxDelivery"),
   OutboxDeliveryEnvelope: {
     type: "object",
     required: ["data", "links"],
@@ -4304,6 +4341,16 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       per_page: { type: "integer", minimum: 1, maximum: 200 },
       next_cursor: nullable(stringSchema),
+    },
+    additionalProperties: false,
+  },
+  CountedPageMetadata: {
+    type: "object",
+    required: ["per_page", "next_cursor", "total"],
+    properties: {
+      per_page: { type: "integer", minimum: 1, maximum: 200 },
+      next_cursor: nullable(stringSchema),
+      total: { type: "integer", minimum: 0 },
     },
     additionalProperties: false,
   },

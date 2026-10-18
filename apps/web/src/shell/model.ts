@@ -36,11 +36,12 @@ import {
 } from '@conflict-hq/ezacto-client'
 import type { InvoiceState } from '../invoices/model.js'
 import type { ActivityRow } from '../activity/browser.js'
+import type { LogPageResult } from '../components/paged-log.js'
 import type {
+  EmailLogQuery,
   EmailLogRow,
-  EmailLogStatus,
+  OutboxQuery,
   OutboxRow,
-  OutboxStatus,
 } from '../deliveries/browser.js'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 import type { ClientDirectoryApi, ClientInvoiceSending } from '../clients/model.js'
@@ -158,13 +159,13 @@ export interface ShellApi
   revokeApiToken?(tokenId: number, signal?: AbortSignal): Promise<void>
   /** What was sent, and what became of it (issue 485). */
   listEmailLog?(
-    query: { readonly status?: EmailLogStatus },
+    query: EmailLogQuery,
     signal?: AbortSignal,
-  ): Promise<{ readonly data: readonly EmailLogRow[] }>
+  ): Promise<LogPageResult<EmailLogRow>>
   listOutboxDeliveries?(
-    query: { readonly status?: OutboxStatus },
+    query: OutboxQuery,
     signal?: AbortSignal,
-  ): Promise<{ readonly data: readonly OutboxRow[] }>
+  ): Promise<LogPageResult<OutboxRow>>
   retryOutboxDelivery?(
     subscriberId: string,
     eventId: string,
@@ -1322,6 +1323,7 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getEmailHealth(withSignal(signal))).data,
   getBackupStatus: async (signal) =>
     (await client.getBackupStatus(withSignal(signal))).data,
+  listBackupRuns: (query, signal) => client.listBackupRuns({ query, ...withSignal(signal) }),
   // Issue 593 shipped the Accounting settings section reading these four and
   // nothing supplying them, so the screen reported "not configured" on every
   // deployment and the connect button never appeared. The suite did not catch
@@ -1807,10 +1809,9 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     ).data,
   listActivityLog: (query, signal) =>
     client.listActivityLog({ query: { per_page: 200, ...query }, ...withSignal(signal) }),
-  listEmailLog: (query, signal) =>
-    client.listEmailLog({ query: { per_page: 200, ...query }, ...withSignal(signal) }),
+  listEmailLog: (query, signal) => client.listEmailLog({ query, ...withSignal(signal) }),
   listOutboxDeliveries: (query, signal) =>
-    client.listOutboxDeliveries({ query: { per_page: 200, ...query }, ...withSignal(signal) }),
+    client.listOutboxDeliveries({ query, ...withSignal(signal) }),
   retryOutboxDelivery: (subscriberId, eventId, signal) =>
     client.retryOutboxDelivery({ subscriberId, eventId, ...withSignal(signal) }),
   listInvoices: (cursor, signal, perPage, states) =>

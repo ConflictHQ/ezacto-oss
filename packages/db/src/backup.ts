@@ -292,6 +292,80 @@ export const getLatestBackupRuns = async (
   return results
 }
 
+export interface BackupRunFilter {
+  status?: BackupRunRecord['status']
+  trigger?: BackupRunRecord['trigger']
+}
+
+export interface BackupRunPageWindow extends BackupRunFilter {
+  /** Where the previous page ended, newest first; null on the first page. */
+  after: { startedAt: string; id: number } | null
+  /** Runs started later than this are left out, so a traversal holds still. */
+  startedThrough: string
+  take: number
+}
+
+const backupRunFilter = (filter: BackupRunFilter): { conditions: string[]; bindings: unknown[] } => {
+  const conditions: string[] = []
+  const bindings: unknown[] = []
+  if (filter.status !== undefined) {
+    conditions.push('status = ?')
+    bindings.push(filter.status)
+  }
+  if (filter.trigger !== undefined) {
+    conditions.push('trigger = ?')
+    bindings.push(filter.trigger)
+  }
+  return { conditions, bindings }
+}
+
+/** The latest start in the whole history, or null when nothing has run. */
+export const getBackupRunsSnapshot = async (database: D1Database): Promise<string | null> => {
+  const row = await database
+    .prepare('SELECT max(started_at) AS latest FROM backup_runs')
+    .first<{ latest: string | null }>()
+  return row?.latest ?? null
+}
+
+/** Backup runs, newest first, a keyset page at a time (issue 929). */
+export const pageBackupRuns = async (
+  database: D1Database,
+  window: BackupRunPageWindow,
+): Promise<BackupRunRecord[]> => {
+  const { conditions, bindings } = backupRunFilter(window)
+  conditions.push('started_at <= ?')
+  bindings.push(window.startedThrough)
+  if (window.after !== null) {
+    conditions.push('(started_at < ? OR (started_at = ? AND id < ?))')
+    bindings.push(window.after.startedAt, window.after.startedAt, window.after.id)
+  }
+  const { results } = await database
+    .prepare(
+      `SELECT id, status, trigger, started_at, completed_at, r2_prefix,
+       manifest_json, table_count, total_rows, error_message, created_at, updated_at
+       FROM backup_runs WHERE ${conditions.join(' AND ')}
+       ORDER BY started_at DESC, id DESC LIMIT ?`,
+    )
+    .bind(...bindings, window.take)
+    .all<BackupRunRecord>()
+  return results
+}
+
+export const countBackupRuns = async (
+  database: D1Database,
+  filter: BackupRunFilter,
+): Promise<number> => {
+  const { conditions, bindings } = backupRunFilter(filter)
+  const row = await database
+    .prepare(
+      `SELECT count(*) AS total FROM backup_runs
+       ${conditions.length === 0 ? '' : `WHERE ${conditions.join(' AND ')}`}`,
+    )
+    .bind(...bindings)
+    .first<{ total: number }>()
+  return row?.total ?? 0
+}
+
 /**
  * Returns true when no nightly backup has started today (UTC date boundary).
  * The scheduled handler calls this every minute but only proceeds when due.

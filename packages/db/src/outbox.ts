@@ -84,6 +84,24 @@ export interface OutboxDrainSummary {
   contention: number
 }
 
+export interface OutboxDeliveryFilter {
+  status?: OutboxDeliveryStatus
+  eventType?: string
+  /** First instant included, on when the delivery was created. */
+  createdFrom?: string
+  /** First instant excluded. */
+  createdBefore?: string
+}
+
+export interface OutboxDeliveryPageWindow extends OutboxDeliveryFilter {
+  order: 'newest' | 'oldest'
+  /** Where the previous page ended in `order`; null on the first page. */
+  after: { createdAt: string; subscriberId: string; eventId: string } | null
+  /** Deliveries created later than this are left out, so a traversal holds still. */
+  createdThrough: string
+  take: number
+}
+
 export interface OutboxService {
   drain(limit?: number): Promise<OutboxDrainSummary>
   listActivity(input?: {
@@ -99,6 +117,10 @@ export interface OutboxService {
     status?: OutboxDeliveryStatus
     limit?: number
   }): Promise<OutboxDeliveryRecord[]>
+  /** The latest delivery creation instant, or null when there are none. */
+  deliveriesSnapshot(): Promise<string | null>
+  pageDeliveries(window: OutboxDeliveryPageWindow): Promise<OutboxDeliveryRecord[]>
+  countDeliveries(filter: OutboxDeliveryFilter): Promise<number>
   retryFailed(subscriberId: string, eventId: string): Promise<OutboxDeliveryRecord | null>
 }
 
@@ -219,6 +241,33 @@ const deliveryColumns = `receipt.subscriber_id AS subscriberId,
   event.event_type AS eventType, event.aggregate_type AS aggregateType,
   event.aggregate_id AS aggregateId, event.aggregate_sequence AS aggregateSequence,
   event.occurred_at AS occurredAt`
+
+const deliveryFilter = (
+  filter: OutboxDeliveryFilter,
+): { conditions: string[]; bindings: unknown[] } => {
+  const conditions: string[] = []
+  const bindings: unknown[] = []
+  if (filter.status !== undefined) {
+    conditions.push('receipt.status = ?')
+    bindings.push(filter.status)
+  }
+  if (filter.eventType !== undefined) {
+    assertIdentifier(filter.eventType, 'outbox delivery event type')
+    conditions.push('event.event_type = ?')
+    bindings.push(filter.eventType)
+  }
+  if (filter.createdFrom !== undefined) {
+    assertCanonicalTimestamp(filter.createdFrom, 'outbox delivery from')
+    conditions.push('receipt.created_at >= ?')
+    bindings.push(filter.createdFrom)
+  }
+  if (filter.createdBefore !== undefined) {
+    assertCanonicalTimestamp(filter.createdBefore, 'outbox delivery before')
+    conditions.push('receipt.created_at < ?')
+    bindings.push(filter.createdBefore)
+  }
+  return { conditions, bindings }
+}
 
 const eventRecord = (row: OutboxEventRow): OutboxEventRecord => {
   let payload: unknown
@@ -813,6 +862,63 @@ const createService = (
           status === undefined ? [limit] : [status, limit],
         )
       ).map(deliveryRecord)
+    },
+
+    async deliveriesSnapshot() {
+      const row = await database.first<{ latest: string | null }>(
+        'SELECT max(created_at) AS latest FROM outbox_delivery_receipts',
+        [],
+      )
+      return row?.latest ?? null
+    },
+
+    async pageDeliveries(window) {
+      assertLimit(window.take, 201, 'outbox delivery page')
+      assertCanonicalTimestamp(window.createdThrough, 'outbox delivery snapshot')
+      const { conditions, bindings } = deliveryFilter(window)
+      conditions.push('receipt.created_at <= ?')
+      bindings.push(window.createdThrough)
+      const newest = window.order === 'newest'
+      if (window.after !== null) {
+        // Strictly past the last row of the previous page, in the direction the
+        // page runs; the receipt's key breaks a tie on the instant.
+        const past = newest ? '<' : '>'
+        conditions.push(
+          `(receipt.created_at ${past} ? OR (receipt.created_at = ? AND (receipt.subscriber_id ${past} ? OR (receipt.subscriber_id = ? AND receipt.event_id ${past} ?))))`,
+        )
+        bindings.push(
+          window.after.createdAt,
+          window.after.createdAt,
+          window.after.subscriberId,
+          window.after.subscriberId,
+          window.after.eventId,
+        )
+      }
+      const direction = newest ? 'DESC' : 'ASC'
+      return (
+        await database.all<OutboxDeliveryRow>(
+          `SELECT ${deliveryColumns}
+           FROM outbox_delivery_receipts receipt
+           JOIN event_outbox event ON event.id = receipt.event_id
+           WHERE ${conditions.join(' AND ')}
+           ORDER BY receipt.created_at ${direction}, receipt.subscriber_id ${direction},
+             receipt.event_id ${direction}
+           LIMIT ?`,
+          [...bindings, window.take],
+        )
+      ).map(deliveryRecord)
+    },
+
+    async countDeliveries(filter) {
+      const { conditions, bindings } = deliveryFilter(filter)
+      const row = await database.first<{ total: number }>(
+        `SELECT count(*) AS total
+         FROM outbox_delivery_receipts receipt
+         JOIN event_outbox event ON event.id = receipt.event_id
+         ${conditions.length === 0 ? '' : `WHERE ${conditions.join(' AND ')}`}`,
+        bindings,
+      )
+      return row?.total ?? 0
     },
 
     async retryFailed(subscriberId, eventId) {

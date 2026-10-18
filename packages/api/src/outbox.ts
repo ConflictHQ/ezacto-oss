@@ -2,6 +2,15 @@ import type { Hono } from 'hono'
 import { requireApiScope, requireSessionPrincipal } from './auth.js'
 import type { ApiContext } from './context.js'
 import { ApiError, validationError } from './errors.js'
+import {
+  dayRange,
+  logOrder,
+  logOrderFor,
+  singleChoice,
+  singleQuery,
+  withTotal,
+} from './log-paging.js'
+import { keysetCursorPage } from './pagination.js'
 
 export type OutboxDeliveryStatus = 'pending' | 'processing' | 'delivered' | 'failed'
 
@@ -47,12 +56,39 @@ export interface OutboxDeliveryResource {
   occurredAt: string
 }
 
+export interface OutboxDeliveryFilter {
+  status?: OutboxDeliveryStatus
+  eventType?: string
+  createdFrom?: string
+  createdBefore?: string
+}
+
+export interface OutboxDeliveryPageWindow extends OutboxDeliveryFilter {
+  order: 'newest' | 'oldest'
+  after: { createdAt: string; subscriberId: string; eventId: string } | null
+  createdThrough: string
+  take: number
+}
+
+export interface OutboxRouteOptions {
+  /** Signs the page cursors. */
+  cursorSigningKey: Uint8Array
+  /** The organization's timezone, which decides where a calendar day begins. */
+  timezone(): Promise<string>
+  /**
+   * The `activity_log` module switch. Switching it off hides the surface and
+   * refuses the read; capture is not gated here, so the evidence keeps being
+   * recorded while nobody is looking at it.
+   */
+  isActivityLogModuleEnabled(): Promise<boolean>
+}
+
 export interface OutboxMonitor {
   listActivity(input?: { limit?: number }): Promise<ActivityLogResource[]>
-  listDeliveries(input?: {
-    status?: OutboxDeliveryStatus
-    limit?: number
-  }): Promise<OutboxDeliveryResource[]>
+  /** The latest delivery creation instant, or null when there are none. */
+  deliveriesSnapshot(): Promise<string | null>
+  pageDeliveries(window: OutboxDeliveryPageWindow): Promise<OutboxDeliveryResource[]>
+  countDeliveries(filter: OutboxDeliveryFilter): Promise<number>
   retryFailed(
     subscriberId: string,
     eventId: string,
@@ -87,7 +123,7 @@ const pageLimit = (presented: string | undefined): number => {
 
 const requireAdministratorSession = <Bindings extends object>(
   context: Parameters<typeof requireSessionPrincipal<Bindings>>[0],
-): void => {
+) => {
   const principal = requireSessionPrincipal(context)
   if (principal.profile !== 'administrator') {
     throw new ApiError({
@@ -96,6 +132,7 @@ const requireAdministratorSession = <Bindings extends object>(
       message: 'Only administrators can inspect or retry outbox deliveries.',
     })
   }
+  return principal
 }
 
 // The actor sits beside the payload rather than inside it. The payload is the
@@ -137,15 +174,6 @@ const deliveryData = (record: OutboxDeliveryResource) => ({
   created_at: record.createdAt,
   updated_at: record.updatedAt,
 })
-
-export interface OutboxRouteOptions {
-  /**
-   * The `activity_log` module switch. Switching it off hides the surface and
-   * refuses the read; capture is not gated here, so the evidence keeps being
-   * recorded while nobody is looking at it.
-   */
-  isActivityLogModuleEnabled(): Promise<boolean>
-}
 
 const requireActivityLogModule = async (options: OutboxRouteOptions): Promise<void> => {
   if (await options.isActivityLogModuleEnabled()) return
@@ -205,35 +233,67 @@ export const installOutboxRoutes = <Bindings extends object>(
   })
 
   api.get('/outbox-deliveries', async (context) => {
-    requireAdministratorSession(context)
-    const presentedStatus = context.req.query('status')
-    if (
-      presentedStatus !== undefined &&
-      !statuses.has(presentedStatus as OutboxDeliveryStatus)
-    ) {
+    const principal = requireAdministratorSession(context)
+    const requestUrl = new URL(context.req.url)
+    const status = singleChoice(requestUrl, 'status', [...statuses])
+    const eventType = singleQuery(requestUrl, 'event_type')
+    if (eventType !== undefined && !/^[A-Za-z0-9._:-]{1,128}$/.test(eventType)) {
       throw validationError([
         {
-          field: 'status',
-          code: 'unsupported',
-          message: 'status is not a supported outbox delivery status',
+          field: 'event_type',
+          code: 'invalid',
+          message: 'event_type must use 1-128 safe identifier characters',
         },
       ])
     }
-    const limit = pageLimit(context.req.query('per_page'))
-    const status = presentedStatus as OutboxDeliveryStatus | undefined
-    return context.json(
-      {
-        data: (
-          await monitor.listDeliveries({
-            ...(status === undefined ? {} : { status }),
-            limit,
-          })
-        ).map(deliveryData),
-        links: { self: '/api/v1/outbox-deliveries' },
+    const days =
+      requestUrl.searchParams.has('from') || requestUrl.searchParams.has('to')
+        ? dayRange(requestUrl, await options.timezone())
+        : {}
+    const filter: OutboxDeliveryFilter = {
+      ...(status === undefined ? {} : { status }),
+      ...(eventType === undefined ? {} : { eventType }),
+      ...days,
+    }
+    const order = logOrder(requestUrl)
+    type Row = { id: number; created_at: string; record: OutboxDeliveryResource }
+    const page = await keysetCursorPage({
+      requestUrl,
+      cursorSigningKey: options.cursorSigningKey,
+      viewer: principal,
+      serializer: (row: Readonly<Row>) => deliveryData(row.record),
+      // A delivery is keyed by its subscriber and event, not by a number, and
+      // the chassis asks every row for a positive id. The position below is
+      // what orders and resumes the page; this id only satisfies the check.
+      order: logOrderFor<Row>(order, ['string', 'string'], (row) => [
+        row.created_at,
+        row.record.subscriberId,
+        row.record.eventId,
+      ]),
+      source: {
+        snapshot: () => monitor.deliveriesSnapshot(),
+        list: async (window) =>
+          (
+            await monitor.pageDeliveries({
+              ...filter,
+              order,
+              after:
+                window.after === null
+                  ? null
+                  : {
+                      createdAt: window.after[0],
+                      subscriberId: window.after[1] as string,
+                      eventId: window.after[2] as string,
+                    },
+              createdThrough: window.createdThrough,
+              take: window.take,
+            })
+          ).map((record) => ({ id: 1, created_at: record.createdAt, record })),
       },
-      200,
-      { 'cache-control': 'no-store' },
-    )
+    })
+    return context.json(withTotal(page, await monitor.countDeliveries(filter)), 200, {
+      'cache-control': 'no-store',
+    })
   })
 
   api.post(

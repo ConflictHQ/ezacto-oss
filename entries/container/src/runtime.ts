@@ -141,6 +141,7 @@ import {
   createSenderBoundQueuedMailer,
   SenderIdentityUnavailableError,
   type HttpEmailProvider,
+  EMAIL_LOG_KIND_TEMPLATES,
 } from '@ezacto/mailer'
 import { SmtpMailer } from '@ezacto/mailer/smtp'
 import type {
@@ -409,7 +410,7 @@ export const createContainerRuntime = async (
     const sessions = createApiSessionService(
       createContainerSessionStore(database, touch),
     )
-    const emailLog = createContainerEmailLogStore(database)
+    const emailLog = createContainerEmailLogStore(database, { kindTemplates: EMAIL_LOG_KIND_TEMPLATES })
     const emailConfiguration = createContainerEmailConfigurationStore(database)
     const smtp =
       options.emailProvider ??
