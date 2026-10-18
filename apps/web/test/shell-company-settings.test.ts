@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { EzactoClient } from '@conflict-hq/ezacto-client'
 import { createShellApi } from '../src/shell/model.js'
+import type { NotificationSettingsState } from '../src/module-settings/model.js'
 import {
   EzactoApiError,
   authenticationError,
@@ -141,10 +142,17 @@ describe('company settings', () => {
         applied: policy === null ? 0 : 2,
       }),
     ),
-    getNotificationSettings: vi.fn(async () => ({ budget_alerts_include_admins: false })),
+    getNotificationSettings: vi.fn(async () => ({
+      budget_alerts_include_admins: false,
+      submission_reminder: null,
+    })),
     updateNotificationSettings: vi.fn(
-      async (patch: { budget_alerts_include_admins?: boolean }) => ({
+      async (patch: {
+        budget_alerts_include_admins?: boolean
+        submission_reminder?: NotificationSettingsState['submission_reminder']
+      }) => ({
         budget_alerts_include_admins: patch.budget_alerts_include_admins ?? false,
+        submission_reminder: patch.submission_reminder ?? null,
       }),
     ),
     getEmailHealth: vi.fn(async () => ({
@@ -707,7 +715,7 @@ describe('company settings', () => {
   })
 
   it('[unit] binds the notification settings to their operations', async () => {
-    const stored = { budget_alerts_include_admins: true }
+    const stored = { budget_alerts_include_admins: true, submission_reminder: null }
     const generated = {
       getNotificationSettings: vi.fn(async () => ({ data: stored })),
       setNotificationSettings: vi.fn(async () => ({ data: stored })),
@@ -760,6 +768,53 @@ describe('company settings', () => {
     globalThis.location.hash = ''
   })
 
+  it('[browser #935] sets, and clears, when everyone is reminded to submit their week', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    globalThis.location.hash = '#notifications'
+    const api = companyApi()
+    await mountShell(api)
+
+    const form = document.querySelector<HTMLFormElement>('[data-notification-settings-form]')!
+    const day = document.querySelector<HTMLSelectElement>('[data-notification-settings-day]')!
+    const time = document.querySelector<HTMLInputElement>('[data-notification-settings-time]')!
+    const result = document.querySelector<HTMLElement>('[data-notification-settings-result]')!
+    await vi.waitFor(() => expect(form.hidden).toBe(false))
+    // Off until an administrator turns it on.
+    expect(day.value).toBe('')
+    expect(time.value).toBe('')
+
+    // Half a schedule is not saved.
+    day.value = 'monday'
+    form.requestSubmit()
+    expect(result.textContent).toBe('Choose a time for the submission reminder.')
+    expect(api.updateNotificationSettings).not.toHaveBeenCalled()
+
+    time.value = '09:00'
+    form.requestSubmit()
+    await vi.waitFor(() => expect(result.textContent).toBe('Saved.'))
+    expect(api.updateNotificationSettings).toHaveBeenLastCalledWith(
+      {
+        budget_alerts_include_admins: false,
+        submission_reminder: { day: 'monday', time: '09:00' },
+      },
+      expect.any(AbortSignal),
+    )
+    expect(day.value).toBe('monday')
+    expect(time.value).toBe('09:00')
+
+    day.value = ''
+    time.value = ''
+    form.requestSubmit()
+    await vi.waitFor(() =>
+      expect(api.updateNotificationSettings).toHaveBeenLastCalledWith(
+        { budget_alerts_include_admins: false, submission_reminder: null },
+        expect.any(AbortSignal),
+      ),
+    )
+    globalThis.location.hash = ''
+  })
+
   it('[browser #934] shows whether administrators are copied on budget alerts, and saves a change', async () => {
     stubModulesEndpoint()
     renderBrowserShell({ view: 'settings-company' })
@@ -777,7 +832,7 @@ describe('company settings', () => {
     form.requestSubmit()
     await vi.waitFor(() => expect(result.textContent).toBe('Saved.'))
     expect(api.updateNotificationSettings).toHaveBeenLastCalledWith(
-      { budget_alerts_include_admins: true },
+      { budget_alerts_include_admins: true, submission_reminder: null },
       expect.any(AbortSignal),
     )
     expect(admins.checked).toBe(true)

@@ -78,6 +78,11 @@ import { createExpenseWorkflowController } from '../expenses/browser.js'
 import { createRoleAdminController } from '../roles/browser.js'
 import { createTaskAdminController } from '../tasks/browser.js'
 import { createTeamDirectoryController } from '../team/browser.js'
+import {
+  notificationFieldsProblem,
+  paintNotificationFields,
+  readNotificationFields,
+} from '../team/notification-fields.js'
 import { teamCapabilities } from '../team/model.js'
 import { createExpenseCategoryDirectoryController } from '../expense-categories/browser.js'
 import { createEmailConfigurationController } from '../email-config/browser.js'
@@ -2231,6 +2236,71 @@ export const mountShell = async (
    * has the Wisetag had nowhere to enter it and somebody else had to do it for
    * them. Which is the opposite of asking them to share it.
    */
+  /**
+   * Your own reminders (issue 935): the daily time reminder, the end-of-week
+   * submission reminder and the digest, edited by the person they are for. The
+   * same fields the Team page shows an administrator, written to the same row,
+   * so "per-person opt-out" does not mean asking someone to do it for you.
+   */
+  const wireUserNotifications = (): void => {
+    const section = document.querySelector<HTMLElement>('[data-settings-notifications]')
+    const read = api.getProfileNotifications
+    const write = api.updateProfileNotifications
+    if (section === null || read === undefined || write === undefined) return
+    const status = required<HTMLElement>('[data-settings-notifications-status]')
+    const form = required<HTMLFormElement>('[data-settings-notifications-form]')
+    const result = required<HTMLElement>('[data-settings-notifications-result]')
+    const submit = required<HTMLButtonElement>('[data-settings-notifications-submit]')
+    section.hidden = false
+    // The demo shares one workspace between strangers (issue 931); nobody there
+    // has an inbox of their own to remind.
+    if (isDemoDeployment()) {
+      status.textContent = demoUnavailable('Setting reminders')
+      return
+    }
+    void (async () => {
+      try {
+        paintNotificationFields(form, await read(), true)
+        status.textContent = ''
+        form.hidden = false
+      } catch {
+        status.textContent = 'Your reminders could not be loaded.'
+      }
+    })()
+    form.addEventListener('input', () => {
+      result.textContent = ''
+    })
+    form.addEventListener('submit', (event) => {
+      event.preventDefault()
+      const preferences = readNotificationFields(form)
+      const problem = notificationFieldsProblem(preferences)
+      if (problem !== null) {
+        result.textContent = problem
+        return
+      }
+      submit.disabled = true
+      result.textContent = 'Saving…'
+      void (async () => {
+        try {
+          paintNotificationFields(form, await write(preferences), true)
+          result.textContent = 'Saved.'
+        } catch (error) {
+          const body =
+            typeof error === 'object' && error !== null && 'body' in error
+              ? (error as { body: unknown }).body
+              : null
+          const first =
+            typeof body === 'object' && body !== null && 'error' in body
+              ? (body as { error: { fields?: readonly { message?: string }[] } }).error.fields?.[0]
+              : undefined
+          result.textContent = first?.message ?? 'Your reminders could not be saved.'
+        } finally {
+          submit.disabled = false
+        }
+      })()
+    })
+  }
+
   const wireUserPayout = (identity: Readonly<Whoami>): void => {
     const section = document.querySelector<HTMLElement>('[data-settings-payout]')
     const read = api.getWisePayoutDestination
@@ -2735,6 +2805,7 @@ export const mountShell = async (
     )
     facts.hidden = false
     settingsStatus.textContent = ''
+    wireUserNotifications()
     wireUserPayout(identity)
     wireApiTokens(identity)
     wireTwoFactor()

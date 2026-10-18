@@ -66,6 +66,10 @@ export interface WisePayoutConnection {
 /** Company settings for the mail the instance sends its own people (issue 934). */
 export type NotificationSettingsState = {
   readonly budget_alerts_include_admins: boolean
+  readonly submission_reminder: {
+    readonly day: 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday'
+    readonly time: string
+  } | null
 }
 
 /** The organisation default payment reminder policy, or null for off (issue 801). */

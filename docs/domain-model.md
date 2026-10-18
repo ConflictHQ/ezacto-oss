@@ -504,7 +504,14 @@ a saved report is a named URL state.
 
 Per user (UI 09f): daily reminder `{enabled, time, days[], channels{email, desktop,
 slack}}`, `include_in_team_reminders`, `weekly_digest`, `notify_project_deleted`.
-No pre-checked marketing opt-in — we are not doing that.
+No pre-checked marketing opt-in — we are not doing that. `include_in_team_reminders`
+(the end-of-week submission reminder) is operational rather than marketing and
+starts on, so that opting out is a choice a person can make; nothing is sent until an
+administrator sets the company schedule (`organizations.submission_reminder_day` /
+`_time`, both or neither). Delivered: the daily reminder, the email channel, team
+reminders and the weekly digest (a digest of who has not submitted, for people who
+approve timesheets). Desktop, Slack and `notify_project_deleted` have no delivery and are
+refused rather than stored. `notification_deliveries` is the once-only ledger.
 
 ---
 

@@ -71,7 +71,7 @@ const person = (overrides: Partial<TeamPerson> = {}): TeamPerson => ({
   ],
   cost_rates: [],
   notifications: {
-    delivery_active: false,
+    delivery_active: true,
     daily_reminder_enabled: false,
     reminder_time: null,
     reminder_days: [],
@@ -996,36 +996,100 @@ describe('Team browser controller', () => {
     })
   })
 
-  it('renders notification delivery as inactive and never saves delivery promises', async () => {
-    writeDocument('team-person')
-    const updateTeamPersonNotifications = vi.fn<
-      TeamDirectoryApi['updateTeamPersonNotifications']
-    >(async () => receipt(4))
-    const controller = createTeamDirectoryController({
-      getTeamPerson: vi.fn(async () =>
-        person({
-          notifications: {
-            ...person().notifications,
-            channels: { email: true, desktop: false, slack: true },
-          },
-        }),
-      ),
-      getTeamCatalog: vi.fn(async () => catalog),
-      updateTeamPersonNotifications,
-    })
-    await controller.activate(identity('people_admin'), new AbortController().signal, () => false)
+  describe('reminder preferences (issue 935)', () => {
+    const open = async (
+      profile: Parameters<typeof identity>[0],
+      stored: Partial<ReturnType<typeof person>['notifications']> = {},
+    ) => {
+      writeDocument('team-person')
+      const updateTeamPersonNotifications = vi.fn<
+        TeamDirectoryApi['updateTeamPersonNotifications']
+      >(async () => receipt(4))
+      const controller = createTeamDirectoryController({
+        getTeamPerson: vi.fn(async () =>
+          person({ notifications: { ...person().notifications, ...stored } }),
+        ),
+        getTeamCatalog: vi.fn(async () => catalog),
+        updateTeamPersonNotifications,
+      })
+      await controller.activate(identity(profile), new AbortController().signal, () => false)
+      const form = document.querySelector<HTMLFormElement>('[data-team-notifications-form]')!
+      const box = (name: string): HTMLInputElement =>
+        form.elements.namedItem(name) as HTMLInputElement
+      return { form, box, updateTeamPersonNotifications }
+    }
 
-    const form = document.querySelector<HTMLFormElement>('[data-team-notifications-form]')!
-    submit(form)
-    expect(updateTeamPersonNotifications).not.toHaveBeenCalled()
-    expect(document.querySelector('[data-team-notification-status]')?.textContent).toContain(
-      'delivery is not active',
-    )
-    expect(
-      [...form.querySelectorAll<HTMLInputElement>('input')].every((input) => input.disabled),
-    ).toBe(true)
-    submit(form)
-    expect(updateTeamPersonNotifications).not.toHaveBeenCalled()
+    it('saves what an administrator of people sets: the daily reminder, mail, team reminders and the digest', async () => {
+      const { form, box, updateTeamPersonNotifications } = await open('people_admin')
+      expect(document.querySelector('[data-team-notifications-submit]')?.hasAttribute('hidden')).toBe(false)
+
+      box('daily_reminder_enabled').checked = true
+      box('reminder_time').value = '17:00'
+      for (const day of form.querySelectorAll<HTMLInputElement>('[name="reminder_days"]')) {
+        day.checked = day.value === 'monday' || day.value === 'friday'
+      }
+      box('channel_email').checked = true
+      box('include_in_team_reminders').checked = true
+      box('weekly_digest').checked = true
+      submit(form)
+
+      await vi.waitFor(() => expect(updateTeamPersonNotifications).toHaveBeenCalledTimes(1))
+      expect(updateTeamPersonNotifications.mock.calls[0]![0]).toBe(1)
+      expect(updateTeamPersonNotifications.mock.calls[0]![2]).toEqual({
+        expected_version: 3,
+        daily_reminder_enabled: true,
+        reminder_time: '17:00',
+        reminder_days: ['monday', 'friday'],
+        channels: { email: true, desktop: false, slack: false },
+        include_in_team_reminders: true,
+        weekly_digest: true,
+        notify_project_deleted: false,
+      })
+    })
+
+    it('says what is missing before it asks the server, and keeps what has no delivery switched off', async () => {
+      const { form, box, updateTeamPersonNotifications } = await open('people_admin', {
+        // An imported preference nothing honours.
+        channels: { email: false, desktop: true, slack: true },
+        notify_project_deleted: true,
+      })
+      expect(box('channel_desktop').checked).toBe(false)
+      expect(box('channel_desktop').disabled).toBe(true)
+      expect(box('channel_slack').disabled).toBe(true)
+      expect(box('notify_project_deleted').disabled).toBe(true)
+
+      box('daily_reminder_enabled').checked = true
+      submit(form)
+      expect(document.querySelector('[data-team-notifications-result]')?.textContent).toBe(
+        'Choose a time for the daily reminder.',
+      )
+      box('reminder_time').value = '17:00'
+      submit(form)
+      expect(document.querySelector('[data-team-notifications-result]')?.textContent).toBe(
+        'Choose at least one day for the daily reminder.',
+      )
+      form.querySelector<HTMLInputElement>('[name="reminder_days"]')!.checked = true
+      submit(form)
+      expect(document.querySelector('[data-team-notifications-result]')?.textContent).toBe(
+        'The daily reminder is sent by email: tick Email.',
+      )
+      expect(updateTeamPersonNotifications).not.toHaveBeenCalled()
+    })
+
+    it('[security] shows them read-only to somebody who cannot administer people', async () => {
+      const { form, box, updateTeamPersonNotifications } = await open('project_manager', {
+        daily_reminder_enabled: true,
+        reminder_time: '09:00',
+        reminder_days: ['monday'],
+        channels: { email: true, desktop: false, slack: false },
+      })
+      expect(box('daily_reminder_enabled').checked).toBe(true)
+      expect(box('reminder_time').value).toBe('09:00')
+      expect([...form.querySelectorAll<HTMLInputElement>('input')].every((input) => input.disabled)).toBe(true)
+      expect(document.querySelector<HTMLButtonElement>('[data-team-notifications-submit]')!.hidden).toBe(true)
+      submit(form)
+      expect(updateTeamPersonNotifications).not.toHaveBeenCalled()
+    })
   })
 
   it('[e2e:rate-change] takes back a misclicked rate and shows the one it displaced reopened', async () => {
