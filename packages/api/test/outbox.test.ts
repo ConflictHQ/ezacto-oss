@@ -3,6 +3,7 @@ import {
   createApiApp,
   installOutboxRoutes,
   type ActivityLogResource,
+  type OutboxDeliveryPageWindow,
   type OutboxDeliveryResource,
   type OutboxMonitor,
   type UserProfile,
@@ -39,13 +40,22 @@ const failedDelivery: OutboxDeliveryResource = {
   updatedAt: '2026-09-02T12:20:00.000Z',
 }
 
+const routeOptions = (timezone: string) => ({
+  cursorSigningKey: new Uint8Array(32).fill(5),
+  timezone: async () => timezone,
+})
+
 const harness = (
   profile: UserProfile,
   monitorOverrides: Partial<OutboxMonitor> = {},
 ) => {
   const monitor: OutboxMonitor = {
     listActivity: vi.fn(async () => [activity]),
-    listDeliveries: vi.fn(async () => [failedDelivery]),
+    deliveriesSnapshot: vi.fn(async () => failedDelivery.createdAt),
+    pageDeliveries: vi.fn(async (window: OutboxDeliveryPageWindow) =>
+      [failedDelivery].slice(0, window.take),
+    ),
+    countDeliveries: vi.fn(async () => 1),
     retryFailed: vi.fn(async (): Promise<OutboxDeliveryResource> => {
       return {
         ...failedDelivery,
@@ -72,7 +82,7 @@ const harness = (
       },
     },
     installApi(api) {
-      installOutboxRoutes(api, monitor)
+      installOutboxRoutes(api, monitor, routeOptions('UTC'))
     },
   })
   return { app, monitor }
@@ -205,9 +215,11 @@ describe('outbox observability API', () => {
       installApi(api) {
         installOutboxRoutes(api, {
           listActivity,
-          listDeliveries: vi.fn(),
+          deliveriesSnapshot: vi.fn(),
+          pageDeliveries: vi.fn(),
+          countDeliveries: vi.fn(),
           retryFailed: vi.fn(),
-        })
+        }, routeOptions('UTC'))
       },
     })
     expect(
@@ -274,8 +286,15 @@ describe('outbox observability API', () => {
           last_error_code: 'subscriber_timeout',
         },
       ],
+      page: { per_page: 10, next_cursor: null, total: 1 },
     })
-    expect(monitor.listDeliveries).toHaveBeenCalledWith({ status: 'failed', limit: 10 })
+    expect(monitor.pageDeliveries).toHaveBeenCalledWith({
+      status: 'failed',
+      order: 'newest',
+      after: null,
+      createdThrough: '2026-09-02T12:00:01.000Z',
+      take: 11,
+    })
 
     const retried = await app.request(
       '/api/v1/outbox-deliveries/activity_log/event-paid/retry',
@@ -310,9 +329,11 @@ describe('outbox observability API', () => {
       installApi(api) {
         installOutboxRoutes(api, {
           listActivity: vi.fn(),
-          listDeliveries: vi.fn(),
+          deliveriesSnapshot: vi.fn(),
+          pageDeliveries: vi.fn(),
+          countDeliveries: vi.fn(),
           retryFailed: vi.fn(),
-        })
+        }, routeOptions('UTC'))
       },
     })
     const response = await app.request('/api/v1/outbox-deliveries', {
@@ -331,7 +352,9 @@ describe('outbox observability API', () => {
       (await app.request('/api/v1/outbox-deliveries?status=unknown')).status,
     ).toBe(422)
     expect((await app.request('/api/v1/activity-log?per_page=0')).status).toBe(422)
-    expect(monitor.listDeliveries).not.toHaveBeenCalled()
+    expect((await app.request('/api/v1/outbox-deliveries?event_type=a%20b')).status).toBe(422)
+    expect((await app.request('/api/v1/outbox-deliveries?to=2026-13-01')).status).toBe(422)
+    expect(monitor.pageDeliveries).not.toHaveBeenCalled()
     expect(monitor.listActivity).not.toHaveBeenCalled()
 
     const response = await app.request(
@@ -342,5 +365,45 @@ describe('outbox observability API', () => {
     expect(await response.json()).toMatchObject({
       error: { code: 'delivery_not_failed' },
     })
+  })
+
+  it('[api] narrows deliveries by event type and by the days it spans in the organization timezone', async () => {
+    const monitor: OutboxMonitor = {
+      listActivity: vi.fn(),
+      deliveriesSnapshot: vi.fn(async () => failedDelivery.createdAt),
+      pageDeliveries: vi.fn(async () => []),
+      countDeliveries: vi.fn(async () => 0),
+      retryFailed: vi.fn(),
+    }
+    const app = createApiApp({
+      authentication: {
+        sessions: {
+          resolve: async () => ({
+            type: 'user' as const,
+            userId: 1,
+            profile: 'administrator' as const,
+            managerGrants: [],
+            authentication: { kind: 'session' as const, sessionId: 'session-1' },
+          }),
+        },
+      },
+      installApi(api) {
+        installOutboxRoutes(api, monitor, routeOptions('Asia/Tokyo'))
+      },
+    })
+    const response = await app.request(
+      '/api/v1/outbox-deliveries?event_type=invoice.paid&from=2026-09-02&to=2026-09-02&order=oldest',
+    )
+    expect(response.status).toBe(200)
+    expect(monitor.pageDeliveries).toHaveBeenCalledWith({
+      eventType: 'invoice.paid',
+      createdFrom: '2026-09-01T15:00:00.000Z',
+      createdBefore: '2026-09-02T15:00:00.000Z',
+      order: 'oldest',
+      after: null,
+      createdThrough: failedDelivery.createdAt,
+      take: 51,
+    })
+    expect(await response.json()).toMatchObject({ data: [], page: { total: 0 } })
   })
 })

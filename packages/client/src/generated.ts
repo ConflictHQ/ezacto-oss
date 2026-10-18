@@ -386,7 +386,8 @@ export type EmailLog = {
 
 export type EmailLogPage = {
   "data": Array<EmailLog>;
-  "links": Links;
+  "links": PageLinks;
+  "page": CountedPageMetadata;
 };
 
 export type EmailReputationSnapshot = {
@@ -516,6 +517,12 @@ export type BackupRun = {
   "table_count": number | null;
   "total_rows": number | null;
   "error_message": string | null;
+};
+
+export type BackupRunPage = {
+  "data": Array<BackupRun>;
+  "links": PageLinks;
+  "page": CountedPageMetadata;
 };
 
 export type BackupStatusEnvelope = {
@@ -737,7 +744,8 @@ export type OutboxDelivery = {
 
 export type OutboxDeliveryPage = {
   "data": Array<OutboxDelivery>;
-  "links": Links;
+  "links": PageLinks;
+  "page": CountedPageMetadata;
 };
 
 export type OutboxDeliveryEnvelope = {
@@ -757,6 +765,12 @@ export type PageLinks = {
 export type PageMetadata = {
   "per_page": number;
   "next_cursor": string | null;
+};
+
+export type CountedPageMetadata = {
+  "per_page": number;
+  "next_cursor": string | null;
+  "total": number;
 };
 
 export type Service = {
@@ -4102,7 +4116,7 @@ export class EzactoClient {
     });
   }
 
-  async listEmailLog(args: { query?: { "status"?: "queued" | "sent" | "bounced" | "complained" | "failed"; "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<EmailLogPage> {
+  async listEmailLog(args: { query?: { "cursor"?: string; "per_page"?: number; "status"?: "queued" | "sent" | "bounced" | "complained" | "failed"; "kind"?: "invoice" | "invoice_preview" | "reminder" | "thank_you" | "sign_in" | "account"; "from"?: string; "to"?: string; "q"?: string; "order"?: "newest" | "oldest" }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<EmailLogPage> {
     const headers = new Headers(args.headers);
 
     return this.request<EmailLogPage>("GET", "/api/v1/email-log", {
@@ -4237,7 +4251,7 @@ export class EzactoClient {
     });
   }
 
-  async listOutboxDeliveries(args: { query?: { "status"?: "pending" | "processing" | "delivered" | "failed"; "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<OutboxDeliveryPage> {
+  async listOutboxDeliveries(args: { query?: { "cursor"?: string; "per_page"?: number; "status"?: "pending" | "processing" | "delivered" | "failed"; "event_type"?: string; "from"?: string; "to"?: string; "order"?: "newest" | "oldest" }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<OutboxDeliveryPage> {
     const headers = new Headers(args.headers);
 
     return this.request<OutboxDeliveryPage>("GET", "/api/v1/outbox-deliveries", {
@@ -6356,6 +6370,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<BackupStatusEnvelope>("GET", "/api/v1/backup/status", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listBackupRuns(args: { query?: { "cursor"?: string; "per_page"?: number; "status"?: "running" | "completed" | "failed"; "trigger"?: "nightly" | "manual" }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<BackupRunPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BackupRunPage>("GET", "/api/v1/backup/runs", {
+      query: args.query,
       signal: args.signal,
       headers,
     });

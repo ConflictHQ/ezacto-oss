@@ -41,6 +41,7 @@ describe('icon set', () => {
       'sidebar',
       'sign-out',
       'sliders',
+      'sort',
     ])
   })
 
