@@ -31,6 +31,8 @@ import {
 } from '@conflict-hq/ezacto-client'
 import { canManageTeammateTime } from '@ezacto/core'
 import { renderFilterBar, type FilterValue } from '../components/filter-bar.js'
+import { sortReportTable, type ReportSortColumn } from '../components/report-table-sort.js'
+import { sortToken, type SortValue, type TableSort } from '../components/table-sort.js'
 import { createPeriodControl } from '../components/period.js'
 import { invoiceIdentityCanWrite, invoicePagePath } from '../invoices/model.js'
 import { moneyText } from '../money-display.js'
@@ -57,6 +59,7 @@ import {
   groupDetailedTimeRows,
   isReportKind,
   invoicedReportOptionsFromUrl,
+  reportSortFromUrl,
   profitabilityOptionsFromUrl,
   reportFiltersFromUrl,
   reportFiltersUrl,
@@ -109,6 +112,50 @@ const canReadKind = (
   kind === 'contractor-cost' || kind === 'profitability'
     ? canReadCostReports(identity)
     : openToEveryProfile.has(kind) || canReadFinancialReports(identity.profile)
+
+/**
+ * The sort the report's address asks for, and what to do when a header changes
+ * it (issue 852). Set by the controller before it draws; the render functions
+ * below are plain functions of the report, so the sort reaches them here.
+ */
+let reportSortAddress: TableSort | null = null
+let reportSortChanged: (sort: TableSort) => void = () => undefined
+let reportSortKind: ReportKind | null = null
+
+/** A sortable column: its key, and the value of each row in the order drawn. */
+const sortBy = (key: string, values: readonly SortValue[]): ReportSortColumn => ({
+  key,
+  value: (index) => values[index] ?? null,
+})
+
+/** Money sorts by currency and then amount; two currencies are never added. */
+const sortMoney = (currency: string, cents: number | null | undefined): SortValue =>
+  cents === null || cents === undefined ? null : [currency, cents]
+
+/** The report's address with the sort it is showing, where it has been chosen. */
+const withSort = (address: string): string => {
+  if (reportSortAddress === null) return address
+  const url = new URL(address, 'https://ezacto.invalid')
+  url.searchParams.set('sort', sortToken(reportSortAddress))
+  return `${url.pathname}${url.search}`
+}
+
+const sortReport = (
+  table: HTMLTableElement,
+  name: string,
+  columns: Readonly<Record<string, ReportSortColumn>>,
+  defaultSort: TableSort | null,
+  unit?: (index: number) => string | number,
+): void => {
+  sortReportTable(table, {
+    table: name,
+    columns,
+    defaultSort,
+    address: reportSortAddress,
+    onSort: (sort) => reportSortChanged(sort),
+    ...(unit === undefined ? {} : { unit }),
+  })
+}
 
 const required = <ElementType extends Element>(selector: string): ElementType => {
   const element = document.querySelector<ElementType>(selector)
@@ -371,6 +418,19 @@ const renderMyHours = (report: Readonly<MyHoursReport>): DocumentFragment => {
   )
   foot.append(totalRow)
   table.append(head, body, foot)
+  sortReport(
+    table,
+    'my-hours',
+    {
+      Client: sortBy('client', report.projects.map((project) => project.client_name)),
+      Project: sortBy('project', report.projects.map((project) => project.project_name)),
+      Tracked: sortBy('tracked', report.projects.map((project) => project.seconds)),
+      Rounded: sortBy('rounded', report.projects.map((project) => project.rounded_seconds)),
+      Billable: sortBy('billable', report.projects.map((project) => project.billable_seconds)),
+      Entries: sortBy('entries', report.projects.map((project) => project.time_entry_count)),
+    },
+    null,
+  )
   wrapper.append(table)
   fragment.append(facts, wrapper)
   return fragment
@@ -416,8 +476,11 @@ const renderUninvoicedProjects = (
     }
     head.append(header)
     const body = element('tbody')
+    // One row per project and currency, in the order drawn, for the sort.
+    const lines: { project: (typeof projects)[number]; total: (typeof projects)[number]['totals'][number] }[] = []
     for (const project of projects) {
       for (const [index, total] of project.totals.entries()) {
+        lines.push({ project, total })
         const row = element('tr')
         row.dataset.projectId = String(project.project_id)
         const projectCell = textElement(
@@ -446,6 +509,23 @@ const renderUninvoicedProjects = (
       }
     }
     table.append(head, body)
+    const projectName = (line: (typeof lines)[number]): string =>
+      `${line.project.project_name}${line.project.project_code === '' ? '' : ` (${line.project.project_code})`}`
+    sortReport(
+      table,
+      'uninvoiced',
+      {
+        Project: sortBy('project', lines.map(projectName)),
+        Currency: sortBy('currency', lines.map((line) => line.total.currency)),
+        Time: sortBy('time', lines.map((line) => sortMoney(line.total.currency, line.total.time_cents))),
+        Expenses: sortBy('expenses', lines.map((line) => sortMoney(line.total.currency, line.total.expense_cents))),
+        Total: sortBy('total', lines.map((line) => sortMoney(line.total.currency, line.total.total_cents))),
+      },
+      null,
+      // A project's second currency sits under a name printed once, so a
+      // project's rows move together.
+      (index) => lines[index]!.project.project_id,
+    )
     wrapper.append(table)
     section.append(wrapper)
     clients.append(section)
@@ -782,6 +862,16 @@ const renderActivityLog = (
     body.append(row)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'activity',
+    {
+      When: sortBy('when', ordered.map((entry) => entry.occurred_at)),
+      Event: sortBy('event', ordered.map((entry) => activityEventLabel(entry.event_type))),
+      Subject: sortBy('subject', ordered.map((entry) => activitySubjectLabel(entry.aggregate))),
+    },
+    { column: 'when', direction: 'descending' },
+  )
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
@@ -908,6 +998,21 @@ const renderInvoiced = (
     body.append(line)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'invoiced',
+    {
+      Status: sortBy('status', report.rows.map((row) => invoiceStateLabel(row.state))),
+      'Issue date': sortBy('issued', report.rows.map((row) => row.issue_date)),
+      'Due date': sortBy('due', report.rows.map((row) => row.due_date)),
+      Invoice: sortBy('invoice', report.rows.map((row) => row.number)),
+      Client: sortBy('client', report.rows.map((row) => row.client_name)),
+      Invoiced: sortBy('invoiced', report.rows.map((row) => sortMoney(row.currency, row.invoiced_cents))),
+      Paid: sortBy('paid', report.rows.map((row) => sortMoney(row.currency, row.paid_cents))),
+      Balance: sortBy('balance', report.rows.map((row) => sortMoney(row.currency, row.balance_cents))),
+    },
+    { column: 'issued', direction: 'descending' },
+  )
   const invoicedFoot = totalsFooter(
     5,
     report.totals.map((total) => ({
@@ -967,6 +1072,19 @@ const renderPaymentsReceived = (
     body.append(line)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'payments-received',
+    {
+      'Payment date': sortBy('paid', report.rows.map((row) => row.payment_date)),
+      Invoice: sortBy('invoice', report.rows.map((row) => row.invoice_number)),
+      Client: sortBy('client', report.rows.map((row) => row.client_name)),
+      Provider: sortBy('provider', report.rows.map((row) => row.provider)),
+      'Invoice total': sortBy('invoice-total', report.rows.map((row) => sortMoney(row.currency, row.invoice_total_cents))),
+      Payment: sortBy('payment', report.rows.map((row) => sortMoney(row.currency, row.payment_cents))),
+    },
+    { column: 'paid', direction: 'descending' },
+  )
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
@@ -1044,6 +1162,23 @@ const renderReceivables = (
     body.append(line)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'receivables',
+    {
+      Client: sortBy('client', report.rows.map((row) => row.client_name)),
+      Currency: sortBy('currency', report.rows.map((row) => row.currency)),
+      Invoices: sortBy('invoices', report.rows.map((row) => row.invoice_count)),
+      Total: sortBy('total', report.rows.map((row) => sortMoney(row.currency, row.invoiced_cents))),
+      Outstanding: sortBy('outstanding', report.rows.map((row) => sortMoney(row.currency, row.outstanding_cents))),
+      'Not due': sortBy('not-due', report.rows.map((row) => sortMoney(row.currency, row.not_due_cents))),
+      '1–30 days': sortBy('days-1-30', report.rows.map((row) => sortMoney(row.currency, row.days_1_to_30_cents))),
+      '31–60 days': sortBy('days-31-60', report.rows.map((row) => sortMoney(row.currency, row.days_31_to_60_cents))),
+      '61–90 days': sortBy('days-61-90', report.rows.map((row) => sortMoney(row.currency, row.days_61_to_90_cents))),
+      '90+ days': sortBy('days-90-plus', report.rows.map((row) => sortMoney(row.currency, row.days_90_plus_cents))),
+    },
+    { column: 'client', direction: 'ascending' },
+  )
   const receivablesFoot = element('tfoot')
   for (const total of report.totals) {
     if (total.outstanding_cents === undefined) continue
@@ -1290,6 +1425,22 @@ const renderProfitability = (
     body.append(line)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'profitability',
+    {
+      [dimensionLabel]: sortBy('name', ordered.map((row) => row.dimension_name)),
+      Hours: sortBy('hours', ordered.map((row) => row.rounded_seconds)),
+      Revenue: sortBy('revenue', ordered.map((row) => sortMoney(row.currency, row.revenue_cents))),
+      Cost: sortBy('cost', ordered.map((row) => sortMoney(currency, row.cost_cents))),
+      'Revenue fees': sortBy('fees', ordered.map((row) => sortMoney(row.currency, row.revenue_fee_cents))),
+      Profit: sortBy('profit', ordered.map((row) => sortMoney(currency, row.profit_cents))),
+      'Return on cost': sortBy('return', ordered.map((row) => row.return_on_cost_ppm)),
+    },
+    // Worst margin first, as the rows arrive: the report is opened to find what
+    // is losing money. A blank margin sorts last either way.
+    { column: 'profit', direction: 'ascending' },
+  )
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
@@ -1422,6 +1573,20 @@ const renderDetailedExpense = (
     body.append(line)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'detailed-expense',
+    {
+      Date: sortBy('date', report.rows.map((row) => row.spent_date)),
+      Client: sortBy('client', report.rows.map((row) => row.client_name)),
+      Project: sortBy('project', report.rows.map((row) => row.project_name)),
+      Category: sortBy('category', report.rows.map((row) => row.category_name)),
+      Person: sortBy('person', report.rows.map((row) => row.user_name)),
+      Notes: sortBy('notes', report.rows.map((row) => row.notes?.trim() || null)),
+      Amount: sortBy('amount', report.rows.map((row) => sortMoney(row.currency, row.total_cost_cents))),
+    },
+    null,
+  )
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
@@ -1589,6 +1754,20 @@ const renderContractorCost = (
     )
     foot.append(totalRow)
     table.append(head, body, foot)
+    sortReport(
+      table,
+      'contractor-cost',
+      {
+        Person: sortBy('person', rows.map((row) => row.name)),
+        'Payroll email': sortBy('email', rows.map((row) => row.payroll_email)),
+        Hours: sortBy('hours', rows.map((row) => row.rounded_seconds)),
+        Utilization: sortBy('utilization', rows.map((row) => row.utilization_ppm)),
+        Rate: sortBy('rate', rows.map((row) => (row.cost_rate_is_mixed ? null : row.cost_rate_cents))),
+        Entries: sortBy('entries', rows.map((row) => row.entry_count)),
+        Cost: sortBy('cost', rows.map((row) => row.cost_cents)),
+      },
+      null,
+    )
     wrapper.append(table)
     section.append(wrapper)
     if (entriesWithoutRate > 0) {
@@ -2096,10 +2275,13 @@ const renderDetailedTime = (
   const entryActions =
     report.grain === 'entry' &&
     (handlers.onEditEntry !== undefined || handlers.onDeleteEntry !== undefined)
+  // Grouped by date, the band already says the date. Grouped by anything
+  // else it does not, and rows could not be ordered by date without a column.
+  const dated = options.grouping !== 'date'
   const headers =
     options.grain === 'entry'
-      ? [...(selectable ? ['Select'] : []), 'Client', 'Project', 'Task', 'Roles', 'Person', 'Notes', 'Claimed by', 'Hours']
-      : ['Client', 'Project', 'Task', 'Roles', 'Person', 'Hours']
+      ? [...(selectable ? ['Select'] : []), ...(dated ? ['Date'] : []), 'Client', 'Project', 'Task', 'Roles', 'Person', 'Notes', 'Claimed by', 'Hours']
+      : [...(dated ? ['Date'] : []), 'Client', 'Project', 'Task', 'Roles', 'Person', 'Hours']
   if (showRounded) headers.push('Rounded hours')
   // Last, after the figures, so the band and total rows keep their hours under
   // the hours column and only gain an empty cell at the end.
@@ -2114,7 +2296,8 @@ const renderDetailedTime = (
   }
   head.append(headerRow)
   const body = element('tbody')
-  for (const band of groupDetailedTimeRows(report.rows, options.grouping)) {
+  const bands = groupDetailedTimeRows(report.rows, options.grouping)
+  for (const band of bands) {
     const bandRow = element('tr', 'report-band-row')
     const bandLabel = textElement('th', band.label)
     bandLabel.colSpan = headers.length - figureColumns
@@ -2162,6 +2345,7 @@ const renderDetailedTime = (
           ...scope, project_id: row.project_id, task_id: row.task_id, user_id: row.user_id,
           invoice_state: row.claimed ? 'invoiced' : 'uninvoiced',
         })
+      if (dated) line.append(textElement('td', row.spent_date))
       line.append(...detailedTimeCells(row, options.grain, href, showRounded))
       if (entryActions) line.append(entryActionsCell(row, handlers))
       body.append(line)
@@ -2177,6 +2361,26 @@ const renderDetailedTime = (
   if (entryActions) totalRow.append(element('td', 'report-entry-actions'))
   foot.append(totalRow)
   table.append(head, body, foot)
+  // Rows sort inside their bands, and a row is the same element after the sort,
+  // so a ticked row stays ticked.
+  const drawn = bands.flatMap((band) => band.rows)
+  sortReport(
+    table,
+    'detailed-time',
+    {
+      Date: sortBy('date', drawn.map((row) => row.spent_date)),
+      Client: sortBy('client', drawn.map((row) => row.client_name)),
+      Project: sortBy('project', drawn.map((row) => detailedTimeProjectLabel(row))),
+      Task: sortBy('task', drawn.map((row) => row.task_name)),
+      Roles: sortBy('roles', drawn.map((row) => row.roles.join(', ') || null)),
+      Person: sortBy('person', drawn.map((row) => row.user_name)),
+      Notes: sortBy('notes', drawn.map((row) => row.notes?.trim() || null)),
+      'Claimed by': sortBy('claimed-by', drawn.map((row) => row.invoice_number ?? null)),
+      Hours: sortBy('hours', drawn.map((row) => row.seconds)),
+      'Rounded hours': sortBy('rounded-hours', drawn.map((row) => row.rounded_seconds)),
+    },
+    dated ? { column: 'date', direction: 'ascending' } : null,
+  )
   wrapper.append(table)
   fragment.append(wrapper)
 
@@ -2343,6 +2547,8 @@ const amountCell = (
  */
 interface TimeTableColumn<Row> {
   readonly label: string
+  /** The column's key and the value it sorts by (issue 852). */
+  readonly sort: { readonly key: string; readonly value: (row: Row) => SortValue }
   readonly cell: (row: Row) => HTMLTableCellElement
   /** The total row's cell, where the column has one. */
   readonly total?: HTMLTableCellElement
@@ -2430,6 +2636,33 @@ const timeTable = <Row extends TimeRowFigures>(
   for (const column of trailing) totalRow.append(column.total ?? element('td'))
   foot.append(totalRow)
   table.append(head, body, foot)
+  // Rows sort inside their groups -- employees and contractors stay apart.
+  const shown = groups.filter((group) => group.rows.length > 0).flatMap((group) => group.rows)
+  const named = (column: TimeTableColumn<Row>): [string, ReportSortColumn] => [
+    column.label,
+    sortBy(column.sort.key, shown.map((row) => column.sort.value(row))),
+  ]
+  sortReport(
+    table,
+    'time',
+    {
+      ...Object.fromEntries([...leading, ...trailing].map(named)),
+      Hours: sortBy('hours', shown.map((row) => row.rounded_seconds)),
+      'Billable hours': sortBy('billable-hours', shown.map((row) => row.billable_seconds)),
+      ...(showMoney
+        ? {
+            'Billable amount': sortBy(
+              'billable-amount',
+              shown.map((row) => {
+                const amount = row.amounts?.[0]
+                return amount === undefined ? null : sortMoney(amount.currency, amount.billable_cents)
+              }),
+            ),
+          }
+        : {}),
+    },
+    null,
+  )
   wrapper.append(table)
   return wrapper
 }
@@ -2493,6 +2726,7 @@ const renderTimeReport = (
         [
           {
             label: 'Name',
+            sort: { key: 'name', value: (row) => row.client_name },
             cell: (row) => nameCell(`/clients/${row.client_id}`, row.client_name),
           },
         ],
@@ -2509,10 +2743,12 @@ const renderTimeReport = (
         [
           {
             label: 'Name',
+            sort: { key: 'name', value: (row) => projectLabel(row) },
             cell: (row) => nameCell(`/projects/${row.project_id}`, projectLabel(row)),
           },
           {
             label: 'Clients',
+            sort: { key: 'clients', value: (row) => row.client_name },
             cell: (row) => {
               const cell = element('td')
               cell.append(linkElement(`/clients/${row.client_id}`, row.client_name))
@@ -2533,6 +2769,7 @@ const renderTimeReport = (
         [
           {
             label: 'Name',
+            sort: { key: 'name', value: (row) => row.task_name },
             cell: (row) => {
               const cell = element('th')
               cell.scope = 'row'
@@ -2556,6 +2793,7 @@ const renderTimeReport = (
         [
           {
             label: 'Name',
+            sort: { key: 'name', value: (row) => row.user_name },
             // Plain text where the viewer cannot read Team, which is what the
             // Tasks tab already does for the same reason: a dead link is worse
             // than no link, because it looks like a way in.
@@ -2568,6 +2806,7 @@ const renderTimeReport = (
         [
           {
             label: 'Utilization',
+            sort: { key: 'utilization', value: (row) => row.utilization_ppm },
             cell: (row) => {
               const cell = element('td')
               cell.textContent = teamUtilization(row.utilization_ppm)
@@ -3331,7 +3570,7 @@ export const createReportsController = (
               globalThis.history.pushState(
                 null,
                 '',
-                reportFiltersUrl({ ...filters, kind: 'detailed-time' }, detailedOptions),
+                withSort(reportFiltersUrl({ ...filters, kind: 'detailed-time' }, detailedOptions)),
               )
               renderDetailed(report)
               return
@@ -3402,7 +3641,7 @@ export const createReportsController = (
     timeTab = tab
     const filters = filtersFromForm()
     syncKindHrefs(filters)
-    globalThis.history.pushState(null, '', reportFiltersUrl(filters, detailedOptions, timeOptions))
+    globalThis.history.pushState(null, '', withSort(reportFiltersUrl(filters, detailedOptions, timeOptions)))
     if (lastTimeReport === null) return
     results.replaceChildren(
       renderTimeReport(lastTimeReport, filters, showTimeTab, timeOptions, canOpenTeam()),
@@ -3472,13 +3711,15 @@ export const createReportsController = (
           globalThis.history.pushState(
             null,
             '',
-            reportFiltersUrl(
-              filtersFromForm(),
-              detailedOptions,
-              timeOptions,
-              invoicedOptions,
-              profitabilityOptions,
-              expenseOptions,
+            withSort(
+              reportFiltersUrl(
+                filtersFromForm(),
+                detailedOptions,
+                timeOptions,
+                invoicedOptions,
+                profitabilityOptions,
+                expenseOptions,
+              ),
             ),
           )
           if (lastProfitabilityReport !== null) {
@@ -3590,14 +3831,20 @@ export const createReportsController = (
     }
     syncKindHrefs(filters)
     if (updateUrl) {
-      const nextUrl = reportFiltersUrl(
+      // A sort belongs to the report it was chosen on: another kind has other
+      // columns, and carrying the word over would only be ignored.
+      if (filters.kind !== reportSortKind) {
+        reportSortAddress = null
+        reportSortKind = filters.kind
+      }
+      const nextUrl = withSort(reportFiltersUrl(
         filters,
         detailedOptions,
         timeOptions,
         invoicedOptions,
         profitabilityOptions,
         expenseOptions,
-      )
+      ))
       globalThis.history.pushState(
         null,
         '',
@@ -3769,6 +4016,8 @@ export const createReportsController = (
       canReadFinancialReports(active.identity.profile),
     )
     detailedOptions = detailedTimeOptionsFromUrl(location)
+    reportSortAddress = reportSortFromUrl(location)
+    reportSortKind = filters.kind
     timeOptions = timeReportOptionsFromUrl(location)
     invoicedOptions = invoicedReportOptionsFromUrl(location)
     profitabilityOptions = profitabilityOptionsFromUrl(location)
@@ -3964,6 +4213,14 @@ export const createReportsController = (
   retry.addEventListener('click', () => {
     retryAction?.()
   })
+  reportSortChanged = (sort) => {
+    reportSortAddress = sort
+    // The address names the sort so a shared or saved report reopens in the
+    // same order; replacing the entry keeps Back for the filters, not the clicks.
+    const address = new URL(globalThis.location.href)
+    address.searchParams.set('sort', sortToken(sort))
+    globalThis.history.replaceState(null, '', `${address.pathname}${address.search}`)
+  }
   return {
     async activate(identity, signal, onSessionFailure) {
       if (!reportsPage) return

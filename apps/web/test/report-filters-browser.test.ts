@@ -249,6 +249,115 @@ describe('Report filters in the browser', () => {
     session.abort()
   })
 
+  const invoicedRow = (id: number, number: string, issue: string, cents: number) => ({
+    invoice_id: id, number, state: 'open' as const, close_reason: null,
+    issue_date: issue, due_date: '2026-09-15', client_id: 1, client_name: 'Parent',
+    subject: null, currency: 'USD', invoiced_cents: cents, paid_cents: 0, balance_cents: cents,
+  })
+  const invoicedReport = () => ({
+    from: '2026-08-01',
+    to: '2026-08-31',
+    client_id: null,
+    status: null,
+    totals: [],
+    rows: [
+      invoicedRow(1, '1315', '2026-08-20', 50_000),
+      invoicedRow(2, '9', '2026-08-25', 10_000),
+      invoicedRow(3, '100', '2026-08-01', 30_000),
+    ],
+  })
+  const numbers = (): string[] =>
+    [...document.querySelectorAll('[data-report-results] tbody tr th a')].map((link) => link.textContent ?? '')
+
+  it('[browser] sorts a report table by its headers and keeps the choice in the address', async () => {
+    localStorage.clear()
+    const getInvoicedReport = vi.fn(async () => invoicedReport())
+    const session = await activate('/reports?report=invoiced&from=2026-08-01&to=2026-08-31', {
+      getInvoicedReport,
+    })
+    // The order the server sent is the Issue date sort, newest first, and says so.
+    expect(numbers()).toEqual(['9', '1315', '100'])
+    expect(
+      document.querySelector('[data-report-results] th[aria-sort]')?.textContent,
+    ).toContain('Issue date')
+
+    document.querySelector<HTMLButtonElement>('[data-report-results] button[data-sort-column="invoice"]')!.click()
+    // Natural order: 9 before 100 before 1315, not the text order.
+    expect(numbers()).toEqual(['9', '100', '1315'])
+    expect(window.location.search).toContain('sort=invoice')
+    // Sorting is a re-order of rows already here: no second request.
+    expect(getInvoicedReport).toHaveBeenCalledTimes(1)
+
+    document.querySelector<HTMLButtonElement>('[data-report-results] button[data-sort-column="invoiced"]')!.click()
+    document.querySelector<HTMLButtonElement>('[data-report-results] button[data-sort-column="invoiced"]')!.click()
+    expect(numbers()).toEqual(['1315', '100', '9'])
+    expect(window.location.search).toContain('sort=-invoiced')
+    session.abort()
+  })
+
+  it('[browser] reopens a report address in the order it names', async () => {
+    localStorage.clear()
+    const getInvoicedReport = vi.fn(async () => invoicedReport())
+    const session = await activate('/reports?report=invoiced&from=2026-08-01&to=2026-08-31&sort=-invoice', {
+      getInvoicedReport,
+    })
+    expect(numbers()).toEqual(['1315', '100', '9'])
+    expect(
+      document.querySelector('[data-report-results] th[aria-sort]')?.getAttribute('aria-sort'),
+    ).toBe('descending')
+    session.abort()
+  })
+
+  it('[browser] gives detailed time a Date column when grouped by something else, and sorts inside the bands', async () => {
+    localStorage.clear()
+    const row = (id: number, client: string, date: string, seconds: number) => ({
+      spent_date: date,
+      client_id: id,
+      client_name: client,
+      project_id: id,
+      project_name: 'Launch',
+      project_code: '',
+      task_id: 1,
+      task_name: 'Delivery',
+      user_id: 2,
+      user_name: 'Ada Lovelace',
+      roles: [] as string[],
+      currency: 'USD',
+      seconds,
+      rounded_seconds: seconds,
+      billable_seconds: seconds,
+      uninvoiced_billable_seconds: seconds,
+      time_entry_count: 1,
+      entries_without_billable_rate: 0,
+      claimed: false,
+    })
+    const getDetailedTimeReport = vi.fn(async () =>
+      detailed({
+        seconds: 10_800,
+        rows: [row(1, 'Acme', '2026-08-03', 3_600), row(1, 'Acme', '2026-08-01', 1_800), row(2, 'Zeta', '2026-08-02', 5_400)],
+      }),
+    )
+    const session = await activate(
+      '/reports?report=detailed-time&from=2026-08-01&to=2026-08-31&group=client',
+      { getDetailedTimeReport },
+    )
+    const headers = [...document.querySelectorAll('[data-report-results] thead th')].map((cell) => cell.textContent)
+    expect(headers[0]).toContain('Date')
+    const dates = (): string[] =>
+      [...document.querySelectorAll('[data-report-results] tbody tr:not(.report-band-row) td:first-child')].map(
+        (cell) => cell.textContent ?? '',
+      )
+    // Date ascending is the default here, inside each client's band.
+    expect(dates()).toEqual(['2026-08-01', '2026-08-03', '2026-08-02'])
+    document.querySelector<HTMLButtonElement>('[data-report-results] button[data-sort-column="hours"]')!.click()
+    expect(dates()).toEqual(['2026-08-01', '2026-08-03', '2026-08-02'])
+    document.querySelector<HTMLButtonElement>('[data-report-results] button[data-sort-column="hours"]')!.click()
+    expect(dates()).toEqual(['2026-08-03', '2026-08-01', '2026-08-02'])
+    expect(document.querySelectorAll('[data-report-results] .report-band-row')).toHaveLength(2)
+    // Grouped by date the band says the date, so there is no column for it.
+    session.abort()
+  })
+
   it('[browser] keeps the filter bar when a filter leaves no rows, so it can be taken off', async () => {
     const getInvoicedReport = vi.fn(async () => ({
       from: '2026-08-01', to: '2026-08-31', client_id: null, status: 'closed' as const, totals: [], rows: [],

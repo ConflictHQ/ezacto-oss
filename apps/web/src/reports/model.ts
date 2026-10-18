@@ -1,3 +1,4 @@
+import { parseSortToken, type TableSort } from '../components/table-sort.js'
 import {
   REPORT_CAPABILITIES,
   canViewMoneyField,
@@ -546,6 +547,13 @@ export const detailedTimeOptionsFromUrl = (url: URL): DetailedTimeOptions => {
     notes: (url.searchParams.get('notes') ?? '').trim().slice(0, 200),
   }
 }
+
+/**
+ * The sort a report's address names (`sort=-hours`), or null. Whether the
+ * column exists on the table drawn is the table's to check, not the address's.
+ */
+export const reportSortFromUrl = (url: URL): TableSort | null =>
+  parseSortToken(url.searchParams.get('sort'))
 
 export const timeReportOptionsFromUrl = (url: URL): TimeReportOptions => ({
   includeFixedFee: url.searchParams.get('include_fixed_fee') === 'true',
