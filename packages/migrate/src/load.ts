@@ -1,9 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { asSnapshotSource, type SnapshotSource } from './snapshot-source.js'
+import { fileSnapshotSource, type SnapshotSource } from './snapshot-source.js'
 import { mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises'
 import { hostname } from 'node:os'
-import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import {
   ensureHarvestExpenseReceipt,
@@ -193,19 +191,16 @@ interface RawChunk {
  * Reads a chunk of one resource, from wherever the snapshot lives (issue 409).
  *
  * Takes a source rather than a directory so a load can be driven from the
- * platform against R2 instead of the operator's own disk. A string is still
- * accepted and means the filesystem, which is why the loader's own call sites
- * are unchanged -- widening this one function was the whole of it, because the
- * byte offset it resumes from is the only thing either source has to honour.
+ * platform against R2 instead of the operator's own disk. The byte offset it
+ * resumes from is the only thing a source has to honour.
  */
 const rawChunkFrom = async (
-  snapshotDir: SnapshotSource | string,
+  source: SnapshotSource,
   resource: string,
   byteOffset: number,
   rowOffset: number,
   limit: number,
 ): Promise<RawChunk> => {
-  const source = asSnapshotSource(snapshotDir)
   const path = source.describe(resource)
   const rows: RawRow[] = []
   let nextByteOffset = byteOffset
@@ -236,7 +231,7 @@ const rawChunkFrom = async (
 }
 
 const findRawRowById = async (
-  snapshotDir: SnapshotSource | string,
+  source: SnapshotSource,
   resource: string,
   total: number,
   targetId: number,
@@ -244,7 +239,7 @@ const findRawRowById = async (
   let rowOffset = 0
   let byteOffset = 0
   while (rowOffset < total) {
-    const chunk = await rawChunkFrom(snapshotDir, resource, byteOffset, rowOffset, 100)
+    const chunk = await rawChunkFrom(source, resource, byteOffset, rowOffset, 100)
     if (chunk.rows.length === 0) return null
     const match = chunk.rows.find(
       (candidate) => safeIntegerAt(candidate, '/id', `${resource}.id`) === targetId,
@@ -445,9 +440,18 @@ export interface UserIdentityInput {
   workEmails?: readonly UserWorkEmail[]
 }
 
+/** `LoadNextChunkOptions` once the raw-row source has been chosen. */
+type ResolvedLoadOptions = LoadNextChunkOptions & { source: SnapshotSource }
+
 export interface LoadNextChunkOptions {
   database: ImportDatabase
   snapshotDir: string
+  /**
+   * Where raw rows are read from. Defaults to the files under `snapshotDir`.
+   * The directory still holds the manifest, checksums, child-index cache and
+   * lock, which are local-disk by design for now.
+   */
+  source?: SnapshotSource
   organizationCurrency?: string
   organizationAddress?: string | null
   maxStatements?: number
@@ -582,7 +586,7 @@ const userEmailStatement = (
  * the pair the source file happens to list first.
  */
 const squashedEmailStatements = async (
-  snapshotDir: string,
+  snapshotSource: SnapshotSource,
   manifest: Manifest,
   identity: ResolvedUserIdentity,
   canonicalHarvestId: number,
@@ -592,7 +596,7 @@ const squashedEmailStatements = async (
   const statements: PlannedStatement[] = []
   for (const duplicate of duplicates) {
     const source = await findRawRowById(
-      snapshotDir,
+      snapshotSource,
       'users',
       manifest.resources.users?.count ?? 0,
       duplicate,
@@ -626,7 +630,7 @@ const squashedEmailStatements = async (
  * stops halfway.
  */
 const assertIdentityInSnapshot = async (
-  snapshotDir: string,
+  snapshotSource: SnapshotSource,
   manifest: Manifest,
   identity: ResolvedUserIdentity,
 ): Promise<void> => {
@@ -642,7 +646,7 @@ const assertIdentityInSnapshot = async (
   let rowOffset = 0
   let byteOffset = 0
   while (rowOffset < total) {
-    const chunk = await rawChunkFrom(snapshotDir, 'users', byteOffset, rowOffset, 100)
+    const chunk = await rawChunkFrom(snapshotSource, 'users', byteOffset, rowOffset, 100)
     if (chunk.rows.length === 0) break
     for (const source of chunk.rows) {
       const harvestId = safeIntegerAt(source, '/id', 'users.id')
@@ -663,7 +667,7 @@ const assertIdentityInSnapshot = async (
       }
     }
   }
-  await assertOneRunningTimer(snapshotDir, manifest, identity)
+  await assertOneRunningTimer(snapshotSource, manifest, identity)
 }
 
 /**
@@ -687,7 +691,7 @@ const assertIdentityInSnapshot = async (
  * snapshot is admitted costs a re-extract rather than a half-loaded database.
  */
 const assertOneRunningTimer = async (
-  snapshotDir: string,
+  snapshotSource: SnapshotSource,
   manifest: Manifest,
   identity: ResolvedUserIdentity,
 ): Promise<void> => {
@@ -697,7 +701,7 @@ const assertOneRunningTimer = async (
   let rowOffset = 0
   let byteOffset = 0
   while (rowOffset < total) {
-    const chunk = await rawChunkFrom(snapshotDir, 'time_entries', byteOffset, rowOffset, 100)
+    const chunk = await rawChunkFrom(snapshotSource, 'time_entries', byteOffset, rowOffset, 100)
     if (chunk.rows.length === 0) break
     for (const source of chunk.rows) {
       if (!isRunningEntry(source.row)) continue
@@ -1447,15 +1451,11 @@ interface IndexedLine {
 
 interface LineCursor {
   next(): Promise<IndexedLine | null>
-  close(): void
+  close(): Promise<void>
 }
 
-const lineCursor = (path: string, byteOffset: number): LineCursor => {
-  const lines = createInterface({
-    input: createReadStream(path, byteOffset === 0 ? undefined : { start: byteOffset }),
-    crlfDelay: Infinity,
-  })
-  const iterator = lines[Symbol.asyncIterator]()
+const lineCursor = (source: SnapshotSource, resource: string, byteOffset: number): LineCursor => {
+  const iterator = source.openRaw(resource, byteOffset)[Symbol.asyncIterator]()
   let offset = byteOffset
   return {
     async next() {
@@ -1467,7 +1467,9 @@ const lineCursor = (path: string, byteOffset: number): LineCursor => {
         if (next.value.trim()) return { line: next.value, startByte, endByte: offset }
       }
     },
-    close: () => lines.close(),
+    close: async () => {
+      await iterator.return?.(undefined)
+    },
   }
 }
 
@@ -1557,6 +1559,7 @@ const writeChildIndexBuildState = async (
 
 const completedChildIndex = async (
   snapshotDir: string,
+  source: SnapshotSource,
   resource: string,
   digest: string,
   parentCount: number,
@@ -1567,10 +1570,10 @@ const completedChildIndex = async (
     try {
       if ((await handle.stat()).size !== parentCount * CHILD_INDEX_RECORD_BYTES) return false
       const [rawSize, lineageSize] = await Promise.all([
-        stat(join(snapshotDir, 'raw', `${resource}.jsonl`)),
-        stat(join(snapshotDir, 'raw', `${resource}.lineage.jsonl`)),
+        source.size(resource),
+        source.size(`${resource}.lineage`),
       ])
-      if (parentCount === 0) return childCount === 0 && rawSize.size === 0 && lineageSize.size === 0
+      if (parentCount === 0) return childCount === 0 && rawSize === 0 && lineageSize === 0
       const first = await readChildIndexRecord(handle, resource, 0)
       const last = await readChildIndexRecord(handle, resource, parentCount - 1)
       await validateChildIndexNeighborhood(handle, resource, 0, first)
@@ -1578,8 +1581,8 @@ const completedChildIndex = async (
         await validateChildIndexNeighborhood(handle, resource, parentCount - 1, last)
       return (
         last.startRow + last.count === childCount &&
-        last.endByte === rawSize.size &&
-        last.lineageEndByte === lineageSize.size
+        last.endByte === rawSize &&
+        last.lineageEndByte === lineageSize
       )
     } finally {
       await handle.close()
@@ -1596,6 +1599,7 @@ interface ChildIndexAdvanceResult {
 
 const advanceChildIndex = async (
   snapshotDir: string,
+  source: SnapshotSource,
   resource: string,
   parentResource: string,
   digest: string,
@@ -1603,7 +1607,7 @@ const advanceChildIndex = async (
   childCount: number,
   workBudget: number,
 ): Promise<ChildIndexAdvanceResult> => {
-  if (await completedChildIndex(snapshotDir, resource, digest, parentCount, childCount)) {
+  if (await completedChildIndex(snapshotDir, source, resource, digest, parentCount, childCount)) {
     await rm(childIndexStatePath(snapshotDir, resource, digest), { force: true })
     await rm(childIndexPartialPath(snapshotDir, resource, digest), { force: true })
     return { complete: true, workRows: 0 }
@@ -1647,6 +1651,7 @@ const advanceChildIndex = async (
     await rm(statePath, { force: true })
     return advanceChildIndex(
       snapshotDir,
+      source,
       resource,
       parentResource,
       digest,
@@ -1663,6 +1668,7 @@ const advanceChildIndex = async (
     await rm(partialPath, { force: true })
     return advanceChildIndex(
       snapshotDir,
+      source,
       resource,
       parentResource,
       digest,
@@ -1699,6 +1705,7 @@ const advanceChildIndex = async (
     await rm(partialPath, { force: true })
     return advanceChildIndex(
       snapshotDir,
+      source,
       resource,
       parentResource,
       digest,
@@ -1708,15 +1715,9 @@ const advanceChildIndex = async (
     )
   }
 
-  const parent = lineCursor(
-    join(snapshotDir, 'raw', `${parentResource}.jsonl`),
-    state.parentByteOffset,
-  )
-  const raw = lineCursor(join(snapshotDir, 'raw', `${resource}.jsonl`), state.childByteOffset)
-  const lineage = lineCursor(
-    join(snapshotDir, 'raw', `${resource}.lineage.jsonl`),
-    state.lineageByteOffset,
-  )
+  const parent = lineCursor(source, parentResource, state.parentByteOffset)
+  const raw = lineCursor(source, resource, state.childByteOffset)
+  const lineage = lineCursor(source, `${resource}.lineage`, state.lineageByteOffset)
   let pendingChild: ChildIndexCandidate | null = null
   let workRows = 0
   const nextChild = async (): Promise<ChildIndexCandidate | null> => {
@@ -1815,9 +1816,9 @@ const advanceChildIndex = async (
     await writeChildIndexBuildState(snapshotDir, resource, digest, state)
     return { complete: false, workRows }
   } finally {
-    parent.close()
-    raw.close()
-    lineage.close()
+    await parent.close()
+    await raw.close()
+    await lineage.close()
     try {
       await output.close()
     } catch (error) {
@@ -1916,6 +1917,7 @@ const validateChildIndexNeighborhood = async (
 
 const advanceChildIndexes = async (
   snapshotDir: string,
+  source: SnapshotSource,
   manifest: Manifest,
   digest: string,
   workBudget: number,
@@ -1939,6 +1941,7 @@ const advanceChildIndexes = async (
     if (remaining < 1) return false
     const advanced = await advanceChildIndex(
       snapshotDir,
+      source,
       step.name,
       step.parent,
       digest,
@@ -2037,7 +2040,7 @@ const childIndexSlices = async (
 }
 
 const lineageChunkFrom = async (
-  snapshotDir: string,
+  source: SnapshotSource,
   resource: string,
   record: ChildIndexRecord,
   skip: number,
@@ -2047,15 +2050,12 @@ const lineageChunkFrom = async (
   const endByteOffsets: number[] = []
   let seen = 0
   let byteOffset = record.lineageStartByte
-  const lines = createInterface({
-    input: createReadStream(join(snapshotDir, 'raw', `${resource}.lineage.jsonl`), {
-      start: record.lineageStartByte,
-      end: record.lineageEndByte - 1,
-    }),
-    crlfDelay: Infinity,
-  })
+  // The source has no end bound, so the indexed range is enforced here: a
+  // range that runs out before `count` rows is truncated, not continued.
+  const lines = source.openRaw(`${resource}.lineage`, record.lineageStartByte)
   try {
     for await (const line of lines) {
+      if (byteOffset >= record.lineageEndByte) break
       byteOffset += Buffer.byteLength(line, 'utf8') + 1
       if (!line.trim()) continue
       if (seen++ < skip) continue
@@ -2072,14 +2072,14 @@ const lineageChunkFrom = async (
       if (rows.length === count) break
     }
   } finally {
-    lines.close()
+    await lines[Symbol.asyncIterator]().return?.(undefined)
   }
   if (rows.length !== count) throw new Error(`${resource} child lineage range is truncated`)
   return { rows, endByteOffsets }
 }
 
 const lineageChunkAt = async (
-  snapshotDir: string,
+  source: SnapshotSource,
   resource: string,
   record: ChildIndexRecord,
   byteOffset: number,
@@ -2091,15 +2091,10 @@ const lineageChunkAt = async (
   const rows: ChildLineage[] = []
   const endByteOffsets: number[] = []
   let nextByteOffset = byteOffset
-  const lines = createInterface({
-    input: createReadStream(join(snapshotDir, 'raw', `${resource}.lineage.jsonl`), {
-      start: byteOffset,
-      end: record.lineageEndByte - 1,
-    }),
-    crlfDelay: Infinity,
-  })
+  const lines = source.openRaw(`${resource}.lineage`, byteOffset)
   try {
     for await (const line of lines) {
+      if (nextByteOffset >= record.lineageEndByte) break
       nextByteOffset += Buffer.byteLength(line, 'utf8') + 1
       if (!line.trim()) continue
       const witness = JSON.parse(line) as Partial<ChildLineage>
@@ -2111,27 +2106,21 @@ const lineageChunkAt = async (
       if (rows.length === count) break
     }
   } finally {
-    lines.close()
+    await lines[Symbol.asyncIterator]().return?.(undefined)
   }
   if (rows.length !== count) throw new Error(`${resource} child lineage range is truncated`)
   return { rows, nextByteOffset, endByteOffsets }
 }
 
 const sequentialLineageChunk = async (
-  snapshotDir: string,
+  source: SnapshotSource,
   resource: string,
   byteOffset: number,
   count: number,
 ): Promise<{ rows: ChildLineage[]; nextByteOffset: number }> => {
   const rows: ChildLineage[] = []
   let nextByteOffset = byteOffset
-  const lines = createInterface({
-    input: createReadStream(
-      join(snapshotDir, 'raw', `${resource}.lineage.jsonl`),
-      byteOffset === 0 ? undefined : { start: byteOffset },
-    ),
-    crlfDelay: Infinity,
-  })
+  const lines = source.openRaw(`${resource}.lineage`, byteOffset)
   try {
     for await (const line of lines) {
       nextByteOffset += Buffer.byteLength(line, 'utf8') + 1
@@ -2149,7 +2138,7 @@ const sequentialLineageChunk = async (
       if (rows.length === count) break
     }
   } finally {
-    lines.close()
+    await lines[Symbol.asyncIterator]().return?.(undefined)
   }
   if (rows.length !== count) throw new Error(`${resource} lineage ended before its staged rows`)
   return { rows, nextByteOffset }
@@ -2157,6 +2146,7 @@ const sequentialLineageChunk = async (
 
 const lineageFor = async (
   snapshotDir: string,
+  snapshotSource: SnapshotSource,
   resource: string,
   digest: string,
   offset: number,
@@ -2169,7 +2159,7 @@ const lineageFor = async (
   let source = 0
   for (const [sliceIndex, slice] of slices.entries()) {
     const witnesses = await lineageChunkAt(
-      snapshotDir,
+      snapshotSource,
       resource,
       slice.record,
       sliceIndex === 0 ? lineageByteOffset : slice.record.lineageStartByte,
@@ -2189,6 +2179,7 @@ const lineageFor = async (
 
 const advanceLineageCursor = async (
   snapshotDir: string,
+  snapshotSource: SnapshotSource,
   resource: string,
   digest: string,
   rowOffset: number,
@@ -2199,7 +2190,7 @@ const advanceLineageCursor = async (
   let nextByteOffset = byteOffset
   for (const [sliceIndex, slice] of slices.entries()) {
     const advanced = await lineageChunkAt(
-      snapshotDir,
+      snapshotSource,
       resource,
       slice.record,
       sliceIndex === 0 ? nextByteOffset : slice.record.lineageStartByte,
@@ -2333,7 +2324,7 @@ const stagedRates = async (
 }
 
 const loadRateChunk = async (
-  options: LoadNextChunkOptions,
+  options: ResolvedLoadOptions,
   resource: RateResource,
   digest: string,
   loadOptionsJson: string,
@@ -2366,7 +2357,7 @@ const loadRateChunk = async (
     const limit = Math.min(options.maxRows ?? 100, maxStatements - 1, total - stage.stagedRows)
     if (limit < 1) throw new Error(`${resource} has no staging statement budget`)
     const chunk = await rawChunkFrom(
-      options.snapshotDir,
+      options.source,
       resource,
       stage.sourceByteOffset,
       stage.stagedRows,
@@ -2374,7 +2365,7 @@ const loadRateChunk = async (
     )
     if (chunk.rows.length === 0) throw new Error(`${resource} ended before manifest count ${total}`)
     const lineage = await sequentialLineageChunk(
-      options.snapshotDir,
+      options.source,
       resource,
       stage.sourceLineageByteOffset,
       chunk.rows.length,
@@ -3534,6 +3525,7 @@ const estimateStatements = (
 
 const childRowsForParent = async (
   snapshotDir: string,
+  source: SnapshotSource,
   resource: string,
   parentOrdinal: number,
   parentId: number,
@@ -3543,11 +3535,11 @@ const childRowsForParent = async (
   if (total === 0) return { rows: [], lineage: [] }
   const record = await findChildIndex(snapshotDir, resource, digest, parentOrdinal, parentId)
   if (record === null) return { rows: [], lineage: [] }
-  const chunk = await rawChunkFrom(snapshotDir, resource, record.startByte, 0, record.count)
+  const chunk = await rawChunkFrom(source, resource, record.startByte, 0, record.count)
   if (chunk.rows.length !== record.count || chunk.nextByteOffset !== record.endByte) {
     throw new Error(`${resource} child index no longer matches raw data`)
   }
-  const lineage = await lineageChunkFrom(snapshotDir, resource, record, 0, record.count)
+  const lineage = await lineageChunkFrom(source, resource, record, 0, record.count)
   for (const [index, witness] of lineage.rows.entries()) {
     if (witness.source_id !== safeIntegerAt(chunk.rows[index]!, '/id', `${resource}.id`)) {
       throw new Error(`${resource} child index disagrees with aligned source lineage`)
@@ -3700,12 +3692,7 @@ const invoiceInput = async (
       kind: requiredText(line, 'kind'),
       description: stringValue(line, 'description'),
       quantity: Number(line.quantity),
-      unitPriceCents: rate(
-        source,
-        `/line_items/${position}/unit_price`,
-        anomalies,
-        'invoices',
-      ),
+      unitPriceCents: rate(source, `/line_items/${position}/unit_price`, anomalies, 'invoices'),
       amountCents: moneyLiteralToCents(
         numberAt(source, `/line_items/${position}/amount`),
         'invoice.line.amount',
@@ -3901,7 +3888,7 @@ const currencyInferenceStatement = (
 
 const resolveOrganizationCurrency = async (
   database: RawDatabase,
-  snapshotDir: string,
+  source: SnapshotSource,
   manifest: Manifest,
   digest: string,
   override: string | undefined,
@@ -3928,7 +3915,7 @@ const resolveOrganizationCurrency = async (
   const sourceByteOffset = prior?.sourceByteOffset ?? 0
   if (rowsScanned > total) throw new Error('organization currency inference exceeds client count')
   const chunk = await rawChunkFrom(
-    snapshotDir,
+    source,
     'clients',
     sourceByteOffset,
     rowsScanned,
@@ -3963,7 +3950,7 @@ const resolveOrganizationCurrency = async (
 
 const organizationStatement = async (
   manifest: Manifest,
-  options: LoadNextChunkOptions,
+  options: ResolvedLoadOptions,
   currency: string,
 ): Promise<PlannedStatement> => {
   if (!/^[A-Z]{3}$/.test(currency))
@@ -4043,7 +4030,7 @@ const checksumDigest = async (snapshotDir: string): Promise<string> => {
 }
 
 const admitSnapshot = async (
-  options: LoadNextChunkOptions,
+  options: ResolvedLoadOptions,
   manifest: Manifest,
   loadOptionsJson: string,
   timestamp: string,
@@ -4089,6 +4076,7 @@ const admitSnapshot = async (
       indexingComplete: await withChildIndexLock(options.snapshotDir, () =>
         advanceChildIndexes(
           options.snapshotDir,
+          options.source,
           manifest,
           expectedDigest,
           CHILD_INDEX_WORK_ROWS_PER_INVOCATION,
@@ -4116,6 +4104,7 @@ const admitSnapshot = async (
   const indexingComplete = await withChildIndexLock(options.snapshotDir, () =>
     advanceChildIndexes(
       options.snapshotDir,
+      options.source,
       manifest,
       actualDigest,
       CHILD_INDEX_WORK_ROWS_PER_INVOCATION,
@@ -4151,7 +4140,7 @@ const admitSnapshot = async (
 }
 
 const loadExpense = async (
-  options: LoadNextChunkOptions,
+  options: ResolvedLoadOptions,
   source: RawRow,
   anomalies: LoadAnomaly[],
 ): Promise<number> => {
@@ -4246,7 +4235,7 @@ const loadExpense = async (
 }
 
 const loadComplexRow = async (
-  options: LoadNextChunkOptions,
+  options: ResolvedLoadOptions,
   resource: 'estimates' | 'invoices' | 'expenses',
   source: RawRow,
   manifest: Manifest,
@@ -4315,14 +4304,14 @@ const loadComplexRow = async (
         ? record.lineageStartByte
         : (prior?.lineageByteOffset ?? record.lineageStartByte)
     const childChunk = await rawChunkFrom(
-      options.snapshotDir,
+      options.source,
       'estimate_messages',
       childByteOffset,
       childOffset,
       take,
     )
     const childLineage = await lineageChunkAt(
-      options.snapshotDir,
+      options.source,
       'estimate_messages',
       record,
       lineageByteOffset,
@@ -4358,6 +4347,7 @@ const loadComplexRow = async (
   // still bounded and resumed through the pending reconciliation receipt below.
   const messages = await childRowsForParent(
     options.snapshotDir,
+    options.source,
     'invoice_messages',
     source.index,
     parentId,
@@ -4366,6 +4356,7 @@ const loadComplexRow = async (
   )
   const payments = await childRowsForParent(
     options.snapshotDir,
+    options.source,
     'invoice_payments',
     source.index,
     parentId,
@@ -4435,7 +4426,11 @@ const loadComplexRow = async (
   }
 }
 
-export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<LoadChunkResult> => {
+export const loadNextChunk = async (input: LoadNextChunkOptions): Promise<LoadChunkResult> => {
+  const options: ResolvedLoadOptions = {
+    ...input,
+    source: input.source ?? fileSnapshotSource(input.snapshotDir),
+  }
   const manifest = await readManifest(options.snapshotDir)
   if (!manifest.preflight.user.is_administrator) {
     throw new Error(
@@ -4484,14 +4479,14 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
     }
     loadOptionsJson = priorAdmission.loadOptionsJson
   } else {
-    await assertIdentityInSnapshot(options.snapshotDir, manifest, identity)
+    await assertIdentityInSnapshot(options.source, manifest, identity)
     const expectedDigest = await checksumDigest(options.snapshotDir)
     if (isD1(options.database.$client) && options.immutableSnapshotSha256 !== expectedDigest) {
       throw new Error('D1 load requires immutableSnapshotSha256 matching checksums.json')
     }
     const organizationCurrency = await resolveOrganizationCurrency(
       options.database.$client,
-      options.snapshotDir,
+      options.source,
       manifest,
       expectedDigest,
       options.organizationCurrency,
@@ -4589,7 +4584,7 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
       )
       const userCount = manifest.resources.users?.count ?? 0
       const owner = await findRawRowById(
-        options.snapshotDir,
+        options.source,
         'users',
         userCount,
         manifest.preflight.user.id,
@@ -4609,7 +4604,7 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
       const ownerStatements = [
         ...rowStatements('users', owner, manifest, identity, anomalies),
         ...(await squashedEmailStatements(
-          options.snapshotDir,
+          options.source,
           manifest,
           identity,
           manifest.preflight.user.id,
@@ -4645,6 +4640,7 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
         const take = Math.min(LINEAGE_RECOVERY_ROWS_PER_INVOCATION, offset - rowsScanned)
         const nextByteOffset = await advanceLineageCursor(
           options.snapshotDir,
+          options.source,
           resource,
           digest,
           rowsScanned,
@@ -4672,7 +4668,7 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
         : Math.min(options.maxRows ?? 100, maxStatements - checkpointStatements, total - offset)
     if (limit < 1) throw new Error(`${resource} row exceeds the invocation statement budget`)
     const sourceChunk = await rawChunkFrom(
-      options.snapshotDir,
+      options.source,
       resource,
       prior?.sourceByteOffset ?? 0,
       offset,
@@ -4789,6 +4785,7 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
       step && 'parent' in step
         ? await lineageFor(
             options.snapshotDir,
+            options.source,
             resource,
             digest,
             offset,
@@ -4831,7 +4828,7 @@ export const loadNextChunk = async (options: LoadNextChunkOptions): Promise<Load
       if (resource === 'users') {
         planned.push(
           ...(await squashedEmailStatements(
-            options.snapshotDir,
+            options.source,
             manifest,
             identity,
             safeIntegerAt(row, '/id', 'users.id'),

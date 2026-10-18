@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
-  asSnapshotSource,
   fileSnapshotSource,
   linesFromStream,
   r2SnapshotSource,
@@ -45,6 +44,8 @@ const collect = async (lines: AsyncIterable<string>): Promise<string[]> => {
 
 /** An R2 stand-in that honours a range offset, which is the whole contract. */
 const bucket = (body: string, key = 'snapshots/run-1/raw/clients.jsonl'): SnapshotBucket => ({
+  head: async (requested) =>
+    requested === key ? { size: new TextEncoder().encode(body).length } : null,
   get: async (requested, options) => {
     if (requested !== key) return null
     const bytes = new TextEncoder().encode(body).slice(options?.range?.offset ?? 0)
@@ -71,6 +72,12 @@ describe('reading a snapshot from disk (#409)', () => {
     // Resuming past the first row is what the loader's checkpoint asks for.
     const offset = Buffer.byteLength(`${ROWS[0]!}\n`, 'utf8')
     expect(await collect(source.openRaw('clients', offset))).toEqual(ROWS.slice(1))
+  })
+
+  it('[unit] sizes a resource by its bytes, not its characters', async () => {
+    const body = `${JSON.stringify({ id: 1, name: 'Ståle Ærø 日本' })}\n`
+    const source = fileSnapshotSource(await onDisk(body))
+    expect(await source.size('clients')).toBe(Buffer.byteLength(body, 'utf8'))
   })
 
   it('[unit] names the file it was reading, for an error that can be chased', async () => {
@@ -104,6 +111,13 @@ describe('reading the same snapshot from a bucket (#409)', () => {
     )
   })
 
+  it('[unit] sizes an object with head, and refuses a missing one', async () => {
+    const body = `${ROWS.join('\n')}\n`
+    const source = r2SnapshotSource(bucket(body), 'snapshots/run-1')
+    expect(await source.size('clients')).toBe(Buffer.byteLength(body, 'utf8'))
+    await expect(source.size('invoices')).rejects.toThrow(/is not in the snapshot bucket/u)
+  })
+
   it('[unit] tolerates a trailing slash on the prefix', async () => {
     const source = r2SnapshotSource(bucket(`${ROWS[0]!}\n`), 'snapshots/run-1/')
     expect(await collect(source.openRaw('clients', 0))).toEqual([ROWS[0]])
@@ -132,17 +146,5 @@ describe('splitting a byte stream into lines (#409)', () => {
   it('[unit] yields nothing for an empty stream rather than one empty line', async () => {
     const stream = new ReadableStream<Uint8Array>({ start: (c) => c.close() })
     expect(await collect(linesFromStream(stream))).toEqual([])
-  })
-})
-
-describe('the adapter the loader calls through (#409)', () => {
-  it('[unit] treats a string as the filesystem, so existing callers are unchanged', async () => {
-    const source = asSnapshotSource(await onDisk(`${ROWS[0]!}\n`))
-    expect(await collect(source.openRaw('clients', 0))).toEqual([ROWS[0]])
-  })
-
-  it('[unit] passes a source through untouched', () => {
-    const given = r2SnapshotSource(bucket(''), 'p')
-    expect(asSnapshotSource(given)).toBe(given)
   })
 })
