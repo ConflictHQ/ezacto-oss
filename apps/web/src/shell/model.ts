@@ -1279,6 +1279,12 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getTimeEntryNoteSettings(withSignal(signal))).data,
   updateTimeEntryNoteSettings: async (patch, signal) =>
     (await client.updateTimeEntryNoteSettings({ body: patch, ...withSignal(signal) })).data,
+  updateTimeEntryRoundingSettings: async (patch, signal) =>
+    (await client.updateTimeEntryRoundingSettings({ body: patch, ...withSignal(signal) })).data,
+  previewTimeRoundingRecalculation: async (scope, signal) =>
+    (await client.previewTimeRoundingRecalculation({ query: scope, ...withSignal(signal) })).data,
+  applyTimeRoundingRecalculation: async (request, signal) =>
+    (await client.applyTimeRoundingRecalculation({ body: request, ...withSignal(signal) })).data,
   getInvoiceReminders: async (signal) =>
     (await client.getOrganizationInvoiceReminders(withSignal(signal))).data.reminder_policy,
   updateInvoiceReminders: async (policy, signal) => {

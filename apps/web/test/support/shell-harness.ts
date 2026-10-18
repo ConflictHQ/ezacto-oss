@@ -284,14 +284,15 @@ export const browserApi = (
       page: { next_cursor: null },
     })),
     listTimeEntryOptions: vi.fn(async () => [
-      { project_id: 1, task_id: 1, minimum_note_length: api.minimumNoteLength },
-      { project_id: 2, task_id: 2, minimum_note_length: api.minimumNoteLength },
+      { project_id: 1, task_id: 1, minimum_note_length: api.minimumNoteLength, time_rounding: { mode: 'exact' as const, minutes: 15 as const, source: 'organization' as const } },
+      { project_id: 2, task_id: 2, minimum_note_length: api.minimumNoteLength, time_rounding: { mode: 'exact' as const, minutes: 15 as const, source: 'organization' as const } },
     ]),
     getTimeEntrySettings: vi.fn(async () => ({
       time_entry_mode: api.timeEntryMode,
       time_format: api.timeFormat,
       clock: api.clock,
       week_start_day: 'monday' as const,
+      time_rounding: { mode: 'exact' as const, minutes: 15 as const },
     })),
     listTimeEntries: vi.fn(async (query) =>
       entries.filter((entry) => {

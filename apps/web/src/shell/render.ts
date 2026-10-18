@@ -886,6 +886,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         <div><dt>Due</dt><dd data-invoice-detail-due-date>—</dd></div>
         <div><dt>Period</dt><dd data-invoice-detail-period>—</dd></div>
         <div><dt>Purchase order</dt><dd data-invoice-detail-purchase-order>—</dd></div>
+        <div data-invoice-rounding-fact hidden><dt>Time rounding</dt><dd><span data-invoice-detail-rounding></span> <small class="hint">The rule today. Hours already on this invoice keep the rounding they were saved with.</small></dd></div>
         <div data-invoice-quickbooks-fact hidden><dt>QuickBooks</dt><dd data-invoice-detail-quickbooks>—</dd></div>
         <div data-invoice-reminders-fact hidden><dt>Reminders</dt><dd><span data-invoice-detail-reminders>—</span> <label class="invoice-reminders-switch"><input type="checkbox" data-invoice-reminders-toggle> Send payment reminders</label></dd></div>
       </dl>
@@ -1121,6 +1122,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         <label>Start<input name="started_time" data-entry-start autocomplete="off" placeholder="9:00 AM"></label>
         <label>End<input name="ended_time" data-entry-end autocomplete="off" placeholder="5:00 PM"></label>
       </div>
+      <p class="hint" data-entry-billing aria-live="polite" hidden></p>
       <p class="hint" data-entry-running hidden>This entry is running. Stop it before changing its assignment or timing.</p>
       <label for="ez-entry-note">Note<textarea id="ez-entry-note" name="notes" data-entry-note-input data-timer-note data-note-input rows="5" maxlength="10000" aria-describedby="note-hint note-result"></textarea></label>
       <p class="hint" id="note-hint" data-entry-note-hint data-timer-note-hint data-note-hint>Optional. Up to 10,000 characters.</p>

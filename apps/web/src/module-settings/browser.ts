@@ -1,5 +1,6 @@
 import { createDeletionRequestsController } from './deletion-requests.js'
 import { createRetentionController } from './retention.js'
+import { createTimeRoundingController } from './time-rounding.js'
 import {
   EzactoApiError,
   type InvoiceRecipient,
@@ -1070,6 +1071,11 @@ export const createModuleSettingsController = (
    */
   const deletionRequests = createDeletionRequestsController(required<HTMLElement>('[data-module-settings-page]'), demo)
   const retention = createRetentionController(required<HTMLElement>('[data-module-settings-page]'), demo)
+  const timeRounding = createTimeRoundingController(
+    required<HTMLElement>('[data-settings-section="time"]'),
+    api,
+    () => session,
+  )
 
   const clearPrivatePresentation = (): void => {
     // The previous session stops owning the page here, before anything is
@@ -1090,6 +1096,7 @@ export const createModuleSettingsController = (
     emailReputation.hidden = true
     timeFacts.replaceChildren()
     noteForm.hidden = true
+    timeRounding.clear()
     // The result line sits outside the form, so hiding the form leaves the
     // previous session's "Saved." or its 403 on screen under the next
     // person's notice.
@@ -1133,6 +1140,7 @@ export const createModuleSettingsController = (
         noteRequired.checked = notes.required
         noteMinimum.value = String(notes.minimum_length)
         noteForm.hidden = false
+        timeRounding.show(active, settings.time_rounding)
         timeStatus.textContent = ''
       })
     } catch (error) {

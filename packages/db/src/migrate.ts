@@ -13,6 +13,7 @@ import { idempotencyAuthorizationMigration } from './migrations/0108_idempotency
 import { expenseDeleteReceiptsMigration } from './migrations/0109_expense_delete_receipts.js'
 import { costRateBackfillMigration } from './migrations/0110_cost_rate_backfill.js'
 import { invoiceTotalsPerInvoiceMigration } from './migrations/0111_invoice_totals_per_invoice.js'
+import { timeRoundingSettingsMigration } from './migrations/0112_time_rounding_settings.js'
 import { organizationInvoiceDefaultsMigration } from './migrations/0097_organization_invoice_defaults.js'
 import { journalFormatsInvoiceExtraMigration } from './migrations/0096_journal_formats_invoice_extra.js'
 import { freeFormInvoiceCreateMigration } from './migrations/0095_free_form_invoice_create.js'
@@ -1577,6 +1578,7 @@ const migrations = [
   { id: '0109_expense_delete_receipts', statements: expenseDeleteReceiptsMigration },
   { id: '0110_cost_rate_backfill', statements: costRateBackfillMigration },
   { id: '0111_invoice_totals_per_invoice', statements: invoiceTotalsPerInvoiceMigration },
+  { id: '0112_time_rounding_settings', statements: timeRoundingSettingsMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

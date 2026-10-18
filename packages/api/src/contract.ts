@@ -1,7 +1,7 @@
 import { ACCOUNT_PRIVACY_FRAMEWORKS } from '@ezacto/core';
 import { paymentRunOperations, paymentRunSchemas } from './payment-run-contract.js'
 import { staffPaymentOperations, staffPaymentSchemas } from './staff-payment-contract.js';
-import { commercialTermFields, DETAILED_TIME_PDF_ROW_LIMIT, maximumBulkApprovalSelections } from "@ezacto/core";
+import { commercialTermFields, DETAILED_TIME_PDF_ROW_LIMIT, maximumBulkApprovalSelections, timeRoundingIncrements, timeRoundingModes } from "@ezacto/core";
 import {
   attachmentContractOperations,
   attachmentContractSchemas,
@@ -377,6 +377,47 @@ const timeEntryOperations: ApiContractOperation[] = [
     responseStatus: 200,
     responseSchema: "TimeEntryNoteSettingsEnvelope",
     requestSchema: "TimeEntryNoteSettingsPatch",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+  {
+    method: "patch",
+    path: "/api/v1/time-entry-rounding-settings",
+    operationId: "updateTimeEntryRoundingSettings",
+    summary: "Update the organization's time rounding rule",
+    description:
+      "A direction and an increment, either or both. Nothing already saved changes: the rule rounds time saved from now on, and open time is re-rounded only by `/time-rounding-recalculation`, after a preview. Executive managers and administrators only.",
+    tag: "time-entries",
+    responseStatus: 200,
+    responseSchema: "TimeRoundingEnvelope",
+    requestSchema: "TimeRoundingPatch",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+  {
+    method: "get",
+    path: "/api/v1/time-rounding-recalculation",
+    operationId: "previewTimeRoundingRecalculation",
+    summary: "Preview re-rounding open time under the current rules",
+    description:
+      "What the apply would change, writing nothing: how many open entries change, their rounded hours before and after, a breakdown by project, the date span, and what is left alone and why. Open means the same as for a single edit: stopped, not invoiced, not approved, on an unlocked date, under an active client, project and task. The `fingerprint` names exactly this set. Executive managers and administrators only.",
+    tag: "time-entries",
+    responseStatus: 200,
+    responseSchema: "TimeRoundingRecalculationPreviewEnvelope",
+    parameters: [query("project_id", integerSchema), query("from", dateSchema), query("to", dateSchema)],
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/time-rounding-recalculation",
+    operationId: "applyTimeRoundingRecalculation",
+    summary: "Re-round open time under the current rules",
+    description:
+      "Applies the preview whose `fingerprint` is sent, for the same scope. If anything has changed since that preview, nothing is written and the answer is 409 `preview_stale`. Executive managers and administrators only.",
+    tag: "time-entries",
+    responseStatus: 200,
+    responseSchema: "TimeRoundingRecalculationAppliedEnvelope",
+    requestSchema: "TimeRoundingRecalculationRequest",
     requestRequired: true,
     sessionOnly: true,
   },
@@ -4898,8 +4939,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   TimeEntryPage: page("TimeEntry"),
   TimeEntrySettings: {
     type: "object",
-    required: ["time_entry_mode", "time_format", "clock", "week_start_day"],
+    required: ["time_entry_mode", "time_format", "clock", "week_start_day", "time_rounding"],
     properties: {
+      time_rounding: reference("TimeRounding"),
       time_entry_mode: { type: "string", enum: ["duration", "start_end"] },
       time_format: { type: "string", enum: ["decimal", "hours_minutes"] },
       clock: { type: "string", enum: ["12h", "24h"] },
@@ -4911,6 +4953,126 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   TimeEntrySettingsEnvelope: envelope("TimeEntrySettings"),
+  TimeRounding: {
+    type: "object",
+    required: ["mode", "minutes"],
+    properties: {
+      mode: { type: "string", enum: [...timeRoundingModes] },
+      minutes: { type: "integer", enum: [...timeRoundingIncrements] },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingPatch: {
+    type: "object",
+    minProperties: 1,
+    properties: {
+      mode: { type: "string", enum: [...timeRoundingModes] },
+      minutes: { type: "integer", enum: [...timeRoundingIncrements] },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingEnvelope: envelope("TimeRounding"),
+  EffectiveTimeRounding: {
+    type: "object",
+    required: ["mode", "minutes", "source"],
+    description: "The rule an entry on a project is saved under, and whose it is.",
+    properties: {
+      mode: { type: "string", enum: [...timeRoundingModes] },
+      minutes: { type: "integer", enum: [...timeRoundingIncrements] },
+      source: { type: "string", enum: ["organization", "project"] },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationScope: {
+    type: "object",
+    required: ["project_id", "from", "to"],
+    properties: {
+      project_id: nullable(integerSchema),
+      from: nullable(dateSchema),
+      to: nullable(dateSchema),
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationProject: {
+    type: "object",
+    required: [
+      "project_id",
+      "project_name",
+      "time_rounding",
+      "changed_entries",
+      "rounded_seconds_before",
+      "rounded_seconds_after",
+    ],
+    properties: {
+      project_id: integerSchema,
+      project_name: stringSchema,
+      time_rounding: reference("EffectiveTimeRounding"),
+      changed_entries: { type: "integer", minimum: 0 },
+      rounded_seconds_before: { type: "integer", minimum: 0 },
+      rounded_seconds_after: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationPreview: {
+    type: "object",
+    required: [
+      "scope",
+      "open_entries",
+      "changed_entries",
+      "rounded_seconds_before",
+      "rounded_seconds_after",
+      "earliest_spent_date",
+      "latest_spent_date",
+      "projects",
+      "kept",
+      "fingerprint",
+    ],
+    properties: {
+      scope: reference("TimeRoundingRecalculationScope"),
+      open_entries: { type: "integer", minimum: 0 },
+      changed_entries: { type: "integer", minimum: 0 },
+      rounded_seconds_before: { type: "integer", minimum: 0 },
+      rounded_seconds_after: { type: "integer", minimum: 0 },
+      earliest_spent_date: nullable(dateSchema),
+      latest_spent_date: nullable(dateSchema),
+      projects: { type: "array", items: reference("TimeRoundingRecalculationProject") },
+      kept: {
+        type: "object",
+        required: ["invoiced", "approved", "locked", "other"],
+        properties: {
+          invoiced: { type: "integer", minimum: 0 },
+          approved: { type: "integer", minimum: 0 },
+          locked: { type: "integer", minimum: 0 },
+          other: { type: "integer", minimum: 0 },
+        },
+        additionalProperties: false,
+      },
+      fingerprint: { type: "string", pattern: "^[0-9a-f]{64}$" },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationPreviewEnvelope: envelope("TimeRoundingRecalculationPreview"),
+  TimeRoundingRecalculationRequest: {
+    type: "object",
+    required: ["fingerprint"],
+    properties: {
+      project_id: integerSchema,
+      from: dateSchema,
+      to: dateSchema,
+      fingerprint: { type: "string", pattern: "^[0-9a-f]{64}$" },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationApplied: {
+    type: "object",
+    required: ["recalculated_entries", "preview"],
+    properties: {
+      recalculated_entries: { type: "integer", minimum: 0 },
+      preview: reference("TimeRoundingRecalculationPreview"),
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationAppliedEnvelope: envelope("TimeRoundingRecalculationApplied"),
   TimeEntryNoteSettings: {
     type: "object",
     required: ["required", "minimum_length"],
@@ -5026,10 +5188,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: { data: { anyOf: [reference("AccountDeletionRecord"), reference("AccountDeletionRequest")] }, links: reference("Links"), status_access: reference("AccountDeletionStatusAccess") } },
   TimeEntryOption: {
     type: "object",
-    required: ["project_id", "task_id", "minimum_note_length"],
+    required: ["project_id", "task_id", "minimum_note_length", "time_rounding"],
     properties: {
       project_id: integerSchema,
       task_id: integerSchema,
+      time_rounding: reference("EffectiveTimeRounding"),
       minimum_note_length: { type: "integer", minimum: 0, maximum: 10000 },
     },
     additionalProperties: false,

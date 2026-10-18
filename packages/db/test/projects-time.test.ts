@@ -1,6 +1,11 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
+import {
+  roundTimeSeconds,
+  timeRoundingFromLegacy,
+  type LegacyTimeRounding,
+} from '@ezacto/core'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { migrateContainer, migrateD1, migrationIds } from '../src/migrate.js'
 import { orgPeopleMigration } from '../src/migrations/0000_org_people.js'
@@ -11,14 +16,26 @@ import {
   elapsedDurationSeconds,
   elapsedWallClockSeconds,
   restartTimeEntry,
-  roundSeconds,
   startTimeEntry,
   stopTimeEntry,
   type CreateStoppedTimeEntryInput,
   type StartTimeEntryInput,
   type TimeBoundary,
-  type TimeRounding,
 } from '../src/time-entries.js'
+
+// These tests state their rounding in the single-enum vocabulary the organization
+// used before issue 949; the rule each value stands for is core's.
+type TimeRounding = LegacyTimeRounding
+const roundSeconds = (seconds: number, policy: TimeRounding): number =>
+  roundTimeSeconds(seconds, timeRoundingFromLegacy(policy))
+const setRounding = async (database: { run(sql: string, ...params: unknown[]): Promise<void> }, policy: TimeRounding) => {
+  const rule = timeRoundingFromLegacy(policy)
+  await database.run(
+    `UPDATE organizations SET time_rounding_mode = ?, time_rounding_minutes = ? WHERE id = 1`,
+    rule.mode,
+    rule.minutes,
+  )
+}
 
 type DrizzleDatabase = Parameters<typeof startTimeEntry>[0]
 
@@ -105,15 +122,15 @@ const installFixture = async (
 ): Promise<void> => {
   await database.run(
     `INSERT INTO organizations
-      (name, time_entry_mode, time_rounding, modules, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+      (name, time_entry_mode, modules, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)`,
     'Halcyon Studio',
     mode,
-    rounding,
     modules,
     timestamp,
     timestamp,
   )
+  await setRounding(database, rounding)
   for (const id of [1, 2]) {
     await database.run(
       `INSERT INTO users
@@ -468,7 +485,7 @@ for (const [runtime, factory] of factories) {
     it('[unit] preserves exact safe upward-rounded totals through explicit JS stops', async () => {
       const db = await setup('duration')
       for (const [index, [policy, increment]] of upRoundingCases.entries()) {
-        await db.run(`UPDATE organizations SET time_rounding = ? WHERE id = 1`, policy)
+        await setRounding(db, policy)
         const exactSafeMultiple = Math.floor(Number.MAX_SAFE_INTEGER / increment) * increment
         expect(Number.isSafeInteger(exactSafeMultiple)).toBe(true)
         expect(exactSafeMultiple % increment).toBe(0)
@@ -507,7 +524,7 @@ for (const [runtime, factory] of factories) {
     it('[unit] preserves the same exact safe totals through trigger replacements', async () => {
       const db = await setup('duration')
       for (const [index, [policy, increment]] of upRoundingCases.entries()) {
-        await db.run(`UPDATE organizations SET time_rounding = ? WHERE id = 1`, policy)
+        await setRounding(db, policy)
         const exactSafeMultiple = Math.floor(Number.MAX_SAFE_INTEGER / increment) * increment
         const hour = String(13 + index).padStart(2, '0')
         const running = await startTimeEntry(
@@ -876,7 +893,7 @@ for (const [runtime, factory] of factories) {
 
       for (const [policy, seconds, expected] of cases) {
         expect(roundSeconds(seconds, policy), `${policy}(${seconds})`).toBe(expected)
-        await db.run(`UPDATE organizations SET time_rounding = ? WHERE id = 1`, policy)
+        await setRounding(db, policy)
         const entry = await createStoppedTimeEntry(db.drizzle, stoppedInput({ seconds }))
         expect(entry.roundedSeconds, `stored ${policy}(${seconds})`).toBe(expected)
       }

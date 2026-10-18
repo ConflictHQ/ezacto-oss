@@ -978,6 +978,59 @@ describe('invoice payment controller', () => {
     setInvoiceClientNames([])
   })
 
+  it('[browser #949] says which rounding the invoiced projects are under today', async () => {
+    renderDetail()
+    const projects: Record<number, Record<string, unknown>> = {
+      1: { id: 1, name: 'Northpeak', time_rounding_mode: 'up', time_rounding_minutes: 15 },
+      2: { id: 2, name: 'Acme', time_rounding_mode: null, time_rounding_minutes: null },
+      // Read without commercial authority: no rule to speak of, so none is guessed.
+      3: { id: 3, name: 'Hidden' },
+    }
+    const getDirectoryProject = vi.fn(async (id: number) => projects[id] as never)
+    await createInvoicePaymentController({
+      findInvoiceByNumber: vi.fn(async () => null),
+      getInvoice: vi.fn(async () =>
+        invoice('ROUNDED', {
+          line_items: [
+            line({ id: 1, project_id: 1 }),
+            line({ id: 2, project_id: 1 }),
+            line({ id: 3, project_id: 2 }),
+            line({ id: 4, project_id: 3 }),
+            line({ id: 5, project_id: null }),
+          ],
+        }),
+      ),
+      getDirectoryProject,
+      getTimeEntrySettings: vi.fn(async () => ({ time_rounding: { mode: 'down' as const, minutes: 30 as const } })),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+    }).activate(identity(1), new AbortController().signal, () => false)
+
+    const fact = document.querySelector<HTMLElement>('[data-invoice-rounding-fact]')!
+    await vi.waitFor(() => expect(fact.hidden).toBe(false))
+    expect(document.querySelector('[data-invoice-detail-rounding]')?.textContent).toBe(
+      'Northpeak: rounded up to 15 min (project setting); Acme: rounded down to 30 min (organization setting)',
+    )
+    // Each project is read once however many lines it has.
+    expect(getDirectoryProject).toHaveBeenCalledTimes(3)
+  })
+
+  it('[browser #949] leaves the rounding row out when there is nothing to say', async () => {
+    renderDetail()
+    await createInvoicePaymentController({
+      findInvoiceByNumber: vi.fn(async () => null),
+      getInvoice: vi.fn(async () => invoice('PLAIN', { line_items: [line({ project_id: null })] })),
+      getDirectoryProject: vi.fn(async () => {
+        throw new Error('not asked')
+      }),
+      getTimeEntrySettings: vi.fn(async () => ({ time_rounding: { mode: 'exact' as const, minutes: 15 as const } })),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+    }).activate(identity(1), new AbortController().signal, () => false)
+    expect(document.querySelector<HTMLElement>('[data-invoice-document]')?.hidden).toBe(false)
+    expect(document.querySelector<HTMLElement>('[data-invoice-rounding-fact]')?.hidden).toBe(true)
+  })
+
   it('[browser] still shows the invoice when its client cannot be read', async () => {
     // A token without clients:read, or a request that failed: the name is a
     // nicety, and the invoice is the page.
