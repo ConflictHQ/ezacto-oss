@@ -1,8 +1,14 @@
+import { isReminderDay, type ReminderDay } from '@ezacto/core'
 import type { Context, Hono } from 'hono'
 import { requireSessionPrincipal } from './auth.js'
 import type { ApiContext } from './context.js'
 import { ApiError } from './errors.js'
-import { assertFields, readObjectBody, unknownFieldErrors } from './resources/support.js'
+import {
+  assertFields,
+  isJsonObject,
+  readObjectBody,
+  unknownFieldErrors,
+} from './resources/support.js'
 
 /**
  * Company settings for the mail ezacto sends its own people (issues 934, 935).
@@ -10,8 +16,15 @@ import { assertFields, readObjectBody, unknownFieldErrors } from './resources/su
  * whom it is read as the company's own voice.
  */
 
+export interface SubmissionReminderBody {
+  readonly day: ReminderDay
+  readonly time: string
+}
+
 export interface NotificationSettingsBody {
   readonly budget_alerts_include_admins: boolean
+  /** When everyone is reminded to submit last week's time; null for never (issue 935). */
+  readonly submission_reminder: SubmissionReminderBody | null
 }
 
 export interface NotificationSettingsService {
@@ -20,29 +33,39 @@ export interface NotificationSettingsService {
 }
 
 /** What the repository keeps, in the repository's own spelling. */
+export interface StoredNotificationSettings {
+  readonly budgetAlertsIncludeAdmins: boolean
+  readonly submissionReminder: SubmissionReminderBody | null
+}
+
 export interface NotificationSettingsStore {
-  read(): Promise<{ readonly budgetAlertsIncludeAdmins: boolean }>
+  read(): Promise<StoredNotificationSettings>
   update(patch: {
     readonly budgetAlertsIncludeAdmins?: boolean
-  }): Promise<{ readonly budgetAlertsIncludeAdmins: boolean }>
+    readonly submissionReminder?: SubmissionReminderBody | null
+  }): Promise<StoredNotificationSettings>
 }
 
 /** The store behind the wire spelling, so both entries share one mapping. */
 export const createNotificationSettingsService = (
   store: Readonly<NotificationSettingsStore>,
 ): NotificationSettingsService => {
-  const wire = (value: { readonly budgetAlertsIncludeAdmins: boolean }): NotificationSettingsBody => ({
+  const wire = (value: StoredNotificationSettings): NotificationSettingsBody => ({
     budget_alerts_include_admins: value.budgetAlertsIncludeAdmins,
+    submission_reminder: value.submissionReminder,
   })
   return {
     read: async () => wire(await store.read()),
     update: async (patch) =>
       wire(
-        await store.update(
-          patch.budget_alerts_include_admins === undefined
+        await store.update({
+          ...(patch.budget_alerts_include_admins === undefined
             ? {}
-            : { budgetAlertsIncludeAdmins: patch.budget_alerts_include_admins },
-        ),
+            : { budgetAlertsIncludeAdmins: patch.budget_alerts_include_admins }),
+          ...(patch.submission_reminder === undefined
+            ? {}
+            : { submissionReminder: patch.submission_reminder }),
+        }),
       ),
   }
 }
@@ -60,7 +83,9 @@ const assertAdministrator = <Bindings extends object>(
   }
 }
 
-const fields = new Set(['budget_alerts_include_admins'])
+const fields = new Set(['budget_alerts_include_admins', 'submission_reminder'])
+
+const canonicalTime = /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/
 
 export const installNotificationSettingsRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
@@ -75,7 +100,10 @@ export const installNotificationSettingsRoutes = <Bindings extends object>(
     assertAdministrator(context)
     const body = await readObjectBody(context)
     const errors = unknownFieldErrors(body, fields)
-    const patch: { budget_alerts_include_admins?: boolean } = {}
+    const patch: {
+      budget_alerts_include_admins?: boolean
+      submission_reminder?: SubmissionReminderBody | null
+    } = {}
     if ('budget_alerts_include_admins' in body) {
       if (typeof body.budget_alerts_include_admins !== 'boolean') {
         errors.push({
@@ -87,9 +115,29 @@ export const installNotificationSettingsRoutes = <Bindings extends object>(
         patch.budget_alerts_include_admins = body.budget_alerts_include_admins
       }
     }
+    if ('submission_reminder' in body) {
+      const schedule = body.submission_reminder
+      if (schedule === null) {
+        patch.submission_reminder = null
+      } else if (
+        !isJsonObject(schedule) ||
+        Object.keys(schedule).some((key) => key !== 'day' && key !== 'time') ||
+        !isReminderDay(schedule.day) ||
+        typeof schedule.time !== 'string' ||
+        !canonicalTime.test(schedule.time)
+      ) {
+        errors.push({
+          field: 'submission_reminder',
+          code: 'invalid',
+          message: 'submission_reminder must be null, or a weekday and a time as HH:MM',
+        })
+      } else {
+        patch.submission_reminder = { day: schedule.day, time: schedule.time }
+      }
+    }
     if (Object.keys(patch).length === 0 && errors.length === 0) {
       errors.push({
-        field: 'budget_alerts_include_admins',
+        field: 'body',
         code: 'required',
         message: 'name at least one setting to change',
       })

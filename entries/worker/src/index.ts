@@ -208,6 +208,18 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
         Sentry.captureException(error)
       }
     }
+    if (controller.cron === '* * * * *' && services.timeReminders !== undefined) {
+      // Time reminders and week-end submission reminders (issue 935). Every
+      // minute, because "due" is each person's own local time and the zones
+      // between them put due times on every minute mark of the hour. Cheap when
+      // nothing is due. Ahead of the drain so what it queues is sent now.
+      try {
+        await services.timeReminders.processDue(new Date().toISOString())
+      } catch (error) {
+        console.error('[worker] time reminders failed', error)
+        Sentry.captureException(error)
+      }
+    }
     // Not on the demo (#931): its database is thrown away at this hour, and an
     // export would copy whatever visitors typed into it into the bucket, which
     // nothing ever empties.

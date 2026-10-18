@@ -105,6 +105,9 @@ import {
   setOrganizationThankYouPolicy,
   evaluateProjectBudgetAlerts,
   prepareBudgetAlertMail,
+  prepareTimeReminders,
+  readUserNotifications,
+  updateUserNotifications,
   readNotificationSettings,
   updateNotificationSettings,
   setBillDelivery,
@@ -118,6 +121,7 @@ import {
   createCloudflareAccessSessionResolver,
   createCloudflareAccessVerifier,
   createBudgetAlertSubscriber,
+  createTimeReminderService,
   createNotificationSettingsService,
   createInvoiceEmailOutboxSubscriber,
   createInvoiceThankYouSubscriber,
@@ -752,6 +756,22 @@ export const createRuntimeServices = async (
     !emailQueueReady || mailFrom === undefined
       ? undefined
       : createWorkerNotificationMailer(emailQueue!, emailLog, mailFrom);
+  // Time reminders and the week-end submission reminders (issue 935): the
+  // same deployment sender, and the instance's own address for the links.
+  const timeReminders =
+    notificationMailer === undefined || env.APP_BASE_URL === undefined
+      ? undefined
+      : createTimeReminderService(
+          {
+            prepare: (now: string) =>
+              prepareTimeReminders(drizzle, {
+                now,
+                from: notificationMailer.from,
+                appUrl: env.APP_BASE_URL!,
+              }),
+          },
+          notificationMailer,
+        );
   // One service behind two ports: the password routes take it whole, the
   // add-an-address route takes only `addEmail`.
   const passwordAuth = createD1PasswordAuthService(database);
@@ -1066,6 +1086,12 @@ export const createRuntimeServices = async (
     recurringInvoices: createRecurringInvoiceEngine(drizzle),
     reminders: { processDue: processDueReminders },
     budgetAlerts: { evaluate: (now: string) => evaluateProjectBudgetAlerts(drizzle, now) },
+    ...(timeReminders === undefined ? {} : { timeReminders }),
+    profileNotifications: {
+      read: (userId: number) => readUserNotifications(drizzle, userId),
+      update: (userId: number, patch) =>
+        updateUserNotifications(drizzle, userId, patch, new Date().toISOString()),
+    },
     notificationSettings: createNotificationSettingsService({
       read: () => readNotificationSettings(drizzle),
       update: (patch) => updateNotificationSettings(drizzle, patch, new Date().toISOString()),

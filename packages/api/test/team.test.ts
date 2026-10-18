@@ -321,10 +321,11 @@ for (const [runtime, factory] of factories) {
       expect(peopleBody.data.departments).toEqual([{ id: 1, name: "Product" }]);
       expect(peopleBody.data.project_assignments).toHaveLength(1);
       expect(peopleBody.data.notifications).toMatchObject({
-        delivery_active: false,
+        delivery_active: true,
         daily_reminder_enabled: false,
         channels: { email: false, desktop: false, slack: false },
-        include_in_team_reminders: false,
+        // New people start in, so that opting out means something (issue 935).
+        include_in_team_reminders: true,
         weekly_digest: false,
         notify_project_deleted: false,
       });
@@ -443,7 +444,7 @@ for (const [runtime, factory] of factories) {
         version: 3,
         roles: [{ id: 2, name: "Engineer" }],
         departments: [{ id: 2, name: "Operations" }],
-        notifications: { delivery_active: false, reminder_time: null },
+        notifications: { delivery_active: true, reminder_time: null },
       });
       expect(data.data.project_assignments).toEqual(
         expect.arrayContaining([
@@ -707,37 +708,57 @@ for (const [runtime, factory] of factories) {
       });
       expect(slack.status).toBe(422);
 
-      const unavailableDelivery = await harness.request("/team/people/4/notifications", {
+      // What still has no delivery is refused rather than stored: desktop, and
+      // the project-deletion notice (issue 935).
+      const noDelivery = {
+        expected_version: 0,
+        daily_reminder_enabled: false,
+        reminder_time: null,
+        reminder_days: [],
+        channels: { email: false, desktop: false, slack: false },
+        include_in_team_reminders: true,
+        weekly_digest: false,
+        notify_project_deleted: false,
+      };
+      const desktop = await harness.request("/team/people/4/notifications", {
+        method: "POST",
+        body: { ...noDelivery, channels: { email: false, desktop: true, slack: false } },
+        idempotencyKey: "team.notifications.desktop",
+      });
+      expect(desktop.status).toBe(422);
+      expect(await desktop.json()).toMatchObject({
+        error: { fields: expect.arrayContaining([expect.objectContaining({ code: "unavailable" })]) },
+      });
+      const deletion = await harness.request("/team/people/4/notifications", {
+        method: "POST",
+        body: { ...noDelivery, notify_project_deleted: true },
+        idempotencyKey: "team.notifications.project-deleted",
+      });
+      expect(deletion.status).toBe(422);
+      // A daily reminder needs a time, a day, and the one channel that delivers.
+      const noMail = await harness.request("/team/people/4/notifications", {
         method: "POST",
         body: {
-          expected_version: 0,
-          daily_reminder_enabled: false,
-          reminder_time: null,
-          reminder_days: [],
-          channels: { email: true, desktop: false, slack: false },
-          include_in_team_reminders: false,
-          weekly_digest: false,
-          notify_project_deleted: false,
+          ...noDelivery,
+          daily_reminder_enabled: true,
+          reminder_time: "17:00",
+          reminder_days: ["monday"],
         },
-        idempotencyKey: "team.notifications.delivery-unavailable",
+        idempotencyKey: "team.notifications.daily-without-mail",
       });
-      expect(unavailableDelivery.status).toBe(422);
-      expect(await unavailableDelivery.json()).toMatchObject({
-        error: {
-          fields: expect.arrayContaining([
-            expect.objectContaining({ code: "delivery_unavailable" }),
-          ]),
-        },
+      expect(noMail.status).toBe(422);
+      expect(await noMail.json()).toMatchObject({
+        error: { fields: expect.arrayContaining([expect.objectContaining({ code: "incomplete" })]) },
       });
       const unchanged = await harness.request("/team/people/4");
       expect(await unchanged.json()).toMatchObject({
         data: {
           version: 0,
           notifications: {
-            delivery_active: false,
+            delivery_active: true,
             daily_reminder_enabled: false,
             channels: { email: false, desktop: false, slack: false },
-            include_in_team_reminders: false,
+            include_in_team_reminders: true,
             weekly_digest: false,
             notify_project_deleted: false,
           },
@@ -751,6 +772,39 @@ for (const [runtime, factory] of factories) {
         idempotencyKey: "team.token.denied",
       });
       expect(token.status).toBe(403);
+    });
+
+    it("saves the daily reminder, the mail channel, team reminders and the weekly digest (issue 935)", async () => {
+      harness = await factory();
+      const saved = await harness.request("/team/people/4/notifications", {
+        method: "POST",
+        body: {
+          expected_version: 0,
+          daily_reminder_enabled: true,
+          reminder_time: "17:00",
+          reminder_days: ["monday", "friday"],
+          channels: { email: true, desktop: false, slack: false },
+          include_in_team_reminders: false,
+          weekly_digest: true,
+          notify_project_deleted: false,
+        },
+        idempotencyKey: "team.notifications.deliverable",
+      });
+      expect(saved.status, await saved.clone().text()).toBe(200);
+      const refreshed = await harness.request("/team/people/4");
+      expect(await refreshed.json()).toMatchObject({
+        data: {
+          version: 1,
+          notifications: {
+            daily_reminder_enabled: true,
+            reminder_time: "17:00",
+            reminder_days: ["monday", "friday"],
+            channels: { email: true, desktop: false, slack: false },
+            include_in_team_reminders: false,
+            weekly_digest: true,
+          },
+        },
+      });
     });
 
     it("supports safe deactivation and Active/All filtering", async () => {

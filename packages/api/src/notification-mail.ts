@@ -108,3 +108,45 @@ export const createBudgetAlertSubscriber = (
     for (const message of messages) await mailer.enqueue(message)
   },
 })
+
+export interface TimeReminderPort {
+  /**
+   * One pass: decides who is due a reminder in their own local time, records
+   * each decision, and returns the messages to queue -- the ones just recorded
+   * and any recorded earlier that never left the queue.
+   */
+  prepare(now: string): Promise<readonly NotificationMessage[]>
+}
+
+export interface TimeReminderSummary {
+  readonly queued: number
+}
+
+/**
+ * The time reminders and the week-end submission reminders (issue 935), run on
+ * a clock: the Worker's minute cron, the container's outbox tick.
+ *
+ * A message that cannot be queued does not stop the others, and the failure is
+ * thrown once all have been tried so the caller reports it. The message is
+ * already recorded, so the next pass queues it again from the record.
+ */
+export const createTimeReminderService = (
+  port: TimeReminderPort,
+  mailer: Pick<NotificationMailer, 'enqueue'>,
+): { processDue(now: string): Promise<TimeReminderSummary> } => ({
+  async processDue(now) {
+    const messages = await port.prepare(now)
+    let queued = 0
+    let failure: unknown
+    for (const message of messages) {
+      try {
+        await mailer.enqueue(message)
+        queued += 1
+      } catch (error) {
+        failure ??= error
+      }
+    }
+    if (failure !== undefined) throw failure
+    return { queued }
+  },
+})

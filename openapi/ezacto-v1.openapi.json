@@ -2553,6 +2553,124 @@
         }
       }
     },
+    "/api/v1/profile/notifications": {
+      "get": {
+        "operationId": "getProfileNotifications",
+        "summary": "The signed-in user's own reminder and digest preferences",
+        "tags": [
+          "profile"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileNotificationEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/profile/notifications",
+        "x-ezacto-generate-client": true
+      },
+      "post": {
+        "operationId": "updateProfileNotifications",
+        "summary": "Change the signed-in user's own reminder and digest preferences",
+        "tags": [
+          "profile"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileNotificationEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/profile/notifications",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileNotificationInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/profile/deletion-request": {
       "post": {
         "operationId": "requestAccountDeletion",
@@ -23789,7 +23907,7 @@
     "/api/v1/team/people/{id}/notifications": {
       "post": {
         "operationId": "updateTeamPersonNotifications",
-        "summary": "Persist inactive notification preferences; delivery is unavailable",
+        "summary": "Save a person's reminder and digest preferences",
         "tags": [
           "team"
         ],
@@ -28751,7 +28869,7 @@
         },
         "additionalProperties": false
       },
-      "TeamInactiveNotificationChannels": {
+      "TeamNotificationChannelsInput": {
         "type": "object",
         "required": [
           "email",
@@ -28760,10 +28878,7 @@
         ],
         "properties": {
           "email": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
+            "type": "boolean"
           },
           "desktop": {
             "type": "boolean",
@@ -28797,7 +28912,7 @@
           "delivery_active": {
             "type": "boolean",
             "enum": [
-              false
+              true
             ]
           },
           "daily_reminder_enabled": {
@@ -29240,10 +29355,7 @@
             "minimum": 0
           },
           "daily_reminder_enabled": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
+            "type": "boolean"
           },
           "reminder_time": {
             "anyOf": [
@@ -29273,25 +29385,91 @@
             }
           },
           "channels": {
-            "$ref": "#/components/schemas/TeamInactiveNotificationChannels"
+            "$ref": "#/components/schemas/TeamNotificationChannelsInput"
           },
           "include_in_team_reminders": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
+            "type": "boolean"
           },
           "weekly_digest": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
+            "type": "boolean"
           },
           "notify_project_deleted": {
             "type": "boolean",
             "enum": [
               false
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProfileNotificationInput": {
+        "type": "object",
+        "required": [
+          "daily_reminder_enabled",
+          "reminder_time",
+          "reminder_days",
+          "channels",
+          "include_in_team_reminders",
+          "weekly_digest",
+          "notify_project_deleted"
+        ],
+        "properties": {
+          "daily_reminder_enabled": {
+            "type": "boolean"
+          },
+          "reminder_time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reminder_days": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday",
+                "saturday",
+                "sunday"
+              ]
+            }
+          },
+          "channels": {
+            "$ref": "#/components/schemas/TeamNotificationChannelsInput"
+          },
+          "include_in_team_reminders": {
+            "type": "boolean"
+          },
+          "weekly_digest": {
+            "type": "boolean"
+          },
+          "notify_project_deleted": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProfileNotificationEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TeamNotificationPreference"
           }
         },
         "additionalProperties": false
@@ -42361,6 +42539,42 @@
         "properties": {
           "budget_alerts_include_admins": {
             "type": "boolean"
+          },
+          "submission_reminder": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubmissionReminderSchedule"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "SubmissionReminderSchedule": {
+        "type": "object",
+        "required": [
+          "day",
+          "time"
+        ],
+        "properties": {
+          "day": {
+            "type": "string",
+            "enum": [
+              "monday",
+              "tuesday",
+              "wednesday",
+              "thursday",
+              "friday",
+              "saturday",
+              "sunday"
+            ]
+          },
+          "time": {
+            "type": "string",
+            "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
           }
         },
         "additionalProperties": false
@@ -42374,11 +42588,22 @@
           "data": {
             "type": "object",
             "required": [
-              "budget_alerts_include_admins"
+              "budget_alerts_include_admins",
+              "submission_reminder"
             ],
             "properties": {
               "budget_alerts_include_admins": {
                 "type": "boolean"
+              },
+              "submission_reminder": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SubmissionReminderSchedule"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "additionalProperties": false

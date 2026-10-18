@@ -24,7 +24,7 @@ const event = (alertId: unknown) => ({
 describe('budget alert subscriber (issue 934)', () => {
   it('[unit] queues each recorded message for the alert the event names', async () => {
     const prepare = vi.fn(async () => [message(7, 'pia@example.test'), message(8, 'ada@example.test')])
-    const enqueue = vi.fn(async () => undefined)
+    const enqueue = vi.fn<(sent: NotificationMessage) => Promise<void>>(async () => undefined)
     const subscriber = createBudgetAlertSubscriber({ prepare }, { enqueue })
 
     await subscriber.deliver(event(12))

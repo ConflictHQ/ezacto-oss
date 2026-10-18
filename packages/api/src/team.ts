@@ -1,13 +1,10 @@
 import {
   canViewMoneyField,
-  reminderDays,
   teamProfiles,
   TeamError,
-  type ReminderDay,
   type TeamCommandKind,
   type TeamCommandReceipt,
   type TeamNamedRelation,
-  type TeamNotificationPatch,
   type TeamPersonPatch,
   type TeamPersonRecord,
   type TeamPersonSummary,
@@ -20,6 +17,11 @@ import { requireApiScope, requireSessionPrincipal } from './auth.js'
 import type { ApiContext, UserPrincipal } from './context.js'
 import { ApiError, readJsonBody, validationError, type FieldError } from './errors.js'
 import { cursorPage } from './pagination.js'
+import {
+  notificationPreferenceFields,
+  parseNotificationPreferences,
+  snakeNotification,
+} from './notification-preferences.js'
 import { queryDate, resourceId, strictSearchParams } from './resources/support.js'
 
 export interface TeamRouteOptions {
@@ -30,7 +32,6 @@ export interface TeamRouteOptions {
 }
 
 const idempotencyPattern = /^[A-Za-z0-9._:-]{1,128}$/u
-const canonicalTime = /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/u
 const canonicalDate = /^\d{4}-\d{2}-\d{2}$/u
 
 const isCanonicalDate = (value: string): boolean => {
@@ -76,22 +77,6 @@ const translate = (error: unknown): never => {
   }
   throw validationError([{ field: 'body', code: error.code, message: error.message }])
 }
-
-const snakeNotification = (value: Readonly<TeamPersonRecord['notifications']>) => ({
-  delivery_active: value.deliveryActive,
-  daily_reminder_enabled: value.dailyReminderEnabled,
-  reminder_time: value.reminderTime,
-  reminder_days: [...value.reminderDays],
-  channels: {
-    email: value.emailEnabled,
-    desktop: value.desktopEnabled,
-    slack: value.slackEnabled,
-  },
-  include_in_team_reminders: value.includeInTeamReminders,
-  weekly_digest: value.weeklyDigest,
-  notify_project_deleted: value.notifyProjectDeleted,
-  updated_at: value.updatedAt,
-})
 
 const snakeRelation = (value: Readonly<TeamNamedRelation>) => ({
   id: value.id,
@@ -608,67 +593,10 @@ export const installTeamRoutes = <Bindings extends object>(
     await ensureVisible(options, principal, userId)
     const body = await objectBody(context)
     const errors: FieldError[] = []
-    noUnknown(body, new Set([
-      'expected_version', 'daily_reminder_enabled', 'reminder_time', 'reminder_days',
-      'channels', 'include_in_team_reminders', 'weekly_digest', 'notify_project_deleted',
-    ]), errors)
+    noUnknown(body, new Set(['expected_version', ...notificationPreferenceFields]), errors)
     const version = expectedVersion(body, errors)
-    const daily = booleanField(body, 'daily_reminder_enabled', errors)
-    const include = booleanField(body, 'include_in_team_reminders', errors)
-    const weekly = booleanField(body, 'weekly_digest', errors)
-    const deleted = booleanField(body, 'notify_project_deleted', errors)
-    const time = body.reminder_time
-    if (time !== null && (typeof time !== 'string' || !canonicalTime.test(time))) {
-      errors.push({ field: 'reminder_time', code: 'invalid_time', message: 'reminder_time must be HH:MM or null' })
-    }
-    const days = body.reminder_days
-    if (
-      !Array.isArray(days) ||
-      !days.every((day) => typeof day === 'string' && reminderDays.includes(day as ReminderDay)) ||
-      new Set(days).size !== days.length
-    ) {
-      errors.push({ field: 'reminder_days', code: 'invalid_array', message: 'reminder_days must contain distinct weekdays' })
-    }
-    const channels = body.channels
-    const channel = typeof channels === 'object' && channels !== null && !Array.isArray(channels)
-      ? channels as Record<string, unknown>
-      : null
-    if (
-      channel === null || Object.keys(channel).some((field) => !['email', 'desktop', 'slack'].includes(field)) ||
-      typeof channel?.email !== 'boolean' || typeof channel.desktop !== 'boolean' || typeof channel.slack !== 'boolean'
-    ) {
-      errors.push({ field: 'channels', code: 'invalid', message: 'channels requires email, desktop, and slack booleans' })
-    } else if (channel.slack) {
-      errors.push({ field: 'channels.slack', code: 'unavailable', message: 'Slack reminders require a configured Slack connector.' })
-    }
-    if (daily === true && (time === null || !Array.isArray(days) || days.length === 0 || channel === null || (!channel.email && !channel.desktop && !channel.slack))) {
-      errors.push({ field: 'daily_reminder_enabled', code: 'incomplete', message: 'Daily reminders require a time, at least one day, and at least one channel.' })
-    }
-    if ([daily, include, weekly, deleted].some((value) => value === undefined)) {
-      errors.push({ field: 'body', code: 'required', message: 'All notification preference fields are required.' })
-    }
-    if (
-      daily === true || include === true || weekly === true || deleted === true ||
-      channel?.email === true || channel?.desktop === true || channel?.slack === true
-    ) {
-      errors.push({
-        field: 'notifications',
-        code: 'delivery_unavailable',
-        message: 'Notification delivery is not active in this release; preferences must remain off.',
-      })
-    }
-    if (errors.length > 0) throw validationError(errors)
-    const patch: TeamNotificationPatch = {
-      dailyReminderEnabled: daily!,
-      reminderTime: time as string | null,
-      reminderDays: days as ReminderDay[],
-      emailEnabled: channel!.email as boolean,
-      desktopEnabled: channel!.desktop as boolean,
-      slackEnabled: false,
-      includeInTeamReminders: include!,
-      weeklyDigest: weekly!,
-      notifyProjectDeleted: deleted!,
-    }
+    const patch = parseNotificationPreferences(body, errors)
+    if (patch === null || errors.length > 0) throw validationError(errors)
     try {
       const receipt = await options.repository.updateNotifications(
         command(commandId(context), 'person.notifications.update', userId, version, principal, options.clock()),

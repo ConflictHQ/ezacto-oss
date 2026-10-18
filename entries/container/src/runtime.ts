@@ -101,6 +101,9 @@ import {
   setOrganizationThankYouPolicy,
   evaluateProjectBudgetAlerts,
   prepareBudgetAlertMail,
+  prepareTimeReminders,
+  readUserNotifications,
+  updateUserNotifications,
   readNotificationSettings,
   updateNotificationSettings,
   setBillDelivery,
@@ -115,6 +118,7 @@ import {
 import {
   createApiSessionService,
   createBudgetAlertSubscriber,
+  createTimeReminderService,
   createNotificationSettingsService,
   createDeploymentNotificationMailer,
   createInvoiceEmailOutboxSubscriber,
@@ -445,6 +449,19 @@ export const createContainerRuntime = async (
     // the deployment sender, on the same queue as the rest. The container
     // always has one.
     const notificationMailer = createDeploymentNotificationMailer(config.smtp.from, queuedMailer)
+    // Time reminders and the week-end submission reminders (issue 935), on the
+    // same sender, with the instance's own address for the links.
+    const timeReminders = createTimeReminderService(
+      {
+        prepare: (now: string) =>
+          prepareTimeReminders(drizzle, {
+            now,
+            from: notificationMailer.from,
+            appUrl: config.appBaseUrl,
+          }),
+      },
+      notificationMailer,
+    )
     const reminders = createContainerReminderScheduler(database)
     // The same connection the Worker composes. A self-hoster's QuickBooks is
     // the same QuickBooks, and the only thing this needs that the Worker has is
@@ -699,15 +716,23 @@ export const createContainerRuntime = async (
     // Budget alerts (issue 934). The tick is every fifteen seconds and a pass
     // reads each alerting project's time, so it is held to once a minute, the
     // Worker's own cadence. A failed pass is reported and never stops the drain.
-    let lastBudgetEvaluation = 0
-    const evaluateBudgetAlerts = async (): Promise<void> => {
+    let lastMinutePass = 0
+    const minutePasses = async (): Promise<void> => {
       const at = Date.now()
-      if (at - lastBudgetEvaluation < 60_000) return
-      lastBudgetEvaluation = at
+      if (at - lastMinutePass < 60_000) return
+      lastMinutePass = at
+      const now = new Date(at).toISOString()
       try {
-        await evaluateProjectBudgetAlerts(drizzle, new Date(at).toISOString())
+        await evaluateProjectBudgetAlerts(drizzle, now)
       } catch (error) {
         console.error('[container] budget alert evaluation failed', error)
+      }
+      // Time reminders (issue 935) are due on each person's own local minute,
+      // so they are looked at every minute too.
+      try {
+        await timeReminders.processDue(now)
+      } catch (error) {
+        console.error('[container] time reminders failed', error)
       }
     }
     outboxScheduler = new ContainerOutboxScheduler(outbox, {
@@ -717,7 +742,7 @@ export const createContainerRuntime = async (
       // it records are drained in the same pass too.
       beforeDrain: async () => {
         await paymentRuns.processDue(new Date().toISOString())
-        await evaluateBudgetAlerts()
+        await minutePasses()
         await processDueReminders(new Date().toISOString())
         await reconcileBillPayments()
       },
@@ -913,6 +938,12 @@ export const createContainerRuntime = async (
       reminders: { processDue: processDueReminders },
       budgetAlerts: {
         evaluate: (now: string) => evaluateProjectBudgetAlerts(drizzle, now),
+      },
+      timeReminders,
+      profileNotifications: {
+        read: (userId: number) => readUserNotifications(drizzle, userId),
+        update: (userId: number, patch) =>
+          updateUserNotifications(drizzle, userId, patch, new Date().toISOString()),
       },
       notificationSettings: createNotificationSettingsService({
       read: () => readNotificationSettings(drizzle),

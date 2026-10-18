@@ -16,6 +16,7 @@ import {
   installThankYouPreferenceRoutes,
   installReminderSettingsRoutes,
   installNotificationSettingsRoutes,
+  installProfileNotificationRoutes,
   installInvoiceDefaultsRoutes,
   installRecurringRepairRoutes,
   installInvoiceTimeClaimRoutes,
@@ -335,9 +336,13 @@ const documentedApp = () =>
         readInvoiceReminders: async () => null,
         setInvoiceReminders: async () => false,
       });
+      installProfileNotificationRoutes(api, {
+        read: async () => null,
+        update: async () => null,
+      });
       installNotificationSettingsRoutes(api, {
-        read: async () => ({ budget_alerts_include_admins: false }),
-        update: async () => ({ budget_alerts_include_admins: false }),
+        read: async () => ({ budget_alerts_include_admins: false, submission_reminder: null }),
+        update: async () => ({ budget_alerts_include_admins: false, submission_reminder: null }),
       });
       installInvoiceDefaultsRoutes(api, {
         read: async () => ({ companyName: "Org", companyAddress: null, notes: null, subject: null }),
@@ -607,7 +612,7 @@ describe("OpenAPI contract", () => {
     ]);
   });
 
-  it("[contract] documents safe legacy rate commands and inactive notification delivery", () => {
+  it("[contract] documents safe legacy rate commands and the notification preferences that can be delivered", () => {
     const document = generateOpenApiDocument() as {
       paths: Record<
         string,
@@ -636,18 +641,19 @@ describe("OpenAPI contract", () => {
     expect(document.components.schemas.UserRateInput?.required).toEqual(
       expect.arrayContaining(["expected_version", "amount_cents"]),
     );
+    // Mail is delivered (issue 935), so the daily reminder, the mail channel,
+    // team reminders and the digest can be on; desktop, Slack and the
+    // project-deletion notice have no delivery and can only be off.
     const notifications = document.components.schemas.TeamNotificationInput;
-    expect(notifications?.properties?.daily_reminder_enabled?.enum).toEqual([
-      false,
-    ]);
+    expect(notifications?.properties?.daily_reminder_enabled?.enum).toBeUndefined();
+    expect(notifications?.properties?.notify_project_deleted?.enum).toEqual([false]);
     expect(notifications?.properties?.channels?.$ref).toBe(
-      "#/components/schemas/TeamInactiveNotificationChannels",
+      "#/components/schemas/TeamNotificationChannelsInput",
     );
-    for (const property of ["email", "desktop", "slack"]) {
-      expect(
-        document.components.schemas.TeamInactiveNotificationChannels
-          ?.properties?.[property]?.enum,
-      ).toEqual([false]);
+    const channels = document.components.schemas.TeamNotificationChannelsInput;
+    expect(channels?.properties?.email?.enum).toBeUndefined();
+    for (const property of ["desktop", "slack"]) {
+      expect(channels?.properties?.[property]?.enum).toEqual([false]);
     }
   });
 });
