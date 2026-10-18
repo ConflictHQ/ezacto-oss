@@ -52,6 +52,19 @@ export interface QuickBooksConnectionView {
   } | null
 }
 
+/** The QuickBooks reconciliation report (issue 1013), as the API states it. */
+export interface QuickBooksReconciliationView {
+  generated_at: string
+  counts: Readonly<Record<string, number>>
+  rows: readonly {
+    status: string
+    number: string
+    detail: string
+    ezacto_amount_cents: number | null
+    quickbooks_amount_cents: number | null
+  }[]
+}
+
 /** The palette as `/api/v1/settings/theme` reports it; null is the built-in theme. */
 export type InstanceThemeView = {
   palette: Readonly<Record<string, string>>
@@ -299,6 +312,8 @@ export interface CompanySettingsApi {
     signal?: AbortSignal,
   ): Promise<unknown>
   disconnectQuickBooks?(signal?: AbortSignal): Promise<void>
+  /** Reads QuickBooks and lists differences; changes nothing on either side. */
+  getQuickBooksReconciliation?(signal?: AbortSignal): Promise<QuickBooksReconciliationView>
 
   /**
    * The instance palette (#591). Optional for the same reason the two above

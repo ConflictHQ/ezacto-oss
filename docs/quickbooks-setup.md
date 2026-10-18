@@ -110,6 +110,32 @@ invoice. Two kinds are not:
   reason stays on the delivery in `quickbooks_webhook_deliveries.skipped_reason`
   for a person to settle.
 
+### Comparing the books (reconciliation report)
+
+Edits, voids and deletions made in QuickBooks are not copied back, so the two
+books can drift. **Settings → Accounting → Compare with QuickBooks** (or
+`GET /api/v1/integrations/quickbooks/reconciliation`, for administrators and
+accounting) reads every invoice in the company and every open or paid invoice
+here, and lists the differences. It only reads: nothing is corrected on either
+side, and no invoice, payment or QuickBooks document is written.
+
+The rule for which side is right is the one the mirror already follows: ezacto
+for the invoice (number, total, currency), QuickBooks for money received there.
+Tax is not compared separately; the check is that the totals agree to the cent.
+
+| Difference | Meaning |
+| --- | --- |
+| amount differs | The invoice total here and in QuickBooks disagree. |
+| currency differs | QuickBooks states a currency and it is not this invoice's. A single-currency company states none and is not compared. |
+| payments differ | Money received (total less balance in QuickBooks, the sum of receipts here) disagrees. A payment made in QuickBooks and not yet recorded here, a partly paid invoice, and a receipt here QuickBooks does not hold all show up this way. |
+| voided in QuickBooks | The document was zeroed with the note "Voided". |
+| missing in QuickBooks | No QuickBooks invoice by link or by number (including one deleted since it was mirrored). |
+| missing here | A QuickBooks invoice no invoice here is linked to or numbered after. |
+
+An invoice not yet linked by the mirror is paired with QuickBooks by number and
+shown as not linked. A company with more than 20,000 invoices is refused rather
+than reported on partially.
+
 ## 5. Keys
 
 **Keys and credentials**, per environment. The client ID and secret are revealed

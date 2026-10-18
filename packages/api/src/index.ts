@@ -423,6 +423,8 @@ export {
   installQuickBooksWebhookRoute,
   type QuickBooksConnectionStatus,
   type QuickBooksInvoiceSyncState,
+  type QuickBooksReconciliation,
+  type QuickBooksReconciliationRow,
   type QuickBooksService,
   type QuickBooksSyncResult,
   type QuickBooksTokenSet,

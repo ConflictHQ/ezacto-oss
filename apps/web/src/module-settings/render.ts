@@ -221,6 +221,12 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <button type="button" class="danger-action" data-quickbooks-disconnect hidden>Disconnect QuickBooks</button>
       </div>
       <p class="form-result" data-settings-quickbooks-result role="status" aria-live="polite"></p>
+      <div class="settings-form" data-quickbooks-reconcile-panel hidden>
+        <p>Compare the invoices here with the QuickBooks company. Differences are listed for you to look at; nothing is changed on either side.</p>
+        <button class="editor-secondary" type="button" data-quickbooks-reconcile>Compare with QuickBooks</button>
+        <p class="form-result" data-quickbooks-reconcile-result role="status" aria-live="polite"></p>
+        <div class="settings-table" data-quickbooks-reconcile-table hidden></div>
+      </div>
     </section>
     <section class="settings-section" data-settings-section="sso" aria-labelledby="settings-sso-title">
       <header><h2 id="settings-sso-title">SSO provisioning domains</h2>

@@ -93,7 +93,10 @@ export * from './team.js'
 export * from './team-access.js'
 export * from './demo-seed.js'
 export * from './demo-reset.js'
-export { createQuickBooksMirrorSource } from './quickbooks-source.js'
+export {
+  createQuickBooksMirrorSource,
+  createQuickBooksReconciliationSource,
+} from './quickbooks-source.js'
 
 export { createStaffPaymentStore } from './staff-payments.js'
 

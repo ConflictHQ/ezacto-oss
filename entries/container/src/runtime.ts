@@ -110,6 +110,7 @@ import {
   updateNotificationSettings,
   setBillDelivery,
   createQuickBooksMirrorSource,
+  createQuickBooksReconciliationSource,
   createQuickBooksStore,
   readUserIdentity,
   readUserTimezone,
@@ -484,6 +485,7 @@ export const createContainerRuntime = async (
             },
             store: createQuickBooksStore(drizzle),
             source: createQuickBooksMirrorSource(drizzle, () => new Date()),
+            reconciliation: createQuickBooksReconciliationSource(drizzle),
             fetch: (request: Request) => fetch(request),
             now: () => new Date(),
           })

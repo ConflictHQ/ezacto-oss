@@ -21,6 +21,11 @@ export const QUICKBOOKS_PRODUCTION_BASE_URL = 'https://quickbooks.api.intuit.com
  */
 export const QUICKBOOKS_MINOR_VERSION = '75'
 
+/** Intuit's ceiling for one query page. */
+export const QUICKBOOKS_QUERY_PAGE_SIZE = 1000
+/** A bound on the report's read, so a runaway company cannot exhaust the Worker. */
+export const QUICKBOOKS_MAXIMUM_LISTED_INVOICES = 20_000
+
 export class QuickBooksApiError extends Error {
   readonly status: number
   /** Intuit's own error code, where the Fault carried one. */
@@ -283,6 +288,30 @@ export class QuickBooksClient {
       'Invoice',
     )
     return rows[0] ?? null
+  }
+
+  /**
+   * Every invoice the company holds, for the reconciliation report. Read-only:
+   * pages of the query endpoint, `MAXRESULTS` at Intuit's ceiling. A company
+   * past `QUICKBOOKS_MAXIMUM_LISTED_INVOICES` is refused rather than reported
+   * on partially -- a report that silently omits invoices would call them
+   * "missing here".
+   */
+  async listInvoices(): Promise<readonly QuickBooksInvoice[]> {
+    const all: QuickBooksInvoice[] = []
+    for (;;) {
+      const page = await this.query<QuickBooksInvoice>(
+        `SELECT * FROM Invoice STARTPOSITION ${String(all.length + 1)} MAXRESULTS ${String(QUICKBOOKS_QUERY_PAGE_SIZE)}`,
+        'Invoice',
+      )
+      all.push(...page)
+      if (all.length > QUICKBOOKS_MAXIMUM_LISTED_INVOICES) {
+        throw new QuickBooksResponseError(
+          `the company holds more than ${String(QUICKBOOKS_MAXIMUM_LISTED_INVOICES)} invoices; the report cannot read them all`,
+        )
+      }
+      if (page.length < QUICKBOOKS_QUERY_PAGE_SIZE) return all
+    }
   }
 
   async readInvoice(id: string): Promise<QuickBooksInvoice | null> {

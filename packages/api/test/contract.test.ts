@@ -232,6 +232,7 @@ const documentedApp = () =>
         newState: () => "contract-fixture-state",
         sync: async () => null,
         syncState: async () => null,
+        reconcile: async () => null,
       });
       installWiseRoutes(api, {
         configured: () => true,
