@@ -14,6 +14,7 @@ import {
   type TimeEntryNoteSettings,
   type TimeEntryNoteSettingsPatch,
 } from '@conflict-hq/ezacto-client'
+import type { LogPageResult } from '../components/paged-log.js'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 import { assertInvoiceAddressCount, parseInvoiceAddressLines } from '../invoice-addresses.js'
 
@@ -26,6 +27,14 @@ import { assertInvoiceAddressCount, parseInvoiceAddressLines } from '../invoice-
 export type BackupStatus = BackupStatusEnvelope['data']
 
 export type { BackupRun }
+
+/** A page of the backup history, narrowed by what the operator is looking for. */
+export interface BackupRunQuery {
+  readonly per_page: number
+  readonly cursor?: string
+  readonly status?: BackupRun['status']
+  readonly trigger?: BackupRun['trigger']
+}
 
 export interface QuickBooksConnectionView {
   configured: boolean
@@ -223,6 +232,10 @@ export interface CompanySettingsApi {
    * backups are the operator's filesystem, where `RESTORE.md` is the contract.
    */
   getBackupStatus?(signal?: AbortSignal): Promise<BackupStatus>
+  /** The organization's timezone, which is how the backup history says when a run started. */
+  getTimesheetLockPolicy?(signal?: AbortSignal): Promise<{ readonly timezone: string }>
+  /** The whole history behind the status, a page at a time (issue 929). */
+  listBackupRuns?(query: BackupRunQuery, signal?: AbortSignal): Promise<LogPageResult<BackupRun>>
   /**
    * The payout connection, as an operator meets it.
    *

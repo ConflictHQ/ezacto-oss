@@ -226,7 +226,7 @@ export const sortableHeader = (
  * without this a keyboard user is dropped to the top of the page every time
  * they sort.
  */
-export const focusSortHeader = (container: ParentNode, column: string): void => {
+export const focusSortHeader = (container: HTMLElement, column: string): void => {
   const button = [...container.querySelectorAll<HTMLButtonElement>('button[data-sort-column]')].find(
     (candidate) => candidate.dataset.sortColumn === column,
   )

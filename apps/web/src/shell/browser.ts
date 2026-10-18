@@ -1129,6 +1129,13 @@ const renderTimer = (running: DisplayTimeEntry | null): void => {
   timerInterval = globalThis.setInterval(update, 1_000)
 }
 
+/** What an install whose api offers no log says: an empty page, not a failure. */
+const emptyLogPage = {
+  data: [],
+  links: { next: null },
+  page: { per_page: 0, next_cursor: null, total: 0 },
+} as const
+
 type WeekStartDay = 'saturday' | 'sunday' | 'monday'
 
 const storageKey = (userId: number, within: string, weekStartDay: WeekStartDay): string =>
@@ -1518,11 +1525,15 @@ export const mountShell = async (
   // shell failing to construct.
   const deliveries = createDeliveriesController({
     listEmailLog: async (query, signal) =>
-      api.listEmailLog === undefined ? { data: [] } : api.listEmailLog(query, signal),
+      api.listEmailLog === undefined ? emptyLogPage : api.listEmailLog(query, signal),
     listOutboxDeliveries: async (query, signal) =>
       api.listOutboxDeliveries === undefined
-        ? { data: [] }
+        ? emptyLogPage
         : api.listOutboxDeliveries(query, signal),
+    organizationTimezone: async (signal) =>
+      api.getTimesheetLockPolicy === undefined
+        ? null
+        : (await api.getTimesheetLockPolicy(signal)).timezone,
     retryOutboxDelivery: async (subscriberId, eventId, signal) =>
       api.retryOutboxDelivery === undefined
         ? undefined

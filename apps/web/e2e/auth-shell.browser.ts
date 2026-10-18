@@ -2332,7 +2332,7 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   // The email above was refused before anything was logged -- this worker has
   // no mail transport -- and the table says so rather than failing to load.
   await expect(deliveries.locator('[data-email-log-list]')).toContainText(
-    'No email matches this filter.',
+    'No email has been sent yet.',
   )
 })
 

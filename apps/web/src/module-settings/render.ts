@@ -138,6 +138,25 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p class="form-result" data-settings-backup-status role="status" aria-live="polite">Loading backup status…</p>
       <p class="form-result settings-backup-alarm" data-settings-backup-alarm role="status" aria-live="polite" hidden></p>
       <dl class="settings-facts" data-settings-backup-facts hidden></dl>
+      <div class="activity-log-toolbar" data-settings-backup-controls hidden>
+        <label for="ez-backup-status-filter">Result
+          <select id="ez-backup-status-filter" data-log-filter="status">
+            <option value="" selected>Every result</option>
+            <option value="completed">Completed</option>
+            <option value="failed">Failed</option>
+            <option value="running">Running</option>
+          </select>
+        </label>
+        <label for="ez-backup-trigger-filter">Trigger
+          <select id="ez-backup-trigger-filter" data-log-filter="trigger">
+            <option value="" selected>Every trigger</option>
+            <option value="nightly">Nightly</option>
+            <option value="manual">Manual</option>
+          </select>
+        </label>
+        <button type="button" data-log-clear>Clear filters</button>
+      </div>
+      <p class="form-result" data-settings-backup-runs-status role="status" aria-live="polite"></p>
       <div class="settings-table" data-settings-backup-runs hidden></div>
     </section>
     <section class="settings-section" data-settings-section="brand" aria-labelledby="settings-brand-title">
@@ -396,9 +415,9 @@ export const renderDeliveriesPage = (view?: string): string => `
 
     <section class="deliveries-section">
       <h2>Email</h2>
-      <div class="activity-log-toolbar">
+      <div class="activity-log-toolbar" data-email-log-controls>
         <label for="ez-email-log-status-filter">Status
-          <select id="ez-email-log-status-filter" data-email-log-status-filter>
+          <select id="ez-email-log-status-filter" data-email-log-status-filter data-log-filter="status">
             <option value="" selected>Every status</option>
             <option value="queued">Queued</option>
             <option value="sent">Sent</option>
@@ -407,6 +426,27 @@ export const renderDeliveriesPage = (view?: string): string => `
             <option value="complained">Complained</option>
           </select>
         </label>
+        <label for="ez-email-log-kind-filter">Kind
+          <select id="ez-email-log-kind-filter" data-log-filter="kind">
+            <option value="" selected>Every kind</option>
+            <option value="invoice">Invoice</option>
+            <option value="invoice_preview">Invoice preview</option>
+            <option value="reminder">Reminder</option>
+            <option value="thank_you">Thank-you</option>
+            <option value="sign_in">Sign-in</option>
+            <option value="account">Account mail</option>
+          </select>
+        </label>
+        <label for="ez-email-log-from">From
+          <input id="ez-email-log-from" type="date" data-log-filter="from">
+        </label>
+        <label for="ez-email-log-to">To
+          <input id="ez-email-log-to" type="date" data-log-filter="to">
+        </label>
+        <label for="ez-email-log-q">Recipient
+          <input id="ez-email-log-q" type="search" maxlength="200" placeholder="Address or name" data-log-filter="q">
+        </label>
+        <button type="button" data-log-clear>Clear filters</button>
       </div>
       <p class="form-result module-settings-status" data-email-log-status role="status" aria-live="polite">Loading email…</p>
       <div data-email-log-list></div>
@@ -414,9 +454,9 @@ export const renderDeliveriesPage = (view?: string): string => `
 
     <section class="deliveries-section">
       <h2>Event deliveries</h2>
-      <div class="activity-log-toolbar">
+      <div class="activity-log-toolbar" data-outbox-controls>
         <label for="ez-outbox-status-filter">Status
-          <select id="ez-outbox-status-filter" data-outbox-status-filter>
+          <select id="ez-outbox-status-filter" data-outbox-status-filter data-log-filter="status">
             <option value="" selected>Every status</option>
             <option value="pending">Pending</option>
             <option value="processing">Processing</option>
@@ -424,6 +464,16 @@ export const renderDeliveriesPage = (view?: string): string => `
             <option value="failed">Failed</option>
           </select>
         </label>
+        <label for="ez-outbox-type-filter">Event
+          <input id="ez-outbox-type-filter" type="text" maxlength="128" placeholder="invoice.paid" data-log-filter="type">
+        </label>
+        <label for="ez-outbox-from">From
+          <input id="ez-outbox-from" type="date" data-log-filter="from">
+        </label>
+        <label for="ez-outbox-to">To
+          <input id="ez-outbox-to" type="date" data-log-filter="to">
+        </label>
+        <button type="button" data-log-clear>Clear filters</button>
       </div>
       <p class="form-result module-settings-status" data-outbox-status role="status" aria-live="polite">Loading deliveries…</p>
       <div data-outbox-list></div>

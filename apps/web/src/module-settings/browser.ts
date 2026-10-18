@@ -8,6 +8,8 @@ import {
   type Whoami,
 } from '@conflict-hq/ezacto-client'
 import { renderDataTable } from '../components/data-table.js'
+import { dateInTimeZone, timeInTimeZone } from '@ezacto/core'
+import { createPagedLog, type PagedLog } from '../components/paged-log.js'
 import { DEMO_UNAVAILABLE, demoUnavailable, isDemoDeployment } from '../demo.js'
 import { invoiceAddressLines } from '../invoice-addresses.js'
 import { defaultTheme, themeManifest } from '../theme.js'
@@ -374,6 +376,8 @@ export const createModuleSettingsController = (
   const backupAlarm = required<HTMLElement>('[data-settings-backup-alarm]')
   const backupFacts = required<HTMLElement>('[data-settings-backup-facts]')
   const backupRuns = required<HTMLElement>('[data-settings-backup-runs]')
+  const backupControls = required<HTMLElement>('[data-settings-backup-controls]')
+  const backupRunsStatus = required<HTMLElement>('[data-settings-backup-runs-status]')
   const brandStatus = required<HTMLElement>('[data-settings-brand-status]')
   const brandSlots = required<HTMLElement>('[data-settings-brand-slots]')
   const brandResult = required<HTMLElement>('[data-settings-brand-result]')
@@ -1286,6 +1290,9 @@ export const createModuleSettingsController = (
     return `${days} ${days === 1 ? 'day' : 'days'} ago`
   }
 
+  // Said in UTC until the organization's timezone is known, and labelled so.
+  let backupZone = 'UTC'
+
   const backupRunTable = (runs: readonly BackupRun[]): HTMLElement =>
     renderDataTable<BackupRun>({
       caption: 'Recent backup runs',
@@ -1293,7 +1300,15 @@ export const createModuleSettingsController = (
       rowKey: (run) => String(run.id),
       empty: 'No backup has run yet.',
       columns: [
-        { key: 'started', label: 'Started', render: (run) => run.started_at.replace('T', ' ').slice(0, 19) },
+        {
+          key: 'started',
+          label: `Started (${backupZone})`,
+          // In the organization's timezone, to the minute, like the other logs.
+          render: (run) =>
+            Number.isNaN(Date.parse(run.started_at))
+              ? run.started_at
+              : `${dateInTimeZone(run.started_at, backupZone)} ${timeInTimeZone(run.started_at, backupZone)}`,
+        },
         { key: 'trigger', label: 'Trigger', render: (run) => run.trigger },
         {
           key: 'status',
@@ -1620,6 +1635,42 @@ export const createModuleSettingsController = (
     globalThis.dispatchEvent(new Event('hashchange'))
   }
 
+  /**
+   * The whole backup history, a page at a time. The status above it carries
+   * only the latest runs, which is enough to say whether the last one worked
+   * and not enough to find out when the last one before it did.
+   */
+  let backupLog: PagedLog | null = null
+  const backupHistory = (list: NonNullable<CompanySettingsApi['listBackupRuns']>): PagedLog => {
+    backupLog ??= createPagedLog<BackupRun>({
+      prefix: 'backup',
+      filterKeys: ['status', 'trigger'],
+      controls: backupControls,
+      list: backupRuns,
+      status: backupRunsStatus,
+      noun: 'runs',
+      failure: 'Backup history could not be loaded.',
+      read: (address, signal) => {
+        const { status, trigger } = address.filters
+        return list(
+          {
+            per_page: address.perPage,
+            ...(address.cursor === null ? {} : { cursor: address.cursor }),
+            ...(status === 'completed' || status === 'failed' || status === 'running'
+              ? { status }
+              : {}),
+            ...(trigger === 'nightly' || trigger === 'manual' ? { trigger } : {}),
+          },
+          signal,
+        )
+      },
+      empty: (filtered) =>
+        filtered ? 'No backup run matches these filters.' : 'No backup has run yet.',
+      draw: (runs) => backupRunTable(runs),
+    })
+    return backupLog
+  }
+
   const loadBackups = async (identity: Whoami, active: ActiveSession): Promise<void> => {
     if (identity.profile !== 'administrator') {
       backupStatus.textContent = 'Backups are visible to administrators only.'
@@ -1647,7 +1698,11 @@ export const createModuleSettingsController = (
             'Destination',
             status.last_completed?.r2_prefix ?? '—',
           ],
-          ['Runs recorded', String(status.recent_runs.length)],
+          // Without a paged history the status is all there is to count; with
+          // one, the pager under the table says how many runs there are.
+          ...(api.listBackupRuns === undefined
+            ? ([['Runs recorded', String(status.recent_runs.length)]] as const)
+            : []),
         ])
         // A failure is not a row in a table to be scanned for; it is the answer
         // to the only question this section is asked.
@@ -1663,10 +1718,23 @@ export const createModuleSettingsController = (
           backupAlarm.textContent =
             'No backup has ever completed, so there is nothing to restore from.'
         }
-        backupRuns.replaceChildren(backupRunTable(status.recent_runs))
-        backupRuns.hidden = false
         backupStatus.textContent = ''
+        if (api.listBackupRuns === undefined) {
+          backupRuns.replaceChildren(backupRunTable(status.recent_runs))
+          backupRuns.hidden = false
+        }
       })
+      if (api.listBackupRuns !== undefined && !active.signal.aborted) {
+        backupControls.hidden = false
+        backupRuns.hidden = false
+        try {
+          backupZone = (await api.getTimesheetLockPolicy?.(active.signal))?.timezone ?? 'UTC'
+        } catch {
+          // The runs are then said in UTC, and the column says so.
+          backupZone = 'UTC'
+        }
+        await backupHistory(api.listBackupRuns).load(active.signal)
+      }
     } catch (error) {
       active.presentFailure(error, () => {
         sectionFailed(

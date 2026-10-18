@@ -2912,6 +2912,61 @@
   color: var(--ez-ink);
 }
 
+/* The clear button sits in the toolbar's last track, level with the controls. */
+.activity-log-toolbar > button {
+  align-self: end;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  cursor: pointer;
+}
+
+/* A log read a page at a time (issue 929): the count, Newer and Older, and the
+   page size on one wrapping row under the table. */
+.log-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+.log-pager-count {
+  flex: 1 1 160px;
+  margin: 0;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.log-pager-button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  cursor: pointer;
+}
+.log-pager-button:disabled { cursor: default; opacity: 0.5; }
+.log-pager-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.log-pager-size select {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.log-empty { margin: 16px 0; color: var(--ez-muted); }
+
 .expense-form,
 .expense-filter-form {
   display: grid;
