@@ -149,6 +149,7 @@ import {
   type HttpEmailProvider,
   type MailgunOptions,
   type SesMailerOptions,
+  EMAIL_LOG_KIND_TEMPLATES,
 } from "@ezacto/mailer";
 import { createInvoiceDocumentPort } from './invoice-documents.js';
 import type { RuntimeServices } from "./app.js";
@@ -677,7 +678,7 @@ export const createRuntimeServices = async (
                   fetch: options.cloudflareAccessFetch,
                 }),
         });
-  const emailLog = createD1EmailLogStore(database);
+  const emailLog = createD1EmailLogStore(database, { kindTemplates: EMAIL_LOG_KIND_TEMPLATES });
   const emailConfiguration = createD1EmailConfigurationStore(database);
   const emailProvider =
     options.emailProvider ??

@@ -2,6 +2,7 @@ import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  EMAIL_LOG_KIND_TEMPLATES,
   EMAIL_RETRY_POLICY,
   processQueuedEmail,
   type EmailLogPager,
@@ -38,7 +39,10 @@ const containerHarness = async (): Promise<Harness> => {
   migrateContainer(database)
   let currentNow = now
   return {
-    store: createContainerEmailLogStore(database, { now: () => currentNow }),
+    store: createContainerEmailLogStore(database, {
+      now: () => currentNow,
+      kindTemplates: EMAIL_LOG_KIND_TEMPLATES,
+    }),
     rows: async <T>(query: string, ...bindings: unknown[]) =>
       database.prepare(query).all(...bindings) as T[],
     run: async (query, ...bindings) => {
@@ -64,7 +68,10 @@ const d1Harness = async (): Promise<Harness> => {
   await migrateD1(database)
   let currentNow = now
   return {
-    store: createD1EmailLogStore(database, { now: () => currentNow }),
+    store: createD1EmailLogStore(database, {
+      now: () => currentNow,
+      kindTemplates: EMAIL_LOG_KIND_TEMPLATES,
+    }),
     rows: async <T>(query: string, ...bindings: unknown[]) =>
       (
         await database
