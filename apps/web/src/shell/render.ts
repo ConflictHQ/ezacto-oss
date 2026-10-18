@@ -897,6 +897,13 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <tbody data-invoice-detail-lines></tbody>
         </table>
       </div>
+      <section class="invoice-end-clients" data-invoice-end-clients aria-label="Subtotal by end-client" hidden>
+        <table class="invoice-line-table">
+          <caption>Subtotal by end-client</caption>
+          <thead><tr><th scope="col">End-client</th><th scope="col">Subtotal</th></tr></thead>
+          <tbody data-invoice-end-client-rows></tbody>
+        </table>
+      </section>
       <dl class="invoice-totals">
         <div><dt>Discount</dt><dd class="money" data-invoice-detail-discount>—</dd></div>
         <div><dt>Tax</dt><dd class="money" data-invoice-detail-tax>—</dd></div>

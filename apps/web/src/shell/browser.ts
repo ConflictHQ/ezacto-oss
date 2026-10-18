@@ -3661,13 +3661,54 @@ export const mountShell = async (
     }
   }
 
+  /**
+   * The chosen client and every client beneath it, the order an invoice for a
+   * parent lists its end-clients in: depth first, siblings by name (issue 33).
+   */
+  const invoiceClientTree = (rootId: number): readonly Record<string, unknown>[] => {
+    const clients = invoiceCatalog?.clients ?? []
+    const root = clients.find((client) => client.id === rootId)
+    if (root === undefined) return []
+    const ordered: Record<string, unknown>[] = []
+    const seen = new Set<number>()
+    const visit = (client: Record<string, unknown> & { id: number }): void => {
+      if (seen.has(client.id)) return
+      seen.add(client.id)
+      ordered.push(client)
+      clients
+        .filter((candidate) => candidate['parent_client_id'] === client.id)
+        .sort(
+          (left, right) =>
+            resourceLabel(left).localeCompare(resourceLabel(right)) || left.id - right.id,
+        )
+        .forEach(visit)
+    }
+    visit(root)
+    return ordered
+  }
+
   const renderInvoiceProjects = (): void => {
     if (invoiceCatalog === null) return
     const clientId = Number(invoiceClient.value)
-    const projects = invoiceCatalog.projects.filter((project) => {
-      const value = project['client_id'] ?? project['clientId']
-      return typeof value === 'number' && value === clientId
-    })
+    // A parent's invoice may bill the work of the clients beneath it, each
+    // line attributed to its end-client by its project (issue 33); the
+    // projects are listed in the tree's order, so the draft reads that way.
+    const tree = invoiceClientTree(clientId)
+    const endClients = new Map(tree.map((client) => [client['id'] as number, client]))
+    const clientCurrency = (client: Record<string, unknown> | undefined): string | null =>
+      typeof client?.['currency'] === 'string' ? client['currency'].toUpperCase() : null
+    const projectCurrency = (project: Record<string, unknown>): string | null => {
+      const own = project['billing_currency']
+      return typeof own === 'string' && own !== ''
+        ? own.toUpperCase()
+        : clientCurrency(endClients.get(project['client_id'] as number))
+    }
+    const projects = tree.flatMap((client) =>
+      invoiceCatalog!.projects.filter((project) => {
+        const value = project['client_id'] ?? project['clientId']
+        return typeof value === 'number' && value === client['id']
+      }),
+    )
     if (projects.length === 0) {
       const empty = document.createElement('p')
       empty.textContent = 'This client has no active projects.'
@@ -3681,12 +3722,32 @@ export const mountShell = async (
         input.type = 'checkbox'
         input.name = 'project'
         input.value = String(project.id)
-        input.checked = true
+        // The client's own projects start selected, as ever. An end-client's
+        // do too unless they bill in another currency, which one invoice
+        // cannot hold: the operator chooses those on purpose.
+        const endClientId = project['client_id'] as number
+        const beneath = endClientId !== clientId
+        input.checked = !beneath || projectCurrency(project) === clientCurrency(endClients.get(clientId))
+        if (beneath) {
+          input.dataset.endClientProject = ''
+          if (invoiceKind() === 'banded') {
+            input.disabled = true
+            input.checked = false
+          }
+        }
         const name = document.createElement('span')
         name.textContent = resourceLabel(project)
         const waiting = document.createElement('small')
         waiting.dataset.projectUninvoiced = String(project.id)
-        label.append(input, name, waiting)
+        label.append(input, name)
+        if (beneath) {
+          const endClient = document.createElement('small')
+          endClient.className = 'project-end-client'
+          endClient.dataset.projectEndClient = String(endClientId)
+          endClient.textContent = `For ${resourceLabel(endClients.get(endClientId) ?? {})}`
+          label.append(endClient)
+        }
+        label.append(waiting)
         // The rule these hours will be billed under (issue 949). A project
         // record that does not carry one is not asked about it.
         const rule =
@@ -4020,6 +4081,14 @@ export const mountShell = async (
     invoicePeriodMount.hidden =
       invoiceForm.querySelector<HTMLInputElement>('[data-invoice-period-choice]:checked')
         ?.value !== 'range'
+    // A band claims its own client's work only: the end-clients' projects are
+    // set aside while one is chosen, and come back with the tracked kind.
+    for (const input of invoiceProjects.querySelectorAll<HTMLInputElement>(
+      'input[data-end-client-project]',
+    )) {
+      input.disabled = kind === 'banded'
+      if (kind === 'banded') input.checked = false
+    }
     paintInvoiceBand()
   }
 

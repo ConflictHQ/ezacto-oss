@@ -43,7 +43,15 @@ const context: InvoiceDocumentContext = {
   organizationName: 'Halcyon Studio',
   clientName: 'Kestrel Environmental',
   lineItems: [
-    { kind: 'Service', description: 'Advisory', quantity: 1, unitPriceCents: 319_495, amountCents: 319_495 },
+    {
+      kind: 'Service',
+      description: 'Advisory',
+      quantity: 1,
+      unitPriceCents: 319_495,
+      amountCents: 319_495,
+      endClientId: null,
+      endClientName: null,
+    },
   ],
   purchaseOrder: null,
   notes: null,

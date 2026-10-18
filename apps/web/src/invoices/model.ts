@@ -807,6 +807,40 @@ export const invoiceLineUnitPriceForForm = (cents: number): string => {
 export const invoiceLineQuantityForForm = (line: Readonly<InvoiceLine>): string =>
   line.quantity.toString()
 
+/** What the lines of one end-client come to; `clientId` is null for lines that name none. */
+export interface InvoiceEndClientSubtotal {
+  readonly clientId: number | null
+  readonly cents: number
+}
+
+/**
+ * An invoice for a parent client bills the work of the clients beneath it, and
+ * a line says whose by its project (issue 33). The lines gathered by that
+ * client, in the order each first appears, with the whole cents they come to --
+ * or null where they name fewer than two, which is every invoice for a single
+ * client. A line whose project is unknown, or that has none, is counted under
+ * `null` and listed last, so the subtotals always add up to the lines.
+ */
+export const invoiceEndClientSubtotals = (
+  lines: readonly Pick<InvoiceLine, 'project_id' | 'amount_cents'>[],
+  clientOfProject: ReadonlyMap<number, number>,
+): InvoiceEndClientSubtotal[] | null => {
+  const totals = new Map<number | null, number>()
+  for (const line of lines) {
+    const clientId = line.project_id === null ? null : (clientOfProject.get(line.project_id) ?? null)
+    const cents = (totals.get(clientId) ?? 0) + line.amount_cents
+    if (!Number.isSafeInteger(cents)) return null
+    totals.set(clientId, cents)
+  }
+  const named = [...totals].filter(([clientId]) => clientId !== null)
+  if (named.length < 2) return null
+  const other = totals.get(null)
+  return [
+    ...named.map(([clientId, cents]) => ({ clientId, cents })),
+    ...(other === undefined ? [] : [{ clientId: null, cents: other }]),
+  ]
+}
+
 const ratePercentPattern = /^(0|[1-9][0-9]*)(?:\.([0-9]{1,4}))?$/u
 
 // Rates are stored as integer parts-per-million and shown as a percentage.

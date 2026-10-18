@@ -144,8 +144,8 @@ for (const [runtime, factory] of factories) {
         organizationName: 'CONFLICT LLC',
         clientName: 'Acme Retail',
         lineItems: [
-          { kind: 'Service', description: 'DevOps support', quantity: 15, unitPriceCents: 10_000, amountCents: 150_000 },
-          { kind: 'Product', description: 'Second', quantity: 1, unitPriceCents: 50_000, amountCents: 50_000 },
+          { kind: 'Service', description: 'DevOps support', quantity: 15, unitPriceCents: 10_000, amountCents: 150_000, endClientId: null, endClientName: null },
+          { kind: 'Product', description: 'Second', quantity: 1, unitPriceCents: 50_000, amountCents: 50_000, endClientId: null, endClientName: null },
         ],
         purchaseOrder: '4500000001',
         notes: 'Beneficiary:\n*CONFLICT LLC*',
