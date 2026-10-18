@@ -81,6 +81,11 @@ export interface CalendarController {
   clearDraft(): void
   /** Focus an entry's block once it is drawn, as after it was created. */
   focusEntry(entryId: number): void
+  /**
+   * Forget everything drawn. Signing out must leave no entry, project or note
+   * from the account that was here in the page for the next one to read.
+   */
+  clear(): void
 }
 
 type DragKind = 'create' | 'move' | 'start' | 'end'
@@ -183,7 +188,7 @@ const setSpanStyle = (node: HTMLElement, span: CalendarSpan, lane = 0, lanes = 1
 export const createCalendarController = (host: CalendarHost): CalendarController => {
   const panel = document.querySelector<HTMLElement>('[data-calendar-week]')
   if (panel === null) {
-    return { render: () => {}, clearDraft: () => {}, focusEntry: () => {} }
+    return { render: () => {}, clearDraft: () => {}, focusEntry: () => {}, clear: () => {} }
   }
   const surface = panel.querySelector<HTMLElement>('[data-calendar-grid]')!
   const status = panel.querySelector<HTMLElement>('[data-calendar-status]')!
@@ -1129,6 +1134,24 @@ export const createCalendarController = (host: CalendarHost): CalendarController
     },
     clearDraft() {
       removeDraft()
+    },
+    clear() {
+      if (ticker !== undefined) globalThis.clearInterval(ticker)
+      ticker = undefined
+      drag = null
+      pending = null
+      deferred = null
+      view = null
+      days = []
+      guide = null
+      scrolledFor = null
+      removeDraft()
+      columns.clear()
+      blockElements.clear()
+      surface.replaceChildren()
+      status.textContent = ''
+      delete status.dataset.calendarStatus
+      if (live !== null) live.textContent = ''
     },
     focusEntry(entryId) {
       const node = surface.querySelector<HTMLElement>(`[data-calendar-block="${entryId}"]`)

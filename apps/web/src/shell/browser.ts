@@ -1925,6 +1925,7 @@ export const mountShell = async (
     required<HTMLElement>('[data-week-grid-rows]').replaceChildren()
     required<HTMLElement>('[data-week-grid-totals]').replaceChildren()
     required<HTMLElement>('[data-day-rows]').replaceChildren()
+    calendar.clear()
     invoiceClient.replaceChildren()
     invoiceProjects.replaceChildren()
     invoiceResult.textContent = ''
