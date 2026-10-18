@@ -160,6 +160,12 @@ export interface InvoiceDeliveryLine {
   amountCents: number
 }
 
+/** A document line and the end-client it bills, where its project names one (issue 33). */
+export interface InvoiceDocumentContextLine extends InvoiceDeliveryLine {
+  endClientId: number | null
+  endClientName: string | null
+}
+
 export interface InvoiceDeliveryContext {
   invoiceId: number
   number: string
@@ -201,6 +207,7 @@ export interface InvoiceDeliveryContext {
  * uploaded mark goes in the corner.
  */
 export interface InvoiceDocumentContext extends InvoiceDeliveryContext {
+  lineItems: InvoiceDocumentContextLine[]
   discountRatePpm: number | null
   taxRatePpm: number | null
   tax2RatePpm: number | null
@@ -831,6 +838,19 @@ const deliveryLinesSelect = `SELECT kind, description, quantity,
   unit_price_cents AS "unitPriceCents", amount_cents AS "amountCents"
   FROM invoice_line_items WHERE invoice_id = ? ORDER BY position, id`
 
+/**
+ * The document's lines also say whose work each is: the client of the project
+ * a line carries (issue 33), so an invoice for a parent prints a section and a
+ * subtotal per end-client. A line with no project has none.
+ */
+const documentLinesSelect = `SELECT line.kind, line.description, line.quantity,
+  line.unit_price_cents AS "unitPriceCents", line.amount_cents AS "amountCents",
+  client.id AS "endClientId", client.name AS "endClientName"
+  FROM invoice_line_items line
+  LEFT JOIN projects project ON project.id = line.project_id
+  LEFT JOIN clients client ON client.id = project.client_id
+  WHERE line.invoice_id = ? ORDER BY line.position, line.id`
+
 type RawDeliveryContext = Omit<InvoiceDeliveryContext, 'lineItems'>
 
 const documentContextSelect = `SELECT invoice.id AS "invoiceId", invoice.number, invoice.subject,
@@ -864,7 +884,7 @@ type RawDocumentContext = Omit<InvoiceDocumentContext, 'lineItems' | 'logo'> & {
 
 const documentContext = (
   { logoFileKey, logoContentType, ...row }: RawDocumentContext,
-  lineItems: InvoiceDeliveryLine[],
+  lineItems: InvoiceDocumentContextLine[],
 ): InvoiceDocumentContext => ({
   ...row,
   lineItems,
@@ -883,19 +903,19 @@ const readConsistentDocumentContext = async (
   if (isD1Client(client)) {
     const [header, lines] = await client.batch([
       client.prepare(documentContextSelect).bind(invoiceId),
-      client.prepare(deliveryLinesSelect).bind(invoiceId),
+      client.prepare(documentLinesSelect).bind(invoiceId),
     ])
     if (header === undefined || lines === undefined) {
       throw new Error('D1 invoice document snapshot batch returned incomplete results')
     }
     const row = (header.results[0] as RawDocumentContext | undefined) ?? null
     if (row === null) return null
-    return documentContext(row, lines.results as unknown as InvoiceDeliveryLine[])
+    return documentContext(row, lines.results as unknown as InvoiceDocumentContextLine[])
   }
   return client.transaction(() => {
     const row = client.prepare(documentContextSelect).get(invoiceId) as RawDocumentContext | undefined
     if (row === undefined) return null
-    return documentContext(row, client.prepare(deliveryLinesSelect).all(invoiceId) as InvoiceDeliveryLine[])
+    return documentContext(row, client.prepare(documentLinesSelect).all(invoiceId) as InvoiceDocumentContextLine[])
   })()
 }
 

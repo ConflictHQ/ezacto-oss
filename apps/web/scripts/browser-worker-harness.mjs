@@ -680,6 +680,99 @@ const fixtureControl = async (request, response) => {
       ),
       database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
     ])
+  } else if (action === 'end-client-invoice-seed') {
+    /**
+     * A parent client with three levels of end-clients beneath it, each with a
+     * project and one entry of its own (issue 33), all 'Browser F7 fixture'
+     * rows in ids 9200-9213 so nothing another spec bills or counts moves:
+     *
+     *   9200 Parent        1h at 100.00 ->  $100.00
+     *   +-- 9201 Alpha     2h           ->  $200.00
+     *   +-- 9202 Bravo     1.5h         ->  $150.00
+     *       +-- 9203 Charlie  0.5h      ->   $50.00
+     */
+    await database.batch([
+      database.prepare(
+        `DELETE FROM time_entries
+         WHERE invoice_id IS NULL AND notes LIKE 'Browser F7 fixture%'`,
+      ),
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO clients (id, name, parent_client_id, currency, payment_terms, created_at, updated_at)
+           VALUES (9200, 'Browser F7 Parent', NULL, 'USD', 'net_30', ?, ?)`,
+        )
+        .bind(timestamp, timestamp),
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO clients (id, name, parent_client_id, currency, payment_terms, created_at, updated_at)
+           VALUES (9201, 'Browser F7 Alpha', 9200, 'USD', 'net_30', ?, ?),
+                  (9202, 'Browser F7 Bravo', 9200, 'USD', 'net_30', ?, ?)`,
+        )
+        .bind(timestamp, timestamp, timestamp, timestamp),
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO clients (id, name, parent_client_id, currency, payment_terms, created_at, updated_at)
+           VALUES (9203, 'Browser F7 Charlie', 9202, 'USD', 'net_30', ?, ?)`,
+        )
+        .bind(timestamp, timestamp),
+      ...[9200, 9201, 9202, 9203].flatMap((id) => [
+        database
+          .prepare(
+            `INSERT OR IGNORE INTO projects (
+               id, client_id, name, code, hourly_rate_cents, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, 10000, ?, ?)`,
+          )
+          .bind(id, id, `Browser F7 Project ${id - 9199}`, `F7${id - 9199}`, timestamp, timestamp),
+        database
+          .prepare(
+            `INSERT OR IGNORE INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+             VALUES (?, ?, 1, ?, ?)`,
+          )
+          .bind(id, id, timestamp, timestamp),
+        database
+          .prepare(
+            `INSERT OR IGNORE INTO task_assignments (
+               id, project_id, task_id, billable, created_at, updated_at
+             ) VALUES (?, ?, 1, 1, ?, ?)`,
+          )
+          .bind(id, id, timestamp, timestamp),
+      ]),
+      ...[
+        [9210, 9200, 3600],
+        [9211, 9201, 7200],
+        [9212, 9202, 5400],
+        [9213, 9203, 1800],
+      ].map(([id, projectId, seconds]) =>
+        database
+          .prepare(
+            `INSERT INTO time_entries (
+               id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+               spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+               billable_rate_cents, cost_rate_cents, notes, created_at, updated_at
+             ) VALUES (?, 1, ?, 1, ?, ?, '2026-07-08', ?, ?, ?, 1, 10000, 5000,
+               'Browser F7 fixture', ?, ?)`,
+          )
+          .bind(id, projectId, projectId, projectId, seconds, seconds, seconds, timestamp, timestamp),
+      ),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
+    const seeded = await database
+      .prepare(
+        `SELECT count(*) AS count, sum(rounded_seconds) AS seconds FROM time_entries
+         WHERE invoice_id IS NULL AND notes LIKE 'Browser F7 fixture%'`,
+      )
+      .first()
+    if (seeded?.count !== 4 || seeded.seconds !== 18000) {
+      throw new Error('end-client invoice fixture did not own one exact work set')
+    }
+  } else if (action === 'end-client-invoice-cleanup') {
+    await database.batch([
+      database.prepare(
+        `DELETE FROM time_entries
+         WHERE invoice_id IS NULL AND notes LIKE 'Browser F7 fixture%'`,
+      ),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
   } else if (action === 'invoice-line-seed') {
     await database.batch([
       database.prepare('DELETE FROM time_entries WHERE id = 904'),
