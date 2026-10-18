@@ -32,6 +32,7 @@ import {
   invoiceCanRecordPayment,
   invoiceConflictCodes,
   invoiceEditHref,
+  invoiceEndClientSubtotals,
   invoiceIdentityCanRead,
   invoiceIdentityCanWrite,
   invoiceLineQuantityForForm,
@@ -1496,6 +1497,7 @@ export const createInvoicePaymentController = (
     required<HTMLElement>('[data-invoice-detail-notes-section]').hidden = true
     required<HTMLElement>('[data-invoice-detail-lines]').replaceChildren()
     required<HTMLElement>('[data-invoice-rounding-fact]').hidden = true
+    required<HTMLElement>('[data-invoice-end-clients]').hidden = true
     required<HTMLElement>('[data-invoice-detail-payments]').replaceChildren()
     required<HTMLElement>('[data-invoice-detail-messages]').replaceChildren()
     const reminderLine = required<HTMLElement>('[data-invoice-reminder-line]')
@@ -1536,6 +1538,73 @@ export const createInvoicePaymentController = (
       if (parts.length === 0) return
       text.textContent = parts.join('; ')
       fact.hidden = false
+    } catch {
+      // A nicety: the invoice is complete without it.
+    }
+  }
+
+  /**
+   * An invoice for a parent client bills its end-clients' work, each line
+   * attributed by its project (issue 33). With two or more end-clients named,
+   * this lists what each comes to; for any other invoice it stays hidden. The
+   * projects and the clients' names are niceties read beside the invoice, so a
+   * failure leaves the invoice as it was.
+   */
+  const loadEndClients = async (session: ActiveSession, shown: Readonly<Invoice>): Promise<void> => {
+    const panel = required<HTMLElement>('[data-invoice-end-clients]')
+    const rows = required<HTMLTableSectionElement>('[data-invoice-end-client-rows]')
+    panel.hidden = true
+    rows.replaceChildren()
+    const getProject = api.getDirectoryProject
+    const getClient = api.getDirectoryClient
+    if (getProject === undefined || getClient === undefined) return
+    const projectIds = [
+      ...new Set(shown.line_items.flatMap((line) => (line.project_id === null ? [] : [line.project_id]))),
+    ]
+    if (projectIds.length < 2) return
+    try {
+      const projects = await Promise.all(
+        projectIds.map((id) => getProject(id, session.signal).catch(() => null)),
+      )
+      const clientOfProject = new Map<number, number>()
+      projects.forEach((project, index) => {
+        const clientId = project?.['client_id']
+        if (typeof clientId === 'number') clientOfProject.set(projectIds[index]!, clientId)
+      })
+      const subtotals = invoiceEndClientSubtotals(shown.line_items, clientOfProject)
+      if (subtotals === null) return
+      const names = new Map<number, string>()
+      await Promise.all(
+        subtotals.flatMap(({ clientId }) =>
+          clientId === null
+            ? []
+            : [
+                getClient(clientId, session.signal)
+                  .then((client) => {
+                    if (typeof client.name === 'string' && client.name.trim() !== '') {
+                      names.set(clientId, client.name.trim())
+                    }
+                  })
+                  .catch(() => undefined),
+              ],
+        ),
+      )
+      if (current() !== session || invoice?.id !== shown.id) return
+      rows.replaceChildren(
+        ...subtotals.map(({ clientId, cents }) => {
+          const row = document.createElement('tr')
+          if (clientId !== null) row.dataset.endClient = String(clientId)
+          const name = document.createElement('th')
+          name.scope = 'row'
+          name.textContent = clientId === null ? 'Other lines' : (names.get(clientId) ?? `Client #${clientId}`)
+          const amount = document.createElement('td')
+          amount.dataset.label = 'Subtotal'
+          amount.append(moneyText(money(cents, shown.currency)))
+          row.append(name, amount)
+          return row
+        }),
+      )
+      panel.hidden = false
     } catch {
       // A nicety: the invoice is complete without it.
     }
@@ -1651,6 +1720,7 @@ export const createInvoicePaymentController = (
       attachmentDemo.hidden = !demo || api.uploadInvoiceAttachment === undefined
       attachmentSubmit.disabled = false
       void loadRounding(session, loadedInvoice)
+      void loadEndClients(session, loadedInvoice)
       void loadAttachments(session, invoiceId!)
       void loadQuickBooks(session, invoiceId!)
       void loadReminders(session, invoiceId!)

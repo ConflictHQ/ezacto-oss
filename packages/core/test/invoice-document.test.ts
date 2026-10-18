@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
+  groupInvoiceLinesByEndClient,
   invoiceDocumentMoney,
   layoutInvoiceDocument,
   renderInvoiceDocument,
@@ -499,5 +500,78 @@ describe("the preview watermark", () => {
       expect(width * Math.cos(turn) + cap * Math.sin(turn), mark.text).toBeLessThanOrEqual(PDF_PAGE_WIDTH - 2 * 39 + 1e-9);
       expect(width * Math.sin(turn) + cap * Math.cos(turn), mark.text).toBeLessThanOrEqual(PDF_PAGE_HEIGHT - 2 * 39 + 1e-9);
     }
+  });
+});
+
+/**
+ * Issue 33 (F7): an invoice for a parent client reads as a section per
+ * end-client, each closed by its subtotal; one for a single client is untouched.
+ */
+describe("invoice document by end-client", () => {
+  const line = (endClientId: number | null, endClientName: string | null, description: string, amountCents: number) => ({
+    kind: "Service",
+    description,
+    quantity: 1,
+    unitPriceCents: amountCents,
+    amountCents,
+    endClientId,
+    endClientName,
+  });
+  const lines = [
+    line(1, "Alpha Unit", "Alpha one", 10_000),
+    line(2, "Bravo Division", "Bravo one", 15_000),
+    line(1, "Alpha Unit", "Alpha two", 333),
+    line(null, null, "Loose fee", 700),
+  ];
+
+  it("[unit] gathers lines by the end-client they name, exactly", () => {
+    const grouped = groupInvoiceLinesByEndClient(lines)!;
+    expect(grouped.sections.map(({ endClientName, subtotalCents }) => [endClientName, subtotalCents])).toEqual([
+      ["Alpha Unit", 10_333],
+      ["Bravo Division", 15_000],
+    ]);
+    expect(grouped.sections[0]!.lines.map((l) => l.description)).toEqual(["Alpha one", "Alpha two"]);
+    expect(grouped.ungrouped.map((l) => l.description)).toEqual(["Loose fee"]);
+  });
+
+  it("[unit] groups nothing for one end-client or none", () => {
+    expect(groupInvoiceLinesByEndClient(lines.filter((l) => l.endClientId !== 2))).toBeNull();
+    expect(groupInvoiceLinesByEndClient(lines.map((l) => ({ ...l, endClientId: null })))).toBeNull();
+    expect(groupInvoiceLinesByEndClient([])).toBeNull();
+  });
+
+  it("[unit] refuses a subtotal that leaves the safe integers", () => {
+    expect(() =>
+      groupInvoiceLinesByEndClient([
+        line(1, "A", "x", Number.MAX_SAFE_INTEGER),
+        line(1, "A", "y", 1),
+        line(2, "B", "z", 1),
+      ]),
+    ).toThrow(RangeError);
+  });
+
+  it("[money] prints each section's name and subtotal, and the totals are the invoice's", () => {
+    const all = strings(invoice({ lines, subtotalCents: 26_033, totalCents: 26_033 }));
+    for (const printed of [
+      "Alpha Unit",
+      "Subtotal: Alpha Unit",
+      "$103.33 USD",
+      "Bravo Division",
+      "Subtotal: Bravo Division",
+      "$150.00 USD",
+    ]) {
+      expect(all, printed).toContain(printed);
+    }
+    // Alpha's two lines sit together, before Bravo's, though they were not adjacent.
+    expect(all.indexOf("Alpha two")).toBeLessThan(all.indexOf("Bravo one"));
+    expect(all.indexOf("Subtotal: Alpha Unit")).toBeLessThan(all.indexOf("Bravo Division"));
+    expect(all.indexOf("Loose fee")).toBeGreaterThan(all.indexOf("Subtotal: Bravo Division"));
+    expect(all).toContain("$260.33 USD");
+  });
+
+  it("[unit] lays out an invoice for one client byte for byte as before", () => {
+    const plain = invoice().lines;
+    const attributed = plain.map((l) => ({ ...l, endClientId: 7, endClientName: "Only Client" }));
+    expect(layoutInvoiceDocument(invoice({ lines: attributed }))).toEqual(layoutInvoiceDocument(invoice({ lines: plain })));
   });
 });

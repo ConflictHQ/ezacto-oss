@@ -1118,10 +1118,63 @@ const readClient = async (
   }
 }
 
+/** A client in the tree under the invoice's client, named for the order lines are written in. */
+interface ClientNode {
+  id: number
+  name: string
+  parentClientId: number | null
+}
+
+/**
+ * The client and every client beneath it, depth first with siblings by name:
+ * the order an invoice for a parent lists its end-clients in (issue 33).
+ */
+const readClientTree = async (
+  database: InvoiceGenerationDatabase,
+  rootId: number,
+): Promise<readonly ClientNode[]> => {
+  const rows = await all<ClientNode>(database, {
+    text: `WITH RECURSIVE tree(id) AS (
+        SELECT id FROM clients WHERE id = ?
+        UNION
+        SELECT child.id FROM clients child JOIN tree ON child.parent_client_id = tree.id
+      )
+      SELECT client.id, client.name, client.parent_client_id AS "parentClientId"
+      FROM clients client WHERE client.id IN (SELECT id FROM tree)`,
+    params: [rootId],
+  })
+  const children = new Map<number | null, ClientNode[]>()
+  for (const row of rows) {
+    const siblings = children.get(row.parentClientId)
+    if (siblings === undefined) children.set(row.parentClientId, [row])
+    else siblings.push(row)
+  }
+  const ordered: ClientNode[] = []
+  const visit = (node: ClientNode): void => {
+    ordered.push(node)
+    const below = children.get(node.id) ?? []
+    below.sort((left, right) => left.name.localeCompare(right.name) || left.id - right.id)
+    below.forEach(visit)
+  }
+  const root = rows.find((row) => row.id === rootId)
+  if (root !== undefined) visit(root)
+  return ordered
+}
+
 const validateSelection = async (
   database: InvoiceGenerationDatabase,
   request: Pick<GenerateInvoiceRequest, 'clientId' | 'projectIds'>,
-): Promise<{ client: ClientDefaults; projects: readonly SelectedProject[] }> => {
+  /**
+   * A tracked invoice may bill the work of clients beneath the one it is for,
+   * each line attributed to its end-client by its project (issue 33). A band
+   * claims its own client's work only.
+   */
+  scope: 'client' | 'tree' = 'client',
+): Promise<{
+  client: ClientDefaults
+  projects: readonly SelectedProject[]
+  tree: readonly ClientNode[]
+}> => {
   const client = await readClient(database, request.clientId)
   const projects = await all<SelectedProject>(database, {
     text: `SELECT project.id, project.client_id AS "clientId", project.is_active AS "isActive",
@@ -1130,11 +1183,17 @@ const validateSelection = async (
       WHERE project.id IN (SELECT CAST(value AS INTEGER) FROM json_each(?)) ORDER BY project.id`,
     params: [JSON.stringify(request.projectIds)],
   })
+  const tree = scope === 'tree' ? await readClientTree(database, request.clientId) : []
+  const reachable = new Set(scope === 'tree' ? tree.map((node) => node.id) : [request.clientId])
   if (
     projects.length !== request.projectIds.length ||
-    projects.some((project) => project.clientId !== request.clientId)
+    projects.some((project) => !reachable.has(project.clientId))
   ) {
-    invalid('every selected project must belong to the selected client')
+    invalid(
+      scope === 'tree'
+        ? 'every selected project must belong to the selected client or a client beneath it'
+        : 'every selected project must belong to the selected client',
+    )
   }
   // Archived work is not billable, and the candidate read drops it. Refusing the
   // selection outright is the difference between "we do not bill this" and an
@@ -1144,7 +1203,7 @@ const validateSelection = async (
   if (projects.some((project) => project.isActive !== 1)) {
     invalid('an archived project cannot be invoiced')
   }
-  return { client, projects }
+  return { client, projects, tree }
 }
 
 const monthNames = [
@@ -1217,6 +1276,13 @@ const lineInsert = (
   ],
 })
 
+/** The invoice's client and every client beneath it: whose projects it may claim work from. */
+const clientTree = `WITH RECURSIVE tree(id) AS (
+          SELECT id FROM clients WHERE id = ?
+          UNION
+          SELECT child.id FROM clients child JOIN tree ON child.parent_client_id = tree.id
+        ) SELECT id FROM tree`
+
 const timeClaim = (
   invoiceId: number,
   commandId: string,
@@ -1238,7 +1304,7 @@ const timeClaim = (
       AND NOT (started_time IS NOT NULL AND ended_time IS NULL)
       AND EXISTS (
         SELECT 1 FROM projects project JOIN clients client ON client.id = project.client_id
-        WHERE project.id = time_entries.project_id AND project.client_id = ?
+        WHERE project.id = time_entries.project_id AND project.client_id IN (${clientTree})
           AND upper(coalesce(project.billing_currency, client.currency)) = ?
       ) AND EXISTS (
         SELECT 1 FROM invoice_command_ledger command
@@ -1276,7 +1342,7 @@ const expenseClaim = (
     ) AND billable = 1 AND invoice_id IS NULL
       AND EXISTS (
         SELECT 1 FROM projects project JOIN clients client ON client.id = project.client_id
-        WHERE project.id = expenses.project_id AND project.client_id = ?
+        WHERE project.id = expenses.project_id AND project.client_id IN (${clientTree})
           AND upper(coalesce(project.billing_currency, client.currency)) = ?
       ) AND EXISTS (
         SELECT 1 FROM invoice_command_ledger command
@@ -1657,7 +1723,7 @@ const trackedContent = async (
   commandId: string,
   request: GenerateInvoiceRequest,
 ): Promise<GenerationContent> => {
-  const { client, projects } = await validateSelection(database, request)
+  const { client, projects, tree } = await validateSelection(database, request, 'tree')
   const candidates = await readUninvoicedCandidates(database, {
     clientId: request.clientId,
     from: request.from,
@@ -1688,10 +1754,36 @@ const trackedContent = async (
   // placeholder would print as a 1970 period on the invoice and its subject.
   const periodStart = request.from ?? earliestDate([...timeEntries, ...expenses])!
   const context = await lineContext(database, periodStart, request.to)
-  const expenseDraft =
-    request.expenseSummaryType === null
-      ? []
-      : expenseLines(expenses, request.expenseSummaryType, context)
+  // One end-client at a time, in the tree's order, its time and then its
+  // expenses: an invoice for a parent reads as a section per end-client, and
+  // the line a project is on says whose work it is (issue 33). Every group is
+  // keyed by project and a project has one client, so no group is split; an
+  // invoice for one client is the time lines and then the expense lines, as it
+  // always was.
+  const nodes = tree.filter(
+    (node) =>
+      timeEntries.some((entry) => entry.clientId === node.id) ||
+      expenses.some((expense) => expense.clientId === node.id),
+  )
+  const drafted = nodes.map((node) => ({
+    time:
+      request.timeSummaryType === null
+        ? []
+        : timeLines(
+            timeEntries.filter((entry) => entry.clientId === node.id),
+            request.timeSummaryType,
+            context,
+          ),
+    expenses:
+      request.expenseSummaryType === null
+        ? []
+        : expenseLines(
+            expenses.filter((expense) => expense.clientId === node.id),
+            request.expenseSummaryType,
+            context,
+          ),
+  }))
+  const expenseDraft = drafted.flatMap((node) => node.expenses)
   // Expenses are billed to the cent the preview shows. Time is not: its lines
   // bill rounded hours times the rate (see `timeLines`), which the preview's
   // per-entry pricing can differ from by a few cents a line.
@@ -1703,12 +1795,10 @@ const trackedContent = async (
   ) {
     throw new Error('invoice generation lines diverged from the canonical uninvoiced preview')
   }
-  const lines = await numberedLines(commandId, [
-    ...(request.timeSummaryType === null
-      ? []
-      : timeLines(timeEntries, request.timeSummaryType, context)),
-    ...expenseDraft,
-  ])
+  const lines = await numberedLines(
+    commandId,
+    drafted.flatMap((node) => [...node.time, ...node.expenses]),
+  )
   const amountCents = checkedSum(
     lines.map((line) => line.amountCents),
     'invoice amount',
@@ -1719,7 +1809,12 @@ const trackedContent = async (
       subject: `Tracked work ${periodStart} – ${request.to}`,
       periodStart,
       periodEnd: request.to,
-      projectId: request.projectIds.length === 1 ? request.projectIds[0]! : null,
+      // The header's project must be the invoice client's own (migration 0004);
+      // a project of an end-client beneath it is attributed on its lines.
+      projectId:
+        request.projectIds.length === 1 && projects[0]!.clientId === request.clientId
+          ? request.projectIds[0]!
+          : null,
       projectName: projects.length === 1 ? projects[0]!.name : null,
     },
     timeEntries,

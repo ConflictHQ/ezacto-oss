@@ -1600,6 +1600,9 @@
 .invoice-line-wrap {
   overflow-x: auto;
 }
+.invoice-end-clients {
+  margin-top: 16px;
+}
 .invoice-line-editor {
   margin-top: 8px;
 }

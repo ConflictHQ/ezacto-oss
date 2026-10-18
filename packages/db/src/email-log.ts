@@ -1,19 +1,28 @@
 import type BetterSqlite3 from 'better-sqlite3'
-import {
-  EMAIL_LOG_KIND_TEMPLATES,
-  type EmailDeliveryStatus,
-  type EmailFailureCode,
-  type EmailLogFilter,
-  type EmailLogPageWindow,
-  type EmailLogPager,
-  type EmailLogRecord,
-  type EmailLogStore,
-  type EmailRecipient,
-  type EmailSender,
+import type {
+  EmailDeliveryStatus,
+  EmailFailureCode,
+  EmailLogFilter,
+  EmailLogKind,
+  EmailLogPageWindow,
+  EmailLogPager,
+  EmailLogRecord,
+  EmailLogStore,
+  EmailRecipient,
+  EmailSender,
 } from '@ezacto/mailer'
+
+/** Template names that make up each log kind: a kind is a set of names, matched whole. */
+export type EmailLogKindTemplates = Readonly<Record<EmailLogKind, readonly string[]>>
 
 export interface EmailLogStoreOptions {
   now?: () => string
+  /**
+   * The mailer package owns which templates belong to a kind, and this package
+   * never imports it at runtime, so the entry point hands the map in. A store
+   * built without it refuses a `kind` filter rather than answering wrongly.
+   */
+  kindTemplates?: EmailLogKindTemplates
 }
 
 interface PortableDatabase {
@@ -130,7 +139,10 @@ const rowRecord = (row: EmailLogRow | null): EmailLogRecord => {
  * in the parsed To and Cc lists, not in their JSON text, so a search for
  * "name" does not match every row on the key it is stored under.
  */
-const filterConditions = (filter: EmailLogFilter): { conditions: string[]; bindings: unknown[] } => {
+const filterConditions = (
+  filter: EmailLogFilter,
+  kindTemplates: EmailLogKindTemplates | undefined,
+): { conditions: string[]; bindings: unknown[] } => {
   const conditions: string[] = []
   const bindings: unknown[] = []
   if (filter.status !== undefined) {
@@ -138,7 +150,10 @@ const filterConditions = (filter: EmailLogFilter): { conditions: string[]; bindi
     bindings.push(filter.status)
   }
   if (filter.kind !== undefined) {
-    const names = EMAIL_LOG_KIND_TEMPLATES[filter.kind]
+    if (kindTemplates === undefined) {
+      throw new Error('the email log store was built without kindTemplates, so it cannot filter by kind')
+    }
+    const names = kindTemplates[filter.kind]
     conditions.push(
       `substr(template, 1, instr(template || ':', ':') - 1) IN (${names.map(() => '?').join(', ')})`,
     )
@@ -445,7 +460,7 @@ const createStore = (
       if (!Number.isSafeInteger(window.take) || window.take < 1 || window.take > 201) {
         throw new RangeError('email log page must hold between 1 and 201 rows')
       }
-      const { conditions, bindings } = filterConditions(window)
+      const { conditions, bindings } = filterConditions(window, options.kindTemplates)
       conditions.push('created_at <= ?')
       bindings.push(window.createdThrough)
       const newest = window.order === 'newest'
@@ -467,7 +482,7 @@ const createStore = (
     },
 
     async count(filter: EmailLogFilter) {
-      const { conditions, bindings } = filterConditions(filter)
+      const { conditions, bindings } = filterConditions(filter, options.kindTemplates)
       const row = await database.first<{ total: number }>(
         `SELECT count(*) AS total FROM email_log
          ${conditions.length === 0 ? '' : `WHERE ${conditions.join(' AND ')}`}`,
