@@ -4949,12 +4949,10 @@ button.primary-action.primary-action {
 .settings-section > .settings-table {
   margin-bottom: 0;
 }
-/* The TXT record is what an operator copies into a zone file, so it wraps
-   rather than ellipsizing at the width a table cell is given, as the token
-   scopes on the You page do. */
-[data-settings-sso-domains] .data-table [data-column='record'] {
-  white-space: normal;
-  overflow-wrap: anywhere;
+/* The DNS record wraps (it is what an operator copies), but not into a column
+   a character wide: below this the table scrolls in its own box instead. */
+[data-settings-sso-domains] .data-table td[data-column='record'] {
+  min-width: 16rem;
 }
 
 /* Modules and Ways in: one card with a row per switch, the shape the

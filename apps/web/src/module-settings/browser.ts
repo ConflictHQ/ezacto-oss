@@ -811,15 +811,19 @@ export const createModuleSettingsController = (
         rowKey: (domain) => String(domain.id),
         empty:
           'No domain is provisioned, so single sign-on creates nobody. Add the email domain your directory signs in with.',
+        // The domain, its status and the date take their own width; the record
+        // is what an operator copies into a zone file, so it takes the rest and
+        // wraps rather than ending in an ellipsis on a narrow window.
         columns: [
-          { key: 'domain', label: 'Domain', render: (domain) => domain.domain },
-          { key: 'status', label: 'Status', render: (domain) => ssoDomainStatus(domain) },
+          { key: 'domain', label: 'Domain', fit: true, render: (domain) => domain.domain },
+          { key: 'status', label: 'Status', fit: true, render: (domain) => ssoDomainStatus(domain) },
           {
             key: 'checked',
             label: 'Last checked',
+            fit: true,
             render: (domain) => ssoLastCheckedLabel(domain),
           },
-          { key: 'record', label: 'DNS record', render: (domain) => ssoRecordCell(domain) },
+          { key: 'record', label: 'DNS record', wrap: true, render: (domain) => ssoRecordCell(domain) },
         ],
         // The demo refuses both (issue 931), so neither is offered as if it worked.
         actions: (domain) => [
