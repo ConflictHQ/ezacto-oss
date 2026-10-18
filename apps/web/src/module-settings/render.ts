@@ -3,6 +3,7 @@ import { renderRetentionSection } from './retention.js'
 import { iconMarkup } from '../components/icons.js'
 import { demoUnavailable } from '../demo.js'
 import { COMPANY_SETTINGS_SECTIONS } from '../settings-sections.js'
+import { renderNotificationFields } from '../team/notification-fields.js'
 
 /**
  * One link per section, and one section shown at a time (issue 800). The
@@ -126,6 +127,32 @@ export const renderModuleSettingsPage = (view?: string): string => `
       </form>
       <p class="form-result" data-reminder-settings-result role="status" aria-live="polite"></p>
     </section>
+    <section class="settings-section" data-settings-section="notifications" aria-labelledby="settings-notifications-title">
+      <header><h2 id="settings-notifications-title">Notifications</h2>
+      <p>Mail this instance sends the people who work in it. A project that has &ldquo;Notify when over budget&rdquo; on emails its project managers once each time its budget crosses the threshold set on the project. If a project has no manager with an address, the administrators are told instead, so an alert never goes to nobody.</p></header>
+      <p class="form-result" data-settings-notifications-status role="status" aria-live="polite">Loading notification settings…</p>
+      <form class="settings-form" data-notification-settings-form hidden>
+        <label class="settings-toggle"><input name="budget_alerts_include_admins" type="checkbox" data-notification-settings-admins>Also email administrators when a project goes over budget</label>
+        <label>Remind everyone to submit last week's time
+          <select name="submission_day" data-notification-settings-day>
+            <option value="">Never</option>
+            <option value="monday">Monday</option>
+            <option value="tuesday">Tuesday</option>
+            <option value="wednesday">Wednesday</option>
+            <option value="thursday">Thursday</option>
+            <option value="friday">Friday</option>
+            <option value="saturday">Saturday</option>
+            <option value="sunday">Sunday</option>
+          </select>
+        </label>
+        <label>At, on each person's own clock
+          <input name="submission_time" type="time" data-notification-settings-time>
+        </label>
+        <p class="hint">Needs the Approval module. On a Friday to Sunday it is about the week now ending; on a Monday to Thursday, about the week before. Each person can opt out under Settings, and people who approve timesheets can ask for a weekly digest of who has not submitted.</p>
+        <button class="primary-action" type="submit" data-notification-settings-submit>Save notification settings</button>
+      </form>
+      <p class="form-result" data-notification-settings-result role="status" aria-live="polite"></p>
+    </section>
     <section class="settings-section" data-settings-section="payouts" data-settings-wise data-settings-unavailable aria-labelledby="settings-wise-title" hidden>
       <header><div class="settings-section-heading"><h2 id="settings-wise-title">Payouts</h2><button type="button" class="settings-refresh" data-settings-refresh="payouts">Refresh</button></div>
       <p>Which Wise profile money leaves from, how many people it can currently pay, and whether Wise can tell this instance what became of a transfer. The token itself stays in the deployment; what is shown here is the state it produces.</p></header>
@@ -217,6 +244,16 @@ export const renderModuleSettingsPage = (view?: string): string => `
     <p class="module-settings-intro">Your own account. Everything here is yours alone; the company settings beside it apply to everyone.</p>
     <p class="form-result module-settings-status" data-settings-user-status role="status" aria-live="polite">Loading your account…</p>
     <dl class="settings-facts" data-settings-user-facts hidden></dl>
+    <section class="settings-notifications" data-settings-notifications aria-labelledby="settings-notifications-heading" hidden>
+      <h2 id="settings-notifications-heading">Your reminders</h2>
+      <p class="hint">Whether and when this instance emails you to log your time, and to submit your week. They are yours to switch off.</p>
+      <p class="form-result" data-settings-notifications-status role="status" aria-live="polite">Loading your reminders…</p>
+      <form class="team-person-form" data-settings-notifications-form hidden>
+        ${renderNotificationFields()}
+        <p class="form-result" data-settings-notifications-result role="status" aria-live="polite"></p>
+        <button class="primary-action" type="submit" data-settings-notifications-submit>Save my reminders</button>
+      </form>
+    </section>
     <section class="settings-payout" data-settings-payout aria-labelledby="settings-payout-heading" hidden>
       <h2 id="settings-payout-heading">Where you are paid</h2>
       <p class="hint" data-settings-payout-unconfigured hidden>Wise is not connected on this instance, so there is nowhere to send a payout yet.</p>

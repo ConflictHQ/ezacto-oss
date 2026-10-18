@@ -91,6 +91,10 @@ export interface InvoiceDeliveryContext {
   notes: string | null;
   paymentTerms: InvoicePaymentTerms;
   dueAmountCents: number;
+  /** Null on a free-form invoice, which bills no period (issue 925). */
+  periodStart: string | null;
+  periodEnd: string | null;
+  organizationTimeZone: string;
 }
 
 /**
@@ -3096,6 +3100,9 @@ const composeDelivery = async (
       messageTemplate: request.message ?? template.textTemplate,
       paymentUrl,
       pdfAttached: attached,
+      // The send and its preview both read the weekday at the moment they are
+      // composed, which for the send is the moment it is recorded.
+      sentAt: options.clock(),
     });
   } catch (error) {
     if (error instanceof EmailTemplateVariableError) {

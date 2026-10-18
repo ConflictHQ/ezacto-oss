@@ -221,6 +221,28 @@ describe('Projects V1 browser controller', () => {
     expect(api.updateDirectoryProject).not.toHaveBeenCalled()
   })
 
+  it('[browser #934] shows when the budget last crossed its threshold and the managers were told', async () => {
+    writeDocument('project-detail', '/projects/7')
+    const alerted = { ...project, over_budget_notified_on: '2026-10-14' }
+    await createProjectDirectoryController(
+      detailApi({ getDirectoryProject: vi.fn(async () => alerted) }),
+    ).activate(identity('member'), new AbortController().signal, () => false)
+    expect(document.querySelector('[data-project-facts]')?.textContent).toContain(
+      'Last over-budget alert2026-10-14',
+    )
+
+    // Never crossed: said so, rather than a blank that reads as a missing field.
+    writeDocument('project-detail', '/projects/7')
+    await createProjectDirectoryController(detailApi()).activate(
+      identity('member'),
+      new AbortController().signal,
+      () => false,
+    )
+    expect(document.querySelector('[data-project-facts]')?.textContent).toContain(
+      'Last over-budget alertNone',
+    )
+  })
+
   it('[security] on the public demo, withholds the upload and says why, and lists the files it has', async () => {
     // Issue 931: the Worker refuses every upload on the demo.
     writeDocument('project-detail', '/projects/7', true)

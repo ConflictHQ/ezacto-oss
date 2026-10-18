@@ -2066,6 +2066,7 @@ export const createInvoicePaymentController = (
     const names = {
       clientName: emailDefaults?.client_name ?? clientLabel(selectedInvoice.client_id),
       companyName: emailDefaults?.company_name ?? '',
+      ...(emailDefaults === null ? {} : { timeZone: emailDefaults.time_zone }),
     }
     try {
       if (delivering && attachmentsOffered()) {

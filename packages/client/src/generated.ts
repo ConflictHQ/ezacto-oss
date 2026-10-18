@@ -948,14 +948,14 @@ export type TeamNotificationChannels = {
   "slack": boolean;
 };
 
-export type TeamInactiveNotificationChannels = {
-  "email": false;
+export type TeamNotificationChannelsInput = {
+  "email": boolean;
   "desktop": false;
   "slack": false;
 };
 
 export type TeamNotificationPreference = {
-  "delivery_active": false;
+  "delivery_active": true;
   "daily_reminder_enabled": boolean;
   "reminder_time": string | null;
   "reminder_days": Array<"monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday">;
@@ -1045,13 +1045,27 @@ export type TeamAssignmentReplaceInput = {
 
 export type TeamNotificationInput = {
   "expected_version": number;
-  "daily_reminder_enabled": false;
+  "daily_reminder_enabled": boolean;
   "reminder_time": string | null;
   "reminder_days": Array<"monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday">;
-  "channels": TeamInactiveNotificationChannels;
-  "include_in_team_reminders": false;
-  "weekly_digest": false;
+  "channels": TeamNotificationChannelsInput;
+  "include_in_team_reminders": boolean;
+  "weekly_digest": boolean;
   "notify_project_deleted": false;
+};
+
+export type ProfileNotificationInput = {
+  "daily_reminder_enabled": boolean;
+  "reminder_time": string | null;
+  "reminder_days": Array<"monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday">;
+  "channels": TeamNotificationChannelsInput;
+  "include_in_team_reminders": boolean;
+  "weekly_digest": boolean;
+  "notify_project_deleted": false;
+};
+
+export type ProfileNotificationEnvelope = {
+  "data": TeamNotificationPreference;
 };
 
 export type TeamRateInput = {
@@ -2286,6 +2300,7 @@ export type InvoiceEmailDefaultsEnvelope = {
   "client_id": number;
   "company_name": string;
   "client_name": string;
+  "time_zone": string;
   "template_version": number;
   "subject": string;
   "message": string;
@@ -3717,6 +3732,23 @@ export type OrganizationInvoiceRemindersEnvelope = {
 };
 };
 
+export type NotificationSettingsInput = {
+  "budget_alerts_include_admins"?: boolean;
+  "submission_reminder"?: SubmissionReminderSchedule | null;
+};
+
+export type SubmissionReminderSchedule = {
+  "day": "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
+  "time": string;
+};
+
+export type NotificationSettingsEnvelope = {
+  "data": {
+  "budget_alerts_include_admins": boolean;
+  "submission_reminder": SubmissionReminderSchedule | null;
+};
+};
+
 export type JournalFormats = Array<"pdf" | "csv" | "xlsx">;
 
 export type InvoiceDocumentPreferenceInput = {
@@ -4310,6 +4342,25 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<ProfileEnvelope>("GET", "/api/v1/profile", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getProfileNotifications(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ProfileNotificationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ProfileNotificationEnvelope>("GET", "/api/v1/profile/notifications", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateProfileNotifications(args: { body: ProfileNotificationInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<ProfileNotificationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ProfileNotificationEnvelope>("POST", "/api/v1/profile/notifications", {
+      body: args.body,
       signal: args.signal,
       headers,
     });
@@ -6705,6 +6756,25 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<InvoiceDefaultsEnvelope>("POST", "/api/v1/settings/invoice-defaults", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getNotificationSettings(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<NotificationSettingsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<NotificationSettingsEnvelope>("GET", "/api/v1/settings/notifications", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setNotificationSettings(args: { body: NotificationSettingsInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<NotificationSettingsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<NotificationSettingsEnvelope>("POST", "/api/v1/settings/notifications", {
       body: args.body,
       signal: args.signal,
       headers,

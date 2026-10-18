@@ -435,6 +435,25 @@ describe('invoice workspace model', () => {
     ).toBe('INV-0042 (#42) is $123.45, due 2026-09-30. %unknown%')
   })
 
+  it('[unit] records the billing period and the weekday in the organization zone (issue 925)', () => {
+    const names = { clientName: '', companyName: '', timeZone: 'America/Costa_Rica' }
+    const sentAt = '2026-10-10T02:00:00.000Z'
+    expect(
+      interpolateInvoiceTemplate(
+        'Happy %send_weekday%: %invoice_period%',
+        invoice({ period_start: '2026-08-15', period_end: '2026-09-14' }),
+        names,
+        sentAt,
+      ),
+    ).toBe('Happy Friday: August – September 2026')
+    // No period reads as nothing; without the zone the weekday is left as typed
+    // rather than guessed from this browser's own.
+    expect(interpolateInvoiceTemplate('[%invoice_period%]', invoice(), names, sentAt)).toBe('[]')
+    expect(interpolateInvoiceTemplate('%send_weekday%', invoice(), undefined, sentAt)).toBe(
+      '%send_weekday%',
+    )
+  })
+
   it('[unit] resolves the lines a message is about, flattened onto their own rows', () => {
     const selected = invoice({
       currency: 'USD',

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { EzactoClient } from '@conflict-hq/ezacto-client'
 import type { LogPageResult } from '../src/components/paged-log.js'
 import { createShellApi } from '../src/shell/model.js'
+import type { NotificationSettingsState } from '../src/module-settings/model.js'
 import {
   EzactoApiError,
   authenticationError,
@@ -156,6 +157,19 @@ describe('company settings', () => {
       async (policy: { first_after_days: number; every_days: number } | null) => ({
         policy,
         applied: policy === null ? 0 : 2,
+      }),
+    ),
+    getNotificationSettings: vi.fn(async () => ({
+      budget_alerts_include_admins: false,
+      submission_reminder: null,
+    })),
+    updateNotificationSettings: vi.fn(
+      async (patch: {
+        budget_alerts_include_admins?: boolean
+        submission_reminder?: NotificationSettingsState['submission_reminder']
+      }) => ({
+        budget_alerts_include_admins: patch.budget_alerts_include_admins ?? false,
+        submission_reminder: patch.submission_reminder ?? null,
       }),
     ),
     getEmailHealth: vi.fn(async () => ({
@@ -717,6 +731,21 @@ describe('company settings', () => {
     expect(generated.setOrganizationInvoiceSending).toHaveBeenCalledWith({ body: stored, signal })
   })
 
+  it('[unit] binds the notification settings to their operations', async () => {
+    const stored = { budget_alerts_include_admins: true, submission_reminder: null }
+    const generated = {
+      getNotificationSettings: vi.fn(async () => ({ data: stored })),
+      setNotificationSettings: vi.fn(async () => ({ data: stored })),
+    }
+    const api = createShellApi(generated as unknown as EzactoClient)
+    const signal = new AbortController().signal
+
+    expect(await api.getNotificationSettings!(signal)).toEqual(stored)
+    expect(await api.updateNotificationSettings!(stored, signal)).toEqual(stored)
+    expect(generated.getNotificationSettings).toHaveBeenCalledWith({ signal })
+    expect(generated.setNotificationSettings).toHaveBeenCalledWith({ body: stored, signal })
+  })
+
   it('[browser #801] shows the payment reminder default, saves a change, and switches it off', async () => {
     stubModulesEndpoint()
     renderBrowserShell({ view: 'settings-company' })
@@ -810,6 +839,7 @@ describe('company settings', () => {
     // policy is the Time section's own read.
     expect(api.getTimeEntryNoteSettings).not.toHaveBeenCalled()
     expect(api.getInvoiceReminders).not.toHaveBeenCalled()
+    expect(api.getNotificationSettings).not.toHaveBeenCalled()
     expect(api.listSenderIdentities).not.toHaveBeenCalled()
     expect(api.getEmailHealth).not.toHaveBeenCalled()
     expect(api.getBackupStatus).not.toHaveBeenCalled()

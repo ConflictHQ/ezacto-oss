@@ -16,6 +16,8 @@ import type {
   InvoiceHoursReportService,
   ThankYouPreferenceService,
   ReminderSettingsService,
+  NotificationSettingsService,
+  ProfileNotificationsPort,
   InvoiceDefaultsService,
   RecurringRepairService,
   InvoiceTimeClaimService,
@@ -78,6 +80,8 @@ import {
   installInvoiceHoursReportRoutes,
   installThankYouPreferenceRoutes,
   installReminderSettingsRoutes,
+  installNotificationSettingsRoutes,
+  installProfileNotificationRoutes,
   installInvoiceDefaultsRoutes,
   installRecurringRepairRoutes,
   installInvoiceTimeClaimRoutes,
@@ -449,6 +453,8 @@ export interface RuntimeServices {
   thankYouPreference?: ThankYouPreferenceService
   /** The organisation's default payment reminder policy (issue 801). */
   reminderSettings?: ReminderSettingsService
+  /** Company settings for the mail the instance sends its own people (issue 934). */
+  notificationSettings?: NotificationSettingsService
   invoiceDefaults?: InvoiceDefaultsService
   /**
    * Sends the reminders that have come due. Called from the daily cron in the
@@ -458,6 +464,25 @@ export interface RuntimeServices {
   reminders?: {
     processDue(now: string, options?: ReminderProcessOptions): Promise<ReminderProcessSummary>
   }
+  /**
+   * Looks for projects that have crossed the budget threshold they asked to be
+   * told about (issue 934). Called from the minute cron in the Worker and from
+   * the outbox tick in the container; the event it writes is what the mail
+   * subscriber and the activity log are driven by.
+   */
+  budgetAlerts?: {
+    evaluate(now: string): Promise<{ readonly opened: readonly unknown[]; readonly closed: number }>
+  }
+  /**
+   * Time reminders and week-end submission reminders (issue 935). Called from
+   * the minute cron in the Worker and from the outbox tick in the container.
+   * Absent where the deployment has no mail to send them with.
+   */
+  timeReminders?: {
+    processDue(now: string): Promise<{ readonly queued: number }>
+  }
+  /** A person's own reminder and digest preferences, edited under Settings. */
+  profileNotifications?: ProfileNotificationsPort
   recurringRepair?: RecurringRepairService
   bill?: BillRuntime
   /**
@@ -779,6 +804,12 @@ export const createApp = (
             }
             if (services.reminderSettings !== undefined) {
               installReminderSettingsRoutes(api, services.reminderSettings)
+            }
+            if (services.notificationSettings !== undefined) {
+              installNotificationSettingsRoutes(api, services.notificationSettings)
+            }
+            if (services.profileNotifications !== undefined) {
+              installProfileNotificationRoutes(api, services.profileNotifications)
             }
             if (services.invoiceDefaults !== undefined) {
               installInvoiceDefaultsRoutes(api, services.invoiceDefaults)

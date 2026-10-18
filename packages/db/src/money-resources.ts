@@ -188,6 +188,14 @@ export interface InvoiceDeliveryContext {
   notes: string | null
   paymentTerms: 'upon_receipt' | 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'custom'
   dueAmountCents: number
+  /**
+   * The billing period and the zone the organization keeps its days in, which
+   * `%invoice_period%` and `%send_weekday%` read (issue 925). The period is
+   * null on a free-form invoice.
+   */
+  periodStart: string | null
+  periodEnd: string | null
+  organizationTimeZone: string
 }
 
 /**
@@ -864,7 +872,9 @@ const deliveryContextSelect = `SELECT invoice.id AS "invoiceId", invoice.number,
     organization.name AS "organizationName", client.name AS "clientName",
     invoice.purchase_order AS "purchaseOrder", invoice.notes,
     invoice.payment_terms AS "paymentTerms",
-    invoice.due_amount_cents AS "dueAmountCents"
+    invoice.due_amount_cents AS "dueAmountCents",
+    invoice.period_start AS "periodStart", invoice.period_end AS "periodEnd",
+    organization.timezone AS "organizationTimeZone"
   FROM invoices invoice
   JOIN clients client ON client.id = invoice.client_id
   JOIN organizations organization ON organization.id = 1
@@ -888,6 +898,8 @@ const documentContextSelect = `SELECT invoice.id AS "invoiceId", invoice.number,
     invoice.discount_rate_ppm AS "discountRatePpm",
     invoice.tax_rate_ppm AS "taxRatePpm", invoice.tax2_rate_ppm AS "tax2RatePpm",
     invoice.due_amount_cents AS "dueAmountCents",
+    invoice.period_start AS "periodStart", invoice.period_end AS "periodEnd",
+    organization.timezone AS "organizationTimeZone",
     (SELECT coalesce(sum(payment.amount_cents), 0) FROM invoice_payments payment
      WHERE payment.invoice_id = invoice.id) AS "paidAmountCents",
     organization.address AS "organizationAddress", client.address AS "clientAddress",
