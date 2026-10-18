@@ -11,6 +11,246 @@
     }
   ],
   "paths": {
+    "/auth/apple/native-capabilities": {
+      "get": {
+        "operationId": "getNativeAppleCapabilities",
+        "summary": "Check explicit native Apple lifecycle protocol support",
+        "tags": [
+          "authentication"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeAppleCapabilities"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/auth/apple/native-capabilities",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/auth/apple": {
+      "post": {
+        "operationId": "signInNativeApple",
+        "summary": "Verify origin-bound Apple lifecycle custody and native identity before sign-in",
+        "tags": [
+          "authentication"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeAppleSignInEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/auth/apple",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NativeAppleSignInInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/apple/deletion-requests/{id}/binding": {
+      "post": {
+        "operationId": "rebindAppleCleanup",
+        "summary": "Bind fresh cleanup-purpose Apple custody to a pending deletion request",
+        "tags": [
+          "authentication"
+        ],
+        "security": [],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/auth/apple/deletion-requests/:id/binding",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppleLifecycleProofInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/apple/deletion-requests/{id}/revocation": {
+      "post": {
+        "operationId": "acceptAppleRevocation",
+        "summary": "Durably accept exact request-bound Apple invalidation evidence",
+        "tags": [
+          "authentication"
+        ],
+        "security": [],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/auth/apple/deletion-requests/:id/revocation",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppleLifecycleProofInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/auth/oidc/{provider}": {
       "get": {
         "operationId": "startOidcSignIn",
@@ -2335,6 +2575,72 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AccountDeletionRequestEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/profile/deletion-request",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountDeletionSubmission"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "getAccountDeletionRequest",
+        "summary": "Read your deletion request and original policy disclosure",
+        "tags": [
+          "profile"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDeletionStatusEnvelope"
                 }
               }
             }
@@ -18016,6 +18322,970 @@
         }
       }
     },
+    "/api/v1/profile/retention-policy": {
+      "get": {
+        "operationId": "getAccountRetentionPolicy",
+        "summary": "Read the operator's published erasure and retention disclosure",
+        "description": "Requires a staff session or a token with time_entries:read.",
+        "tags": [
+          "profile"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountRetentionEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/profile/retention-policy",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/admin/retention-policy": {
+      "post": {
+        "operationId": "publishAccountRetentionPolicy",
+        "summary": "Publish an operator erasure and retention policy version",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountRetentionEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/retention-policy",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountRetentionPublication"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/account-deletion/requests/{id}/status": {
+      "post": {
+        "operationId": "readAccountDeletionTrackingStatus",
+        "summary": "Read minimal deletion status with its private tracking capability",
+        "tags": [
+          "profile"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDeletionTrackingEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/account-deletion/requests/:id/status",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountDeletionTrackingInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/retention-reviews": {
+      "get": {
+        "operationId": "listDueRetentionReviews",
+        "summary": "List due retained-record and downstream review obligations",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionReviewListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/retention-reviews",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/deletion-requests/{id}/retention-reviews": {
+      "get": {
+        "operationId": "readRetentionReviews",
+        "summary": "Read recorded retention and cleanup evidence",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionReviewListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/deletion-requests/:id/retention-reviews",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/deletion-requests/{id}/retention-reviews/{area}": {
+      "patch": {
+        "operationId": "recordRetentionReview",
+        "summary": "Record an operator review with evidence and compare-and-swap",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionReviewEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/deletion-requests/:id/retention-reviews/:area",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "area",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetentionReviewInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/deletion-requests/{id}/completion": {
+      "post": {
+        "operationId": "completeReviewedDeletionRequest",
+        "summary": "Confirm a reviewed request outcome with remaining retention disclosed",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletionCompletionEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/deletion-requests/:id/completion",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeletionCompletionInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/deletion-requests/{id}/closure": {
+      "get": {
+        "operationId": "previewAccountClosure",
+        "summary": "Review actual account data before irreversible access closure",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountClosurePreviewEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/deletion-requests/:id/closure",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "closeAccountAccess",
+        "summary": "Erase local credentials and optional profile under reviewed retention decisions",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountClosureRecordEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/deletion-requests/:id/closure",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountClosureInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/deletion-requests/{id}/apple-cleanup": {
+      "post": {
+        "operationId": "retryAccountAppleCleanup",
+        "summary": "Retry server-managed Apple cleanup after local account closure",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppleCleanupStatusEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/deletion-requests/:id/apple-cleanup",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/deletion-requests": {
+      "get": {
+        "operationId": "listAccountDeletionRequests",
+        "summary": "List account deletion requests",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDeletionListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/deletion-requests",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/deletion-requests/{id}": {
+      "get": {
+        "operationId": "getAccountDeletionRequestForAdmin",
+        "summary": "Read an account deletion request",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDeletionDetailEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/deletion-requests/:id",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "updateAccountDeletionRequest",
+        "summary": "Update request progress without completing erasure",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDeletionDetailEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/deletion-requests/:id",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountDeletionUpdate"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/deletion-requests/{id}/notification": {
+      "post": {
+        "operationId": "retryAccountDeletionNotification",
+        "summary": "Retry an unavailable or failed administrator notification",
+        "tags": [
+          "admin-modules"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDeletionDetailEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/deletion-requests/:id/notification",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/backup/status": {
       "get": {
         "operationId": "getBackupStatus",
@@ -28747,6 +30017,22 @@
             "type": "integer",
             "minimum": 1
           },
+          "first_name": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "timezone": {
             "type": "string",
             "minLength": 1
@@ -28787,6 +30073,1087 @@
         },
         "additionalProperties": false
       },
+      "NativeAppleCapabilities": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "available",
+          "lifecycle_version"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "lifecycle_version": {
+            "type": "integer",
+            "const": 1
+          }
+        }
+      },
+      "NativeAppleSignInInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "identityToken",
+          "bindingReceipt"
+        ],
+        "properties": {
+          "identityToken": {
+            "type": "string",
+            "maxLength": 16384
+          },
+          "bindingReceipt": {
+            "type": "string",
+            "maxLength": 16384
+          },
+          "fullName": {
+            "type": "object",
+            "properties": {
+              "givenName": {
+                "type": "string"
+              },
+              "familyName": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "NativeAppleSignInEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "ok"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "const": true
+              }
+            }
+          }
+        }
+      },
+      "AppleLifecycleProofInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "receipt"
+        ],
+        "properties": {
+          "receipt": {
+            "type": "string",
+            "maxLength": 16384
+          }
+        }
+      },
+      "AppleCleanupStatus": {
+        "type": "string",
+        "enum": [
+          "not_linked",
+          "pending",
+          "revoked",
+          "manual_required"
+        ]
+      },
+      "AccountClosureInventoryItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "location",
+          "count",
+          "category"
+        ],
+        "properties": {
+          "location": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "time_and_worker_attribution",
+              "billing_and_payments",
+              "audit_and_security",
+              "legal_hold"
+            ]
+          }
+        }
+      },
+      "AccountClosureRecord": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "user_id",
+          "actor_user_id",
+          "closed_at",
+          "policy_version",
+          "policy_snapshot",
+          "inventory",
+          "retained_identity",
+          "apple_cleanup"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "actor_user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "closed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "policy_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "policy_snapshot": {
+            "$ref": "#/components/schemas/AccountRetentionPolicy"
+          },
+          "inventory": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountClosureInventoryItem"
+            }
+          },
+          "retained_identity": {
+            "type": "boolean"
+          },
+          "apple_cleanup": {
+            "$ref": "#/components/schemas/AppleCleanupStatus"
+          }
+        }
+      },
+      "AccountClosurePreview": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "user_id",
+          "request_version",
+          "review_token",
+          "policy_version",
+          "policy_snapshot",
+          "inventory",
+          "uncovered_categories",
+          "owner_transfer_required",
+          "running_timer",
+          "closure"
+        ],
+        "properties": {
+          "apple_cleanup_retry_available": {
+            "type": "boolean"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "request_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "review_token": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "policy_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountRetentionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inventory": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountClosureInventoryItem"
+            }
+          },
+          "uncovered_categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "time_and_worker_attribution",
+                "billing_and_payments",
+                "audit_and_security",
+                "legal_hold"
+              ]
+            }
+          },
+          "owner_transfer_required": {
+            "type": "boolean"
+          },
+          "running_timer": {
+            "type": "boolean"
+          },
+          "closure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountClosureRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "EmptyObject": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      },
+      "AppleCleanupStatusEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "apple_cleanup"
+            ],
+            "properties": {
+              "apple_cleanup": {
+                "$ref": "#/components/schemas/AppleCleanupStatus"
+              }
+            }
+          }
+        }
+      },
+      "RetentionReview": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "area",
+          "kind",
+          "original_reason",
+          "original_period",
+          "decision",
+          "basis",
+          "release_condition",
+          "evidence",
+          "next_review_at",
+          "hold_active",
+          "version",
+          "reviewed_at",
+          "actor_user_id"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "area": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "retained_category",
+              "downstream"
+            ]
+          },
+          "original_reason": {
+            "type": "string"
+          },
+          "original_period": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "retain",
+              "removed",
+              "not_applicable",
+              "failed",
+              "release_hold"
+            ]
+          },
+          "basis": {
+            "type": "string"
+          },
+          "release_condition": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "next_review_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hold_active": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "actor_user_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "RetentionReviewListEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RetentionReview"
+            }
+          }
+        }
+      },
+      "RetentionReviewEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RetentionReview"
+          }
+        }
+      },
+      "RetentionReviewInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expected_version",
+          "decision",
+          "basis",
+          "release_condition",
+          "evidence",
+          "next_review_at",
+          "acknowledged"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "retain",
+              "removed",
+              "not_applicable",
+              "failed",
+              "release_hold"
+            ]
+          },
+          "basis": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "release_condition": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "evidence": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "next_review_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "acknowledged": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      },
+      "DeletionCompletionInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expected_request_version",
+          "expected_reviews",
+          "acknowledged"
+        ],
+        "properties": {
+          "apple_historical_manual_verified": {
+            "type": "boolean"
+          },
+          "expected_request_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "expected_reviews": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "acknowledged": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      },
+      "DeletionCompletionEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "completed_at",
+              "confirmation"
+            ],
+            "properties": {
+              "completed_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "confirmation": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "AccountClosureInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expected_version",
+          "expected_policy_version",
+          "review_token",
+          "acknowledged"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "expected_policy_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "review_token": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "acknowledged": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      },
+      "AccountClosurePreviewEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AccountClosurePreview"
+          }
+        }
+      },
+      "AccountClosureRecordEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AccountClosureRecord"
+          }
+        }
+      },
+      "AccountDeletionStatusAccess": {
+        "type": "object",
+        "required": [
+          "token",
+          "expires_at",
+          "url"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "AccountDeletionTrackingInput": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 100
+          }
+        }
+      },
+      "AccountDeletionRetainedDisclosure": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "reason",
+          "period",
+          "review_after_days",
+          "review_due"
+        ],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "period": {
+            "type": "string"
+          },
+          "review_after_days": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "review_due": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AccountDeletionClosureDisclosure": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "retained_records",
+          "backup_handling",
+          "user_notice",
+          "operator_contact"
+        ],
+        "properties": {
+          "retained_records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountDeletionRetainedDisclosure"
+            }
+          },
+          "backup_handling": {
+            "type": "string"
+          },
+          "user_notice": {
+            "type": "string"
+          },
+          "operator_contact": {
+            "type": "string"
+          }
+        }
+      },
+      "AccountDeletionTrackingStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "status",
+          "requested_at",
+          "expected_completion_at",
+          "closed_at",
+          "completed_at",
+          "message",
+          "completion_confirmation",
+          "policy_version",
+          "policy_snapshot",
+          "policy_reviewed",
+          "closure_disclosure",
+          "operator_contact",
+          "expires_at"
+        ],
+        "properties": {
+          "apple_cleanup": {
+            "$ref": "#/components/schemas/AppleCleanupStatus"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in_progress",
+              "action_required",
+              "completed"
+            ]
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expected_completion_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "completion_confirmation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountRetentionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy_reviewed": {
+            "type": "boolean"
+          },
+          "closure_disclosure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountDeletionClosureDisclosure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "operator_contact": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AccountDeletionTrackingEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AccountDeletionTrackingStatus"
+          }
+        }
+      },
+      "AccountDeletionSubmission": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "expected_policy_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "AccountDeletionUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expected_version",
+          "status",
+          "message",
+          "expected_completion_at"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740990
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in_progress",
+              "action_required"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 5000
+          },
+          "expected_completion_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "AccountDeletionRecord": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "user_id",
+          "requested_at",
+          "policy_version",
+          "policy_snapshot",
+          "policy_reviewed",
+          "status",
+          "version",
+          "message",
+          "response_target_at",
+          "expected_completion_at",
+          "completed_at",
+          "completion_confirmation",
+          "notification",
+          "notification_updated_at",
+          "notification_delivery_id",
+          "updated_at"
+        ],
+        "properties": {
+          "apple_cleanup": {
+            "$ref": "#/components/schemas/AppleCleanupStatus"
+          },
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "policy_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountRetentionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy_reviewed": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in_progress",
+              "action_required",
+              "completed"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "message": {
+            "type": "string"
+          },
+          "response_target_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_completion_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completion_confirmation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notification": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "sending",
+              "queued",
+              "failed",
+              "unavailable"
+            ]
+          },
+          "notification_updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "notification_delivery_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AccountDeletionStatusEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountDeletionRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        }
+      },
+      "AccountDeletionDetailEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AccountDeletionRecord"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AccountDeletionListEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountDeletionRecord"
+            }
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        }
+      },
       "AccountDeletionRequest": {
         "type": "object",
         "required": [
@@ -28811,15 +31178,25 @@
           "data",
           "links"
         ],
+        "additionalProperties": false,
         "properties": {
           "data": {
-            "$ref": "#/components/schemas/AccountDeletionRequest"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountDeletionRecord"
+              },
+              {
+                "$ref": "#/components/schemas/AccountDeletionRequest"
+              }
+            ]
           },
           "links": {
             "$ref": "#/components/schemas/Links"
+          },
+          "status_access": {
+            "$ref": "#/components/schemas/AccountDeletionStatusAccess"
           }
-        },
-        "additionalProperties": false
+        }
       },
       "TimeEntryOption": {
         "type": "object",
@@ -38879,6 +41256,216 @@
           }
         },
         "additionalProperties": false
+      },
+      "AccountRetentionRule": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "reason",
+          "period",
+          "review_after_days"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "time_and_worker_attribution",
+              "billing_and_payments",
+              "audit_and_security",
+              "legal_hold"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "period": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "review_after_days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 365
+          }
+        }
+      },
+      "AccountRetentionPolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "frameworks",
+          "retained_records",
+          "response_target_days",
+          "operator_contact",
+          "user_notice",
+          "backup_handling",
+          "acknowledged"
+        ],
+        "properties": {
+          "frameworks": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "gdpr",
+                "us_florida",
+                "us_al",
+                "us_ak",
+                "us_az",
+                "us_ar",
+                "california_ccpa_cpra",
+                "colorado_cpa",
+                "us_ct",
+                "us_de",
+                "us_dc",
+                "us_fl",
+                "us_ga",
+                "us_hi",
+                "us_id",
+                "us_il",
+                "us_in",
+                "us_ia",
+                "us_ks",
+                "us_ky",
+                "us_la",
+                "us_me",
+                "us_md",
+                "us_ma",
+                "us_mi",
+                "us_mn",
+                "us_ms",
+                "us_mo",
+                "us_mt",
+                "us_ne",
+                "us_nv",
+                "us_nh",
+                "us_nj",
+                "us_nm",
+                "us_ny",
+                "us_nc",
+                "us_nd",
+                "us_oh",
+                "us_ok",
+                "us_or",
+                "us_pa",
+                "us_ri",
+                "us_sc",
+                "us_sd",
+                "us_tn",
+                "texas_tdpsa",
+                "us_ut",
+                "us_vt",
+                "us_va",
+                "us_wa",
+                "us_wv",
+                "us_wi",
+                "us_wy",
+                "other"
+              ]
+            }
+          },
+          "retained_records": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "$ref": "#/components/schemas/AccountRetentionRule"
+            }
+          },
+          "response_target_days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 90
+          },
+          "operator_contact": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "user_notice": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 5000
+          },
+          "backup_handling": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 5000
+          },
+          "acknowledged": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        }
+      },
+      "AccountRetentionPublication": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expected_version",
+          "policy"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740990
+          },
+          "policy": {
+            "$ref": "#/components/schemas/AccountRetentionPolicy"
+          }
+        }
+      },
+      "AccountRetentionRecord": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "policy",
+          "published_at"
+        ],
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "policy": {
+            "$ref": "#/components/schemas/AccountRetentionPolicy"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AccountRetentionEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountRetentionRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        }
       },
       "SignInMethodState": {
         "type": "object",

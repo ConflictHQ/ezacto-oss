@@ -19,8 +19,8 @@ const body = (
   const asked = `${who} asked on ${request.requestedAt.slice(0, 10)} to have their ${company} account, and the data held against it, deleted.`
   const nothing =
     'Nothing has been deleted or deactivated. The account stays as it is until an administrator ' +
-    "acts on the request in Team, as your organization's retention policy allows."
-  const logged = 'The request is in the Activity log as well.'
+    "acts on the request in Company settings → Erasure and retention, as your organization's retention policy allows."
+  const logged = 'Review the request and its recorded disclosure in the deletion-request queue. Queued email does not complete account erasure.'
   return {
     subject: `${request.person.name} asked to have their ${company} account deleted`,
     text: [asked, '', nothing, '', logged].join('\n'),
@@ -40,12 +40,13 @@ export const createQueuedAccountDeletionMailer = (
 ): AccountDeletionMailer => ({
   notify: async (request) => {
     const { subject, text, html } = body(request, await organizationName())
-    await mailer.enqueue({
+    const delivery = await mailer.enqueue({
       to: request.administrators.map((email) => ({ email })),
       template: 'account_deletion_request:v1',
       subject,
       text,
       html,
     })
+    return { deliveryId: delivery.id, queued: delivery.status === 'queued' || delivery.status === 'sent' }
   },
 })

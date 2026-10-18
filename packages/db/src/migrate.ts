@@ -1,7 +1,17 @@
+import { accountRetentionReviewMigration } from './migrations/0106_account_retention_review.js'
+import { appleLifecycleMigration } from './migrations/0104_apple_lifecycle.js'
+import { accountClosureMigration } from './migrations/0103_account_closure.js'
+import { accountDeletionRequestsMigration } from './migrations/0102_account_deletion_requests.js'
+import { accountRetentionPolicyMigration } from './migrations/0101_account_retention_policy.js'
+
+import { appleWebCustodyMigration } from './migrations/0105_apple_web_custody.js'
 import { bandedInvoiceCreateMigration } from './migrations/0098_banded_invoice_create.js'
 import { invoiceSendingMigration } from './migrations/0099_invoice_sending.js'
 import { durationTimedEntriesMigration } from './migrations/0100_duration_timed_entries.js'
-import { timeRoundingSettingsMigration } from './migrations/0101_time_rounding_settings.js'
+import { idempotencyKeysMigration } from './migrations/0107_idempotency_keys.js'
+import { idempotencyAuthorizationMigration } from './migrations/0108_idempotency_authorization.js'
+import { expenseDeleteReceiptsMigration } from './migrations/0109_expense_delete_receipts.js'
+import { timeRoundingSettingsMigration } from './migrations/0110_time_rounding_settings.js'
 import { organizationInvoiceDefaultsMigration } from './migrations/0097_organization_invoice_defaults.js'
 import { journalFormatsInvoiceExtraMigration } from './migrations/0096_journal_formats_invoice_extra.js'
 import { freeFormInvoiceCreateMigration } from './migrations/0095_free_form_invoice_create.js'
@@ -1555,7 +1565,16 @@ const migrations = [
   { id: '0098_banded_invoice_create', statements: bandedInvoiceCreateMigration },
   { id: '0099_invoice_sending', statements: invoiceSendingMigration },
   { id: '0100_duration_timed_entries', statements: durationTimedEntriesMigration },
-  { id: '0101_time_rounding_settings', statements: timeRoundingSettingsMigration },
+  { id: '0101_account_retention_policy', statements: accountRetentionPolicyMigration },
+  { id: '0102_account_deletion_requests', statements: accountDeletionRequestsMigration },
+  { id: '0103_account_closure', statements: accountClosureMigration },
+  { id: '0104_apple_lifecycle', statements: appleLifecycleMigration },
+  { id: '0105_apple_web_custody', statements: appleWebCustodyMigration },
+  { id: '0106_account_retention_review', statements: accountRetentionReviewMigration },
+  { id: '0107_idempotency_keys', statements: idempotencyKeysMigration },
+  { id: '0108_idempotency_authorization', statements: idempotencyAuthorizationMigration },
+  { id: '0109_expense_delete_receipts', statements: expenseDeleteReceiptsMigration },
+  { id: '0110_time_rounding_settings', statements: timeRoundingSettingsMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

@@ -75,9 +75,10 @@ describe('worker entry', () => {
     const home = await (await app.request('/dashboard', {}, env)).text()
     expect(home).toContain('data-app-view="dashboard"')
     expect(home).toContain('data-dashboard-page')
-    // A section link is its mark and its label; the label is the name.
+    // Home lives in the Menu, as a card: its mark, its title (the name) and a
+    // hint that describes it.
     expect(home).toMatch(
-      /<a href="\/dashboard" aria-current="page"><svg[^>]*>(?:(?!<\/a>)[^])*<span class="nav-label">Home<\/span><\/a>/u,
+      /<a class="menu-card" aria-describedby="menu-hint-home" href="\/dashboard" aria-current="page"><svg[^>]*>(?:(?!<\/a>)[^])*<span class="menu-card-title">Home<\/span>(?:(?!<\/a>)[^])*<\/a>/u,
     )
 
     const time = await (await app.request('/', {}, env)).text()

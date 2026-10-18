@@ -220,10 +220,12 @@ describe("an administrator on a teammate's week (issue 917)", () => {
     await vi.waitFor(() => expect(cellValues()).toEqual(['', '', '1.5', '', '', '', '']))
 
     document.querySelector<HTMLButtonElement>('[data-timer-chip]')!.click()
-    expect(document.querySelector<HTMLDialogElement>('[data-entry-dialog]')!.open).toBe(false)
-    expect(document.querySelector('[data-session-message]')!.textContent).toBe(
-      'Go back to your own timesheet to start a timer.',
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-session-message]')!.textContent).toBe(
+        'Go back to your own timesheet to start a timer.',
+      ),
     )
+    expect(document.querySelector<HTMLDialogElement>('[data-entry-dialog]')!.open).toBe(false)
 
     const before = api.listTimeEntries.mock.calls.length
     document.querySelector<HTMLButtonElement>('[data-time-person-reset]')!.click()

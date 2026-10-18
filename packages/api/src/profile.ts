@@ -1,3 +1,6 @@
+import type { AppleCleanupPort } from '@ezacto/core'
+import type { AccountDeletionStore, AccountDeletionStatusStore } from '@ezacto/core'
+import { installAccountDeletionRequestRoutes } from './account-deletion-requests.js'
 import type { Hono } from 'hono'
 import type { ApiContext } from './context.js'
 import { requireApiScope } from './auth.js'
@@ -20,6 +23,10 @@ export interface ProfileRepositoryPort {
    * organization zone is what actually decides their day until they choose.
    */
   readTimezone(userId: number): Promise<string | null>
+  /** The person's own name and primary address; absent where not composed. */
+  readIdentity?(
+    userId: number,
+  ): Promise<{ firstName: string; lastName: string; email: string | null } | null>
   updateTimezone(userId: number, timezone: string, occurredAt: string): Promise<void>
   /** Absent where the deployment does not send invoice email. */
   readInvoiceCopy?(userId: number): Promise<boolean | null>
@@ -48,11 +55,14 @@ export interface AccountDeletionRequest {
 
 /** Tells the administrators who asked to have their account deleted, and when. */
 export interface AccountDeletionMailer {
-  notify(request: AccountDeletionRequest): Promise<void>
+  notify(request: AccountDeletionRequest): Promise<void | { deliveryId: number; queued: boolean }>
 }
 
 export interface ProfileRouteOptions {
   repository: ProfileRepositoryPort
+  deletionStore?: AccountDeletionStore
+  deletionTracking?: AccountDeletionStatusStore
+  appleCleanup?: AppleCleanupPort
   clock: () => string
   /** Absent where the deployment sends no mail; the request is still recorded. */
   deletionMailer?: AccountDeletionMailer
@@ -90,8 +100,16 @@ export const installProfileRoutes = <Bindings extends object>(
 ): void => {
   const profileData = async (userId: number, timezone: string | null) => {
     const copy = (await options.repository.readInvoiceCopy?.(userId)) ?? null
+    const identity = (await options.repository.readIdentity?.(userId)) ?? null
     return {
       user_id: userId,
+      ...(identity === null
+        ? {}
+        : {
+            first_name: identity.firstName,
+            last_name: identity.lastName,
+            email: identity.email,
+          }),
       timezone: timezone ?? 'UTC',
       // On unless the person turned it off; absent where nothing sends invoices.
       ...(copy === null ? {} : { invoice_copy_to_self: copy }),
@@ -126,7 +144,13 @@ export const installProfileRoutes = <Bindings extends object>(
    * 202 rather than 201: something was set in motion, and it is somebody
    * else's to finish. Asking again answers with the first request's time.
    */
-  api.post('/profile/deletion-request', async (context) => {
+  if (options.deletionStore !== undefined) installAccountDeletionRequestRoutes(api, {
+    store: options.deletionStore, clock: options.clock,
+    ...(options.appleCleanup === undefined ? {} : { appleCleanup: options.appleCleanup }),
+    ...(options.deletionTracking === undefined ? {} : { tracking: options.deletionTracking }),
+    ...(options.deletionMailer === undefined ? {} : { mailer: options.deletionMailer }),
+  })
+  else api.post('/profile/deletion-request', async (context) => {
     requireApiScope(context, 'time_entries:write')
     const principal = context.get('principal')
     if (options.repository.requestDeletion === undefined) {

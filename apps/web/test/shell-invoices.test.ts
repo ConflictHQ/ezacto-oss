@@ -44,6 +44,9 @@ describe('invoice generation browser behavior', () => {
     const timerChip = document.querySelector<HTMLButtonElement>('[data-timer-chip]')!
     await vi.waitFor(() => expect(timerChip.textContent).toContain('Northpeak / Development'))
     timerChip.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLButtonElement>('[data-stop-timer]')!.hidden).toBe(false),
+    )
     document.querySelector<HTMLButtonElement>('[data-stop-timer]')!.click()
     await vi.waitFor(() => expect(api.stopTimeEntry).toHaveBeenCalledWith(3, expect.anything()))
   })

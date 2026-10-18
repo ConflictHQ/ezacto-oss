@@ -197,3 +197,29 @@ describe('data table', () => {
     expect(keys).toEqual(['1', '2', '3'])
   })
 })
+
+
+describe('keyboard access', () => {
+  it('[unit] names the focusable scrolling region after its table', () => {
+    const element = table()
+    expect(element.tabIndex).toBe(0)
+    expect(element.getAttribute('role')).toBe('region')
+    expect(element.getAttribute('aria-label')).toBe('Projects')
+  })
+
+  it('[unit] Escape closes row actions and restores focus without selecting an action', () => {
+    const selected = vi.fn()
+    const element = table({ actions: () => [{ label: 'Archive', onSelect: selected }] })
+    document.body.appendChild(element)
+    const details = element.querySelector<HTMLDetailsElement>('details')!
+    const summary = details.querySelector('summary')!
+    details.open = true
+    const button = details.querySelector('button')!
+    button.focus()
+    button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    expect(details.open).toBe(false)
+    expect(document.activeElement).toBe(summary)
+    expect(selected).not.toHaveBeenCalled()
+    element.remove()
+  })
+})

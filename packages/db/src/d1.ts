@@ -22,6 +22,17 @@ export {
 } from './attachments.js'
 
 export {
+  createD1IdempotencyStore,
+  createIdempotentD1,
+  runWithClaim,
+  type IdempotencyClaim,
+  type IdempotencyRecord,
+  type IdempotencyStore,
+  type IdempotentExecution,
+  type SealedIdempotentResponse,
+} from './idempotency.js'
+
+export {
   createApiTokenStore,
   type ApiTokenStore,
   type CreateApiTokenStoreOptions,
@@ -30,6 +41,7 @@ export { createGeneralResourceRepository } from './general-resources.js'
 export {
   listClientAncestors,
   listClientDescendants,
+  readUserIdentity,
   readUserTimezone,
   updateUserTimezone,
   type ClientHierarchyNode,
@@ -158,6 +170,8 @@ export {
 } from './password-auth.js'
 export {
   createD1SessionStore,
+  LAST_SEEN_INTERVAL_MS,
+  lastSeenIntervalFromSeconds,
   SESSION_ABSOLUTE_TTL_MS,
   SESSION_IDLE_TTL_MS,
   type AuthenticatedSession,
@@ -398,7 +412,7 @@ export {
 export { backfillBandClaims } from './band-claim-backfill.js'
 export { captureActivityEvent } from './activity-log.js'
 export { requestAccountDeletion } from './account-deletion.js'
-export { createD1ReminderScheduler } from './reminders.js'
+export { createD1ReminderScheduler, type ReminderProcessOptions, type ReminderProcessSummary } from './reminders.js'
 
 // The QuickBooks store is type-only against better-sqlite3, so it is safe to
 // reach from the Worker entry -- the native driver never enters the bundle.
@@ -415,3 +429,16 @@ export { createQuickBooksMirrorSource } from './quickbooks-source.js'
 export { createStaffPaymentStore } from './staff-payments.js'
 
 export { createPaymentRunsService } from './payment-runs.js'
+
+export { createAccountRetentionRepository } from './account-retention.js'
+
+export * from './account-deletion-requests.js'
+
+export * from './account-closure.js'
+
+export * from './account-deletion-status.js'
+
+export * from './apple-lifecycle.js'
+
+export { createAccountRetentionReviewRepository } from './account-retention-review.js'
+export { createD1AppleWebCustodyStore } from './apple-web-custody.js'

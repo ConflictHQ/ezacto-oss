@@ -1,3 +1,7 @@
+import * as fs from 'node:fs'
+import {runInNewContext} from 'node:vm'
+import {assertNoIncompletePrivacyRestore,prepareContainerDatabase} from '../src/runtime.js'
+import {privacyRestoreCommand} from '../src/privacy-restore.js'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { mkdtemp, realpath, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
@@ -9,6 +13,7 @@ import {
   createCanonicalTemporaryDirectory,
   createPhysicalSnapshotMetadata,
   verifyPhysicalSnapshot,
+  restorePhysicalSnapshot,
 } from '../../../scripts/container-physical-snapshot.mjs'
 
 const helper = new URL(
@@ -98,6 +103,83 @@ describe('container physical snapshot', () => {
     expect(command.stderr).toBe('')
   })
 
+  it("[regression #973] keeps a failed quarantine helper restore blocked and rejects unsupported images before copying", async () => {
+    const { root } = await fixture();
+    const target = await createCanonicalTemporaryDirectory(
+      "ezacto-failed-restore-",
+    );
+    roots.push(target);
+    const execute = async (args: string[]) => {
+      if (args[0] === "run" && args.includes("quarantine"))
+        throw new Error("forced quarantine helper failure");
+      if (args[0] === "run" && args.includes("-e")) {
+        const code = args[args.indexOf("-e") + 1]!;
+        if (!code.includes("accessSync"))
+          runInNewContext(
+            code
+              .replaceAll("'/restore'", JSON.stringify(root))
+              .replaceAll("'/data'", JSON.stringify(target)),
+            {
+              require: (name: string) => {
+                if (name !== "node:fs") throw new Error("unexpected module");
+                return { ...fs, chownSync: () => {} };
+              },
+            },
+          );
+      }
+      if (args[0] === "container" && args[1] === "cp")
+        fs.cpSync(target, args[3]!, { recursive: true });
+      return { stdout: "", stderr: "" };
+    };
+    await expect(
+      restorePhysicalSnapshot(
+        { bundle: root, volume: "disposable-test", image: "fixture:new" },
+        execute,
+      ),
+    ).rejects.toThrow("forced quarantine helper failure");
+    expect(fs.existsSync(join(target, "db.sqlite"))).toBe(true);
+    expect(fs.existsSync(join(target, ".privacy-restore-incomplete"))).toBe(
+      true,
+    );
+    await expect(assertNoIncompletePrivacyRestore(target)).rejects.toThrow(
+      "Incomplete physical restore",
+    );
+    privacyRestoreCommand(['quarantine','--database',join(target,'db.sqlite')]);
+    expect(fs.existsSync(join(target,'.privacy-restore-incomplete'))).toBe(false);
+    const quarantined=new BetterSqlite3(join(target,'db.sqlite'));
+    try {expect(()=>prepareContainerDatabase(quarantined)).toThrow('privacy evidence must be reconciled')}finally{quarantined.close()}
+    const preflightCalls:string[][]=[];
+    await expect(
+      restorePhysicalSnapshot(
+        { bundle: root, volume: "disposable-other", image: "fixture:old" },
+        async (args) => {
+          preflightCalls.push(args);
+          if (args.includes("-e") && args.at(-1)!.includes("accessSync"))
+            throw new Error("helper unavailable");
+          return { stdout: "", stderr: "" };
+        },
+      ),
+    ).rejects.toThrow("helper unavailable");
+    expect(preflightCalls.filter(args=>args[0]==='run')).toHaveLength(1);
+    expect(preflightCalls.at(-1)!.at(-1)).toContain('accessSync');
+  });
+  it('[regression #973] flushes the marker and directory before copying and aborts on a directory flush failure',async()=>{
+    const {root}=await fixture();const target=await createCanonicalTemporaryDirectory('ezacto-restore-fsync-');roots.push(target);
+    const operations:string[]=[];
+    await expect(restorePhysicalSnapshot({bundle:root,volume:'disposable-flush',image:'fixture:new'},async args=>{
+      if(args[0]==='run'&&args.includes('-e')){
+        const code=args[args.indexOf('-e')+1]!;
+        if(!code.includes('accessSync'))runInNewContext(code.replaceAll("'/restore'",JSON.stringify(root)).replaceAll("'/data'",JSON.stringify(target)),{require:()=>({...fs,
+          fsyncSync:(fd:number)=>{operations.push(fs.fstatSync(fd).isDirectory()?'directory-flush':'file-flush');if(fs.fstatSync(fd).isDirectory())throw new Error('forced directory flush failure');fs.fsyncSync(fd)},
+          copyFileSync:()=>{operations.push('copy');throw new Error('copy must not start')},chownSync:()=>{}
+        })});
+      }
+      return {stdout:'',stderr:''};
+    })).rejects.toThrow('forced directory flush failure');
+    expect(operations).toEqual(['file-flush','directory-flush']);
+    expect(fs.existsSync(join(target,'db.sqlite'))).toBe(false);
+    await expect(assertNoIncompletePrivacyRestore(target)).rejects.toThrow('Incomplete physical restore');
+  });
   it('[security] rejects changed content and symbolic links', async () => {
     const changed = await fixture()
     await writeFile(changed.attachment, 'changed')

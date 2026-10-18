@@ -173,6 +173,7 @@ export const createQuickBooksMirrorSource = (
       externalAccountId: input.realmId,
       accountDisplayName: "QuickBooks Online",
       providerTransactionId: input.quickBooksPaymentId,
+      share: input.quickBooksInvoiceId,
       amountCents: input.amountCents,
       paidOn: input.paidOn,
       now: now().toISOString(),

@@ -41,6 +41,7 @@
     "lint": "eslint .",
     "pretest": "npm run build -w @conflict-hq/ezacto-client && npm run build",
     "test": "vitest run --testTimeout=10000",
+    "test:package": "node scripts/test-package.mjs",
     "build": "tsc -p tsconfig.build.json && node scripts/bundle-reports.mjs",
     "prepack": "npm run build"
   },
