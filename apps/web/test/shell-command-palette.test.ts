@@ -248,6 +248,9 @@ describe('command palette browser behavior', () => {
     await mountShell(browserApi())
 
     document.querySelector<HTMLButtonElement>('[data-timer-chip]')!.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLDialogElement>('[data-entry-dialog]')!.open).toBe(true),
+    )
 
     const projects = [
       ...document.querySelectorAll<HTMLOptionElement>('[data-entry-project-options] option'),
@@ -354,7 +357,7 @@ describe('where focus lands when the command bar and the menu open (issue 861)',
     trigger.click()
     expect(menu.open).toBe(true)
     expect(document.activeElement).toBe(links[0])
-    expect(links[0]!.textContent).toBe('Time')
+    expect(links[0]!.querySelector('.menu-card-title')?.textContent).toBe('Time')
 
     // A gate hides a link with `hidden`, and focus() on a link that is not
     // drawn goes nowhere, leaving the close button where showModal() put it.

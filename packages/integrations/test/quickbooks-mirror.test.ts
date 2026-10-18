@@ -420,6 +420,7 @@ describe('reading a payment back', () => {
         amountCents: 250_000,
         paidOn: '2026-09-20',
         quickBooksPaymentId: 'qb-pay-1',
+        quickBooksInvoiceId: 'qb-inv-7',
       },
     ])
   })

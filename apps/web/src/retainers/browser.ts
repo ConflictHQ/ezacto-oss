@@ -481,7 +481,7 @@ export const createRetainerWorkspaceController = (
             label: 'Scope',
             render: (retainer) => retainerProjectLabel(retainer, projects),
           },
-          { key: 'basis', label: 'Basis', render: retainerBasisLabel },
+          { key: 'basis', label: 'Basis', fit: true, render: retainerBasisLabel },
           {
             key: 'commitment',
             label: 'On retainer',
@@ -512,6 +512,7 @@ export const createRetainerWorkspaceController = (
           },
           {
             key: 'state',
+            fit: true,
             label: 'State',
             render: (retainer) => {
               const pill = document.createElement('span')
@@ -546,9 +547,10 @@ export const createRetainerWorkspaceController = (
         rowKey: (movement) => movement.entry.id,
         empty: 'No movements recorded yet.',
         columns: [
-          { key: 'date', label: 'Date', render: (movement) => movement.entry.occurred_on },
+          { key: 'date', label: 'Date', fit: true, render: (movement) => movement.entry.occurred_on },
           {
             key: 'kind',
+            fit: true,
             label: 'Movement',
             render: (movement) => retainerLedgerKindLabel(movement.entry.kind),
           },

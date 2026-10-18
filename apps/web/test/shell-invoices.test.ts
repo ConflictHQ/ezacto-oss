@@ -44,6 +44,9 @@ describe('invoice generation browser behavior', () => {
     const timerChip = document.querySelector<HTMLButtonElement>('[data-timer-chip]')!
     await vi.waitFor(() => expect(timerChip.textContent).toContain('Northpeak / Development'))
     timerChip.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLButtonElement>('[data-stop-timer]')!.hidden).toBe(false),
+    )
     document.querySelector<HTMLButtonElement>('[data-stop-timer]')!.click()
     await vi.waitFor(() => expect(api.stopTimeEntry).toHaveBeenCalledWith(3, expect.anything()))
   })
@@ -132,6 +135,47 @@ describe('invoice generation browser behavior', () => {
     // A whole month, and the one before the month the wizard opened on.
     expect(billed.from.slice(8)).toBe('01')
     expect(billed.from < billed.to).toBe(true)
+  })
+
+  it('[browser #949] says under which rounding each project\'s hours will be billed', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-14T12:00:00.000Z'))
+    renderBrowserShell({ view: 'invoice-generation' })
+    const api: ShellApi = {
+      ...browserApi(),
+      listClients: async () => ({
+        data: [resource(11, 'Northwind Freight')],
+        page: { next_cursor: null },
+      }),
+      listProjects: async () => ({
+        data: [
+          { ...resource(1, 'Northpeak'), client_id: 11, time_rounding_mode: 'up', time_rounding_minutes: 15 },
+          { ...resource(2, 'Acme'), client_id: 11, time_rounding_mode: null, time_rounding_minutes: null },
+          // A record without the fields: the viewer is not told a rule they cannot see.
+          { ...resource(3, 'Plain'), client_id: 11 },
+        ],
+        page: { next_cursor: null },
+      }),
+      generateInvoice: vi.fn<NonNullable<ShellApi['generateInvoice']>>().mockResolvedValue(invoice(21)),
+    }
+    await mountShell(api)
+
+    const wizard = document.querySelector<HTMLFormElement>('[data-invoice-generation-form]')!
+    const clientSelect = wizard.querySelector<HTMLSelectElement>('[data-invoice-client]')!
+    await vi.waitFor(() => expect(clientSelect.options.length).toBe(1))
+    clientSelect.value = '11'
+    clientSelect.dispatchEvent(new Event('change'))
+    await vi.waitFor(() =>
+      expect(wizard.querySelectorAll('[data-invoice-projects] [name="project"]')).toHaveLength(3),
+    )
+    const rounding = (id: number): string | undefined =>
+      wizard
+        .querySelector<HTMLInputElement>(`[data-invoice-projects] [value="${id}"]`)!
+        .closest('label')!
+        .querySelector('.project-rounding')?.textContent ?? undefined
+    expect(rounding(1)).toBe('Time rounded up to 15 min (project setting)')
+    expect(rounding(2)).toBe('Time not rounded (organization setting)')
+    expect(rounding(3)).toBeUndefined()
   })
 
   it('[browser] greys out Expenses unless the selected projects have some to bill', async () => {

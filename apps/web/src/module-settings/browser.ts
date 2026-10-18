@@ -1,3 +1,6 @@
+import { createDeletionRequestsController } from './deletion-requests.js'
+import { createRetentionController } from './retention.js'
+import { createTimeRoundingController } from './time-rounding.js'
 import {
   EzactoApiError,
   type InvoiceRecipient,
@@ -10,6 +13,7 @@ import { DEMO_UNAVAILABLE, demoUnavailable, isDemoDeployment } from '../demo.js'
 import { invoiceAddressLines } from '../invoice-addresses.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
+import { shellFetch } from '../shell/net.js'
 import {
   DEFAULT_COMPANY_SETTINGS_SECTION,
   resolveSettingsSection,
@@ -68,12 +72,14 @@ interface BrandAssetListEnvelope {
  * These three go through `fetch` rather than the generated client for the same
  * reason `fetchModules` does: the upload is `multipart/form-data`, which the
  * generated JSON client has no shape for, and having the list travel by a
- * different road from the upload that changes it is how the two drift.
+ * different road from the upload that changes it is how the two drift. The
+ * fetch is still the shell's own, so the writes are keyed and retried like
+ * every other (issue 953).
  */
 const fetchBrandAssets = async (
   signal?: AbortSignal,
 ): Promise<readonly BrandAssetState[]> => {
-  const response = await globalThis.fetch('/api/v1/settings/brand-assets', {
+  const response = await shellFetch('/api/v1/settings/brand-assets', {
     credentials: 'same-origin',
     ...withSignal(signal),
   })
@@ -95,7 +101,7 @@ const uploadBrandAsset = async (
 ): Promise<void> => {
   const body = new FormData()
   body.append('file', file)
-  const response = await globalThis.fetch(`/api/v1/settings/brand-assets/${segment}`, {
+  const response = await shellFetch(`/api/v1/settings/brand-assets/${segment}`, {
     method: 'POST',
     body,
     credentials: 'same-origin',
@@ -109,7 +115,7 @@ const uploadBrandAsset = async (
 }
 
 const removeBrandAsset = async (segment: string, signal?: AbortSignal): Promise<void> => {
-  const response = await globalThis.fetch(`/api/v1/settings/brand-assets/${segment}`, {
+  const response = await shellFetch(`/api/v1/settings/brand-assets/${segment}`, {
     method: 'DELETE',
     credentials: 'same-origin',
     ...withSignal(signal),
@@ -195,7 +201,7 @@ const withSignal = (signal?: AbortSignal): { signal?: AbortSignal } =>
   signal === undefined ? {} : { signal }
 
 const fetchModules = async (signal?: AbortSignal): Promise<readonly ModuleState[]> => {
-  const response = await globalThis.fetch('/api/v1/admin/modules', {
+  const response = await shellFetch('/api/v1/admin/modules', {
     credentials: 'same-origin',
     ...withSignal(signal),
   })
@@ -218,7 +224,7 @@ const patchModule = async (
   enabled: boolean,
   signal?: AbortSignal,
 ): Promise<readonly ModuleState[]> => {
-  const response = await globalThis.fetch(`/api/v1/admin/modules/${module}`, {
+  const response = await shellFetch(`/api/v1/admin/modules/${module}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ enabled }),
@@ -258,7 +264,7 @@ const refusal = (body: string, fallback: string): string => {
 const fetchSignInMethods = async (
   signal?: AbortSignal,
 ): Promise<readonly SignInMethodState[]> => {
-  const response = await globalThis.fetch('/api/v1/admin/sign-in-methods', {
+  const response = await shellFetch('/api/v1/admin/sign-in-methods', {
     credentials: 'same-origin',
     ...withSignal(signal),
   })
@@ -278,7 +284,7 @@ const patchSignInMethod = async (
   enabled: boolean,
   signal?: AbortSignal,
 ): Promise<readonly SignInMethodState[]> => {
-  const response = await globalThis.fetch(
+  const response = await shellFetch(
     `/api/v1/admin/sign-in-methods/${method}`,
     {
       method: 'PATCH',
@@ -316,13 +322,18 @@ const renderSignInMethodCard = (state: SignInMethodState, demo: boolean): string
       ? 'Live. People can sign in this way.'
       : 'Switched off. The routes refuse it.'
     : 'Not configured in this deployment, so it cannot be switched on here.'
+  // The switch is named by the method's heading as well as its state word, so
+  // a screen reader hears "Google Enabled" rather than five switches all
+  // called "Enabled". The span stays the label's first: the change handler
+  // below rewrites the state word through it.
+  const id = `settings-sign-in-${state.method}`
   return (
     `<article class="module-settings-card" data-sign-in-card="${state.method}">` +
     `<header class="module-settings-card-header">` +
-    `<div><h2>${label}</h2><p class="module-code">${state.method}</p></div>` +
-    `<label class="module-toggle"><input type="checkbox" data-sign-in-toggle="${state.method}"${state.enabled ? ' checked' : ''}${state.configured && !demo ? '' : ' disabled'}><span>${state.enabled ? 'Enabled' : 'Disabled'}</span></label>` +
+    `<h3 id="${id}-title">${label}</h3>` +
+    `<label class="module-toggle"><input type="checkbox" data-sign-in-toggle="${state.method}" aria-labelledby="${id}-title ${id}-state" aria-describedby="${id}-note"${state.enabled ? ' checked' : ''}${state.configured && !demo ? '' : ' disabled'}><span id="${id}-state">${state.enabled ? 'Enabled' : 'Disabled'}</span></label>` +
     `</header>` +
-    `<p class="module-settings-warning">${note}</p>` +
+    `<p class="module-settings-warning" id="${id}-note">${note}</p>` +
     `<p class="form-result" data-sign-in-result="${state.method}" role="status" aria-live="polite"></p>` +
     `</article>`
   )
@@ -332,13 +343,15 @@ const renderModuleCard = (state: ModuleState): string => {
   const description = moduleDescriptions[state.module]
   const label = description?.label ?? state.module
   const warning = description?.warning ?? ''
+  // Named and described the way a sign-in method's switch is, above.
+  const id = `settings-module-${state.module}`
   return (
     `<article class="module-settings-card" data-module-card="${state.module}">` +
     `<header class="module-settings-card-header">` +
-    `<div><h2>${label}</h2><p class="module-code">${state.module}</p></div>` +
-    `<label class="module-toggle"><input type="checkbox" data-module-toggle="${state.module}"${state.enabled ? ' checked' : ''}><span>${state.enabled ? 'Enabled' : 'Disabled'}</span></label>` +
+    `<h3 id="${id}-title">${label}</h3>` +
+    `<label class="module-toggle"><input type="checkbox" data-module-toggle="${state.module}" aria-labelledby="${id}-title ${id}-state" aria-describedby="${id}-note"${state.enabled ? ' checked' : ''}><span id="${id}-state">${state.enabled ? 'Enabled' : 'Disabled'}</span></label>` +
     `</header>` +
-    `<p class="module-settings-warning">${warning}</p>` +
+    `<p class="module-settings-warning" id="${id}-note">${warning}</p>` +
     `<p class="form-result" data-module-result="${state.module}" role="status" aria-live="polite"></p>` +
     `</article>`
   )
@@ -799,15 +812,19 @@ export const createModuleSettingsController = (
         rowKey: (domain) => String(domain.id),
         empty:
           'No domain is provisioned, so single sign-on creates nobody. Add the email domain your directory signs in with.',
+        // The domain, its status and the date take their own width; the record
+        // is what an operator copies into a zone file, so it takes the rest and
+        // wraps rather than ending in an ellipsis on a narrow window.
         columns: [
-          { key: 'domain', label: 'Domain', render: (domain) => domain.domain },
-          { key: 'status', label: 'Status', render: (domain) => ssoDomainStatus(domain) },
+          { key: 'domain', label: 'Domain', fit: true, render: (domain) => domain.domain },
+          { key: 'status', label: 'Status', fit: true, render: (domain) => ssoDomainStatus(domain) },
           {
             key: 'checked',
             label: 'Last checked',
+            fit: true,
             render: (domain) => ssoLastCheckedLabel(domain),
           },
-          { key: 'record', label: 'DNS record', render: (domain) => ssoRecordCell(domain) },
+          { key: 'record', label: 'DNS record', wrap: true, render: (domain) => ssoRecordCell(domain) },
         ],
         // The demo refuses both (issue 931), so neither is offered as if it worked.
         actions: (domain) => [
@@ -867,8 +884,12 @@ export const createModuleSettingsController = (
           preview.append(image)
         }
 
+        // A button-shaped label over a visually hidden file input: the upload
+        // starts the moment a file is chosen, so the browser's own "No file
+        // chosen" box had nothing to say, and it squeezed the label beside it
+        // into three lines.
         const picker = document.createElement('label')
-        picker.className = 'brand-slot-picker'
+        picker.className = 'brand-slot-picker editor-secondary'
         picker.append(stored === undefined ? 'Upload an image' : 'Replace')
         const input = document.createElement('input')
         input.type = 'file'
@@ -887,6 +908,7 @@ export const createModuleSettingsController = (
         if (stored !== undefined) {
           const remove = document.createElement('button')
           remove.type = 'button'
+          remove.className = 'editor-secondary'
           remove.textContent = 'Remove'
           remove.disabled = brandBusy
           remove.addEventListener('click', () => void discardBrandAsset(copy.segment))
@@ -1047,12 +1069,22 @@ export const createModuleSettingsController = (
    * all the non-privileged branch used to do, does not remove what is rendered
    * above them.
    */
+  const deletionRequests = createDeletionRequestsController(required<HTMLElement>('[data-module-settings-page]'), demo)
+  const retention = createRetentionController(required<HTMLElement>('[data-module-settings-page]'), demo)
+  const timeRounding = createTimeRoundingController(
+    required<HTMLElement>('[data-settings-section="time"]'),
+    api,
+    () => session,
+  )
+
   const clearPrivatePresentation = (): void => {
     // The previous session stops owning the page here, before anything is
     // taken off it. Whatever it still has in flight then has nowhere to paint,
     // whether or not the shell remembered to abort its signal on the way out.
     session = null
     loaded.clear()
+    retention.clear()
+    deletionRequests.clear()
     // Its controls come back with the page rather than from the finally of an
     // operation that is no longer allowed to touch anything.
     noteSubmit.disabled = false
@@ -1064,6 +1096,7 @@ export const createModuleSettingsController = (
     emailReputation.hidden = true
     timeFacts.replaceChildren()
     noteForm.hidden = true
+    timeRounding.clear()
     // The result line sits outside the form, so hiding the form leaves the
     // previous session's "Saved." or its 403 on screen under the next
     // person's notice.
@@ -1107,6 +1140,7 @@ export const createModuleSettingsController = (
         noteRequired.checked = notes.required
         noteMinimum.value = String(notes.minimum_length)
         noteForm.hidden = false
+        timeRounding.show(active, settings.time_rounding)
         timeStatus.textContent = ''
       })
     } catch (error) {
@@ -2012,6 +2046,12 @@ export const createModuleSettingsController = (
    */
   const sectionLoaders: Readonly<Record<string, (active: ActiveSession) => Promise<void>>> = {
     modules: loadModules,
+    erasure: async (active) => {
+      try { await retention.load(active); await deletionRequests.load(active) }
+      catch (error) {
+        active.presentFailure(error, () => sectionFailed('erasure', required<HTMLElement>('[data-retention-status]'), error, 'Only administrators can manage this policy.', 'The policy could not be loaded.'))
+      }
+    },
     'sign-in': loadSignInMethods,
     time: loadTimeTracking,
     email: (active) => loadEmail(active.identity, active),

@@ -1,6 +1,7 @@
+import { ACCOUNT_PRIVACY_FRAMEWORKS } from '@ezacto/core';
 import { paymentRunOperations, paymentRunSchemas } from './payment-run-contract.js'
 import { staffPaymentOperations, staffPaymentSchemas } from './staff-payment-contract.js';
-import { commercialTermFields, DETAILED_TIME_PDF_ROW_LIMIT, maximumBulkApprovalSelections } from "@ezacto/core";
+import { commercialTermFields, DETAILED_TIME_PDF_ROW_LIMIT, maximumBulkApprovalSelections, timeRoundingIncrements, timeRoundingModes } from "@ezacto/core";
 import {
   attachmentContractOperations,
   attachmentContractSchemas,
@@ -376,6 +377,47 @@ const timeEntryOperations: ApiContractOperation[] = [
     responseStatus: 200,
     responseSchema: "TimeEntryNoteSettingsEnvelope",
     requestSchema: "TimeEntryNoteSettingsPatch",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+  {
+    method: "patch",
+    path: "/api/v1/time-entry-rounding-settings",
+    operationId: "updateTimeEntryRoundingSettings",
+    summary: "Update the organization's time rounding rule",
+    description:
+      "A direction and an increment, either or both. Nothing already saved changes: the rule rounds time saved from now on, and open time is re-rounded only by `/time-rounding-recalculation`, after a preview. Executive managers and administrators only.",
+    tag: "time-entries",
+    responseStatus: 200,
+    responseSchema: "TimeRoundingEnvelope",
+    requestSchema: "TimeRoundingPatch",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+  {
+    method: "get",
+    path: "/api/v1/time-rounding-recalculation",
+    operationId: "previewTimeRoundingRecalculation",
+    summary: "Preview re-rounding open time under the current rules",
+    description:
+      "What the apply would change, writing nothing: how many open entries change, their rounded hours before and after, a breakdown by project, the date span, and what is left alone and why. Open means the same as for a single edit: stopped, not invoiced, not approved, on an unlocked date, under an active client, project and task. The `fingerprint` names exactly this set. Executive managers and administrators only.",
+    tag: "time-entries",
+    responseStatus: 200,
+    responseSchema: "TimeRoundingRecalculationPreviewEnvelope",
+    parameters: [query("project_id", integerSchema), query("from", dateSchema), query("to", dateSchema)],
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/time-rounding-recalculation",
+    operationId: "applyTimeRoundingRecalculation",
+    summary: "Re-round open time under the current rules",
+    description:
+      "Applies the preview whose `fingerprint` is sent, for the same scope. If anything has changed since that preview, nothing is written and the answer is 409 `preview_stale`. Executive managers and administrators only.",
+    tag: "time-entries",
+    responseStatus: 200,
+    responseSchema: "TimeRoundingRecalculationAppliedEnvelope",
+    requestSchema: "TimeRoundingRecalculationRequest",
     requestRequired: true,
     sessionOnly: true,
   },
@@ -1140,6 +1182,29 @@ const moduleSettingsOperations: ApiContractOperation[] = [
 
 // Issue 761. Which ways in the instance offers, as an administrator setting
 // rather than three separate deploy secrets.
+const accountDeletionOperations: ApiContractOperation[] = [
+  { method: "post", path: "/account-deletion/requests/:id/status", operationId: "readAccountDeletionTrackingStatus", summary: "Read minimal deletion status with its private tracking capability", tag: "profile", public: true, responseStatus: 200, responseSchema: "AccountDeletionTrackingEnvelope", requestSchema: "AccountDeletionTrackingInput", requestRequired: true, parameters: [stringPath("id")] },
+
+  { method:"get",path:"/api/v1/admin/retention-reviews",operationId:"listDueRetentionReviews",summary:"List due retained-record and downstream review obligations",tag:"admin-modules",responseStatus:200,responseSchema:"RetentionReviewListEnvelope",sessionOnly:true,parameters:[{name:"after",location:"query",required:false,schema:{type:"string"}}] },
+  { method:"get",path:"/api/v1/admin/deletion-requests/:id/retention-reviews",operationId:"readRetentionReviews",summary:"Read recorded retention and cleanup evidence",tag:"admin-modules",responseStatus:200,responseSchema:"RetentionReviewListEnvelope",sessionOnly:true,parameters:[stringPath("id")] },
+  { method:"patch",path:"/api/v1/admin/deletion-requests/:id/retention-reviews/:area",operationId:"recordRetentionReview",summary:"Record an operator review with evidence and compare-and-swap",tag:"admin-modules",responseStatus:200,responseSchema:"RetentionReviewEnvelope",sessionOnly:true,parameters:[stringPath("id"),stringPath("area")],requestSchema:"RetentionReviewInput",requestRequired:true },
+  { method:"post",path:"/api/v1/admin/deletion-requests/:id/completion",operationId:"completeReviewedDeletionRequest",summary:"Confirm a reviewed request outcome with remaining retention disclosed",tag:"admin-modules",responseStatus:200,responseSchema:"DeletionCompletionEnvelope",sessionOnly:true,parameters:[stringPath("id")],requestSchema:"DeletionCompletionInput",requestRequired:true },
+  { method: "get", path: "/api/v1/admin/deletion-requests/:id/closure", operationId: "previewAccountClosure", summary: "Review actual account data before irreversible access closure", tag: "admin-modules", responseStatus: 200, responseSchema: "AccountClosurePreviewEnvelope", sessionOnly: true, parameters: [stringPath("id")] },
+  { method: "post", path: "/api/v1/admin/deletion-requests/:id/closure", operationId: "closeAccountAccess", summary: "Erase local credentials and optional profile under reviewed retention decisions", tag: "admin-modules", responseStatus: 200, responseSchema: "AccountClosureRecordEnvelope", sessionOnly: true, parameters: [stringPath("id")], requestSchema: "AccountClosureInput", requestRequired: true },
+  { method: "post", path: "/api/v1/admin/deletion-requests/:id/apple-cleanup", operationId: "retryAccountAppleCleanup", summary: "Retry server-managed Apple cleanup after local account closure", tag: "admin-modules", responseStatus: 200, responseSchema: "AppleCleanupStatusEnvelope", sessionOnly: true, parameters: [stringPath("id")], requestSchema: "EmptyObject", requestRequired: true },
+
+  { method: "get", path: "/api/v1/profile/deletion-request", operationId: "getAccountDeletionRequest", summary: "Read your deletion request and original policy disclosure", tag: "profile", responseStatus: 200, responseSchema: "AccountDeletionStatusEnvelope" },
+  { method: "get", path: "/api/v1/admin/deletion-requests", operationId: "listAccountDeletionRequests", summary: "List account deletion requests", tag: "admin-modules", responseStatus: 200, responseSchema: "AccountDeletionListEnvelope", sessionOnly: true, parameters: [{ name: "after", location: "query", required: false, schema: { type: "string" } }] },
+  { method: "get", path: "/api/v1/admin/deletion-requests/:id", operationId: "getAccountDeletionRequestForAdmin", summary: "Read an account deletion request", tag: "admin-modules", responseStatus: 200, responseSchema: "AccountDeletionDetailEnvelope", sessionOnly: true, parameters: [stringPath("id")] },
+  { method: "patch", path: "/api/v1/admin/deletion-requests/:id", operationId: "updateAccountDeletionRequest", summary: "Update request progress without completing erasure", tag: "admin-modules", responseStatus: 200, responseSchema: "AccountDeletionDetailEnvelope", sessionOnly: true, parameters: [stringPath("id")], requestSchema: "AccountDeletionUpdate", requestRequired: true },
+  { method: "post", path: "/api/v1/admin/deletion-requests/:id/notification", operationId: "retryAccountDeletionNotification", summary: "Retry an unavailable or failed administrator notification", tag: "admin-modules", responseStatus: 200, responseSchema: "AccountDeletionDetailEnvelope", sessionOnly: true, parameters: [stringPath("id")] },
+];
+
+const accountRetentionOperations: ApiContractOperation[] = [
+  { method: "get", path: "/api/v1/profile/retention-policy", operationId: "getAccountRetentionPolicy", summary: "Read the operator's published erasure and retention disclosure", tag: "profile", responseStatus: 200, responseSchema: "AccountRetentionEnvelope", description: "Requires a staff session or a token with time_entries:read." },
+  { method: "post", path: "/api/v1/admin/retention-policy", operationId: "publishAccountRetentionPolicy", summary: "Publish an operator erasure and retention policy version", tag: "admin-modules", responseStatus: 200, responseSchema: "AccountRetentionEnvelope", requestSchema: "AccountRetentionPublication", requestRequired: true, sessionOnly: true },
+];
+
 const signInMethodOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -2470,9 +2535,30 @@ const teamOperations: ApiContractOperation[] = [
     sessionOnly: true,
     parameters: [path("id"), path("rateId"), header("Idempotency-Key")],
   },
+  {
+    // Pricing the cost of hours tracked before a person had a cost rate (#750).
+    // Rehearsal is the default: a call writes nothing unless it says `apply`.
+    // The rate and the range are always the caller's; the idempotency key names
+    // the run recorded on every reprice row it writes.
+    method: "post",
+    path: "/api/v1/team/people/:id/cost-rate-backfill",
+    operationId: "backfillTeamPersonCostRate",
+    summary: "Rehearse or apply a cost rate over hours tracked before the person had one",
+    tag: "team",
+    responseStatus: 200,
+    responseSchema: "CostRateBackfillEnvelope",
+    requestSchema: "CostRateBackfillInput",
+    requestRequired: true,
+    sessionOnly: true,
+    parameters: [path("id"), header("Idempotency-Key")],
+  },
 ];
 
 export const apiContractOperations: readonly ApiContractOperation[] = [
+  { method:"get",path:"/auth/apple/native-capabilities",operationId:"getNativeAppleCapabilities",summary:"Check explicit native Apple lifecycle protocol support",tag:"authentication",public:true,responseStatus:200,responseSchema:"NativeAppleCapabilities" },
+  { method:"post",path:"/auth/apple",operationId:"signInNativeApple",summary:"Verify origin-bound Apple lifecycle custody and native identity before sign-in",tag:"authentication",public:true,responseStatus:200,responseSchema:"NativeAppleSignInEnvelope",requestSchema:"NativeAppleSignInInput",requestRequired:true },
+  { method:"post",path:"/auth/apple/deletion-requests/:id/binding",operationId:"rebindAppleCleanup",summary:"Bind fresh cleanup-purpose Apple custody to a pending deletion request",tag:"authentication",public:true,responseStatus:204,requestSchema:"AppleLifecycleProofInput",requestRequired:true,parameters:[stringPath("id")] },
+  { method:"post",path:"/auth/apple/deletion-requests/:id/revocation",operationId:"acceptAppleRevocation",summary:"Durably accept exact request-bound Apple invalidation evidence",tag:"authentication",public:true,responseStatus:204,requestSchema:"AppleLifecycleProofInput",requestRequired:true,parameters:[stringPath("id")] },
   {
     method: "get",
     path: "/auth/oidc/:provider",
@@ -2875,11 +2961,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     requestRequired: true,
   },
   {
-    // Starting the deletion of one's own account from inside an app (App
-    // Store Guideline 5.1.1(v), Google Play's account deletion policy). A
-    // request, recorded and sent to the administrators, who decide: the
-    // account is the organization's, and nothing about it changes here.
-    // Asking again answers with the first request's time.
+    // Durable requests on current runtimes; legacy adapters retain the base envelope.
     method: "post",
     path: "/api/v1/profile/deletion-request",
     operationId: "requestAccountDeletion",
@@ -2887,6 +2969,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     tag: "profile",
     responseStatus: 202,
     responseSchema: "AccountDeletionRequestEnvelope",
+    requestSchema: "AccountDeletionSubmission",
   },
   ...generalOperations(),
   ...rateOperations(),
@@ -2901,6 +2984,8 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...reportOperations,
   ...moduleSettingsOperations,
   ...signInMethodOperations,
+  ...accountRetentionOperations,
+  ...accountDeletionOperations,
   ...backupOperations,
   ...quickBooksOperations,
   ...wiseOperations,
@@ -4584,6 +4669,70 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  CostRateBackfillInput: {
+    type: "object",
+    required: ["from", "to", "cost_rate_cents", "reason"],
+    properties: {
+      // Both ends are required: "all of history" is something somebody chooses.
+      from: dateSchema,
+      to: dateSchema,
+      // The effective rate for the whole range. Nothing in the data can say what
+      // a person cost in a past year, so it is supplied, never inferred.
+      cost_rate_cents: { type: "integer", minimum: 0 },
+      reason: { type: "string", minLength: 1, maxLength: 500 },
+      // Also restamp entries carrying a different cost rate. Absent leaves them.
+      replace_captured: booleanSchema,
+      // Absent rehearses. A run writes nothing unless it says so.
+      apply: booleanSchema,
+    },
+    additionalProperties: false,
+  },
+  CostRateBackfillPeriod: {
+    type: "object",
+    required: ["month", "entry_count", "seconds", "cost_cents"],
+    properties: {
+      month: stringSchema,
+      entry_count: { type: "integer", minimum: 0 },
+      seconds: signedIntegerSchema,
+      cost_cents: signedIntegerSchema,
+    },
+    additionalProperties: false,
+  },
+  CostRateBackfill: {
+    type: "object",
+    required: [
+      "run_id",
+      "applied",
+      "user_id",
+      "from",
+      "to",
+      "cost_rate_cents",
+      "entry_count",
+      "seconds",
+      "cost_cents",
+      "periods",
+      "captured_entry_count",
+      "running_entry_count",
+    ],
+    properties: {
+      run_id: stringSchema,
+      applied: booleanSchema,
+      user_id: integerSchema,
+      from: dateSchema,
+      to: dateSchema,
+      cost_rate_cents: { type: "integer", minimum: 0 },
+      // What the run stamps, or in a rehearsal would stamp.
+      entry_count: { type: "integer", minimum: 0 },
+      seconds: signedIntegerSchema,
+      cost_cents: signedIntegerSchema,
+      periods: { type: "array", items: reference("CostRateBackfillPeriod") },
+      // In range but left alone: already priced, or the timer is still running.
+      captured_entry_count: { type: "integer", minimum: 0 },
+      running_entry_count: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  CostRateBackfillEnvelope: envelope("CostRateBackfill"),
   TeamCommandReceipt: {
     type: "object",
     required: ["target_user_id", "version", "resource_id", "occurred_at"],
@@ -4790,8 +4939,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   TimeEntryPage: page("TimeEntry"),
   TimeEntrySettings: {
     type: "object",
-    required: ["time_entry_mode", "time_format", "clock", "week_start_day"],
+    required: ["time_entry_mode", "time_format", "clock", "week_start_day", "time_rounding"],
     properties: {
+      time_rounding: reference("TimeRounding"),
       time_entry_mode: { type: "string", enum: ["duration", "start_end"] },
       time_format: { type: "string", enum: ["decimal", "hours_minutes"] },
       clock: { type: "string", enum: ["12h", "24h"] },
@@ -4803,6 +4953,126 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   TimeEntrySettingsEnvelope: envelope("TimeEntrySettings"),
+  TimeRounding: {
+    type: "object",
+    required: ["mode", "minutes"],
+    properties: {
+      mode: { type: "string", enum: [...timeRoundingModes] },
+      minutes: { type: "integer", enum: [...timeRoundingIncrements] },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingPatch: {
+    type: "object",
+    minProperties: 1,
+    properties: {
+      mode: { type: "string", enum: [...timeRoundingModes] },
+      minutes: { type: "integer", enum: [...timeRoundingIncrements] },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingEnvelope: envelope("TimeRounding"),
+  EffectiveTimeRounding: {
+    type: "object",
+    required: ["mode", "minutes", "source"],
+    description: "The rule an entry on a project is saved under, and whose it is.",
+    properties: {
+      mode: { type: "string", enum: [...timeRoundingModes] },
+      minutes: { type: "integer", enum: [...timeRoundingIncrements] },
+      source: { type: "string", enum: ["organization", "project"] },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationScope: {
+    type: "object",
+    required: ["project_id", "from", "to"],
+    properties: {
+      project_id: nullable(integerSchema),
+      from: nullable(dateSchema),
+      to: nullable(dateSchema),
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationProject: {
+    type: "object",
+    required: [
+      "project_id",
+      "project_name",
+      "time_rounding",
+      "changed_entries",
+      "rounded_seconds_before",
+      "rounded_seconds_after",
+    ],
+    properties: {
+      project_id: integerSchema,
+      project_name: stringSchema,
+      time_rounding: reference("EffectiveTimeRounding"),
+      changed_entries: { type: "integer", minimum: 0 },
+      rounded_seconds_before: { type: "integer", minimum: 0 },
+      rounded_seconds_after: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationPreview: {
+    type: "object",
+    required: [
+      "scope",
+      "open_entries",
+      "changed_entries",
+      "rounded_seconds_before",
+      "rounded_seconds_after",
+      "earliest_spent_date",
+      "latest_spent_date",
+      "projects",
+      "kept",
+      "fingerprint",
+    ],
+    properties: {
+      scope: reference("TimeRoundingRecalculationScope"),
+      open_entries: { type: "integer", minimum: 0 },
+      changed_entries: { type: "integer", minimum: 0 },
+      rounded_seconds_before: { type: "integer", minimum: 0 },
+      rounded_seconds_after: { type: "integer", minimum: 0 },
+      earliest_spent_date: nullable(dateSchema),
+      latest_spent_date: nullable(dateSchema),
+      projects: { type: "array", items: reference("TimeRoundingRecalculationProject") },
+      kept: {
+        type: "object",
+        required: ["invoiced", "approved", "locked", "other"],
+        properties: {
+          invoiced: { type: "integer", minimum: 0 },
+          approved: { type: "integer", minimum: 0 },
+          locked: { type: "integer", minimum: 0 },
+          other: { type: "integer", minimum: 0 },
+        },
+        additionalProperties: false,
+      },
+      fingerprint: { type: "string", pattern: "^[0-9a-f]{64}$" },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationPreviewEnvelope: envelope("TimeRoundingRecalculationPreview"),
+  TimeRoundingRecalculationRequest: {
+    type: "object",
+    required: ["fingerprint"],
+    properties: {
+      project_id: integerSchema,
+      from: dateSchema,
+      to: dateSchema,
+      fingerprint: { type: "string", pattern: "^[0-9a-f]{64}$" },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationApplied: {
+    type: "object",
+    required: ["recalculated_entries", "preview"],
+    properties: {
+      recalculated_entries: { type: "integer", minimum: 0 },
+      preview: reference("TimeRoundingRecalculationPreview"),
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationAppliedEnvelope: envelope("TimeRoundingRecalculationApplied"),
   TimeEntryNoteSettings: {
     type: "object",
     required: ["required", "minimum_length"],
@@ -4827,6 +5097,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     required: ["user_id", "timezone"],
     properties: {
       user_id: integerSchema,
+      // The person's own name and primary address, for the identity card.
+      // Absent where the deployment does not compose the reader.
+      first_name: stringSchema,
+      last_name: stringSchema,
+      email: nullable(stringSchema),
       timezone: { type: "string", minLength: 1 },
       // Whether this person is copied on the invoice emails they send. Absent
       // where the deployment sends no invoice email.
@@ -4844,6 +5119,61 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   ProfileEnvelope: envelope("Profile"),
+  NativeAppleCapabilities: {type:"object",additionalProperties:false,required:["available","lifecycle_version"],properties:{available:booleanSchema,lifecycle_version:{type:"integer",const:1}}},
+  NativeAppleSignInInput: {type:"object",additionalProperties:false,required:["identityToken","bindingReceipt"],properties:{identityToken:{type:"string",maxLength:16384},bindingReceipt:{type:"string",maxLength:16384},fullName:{type:"object",properties:{givenName:stringSchema,familyName:stringSchema}}}},
+  NativeAppleSignInEnvelope: {type:"object",additionalProperties:false,required:["data"],properties:{data:{type:"object",required:["ok"],additionalProperties:false,properties:{ok:{type:"boolean",const:true}}}}},
+  AppleLifecycleProofInput: {type:"object",additionalProperties:false,required:["receipt"],properties:{receipt:{type:"string",maxLength:16384}}},
+  AppleCleanupStatus: {type:"string",enum:["not_linked","pending","revoked","manual_required"]},
+  AccountClosureInventoryItem: { type: "object", additionalProperties: false, required: ["location", "count", "category"], properties: { location: stringSchema, count: integerSchema, category: { type: "string", enum: ["time_and_worker_attribution", "billing_and_payments", "audit_and_security", "legal_hold"] } } },
+  AccountClosureRecord: { type: "object", additionalProperties: false, required: ["request_id", "user_id", "actor_user_id", "closed_at", "policy_version", "policy_snapshot", "inventory", "retained_identity", "apple_cleanup"], properties: { request_id: stringSchema, user_id: integerSchema, actor_user_id: integerSchema, closed_at: timestampSchema, policy_version: integerSchema, policy_snapshot: reference("AccountRetentionPolicy"), inventory: { type: "array", items: reference("AccountClosureInventoryItem") }, retained_identity: booleanSchema, apple_cleanup: reference("AppleCleanupStatus") } },
+  AccountClosurePreview: { type: "object", additionalProperties: false, required: ["request_id", "user_id", "request_version", "review_token", "policy_version", "policy_snapshot", "inventory", "uncovered_categories", "owner_transfer_required", "running_timer", "closure"], properties: { apple_cleanup_retry_available:booleanSchema, request_id: stringSchema, user_id: integerSchema, request_version: integerSchema, review_token: { type: "string", pattern: "^[0-9a-f]{64}$" }, policy_version: nullable(integerSchema), policy_snapshot: nullable(reference("AccountRetentionPolicy")), inventory: { type: "array", items: reference("AccountClosureInventoryItem") }, uncovered_categories: { type: "array", items: { type: "string", enum: ["time_and_worker_attribution", "billing_and_payments", "audit_and_security", "legal_hold"] } }, owner_transfer_required: booleanSchema, running_timer: booleanSchema, closure: nullable(reference("AccountClosureRecord")) } },
+  EmptyObject: {type:"object",additionalProperties:false,properties:{}},
+  AppleCleanupStatusEnvelope: {type:"object",additionalProperties:false,required:["data"],properties:{data:{type:"object",additionalProperties:false,required:["apple_cleanup"],properties:{apple_cleanup:reference("AppleCleanupStatus")}}}},
+  RetentionReview: {type:"object",additionalProperties:false,required:["request_id","area","kind","original_reason","original_period","decision","basis","release_condition","evidence","next_review_at","hold_active","version","reviewed_at","actor_user_id"],properties:{request_id:stringSchema,area:stringSchema,kind:{type:"string",enum:["retained_category","downstream"]},original_reason:stringSchema,original_period:stringSchema,decision:{type:"string",enum:["pending","retain","removed","not_applicable","failed","release_hold"]},basis:stringSchema,release_condition:stringSchema,evidence:stringSchema,next_review_at:nullable(timestampSchema),hold_active:booleanSchema,version:integerSchema,reviewed_at:nullable(timestampSchema),actor_user_id:nullable(integerSchema)}},
+  RetentionReviewListEnvelope:{type:"object",required:["data"],additionalProperties:false,properties:{data:{type:"array",items:reference("RetentionReview")}}},
+  RetentionReviewEnvelope:{type:"object",required:["data"],additionalProperties:false,properties:{data:reference("RetentionReview")}},
+  RetentionReviewInput:{type:"object",additionalProperties:false,required:["expected_version","decision","basis","release_condition","evidence","next_review_at","acknowledged"],properties:{expected_version:{type:"integer",minimum:1},decision:{type:"string",enum:["retain","removed","not_applicable","failed","release_hold"]},basis:{type:"string",maxLength:2000},release_condition:{type:"string",maxLength:2000},evidence:{type:"string",maxLength:2000},next_review_at:nullable(timestampSchema),acknowledged:{type:"boolean",const:true}}},
+  DeletionCompletionInput:{type:"object",additionalProperties:false,required:["expected_request_version","expected_reviews","acknowledged"],properties:{apple_historical_manual_verified:{type:"boolean"},expected_request_version:{type:"integer",minimum:1},expected_reviews:{type:"object",additionalProperties:{type:"integer",minimum:1}},acknowledged:{type:"boolean",const:true}}},
+  DeletionCompletionEnvelope:{type:"object",additionalProperties:false,required:["data"],properties:{data:{type:"object",additionalProperties:false,required:["completed_at","confirmation"],properties:{completed_at:timestampSchema,confirmation:stringSchema}}}},
+  AccountClosureInput: { type: "object", additionalProperties: false, required: ["expected_version", "expected_policy_version", "review_token", "acknowledged"], properties: { expected_version: { type: "integer", minimum: 1 }, expected_policy_version: { type: "integer", minimum: 1 }, review_token: { type: "string", pattern: "^[0-9a-f]{64}$" }, acknowledged: { type: "boolean", const: true } } },
+  AccountClosurePreviewEnvelope: { type: "object", additionalProperties: false, required: ["data"], properties: { data: reference("AccountClosurePreview") } },
+  AccountClosureRecordEnvelope: { type: "object", additionalProperties: false, required: ["data"], properties: { data: reference("AccountClosureRecord") } },
+  AccountDeletionStatusAccess: { type: "object", required: ["token", "expires_at", "url"], additionalProperties: false, properties: { token: stringSchema, expires_at: timestampSchema, url: stringSchema } },
+  AccountDeletionTrackingInput: { type: "object", required: ["token"], additionalProperties: false, properties: { token: { type: "string", maxLength: 100 } } },
+  AccountDeletionRetainedDisclosure: { type: "object", additionalProperties: false, required: ["category", "reason", "period", "review_after_days", "review_due"], properties: { category: stringSchema, reason: stringSchema, period: stringSchema, review_after_days: integerSchema, review_due: timestampSchema } },
+  AccountDeletionClosureDisclosure: { type: "object", additionalProperties: false, required: ["retained_records", "backup_handling", "user_notice", "operator_contact"], properties: { retained_records: { type: "array", items: reference("AccountDeletionRetainedDisclosure") }, backup_handling: stringSchema, user_notice: stringSchema, operator_contact: stringSchema } },
+  AccountDeletionTrackingStatus: { type: "object", additionalProperties: false, required: ["request_id", "status", "requested_at", "expected_completion_at", "closed_at", "completed_at", "message", "completion_confirmation", "policy_version", "policy_snapshot", "policy_reviewed", "closure_disclosure", "operator_contact", "expires_at"], properties: { apple_cleanup: reference("AppleCleanupStatus"), request_id: stringSchema, status: { type: "string", enum: ["pending", "in_progress", "action_required", "completed"] }, requested_at: timestampSchema, expected_completion_at: nullable(timestampSchema), closed_at: nullable(timestampSchema), completed_at: nullable(timestampSchema), message: stringSchema, completion_confirmation: nullable(stringSchema), policy_version: nullable(integerSchema), policy_snapshot: nullable(reference("AccountRetentionPolicy")), policy_reviewed: booleanSchema, closure_disclosure: nullable(reference("AccountDeletionClosureDisclosure")), operator_contact: nullable(stringSchema), expires_at: timestampSchema } },
+  AccountDeletionTrackingEnvelope: { type: "object", additionalProperties: false, required: ["data"], properties: { data: reference("AccountDeletionTrackingStatus") } },
+  AccountDeletionSubmission: {
+    type: "object", additionalProperties: false,
+    properties: { expected_policy_version: nullable({ type: "integer", minimum: 1 }) },
+  },
+  AccountDeletionUpdate: {
+    type: "object", additionalProperties: false, required: ["expected_version", "status", "message", "expected_completion_at"],
+    properties: {
+      expected_version: { type: "integer", minimum: 1, maximum: 9007199254740990 },
+      status: { type: "string", enum: ["pending", "in_progress", "action_required"] },
+      message: { type: "string", maxLength: 5000 },
+      expected_completion_at: nullable(timestampSchema),
+    },
+  },
+  AccountDeletionRecord: {
+    type: "object", additionalProperties: false,
+    required: ["id", "user_id", "requested_at", "policy_version", "policy_snapshot", "policy_reviewed", "status", "version", "message", "response_target_at", "expected_completion_at", "completed_at", "completion_confirmation", "notification", "notification_updated_at", "notification_delivery_id", "updated_at"],
+    properties: {
+      apple_cleanup: reference("AppleCleanupStatus"),
+      id: stringSchema, user_id: integerSchema, requested_at: timestampSchema,
+      policy_version: nullable(integerSchema), policy_snapshot: nullable(reference("AccountRetentionPolicy")), policy_reviewed: booleanSchema,
+      status: { type: "string", enum: ["pending", "in_progress", "action_required", "completed"] },
+      version: integerSchema, message: stringSchema, response_target_at: nullable(timestampSchema),
+      expected_completion_at: nullable(timestampSchema), completed_at: nullable(timestampSchema), completion_confirmation: nullable(stringSchema),
+      notification: { type: "string", enum: ["pending", "sending", "queued", "failed", "unavailable"] },
+      notification_updated_at: timestampSchema, notification_delivery_id: nullable(integerSchema), updated_at: timestampSchema,
+    },
+  },
+  AccountDeletionStatusEnvelope: { type: "object", required: ["data", "links"], additionalProperties: false, properties: { data: nullable(reference("AccountDeletionRecord")), links: reference("Links") } },
+  AccountDeletionDetailEnvelope: envelope("AccountDeletionRecord"),
+  AccountDeletionListEnvelope: { type: "object", required: ["data", "links"], additionalProperties: false, properties: { data: { type: "array", items: reference("AccountDeletionRecord") }, links: reference("Links") } },
   AccountDeletionRequest: {
     type: "object",
     required: ["user_id", "requested_at"],
@@ -4854,13 +5184,15 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
-  AccountDeletionRequestEnvelope: envelope("AccountDeletionRequest"),
+  AccountDeletionRequestEnvelope: { type: "object", required: ["data", "links"], additionalProperties: false,
+    properties: { data: { anyOf: [reference("AccountDeletionRecord"), reference("AccountDeletionRequest")] }, links: reference("Links"), status_access: reference("AccountDeletionStatusAccess") } },
   TimeEntryOption: {
     type: "object",
-    required: ["project_id", "task_id", "minimum_note_length"],
+    required: ["project_id", "task_id", "minimum_note_length", "time_rounding"],
     properties: {
       project_id: integerSchema,
       task_id: integerSchema,
+      time_rounding: reference("EffectiveTimeRounding"),
       minimum_note_length: { type: "integer", minimum: 0, maximum: 10000 },
     },
     additionalProperties: false,
@@ -8366,6 +8698,41 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       links: reference("Links"),
     },
     additionalProperties: false,
+  },
+  AccountRetentionRule: {
+    type: "object", additionalProperties: false,
+    required: ["category", "reason", "period", "review_after_days"],
+    properties: {
+      category: { type: "string", enum: ["time_and_worker_attribution", "billing_and_payments", "audit_and_security", "legal_hold"] },
+      reason: { type: "string", minLength: 1, maxLength: 2000 },
+      period: { type: "string", minLength: 1, maxLength: 1000 },
+      review_after_days: { type: "integer", minimum: 1, maximum: 365 },
+    },
+  },
+  AccountRetentionPolicy: {
+    type: "object", additionalProperties: false,
+    required: ["frameworks", "retained_records", "response_target_days", "operator_contact", "user_notice", "backup_handling", "acknowledged"],
+    properties: {
+      frameworks: { type: "array", uniqueItems: true, items: { type: "string", enum: [...ACCOUNT_PRIVACY_FRAMEWORKS] } },
+      retained_records: { type: "array", maxItems: 4, items: reference("AccountRetentionRule") },
+      response_target_days: { type: "integer", minimum: 1, maximum: 90 },
+      operator_contact: { type: "string", format: "email", maxLength: 254 },
+      user_notice: { type: "string", minLength: 1, maxLength: 5000 },
+      backup_handling: { type: "string", minLength: 1, maxLength: 5000 },
+      acknowledged: { type: "boolean", enum: [true] },
+    },
+  },
+  AccountRetentionPublication: {
+    type: "object", additionalProperties: false, required: ["expected_version", "policy"],
+    properties: { expected_version: { type: "integer", minimum: 0, maximum: 9007199254740990 }, policy: reference("AccountRetentionPolicy") },
+  },
+  AccountRetentionRecord: {
+    type: "object", additionalProperties: false, required: ["version", "policy", "published_at"],
+    properties: { version: { type: "integer", minimum: 1 }, policy: reference("AccountRetentionPolicy"), published_at: { type: "string", format: "date-time" } },
+  },
+  AccountRetentionEnvelope: {
+    type: "object", additionalProperties: false, required: ["data", "links"],
+    properties: { data: { anyOf: [reference("AccountRetentionRecord"), { type: "null" }] }, links: reference("Links") },
   },
   SignInMethodState: {
     type: "object",

@@ -5,7 +5,7 @@ describe('commercial field policy', () => {
   it('[security #466] classifies the non-cents commercial surface explicitly', () => {
     expect(commercialTermFields).toEqual({
       clients: ['paymentTerms', 'defaultTaxPct', 'defaultTax2Pct', 'defaultDiscountPct'],
-      projects: ['billingMethod', 'billBy', 'billingCurrency'],
+      projects: ['billingMethod', 'billBy', 'billingCurrency', 'timeRoundingMode', 'timeRoundingMinutes'],
       contacts: ['invoiceRecipientStatus'],
     })
     expect(isCommercialTermField('clients', 'paymentTerms')).toBe(true)

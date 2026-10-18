@@ -1,6 +1,7 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase } from '../src/adapters.js'
+import { recordCheckoutPayment } from '../src/checkout-payments.js'
 import { executeInvoiceLifecycleCommand } from '../src/invoice-state.js'
 import { migrateContainer } from '../src/migrate.js'
 import {
@@ -289,6 +290,84 @@ describe('recording a BILL payment', () => {
     ).toEqual([
       { invoice_id: 10, amount_cents: 60_000 },
       { invoice_id: 11, amount_cents: 10_000 },
+    ])
+  })
+
+  // One payment for several invoices is how Kestrel Environmental and Nexus pay. Keyed on
+  // the payment alone, the second invoice's receipt was refused as already
+  // recorded and the invoice stayed open (prod: 1299 closed, 1302 did not).
+  const sendTwo = async (fx: Awaited<ReturnType<typeof fixture>>) => {
+    fx.sqlite.exec(`
+      INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+        VALUES (1, 'Casey', 'Ng', 'administrator', '[]', '${t(0)}', '${t(0)}');
+      INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date, state, created_at, updated_at)
+        VALUES (11, 1, '1316', 'USD', '2026-09-11', '2026-10-11', 'draft', '${t(0)}', '${t(0)}');
+      INSERT INTO invoice_line_items (invoice_id, position, kind, description, quantity, unit_price_cents, amount_cents, created_at, updated_at)
+        VALUES (11, 1, 'Service', 'Advisory', 1, 10000, 10000, '${t(0)}', '${t(0)}');
+    `)
+    for (const id of [10, 11]) {
+      await executeInvoiceLifecycleCommand(fx.orm, {
+        invoiceId: id,
+        commandId: `send-${String(id)}`,
+        command: 'send',
+        actor: { type: 'user', id: 1 },
+        authorize: async () => true,
+        expectedVersion: 0,
+        occurredAt: t(1),
+        messageId: 200 + id,
+        eventId: `sent-${String(id)}`,
+      })
+    }
+  }
+  const secondShare = { ...payment, invoiceId: 11, billInvoiceId: '00e002', amountCents: 10_000 }
+
+  it('[money] one BILL payment for two sent invoices closes both, once', async () => {
+    const fx = await fixture()
+    await sendTwo(fx)
+    for (let pass = 0; pass < 2; pass += 1) {
+      await fx.source.recordPayment(payment)
+      await fx.source.recordPayment(secondShare)
+    }
+    expect(
+      fx.sqlite.prepare('SELECT id, state, due_amount_cents FROM invoices ORDER BY id').all(),
+    ).toEqual([
+      { id: 10, state: 'paid', due_amount_cents: 0 },
+      { id: 11, state: 'paid', due_amount_cents: 0 },
+    ])
+    expect(
+      fx.sqlite
+        .prepare('SELECT invoice_id, provider_transaction_id FROM invoice_payments ORDER BY invoice_id')
+        .all(),
+    ).toEqual([
+      { invoice_id: 10, provider_transaction_id: '0rp1:00e001' },
+      { invoice_id: 11, provider_transaction_id: '0rp1:00e002' },
+    ])
+  })
+
+  it('[money] closes the share a receipt keyed on the bare payment id left open', async () => {
+    // What prod holds: the first share recorded under the payment id alone.
+    // It must not be recorded again, and the share it blocked must now land.
+    const fx = await fixture()
+    await sendTwo(fx)
+    await recordCheckoutPayment(fx.orm, {
+      invoiceId: 10,
+      provider: 'bill_com',
+      externalAccountId: 'bill',
+      accountDisplayName: 'BILL',
+      providerTransactionId: '0rp1',
+      amountCents: 60_000,
+      paidOn: '2026-09-20',
+      now: t(2),
+    })
+    await fx.source.recordPayment(payment)
+    await fx.source.recordPayment(secondShare)
+    expect(
+      fx.sqlite
+        .prepare('SELECT invoice_id, provider_transaction_id FROM invoice_payments ORDER BY invoice_id')
+        .all(),
+    ).toEqual([
+      { invoice_id: 10, provider_transaction_id: '0rp1' },
+      { invoice_id: 11, provider_transaction_id: '0rp1:00e002' },
     ])
   })
 

@@ -121,6 +121,8 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
       notes: 'notes',
       billingCurrency: 'billing_currency',
       timeEntryNotesMinimumLength: 'time_entry_notes_minimum_length',
+      timeRoundingMode: 'time_rounding_mode',
+      timeRoundingMinutes: 'time_rounding_minutes',
     },
     booleans: new Set([
       'isActive',
@@ -243,16 +245,6 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
 
 const identifier = (name: string) => sql.identifier(name)
 
-/**
- * The `search` filter, as a LIKE pattern. SQLite's LIKE is case-insensitive for
- * ASCII, which is the match a search box wants without a second column to hold
- * a folded copy. The wildcards and the escape character are escaped in the
- * value: unescaped, a search for `%` would match every row and one for `_`
- * would match every single character.
- */
-const likePattern = (value: string): string =>
-  `%${value.replace(/[\\%_]/g, (character) => `\\${character}`)}%`
-
 const isD1Client = (client: NativeClient): client is D1Database => 'batch' in client
 
 const nativeClient = (database: Database): NativeClient =>
@@ -297,7 +289,11 @@ const whereFor = (
     // to be the end of the collection -- forty tasks with two matches in them
     // is exactly the shape that breaks.
     else if (field === 'search')
-      conditions.push(sql`${identifier(column!)} LIKE ${likePattern(String(value))} ESCAPE '\\'`)
+      // A substring match, case-insensitive for ASCII as LIKE was, but not a
+      // LIKE: D1 refuses any LIKE pattern over 50 bytes ("LIKE or GLOB pattern
+      // too complex"), so a long search 500ed. `instr` has no pattern, so
+      // there is no length limit and no wildcard to escape.
+      conditions.push(sql`instr(lower(${identifier(column!)}), lower(${String(value)})) > 0`)
     else conditions.push(sql`${identifier(column!)} = ${stored}`)
   }
   if (window !== undefined) {
@@ -371,7 +367,8 @@ const translate = (error: unknown): never => {
     lower.includes('must be a valid date') ||
     lower.includes('derived') ||
     lower.includes('retain an active administrator') ||
-    lower.includes('owner cannot be deactivated')
+    lower.includes('owner cannot be deactivated') ||
+    lower.includes('time rounding must be')
   ) {
     throw new GeneralResourceError('invalid_input', message)
   }

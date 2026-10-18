@@ -1,4 +1,5 @@
 import { createStaffPaymentsController } from '../staff-payments/browser.js'
+import { mountPasswordRecovery, takePasswordResetLink } from './password-recovery.js'
 import {
   EzactoApiError,
   type GeneralResource,
@@ -57,10 +58,14 @@ import {
   type MoneyDisplay,
 } from '../money-display.js'
 import {
+  billsAsText,
   contextLabel,
+  projectTimeRounding,
+  roundingWithSource,
   formatTimeForClock,
   modeForEntryDraft,
   parseTimeForClock,
+  secondsBetweenTimes,
   type EntryEditorContext,
   type TimeEntryMode,
 } from '../components/time-entry-editor.js'
@@ -150,6 +155,8 @@ import {
   type ShellSnapshot,
   TimeEntryNoteValidationError,
 } from './model.js'
+import { shellPendingWrites, type PendingWrites } from './net.js'
+import { bindWriteStatus } from './write-status.js'
 
 type GridView = 'desktop' | 'phone'
 
@@ -299,7 +306,7 @@ const setActiveTimeFormat = (format: 'decimal' | 'hours_minutes'): void => {
 }
 
 /**
- * Every total on this screen — row, tfoot, week, day strip, timer chip — reads
+ * Every total on this screen — row, tfoot, week, day strip — reads
  * beside a cell rendered from the same seconds, so it renders through the same
  * function the cell does rather than a second one that rounded differently.
  * Unlike `formatCellHours` a total of zero still prints: an empty cell means
@@ -786,14 +793,7 @@ const rowStopButton = (entryId: number, label: string, className: string, handle
   return button
 }
 
-/**
- * `today` is the day the server files a timer on -- the operator's zone, then
- * the organization's -- not the browser's clock. The column marked today and
- * the cell a row's Start aims at are the same date, so they take it from the
- * same place: marked from one clock and started from another, the highlighted
- * column would stay empty while the timer landed a day over.
- */
-const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string): void => {
+const renderGridHead = (dates: readonly string[], today: string): void => {
   const head = required<HTMLTableSectionElement>('[data-week-grid-head]')
   const heading = document.createElement('tr')
   const projectHeading = document.createElement('th')
@@ -803,7 +803,7 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
   // Which column is today is the first thing you look for in a week grid, and
   // nothing said. The cells carry it too, so the marker runs the column's
   // height rather than sitting only in its header.
-  for (const date of grid.dates) {
+  for (const date of dates) {
     const th = document.createElement('th')
     th.scope = 'col'
     const [weekday, day] = dayHeadingParts(date)
@@ -822,6 +822,17 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
   totalHeading.textContent = 'Total'
   heading.append(totalHeading)
   head.replaceChildren(heading)
+}
+
+/**
+ * `today` is the day the server files a timer on -- the operator's zone, then
+ * the organization's -- not the browser's clock. The column marked today and
+ * the cell a row's Start aims at are the same date, so they take it from the
+ * same place: marked from one clock and started from another, the highlighted
+ * column would stay empty while the timer landed a day over.
+ */
+const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string): void => {
+  renderGridHead(grid.dates, today)
 
   const body = required<HTMLTableSectionElement>('[data-week-grid-rows]')
   if (grid.rows.length === 0) {
@@ -1093,6 +1104,11 @@ const renderPhoneDay = (grid: WeekGrid, selectedDay: number, handlers: GridHandl
 
 let timerInterval: ReturnType<typeof globalThis.setInterval> | undefined
 
+// Whole minutes elapsed, floored: a clock never reads ahead of the time passed,
+// and 20m32s is 0:20 on the app.
+const clockElapsed = (seconds: number): string =>
+  formatDuration(Math.floor(seconds / 60) * 60, 'hours_minutes')
+
 const renderTimer = (running: DisplayTimeEntry | null): void => {
   const chip = required<HTMLButtonElement>('[data-timer-chip]')
   const label = required<HTMLElement>('[data-timer-label]')
@@ -1101,16 +1117,16 @@ const renderTimer = (running: DisplayTimeEntry | null): void => {
   if (running === null) {
     chip.dataset.state = 'stopped'
     label.textContent = 'Start timer'
-    // The idle placeholder sits in the same column of numbers as the totals, so
-    // it follows the setting too: a hardcoded 0:00 beside a 2.25 row total is
-    // the same mismatch, just at zero.
-    elapsed.textContent = formatSeconds(0)
+    elapsed.textContent = formatDuration(0, 'hours_minutes')
     return
   }
   chip.dataset.state = 'running'
   label.textContent = `${running.project_label} / ${running.task_label}`
   const update = (): void => {
-    elapsed.textContent = formatSeconds(runningElapsedSeconds(running))
+    // A running clock reads as a clock on every client, whatever the
+    // organization's time format: 0.3422 ticking up is unreadable and looks
+    // like the app and the web disagree (issue 1003). Totals still follow it.
+    elapsed.textContent = clockElapsed(runningElapsedSeconds(running))
   }
   update()
   timerInterval = globalThis.setInterval(update, 1_000)
@@ -1267,7 +1283,17 @@ const collectResources = async (
   return resources
 }
 
-export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Promise<void> => {
+export const mountShell = async (
+  api: ShellApi = createSameOriginShellApi(),
+  writes: PendingWrites = shellPendingWrites,
+): Promise<void> => {
+  const resetLink = takePasswordResetLink()
+  // Bind before sign-in so its retry status is visible (issue 953).
+  bindWriteStatus(
+    required<HTMLElement>('[data-write-status]'),
+    required<HTMLElement>('[data-write-status-message]'),
+    writes,
+  )
   const authGateway = required<HTMLElement>('[data-auth-gateway]')
   const authChecking = required<HTMLElement>('[data-auth-checking]')
   const sessionCheckOverlay = required<HTMLElement>('[data-session-check-overlay]')
@@ -1405,6 +1431,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   const entryStart = required<HTMLInputElement>('[data-entry-start]')
   const entryEnd = required<HTMLInputElement>('[data-entry-end]')
   const entryRunning = required<HTMLElement>('[data-entry-running]')
+  const entryBilling = required<HTMLElement>('[data-entry-billing]')
   const entryNoteInput = required<HTMLTextAreaElement>('[data-entry-note-input]')
   const entryNoteHint = required<HTMLElement>('[data-entry-note-hint]')
   const entryResult = required<HTMLElement>('[data-entry-result]')
@@ -1771,6 +1798,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
 
   const showSignedOutScreen = (): void => {
+    passwordRecovery?.clear()
     sessionCheckOverlay.hidden = true
     authenticatedShell.hidden = true
     authenticatedShell.inert = true
@@ -1788,6 +1816,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   }
 
   const showAuthenticatedShell = (): void => {
+    passwordRecovery?.clear()
     sessionCheckOverlay.hidden = true
     authGateway.hidden = true
     authGateway.dataset.state = 'authenticated'
@@ -1863,6 +1892,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     required<HTMLElement>('[data-current-profile]').textContent = '—'
     required<HTMLElement>('[data-timer-label]').textContent = 'Timer'
     required<HTMLElement>('[data-timer-elapsed]').textContent = '—'
+    endWeekLoading()
     required<HTMLElement>('[data-week-total]').textContent = '—'
     required<HTMLElement>('[data-week-grid-rows]').replaceChildren()
     required<HTMLElement>('[data-week-grid-totals]').replaceChildren()
@@ -1970,6 +2000,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     required<HTMLButtonElement>('[data-timer-chip]').dataset.state = 'signed-out'
     required<HTMLElement>('[data-timer-label]').textContent = 'Sign in required'
     required<HTMLElement>('[data-timer-elapsed]').textContent = '—'
+    endWeekLoading()
     weekPeriod.setRange(weekRange(within, weekStartDay))
     required<HTMLElement>('[data-week-total]').textContent = '—'
     const unavailable = document.createElement('tr')
@@ -1986,7 +2017,69 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     required<HTMLElement>('[data-day-rows]').replaceChildren(phoneUnavailable)
   }
 
+  // A week change keeps the old week's rows on screen until the new one answers,
+  // so the grid is marked busy and inert at once and swaps to placeholders only
+  // if the answer is slow: a fast one would otherwise flash a skeleton.
+  const weekLoadSkeletonDelayMs = 150
+  let weekLoadSeq = 0
+  let weekLoadTimer: ReturnType<typeof globalThis.setTimeout> | undefined
+  const setWeekBusy = (busy: boolean): void => {
+    for (const selector of ['[data-week-grid]', '[data-day-list]']) {
+      const surface = required<HTMLElement>(selector)
+      surface.setAttribute('aria-busy', String(busy))
+      surface.toggleAttribute('inert', busy)
+    }
+  }
+  const renderWeekSkeleton = (): void => {
+    const rows = Array.from({ length: 4 }, () => {
+      const row = document.createElement('tr')
+      row.className = 'grid-skeleton-row'
+      const cell = document.createElement('td')
+      cell.colSpan = 9
+      const bar = document.createElement('span')
+      bar.className = 'grid-skeleton'
+      cell.append(bar)
+      row.append(cell)
+      return row
+    })
+    required<HTMLElement>('[data-week-grid-rows]').replaceChildren(...rows)
+    required<HTMLElement>('[data-week-grid-totals]').replaceChildren()
+    const blocks = Array.from({ length: 3 }, () => {
+      const block = document.createElement('div')
+      block.className = 'grid-skeleton day-skeleton'
+      return block
+    })
+    required<HTMLElement>('[data-day-rows]').replaceChildren(...blocks)
+  }
+  const endWeekLoading = (): void => {
+    globalThis.clearTimeout(weekLoadTimer)
+    weekLoadTimer = undefined
+    setWeekBusy(false)
+  }
+  /** Returns the token of this load; only the latest token may end the state. */
+  const beginWeekLoading = (): number => {
+    const token = ++weekLoadSeq
+    globalThis.clearTimeout(weekLoadTimer)
+    setWeekBusy(true)
+    const dates = weekDates(within, weekStartDay)
+    weekPeriod.setRange({ from: dates[0]!, to: dates.at(-1)! })
+    renderGridHead(
+      dates,
+      filingDate([
+        ...(profileZone === null ? [] : [profileZone]),
+        ...(lockPolicy === null ? [] : [lockPolicy.timezone]),
+      ]),
+    )
+    required<HTMLElement>('[data-day-label]').textContent = dayLabel(dates[selectedDay]!)
+    required<HTMLElement>('[data-week-total]').textContent = '—'
+    weekLoadTimer = globalThis.setTimeout(() => {
+      if (token === weekLoadSeq) renderWeekSkeleton()
+    }, weekLoadSkeletonDelayMs)
+    return token
+  }
+
   const renderWeekLoadFailure = (): void => {
+    endWeekLoading()
     snapshot = null
     grid = null
     cellStates.clear()
@@ -2033,6 +2126,26 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     signInEmail.focus()
   }
 
+  // The identity card leads with the person's name (it read "User #1"). The
+  // profile carries it; until it answers, or where a server sends none, the
+  // role stands in, and the address shows on hover.
+  const showIdentityName = (
+    profile: { first_name?: string; last_name?: string; email?: string | null } | null,
+  ): void => {
+    const nameElement = required<HTMLElement>('[data-current-name]')
+    const fullName = [profile?.first_name, profile?.last_name]
+      .filter((part): part is string => typeof part === 'string' && part.trim() !== '')
+      .join(' ')
+    const name = fullName !== '' ? fullName : (profile?.email ?? '')
+    nameElement.textContent = name
+    nameElement.hidden = name === ''
+    const card = nameElement.closest<HTMLElement>('[data-current-identity]')
+    if (card !== null) {
+      if (typeof profile?.email === 'string' && profile.email !== '') card.title = profile.email
+      else card.removeAttribute('title')
+    }
+  }
+
   const showAuthenticated = (identity: Whoami): AuthOperation => {
     const operation = beginAuthGeneration(identity.user_id)
     clearFormState()
@@ -2047,6 +2160,10 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     currentIdentityPanel.hidden = false
     required<HTMLElement>('[data-current-user-id]').textContent = String(identity.user_id)
     required<HTMLElement>('[data-current-profile]').textContent = profileLabel(identity.profile)
+    showIdentityName(null)
+    // After this returns, so the loader below is defined; the card shows the
+    // role until the profile answers.
+    queueMicrotask(() => loadIdentityName(operation))
     for (const link of document.querySelectorAll<HTMLElement>('[data-team-nav]')) {
       link.hidden = true
     }
@@ -2600,7 +2717,12 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     const settingsStatus = document.querySelector<HTMLElement>('[data-settings-user-status]')
     if (facts === null || settingsStatus === null) return
     const rows: readonly (readonly [string, string])[] = [
-      ['Signed in as', `User #${identity.user_id}`],
+      // The name the identity card already resolved, or the id where none came.
+      [
+        'Signed in as',
+        document.querySelector<HTMLElement>('[data-current-name]')?.textContent?.trim() ||
+          `User #${identity.user_id}`,
+      ],
       ['Permission profile', profileLabel(identity.profile)],
       [
         'Sign-in method',
@@ -3515,6 +3637,8 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     lockPolicy = policy.policy
     profileZone = zone
     activeTimesheetLocks = policy.locks
+    // The latest requested week is on screen: nothing superseded gets this far.
+    endWeekLoading()
     render()
     focusCell(focus)
     return true
@@ -3563,6 +3687,18 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
         const waiting = document.createElement('small')
         waiting.dataset.projectUninvoiced = String(project.id)
         label.append(input, name, waiting)
+        // The rule these hours will be billed under (issue 949). A project
+        // record that does not carry one is not asked about it.
+        const rule =
+          snapshot === null
+            ? undefined
+            : projectTimeRounding(project, snapshot.timeEntrySettings.time_rounding)
+        if (rule !== undefined) {
+          const rounding = document.createElement('small')
+          rounding.className = 'project-rounding'
+          rounding.textContent = `Time ${roundingWithSource(rule)}`
+          label.append(rounding)
+        }
         return label
       }),
     )
@@ -4673,6 +4809,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     // can only refuse is worse than no control beside a sentence that already
     // explains itself (issue 496).
     deleteEntry.hidden = next.entry === null || running || next.entry.is_locked
+    updateEntryBilling()
     entryResult.textContent = message
     open(entryDialog)
     // A locked entry disables every field and hides both actions, so the usual
@@ -4808,7 +4945,43 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     })
   }
   required<HTMLButtonElement>('[data-timer-chip]').addEventListener('click', () => {
-    if (currentIdentity === null || snapshot === null) return
+    void openTimerEditor()
+  })
+  // The same staleness reaches the grid: a timer started elsewhere is missing
+  // from the week on screen, its cell reads empty, and the pencil there opens
+  // Add entry on a day that already holds one. Coming back to the tab reloads
+  // the week, unless something is open or being typed into.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return
+    const operation = sessionOperation()
+    if (operation === null || snapshot === null) return
+    if (document.querySelector('dialog[open]') !== null) return
+    const active = document.activeElement
+    if (
+      active instanceof HTMLInputElement ||
+      active instanceof HTMLTextAreaElement ||
+      active instanceof HTMLSelectElement
+    )
+      return
+    refresh(operation).catch((error: unknown) => {
+      handleSessionFailure(error, operation)
+    })
+  })
+  // The timer is started and stopped from the CLI, the extension and other tabs,
+  // so the snapshot this page loaded can name an entry that has since stopped
+  // (issue 1005). The modal reads the running entry from the server, never from
+  // what was true when the page loaded, and its Save note writes to that id.
+  async function openTimerEditor(): Promise<void> {
+    const operation = sessionOperation()
+    if (operation === null || snapshot === null) return
+    try {
+      if (!(await refresh(operation))) return
+    } catch (error) {
+      if (handleSessionFailure(error, operation)) return
+      setSessionStatus(messageFor(error), 'error')
+      return
+    }
+    if (snapshot === null) return
     if (snapshot.running !== null) {
       const running = snapshot.running
       configureEntryEditor({
@@ -4843,7 +5016,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       timer: true,
       minimumNoteLength: snapshot.catalog.timeEntryOptions[0]?.minimum_note_length ?? 0,
     })
-  })
+  }
   required<HTMLButtonElement>('[data-menu-trigger]').addEventListener('click', () => {
     loadProfileTimezone()
     open(menuDialog)
@@ -5329,11 +5502,49 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     configureNoteInput(entryNoteInput, entryNoteHint, option.minimum_note_length)
   }
 
+  /**
+   * What the entry on screen will bill as, under the rule of the project it is
+   * filed against (issue 949). It follows the duration or the times as they are
+   * typed, and says nothing while they do not parse: a half-typed "1h" is not
+   * an error to report, only a figure not to show yet.
+   */
+  const updateEntryBilling = (): void => {
+    const editor = activeEntry
+    entryBilling.hidden = true
+    entryBilling.textContent = ''
+    if (editor === null || snapshot === null || editor.timer || editor.entry?.is_running === true) return
+    const projectId = editorResourceId('project', entryProject.value, editor.projectId)
+    const taskId = editorResourceId('task', entryTask.value, editor.taskId)
+    const option = editorOptions().find(
+      (candidate) => candidate.project_id === projectId && candidate.task_id === taskId,
+    )
+    if (option === undefined) return
+    let seconds: number
+    try {
+      seconds =
+        editor.mode === 'duration'
+          ? parseCellSeconds(entryDurationInput.value)
+          : secondsBetweenTimes(
+              parseTimeForClock(entryStart.value, snapshot.timeEntrySettings.clock),
+              parseTimeForClock(entryEnd.value, snapshot.timeEntrySettings.clock),
+            )
+    } catch {
+      return
+    }
+    if (!Number.isSafeInteger(seconds) || seconds < 1) return
+    entryBilling.textContent = billsAsText(seconds, option.time_rounding)
+    entryBilling.hidden = false
+  }
+
   for (const control of [entryProject, entryTask]) {
     control.addEventListener('change', () => {
       entryResult.textContent = ''
       syncAssignmentNoteRule()
+      updateEntryBilling()
     })
+  }
+  for (const control of [entryDurationInput, entryStart, entryEnd]) {
+    control.addEventListener('input', updateEntryBilling)
   }
 
   for (const input of entryForm.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
@@ -5689,6 +5900,18 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   // A person's own timezone. `PATCH /profile` has existed since the timer bug
   // was fixed but nothing in the shell ever called it, so the only way to set
   // one was for an administrator to edit that person on the team page.
+  // The card's name, read once per sign-in. A failure leaves the role showing;
+  // a session that has ended is the week's to report, not this read's.
+  const loadIdentityName = (operation: AuthOperation): void => {
+    if (api.getProfile === undefined) return
+    void api
+      .getProfile(operation.signal)
+      .then((profile) => {
+        if (isSessionCurrent(operation)) showIdentityName(profile)
+      })
+      .catch(() => undefined)
+  }
+
   const loadProfileTimezone = (): void => {
     const operation = sessionOperation()
     if (operation === null || api.getProfile === undefined) return
@@ -5696,6 +5919,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
       .getProfile(operation.signal)
       .then((profile) => {
         if (!isSessionCurrent(operation)) return
+        showIdentityName(profile)
         if (document.activeElement === profileTimezone) return
         // 'UTC' is this column's "unset", not a choice: say so rather than
         // showing a zone the person never picked.
@@ -5856,6 +6080,30 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     approvalHistoryLoadMore.hidden = true
   })
 
+  const loadChangedWeek = (operation: AuthOperation): void => {
+    setSessionStatus('Loading week…', 'loading')
+    const token = beginWeekLoading()
+    void refresh(operation)
+      .then((loaded) => {
+        if (token !== weekLoadSeq) return
+        endWeekLoading()
+        if (!loaded || !isSessionCurrent(operation)) return
+        setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready')
+      })
+      .catch((error: unknown) => {
+        if (token !== weekLoadSeq) return
+        if (handleSessionFailure(error, operation)) {
+          endWeekLoading()
+          return
+        }
+        renderWeekLoadFailure()
+        setSessionStatus(
+          'Signed in, but your week could not load. Check the connection and retry.',
+          'error',
+          true,
+        )
+      })
+  }
   function moveWeekTo(nextWithin: string): void {
     const operation = sessionOperation()
     if (operation === null || operation.userId === null) return
@@ -5864,21 +6112,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     selectedDay = 0
     cellStates.clear()
     setWeekUrl(within, weekStartDay)
-    setSessionStatus('Loading week…', 'loading')
-    void refresh(operation)
-      .then((loaded) => {
-        if (!loaded || !isSessionCurrent(operation)) return
-        setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready')
-      })
-      .catch((error: unknown) => {
-        if (handleSessionFailure(error, operation)) return
-        renderWeekLoadFailure()
-        setSessionStatus(
-          'Signed in, but your week could not load. Check the connection and retry.',
-          'error',
-          true,
-        )
-      })
+    loadChangedWeek(operation)
   }
   /**
    * Kept for the callers that still think in days rather than in periods: the
@@ -5893,7 +6127,7 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     selectedDay = Math.max(0, weekDates(within, weekStartDay).indexOf(localDate()))
     cellStates.clear()
     setWeekUrl(within, weekStartDay)
-    void loadWeek(operation)
+    loadChangedWeek(operation)
   })
   const selectDay = (index: number): void => {
     if (currentIdentity === null || index < 0 || index > 6 || index === selectedDay) return
@@ -6418,13 +6652,26 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
   if (moduleSettingsPage) {
     const sections = [...document.querySelectorAll<HTMLElement>('[data-settings-section]')]
     const links = [...document.querySelectorAll<HTMLElement>('[data-settings-section-link]')]
+    const strip = document.querySelector<HTMLElement>('[data-settings-sections]')
     const unavailable = (section: HTMLElement): boolean =>
       section.hasAttribute('data-settings-unavailable')
+    // The strip is one line that scrolls sideways where the width runs out, so
+    // the segment a link opened on may start past its edge: bring it in, by
+    // the strip's own scroll alone and never the page's.
+    const keepCurrentInStrip = (): void => {
+      const link = links.find((candidate) => candidate.getAttribute('aria-current') === 'page')
+      if (strip === null || link === undefined) return
+      const bounds = strip.getBoundingClientRect()
+      const segment = link.getBoundingClientRect()
+      if (segment.left < bounds.left) strip.scrollLeft -= bounds.left - segment.left + 24
+      else if (segment.right > bounds.right) strip.scrollLeft += segment.right - bounds.right + 24
+    }
     const showSection = (): void => {
       let current = resolveSettingsSection(globalThis.location.hash)
       const chosen = sections.find((section) => section.dataset.settingsSection === current)
       if (chosen !== undefined && unavailable(chosen)) current = DEFAULT_COMPANY_SETTINGS_SECTION
       applySettingsSection(current, sections, links, unavailable)
+      keepCurrentInStrip()
     }
     showSection()
     globalThis.addEventListener('hashchange', showSection)
@@ -6549,6 +6796,15 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     })
   }
 
+  const passwordRecovery = mountPasswordRecovery({ api,
+    enter: () => { pendingChallenge = null; transitionSignedOut() },
+    leave: message => transitionSignedOut(message),
+  })
+  if (resetLink) {
+    passwordRecovery.open(resetLink)
+    return
+  }
+
   // A magic link answered by an enrolled user lands here with a challenge
   // cookie and no session. The cookie is HttpOnly, so the redirect says so with
   // a flag -- it names no credential, and the token stays out of the URL.
@@ -6558,6 +6814,25 @@ export const mountShell = async (api: ShellApi = createSameOriginShellApi()): Pr
     globalThis.history.replaceState(null, '', globalThis.location.pathname)
     openTwoFactorStep('')
     return
+  }
+
+  const appleResult = new URLSearchParams(globalThis.location.search).get('apple_sign_in')
+  if (appleResult !== null) {
+    const messages: Record<string, string> = {
+      cancelled: 'Apple sign-in was cancelled. You can try again.',
+      unavailable: 'Apple sign-in is unavailable. Please try again or use another sign-in method.',
+      invalid: 'Apple sign-in could not be verified. Please start again.',
+      denied: 'This Apple account does not have access to this workspace. Ask an administrator for an invitation.',
+      private_email: 'This private Apple email is not linked to your workspace. Use your existing sign-in method or ask an administrator for help.',
+      disabled: 'This workspace account is disabled. Ask an administrator for help.',
+      profile: 'Apple did not provide the profile information this workspace needs. Ask an administrator for help.',
+      disconnected: 'Your Apple authorization has been disconnected. Workspace records have not been deleted.',
+    }
+    const result = document.querySelector<HTMLElement>('[data-apple-sign-in-result]')
+    if (result !== null) result.textContent = messages[appleResult] ?? ''
+    const cleaned = new URL(globalThis.location.href)
+    cleaned.searchParams.delete('apple_sign_in')
+    globalThis.history.replaceState(null, '', cleaned.pathname + cleaned.search + cleaned.hash)
   }
 
   const initialOperation = currentAuthOperation(null)

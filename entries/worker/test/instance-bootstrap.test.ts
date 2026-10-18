@@ -72,6 +72,22 @@ afterEach(async () => {
 });
 
 describe("Worker operator bootstrap", () => {
+  it("[contract] dispatches private deletion tracking to services on the first request", async () => {
+    const { database, request } = await harness(false);
+    const response = await request("/account-deletion/requests/unknown/status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "unknown-request-capability" }),
+    });
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toMatchObject({
+      error: { code: "tracking_unavailable" },
+    });
+    expect(await database.prepare("SELECT count(*) AS n FROM account_closure_security").first("n")).toBe(1);
+  });
+
   it("[e2e:cli-log] seeds once, rejects mismatch, authenticates whoami, and never returns the bearer", async () => {
     const { database, request } = await harness();
     const responses: string[] = [];

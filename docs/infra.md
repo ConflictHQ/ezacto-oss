@@ -18,8 +18,9 @@ Keep the mail domain out of that list. A zone carrying MX records and a
 transactional sending subdomain should not also have an app routed at its apex —
 the two want different DNS and fail in different ways.
 
-Two deployments, and only two. Per-branch preview Workers are how an account
-grows forty of them; targets here are hosts you own and name.
+The regular deployment path has two targets. Per-branch preview Workers are
+not supported; targets here are hosts you own and name. The bounded mobile
+App Review exception is documented in [app-review-instance.md](app-review-instance.md).
 
 ## Hosting
 

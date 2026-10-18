@@ -74,10 +74,10 @@ const teamApi = (profile: Whoami['profile'] = 'administrator') => {
   )
   const listTimeEntryOptions = vi.fn(async (_signal?: AbortSignal, userId?: number) =>
     userId === 7
-      ? [{ project_id: 1, task_id: 1, minimum_note_length: 0 }]
+      ? [{ project_id: 1, task_id: 1, minimum_note_length: 0, time_rounding: { mode: 'exact' as const, minutes: 15 as const, source: 'organization' as const } }]
       : [
-          { project_id: 1, task_id: 1, minimum_note_length: 0 },
-          { project_id: 2, task_id: 2, minimum_note_length: 0 },
+          { project_id: 1, task_id: 1, minimum_note_length: 0, time_rounding: { mode: 'exact' as const, minutes: 15 as const, source: 'organization' as const } },
+          { project_id: 2, task_id: 2, minimum_note_length: 0, time_rounding: { mode: 'exact' as const, minutes: 15 as const, source: 'organization' as const } },
         ],
   )
   const createTimeEntry = vi.fn(async (input: TimeEntryInput) => {
@@ -220,10 +220,12 @@ describe("an administrator on a teammate's week (issue 917)", () => {
     await vi.waitFor(() => expect(cellValues()).toEqual(['', '', '1.5', '', '', '', '']))
 
     document.querySelector<HTMLButtonElement>('[data-timer-chip]')!.click()
-    expect(document.querySelector<HTMLDialogElement>('[data-entry-dialog]')!.open).toBe(false)
-    expect(document.querySelector('[data-session-message]')!.textContent).toBe(
-      'Go back to your own timesheet to start a timer.',
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-session-message]')!.textContent).toBe(
+        'Go back to your own timesheet to start a timer.',
+      ),
     )
+    expect(document.querySelector<HTMLDialogElement>('[data-entry-dialog]')!.open).toBe(false)
 
     const before = api.listTimeEntries.mock.calls.length
     document.querySelector<HTMLButtonElement>('[data-time-person-reset]')!.click()

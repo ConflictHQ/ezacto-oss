@@ -556,6 +556,7 @@ describe("Worker D1 runtime composition", () => {
       project_id: project.data.id,
       task_id: task.data.id,
       minimum_note_length: 3,
+      time_rounding: { mode: "exact", minutes: 15, source: "organization" },
     });
     const entry = await client.createTimeEntry({
       body: {
@@ -893,7 +894,13 @@ describe("Worker D1 runtime composition", () => {
         body: changedRetry,
       },
     );
-    expect(changedRetryResponse.status).toBe(409);
+    // The entry answers a key reused for a different request before the route
+    // sees it (#952), as the hosted router does. The upload route's own 409 for
+    // a changed command stays for callers that reach it directly.
+    expect(changedRetryResponse.status).toBe(422);
+    expect(await changedRetryResponse.json()).toMatchObject({
+      error: { code: "idempotency_key_reused" },
+    });
 
     const bytes = await client.downloadInvoiceAttachment({
       invoiceId: 1,
@@ -1290,6 +1297,142 @@ describe("cursor signing binding", () => {
       /canonical base64url/,
     );
     expect(() => parseCursorSigningKey("")).toThrow(/canonical base64url/);
+  });
+});
+
+describe("Idempotency-Key through the deployed Worker entry (#952)", () => {
+  const logTime = (key: string | null, notes: string): Promise<Response> =>
+    request("/api/v1/time-entries", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearer}`,
+        "content-type": "application/json",
+        ...(key === null ? {} : { "idempotency-key": key }),
+      },
+      body: JSON.stringify({
+        project_id: 1,
+        task_id: 1,
+        spent_date: "2026-08-29",
+        seconds: 1800,
+        notes,
+      }),
+    });
+
+  const entriesNoted = async (notes: string): Promise<number> =>
+    (await database
+      .prepare("SELECT count(*) AS n FROM time_entries WHERE notes = ?")
+      .bind(notes)
+      .first<{ n: number }>())!.n;
+
+  it("[api] creates a keyed time entry once and replays its exact answer to the retry", async () => {
+    const first = await logTime("e2e-952-once", "e2e 952 once");
+    expect(first.status).toBe(201);
+    expect(first.headers.get("idempotency-key-lifetime")).toBe("86400");
+    expect(first.headers.get("idempotent-replayed")).toBeNull();
+    const created = await first.text();
+
+    const retry = await logTime("e2e-952-once", "e2e 952 once");
+    expect(retry.status).toBe(201);
+    expect(retry.headers.get("idempotent-replayed")).toBe("true");
+    expect(retry.headers.get("x-request-id")).toBe(first.headers.get("x-request-id"));
+    expect(await retry.text()).toBe(created);
+    expect(await entriesNoted("e2e 952 once")).toBe(1);
+  });
+
+  it("[api] lands concurrent copies of one keyed write exactly once", async () => {
+    const answers = await Promise.all(
+      Array.from({ length: 3 }, () => logTime("e2e-952-race", "e2e 952 race")),
+    );
+    for (const answer of answers) expect([201, 503]).toContain(answer.status);
+    expect(await entriesNoted("e2e 952 race")).toBe(1);
+    const settled = await logTime("e2e-952-race", "e2e 952 race");
+    expect(settled.status).toBe(201);
+    expect(settled.headers.get("idempotent-replayed")).toBe("true");
+    expect(await entriesNoted("e2e 952 race")).toBe(1);
+  });
+
+  it("[security] holds a key to the request it first carried", async () => {
+    expect((await logTime("e2e-952-bound", "e2e 952 bound")).status).toBe(201);
+    const reused = await logTime("e2e-952-bound", "e2e 952 something else");
+    expect(reused.status).toBe(422);
+    expect(await reused.json()).toMatchObject({
+      error: { code: "idempotency_key_reused" },
+    });
+    expect(await entriesNoted("e2e 952 something else")).toBe(0);
+  });
+
+  it("[api] runs a write refused before it changed anything again under the token signed in afresh", async () => {
+    // A token without the write scope: authentication records its last use,
+    // and the route refuses. That write is authentication's, not the
+    // request's, so it must not claim the key and turn the refusal into
+    // "already done" for the retry.
+    const tokens = createApiTokenStore(createD1Database(database), {
+      now: () => timestamp,
+    });
+    const readOnly = (
+      await tokens.issue({ userId: 2, name: "Read-only #952", scopes: ["time_entries:read"] })
+    ).token;
+    const writer = (
+      await tokens.issue({
+        userId: 2,
+        name: "Writer #952",
+        scopes: ["time_entries:read", "time_entries:write"],
+      })
+    ).token;
+    const send = (token: string) =>
+      request("/api/v1/time-entries", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          "idempotency-key": "e2e-952-reauthenticated",
+        },
+        body: JSON.stringify({
+          project_id: 1,
+          task_id: 1,
+          spent_date: "2026-08-29",
+          seconds: 1800,
+          notes: "e2e 952 reauthenticated",
+        }),
+      });
+    expect((await send(readOnly)).status).toBe(403);
+    const retried = await send(writer);
+    expect(retried.status).toBe(201);
+    expect(retried.headers.get("idempotent-replayed")).toBeNull();
+    expect(await entriesNoted("e2e 952 reauthenticated")).toBe(1);
+    const replayed = await send(writer);
+    expect(replayed.headers.get("idempotent-replayed")).toBe("true");
+    // The first token's holder never sees the answer: it is told the write
+    // was done, not handed it.
+    const other = await send(readOnly);
+    expect(other.status).toBe(409);
+    expect(await entriesNoted("e2e 952 reauthenticated")).toBe(1);
+  });
+
+  it("[security] refuses an invalid key without creating anything", async () => {
+    const refused = await logTime("not a key", "e2e 952 invalid");
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({
+      error: { code: "invalid_idempotency_key" },
+    });
+    expect(await entriesNoted("e2e 952 invalid")).toBe(0);
+  });
+
+  it("[api] runs an unkeyed write every time, as before", async () => {
+    expect((await logTime(null, "e2e 952 unkeyed")).status).toBe(201);
+    expect((await logTime(null, "e2e 952 unkeyed")).status).toBe(201);
+    expect(await entriesNoted("e2e 952 unkeyed")).toBe(2);
+  });
+
+  it("[api] tells every data answer, refusals included, that keys are honoured here", async () => {
+    const read = await request("/api/v1/time-entries?per_page=1", {
+      headers: { authorization: `Bearer ${bearer}` },
+    });
+    expect(read.status).toBe(200);
+    expect(read.headers.get("idempotency-key-lifetime")).toBe("86400");
+    const refused = await request("/api/v1/time-entries");
+    expect(refused.status).toBe(401);
+    expect(refused.headers.get("idempotency-key-lifetime")).toBe("86400");
   });
 });
 

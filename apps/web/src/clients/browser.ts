@@ -493,12 +493,14 @@ export const createClientDirectoryController = (
           },
           ...(session !== null && canManageClientTerms(session.identity) ? [{
             key: 'billing',
+            fit: true,
             label: 'Billing',
             render: (project: GeneralResource) =>
               clientText(project, 'billing_method')?.replaceAll('_', ' ') ?? '—',
           }] : []),
           {
             key: 'status',
+            fit: true,
             label: 'Status',
             render: (project) => (project['is_active'] === false ? 'Archived' : 'Active'),
           },

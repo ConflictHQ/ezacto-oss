@@ -313,21 +313,25 @@ export const createEmailConfigurationController = (
         columns: [
           {
             key: 'kind',
+            fit: true,
             label: 'Template',
             render: (template) => emailTemplateKindLabel(template.kind),
           },
           {
             key: 'purpose',
+            wrap: true,
             label: 'Sent when',
             render: (template) => emailTemplateKindPurpose(template.kind),
           },
           {
             key: 'subject',
+            wrap: true,
             label: 'Subject',
             render: (template) => template.subject_template,
           },
           {
             key: 'version',
+            fit: true,
             label: 'Version',
             numeric: true,
             render: (template) => String(template.version),
@@ -378,12 +382,14 @@ export const createEmailConfigurationController = (
         columns: [
           {
             key: 'version',
+            fit: true,
             label: 'Version',
             numeric: true,
             render: (template) => String(template.version),
           },
           {
             key: 'created',
+            fit: true,
             label: 'Saved',
             render: (template) => template.created_at.slice(0, 10),
           },
@@ -397,6 +403,7 @@ export const createEmailConfigurationController = (
           },
           {
             key: 'subject',
+            wrap: true,
             label: 'Subject',
             render: (template) => template.subject_template,
           },

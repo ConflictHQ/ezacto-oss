@@ -26,6 +26,11 @@ import { resolveMailFrom } from './runtime.js'
 const INVOICES_PER_TICK = 10
 
 export const DEMO_REBUILD_CRON = '0 3 * * *'
+/**
+ * Billing runs on this cron alone. The worker also fires an hourly cron, and
+ * billing on that too started two ticks on the same backlog every hour.
+ */
+const DEMO_BILLING_CRON = '* * * * *'
 
 export interface DemoMaintenanceOutcome {
   readonly ran: 'nothing' | 'rebuild' | 'billing'
@@ -46,6 +51,7 @@ export const runDemoMaintenance = async (
   now: () => string = () => new Date().toISOString(),
 ): Promise<DemoMaintenanceOutcome> => {
   if (!demoDeployment(env)) return { ran: 'nothing' }
+  if (cron !== DEMO_REBUILD_CRON && cron !== DEMO_BILLING_CRON) return { ran: 'nothing' }
   const driver = createD1DemoResetDriver(env.DB)
   const at = now()
 

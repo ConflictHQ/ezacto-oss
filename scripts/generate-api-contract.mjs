@@ -93,7 +93,7 @@ const methodSource = (operation) => {
     ...(operation.requestSchema === undefined
       ? []
       : [
-          `body: ${operation.requestContentType === "multipart/form-data" ? "FormData" : operation.requestSchema}`,
+          `body${operation.requestRequired === true ? "" : "?"}: ${operation.requestContentType === "multipart/form-data" ? "FormData" : operation.requestSchema}`,
         ]),
     ...(query === null
       ? []

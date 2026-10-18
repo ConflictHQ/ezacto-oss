@@ -449,6 +449,60 @@ for (const [runtime, createHarness] of factories) {
       expect(await data(await harness.request(`/projects/${project.id}`))).toMatchObject(projectTerms);
     }, 30_000);
 
+    it('[949] a project rounding rule is a commercial term, set as a direction with an increment', async () => {
+      const client = await data(await harness.request('/clients', json({ name: 'Rounding client' })));
+      const create = (terms: Record<string, unknown>) =>
+        harness.request('/projects', json({ client_id: client.id, name: 'Rounded', ...terms }));
+
+      // Both or neither, and each from the vocabulary.
+      for (const bad of [
+        { time_rounding_mode: 'up' },
+        { time_rounding_minutes: 15 },
+        { time_rounding_mode: 'up', time_rounding_minutes: null },
+        { time_rounding_mode: null, time_rounding_minutes: 15 },
+        { time_rounding_mode: 'up', time_rounding_minutes: 7 },
+        { time_rounding_mode: 'sideways', time_rounding_minutes: 15 },
+        { time_rounding_mode: 'up', time_rounding_minutes: '15' },
+      ]) {
+        const refused = await create(bad);
+        expect(refused.status, JSON.stringify(bad)).toBe(422);
+      }
+      const rounded = await data(await create({ time_rounding_mode: 'up', time_rounding_minutes: 15 }));
+      expect(rounded).toMatchObject({ time_rounding_mode: 'up', time_rounding_minutes: 15 });
+      expect(await data(await create({}))).toMatchObject({ time_rounding_mode: null, time_rounding_minutes: null });
+
+      // Changing one half alone is as incomplete on an update as on a create.
+      expect((await harness.request(`/projects/${rounded.id}`, json({ time_rounding_minutes: 30 }, 'PATCH'))).status).toBe(422);
+      expect(
+        await data(
+          await harness.request(`/projects/${rounded.id}`, json({ time_rounding_mode: 'nearest', time_rounding_minutes: 30 }, 'PATCH')),
+        ),
+      ).toMatchObject({ time_rounding_mode: 'nearest', time_rounding_minutes: 30 });
+      // Back to the organization's rule.
+      expect(
+        await data(
+          await harness.request(`/projects/${rounded.id}`, json({ time_rounding_mode: null, time_rounding_minutes: null }, 'PATCH')),
+        ),
+      ).toMatchObject({ time_rounding_mode: null, time_rounding_minutes: null });
+      await harness.request(`/projects/${rounded.id}`, json({ time_rounding_mode: 'down', time_rounding_minutes: 10 }, 'PATCH'));
+
+      // Commercial authority, as billing method has it: unseen and unwritable without it.
+      await assignActingUser(harness, rounded.id as number);
+      for (const profile of ['member', 'people_admin', 'project_manager'] as const) {
+        const read = await data(await harness.request(`/projects/${rounded.id}`, asProfile(profile)));
+        expect(read, profile).not.toHaveProperty('time_rounding_mode');
+        expect(read, profile).not.toHaveProperty('time_rounding_minutes');
+        const write = await harness.request(
+          `/projects/${rounded.id}`,
+          asProfile(profile, json({ time_rounding_mode: 'exact', time_rounding_minutes: 15 }, 'PATCH')),
+        );
+        expect(write.status, profile).toBe(403);
+      }
+      expect(
+        await data(await harness.request(`/projects/${rounded.id}`, asProfile('administrator'))),
+      ).toMatchObject({ time_rounding_mode: 'down', time_rounding_minutes: 10 });
+    }, 30_000);
+
     it('[security #491] narrows the directories to a member\'s own work instead of refusing them', async () => {
       // Hiding the Clients link is not withholding the client list, and the
       // previous attempt at this (#507) proved the other half: refusing
@@ -2473,6 +2527,15 @@ for (const [runtime, createHarness] of factories) {
       expect(wildcard.data).toEqual([]);
       const blank = await harness.request("/clients?q=%20");
       expect(blank.status).toBe(422);
+
+      // Longer than the 50 bytes D1 allows a LIKE pattern, which is what a
+      // pasted timer description on the tasks box sent (EZACTO-SERVER-6).
+      const long = "Northwind Traders platform modernisation programme, phase two";
+      await data(await harness.request("/clients", json({ name: long })));
+      const found = await page(
+        await harness.request(`/clients?q=${encodeURIComponent(long.toLowerCase())}`),
+      );
+      expect(found.data.map((row) => row.name)).toEqual([long]);
     }, 20_000);
 
     it("[api] rejects unknown/non-combinable query inputs and translates DB constraints", async () => {

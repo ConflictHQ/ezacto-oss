@@ -1,3 +1,6 @@
+import type { ReminderProcessOptions } from '@ezacto/db'
+import { createRuntimeAppleWeb } from '../../worker/src/apple-web.js'
+import { createContainerAppleWebCustodyStore } from '@ezacto/db'
 import { createPaymentRunsService } from '@ezacto/db'
 import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createStaffPaymentStore } from '@ezacto/db'
@@ -26,6 +29,7 @@ import {
   createContainerSsoProvisioningDomainStore,
   createContainerTwoFactorStore,
   backfillBandClaims,
+  backfillCostRates,
   requestAccountDeletion,
   createRecurringInvoiceEngine,
   createContainerReminderScheduler,
@@ -37,6 +41,12 @@ import {
   createReportRepository,
   createModuleSettingsRepository,
   createSignInMethodRepository,
+  createAccountRetentionRepository,
+  createAccountDeletionRequestRepository,
+  createAccountClosureRepository,
+  createAccountRetentionReviewRepository,
+  createAppleLifecycleRepository,
+  createAccountDeletionStatusRepository,
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
   createTeamRepository,
@@ -93,8 +103,11 @@ import {
   setBillDelivery,
   createQuickBooksMirrorSource,
   createQuickBooksStore,
+  readUserIdentity,
   readUserTimezone,
   updateUserTimezone,
+  createContainerIdempotencyStore,
+  createIdempotentSqlite,
 } from '@ezacto/db'
 import {
   createApiSessionService,
@@ -108,6 +121,7 @@ import {
   type AttachmentRouteOptions,
   type UserPrincipal,
   invoicePaymentUrlForMail,
+  deriveIdempotencySecret,
 } from '@ezacto/api'
 import {
   configuredEmailSender,
@@ -121,6 +135,7 @@ import { SmtpMailer } from '@ezacto/mailer/smtp'
 import type {
   BandClaimBackfillPort,
   BrandAssetSurface,
+  CostRateBackfillPort,
   InstanceThemeSurface,
 } from '@ezacto/api'
 import type { AppEnv, RuntimeServices } from '../../worker/src/app.js'
@@ -227,6 +242,7 @@ export const prepareContainerDatabase = (
   database.pragma('busy_timeout = 5000')
   database.pragma('wal_autocheckpoint = 1000')
   migrateContainer(database)
+  if(database.prepare('SELECT 1 FROM account_restore_quarantine WHERE id=1 AND quarantined=1').get())throw new Error('Restored privacy evidence must be reconciled before this instance serves traffic.')
 
   assertPragma(database, 'journal_mode', 'wal')
   assertPragma(database, 'synchronous', 2)
@@ -350,13 +366,23 @@ const assertDatabasePath = async (path: string): Promise<void> => {
   }
 }
 
+export const assertNoIncompletePrivacyRestore = async (directory: string): Promise<void> => {
+  try { await lstat(resolve(directory, '.privacy-restore-incomplete')) }
+  catch(error) { if(error instanceof Error && 'code' in error && error.code==='ENOENT') return; throw error }
+  throw new Error('Incomplete physical restore: privacy evidence must be reconciled before startup')
+}
+
 export const createContainerRuntime = async (
   config: ContainerConfig,
   options: ContainerRuntimeOptions = {},
 ): Promise<ContainerRuntime> => {
   await ensureDataDirectory(config.dataDirectory)
+  await assertNoIncompletePrivacyRestore(config.dataDirectory)
   await assertDatabasePath(config.databasePath)
-  const database = new BetterSqlite3(config.databasePath, { timeout: 5_000 })
+  const handle = new BetterSqlite3(config.databasePath, { timeout: 5_000 })
+  // Every store below writes through this: in a request that carries an
+  // Idempotency-Key, each write commits with the key's claim (#952).
+  const database = createIdempotentSqlite(handle)
   let queue: ContainerEmailQueue | undefined
   let outboxScheduler: ContainerOutboxScheduler | undefined
   try {
@@ -365,8 +391,12 @@ export const createContainerRuntime = async (
 
     const drizzle = createContainerDatabase(database)
     const timesheetLockPolicy = createTimesheetLockPolicyRepository(drizzle)
+    const touch =
+      config.lastSeenIntervalMs === undefined
+        ? {}
+        : { touchIntervalMs: config.lastSeenIntervalMs }
     const sessions = createApiSessionService(
-      createContainerSessionStore(database),
+      createContainerSessionStore(database, touch),
     )
     const emailLog = createContainerEmailLogStore(database)
     const emailConfiguration = createContainerEmailConfigurationStore(database)
@@ -576,8 +606,9 @@ export const createContainerRuntime = async (
       },
       now: () => new Date().toISOString(),
     })
-    const processDueReminders = (now: string) =>
+    const processDueReminders = (now: string, options: ReminderProcessOptions = {}) =>
       reminders.processReminders({
+        ...options,
         now,
         send: async (reminder) => {
           const message = await reminderPort.prepare(reminder)
@@ -669,7 +700,7 @@ export const createContainerRuntime = async (
       bootstrap: (input) => bootstrapInstanceContainer(database, input),
       enrollOwnerPassword: (input) =>
         enrollInstanceOwnerPasswordContainer(database, input),
-      tokens: createApiTokenStore(drizzle),
+      tokens: createApiTokenStore(drizzle, touch),
       generalResources: createGeneralResourceRepository(drizzle),
       clientTree: {
         ancestors: (clientId) => listClientAncestors(drizzle, clientId),
@@ -682,6 +713,7 @@ export const createContainerRuntime = async (
       ),
       profile: {
         readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
+        readIdentity: async (userId) => await readUserIdentity(drizzle, userId),
         updateTimezone: async (userId, timezone, occurredAt) => {
           await updateUserTimezone(drizzle, userId, timezone, occurredAt)
         },
@@ -877,6 +909,11 @@ export const createContainerRuntime = async (
         backfill: (input: Parameters<BandClaimBackfillPort['backfill']>[0]) =>
           backfillBandClaims(drizzle, input),
       },
+      // #750. Carried for the same reason as the claim backfill above.
+      costRateBackfill: {
+        backfill: (input: Parameters<CostRateBackfillPort['backfill']>[0]) =>
+          backfillCostRates(drizzle, input),
+      },
       activity: {
         capture: async (request) => {
           await captureActivityEvent(drizzle, request)
@@ -885,6 +922,12 @@ export const createContainerRuntime = async (
       reports: createReportRepository(drizzle),
       moduleSettings: createModuleSettingsRepository(drizzle),
       signInMethods: createSignInMethodRepository(drizzle),
+    accountRetention: createAccountRetentionRepository(drizzle),
+    accountDeletionRequests: createAccountDeletionRequestRepository(drizzle),
+    accountClosure: createAccountClosureRepository(drizzle),
+    accountRetentionReview: createAccountRetentionReviewRepository(drizzle),
+    nativeAppleLifecycle: createAppleLifecycleRepository(drizzle),
+    accountDeletionTracking: createAccountDeletionStatusRepository(drizzle),
       organizationName,
       ssoProvisioningDomains:
         createContainerSsoProvisioningDomainStore(database),
@@ -905,6 +948,11 @@ export const createContainerRuntime = async (
       timesheetApprovals: createTimesheetApprovalRepository(drizzle),
       timesheetLockPolicy,
       cursorSigningKey: config.cursorSigningKey,
+      idempotency: {
+        // The handle itself: the store's own statements never carry a claim.
+        store: createContainerIdempotencyStore(handle),
+        secret: await deriveIdempotencySecret(config.cursorSigningKey),
+      },
       passwordAuth,
       userEmails: passwordAuth,
       sessions,
@@ -913,6 +961,7 @@ export const createContainerRuntime = async (
       senderIdentityVerifier: createSmtpSenderIdentityVerifier(config.smtp.from),
       outbox,
       identities: createContainerIdentityStore(database),
+      ...createRuntimeAppleWeb(config.appEnv, createContainerAppleWebCustodyStore(database)),
       oidcTransactions: createContainerOidcTransactionStore(database),
       oidcAppCodes: createContainerOidcAppCodeStore(database),
       // Same opt-in as portalAuth below: mounted only with a code-signing key,
@@ -966,9 +1015,9 @@ export const createContainerRuntime = async (
                 signingKey: config.portalMagicLinkSigningKey,
               }),
               sessions: createPortalSessionService(
-                createContainerContactSessionStore(database),
+                createContainerContactSessionStore(database, touch),
               ),
-              sessionStore: createContainerContactSessionStore(database),
+              sessionStore: createContainerContactSessionStore(database, touch),
             },
           }),
       attachments: {

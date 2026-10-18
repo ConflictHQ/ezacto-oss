@@ -1,5 +1,6 @@
 import { renderStaffPayments } from '../staff-payments/render.js'
-import { shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
+import { PASSWORD_MIN_CODE_POINTS, PASSWORD_MAX_CODE_POINTS } from '@ezacto/core'
+import { appleSignInIcon, googleSignInIcon, shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
 import { iconMarkup, type IconName } from '../components/icons.js'
 import { INSTANCE_THEME_STYLESHEET_PATH } from '../instance-theme.js'
 import { defaultTheme, themeManifest } from '../theme.js'
@@ -162,7 +163,7 @@ export interface AppShellOptions {
   readonly sessionCookiePresent?: boolean
 }
 
-export type SignInProvider = 'google' | 'github'
+export type SignInProvider = 'google' | 'github' | 'apple'
 
 export interface DemoSignInAccount {
   /** What the account is, e.g. "Administrator". */
@@ -378,6 +379,26 @@ const directorySections: ReadonlySet<string> = new Set(['Projects', 'Tasks', 'Cl
 const foldedSections = ['Home', 'Tasks', 'Team'] as const
 
 /**
+ * One line under each destination in the Menu's cards, so the Menu reads as a
+ * map of the product rather than a second copy of the sidebar.
+ */
+const sectionHints: Readonly<
+  Record<(typeof sections)[number] | (typeof foldedSections)[number], string>
+> = {
+  Time: 'Your week, timers and entries',
+  Approvals: 'Timesheets waiting on you',
+  Expenses: 'Receipts and reimbursements',
+  Projects: 'Budgets, tasks and progress',
+  Clients: 'Contacts and client history',
+  Invoices: 'Drafts, sent and paid',
+  Payments: 'Staff and contractor payouts',
+  Reports: 'Hours, money and exports',
+  Home: 'Today at a glance',
+  Tasks: 'The task list projects draw on',
+  Team: 'People, roles and rates',
+}
+
+/**
  * Each section's mark (the 2026-10 reskin). A collapsed sidebar is read by
  * these alone, so every section has one; the label stays in the link, hidden
  * from sight but not from a screen reader, so the link's name never changes.
@@ -416,12 +437,17 @@ const providerSignIn = (
   const links: string[] = []
   if (providers.includes('google')) {
     links.push(
-      `<a class="oidc-sign-in" data-oidc-provider="google" href="${safePath('/auth/oidc/google')}">Continue with Google</a>`,
+      `<a class="oidc-sign-in" data-oidc-provider="google" href="${safePath('/auth/oidc/google')}"><img src="${googleSignInIcon}" alt="" width="40" height="40">Continue with Google</a>`,
     )
   }
   if (providers.includes('github')) {
     links.push(
       `<a class="oidc-sign-in" data-oidc-provider="github" href="${safePath('/auth/github')}">Continue with GitHub</a>`,
+    )
+  }
+  if (providers.includes('apple')) {
+    links.push(
+      `<a class="oidc-sign-in" data-oidc-provider="apple" href="/auth/apple/start"><img src="${appleSignInIcon}" alt="" width="40" height="40">Continue with Apple</a>`,
     )
   }
   if (links.length === 0) return ''
@@ -518,7 +544,19 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const navLink = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
     `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Payments' ? ' data-staff-payments-nav hidden' : ''}${section === 'Expenses' ? ' data-expenses-nav' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${iconMarkup(sectionIcons[section])}<span class="nav-label">${section}</span></a>`
   const navigation = sections.map(navLink).join('')
-  const foldedNavigation = foldedSections.map(navLink).join('')
+  // The Menu's cards are their own component: the sidebar's links shrink to
+  // marks when it is collapsed, and the Menu must never inherit that. Same
+  // gates and same current-page mark as the links, so permissions and the
+  // command bar read them exactly as before.
+  const menuCard = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
+    navLink(section)
+      .replace('<a ', `<a class="menu-card" aria-describedby="menu-hint-${section.toLowerCase()}" `)
+      .replace(
+        `<span class="nav-label">${section}</span>`,
+        `<span class="menu-card-text"><span class="menu-card-title">${section}</span><span class="menu-card-hint" id="menu-hint-${section.toLowerCase()}" aria-hidden="true">${sectionHints[section]}</span></span>`,
+      )
+  const menuNavigation = sections.map(menuCard).join('')
+  const menuFoldedNavigation = foldedSections.map(menuCard).join('')
 
   return `<!doctype html>
 <html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="${colorScheme}"${instancePalette ? ' data-ez-palette="instance"' : ''} data-ez-nav="${navLayout}" data-ez-sidebar="${sidebar}" data-ez-time-layout="${timeLayout}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
@@ -560,6 +598,8 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
             <p>Use your account to continue to your workspace.</p>
           </div>
           ${providerSignIn(options.signInProviders ?? [], passwordSignIn)}
+          ${(options.signInProviders ?? []).includes('apple') ? `<p class="apple-authorization-note">${options.demo === true ? 'Apple opens the shared sample workspace. It does not create a workspace account or link your identity to sample data. ' : ''}The Ezacto Apple sign-in service securely retains your Apple authorization. Signing out does not revoke it. <a href="/auth/apple/disconnect">Disconnect Apple</a> to withdraw authorization; this may also affect the iPhone app and other Ezacto sites. <a href="https://ezacto.com/app-privacy.html#apple-web">Apple sign-in privacy details</a>.</p>` : ''}
+          <p class="auth-result" data-apple-sign-in-result role="status" aria-live="polite"></p>
           <div class="password-entry" data-password-entry${passwordSignIn ? '' : ' hidden'}>
             <label for="ez-sign-in-email">Email
               <input id="ez-sign-in-email" name="email" type="email" inputmode="email" autocomplete="username" required>
@@ -569,6 +609,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
             </label>
             <button class="primary-action" type="submit" data-sign-in-submit>Sign in</button>
             <p class="auth-result" data-sign-in-result role="status" aria-live="polite"></p>
+            <button class="sign-in-restart" type="button" data-password-forgot hidden>Forgot password?</button>
             ${demoCredentials(options.demoAccounts ?? [])}
           </div>
           ${passwordSignIn || (options.signInProviders ?? []).length > 0 ? '' : noSignInMethod(brand)}
@@ -586,6 +627,23 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <button class="sign-in-restart" type="button" data-two-factor-cancel>Start over</button>
           <p class="auth-result" data-two-factor-result role="status" aria-live="polite"></p>
         </form>
+        <form class="sign-in-form" data-password-request-form method="post" action="/auth/password/forgot" hidden>
+          <div class="auth-heading"><h2>Reset your password</h2><p>Enter the email address you use for this workspace.</p></div>
+          <label for="ez-password-request-email">Email<input id="ez-password-request-email" name="email" type="email" autocomplete="username" maxlength="254" required></label>
+          <button class="primary-action" type="submit">Send reset link</button>
+          <button class="sign-in-restart" type="button" data-password-recovery-back>Back to sign in</button>
+          <p class="auth-result" data-password-request-result role="status" aria-live="polite"></p>
+        </form>
+        <form class="sign-in-form" data-password-reset-form method="post" action="/auth/password/reset" hidden>
+          <div class="auth-heading"><h2>Choose your new password</h2><p>Use at least ${PASSWORD_MIN_CODE_POINTS} characters. After resetting, sign in again with your new password.</p></div>
+          <label for="ez-password-reset-password">New password<input id="ez-password-reset-password" name="password" type="password" autocomplete="new-password" maxlength="${PASSWORD_MAX_CODE_POINTS * 2}" required></label>
+          <label for="ez-password-reset-confirm">Confirm new password<input id="ez-password-reset-confirm" name="confirm" type="password" autocomplete="new-password" maxlength="${PASSWORD_MAX_CODE_POINTS * 2}" required></label>
+          <button class="primary-action" type="submit">Reset password</button>
+          <button class="sign-in-restart" type="button" data-password-recovery-restart>Request a new link</button>
+          <button class="sign-in-restart" type="button" data-password-recovery-back>Back to sign in</button>
+          <p class="auth-result" data-password-reset-result role="status" aria-live="polite"></p>
+        </form>
+        <p class="auth-result" data-password-recovery-notice role="status" aria-live="polite" hidden></p>
         <noscript>${renderEmptyState('JavaScript is required', `The ${escapeHtml(brand)} app uses JavaScript to establish and protect your session.`)}</noscript>
       </div>
       <p class="auth-build-stamp">${escapeHtml(options.environment)} · ${escapeHtml(shortRelease)}</p>
@@ -634,10 +692,12 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
       <div class="account-identity" data-current-identity hidden>
         <svg class="identity-avatar" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8.5" r="3.25"/><path d="M5.75 19a6.25 6.25 0 0 1 12.5 0"/></svg>
         <span class="identity-text">
-          <span class="visually-hidden">Signed in as </span><span class="identity-name" data-current-profile>—</span>
-          <span class="identity-meta">User #<span data-current-user-id>—</span></span>
+          <span class="visually-hidden">Signed in as </span><span class="identity-name" data-current-name hidden></span>
+          <span class="identity-meta identity-role" data-current-profile>—</span>
+          <span class="visually-hidden">User <span data-current-user-id>—</span></span>
         </span>
         <a class="identity-settings" href="/settings/user" data-settings-link>${iconMarkup('sliders')}<span class="identity-action-label">Settings</span></a>
+        ${(options.signInProviders ?? []).includes('apple') ? '<a class="identity-settings" href="/auth/apple/disconnect">Disconnect Apple</a>' : ''}
         <button type="button" class="identity-signout" data-logout>${iconMarkup('sign-out')}<span class="identity-action-label">Sign out</span></button>
         <p class="auth-result visually-hidden" data-logout-result role="status" aria-live="polite"></p>
       </div>
@@ -852,6 +912,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         <div><dt>Due</dt><dd data-invoice-detail-due-date>—</dd></div>
         <div><dt>Period</dt><dd data-invoice-detail-period>—</dd></div>
         <div><dt>Purchase order</dt><dd data-invoice-detail-purchase-order>—</dd></div>
+        <div data-invoice-rounding-fact hidden><dt>Time rounding</dt><dd><span data-invoice-detail-rounding></span> <small class="hint">The rule today. Hours already on this invoice keep the rounding they were saved with.</small></dd></div>
         <div data-invoice-quickbooks-fact hidden><dt>QuickBooks</dt><dd data-invoice-detail-quickbooks>—</dd></div>
         <div data-invoice-reminders-fact hidden><dt>Reminders</dt><dd><span data-invoice-detail-reminders>—</span> <label class="invoice-reminders-switch"><input type="checkbox" data-invoice-reminders-toggle> Send payment reminders</label></dd></div>
       </dl>
@@ -1087,6 +1148,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         <label>Start<input name="started_time" data-entry-start autocomplete="off" placeholder="9:00 AM"></label>
         <label>End<input name="ended_time" data-entry-end autocomplete="off" placeholder="5:00 PM"></label>
       </div>
+      <p class="hint" data-entry-billing aria-live="polite" hidden></p>
       <p class="hint" data-entry-running hidden>This entry is running. Stop it before changing its assignment or timing.</p>
       <label for="ez-entry-note">Note<textarea id="ez-entry-note" name="notes" data-entry-note-input data-timer-note data-note-input rows="5" maxlength="10000" aria-describedby="note-hint note-result"></textarea></label>
       <p class="hint" id="note-hint" data-entry-note-hint data-timer-note-hint data-note-hint>Optional. Up to 10,000 characters.</p>
@@ -1096,8 +1158,14 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   </dialog>
   <dialog class="menu-dialog" data-menu-dialog aria-labelledby="menu-title">
     <header><div><p class="eyebrow">Menu</p><h2 id="menu-title">Navigate</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
-    <nav aria-label="Mobile primary">${navigation}</nav>
-    <nav class="secondary-nav" data-secondary-nav aria-label="More">${foldedNavigation}</nav>
+    <section class="menu-group" aria-labelledby="menu-work-title">
+      <h3 class="menu-group-title" id="menu-work-title">Work</h3>
+      <nav class="menu-grid" aria-label="Mobile primary">${menuNavigation}</nav>
+    </section>
+    <section class="menu-group" aria-labelledby="menu-more-title">
+      <h3 class="menu-group-title" id="menu-more-title">Set up</h3>
+      <nav class="menu-grid secondary-nav" data-secondary-nav aria-label="More">${menuFoldedNavigation}</nav>
+    </section>
     <!--
       The layout switch, where the navigation is (the 2026-10 reskin). Settings
       carries the same pair beside the theme; both write one cookie.
@@ -1152,6 +1220,14 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   </dialog>
   <footer class="build-stamp">${escapeHtml(options.environment)} · ${escapeHtml(shortRelease)}</footer>
   </div>
+  <!--
+    A write that failed once and is being sent again (issue 953). Outside the
+    signed-in shell, so a sign-in being retried shows it as well.
+  -->
+  <aside class="write-status" data-write-status role="status" aria-live="polite" hidden>
+    <span class="write-status-spinner" aria-hidden="true"></span>
+    <span data-write-status-message>Saving… retrying</span>
+  </aside>
 </body>
 </html>`
 }
@@ -1160,3 +1236,30 @@ export const webAssets = {
   stylesheet: shellStylesheet,
   javascript: shellJavascript,
 } as const
+
+/** Standalone confirmation: no workspace session authorizes Apple revocation. */
+export const renderAppleDisconnect = (options: {
+  connected: boolean
+  unavailable: boolean
+  disconnected?: boolean
+  recoveryRequestId?: string
+}): string => `<!doctype html>
+<html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="light">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>Disconnect Apple — Ezacto</title>
+<link rel="stylesheet" href="/assets/ezacto.css"></head>
+<body><main class="apple-disconnect"><div class="auth-card">
+<div class="auth-heading"><p class="eyebrow">Apple authorization</p><h1>Disconnect Apple</h1></div>
+<p>Ezacto securely retains your Apple authorization in its sign-in service. Signing out of a workspace does not revoke it. <a href="https://ezacto.com/app-privacy.html#apple-web">Apple sign-in privacy details</a>.</p>
+<p>Disconnecting withdraws that authorization from Apple. It may also affect Sign in with Apple in the Ezacto iPhone app and other Ezacto sites linked to the same Apple app. Your workspace and its records are not deleted.</p>
+${options.unavailable ? '<p class="auth-result" role="alert">Apple authorization could not be checked or disconnected. No successful disconnection has been confirmed. Please try again.</p>' : ''}
+${options.disconnected === true ? '<p role="status">Your Apple authorization has been disconnected. Your workspace records have not been deleted.</p>' : options.connected ? `<form class="sign-in-form" method="post" action="/auth/apple/disconnect">
+<label class="apple-disconnect-confirm"><input type="checkbox" name="confirm" value="disconnect" required> I understand this may affect my Apple sign-in across Ezacto apps and sites.</label>
+<button class="primary-action" type="submit">Disconnect Apple</button></form>` : ''}
+${options.disconnected !== true && (!options.connected || options.unavailable) ? `<p>${options.connected ? 'The saved Apple connection could not complete disconnection.' : 'This browser does not have a verified Apple connection.'} Continue with Apple to recover access to your authorization, then return here to confirm disconnection. This does not create a workspace account or sign you in to a workspace.</p><a class="oidc-sign-in" data-oidc-provider="apple" href="/auth/apple/start?intent=disconnect${options.recoveryRequestId === undefined ? '' : '&amp;cleanup_request=' + encodeURIComponent(options.recoveryRequestId)}"><img src="${appleSignInIcon}" alt="" width="40" height="40">Continue with Apple</a>
+<form class="sign-in-form" method="get" action="/auth/apple/start">
+<input type="hidden" name="intent" value="disconnect">
+<label>Pending deletion request reference<input name="cleanup_request" value="${escapeHtml(options.recoveryRequestId ?? '')}" pattern="[A-Za-z0-9_-]{8,128}" maxlength="128" required autocomplete="off"></label>
+<p>If you have already requested account deletion, use its request reference to finish Apple cleanup for that same request.</p>
+<button type="submit">Recover this deletion request with Apple</button></form>` : ''}
+<p><a href="/">Return to Ezacto</a></p></div></main></body></html>`
