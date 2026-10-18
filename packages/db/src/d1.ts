@@ -170,6 +170,8 @@ export {
 } from './password-auth.js'
 export {
   createD1SessionStore,
+  LAST_SEEN_INTERVAL_MS,
+  lastSeenIntervalFromSeconds,
   SESSION_ABSOLUTE_TTL_MS,
   SESSION_IDLE_TTL_MS,
   type AuthenticatedSession,

@@ -389,8 +389,12 @@ export const createContainerRuntime = async (
 
     const drizzle = createContainerDatabase(database)
     const timesheetLockPolicy = createTimesheetLockPolicyRepository(drizzle)
+    const touch =
+      config.lastSeenIntervalMs === undefined
+        ? {}
+        : { touchIntervalMs: config.lastSeenIntervalMs }
     const sessions = createApiSessionService(
-      createContainerSessionStore(database),
+      createContainerSessionStore(database, touch),
     )
     const emailLog = createContainerEmailLogStore(database)
     const emailConfiguration = createContainerEmailConfigurationStore(database)
@@ -694,7 +698,7 @@ export const createContainerRuntime = async (
       bootstrap: (input) => bootstrapInstanceContainer(database, input),
       enrollOwnerPassword: (input) =>
         enrollInstanceOwnerPasswordContainer(database, input),
-      tokens: createApiTokenStore(drizzle),
+      tokens: createApiTokenStore(drizzle, touch),
       generalResources: createGeneralResourceRepository(drizzle),
       clientTree: {
         ancestors: (clientId) => listClientAncestors(drizzle, clientId),
@@ -1004,9 +1008,9 @@ export const createContainerRuntime = async (
                 signingKey: config.portalMagicLinkSigningKey,
               }),
               sessions: createPortalSessionService(
-                createContainerContactSessionStore(database),
+                createContainerContactSessionStore(database, touch),
               ),
-              sessionStore: createContainerContactSessionStore(database),
+              sessionStore: createContainerContactSessionStore(database, touch),
             },
           }),
       attachments: {

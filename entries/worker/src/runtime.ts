@@ -43,6 +43,7 @@ import {
   createD1EmailConfigurationStore,
   createD1PasswordAuthService,
   createD1SessionStore,
+  lastSeenIntervalFromSeconds,
   createD1SsoProvisioningDomainStore,
   DrizzleTrackedResourceRepository,
   getLatestBackupRuns,
@@ -641,7 +642,10 @@ export const createRuntimeServices = async (
   await ensureRuntimeDatabaseReady(database);
   const drizzle = createD1Database(database);
   const timesheetLockPolicy = createTimesheetLockPolicyRepository(drizzle);
-  const sessions = createApiSessionService(createD1SessionStore(database));
+  const touchIntervalMs = lastSeenIntervalFromSeconds(env.LAST_SEEN_INTERVAL_SECONDS);
+  const sessions = createApiSessionService(
+    createD1SessionStore(database, { touchIntervalMs }),
+  );
   const identities = createD1IdentityStore(database);
   const access = cloudflareAccessConfig(env);
   const authenticationSessions =
@@ -1017,10 +1021,10 @@ export const createRuntimeServices = async (
       enrollInstanceOwnerPasswordD1(database, input),
     // The demo hands its credentials to strangers, so a token minted there gets
     // a ceiling; everywhere else a token lives until someone revokes it.
-    tokens: createApiTokenStore(
-      drizzle,
-      demoDeployment(env) ? { maxLifetimeMs: DEMO_API_TOKEN_MAX_LIFETIME_MS } : {},
-    ),
+    tokens: createApiTokenStore(drizzle, {
+      touchIntervalMs,
+      ...(demoDeployment(env) ? { maxLifetimeMs: DEMO_API_TOKEN_MAX_LIFETIME_MS } : {}),
+    }),
     generalResources: createGeneralResourceRepository(drizzle),
     clientTree: {
       ancestors: (clientId) => listClientAncestors(drizzle, clientId),
@@ -1165,8 +1169,10 @@ export const createRuntimeServices = async (
               store: createD1MagicLinkStore(database),
               signingKey: portalMagicLinkSigningKey,
             }),
-            sessions: createPortalSessionService(createD1ContactSessionStore(database)),
-            sessionStore: createD1ContactSessionStore(database),
+            sessions: createPortalSessionService(
+              createD1ContactSessionStore(database, { touchIntervalMs }),
+            ),
+            sessionStore: createD1ContactSessionStore(database, { touchIntervalMs }),
           },
         }),
     ...(emailProvider instanceof SesMailer

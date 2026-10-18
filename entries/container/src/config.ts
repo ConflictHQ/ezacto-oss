@@ -1,4 +1,5 @@
 import { isAbsolute, normalize, resolve } from 'node:path'
+import { lastSeenIntervalFromSeconds } from '@ezacto/db'
 import type { AppEnv } from '../../worker/src/app.js'
 
 export interface ContainerConfig {
@@ -10,6 +11,12 @@ export interface ContainerConfig {
    * caller who can pick their own rate-limit bucket has no rate limit.
    */
   trustedProxyHops: number
+  /**
+   * How long a session's last-seen time, or an API token's last-used time, may
+   * age before a request writes it again (#951), from
+   * `LAST_SEEN_INTERVAL_SECONDS`. Absent is the store default, five minutes.
+   */
+  lastSeenIntervalMs?: number
   dataDirectory: string
   databasePath: string
   attachmentDirectory: string
@@ -245,6 +252,7 @@ export const readContainerConfig = (
     host: optional(environment, 'HOST', 255) ?? '0.0.0.0',
     port: port(environment.PORT),
     trustedProxyHops: trustedProxyHops(environment.TRUSTED_PROXY_HOPS),
+    lastSeenIntervalMs: lastSeenIntervalFromSeconds(environment.LAST_SEEN_INTERVAL_SECONDS),
     dataDirectory: directory,
     databasePath: `${directory}/db.sqlite`,
     attachmentDirectory: `${directory}/attachments`,

@@ -132,6 +132,23 @@ what makes the setting safe. Give container shutdown at least 30 seconds; Ezacto
 stops accepting requests, drains queued SMTP work within its budget, checkpoints
 SQLite WAL, and closes the database before exit.
 
+### How often a signed-in request writes
+
+A session remembers when it was last used, and an API token when it was last
+used, and both are recorded at most once every five minutes rather than on every
+request. Inside that interval a signed-in page view reads the database and
+writes nothing. The idle timeout is still measured from the last recorded use,
+so a session can idle out up to five minutes early, never late. To change the
+interval:
+
+```dotenv
+LAST_SEEN_INTERVAL_SECONDS=300
+```
+
+`0` records every request, as releases before #951 did. The ceiling is `3600`;
+a value Ezacto cannot read stops the container at startup and names the
+variable.
+
 Confirm the container is healthy and non-root:
 
 ```sh

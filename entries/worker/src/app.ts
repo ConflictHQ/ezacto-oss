@@ -223,6 +223,14 @@ export type WorkerEnv = AppEnv & {
   ATTACHMENTS?: R2Bucket
   API_CURSOR_SIGNING_KEY: string
   /**
+   * How many seconds a session's last-seen time, or an API token's last-used
+   * time, may age before a signed-in request writes it again (#951). Unset is
+   * 300; 0 writes on every request; at most 3600. Inside the interval an
+   * authenticated read is a read, which is what keeps page views off the
+   * database's write path.
+   */
+  LAST_SEEN_INTERVAL_SECONDS?: string
+  /**
    * Portal magic-link signing key. Absent means portal auth is off: the routes
    * hand out sessions, so an install with no key must not serve them rather
    * than serve them with a weak one.
