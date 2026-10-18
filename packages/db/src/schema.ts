@@ -1667,7 +1667,12 @@ export const invoiceLineItems = sqliteTable(
   (table) => [
     uniqueIndex('invoice_line_items_harvest_id_unique').on(table.harvestId),
     uniqueIndex('invoice_line_items_invoice_position_unique').on(table.invoiceId, table.position),
-    index('invoice_line_items_invoice_id').on(table.invoiceId),
+    index('invoice_line_items_invoice_totals').on(
+      table.invoiceId,
+      table.amountCents,
+      table.taxed,
+      table.taxed2,
+    ),
     index('invoice_line_items_project_id').on(table.projectId),
     check('invoice_line_items_position_nonnegative', sql`${table.position} >= 0`),
     check('invoice_line_items_taxed_boolean', sql`${table.taxed} in (0, 1)`),
@@ -3677,9 +3682,12 @@ export const timeEntryRateReprices = sqliteTable(
     costRateCents: integer('cost_rate_cents'),
     reason: text('reason').notNull(),
     repricedAt: text('repriced_at').notNull(),
+    runId: text('run_id'),
+    actorUserId: integer('actor_user_id').references(() => users.id, { onDelete: 'restrict' }),
   },
   (table) => [
     index('time_entry_rate_reprices_entry_id').on(table.timeEntryId, table.id),
+    index('time_entry_rate_reprices_run').on(table.runId, table.id),
     check(
       'time_entry_rate_reprices_previous_billable_nonnegative',
       sql`${table.previousBillableRateCents} is null or ${table.previousBillableRateCents} >= 0`,

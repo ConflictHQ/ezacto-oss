@@ -23929,6 +23929,90 @@
         }
       }
     },
+    "/api/v1/team/people/{id}/cost-rate-backfill": {
+      "post": {
+        "operationId": "backfillTeamPersonCostRate",
+        "summary": "Rehearse or apply a cost rate over hours tracked before the person had one",
+        "tags": [
+          "team"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CostRateBackfillEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/team/people/:id/cost-rate-backfill",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CostRateBackfillInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/clients/{id}/ancestors": {
       "get": {
         "operationId": "listClientAncestors",
@@ -29233,6 +29317,148 @@
               "billable",
               "cost"
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "CostRateBackfillInput": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "cost_rate_cents",
+          "reason"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date"
+          },
+          "to": {
+            "type": "string",
+            "format": "date"
+          },
+          "cost_rate_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "replace_captured": {
+            "type": "boolean"
+          },
+          "apply": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CostRateBackfillPeriod": {
+        "type": "object",
+        "required": [
+          "month",
+          "entry_count",
+          "seconds",
+          "cost_cents"
+        ],
+        "properties": {
+          "month": {
+            "type": "string"
+          },
+          "entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "seconds": {
+            "type": "integer"
+          },
+          "cost_cents": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CostRateBackfill": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "applied",
+          "user_id",
+          "from",
+          "to",
+          "cost_rate_cents",
+          "entry_count",
+          "seconds",
+          "cost_cents",
+          "periods",
+          "captured_entry_count",
+          "running_entry_count"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "applied": {
+            "type": "boolean"
+          },
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "from": {
+            "type": "string",
+            "format": "date"
+          },
+          "to": {
+            "type": "string",
+            "format": "date"
+          },
+          "cost_rate_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "seconds": {
+            "type": "integer"
+          },
+          "cost_cents": {
+            "type": "integer"
+          },
+          "periods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CostRateBackfillPeriod"
+            }
+          },
+          "captured_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "running_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "CostRateBackfillEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CostRateBackfill"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
           }
         },
         "additionalProperties": false

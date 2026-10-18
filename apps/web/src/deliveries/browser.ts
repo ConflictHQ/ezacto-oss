@@ -125,7 +125,7 @@ export const createDeliveriesController = (api: DeliveriesApi): DeliveriesContro
         rowKey: (row) => String(row.id),
         empty: 'No email matches this filter.',
         columns: [
-          { key: 'when', label: 'When', render: (row) => row.created_at },
+          { key: 'when', label: 'When', fit: true, render: (row) => row.created_at },
           {
             key: 'to',
             label: 'To',
@@ -146,8 +146,8 @@ export const createDeliveriesController = (api: DeliveriesApi): DeliveriesContro
             render: (row) =>
               row.subject === '' ? deliveryLabel(row.template) : row.subject,
           },
-          { key: 'status', label: 'Status', render: (row) => deliveryLabel(row.status) },
-          { key: 'attempts', label: 'Attempts', render: (row) => String(row.attempt_count) },
+          { key: 'status', label: 'Status', fit: true, render: (row) => deliveryLabel(row.status) },
+          { key: 'attempts', label: 'Attempts', fit: true, render: (row) => String(row.attempt_count) },
           {
             key: 'why',
             label: 'Why',
@@ -181,11 +181,11 @@ export const createDeliveriesController = (api: DeliveriesApi): DeliveriesContro
         rowKey: (row) => `${row.subscriber_id}:${row.event_id}`,
         empty: 'No delivery matches this filter.',
         columns: [
-          { key: 'when', label: 'When', render: (row) => row.occurred_at },
+          { key: 'when', label: 'When', fit: true, render: (row) => row.occurred_at },
           { key: 'event', label: 'Event', render: (row) => deliveryLabel(row.event_type) },
           { key: 'subscriber', label: 'Subscriber', render: (row) => row.subscriber_id },
-          { key: 'status', label: 'Status', render: (row) => deliveryLabel(row.status) },
-          { key: 'attempts', label: 'Attempts', render: (row) => String(row.attempt_count) },
+          { key: 'status', label: 'Status', fit: true, render: (row) => deliveryLabel(row.status) },
+          { key: 'attempts', label: 'Attempts', fit: true, render: (row) => String(row.attempt_count) },
           { key: 'why', label: 'Why', render: (row) => failureText(row.last_error_code, null) },
         ],
         // Only where there is something to retry. A Retry beside a delivered

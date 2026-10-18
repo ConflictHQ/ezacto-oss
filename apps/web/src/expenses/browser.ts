@@ -539,7 +539,7 @@ export const createExpenseWorkflowController = (
         groupBy: (expense) => expenseWeekLabel(expense.spent_date, weekStartDay),
         empty: 'No expenses match these filters.',
         columns: [
-          { key: 'date', label: 'Date', render: expenseDateLink },
+          { key: 'date', label: 'Date', fit: true, render: expenseDateLink },
           {
             key: 'work',
             label: 'Client / Project',
@@ -559,10 +559,11 @@ export const createExpenseWorkflowController = (
           },
           {
             key: 'billing',
+            fit: true,
             label: 'Billing',
             render: expenseBillingCell,
           },
-          { key: 'status', label: 'Status', render: expenseStatusPill },
+          { key: 'status', label: 'Status', fit: true, render: expenseStatusPill },
           {
             key: 'amount',
             label: 'Amount',

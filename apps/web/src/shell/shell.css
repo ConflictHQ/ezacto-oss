@@ -3324,6 +3324,12 @@
 .lock-policy-form button,
 .manual-lock-form button {
   min-height: 44px;
+  padding: 0 14px;
+}
+.org-timezone-form button,
+.manual-lock-form button {
+  justify-self: start;
+  align-self: start;
 }
 .lock-policy-form input:not([type='checkbox']),
 .lock-policy-form select,
@@ -3556,6 +3562,26 @@ textarea {
 }
 button {
   cursor: pointer;
+}
+/* A baseline for a button no screen has styled. Buttons here are styled per
+   screen, and a screen that sets only min-height left the browser's grey
+   default showing -- "Saved reports" beside a styled "New report". :where()
+   has no specificity, so any rule that sets its own border or background wins
+   and nothing deliberately styled changes. */
+:where(button) {
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+:where(button:hover:not(:disabled)) {
+  background: var(--ez-surface-2);
+}
+:where(select, textarea, input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'], [type='button'], [type='submit'])) {
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
 }
 button:focus-visible,
 a:focus-visible,
@@ -3864,6 +3890,15 @@ a {
   flex-wrap: wrap;
   gap: 8px;
 }
+.report-actions button {
+  min-height: 44px;
+  padding: 0 14px;
+}
+.report-actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
 .context-row h1,
 .week-surface h2,
 dialog h2,
@@ -3909,6 +3944,17 @@ dialog h2,
   box-shadow: var(--ez-shadow-primary);
   color: var(--ez-action-fg);
   font-weight: 600;
+}
+/* A screen's own button rule outranks the lone class above, so a primary button
+   inside it turned white: "Add expense", "Apply filters", "Add project", "Add
+   client". Those rules are an element or attribute plus a container class, so
+   the element and the class twice beats them. A rule that names a container and
+   this class explicitly still wins, which is how a screen picks its own. */
+button.primary-action.primary-action {
+  border-color: var(--ez-action-edge);
+  background: var(--ez-action);
+  box-shadow: var(--ez-shadow-primary);
+  color: var(--ez-action-fg);
 }
 .authenticated-shell[hidden],
 .auth-gateway[hidden],
@@ -7475,6 +7521,26 @@ dialog textarea {
 
 .data-table .is-numeric {
   text-align: right;
+}
+
+/* Numbers and short facts take their content's width and no more, so the name
+   column gets the slack. Every body cell carries max-width:0, which shares the
+   width out equally: "Storefro..." clipped beside three half-empty money
+   columns. width:1% with nowrap is the shrink-to-content idiom for a cell. */
+.data-table th.is-numeric,
+.data-table td.is-numeric,
+.data-table th.is-fit,
+.data-table td.is-fit {
+  width: 1%;
+  max-width: none;
+  overflow: visible;
+  white-space: nowrap;
+}
+.data-table tbody td.is-wrap {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 /* Grouping is a band, not an indent — the label owns the full width. */
