@@ -1257,6 +1257,40 @@ export type TimeEntryPage = {
   "page": PageMetadata;
 };
 
+export type CalendarProposal = {
+  "id": number;
+  "provider": "google" | "microsoft";
+  "calendar_id": string;
+  "event_id": string;
+  "occurrence": string;
+  "title": string;
+  "starts_at": string;
+  "ends_at": string;
+  "status": "proposed" | "accepted" | "discarded" | "cancelled";
+  "time_entry_id": number | null;
+  "decided_at": string | null;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type CalendarProposalAcceptInput = {
+  "project_id": number;
+  "task_id": number;
+  "notes"?: string | null;
+  "budgeted"?: boolean;
+};
+
+export type CalendarProposalEnvelope = {
+  "data": CalendarProposal;
+  "links": Links;
+};
+
+export type CalendarProposalPage = {
+  "data": Array<CalendarProposal>;
+  "links": PageLinks;
+  "page": PageMetadata;
+};
+
 export type TimeEntrySettings = {
   "time_rounding": TimeRounding;
   "time_entry_mode": "duration" | "start_end";
@@ -5023,6 +5057,35 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<TimeEntryEnvelope>("POST", "/api/v1/time-entries/:id/restart".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listCalendarProposals(args: { query?: { "cursor"?: string; "per_page"?: number; "from"?: string; "to"?: string; "status"?: "proposed" | "accepted" | "discarded" | "cancelled" }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<CalendarProposalPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CalendarProposalPage>("GET", "/api/v1/calendar-proposals", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async acceptCalendarProposal(args: { "id": number; body: CalendarProposalAcceptInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<CalendarProposalEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CalendarProposalEnvelope>("POST", "/api/v1/calendar-proposals/:id/accept".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async discardCalendarProposal(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<CalendarProposalEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CalendarProposalEnvelope>("POST", "/api/v1/calendar-proposals/:id/discard".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });

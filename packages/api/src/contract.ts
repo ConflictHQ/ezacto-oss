@@ -494,6 +494,52 @@ const timeEntryOperations: ApiContractOperation[] = [
   })),
 ];
 
+const calendarProposalOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/calendar-proposals",
+    operationId: "listCalendarProposals",
+    summary: "List the acting user's calendar events offered as time",
+    description:
+      "Only the acting user's own, administrators included. A proposal is a calendar event held beside the timesheet, not a time entry: it reaches no report, lock or invoice until it is accepted. `status` defaults to `proposed`, what is waiting for a decision. `from` and `to` are calendar days on the user's own calendar, both included, and filter on the day the event starts.",
+    tag: "time-entries",
+    responseStatus: 200,
+    responseSchema: "CalendarProposalPage",
+    parameters: [
+      ...pageParameters,
+      query("from", dateSchema),
+      query("to", dateSchema),
+      query("status", { type: "string", enum: ["proposed", "accepted", "discarded", "cancelled"] }),
+    ],
+  },
+  {
+    method: "post",
+    path: "/api/v1/calendar-proposals/:id/accept",
+    operationId: "acceptCalendarProposal",
+    summary: "Accept a calendar proposal as a time entry",
+    description:
+      "Creates the entry through the same path as `POST /time-entries`, so rounding, timesheet locks, approval membership, assignment and note rules all apply, and marks the proposal accepted in the same write. In a `duration` organization the entry carries the event's length and no times; in `start_end` it carries the event's times on the user's own clock, and an event that runs past local midnight is 422 `spans_days`. `notes` defaults to the event's title. The proposal's `time_entry_id` and the `Location` header name the entry. A proposal already decided is 409 `proposal_not_open`, and nothing is created.",
+    tag: "time-entries",
+    responseStatus: 201,
+    responseSchema: "CalendarProposalEnvelope",
+    requestSchema: "CalendarProposalAcceptInput",
+    requestRequired: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "post",
+    path: "/api/v1/calendar-proposals/:id/discard",
+    operationId: "discardCalendarProposal",
+    summary: "Discard a calendar proposal",
+    description:
+      "A discarded event is not offered again when the calendar is read again. A proposal already decided is 409 `proposal_not_open`.",
+    tag: "time-entries",
+    responseStatus: 200,
+    responseSchema: "CalendarProposalEnvelope",
+    parameters: [path("id")],
+  },
+];
+
 const timesheetApprovalOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -3084,6 +3130,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...generalOperations(),
   ...rateOperations(),
   ...timeEntryOperations,
+  ...calendarProposalOperations,
   ...timesheetApprovalOperations,
   ...timesheetLockPolicyOperations,
   ...expenseOperations,
@@ -5092,6 +5139,62 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   TimeEntryEnvelope: envelope("TimeEntry"),
   TimeEntryPage: page("TimeEntry"),
+  CalendarProposal: {
+    type: "object",
+    required: [
+      "id",
+      "provider",
+      "calendar_id",
+      "event_id",
+      "occurrence",
+      "title",
+      "starts_at",
+      "ends_at",
+      "status",
+      "time_entry_id",
+      "decided_at",
+      "created_at",
+      "updated_at",
+    ],
+    properties: {
+      id: integerSchema,
+      provider: { type: "string", enum: ["google", "microsoft"] },
+      calendar_id: stringSchema,
+      event_id: stringSchema,
+      occurrence: {
+        ...stringSchema,
+        description: "Tells the instances of a recurring event apart; empty otherwise.",
+      },
+      title: stringSchema,
+      starts_at: timestampSchema,
+      ends_at: timestampSchema,
+      status: { type: "string", enum: ["proposed", "accepted", "discarded", "cancelled"] },
+      time_entry_id: {
+        ...nullable(integerSchema),
+        description: "The entry an accepted proposal became; null until then.",
+      },
+      decided_at: nullable(timestampSchema),
+      created_at: timestampSchema,
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  CalendarProposalAcceptInput: {
+    type: "object",
+    required: ["project_id", "task_id"],
+    properties: {
+      project_id: integerSchema,
+      task_id: integerSchema,
+      notes: {
+        ...nullable(stringSchema),
+        description: "Defaults to the event's title.",
+      },
+      budgeted: booleanSchema,
+    },
+    additionalProperties: false,
+  },
+  CalendarProposalEnvelope: envelope("CalendarProposal"),
+  CalendarProposalPage: page("CalendarProposal"),
   TimeEntrySettings: {
     type: "object",
     required: ["time_entry_mode", "time_format", "clock", "week_start_day", "time_rounding"],

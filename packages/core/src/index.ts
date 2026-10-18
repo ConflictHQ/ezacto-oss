@@ -1,5 +1,6 @@
 export * from './api-authorization.js'
 export * from './budget-alert.js'
+export * from './calendar-proposal.js'
 export * from './commercial-terms.js'
 export * from './email-templates.js'
 export * from './email-sender-identities.js'

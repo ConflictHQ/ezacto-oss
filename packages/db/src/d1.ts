@@ -410,6 +410,7 @@ export {
   type DemoWipeSummary,
 } from './demo-reset.js'
 export { migrateD1, migrationIds } from './migrate.js'
+export { DrizzleCalendarProposalRepository } from './calendar-proposals.js'
 export {
   DrizzleTrackedResourceRepository,
   type PolicySubject,

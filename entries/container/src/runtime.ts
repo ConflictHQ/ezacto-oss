@@ -50,6 +50,7 @@ import {
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
   createTeamRepository,
+  DrizzleCalendarProposalRepository,
   DrizzleTrackedResourceRepository,
   enrollInstanceOwnerPasswordContainer,
   listClientAncestors,
@@ -403,6 +404,7 @@ export const createContainerRuntime = async (
 
     const drizzle = createContainerDatabase(database)
     const timesheetLockPolicy = createTimesheetLockPolicyRepository(drizzle)
+    const trackedResources = new DrizzleTrackedResourceRepository(drizzle, timesheetLockPolicy)
     const touch =
       config.lastSeenIntervalMs === undefined
         ? {}
@@ -770,10 +772,8 @@ export const createContainerRuntime = async (
         descendants: (clientId) => listClientDescendants(drizzle, clientId),
       },
       team: createTeamRepository(drizzle),
-      trackedResources: new DrizzleTrackedResourceRepository(
-        drizzle,
-        timesheetLockPolicy,
-      ),
+      trackedResources,
+      calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
       profile: {
         readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
         readIdentity: async (userId) => await readUserIdentity(drizzle, userId),

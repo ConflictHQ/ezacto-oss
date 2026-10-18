@@ -70,6 +70,7 @@ import {
   installAccountDeletionStatusRoutes,
   installSessionRoutes,
   installSsoDomainRoutes,
+  installCalendarProposalRoutes,
   installTrackedResourceRoutes,
   installTimesheetApprovalRoutes,
   installBackupStatusRoutes,
@@ -133,6 +134,7 @@ import {
   type ReportReader,
   type SsoProvisioningDomainService,
   type UserEmailService,
+  type CalendarProposalRepository,
   type TrackedResourceRepository,
   type ProfileRepositoryPort,
   type TimesheetApprovalService,
@@ -334,6 +336,8 @@ export interface RuntimeServices {
   clientTree: ClientTreeReader
   team: TeamRouteOptions['repository']
   trackedResources: TrackedResourceRepository
+  /** Calendar events offered as time, accepted through `trackedResources` (issue 428). */
+  calendarProposals: CalendarProposalRepository
   profile: ProfileRepositoryPort
   isExpensesModuleEnabled(): Promise<boolean>
   moduleSettings: ModuleSettingsService
@@ -701,6 +705,11 @@ export const createApp = (
               clock: systemClock,
               cursorSigningKey: services.cursorSigningKey,
               isExpensesModuleEnabled: services.isExpensesModuleEnabled,
+            })
+            installCalendarProposalRoutes(api, {
+              repository: services.calendarProposals,
+              clock: systemClock,
+              cursorSigningKey: services.cursorSigningKey,
             })
             installTimesheetApprovalRoutes(api, {
               service: services.timesheetApprovals,

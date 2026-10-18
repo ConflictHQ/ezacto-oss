@@ -3684,6 +3684,49 @@ export const timeEntries = sqliteTable(
   ],
 )
 
+/**
+ * Calendar events offered to a person as time they might have worked (issue
+ * 428). Not time entries: nothing here reaches a report, a lock or an invoice
+ * until it is accepted, which writes a real entry and links it back.
+ */
+export const calendarProposals = sqliteTable(
+  'calendar_proposals',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    provider: text('provider', { enum: ['google', 'microsoft'] }).notNull(),
+    calendarId: text('calendar_id').notNull(),
+    eventId: text('event_id').notNull(),
+    occurrence: text('occurrence').notNull().default(''),
+    title: text('title').notNull(),
+    startsAt: text('starts_at').notNull(),
+    endsAt: text('ends_at').notNull(),
+    status: text('status', { enum: ['proposed', 'accepted', 'discarded', 'cancelled'] })
+      .notNull()
+      .default('proposed'),
+    sourceVersion: text('source_version'),
+    timeEntryId: integer('time_entry_id').references(() => timeEntries.id, {
+      onDelete: 'set null',
+    }),
+    decidedAt: text('decided_at'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('calendar_proposals_event_identity').on(
+      table.userId,
+      table.provider,
+      table.eventId,
+      table.occurrence,
+    ),
+    index('calendar_proposals_user_starts').on(table.userId, table.startsAt),
+    uniqueIndex('calendar_proposals_time_entry')
+      .on(table.timeEntryId)
+      .where(sql`${table.timeEntryId} is not null`),
+  ],
+)
+
 export const timeEntryRateReprices = sqliteTable(
   'time_entry_rate_reprices',
   {
