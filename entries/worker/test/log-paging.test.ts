@@ -70,7 +70,7 @@ const setup = async () => {
     return (await response.json()) as Page
   }
   /** Every page of a traversal, following the links the server gave. */
-  const walk = async (path: string): Promise<{ pages: Page[]; ids: unknown[] }> => {
+  const walk = async (path: string): Promise<{ pages: Page[]; ids: Record<string, unknown>[] }> => {
     const pages: Page[] = []
     let next: string | null = path
     while (next !== null) {
