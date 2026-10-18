@@ -46,6 +46,7 @@ import {
   lastSeenIntervalFromSeconds,
   createD1SsoProvisioningDomainStore,
   DrizzleCalendarProposalRepository,
+  DrizzleWorkItemRepository,
   DrizzleTrackedResourceRepository,
   countBackupRuns,
   getBackupRunsSnapshot,
@@ -158,6 +159,7 @@ import {
   cloudflareAccessConfig,
   DEMO_API_TOKEN_MAX_LIFETIME_MS,
   demoDeployment,
+  workItemCredentialConfigured,
   demoMailDomains,
   type WorkerEnv,
 } from "./app.js";
@@ -1132,6 +1134,10 @@ export const createRuntimeServices = async (
     },
     trackedResources,
     calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
+    workItems: {
+      repository: new DrizzleWorkItemRepository(drizzle),
+      credentialConfigured: (provider) => workItemCredentialConfigured(env, provider),
+    },
     profile: {
       readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
       readIdentity: async (userId) => await readUserIdentity(drizzle, userId),

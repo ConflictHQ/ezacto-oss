@@ -50,6 +50,7 @@ import {
   installSsoDomainRoutes,
   installTwoFactorRoutes,
   installCalendarProposalRoutes,
+  installWorkItemRoutes,
   installTrackedResourceRoutes,
   installTeamRoutes,
   installTimesheetApprovalRoutes,
@@ -72,6 +73,7 @@ import {
   type ReportReader,
   type SsoProvisioningDomainService,
   type CalendarProposalRepository,
+  type WorkItemRepository,
   type TrackedResourceRepository,
   type UserEmailService,
   type TimesheetApprovalService,
@@ -95,6 +97,10 @@ const calendarProposals = new Proxy(
   {},
   { get: () => unavailable },
 ) as CalendarProposalRepository;
+const workItems = new Proxy(
+  {},
+  { get: () => unavailable },
+) as WorkItemRepository;
 const timesheetApprovals = new Proxy(
   {},
   { get: () => unavailable },
@@ -289,6 +295,12 @@ const documentedApp = () =>
             time: "12:00",
           }),
         },
+      });
+      installWorkItemRoutes(api, {
+        repository: workItems,
+        credentialConfigured: () => true,
+        clock: () => "2026-08-28T12:00:00.000Z",
+        cursorSigningKey: new Uint8Array(32),
       });
       installTimesheetApprovalRoutes(api, {
         service: timesheetApprovals,

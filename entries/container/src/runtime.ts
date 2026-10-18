@@ -51,6 +51,7 @@ import {
   createTimesheetLockPolicyRepository,
   createTeamRepository,
   DrizzleCalendarProposalRepository,
+  DrizzleWorkItemRepository,
   DrizzleTrackedResourceRepository,
   enrollInstanceOwnerPasswordContainer,
   listClientAncestors,
@@ -151,7 +152,7 @@ import type {
   CostRateBackfillPort,
   InstanceThemeSurface,
 } from '@ezacto/api'
-import type { AppEnv, RuntimeServices } from '../../worker/src/app.js'
+import { workItemCredentialConfigured, type AppEnv, type RuntimeServices } from '../../worker/src/app.js'
 import {
   createBillMirrorSubscriber,
   createBillRuntime,
@@ -774,6 +775,11 @@ export const createContainerRuntime = async (
       team: createTeamRepository(drizzle),
       trackedResources,
       calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
+      workItems: {
+        repository: new DrizzleWorkItemRepository(drizzle),
+        credentialConfigured: (provider) =>
+          workItemCredentialConfigured(config.appEnv, provider),
+      },
       profile: {
         readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
         readIdentity: async (userId) => await readUserIdentity(drizzle, userId),

@@ -12,6 +12,7 @@ This is the shared deployment procedure for the [operator guides](operator-guide
 | QuickBooks Online | `QUICKBOOKS_CLIENT_ID`, `QUICKBOOKS_CLIENT_SECRET`, `QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN`, `QUICKBOOKS_ENVIRONMENT` | [QuickBooks](quickbooks-setup.md) |
 | Wise | `WISE_TOKEN`, `WISE_PROFILE_ID`, `WISE_WEBHOOK_PUBLIC_KEY` | [Wise](wise-setup.md) |
 | BILL | `BILL_DEV_KEY`, `BILL_COMPANY_ID`, `BILL_USERNAME`, `BILL_PASSWORD`, optional `BILL_REPLY_TO_USER_ID`; runtime `BILL_ENVIRONMENT` | [BILL](bill-setup.md) |
+| Issue tracker links (GitHub) | `GITHUB_WORK_ITEMS_CREDENTIAL`, set directly with `wrangler secret put`; not yet in `deploy.yml`, which waits for the first slice that uses the credential (issue 1008) | Administrators connect it under `/api/v1/settings/work-item-connections`; no provider is called yet |
 | Invoice Stripe | `STRIPE_API_KEY`, `STRIPE_WEBHOOK_SECRET` | [Stripe](stripe-setup.md) |
 | Worker email / container SMTP | Transport-specific variables | [Email](email-setup.md) |
 
@@ -52,6 +53,7 @@ After deployment, sign in with the appropriate administrator/accounting privileg
 | QuickBooks | `GET /api/v1/integrations/quickbooks` | `data.configured` and the intended company/realm in `data.connection` after OAuth |
 | BILL | `GET /api/v1/integrations/bill` | Configured state, company and selected environment |
 | Wise | `GET /api/v1/integrations/wise` | Payer profile and webhook-verification configuration |
+| Issue tracker links | `GET /api/v1/settings/work-item-connections` | `credential_configured` per provider; the credential is never returned |
 | Identity methods | **Settings → Company → Ways in** | Configured and enabled state; then a real controlled login |
 | Sentry | Sentry project and CI upload result | Correct event environment/release and readable stack |
 

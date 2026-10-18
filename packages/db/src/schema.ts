@@ -3727,6 +3727,56 @@ export const calendarProposals = sqliteTable(
   ],
 )
 
+/**
+ * An issue tracker this instance has connected (issue 1008, slice 1). One row
+ * per provider: the instance is one organization. `credentialRef` names the
+ * deployment secret holding the credential and is null once disconnected.
+ */
+export const workItemConnections = sqliteTable('work_item_connections', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  provider: text('provider').notNull().unique(),
+  status: text('status', { enum: ['active', 'disconnected'] }).notNull(),
+  ownerUserId: integer('owner_user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'restrict' }),
+  credentialRef: text('credential_ref'),
+  connectedAt: text('connected_at').notNull(),
+  disconnectedAt: text('disconnected_at'),
+  ...timestamps,
+})
+
+/** A time entry or a project pointing at one tracker item. */
+export const workItemLinks = sqliteTable(
+  'work_item_links',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    connectionId: integer('connection_id')
+      .notNull()
+      .references(() => workItemConnections.id, { onDelete: 'restrict' }),
+    timeEntryId: integer('time_entry_id').references(() => timeEntries.id, {
+      onDelete: 'cascade',
+    }),
+    projectId: integer('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+    providerItemId: text('provider_item_id').notNull(),
+    url: text('url'),
+    createdBy: integer('created_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('work_item_links_entry')
+      .on(table.connectionId, table.timeEntryId)
+      .where(sql`${table.timeEntryId} is not null`),
+    uniqueIndex('work_item_links_project_item')
+      .on(table.connectionId, table.projectId, table.providerItemId)
+      .where(sql`${table.projectId} is not null`),
+    index('work_item_links_item').on(table.connectionId, table.providerItemId),
+    index('work_item_links_time_entry').on(table.timeEntryId),
+    index('work_item_links_project').on(table.projectId),
+  ],
+)
+
 export const timeEntryRateReprices = sqliteTable(
   'time_entry_rate_reprices',
   {

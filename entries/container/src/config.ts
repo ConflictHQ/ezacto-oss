@@ -208,6 +208,7 @@ export const readContainerConfig = (
     )
   }
   const wiseToken = optional(environment, 'WISE_TOKEN', 512)
+  const githubWorkItemsCredential = optional(environment, 'GITHUB_WORK_ITEMS_CREDENTIAL', 4_096)
   const wiseProfileId = optional(environment, 'WISE_PROFILE_ID', 64)
   const wiseWebhookKey = optional(environment, 'WISE_WEBHOOK_PUBLIC_KEY', 4_096)
   const brandName = optional(environment, 'BRAND_NAME', 200)
@@ -240,6 +241,9 @@ export const readContainerConfig = (
     ...(bootstrapToken === undefined
       ? {}
       : { EZACTO_BOOTSTRAP_TOKEN: bootstrapToken }),
+    ...(githubWorkItemsCredential === undefined
+      ? {}
+      : { GITHUB_WORK_ITEMS_CREDENTIAL: githubWorkItemsCredential }),
     ...(brandName === undefined ? {} : { BRAND_NAME: brandName }),
     ...(brandTagline === undefined ? {} : { BRAND_TAGLINE: brandTagline }),
     ...(brandDescription === undefined ? {} : { BRAND_DESCRIPTION: brandDescription }),

@@ -72,6 +72,12 @@ WISE_PROFILE_ID=
 # unverifiable claim about money is not one to act on.
 WISE_WEBHOOK_PUBLIC_KEY=
 
+# --- Issue tracker links (issue 1008) ---
+# The GitHub credential work-item links will use. Connecting GitHub under
+# /api/v1/settings/work-item-connections is refused without it. Nothing calls
+# GitHub yet. The credential is never returned by any API.
+GITHUB_WORK_ITEMS_CREDENTIAL=
+
 # --- migrate package (dev, against the live Harvest account) ---
 HARVEST_ACCOUNT_ID=
 HARVEST_PAT=

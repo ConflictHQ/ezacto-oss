@@ -239,3 +239,12 @@ export * from './wise/webhook.js'
 export * from './wise/client.js'
 
 export { createWisePaymentProvider } from './wise/payments.js'
+
+export type {
+  PostedWorkItemTimeNote,
+  WorkItemProvider,
+  WorkItemSnapshot,
+  WorkItemTimeNote,
+  WorkItemWebhookRequest,
+  WorkItemWebhookVerdict,
+} from './work-items/provider.js'

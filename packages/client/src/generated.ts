@@ -1291,6 +1291,63 @@ export type CalendarProposalPage = {
   "page": PageMetadata;
 };
 
+export type WorkItemConnection = {
+  "id": number;
+  "provider": "github";
+  "status": "active" | "disconnected";
+  "owner_user_id": number;
+  "credential_configured": boolean;
+  "connected_at": string;
+  "disconnected_at": string | null;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type WorkItemConnectionInput = {
+  "provider": "github";
+};
+
+export type WorkItemConnectionEnvelope = {
+  "data": WorkItemConnection;
+};
+
+export type WorkItemConnectionListEnvelope = {
+  "data": Array<WorkItemConnection>;
+  "links": Links;
+};
+
+export type WorkItemLink = {
+  "id": number;
+  "connection_id": number;
+  "provider": "github";
+  "time_entry_id": number | null;
+  "project_id": number | null;
+  "item_id": string;
+  "url": string | null;
+  "created_by": number;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type WorkItemLinkInput = {
+  "connection_id": number;
+  "time_entry_id"?: number;
+  "project_id"?: number;
+  "item_id": string;
+  "url"?: string | null;
+};
+
+export type WorkItemLinkEnvelope = {
+  "data": WorkItemLink;
+  "links": Links;
+};
+
+export type WorkItemLinkPage = {
+  "data": Array<WorkItemLink>;
+  "links": PageLinks;
+  "page": PageMetadata;
+};
+
 export type TimeEntrySettings = {
   "time_rounding": TimeRounding;
   "time_entry_mode": "duration" | "start_end";
@@ -5086,6 +5143,72 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<CalendarProposalEnvelope>("POST", "/api/v1/calendar-proposals/:id/discard".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listWorkItemConnections(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<WorkItemConnectionListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WorkItemConnectionListEnvelope>("GET", "/api/v1/settings/work-item-connections", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async connectWorkItemProvider(args: { body: WorkItemConnectionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<WorkItemConnectionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WorkItemConnectionEnvelope>("POST", "/api/v1/settings/work-item-connections", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async disconnectWorkItemProvider(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<WorkItemConnectionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WorkItemConnectionEnvelope>("POST", "/api/v1/settings/work-item-connections/:id/disconnect".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listWorkItemLinks(args: { query?: { "cursor"?: string; "per_page"?: number; "connection_id"?: number; "time_entry_id"?: number; "project_id"?: number; "item_id"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<WorkItemLinkPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WorkItemLinkPage>("GET", "/api/v1/work-item-links", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createWorkItemLink(args: { body: WorkItemLinkInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<WorkItemLinkEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WorkItemLinkEnvelope>("POST", "/api/v1/work-item-links", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getWorkItemLink(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<WorkItemLinkEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WorkItemLinkEnvelope>("GET", "/api/v1/work-item-links/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async deleteWorkItemLink(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/work-item-links/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });

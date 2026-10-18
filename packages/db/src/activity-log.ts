@@ -37,6 +37,9 @@ export const ACTIVITY_EVENT_AGGREGATES = {
   'backup.restored': 'backup_restore',
   // A person asking for their own account to be deleted (account-deletion.ts).
   'account.deletion_requested': 'user_account',
+  // An administrator connecting or disconnecting an issue tracker (issue 1008).
+  'work_item_connection.connected': 'work_item_connection',
+  'work_item_connection.disconnected': 'work_item_connection',
 } as const
 
 export type ActivityEventType = keyof typeof ACTIVITY_EVENT_AGGREGATES

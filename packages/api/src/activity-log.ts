@@ -22,6 +22,8 @@ export type ActivityEventType =
   | 'api_token.revoked'
   | 'backup.exported'
   | 'backup.restored'
+  | 'work_item_connection.connected'
+  | 'work_item_connection.disconnected'
 
 export type ActivityActor =
   | { readonly type: 'user'; readonly id: number }

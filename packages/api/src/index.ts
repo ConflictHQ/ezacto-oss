@@ -414,6 +414,16 @@ export {
 } from './sso-domains.js'
 export { installTeamRoutes, type CostRateBackfillPort, type TeamRouteOptions } from './team.js'
 export {
+  installWorkItemRoutes,
+  serializeWorkItemLink,
+  type WorkItemActor,
+  type WorkItemConnectionRecord,
+  type WorkItemLinkFilters,
+  type WorkItemLinkRecord,
+  type WorkItemRepository,
+  type WorkItemRouteOptions,
+} from './work-items.js'
+export {
   installUserEmailRoutes,
   type UserEmailRouteOptions,
   type UserEmailService,

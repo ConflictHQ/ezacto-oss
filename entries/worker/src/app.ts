@@ -3,6 +3,7 @@ import { appleWebConfiguration } from './apple-web.js'
 import { aggregateAppleCleanup, type AppleCleanupPort, type AppleLifecycleStore, type AppleWebCleanupPort } from '@ezacto/core'
 import type { AccountDeletionStore, AccountClosureStore, AccountRetentionReviewStore, AccountDeletionStatusStore } from '@ezacto/core'
 import type { PaymentRunsService } from '@ezacto/core'
+import { workItemProviders, type WorkItemProviderId } from '@ezacto/core'
 import { installPaymentRunRoutes } from '@ezacto/api'
 import { installStaffPaymentRoutes } from '@ezacto/api'
 import type { StaffPaymentStore } from '@ezacto/core'
@@ -71,6 +72,7 @@ import {
   installSessionRoutes,
   installSsoDomainRoutes,
   installCalendarProposalRoutes,
+  installWorkItemRoutes,
   installTrackedResourceRoutes,
   installTimesheetApprovalRoutes,
   installBackupStatusRoutes,
@@ -135,6 +137,7 @@ import {
   type SsoProvisioningDomainService,
   type UserEmailService,
   type CalendarProposalRepository,
+  type WorkItemRepository,
   type TrackedResourceRepository,
   type ProfileRepositoryPort,
   type TimesheetApprovalService,
@@ -208,6 +211,11 @@ export type AppEnv = Env & {
   BRAND_WORDMARK_LIGHT?: string
   BRAND_WORDMARK_DARK?: string
   BRAND_EMAIL_SENDER_NAME?: string
+  /**
+   * The GitHub credential for work-item links (issue 1008). A deployment secret
+   * named here and not by any request; connecting GitHub is refused without it.
+   */
+  GITHUB_WORK_ITEMS_CREDENTIAL?: string
   /**
    * Publishes sign-in credentials on the front page and lets the nightly cron
    * wipe the database. Both are refused outside a non-production environment
@@ -338,6 +346,11 @@ export interface RuntimeServices {
   trackedResources: TrackedResourceRepository
   /** Calendar events offered as time, accepted through `trackedResources` (issue 428). */
   calendarProposals: CalendarProposalRepository
+  /** Issue tracker connections and the links to their items (issue 1008). */
+  workItems: {
+    repository: WorkItemRepository
+    credentialConfigured(provider: WorkItemProviderId): boolean
+  }
   profile: ProfileRepositoryPort
   isExpensesModuleEnabled(): Promise<boolean>
   moduleSettings: ModuleSettingsService
@@ -710,6 +723,13 @@ export const createApp = (
               repository: services.calendarProposals,
               clock: systemClock,
               cursorSigningKey: services.cursorSigningKey,
+            })
+            installWorkItemRoutes(api, {
+              repository: services.workItems.repository,
+              credentialConfigured: services.workItems.credentialConfigured,
+              clock: () => systemClock.now().instant,
+              cursorSigningKey: services.cursorSigningKey,
+              ...(services.activity === undefined ? {} : { activity: services.activity }),
             })
             installTimesheetApprovalRoutes(api, {
               service: services.timesheetApprovals,
@@ -2248,6 +2268,11 @@ export const appleProvider = (env: AppEnv): AppleProviderConfig | null => {
  * nothing. Everything demo-shaped in this codebase asks this function, so
  * there is one place to read to know what it takes.
  */
+export const workItemCredentialConfigured = (env: AppEnv, provider: WorkItemProviderId): boolean => {
+  const value = env[workItemProviders[provider].credentialSecret]
+  return typeof value === 'string' && value !== ''
+}
+
 export const demoDeployment = (env: AppEnv): boolean =>
   env.ENVIRONMENT !== 'prod' && env.DEMO_MODE === 'true'
 
