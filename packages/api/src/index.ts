@@ -276,6 +276,7 @@ export {
   type MagicLinkMailer,
   type MagicLinkRouteOptions,
   type MagicLinkService,
+  type PortalEstimateService,
   type PortalInvoiceSummary,
   type PortalSessionIssuer,
   type PortalSessionStore,

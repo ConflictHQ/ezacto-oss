@@ -113,7 +113,7 @@ const bearerToken = (authorization: string): string | null => {
 
 const safeSessionMethods = new Set(['GET', 'HEAD', 'OPTIONS'])
 
-const requireSameOriginForUnsafeSessionRequest = (request: Request): void => {
+export const requireSameOriginForUnsafeSessionRequest =(request: Request): void => {
   if (safeSessionMethods.has(request.method.toUpperCase())) return
   const origin = request.headers.get('origin')
   if (origin !== null && origin === new URL(request.url).origin) return

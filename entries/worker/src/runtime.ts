@@ -1253,6 +1253,13 @@ export const createRuntimeServices = async (
               createD1ContactSessionStore(database, { touchIntervalMs }),
             ),
             sessionStore: createD1ContactSessionStore(database, { touchIntervalMs }),
+            estimates: {
+              list: (clientId: number) => moneyResources.listCustomerEstimates(clientId),
+              get: (clientId: number, estimateId: number) =>
+                moneyResources.getCustomerEstimate(clientId, estimateId),
+              respond: (input) =>
+                moneyResources.respondToEstimate({ ...input, occurredAt: new Date().toISOString() }),
+            },
           },
         }),
     ...(emailProvider instanceof SesMailer

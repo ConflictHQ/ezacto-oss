@@ -1127,6 +1127,7 @@ export const estimates = sqliteTable(
     sentAt: text('sent_at'),
     acceptedAt: text('accepted_at'),
     declinedAt: text('declined_at'),
+    sentContentHash: text('sent_content_hash'),
     clientKey: text('client_key')
       .notNull()
       .default(sql`lower(hex(randomblob(32)))`),
@@ -1273,10 +1274,16 @@ export const estimateMessages = sqliteTable(
       enum: ['queued', 'sent', 'bounced', 'complained', 'failed'],
     }),
     providerMessageId: text('provider_message_id'),
+    contactId: integer('contact_id').references(() => contacts.id, { onDelete: 'set null' }),
+    contentHash: text('content_hash'),
+    estimateVersion: integer('estimate_version'),
     ...timestamps,
   },
   (table) => [
     uniqueIndex('estimate_messages_harvest_id_unique').on(table.harvestId),
+    uniqueIndex('estimate_messages_customer_response_unique')
+      .on(table.estimateId, table.estimateVersion)
+      .where(sql`${table.estimateVersion} is not null`),
     uniqueIndex('estimate_messages_invoice_event_unique')
       .on(table.estimateId)
       .where(sql`${table.eventType} = 'invoice'`),
