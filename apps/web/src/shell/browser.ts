@@ -6596,13 +6596,26 @@ export const mountShell = async (
   if (moduleSettingsPage) {
     const sections = [...document.querySelectorAll<HTMLElement>('[data-settings-section]')]
     const links = [...document.querySelectorAll<HTMLElement>('[data-settings-section-link]')]
+    const strip = document.querySelector<HTMLElement>('[data-settings-sections]')
     const unavailable = (section: HTMLElement): boolean =>
       section.hasAttribute('data-settings-unavailable')
+    // The strip is one line that scrolls sideways where the width runs out, so
+    // the segment a link opened on may start past its edge: bring it in, by
+    // the strip's own scroll alone and never the page's.
+    const keepCurrentInStrip = (): void => {
+      const link = links.find((candidate) => candidate.getAttribute('aria-current') === 'page')
+      if (strip === null || link === undefined) return
+      const bounds = strip.getBoundingClientRect()
+      const segment = link.getBoundingClientRect()
+      if (segment.left < bounds.left) strip.scrollLeft -= bounds.left - segment.left + 24
+      else if (segment.right > bounds.right) strip.scrollLeft += segment.right - bounds.right + 24
+    }
     const showSection = (): void => {
       let current = resolveSettingsSection(globalThis.location.hash)
       const chosen = sections.find((section) => section.dataset.settingsSection === current)
       if (chosen !== undefined && unavailable(chosen)) current = DEFAULT_COMPANY_SETTINGS_SECTION
       applySettingsSection(current, sections, links, unavailable)
+      keepCurrentInStrip()
     }
     showSection()
     globalThis.addEventListener('hashchange', showSection)

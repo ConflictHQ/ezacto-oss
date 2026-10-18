@@ -101,6 +101,7 @@ export function createRetentionReviewController(
           "An active hold must be explicitly released before removal can be recorded.",
         );
       const form = document.createElement("form");
+      form.className = "settings-form";
       form.dataset.area = row.area;
       const label = document.createElement("label");
       label.textContent = "Decision";
@@ -156,6 +157,7 @@ export function createRetentionReviewController(
       );
       const ackLabel = document.createElement("label"),
         ack = document.createElement("input");
+      ackLabel.className = "settings-toggle";
       ack.type = "checkbox";
       ack.name = "acknowledged";
       ack.required = true;
@@ -168,6 +170,7 @@ export function createRetentionReviewController(
       form.append(ackLabel);
       const save = document.createElement("button");
       save.type = "submit";
+      save.className = "primary-action";
       save.textContent = "Record review";
       save.disabled = demo;
       form.append(save);
@@ -219,6 +222,8 @@ export function createRetentionReviewController(
       const complete = document.createElement("form"),
         label = document.createElement("label"),
         ack = document.createElement("input");
+      complete.className = "settings-form";
+      label.className = "settings-toggle";
       ack.type = "checkbox";
       ack.required = true;
       label.append(
@@ -229,10 +234,12 @@ export function createRetentionReviewController(
       );
       const button = document.createElement("button");
       button.type = "submit";
+      button.className = "primary-action";
       button.textContent = "Confirm reviewed request outcome";
       button.disabled = demo;
       const manualLabel = document.createElement("label"),
         manual = document.createElement("input");
+      manualLabel.className = "settings-toggle";
       manual.type = "checkbox";
       manualLabel.append(
         manual,
