@@ -1379,6 +1379,16 @@ const quickBooksOperations: ApiContractOperation[] = [
     responseStatus: 204,
     sessionOnly: true,
   },
+  {
+    method: "get",
+    path: "/api/v1/integrations/quickbooks/reconciliation",
+    operationId: "getQuickBooksReconciliation",
+    summary: "Differences between our invoices and the QuickBooks company, listed and never corrected",
+    tag: "integrations",
+    responseStatus: 200,
+    responseSchema: "QuickBooksReconciliationEnvelope",
+    sessionOnly: true,
+  },
   // Where one invoice stands with QuickBooks, and the button that mirrors it
   // now (issue 819). Gated with the connection routes: same keys, same
   // feature, and `entry-surface.ts` lists them together.
@@ -4171,6 +4181,72 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: ["allow_online_payment"],
     properties: { allow_online_payment: { type: "boolean" } },
+    additionalProperties: false,
+  },
+  QuickBooksReconciliationEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["realm_id", "generated_at", "counts", "rows"],
+        properties: {
+          realm_id: stringSchema,
+          generated_at: timestampSchema,
+          // Rows per status, every status present (zero included).
+          counts: { type: "object", additionalProperties: integerSchema },
+          rows: {
+            type: "array",
+            items: {
+              type: "object",
+              required: [
+                "status",
+                "issues",
+                "invoice_id",
+                "number",
+                "quickbooks_id",
+                "linked",
+                "ezacto_amount_cents",
+                "quickbooks_amount_cents",
+                "ezacto_currency",
+                "quickbooks_currency",
+                "ezacto_paid_cents",
+                "quickbooks_paid_cents",
+                "detail",
+              ],
+              properties: {
+                status: {
+                  type: "string",
+                  enum: [
+                    "matched",
+                    "voided_in_quickbooks",
+                    "missing_in_quickbooks",
+                    "amount_differs",
+                    "currency_differs",
+                    "payments_differ",
+                    "missing_here",
+                  ],
+                },
+                issues: { type: "array", items: stringSchema },
+                invoice_id: nullable(integerSchema),
+                number: stringSchema,
+                quickbooks_id: nullable(stringSchema),
+                linked: booleanSchema,
+                ezacto_amount_cents: nullable(integerSchema),
+                quickbooks_amount_cents: nullable(integerSchema),
+                ezacto_currency: nullable(stringSchema),
+                quickbooks_currency: nullable(stringSchema),
+                ezacto_paid_cents: nullable(integerSchema),
+                quickbooks_paid_cents: nullable(integerSchema),
+                detail: stringSchema,
+              },
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
+      },
+    },
     additionalProperties: false,
   },
   InvoiceQuickBooksEnvelope: {

@@ -650,6 +650,31 @@ export type QuickBooksSettingsInput = {
   "allow_online_payment": boolean;
 };
 
+export type QuickBooksReconciliationEnvelope = {
+  "data": {
+  "realm_id": string;
+  "generated_at": string;
+  "counts": {
+  [key: string]: number;
+};
+  "rows": Array<{
+  "status": "matched" | "voided_in_quickbooks" | "missing_in_quickbooks" | "amount_differs" | "currency_differs" | "payments_differ" | "missing_here";
+  "issues": Array<string>;
+  "invoice_id": number | null;
+  "number": string;
+  "quickbooks_id": string | null;
+  "linked": boolean;
+  "ezacto_amount_cents": number | null;
+  "quickbooks_amount_cents": number | null;
+  "ezacto_currency": string | null;
+  "quickbooks_currency": string | null;
+  "ezacto_paid_cents": number | null;
+  "quickbooks_paid_cents": number | null;
+  "detail": string;
+}>;
+};
+};
+
 export type InvoiceQuickBooksEnvelope = {
   "data": {
   "connected": boolean;
@@ -6511,6 +6536,15 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<void>("DELETE", "/api/v1/integrations/quickbooks", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getQuickBooksReconciliation(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<QuickBooksReconciliationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<QuickBooksReconciliationEnvelope>("GET", "/api/v1/integrations/quickbooks/reconciliation", {
       signal: args.signal,
       headers,
     });

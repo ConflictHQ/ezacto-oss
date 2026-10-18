@@ -403,6 +403,10 @@ export const createModuleSettingsController = (
   const quickBooksAllowPayment = required<HTMLInputElement>('[data-quickbooks-allow-payment]')
   const quickBooksDisconnect = required<HTMLButtonElement>('[data-quickbooks-disconnect]')
   const quickBooksResult = required<HTMLElement>('[data-settings-quickbooks-result]')
+  const quickBooksReconcilePanel = required<HTMLElement>('[data-quickbooks-reconcile-panel]')
+  const quickBooksReconcile = required<HTMLButtonElement>('[data-quickbooks-reconcile]')
+  const quickBooksReconcileResult = required<HTMLElement>('[data-quickbooks-reconcile-result]')
+  const quickBooksReconcileTable = required<HTMLElement>('[data-quickbooks-reconcile-table]')
   const refreshControls = document.querySelectorAll<HTMLButtonElement>('[data-settings-refresh]')
   const themeStatus = required<HTMLElement>('[data-settings-theme-status]')
   const themeSlots = required<HTMLElement>('[data-settings-theme-slots]')
@@ -1626,6 +1630,8 @@ export const createModuleSettingsController = (
         quickBooksConnect.hidden = connection !== null
         quickBooksDisconnect.hidden = connection === null
         quickBooksPaymentRow.hidden = connection === null
+        quickBooksReconcilePanel.hidden =
+          connection === null || api.getQuickBooksReconciliation === undefined
         if (connection === null) {
           quickBooksFacts.hidden = true
           quickBooksStatus.textContent = 'Not connected.'
@@ -1984,6 +1990,58 @@ export const createModuleSettingsController = (
       })
       .finally(() => {
         if (currentSession() === active) quickBooksAllowPayment.disabled = false
+      })
+  })
+
+  // The reconciliation report (issue 1013): a read, shown as a table of what
+  // differs. There is no action on a row -- nothing here corrects anything.
+  quickBooksReconcile.addEventListener('click', () => {
+    const active = currentSession()
+    if (active === null || api.getQuickBooksReconciliation === undefined) return
+    quickBooksReconcile.disabled = true
+    quickBooksReconcileResult.textContent = 'Comparing…'
+    api
+      .getQuickBooksReconciliation(active.signal)
+      .then((report) => {
+        active.present(() => {
+          const differing = report.rows.filter((row) => row.status !== 'matched')
+          const matched = report.counts['matched'] ?? 0
+          quickBooksReconcileResult.textContent =
+            differing.length === 0
+              ? `Everything agrees (${String(matched)} invoices matched).`
+              : `${String(differing.length)} to look at, ${String(matched)} matched.`
+          const money = (cents: number | null): string =>
+            cents === null ? '—' : (cents / 100).toFixed(2)
+          quickBooksReconcileTable.replaceChildren(
+            renderDataTable({
+              caption: 'Differences between ezacto and QuickBooks',
+              rows: differing,
+              rowKey: (row) => `${row.status}:${row.number}`,
+              empty: 'No differences.',
+              columns: [
+                { key: 'number', label: 'Invoice', fit: true, render: (row) => row.number || '—' },
+                { key: 'status', label: 'Difference', fit: true, render: (row) => row.status.replaceAll('_', ' ') },
+                { key: 'ezacto', label: 'ezacto', numeric: true, render: (row) => money(row.ezacto_amount_cents) },
+                { key: 'quickbooks', label: 'QuickBooks', numeric: true, render: (row) => money(row.quickbooks_amount_cents) },
+                { key: 'detail', label: 'Detail', wrap: true, render: (row) => row.detail },
+              ],
+            }),
+          )
+          quickBooksReconcileTable.hidden = false
+        })
+      })
+      .catch((error: unknown) => {
+        active.presentFailure(error, () => {
+          quickBooksReconcileTable.hidden = true
+          quickBooksReconcileResult.textContent = messageFor(
+            error,
+            'The reconciliation is for administrators and accounting.',
+            'QuickBooks could not be compared.',
+          )
+        })
+      })
+      .finally(() => {
+        if (currentSession() === active) quickBooksReconcile.disabled = false
       })
   })
 

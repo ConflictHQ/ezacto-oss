@@ -447,7 +447,10 @@ export {
   type QuickBooksMirrorOutcomeRecord,
   type QuickBooksStore,
 } from './quickbooks.js'
-export { createQuickBooksMirrorSource } from './quickbooks-source.js'
+export {
+  createQuickBooksMirrorSource,
+  createQuickBooksReconciliationSource,
+} from './quickbooks-source.js'
 
 export { createStaffPaymentStore } from './staff-payments.js'
 

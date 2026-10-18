@@ -4,6 +4,7 @@ import {
   installQuickBooksRoutes,
   installQuickBooksWebhookRoute,
   type QuickBooksInvoiceSyncState,
+  type QuickBooksReconciliation,
   type QuickBooksService,
 } from '../src/quickbooks.js'
 import { createApiApp } from '../src/index.js'
@@ -26,6 +27,29 @@ const synced: QuickBooksInvoiceSyncState = {
   lastOutcome: { kind: 'created', reason: null, at: '2026-09-17T12:00:01.000Z' },
 }
 
+const reconciliation: QuickBooksReconciliation = {
+  realmId: 'realm-a',
+  generatedAt: '2026-10-18T12:00:00.000Z',
+  counts: { matched: 0, amount_differs: 1 },
+  rows: [
+    {
+      status: 'amount_differs',
+      issues: ['amount_differs'],
+      ezactoInvoiceId: 7,
+      number: '1315',
+      quickBooksId: '147',
+      linked: true,
+      ezactoAmountCents: 100_000,
+      quickBooksAmountCents: 90_000,
+      ezactoCurrency: 'USD',
+      quickBooksCurrency: null,
+      ezactoPaidCents: 0,
+      quickBooksPaidCents: 0,
+      detail: 'total is 1000.00 here and 900.00 in QuickBooks',
+    },
+  ],
+}
+
 const service = (overrides: Partial<QuickBooksService> = {}): QuickBooksService => ({
   clientId: vi.fn(() => 'client-id'),
   callbackUrl: vi.fn(() => 'https://app.example.test/api/v1/integrations/quickbooks/callback'),
@@ -46,6 +70,7 @@ const service = (overrides: Partial<QuickBooksService> = {}): QuickBooksService 
     payments: [{ paymentId: 9, outcome: { kind: 'created', quickBooksId: '148' } }],
   })),
   syncState: vi.fn(async () => synced),
+  reconcile: vi.fn(async () => reconciliation),
   ...overrides,
 })
 
@@ -103,6 +128,39 @@ describe('the connect button', () => {
       userId: 1,
       redirectUri: 'https://app.example.test/api/v1/integrations/quickbooks/callback',
     })
+  })
+
+  it('[security] the reconciliation report is for administrators and accounting only', async () => {
+    for (const profile of ['administrator', 'accounting']) {
+      const quickBooks = service()
+      const response = await app(quickBooks, { userId: 2, profile }).request(
+        '/integrations/quickbooks/reconciliation',
+      )
+      expect(response.status).toBe(200)
+      const body = (await response.json()) as { data: { rows: Record<string, unknown>[] } }
+      expect(body.data.rows[0]).toMatchObject({
+        status: 'amount_differs',
+        invoice_id: 7,
+        quickbooks_id: '147',
+        ezacto_amount_cents: 100_000,
+        quickbooks_amount_cents: 90_000,
+      })
+      expect(response.headers.get('cache-control')).toBe('no-store')
+    }
+    for (const profile of ['member', 'project_manager', 'executive_manager']) {
+      const quickBooks = service()
+      const response = await app(quickBooks, { userId: 3, profile }).request(
+        '/integrations/quickbooks/reconciliation',
+      )
+      expect(response.status).toBe(403)
+      expect(quickBooks.reconcile).not.toHaveBeenCalled()
+    }
+  })
+
+  it('answers 409 when QuickBooks is not connected', async () => {
+    const quickBooks = service({ reconcile: vi.fn(async () => null) })
+    const response = await app(quickBooks).request('/integrations/quickbooks/reconciliation')
+    expect(response.status).toBe(409)
   })
 
   it('[security] only an administrator may connect or disconnect', async () => {

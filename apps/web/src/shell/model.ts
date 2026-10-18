@@ -1377,6 +1377,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       })
     ).data,
   disconnectQuickBooks: (signal) => client.disconnectQuickBooks(withSignal(signal)),
+  getQuickBooksReconciliation: async (signal) =>
+    (await client.getQuickBooksReconciliation(withSignal(signal))).data,
   // Bound here because this is the only place the real client reaches the
   // client screen. Issue 593 shipped a settings section reading four methods
   // nothing supplied, and the suite stayed green because the tests inject

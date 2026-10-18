@@ -21,6 +21,7 @@ import {
   createD1StaffUserDirectory,
   createD1OutboxService,
   createQuickBooksMirrorSource,
+  createQuickBooksReconciliationSource,
   createQuickBooksStore,
   createGeneralResourceRepository,
   createMoneyResourceRepository,
@@ -807,6 +808,7 @@ export const createRuntimeServices = async (
           },
           store: createQuickBooksStore(drizzle),
           source: createQuickBooksMirrorSource(drizzle, () => new Date()),
+          reconciliation: createQuickBooksReconciliationSource(drizzle),
           fetch: (request: Request) => fetch(request),
           now: () => new Date(),
         });

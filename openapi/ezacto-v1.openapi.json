@@ -20466,6 +20466,61 @@
         }
       }
     },
+    "/api/v1/integrations/quickbooks/reconciliation": {
+      "get": {
+        "operationId": "getQuickBooksReconciliation",
+        "summary": "Differences between our invoices and the QuickBooks company, listed and never corrected",
+        "tags": [
+          "integrations"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuickBooksReconciliationEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/integrations/quickbooks/reconciliation",
+        "x-ezacto-generate-client": true
+      }
+    },
     "/api/v1/invoices/{id}/quickbooks": {
       "get": {
         "operationId": "getInvoiceQuickBooks",
@@ -28426,6 +28481,177 @@
         "properties": {
           "allow_online_payment": {
             "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "QuickBooksReconciliationEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "realm_id",
+              "generated_at",
+              "counts",
+              "rows"
+            ],
+            "properties": {
+              "realm_id": {
+                "type": "string"
+              },
+              "generated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "counts": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "status",
+                    "issues",
+                    "invoice_id",
+                    "number",
+                    "quickbooks_id",
+                    "linked",
+                    "ezacto_amount_cents",
+                    "quickbooks_amount_cents",
+                    "ezacto_currency",
+                    "quickbooks_currency",
+                    "ezacto_paid_cents",
+                    "quickbooks_paid_cents",
+                    "detail"
+                  ],
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "matched",
+                        "voided_in_quickbooks",
+                        "missing_in_quickbooks",
+                        "amount_differs",
+                        "currency_differs",
+                        "payments_differ",
+                        "missing_here"
+                      ]
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "invoice_id": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "number": {
+                      "type": "string"
+                    },
+                    "quickbooks_id": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "linked": {
+                      "type": "boolean"
+                    },
+                    "ezacto_amount_cents": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "quickbooks_amount_cents": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "ezacto_currency": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "quickbooks_currency": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "ezacto_paid_cents": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "quickbooks_paid_cents": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": false
