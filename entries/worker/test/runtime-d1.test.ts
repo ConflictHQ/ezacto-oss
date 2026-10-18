@@ -556,6 +556,7 @@ describe("Worker D1 runtime composition", () => {
       project_id: project.data.id,
       task_id: task.data.id,
       minimum_note_length: 3,
+      time_rounding: { mode: "exact", minutes: 15, source: "organization" },
     });
     const entry = await client.createTimeEntry({
       body: {

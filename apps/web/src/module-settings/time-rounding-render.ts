@@ -30,7 +30,7 @@ export const renderTimeRoundingSection = (): string => `
         <p>Applies today's rules to time saved earlier. Only entries that can still be edited are touched: not invoiced, not approved, not in a locked period, under an active client, project and task. Preview first; nothing changes until you apply.</p>
         <label>From <input type="date" data-rounding-from></label>
         <label>To <input type="date" data-rounding-to></label>
-        <button type="button" data-rounding-preview>Preview</button>
+        <button class="editor-secondary" type="button" data-rounding-preview>Preview</button>
         <div data-rounding-preview-output role="status" aria-live="polite"></div>
         <button class="primary-action" type="button" data-rounding-apply hidden>Apply this preview</button>
         <p class="form-result" data-rounding-recalculate-result role="status" aria-live="polite"></p>

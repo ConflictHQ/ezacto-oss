@@ -119,11 +119,21 @@ const policyKey = (subject: Readonly<PolicySubject>): string =>
 /**
  * Maya (2) logs time on one project with two tasks; Ada (1) administers.
  * Rounding is up to the quarter hour so a derived duration is visibly rounded.
+ *
+ * The rule goes in the columns the database has. One migrated only to before
+ * 0100 also predates 0112 (issue 949), so it holds the rule as the single enum
+ * that 0112 later copies into the direction and increment.
  */
 const installFixture = async (db: TestDatabase, mode: Mode): Promise<void> => {
+  const organizationColumns = (
+    await db.rows<{ name: string }>(`PRAGMA table_info(organizations)`)
+  ).map(({ name }) => name)
+  const rounding = organizationColumns.includes('time_rounding_mode')
+    ? { columns: 'time_rounding_mode, time_rounding_minutes', values: `'up', 15` }
+    : { columns: 'time_rounding', values: `'up_15'` }
   await db.run(
-    `INSERT INTO organizations (name, time_entry_mode, time_rounding_mode, time_rounding_minutes, modules, created_at, updated_at)
-     VALUES ('Fictional Studio', ?, 'up', 15, ?, ?, ?)`,
+    `INSERT INTO organizations (name, time_entry_mode, ${rounding.columns}, modules, created_at, updated_at)
+     VALUES ('Fictional Studio', ?, ${rounding.values}, ?, ?, ?)`,
     mode,
     JSON.stringify({ expenses: true, invoices: true, approval: true }),
     ...stamps(2),
