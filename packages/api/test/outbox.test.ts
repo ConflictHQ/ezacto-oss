@@ -262,7 +262,17 @@ describe('outbox observability API', () => {
           },
         },
         installApi(api) {
-          installOutboxRoutes(api, { listActivity, listDeliveries: vi.fn(), retryFailed: vi.fn() })
+          installOutboxRoutes(
+            api,
+            {
+              listActivity,
+              deliveriesSnapshot: vi.fn(),
+              pageDeliveries: vi.fn(),
+              countDeliveries: vi.fn(),
+              retryFailed: vi.fn(),
+            },
+            routeOptions('UTC'),
+          )
         },
       })
     const headers = { authorization: 'Bearer report-token' }
