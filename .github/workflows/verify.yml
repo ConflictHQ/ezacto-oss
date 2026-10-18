@@ -135,14 +135,20 @@ jobs:
           # nothing, while the same limit in NODE_OPTIONS killed the run.
           NODE_OPTIONS: --max-old-space-size=4096
         run: |
+          # pipefail so tee does not hide a red suite; the log is what the
+          # annotation step below classifies (issue 745).
+          set -o pipefail
           # Two vCPUs on ubuntu-latest, so two workers. This belongs to the
           # runner, not to a package.json: the same suite on a developer
           # machine should use the cores it has.
           if [ -n "$SHARD" ]; then
-            npm test $WORKSPACES -- --shard="$SHARD" --maxWorkers=2
+            npm test $WORKSPACES -- --shard="$SHARD" --maxWorkers=2 2>&1 | tee "$RUNNER_TEMP/test.log"
           else
-            npm test $WORKSPACES -- --maxWorkers=2
+            npm test $WORKSPACES -- --maxWorkers=2 2>&1 | tee "$RUNNER_TEMP/test.log"
           fi
+      - name: classify the failure against the ledger
+        if: failure()
+        run: node scripts/ci-failure-ledger.mjs --classify "$RUNNER_TEMP/test.log" --job "test (${{ matrix.name }})"
 
   secrets:
     runs-on: ubuntu-latest
