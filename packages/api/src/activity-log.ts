@@ -20,6 +20,8 @@ export type ActivityEventType =
   | 'auth.signed_out'
   | 'api_token.created'
   | 'api_token.revoked'
+  | 'two_factor.email_enabled'
+  | 'two_factor.email_disabled'
   | 'backup.exported'
   | 'backup.restored'
 

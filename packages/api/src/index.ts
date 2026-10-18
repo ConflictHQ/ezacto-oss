@@ -167,8 +167,12 @@ export {
   TWO_FACTOR_CHALLENGE_COOKIE,
   type TwoFactorChallengeRouteOptions,
   type TwoFactorChallengeVerdict,
+  type TwoFactorEmailCodeDelivery,
+  type TwoFactorEmailCodeMailer,
   type TwoFactorGate,
+  type TwoFactorMethod,
 } from './two-factor-challenge.js'
+export { createQueuedTwoFactorEmailCodeMailer } from './two-factor-email-code-email.js'
 export {
   createQueuedAuthMailer,
   type AuthEmailTemplate,

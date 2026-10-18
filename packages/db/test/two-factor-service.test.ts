@@ -86,7 +86,12 @@ const store = (
     createChallenge: async () => 'created',
     consumeChallenge: async () => null,
     challengeHolder: async () => null,
+    challengeState: async () => null,
     redeemChallengeCode: async () => ({ status: 'unknown' }),
+    emailFactorEnabled: async () => false,
+    enableEmailFactor: async () => true,
+    disableEmailFactor: async () => true,
+    claimEmailCodeSend: async () => ({ status: 'claimed' }),
     ...overrides,
   }
 }

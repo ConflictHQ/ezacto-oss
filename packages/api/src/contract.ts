@@ -2103,6 +2103,43 @@ const twoFactorOperations: ApiContractOperation[] = [
     requestRequired: true,
     sessionOnly: true,
   },
+  // Issue 770: a code by email, alongside the authenticator rather than
+  // instead of it. Password sign-in only.
+  {
+    method: "post",
+    path: "/api/v1/two-factor/email",
+    operationId: "enableTwoFactorEmail",
+    summary: "Turn on the emailed second factor",
+    description:
+      "Needs a verified email address. A code is mailed at password sign-in; magic-link and federated sign-in never use this factor.",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorStatusEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/two-factor/email",
+    operationId: "disableTwoFactorEmail",
+    summary: "Turn off the emailed second factor",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorStatusEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/users/:id/two-factor/email",
+    operationId: "disableUserTwoFactorEmail",
+    summary: "Turn off a user's emailed second factor (administrator)",
+    description:
+      "Lockout recovery for a user who lost their mailbox. Administrators only; the change is recorded in the activity log.",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorEmailDisabledEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
 ];
 
 const userEmailOperations: ApiContractOperation[] = [
@@ -2741,6 +2778,20 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     responseStatus: 200,
     responseSchema: "TwoFactorChallengeAcceptedEnvelope",
     requestSchema: "TwoFactorChallengeInput",
+    requestRequired: true,
+    public: true,
+  },
+  {
+    method: "post",
+    path: "/auth/two-factor/email-code",
+    operationId: "sendTwoFactorEmailCode",
+    summary: "Email a verification code for a pending sign-in",
+    description:
+      "Supersedes the earlier challenge: the response carries the new one. Limited to one a minute and five an hour per user. Only a password sign-in can ask.",
+    tag: "authentication",
+    responseStatus: 200,
+    responseSchema: "TwoFactorChallengeIssuedEnvelope",
+    requestSchema: "TwoFactorEmailCodeInput",
     requestRequired: true,
     public: true,
   },
@@ -9663,9 +9714,16 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   TwoFactorStatus: {
     type: "object",
-    required: ["enrolled", "pending_confirmation", "recovery_codes_remaining"],
+    required: [
+      "enrolled",
+      "email_enabled",
+      "pending_confirmation",
+      "recovery_codes_remaining",
+    ],
     properties: {
       enrolled: booleanSchema,
+      // Issue 770: a code by email. Independent of the authenticator.
+      email_enabled: booleanSchema,
       pending_confirmation: booleanSchema,
       // Counts down as codes are spent, so zero is a real answer.
       recovery_codes_remaining: { type: "integer", minimum: 0 },
@@ -9713,13 +9771,41 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   // a confirmed second factor. No session accompanies it.
   TwoFactorChallengeIssued: {
     type: "object",
-    required: ["status", "challenge", "expires_at"],
+    required: ["status", "challenge", "expires_at", "methods"],
     properties: {
       status: { type: "string", enum: ["two_factor_required"] },
       // Also set as an HttpOnly cookie. Named here for clients that keep none.
       challenge: stringSchema,
       expires_at: stringSchema,
+      // What can answer it: an authenticator or recovery code, or a mailed one.
+      methods: { type: "array", items: { type: "string", enum: ["totp", "email"] } },
     },
+    additionalProperties: false,
+  },
+  TwoFactorChallengeIssuedEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("TwoFactorChallengeIssued") },
+    additionalProperties: false,
+  },
+  TwoFactorEmailCodeInput: {
+    type: "object",
+    properties: {
+      // Omitted by anything that kept the cookie the sign-in set.
+      challenge: stringSchema,
+    },
+    additionalProperties: false,
+  },
+  TwoFactorEmailDisabled: {
+    type: "object",
+    required: ["user_id", "email_enabled"],
+    properties: { user_id: integerSchema, email_enabled: { type: "boolean", enum: [false] } },
+    additionalProperties: false,
+  },
+  TwoFactorEmailDisabledEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("TwoFactorEmailDisabled") },
     additionalProperties: false,
   },
   TwoFactorChallengeInput: {

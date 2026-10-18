@@ -282,6 +282,12 @@ for (const runtime of ['SQLite', 'D1'])
       await exec(
         `INSERT INTO user_recovery_codes(user_id,selector,algorithm,version,memory_kib,time_cost,parallelism,salt,code_hash,created_at,updated_at) VALUES(2,'AAAAAAAA','argon2id',19,19456,2,1,'${'B'.repeat(22)}','${'C'.repeat(43)}','${at}','${at}')`,
       )
+      await exec(
+        `INSERT INTO user_email_second_factors(user_id,enabled_at) VALUES(2,'${at}')`,
+      )
+      await exec(
+        `INSERT INTO two_factor_email_code_sends(user_id,sent_at) VALUES(2,'${at}')`,
+      )
       expect(await sessions.authenticate(session.token)).not.toBeNull()
       expect(await authenticateApiToken(db, token.token, at)).not.toBeNull()
       await closure.close({
@@ -303,8 +309,14 @@ for (const runtime of ['SQLite', 'D1'])
         'two_factor_challenges',
         'user_totp_enrolments',
         'user_recovery_codes',
+        'user_email_second_factors',
+        'two_factor_email_code_sends',
       ])
         expect(await rows(`SELECT * FROM ${table}`), table).toEqual([])
+      // A closed account is not handed the emailed factor afterwards either.
+      await expect(
+        exec(`INSERT INTO user_email_second_factors(user_id,enabled_at) VALUES(2,'${later}')`),
+      ).rejects.toThrow('closed account')
       expect(await sessions.authenticate(session.token)).toBeNull()
       expect(await authenticateApiToken(db, token.token, later)).toBeNull()
       expect(await magic.consumeByToken(hash, later)).toBeNull()

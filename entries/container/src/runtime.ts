@@ -35,6 +35,7 @@ import {
   createContainerReminderScheduler,
   captureActivityEvent,
   createTwoFactorService,
+  deriveTwoFactorEmailCodeKey,
   createGeneralResourceRepository,
   createInvoiceGenerationService,
   createMoneyResourceRepository,
@@ -130,6 +131,7 @@ import {
   createQueuedAccountDeletionMailer,
   createQueuedAuthMailer,
   createQueuedStaffMagicLinkMailer,
+  createQueuedTwoFactorEmailCodeMailer,
   type AttachmentRouteOptions,
   type UserPrincipal,
   invoicePaymentUrlForMail,
@@ -1029,7 +1031,24 @@ export const createContainerRuntime = async (
               .get(userId) as { address: string } | undefined
           )?.address ?? `user-${userId}`,
         issuer: config.appEnv.BRAND_NAME ?? 'ezacto',
+        // The emailed second factor (issue 770); see the worker runtime.
+        emailCodeKey: await deriveTwoFactorEmailCodeKey(config.cursorSigningKey),
+        emailAddress: async (userId) =>
+          (
+            database
+              .prepare(
+                `SELECT address FROM user_emails
+                   WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
+                   ORDER BY is_primary DESC, id LIMIT 1`,
+              )
+              .get(userId) as { address: string } | undefined
+          )?.address ?? null,
       }),
+      // The container always has a mailer.
+      twoFactorEmailCodes: createQueuedTwoFactorEmailCodeMailer(
+        createDeploymentSenderQueuedMailer(config.smtp.from, queuedMailer),
+        organizationName,
+      ),
       timesheetApprovals: createTimesheetApprovalRepository(drizzle),
       timesheetLockPolicy,
       cursorSigningKey: config.cursorSigningKey,

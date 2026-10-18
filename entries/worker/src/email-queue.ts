@@ -20,10 +20,12 @@ import {
   createQueuedAccountDeletionMailer,
   createQueuedAuthMailer,
   createQueuedStaffMagicLinkMailer,
+  createQueuedTwoFactorEmailCodeMailer,
   type AccountDeletionMailer,
   type AuthMailer,
   type NotificationMailer,
   type StaffMagicLinkMailer,
+  type TwoFactorEmailCodeMailer,
 } from '@ezacto/api'
 
 /** Cloudflare Queues producer adapter. Provider I/O never runs in fetch(). */
@@ -133,6 +135,18 @@ export const createWorkerStaffMagicLinkMailer = (
   organizationName: () => Promise<string>,
 ): StaffMagicLinkMailer =>
   createQueuedStaffMagicLinkMailer(
+    createDeploymentSenderQueuedMailer(from, createQueuedMailer(log, queue)),
+    organizationName,
+  )
+
+/** The emailed second-factor code, on the same queue and deployment sender (issue 770). */
+export const createWorkerTwoFactorEmailCodeMailer = (
+  queue: EmailQueue,
+  log: EmailLogStore,
+  from: string,
+  organizationName: () => Promise<string>,
+): TwoFactorEmailCodeMailer =>
+  createQueuedTwoFactorEmailCodeMailer(
     createDeploymentSenderQueuedMailer(from, createQueuedMailer(log, queue)),
     organizationName,
   )

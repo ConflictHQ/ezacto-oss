@@ -33,6 +33,10 @@ export const ACTIVITY_EVENT_AGGREGATES = {
   'auth.signed_out': 'user_authentication',
   'api_token.created': 'api_token',
   'api_token.revoked': 'api_token',
+  // The emailed second factor (issue 770), recorded against the user whose
+  // sign-in it changes -- not against the actor, who may be an administrator.
+  'two_factor.email_enabled': 'user_authentication',
+  'two_factor.email_disabled': 'user_authentication',
   'backup.exported': 'backup_run',
   'backup.restored': 'backup_restore',
   // A person asking for their own account to be deleted (account-deletion.ts).

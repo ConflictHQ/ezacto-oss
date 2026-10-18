@@ -9,6 +9,7 @@ import {
 } from './errors.js'
 import {
   issueSessionOrChallenge,
+  type TwoFactorEmailCodeMailer,
   type TwoFactorGate,
 } from './two-factor-challenge.js'
 import {
@@ -81,6 +82,12 @@ export interface PasswordAuthRouteOptions {
    * no session until a code answers it.
    */
   twoFactor?: TwoFactorGate
+  /**
+   * Issue 770. Sends the emailed second factor. Without it a user whose only
+   * factor is the mailed code cannot be let in, so their sign-in is refused
+   * rather than waved through.
+   */
+  twoFactorEmailCodes?: TwoFactorEmailCodeMailer
   /**
    * Issue 761. When the operator has switched the password method off, the
    * whole family goes with it -- signing in, signing up, and the reset legs
@@ -328,6 +335,12 @@ export const installPasswordAuthRoutes = <Bindings extends object>(
             issue: (userId) =>
               options.sessions.issue(userId, result.credentialVersion),
           },
+          // The one sign-in the emailed factor applies to (issue 770).
+          passwordSignIn: {
+            ...(options.twoFactorEmailCodes === undefined
+              ? {}
+              : { emailCodes: options.twoFactorEmailCodes }),
+          },
         },
         result.principal.userId,
       )
@@ -338,6 +351,7 @@ export const installPasswordAuthRoutes = <Bindings extends object>(
               status: challenge.status,
               challenge: challenge.token,
               expires_at: challenge.expiresAt,
+              methods: [...challenge.methods],
             },
           },
           200,

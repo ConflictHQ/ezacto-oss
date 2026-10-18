@@ -63,6 +63,7 @@ import {
   createD1ReminderScheduler,
   captureActivityEvent,
   createTwoFactorService,
+  deriveTwoFactorEmailCodeKey,
   createBillLinkStore,
   createBillMirrorSource,
   createPayoutAccountStore,
@@ -176,6 +177,7 @@ import {
   createWorkerNotificationMailer,
   createWorkerOrganizationMailer,
   createWorkerStaffMagicLinkMailer,
+  createWorkerTwoFactorEmailCodeMailer,
 } from "./email-queue.js";
 import { demoRefusal } from "./demo-lockdown.js";
 
@@ -737,6 +739,15 @@ export const createRuntimeServices = async (
           mailFrom,
           organizationName,
         );
+  const twoFactorEmailCodeMailer =
+    !emailQueueReady || mailFrom === undefined
+      ? undefined
+      : createWorkerTwoFactorEmailCodeMailer(
+          emailQueue!,
+          emailLog,
+          mailFrom,
+          organizationName,
+        );
   const accountDeletionMailer =
     !emailQueueReady || mailFrom === undefined
       ? undefined
@@ -1233,7 +1244,25 @@ export const createRuntimeServices = async (
             .first<{ address: string }>()
         )?.address ?? `user-${userId}`,
       issuer: env.BRAND_NAME === undefined || env.BRAND_NAME === "" ? "ezacto" : env.BRAND_NAME,
+      // The emailed second factor (issue 770). Its hash key is derived from the
+      // cursor signing key every deployment already has, so there is no new
+      // secret to provision, and it goes to the person's own verified address.
+      emailCodeKey: await deriveTwoFactorEmailCodeKey(cursorSigningKey),
+      emailAddress: async (userId) =>
+        (
+          await database
+            .prepare(
+              `SELECT address FROM user_emails
+                 WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
+                 ORDER BY is_primary DESC, id LIMIT 1`,
+            )
+            .bind(userId)
+            .first<{ address: string }>()
+        )?.address ?? null,
     }),
+    ...(twoFactorEmailCodeMailer === undefined
+      ? {}
+      : { twoFactorEmailCodes: twoFactorEmailCodeMailer }),
     ...(portalMagicLinkSigningKey === undefined
       ? {}
       : {
