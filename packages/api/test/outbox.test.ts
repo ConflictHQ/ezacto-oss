@@ -98,7 +98,7 @@ describe('outbox observability API', () => {
     // validates each bound and rejects a date the calendar does not have, so a
     // bad request fails loudly here rather than returning an empty page that
     // reads as "nothing happened".
-    const { app, monitor } = harness('accounting')
+    const { app, monitor } = harness('administrator')
     const response = await app.request(
       '/api/v1/activity-log?per_page=10&from=2026-09-01&to=2026-09-08' +
         '&event_type=auth.signed_in&actor_id=4',
@@ -117,7 +117,7 @@ describe('outbox observability API', () => {
     // `{ from: undefined }` and no `from` are the same to a caller and not to a
     // repository that checks `!== undefined` before validating. Sending the key
     // would make every unfiltered request carry four invisible ones.
-    const { app, monitor } = harness('accounting')
+    const { app, monitor } = harness('administrator')
     await app.request('/api/v1/activity-log?per_page=5')
     // Asserted on the keys, not with toHaveBeenCalledWith: that matcher treats
     // an explicit `undefined` as equal to a missing key, so it cannot tell the
@@ -151,7 +151,11 @@ describe('outbox observability API', () => {
       ],
       links: { self: '/api/v1/activity-log' },
     })
-    expect(monitor.listActivity).toHaveBeenCalledWith({ limit: 25 })
+    // A money-report viewer reads the log without the identity events (issue 740).
+    expect(monitor.listActivity).toHaveBeenCalledWith({
+      limit: 25,
+      excludeEventTypes: expect.arrayContaining(['auth.signed_in', 'api_token.created']),
+    })
   })
 
   it('[api] names the actor beside the recorded payload, for the report audience only (issue 862)', async () => {
@@ -232,6 +236,57 @@ describe('outbox observability API', () => {
         })
       ).status,
     ).toBe(200)
+  })
+
+  it('[security] keeps sign-in, token and deletion events out of the log for everyone but an administrator (issue 740)', async () => {
+    const sensitive = [
+      'auth.signed_in',
+      'auth.signed_out',
+      'api_token.created',
+      'api_token.revoked',
+      'account.deletion_requested',
+    ]
+    const sessionRead = async (profile: UserProfile) => {
+      const { app, monitor } = harness(profile)
+      expect((await app.request('/api/v1/activity-log?event_type=auth.signed_in')).status).toBe(200)
+      return (monitor.listActivity as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![0]
+    }
+    for (const profile of ['executive_manager', 'accounting'] as const) {
+      expect(await sessionRead(profile)).toMatchObject({ excludeEventTypes: sensitive })
+    }
+    expect(await sessionRead('administrator')).not.toHaveProperty('excludeEventTypes')
+
+    // A bearer token is held to its owner's profile, same as a session.
+    const listActivity = vi.fn<OutboxMonitor['listActivity']>(async () => [activity])
+    const bearer = (profile: UserProfile) =>
+      createApiApp({
+        authentication: {
+          tokens: {
+            authenticate: async () => ({ tokenId: 1, userId: 1, profile, scopes: ['reports:read'] }),
+            issue: vi.fn(),
+            list: vi.fn(),
+            revoke: vi.fn(),
+          },
+        },
+        installApi(api) {
+          installOutboxRoutes(
+            api,
+            {
+              listActivity,
+              deliveriesSnapshot: vi.fn(),
+              pageDeliveries: vi.fn(),
+              countDeliveries: vi.fn(),
+              retryFailed: vi.fn(),
+            },
+            { ...routeOptions('UTC'), isActivityLogModuleEnabled: async () => true },
+          )
+        },
+      })
+    const headers = { authorization: 'Bearer report-token' }
+    await bearer('accounting').request('/api/v1/activity-log', { headers })
+    expect(listActivity).toHaveBeenLastCalledWith(expect.objectContaining({ excludeEventTypes: sensitive }))
+    await bearer('administrator').request('/api/v1/activity-log', { headers })
+    expect(listActivity.mock.calls.at(-1)![0]).not.toHaveProperty('excludeEventTypes')
   })
 
   it('[api] makes terminal subscriber failures visible and retryable to administrators', async () => {

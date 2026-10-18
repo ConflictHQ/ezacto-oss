@@ -121,6 +121,20 @@ const pageLimit = (presented: string | undefined): number => {
   return limit
 }
 
+/**
+ * Identity and credential events: who signed in, which API tokens were granted
+ * or revoked, who asked for their account to be deleted. Closed on purpose, to
+ * match the kinds the activity log can record; a new identity kind has to be
+ * named here before a non-administrator stops seeing it.
+ */
+const ADMINISTRATOR_ONLY_ACTIVITY_EVENTS: readonly string[] = [
+  'auth.signed_in',
+  'auth.signed_out',
+  'api_token.created',
+  'api_token.revoked',
+  'account.deletion_requested',
+]
+
 const requireAdministratorSession = <Bindings extends object>(
   context: Parameters<typeof requireSessionPrincipal<Bindings>>[0],
 ) => {
@@ -206,6 +220,10 @@ export const installOutboxRoutes = <Bindings extends object>(
   api.get('/activity-log', async (context) => {
     requireApiScope(context, 'reports:read')
     await requireActivityLogModule(options)
+    // The report audience reads the log, but the raw payloads of sign-ins,
+    // token grants and account-deletion requests are an administrator's to see
+    // (issue 740). Keyed on the profile, so a bearer token cannot widen it.
+    const administrator = context.get('principal').profile === 'administrator'
     const limit = pageLimit(context.req.query('per_page'))
     // Passed straight through. The repository validates each one and throws a
     // RangeError the error middleware turns into a 422, so a bad date is a bad
@@ -223,6 +241,7 @@ export const installOutboxRoutes = <Bindings extends object>(
             ...(to === undefined ? {} : { to }),
             ...(eventType === undefined ? {} : { eventType }),
             ...(actor === undefined ? {} : { actorId: Number(actor) }),
+            ...(administrator ? {} : { excludeEventTypes: ADMINISTRATOR_ONLY_ACTIVITY_EVENTS }),
           })
         ).map(activityData),
         links: { self: '/api/v1/activity-log' },
