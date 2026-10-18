@@ -335,6 +335,36 @@ for (const [runtime, factory] of factories) {
       expect(await ids({ from: '2026-09-04', to: '2026-09-05' })).toEqual(['a-2', 'a-1'])
     })
 
+    it('[unit] leaves named event types out for a reader who may not see them (issue 740)', async () => {
+      database = await factory()
+      const capture = async (
+        eventType: 'auth.signed_in' | 'api_token.created' | 'backup.exported',
+        subjectId: number,
+        occurredAt: string,
+        id: string,
+      ) =>
+        captureActivityEvent(
+          database!.orm,
+          { eventType, subjectId, actor: { type: 'user', id: 1 }, occurredAt, captureId: id },
+          { createEventId: () => id },
+        )
+      await capture('auth.signed_in', 1, '2026-09-04T09:00:00.000Z', 'x-1')
+      await capture('api_token.created', 2, '2026-09-05T09:00:00.000Z', 'x-2')
+      await capture('backup.exported', 3, '2026-09-06T09:00:00.000Z', 'x-3')
+      const service = database.outbox()
+      await service.drain()
+
+      const ids = async (filter: Parameters<typeof service.listActivity>[0]) =>
+        (await service.listActivity(filter)).map((entry) => entry.id)
+      const excluded = ['auth.signed_in', 'api_token.created']
+
+      expect(await ids({ excludeEventTypes: excluded })).toEqual(['x-3'])
+      // Asking for an excluded type by name does not get around the exclusion.
+      expect(await ids({ eventType: 'auth.signed_in', excludeEventTypes: excluded })).toEqual([])
+      expect(await ids({ excludeEventTypes: [] })).toEqual(['x-3', 'x-2', 'x-1'])
+      await expect(service.listActivity({ excludeEventTypes: ["x'; --"] })).rejects.toThrow(RangeError)
+    })
+
     it('[unit] names who acted when the log is read, and keeps the id when nobody carries it (issue 862)', async () => {
       // The payload records only `{ type, id }`, which is why the screen read
       // "User #30". The name is joined when the log is read, from the table the

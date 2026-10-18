@@ -736,6 +736,53 @@ for (const [runtime, factory] of factories) {
       ).toEqual([{ count: 1 }]);
     });
 
+    it("keeps an administrator's status and assignments out of reach of the people profiles (issue 740)", async () => {
+      harness = await factory();
+      const replace = (profile: UserProfile, key: string, version = 0) =>
+        harness!.request("/team/people/2/project-assignments/replace", {
+          method: "POST",
+          body: { expected_version: version, assignments: [{ project_id: 2, is_project_manager: true }] },
+          profile,
+          userId: 4,
+          idempotencyKey: key,
+        });
+      const deactivate = (profile: UserProfile, key: string, version = 0) =>
+        harness!.request("/team/people/2", {
+          method: "PATCH",
+          body: { expected_version: version, is_active: false },
+          profile,
+          userId: 4,
+          idempotencyKey: key,
+        });
+
+      for (const profile of ["people_admin", "executive_manager"] as const) {
+        const denied = await deactivate(profile, `team.admin-target.deactivate.${profile}`);
+        expect(denied.status, profile).toBe(403);
+        expect(await denied.json()).toMatchObject({ error: { code: "profile_forbidden" } });
+        expect((await replace(profile, `team.admin-target.replace.${profile}`)).status, profile).toBe(403);
+      }
+      // Nothing moved: the refusals came before any write.
+      expect(await (await harness.request("/team/people/2")).json()).toMatchObject({
+        data: { version: 0, is_active: true, project_assignments: [] },
+      });
+
+      // The same profiles still manage everyone who is not an administrator.
+      const member = await harness.request("/team/people/4", {
+        method: "PATCH",
+        body: { expected_version: 0, is_active: false },
+        profile: "people_admin",
+        userId: 2,
+        idempotencyKey: "team.admin-target.member",
+      });
+      expect(member.status, await member.clone().text()).toBe(200);
+
+      // An administrator still can.
+      const assigned = await replace("administrator", "team.admin-target.replace.admin");
+      expect(assigned.status, await assigned.clone().text()).toBe(200);
+      const removed = await deactivate("administrator", "team.admin-target.deactivate.admin", 1);
+      expect(removed.status, await removed.clone().text()).toBe(200);
+    });
+
     it("protects the owner, profile boundary, Slack truthfulness, and session-only writes", async () => {
       harness = await factory();
       const owner = await harness.request("/team/people/1", {

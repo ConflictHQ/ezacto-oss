@@ -404,6 +404,26 @@ const requirePersonWriter = (principal: Readonly<UserPrincipal>): void => {
   }
 }
 
+/**
+ * An administrator's status and assignments are an administrator's to change.
+ * The people profiles exist to manage people, not to take over administration
+ * (issue 740), so deactivating an administrator or rewriting their projects is
+ * refused unless the actor is one. The owner and last-administrator rules stay
+ * in the repository, where every caller shares them.
+ */
+const requireAdministratorForAdministratorTarget = (
+  principal: Readonly<UserPrincipal>,
+  person: Readonly<TeamPersonRecord>,
+): void => {
+  if (person.profile === 'administrator' && principal.profile !== 'administrator') {
+    throw new ApiError({
+      status: 403,
+      code: 'profile_forbidden',
+      message: 'Only an administrator can change the status or project assignments of an administrator.',
+    })
+  }
+}
+
 const command = (
   id: string,
   kind: TeamCommandKind,
@@ -561,6 +581,7 @@ export const installTeamRoutes = <Bindings extends object>(
     if (parsed.patch.profile !== undefined && principal.profile !== 'administrator') {
       throw new ApiError({ status: 403, code: 'profile_forbidden', message: 'Only an administrator can change permission profiles.' })
     }
+    if (parsed.patch.isActive === false) requireAdministratorForAdministratorTarget(principal, person)
     if (person.isOwner && (parsed.patch.profile !== undefined || parsed.patch.isActive === false)) {
       throw new ApiError({ status: 409, code: 'owner_immutable', message: 'The organization owner profile and active status cannot be changed.' })
     }
@@ -580,7 +601,7 @@ export const installTeamRoutes = <Bindings extends object>(
     requirePersonWriter(principal)
     await requireEnabled(options)
     const userId = resourceId(context.req.param('id'), 'person')
-    await ensureVisible(options, principal, userId)
+    requireAdministratorForAdministratorTarget(principal, await ensureVisible(options, principal, userId))
     const body = await objectBody(context)
     const errors: FieldError[] = []
     noUnknown(body, new Set(['expected_version', 'assignments']), errors)

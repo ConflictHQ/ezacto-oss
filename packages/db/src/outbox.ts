@@ -94,6 +94,8 @@ export interface OutboxService {
     eventType?: string
     /** The user whose actions to show. Never matches a system event. */
     actorId?: number
+    /** Event types to leave out, for a reader who may not see them. */
+    excludeEventTypes?: readonly string[]
   }): Promise<ActivityLogRecord[]>
   listDeliveries(input?: {
     status?: OutboxDeliveryStatus
@@ -764,6 +766,11 @@ const createService = (
         // to whoever configured it.
         conditions.push("json_extract(event.payload_json, '$.actor.id') = ?")
         params.push(input.actorId)
+      }
+      if (input.excludeEventTypes !== undefined && input.excludeEventTypes.length > 0) {
+        for (const type of input.excludeEventTypes) assertIdentifier(type, 'activity log excluded event type')
+        conditions.push(`event.event_type NOT IN (${input.excludeEventTypes.map(() => '?').join(', ')})`)
+        params.push(...input.excludeEventTypes)
       }
       // The actor's name is joined here, in the one read every surface uses, so
       // the screen, the API and an export all name the same person (issue 862).
