@@ -4927,7 +4927,43 @@ export const mountShell = async (
     })
   }
   required<HTMLButtonElement>('[data-timer-chip]').addEventListener('click', () => {
-    if (currentIdentity === null || snapshot === null) return
+    void openTimerEditor()
+  })
+  // The same staleness reaches the grid: a timer started elsewhere is missing
+  // from the week on screen, its cell reads empty, and the pencil there opens
+  // Add entry on a day that already holds one. Coming back to the tab reloads
+  // the week, unless something is open or being typed into.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return
+    const operation = sessionOperation()
+    if (operation === null || snapshot === null) return
+    if (document.querySelector('dialog[open]') !== null) return
+    const active = document.activeElement
+    if (
+      active instanceof HTMLInputElement ||
+      active instanceof HTMLTextAreaElement ||
+      active instanceof HTMLSelectElement
+    )
+      return
+    refresh(operation).catch((error: unknown) => {
+      handleSessionFailure(error, operation)
+    })
+  })
+  // The timer is started and stopped from the CLI, the extension and other tabs,
+  // so the snapshot this page loaded can name an entry that has since stopped
+  // (issue 1005). The modal reads the running entry from the server, never from
+  // what was true when the page loaded, and its Save note writes to that id.
+  async function openTimerEditor(): Promise<void> {
+    const operation = sessionOperation()
+    if (operation === null || snapshot === null) return
+    try {
+      if (!(await refresh(operation))) return
+    } catch (error) {
+      if (handleSessionFailure(error, operation)) return
+      setSessionStatus(messageFor(error), 'error')
+      return
+    }
+    if (snapshot === null) return
     if (snapshot.running !== null) {
       const running = snapshot.running
       configureEntryEditor({
@@ -4962,7 +4998,7 @@ export const mountShell = async (
       timer: true,
       minimumNoteLength: snapshot.catalog.timeEntryOptions[0]?.minimum_note_length ?? 0,
     })
-  })
+  }
   required<HTMLButtonElement>('[data-menu-trigger]').addEventListener('click', () => {
     loadProfileTimezone()
     open(menuDialog)
