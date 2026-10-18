@@ -88,7 +88,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <label class="invoice-defaults-check" data-invoice-defaults-sending hidden><input type="checkbox" name="attach_pdf" data-invoice-defaults-attach-pdf>Attach the invoice PDF by default</label>
         <label class="invoice-defaults-check" data-invoice-defaults-sending hidden><input type="checkbox" name="attach_journal" data-invoice-defaults-attach-journal>Attach the hours report by default</label>
         <label data-invoice-defaults-journal-detail hidden>Hours report detail
-          <select class="invoice-defaults-select" name="journal_level" data-invoice-defaults-journal-level>
+          <select name="journal_level" data-invoice-defaults-journal-level>
             <option value="detailed">Every entry</option>
             <option value="summary">Summary</option>
           </select>
@@ -155,9 +155,9 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p>These are the light theme, and they are what everyone sees by default, whatever their computer is set to. Somebody who picks Dim or Dark in their own settings sees that built-in theme instead.</p></header>
       <p class="form-result" data-settings-theme-status role="status" aria-live="polite">Loading appearance&hellip;</p>
       <div class="settings-theme" data-settings-theme-slots hidden></div>
-      <div class="settings-form" data-settings-theme-actions hidden>
+      <div class="settings-actions" data-settings-theme-actions hidden>
         <button class="primary-action" type="button" data-theme-save>Save colours</button>
-        <button type="button" data-theme-revert>Undo my changes</button>
+        <button class="editor-secondary" type="button" data-theme-revert>Undo my changes</button>
         <button type="button" class="danger-action" data-theme-reset hidden>Back to the built-in theme</button>
       </div>
       <p class="form-result" data-settings-theme-result role="status" aria-live="polite"></p>
