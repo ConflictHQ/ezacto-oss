@@ -1290,6 +1290,10 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     ).data
     return { policy: saved.reminder_policy, applied: saved.applied_to_open_invoices ?? 0 }
   },
+  getNotificationSettings: async (signal) =>
+    (await client.getNotificationSettings(withSignal(signal))).data,
+  updateNotificationSettings: async (patch, signal) =>
+    (await client.setNotificationSettings({ body: patch, ...withSignal(signal) })).data,
   getEmailHealth: async (signal) =>
     (await client.getEmailHealth(withSignal(signal))).data,
   getBackupStatus: async (signal) =>

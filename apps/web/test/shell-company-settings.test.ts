@@ -141,6 +141,12 @@ describe('company settings', () => {
         applied: policy === null ? 0 : 2,
       }),
     ),
+    getNotificationSettings: vi.fn(async () => ({ budget_alerts_include_admins: false })),
+    updateNotificationSettings: vi.fn(
+      async (patch: { budget_alerts_include_admins?: boolean }) => ({
+        budget_alerts_include_admins: patch.budget_alerts_include_admins ?? false,
+      }),
+    ),
     getEmailHealth: vi.fn(async () => ({
       reputation: {
         sent: 412,
@@ -700,6 +706,21 @@ describe('company settings', () => {
     expect(generated.setOrganizationInvoiceSending).toHaveBeenCalledWith({ body: stored, signal })
   })
 
+  it('[unit] binds the notification settings to their operations', async () => {
+    const stored = { budget_alerts_include_admins: true }
+    const generated = {
+      getNotificationSettings: vi.fn(async () => ({ data: stored })),
+      setNotificationSettings: vi.fn(async () => ({ data: stored })),
+    }
+    const api = createShellApi(generated as unknown as EzactoClient)
+    const signal = new AbortController().signal
+
+    expect(await api.getNotificationSettings!(signal)).toEqual(stored)
+    expect(await api.updateNotificationSettings!(stored, signal)).toEqual(stored)
+    expect(generated.getNotificationSettings).toHaveBeenCalledWith({ signal })
+    expect(generated.setNotificationSettings).toHaveBeenCalledWith({ body: stored, signal })
+  })
+
   it('[browser #801] shows the payment reminder default, saves a change, and switches it off', async () => {
     stubModulesEndpoint()
     renderBrowserShell({ view: 'settings-company' })
@@ -736,6 +757,30 @@ describe('company settings', () => {
     form.requestSubmit()
     await vi.waitFor(() => expect(result.textContent).toBe('Saved. Payment reminders are off.'))
     expect(api.updateInvoiceReminders).toHaveBeenLastCalledWith(null, expect.any(AbortSignal))
+    globalThis.location.hash = ''
+  })
+
+  it('[browser #934] shows whether administrators are copied on budget alerts, and saves a change', async () => {
+    stubModulesEndpoint()
+    renderBrowserShell({ view: 'settings-company' })
+    globalThis.location.hash = '#notifications'
+    const api = companyApi()
+    await mountShell(api)
+
+    const form = document.querySelector<HTMLFormElement>('[data-notification-settings-form]')!
+    const admins = document.querySelector<HTMLInputElement>('[data-notification-settings-admins]')!
+    const result = document.querySelector<HTMLElement>('[data-notification-settings-result]')!
+    await vi.waitFor(() => expect(form.hidden).toBe(false))
+    expect(admins.checked).toBe(false)
+
+    admins.checked = true
+    form.requestSubmit()
+    await vi.waitFor(() => expect(result.textContent).toBe('Saved.'))
+    expect(api.updateNotificationSettings).toHaveBeenLastCalledWith(
+      { budget_alerts_include_admins: true },
+      expect.any(AbortSignal),
+    )
+    expect(admins.checked).toBe(true)
     globalThis.location.hash = ''
   })
 
@@ -793,6 +838,7 @@ describe('company settings', () => {
     // policy is the Time section's own read.
     expect(api.getTimeEntryNoteSettings).not.toHaveBeenCalled()
     expect(api.getInvoiceReminders).not.toHaveBeenCalled()
+    expect(api.getNotificationSettings).not.toHaveBeenCalled()
     expect(api.listSenderIdentities).not.toHaveBeenCalled()
     expect(api.getEmailHealth).not.toHaveBeenCalled()
     expect(api.getBackupStatus).not.toHaveBeenCalled()

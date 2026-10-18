@@ -125,6 +125,16 @@ export const renderModuleSettingsPage = (view?: string): string => `
       </form>
       <p class="form-result" data-reminder-settings-result role="status" aria-live="polite"></p>
     </section>
+    <section class="settings-section" data-settings-section="notifications" aria-labelledby="settings-notifications-title">
+      <header><h2 id="settings-notifications-title">Notifications</h2>
+      <p>Mail this instance sends the people who work in it. A project that has &ldquo;Notify when over budget&rdquo; on emails its project managers once each time its budget crosses the threshold set on the project. If a project has no manager with an address, the administrators are told instead, so an alert never goes to nobody.</p></header>
+      <p class="form-result" data-settings-notifications-status role="status" aria-live="polite">Loading notification settings…</p>
+      <form class="settings-form" data-notification-settings-form hidden>
+        <label class="settings-toggle"><input name="budget_alerts_include_admins" type="checkbox" data-notification-settings-admins>Also email administrators when a project goes over budget</label>
+        <button class="primary-action" type="submit" data-notification-settings-submit>Save notification settings</button>
+      </form>
+      <p class="form-result" data-notification-settings-result role="status" aria-live="polite"></p>
+    </section>
     <section class="settings-section" data-settings-section="payouts" data-settings-wise data-settings-unavailable aria-labelledby="settings-wise-title" hidden>
       <header><div class="settings-section-heading"><h2 id="settings-wise-title">Payouts</h2><button type="button" class="settings-refresh" data-settings-refresh="payouts">Refresh</button></div>
       <p>Which Wise profile money leaves from, how many people it can currently pay, and whether Wise can tell this instance what became of a transfer. The token itself stays in the deployment; what is shown here is the state it produces.</p></header>

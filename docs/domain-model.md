@@ -174,7 +174,7 @@ Contacts are reassignable between clients (Harvest parity).
 | `cost_budget_cents` | int nullable | Money budgets. |
 | `budget_is_monthly` | bool | The ↻ resetting budget. |
 | `cost_budget_include_expenses` | bool | |
-| `notify_when_over_budget` / `over_budget_pct` / `over_budget_notified_on` | bool / real / date | |
+| `notify_when_over_budget` / `over_budget_pct` / `over_budget_notified_on` | bool / real / date | Alert when `spent / budget >= over_budget_pct` (100 when unset), read from the same figures the budget report shows; a monthly budget over the current month in the organization's zone, any other over the project's whole history. One alert per crossing (`project_budget_alerts`; usage falling back under the line closes it, the next crossing is a new alert). Mailed to the project's managers, plus administrators when `organizations.budget_alerts_include_admins` is on or when the project has no manager with an address. `over_budget_notified_on` is the local date of the last alert. |
 | `show_budget_to_all` | bool | |
 | `report_visibility` | enum `managers\|everyone` | UI 28 permissions radio. |
 | `starts_on`, `ends_on` | date nullable | Non-blocking (time can be tracked outside range). |

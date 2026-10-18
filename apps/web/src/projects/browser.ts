@@ -691,6 +691,9 @@ export const createProjectDirectoryController = (
           ? `${projectNumber(currentProject, 'over_budget_pct') ?? 0}%`
           : 'Off',
       ),
+      // Set when the budget last crossed the threshold above and the project's
+      // managers were told (issue 934): the date, in the organization's day.
+      fact('Last over-budget alert', projectText(currentProject, 'over_budget_notified_on') ?? 'None'),
       fact('Budget visible to everyone', projectBoolean(currentProject, 'show_budget_to_all') ? 'Yes' : 'No'),
       fact('Report visibility', projectEnumLabel(projectText(currentProject, 'report_visibility'))),
       fact('Starts on', projectText(currentProject, 'starts_on') ?? 'Not set'),

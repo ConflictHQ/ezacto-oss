@@ -451,6 +451,11 @@ export const createModuleSettingsController = (
   const remindersEvery = required<HTMLInputElement>('[data-reminder-settings-every]')
   const remindersSubmit = required<HTMLButtonElement>('[data-reminder-settings-submit]')
   const remindersResult = required<HTMLElement>('[data-reminder-settings-result]')
+  const notificationsStatus = required<HTMLElement>('[data-settings-notifications-status]')
+  const notificationsForm = required<HTMLFormElement>('[data-notification-settings-form]')
+  const notificationsAdmins = required<HTMLInputElement>('[data-notification-settings-admins]')
+  const notificationsSubmit = required<HTMLButtonElement>('[data-notification-settings-submit]')
+  const notificationsResult = required<HTMLElement>('[data-notification-settings-result]')
 
   // The list is held rather than re-fetched after every action: add, verify and
   // remove all answer with what they changed, and a re-fetch would throw away
@@ -717,6 +722,34 @@ export const createModuleSettingsController = (
       })
     } finally {
       if (currentSession() === active) remindersSubmit.disabled = false
+    }
+  })
+
+  notificationsForm.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    if (active === null || api.updateNotificationSettings === undefined) return
+    notificationsResult.textContent = 'Saving…'
+    notificationsSubmit.disabled = true
+    try {
+      const saved = await api.updateNotificationSettings(
+        { budget_alerts_include_admins: notificationsAdmins.checked },
+        active.signal,
+      )
+      active.present(() => {
+        notificationsAdmins.checked = saved.budget_alerts_include_admins
+        notificationsResult.textContent = 'Saved.'
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        notificationsResult.textContent = messageFor(
+          error,
+          'Only administrators can change notification settings.',
+          'Notification settings could not be saved.',
+        )
+      })
+    } finally {
+      if (currentSession() === active) notificationsSubmit.disabled = false
     }
   })
 
@@ -1219,6 +1252,31 @@ export const createModuleSettingsController = (
           error,
           'Only administrators and accounting can read payment reminder settings.',
           'Payment reminder settings could not be loaded.',
+        )
+      })
+    }
+  }
+
+  const loadNotifications = async (active: ActiveSession): Promise<void> => {
+    if (api.getNotificationSettings === undefined) {
+      notificationsStatus.textContent = 'This build has no notification settings endpoint.'
+      return
+    }
+    try {
+      const settings = await api.getNotificationSettings(active.signal)
+      active.present(() => {
+        notificationsAdmins.checked = settings.budget_alerts_include_admins
+        notificationsForm.hidden = false
+        notificationsStatus.textContent = ''
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        sectionFailed(
+          'notifications',
+          notificationsStatus,
+          error,
+          'Only administrators can read notification settings.',
+          'Notification settings could not be loaded.',
         )
       })
     }
@@ -2033,6 +2091,7 @@ export const createModuleSettingsController = (
     email: (active) => loadEmail(active.identity, active),
     invoices: loadInvoiceDefaults,
     reminders: loadReminders,
+    notifications: loadNotifications,
     payouts: loadWiseConnection,
     backup: (active) => loadBackups(active.identity, active),
     brand: (active) => loadBrandAssets(active.identity, active),
