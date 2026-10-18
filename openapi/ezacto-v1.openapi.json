@@ -10217,7 +10217,7 @@
       "get": {
         "operationId": "listInvoices",
         "summary": "List invoices",
-        "description": "Newest first: by issue_date, latest first; then by number, highest first -- compared as a number when it is made of digits alone (leading zeros ignored) and as text, by Unicode code point, otherwise, with all-digit numbers ahead of the rest on a day that has both; then by id, highest first, so no two invoices tie. The first page fixes the traversal to the invoices that existed when it was read: an invoice created after it does not appear on later pages of the same traversal, and is listed by a new one. Editing an invoice's issue_date or number moves it in the order, so a traversal already under way may miss it or list it twice. The number parameter narrows the list to the invoice with exactly that number, compared as text, so 089 is not 89; numbers are unique, so the page holds that invoice or nothing.",
+        "description": "Newest first: by issue_date, latest first; then by number, highest first -- compared as a number when it is made of digits alone (leading zeros ignored) and as text, by Unicode code point, otherwise, with all-digit numbers ahead of the rest on a day that has both; then by id, highest first, so no two invoices tie. The first page fixes the traversal to the invoices that existed when it was read: an invoice created after it does not appear on later pages of the same traversal, and is listed by a new one. Editing an invoice's issue_date or number moves it in the order, so a traversal already under way may miss it or list it twice. The number parameter narrows the list to the invoice with exactly that number, compared as text, so 089 is not 89; numbers are unique, so the page holds that invoice or nothing. The sort parameter orders by issue_date, due_date, number, amount or balance, with - in front for descending (the default is -issue_date, the order above). The chosen column ranks first, then the number, then the id, all in the one direction. A cursor belongs to the sort it was issued under and is refused under another.",
         "tags": [
           "invoices"
         ],
@@ -10315,6 +10315,15 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 64
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^-?(issue_date|due_date|number|amount|balance)$"
             }
           }
         ]
@@ -16903,6 +16912,18 @@
               "type": "integer",
               "minimum": 1
             }
+          },
+          {
+            "name": "due_state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "not_due",
+                "past_due"
+              ]
+            }
           }
         ]
       }
@@ -17899,6 +17920,15 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "notes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
           }
         ]
       }
@@ -18169,6 +18199,15 @@
             "required": false,
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "name": "notes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
             }
           },
           {
@@ -39350,6 +39389,7 @@
           "unclaimed_seconds",
           "time_entry_count",
           "currencies",
+          "facets",
           "rows"
         ],
         "properties": {
@@ -39484,10 +39524,66 @@
               "$ref": "#/components/schemas/DetailedTimeCurrencyTotal"
             }
           },
+          "facets": {
+            "$ref": "#/components/schemas/DetailedTimeFacets"
+          },
           "rows": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/DetailedTimeRow"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "DetailedTimeFacet": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DetailedTimeFacets": {
+        "type": "object",
+        "required": [
+          "people",
+          "tasks",
+          "roles",
+          "tags"
+        ],
+        "properties": {
+          "people": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DetailedTimeFacet"
+            }
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DetailedTimeFacet"
+            }
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DetailedTimeFacet"
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DetailedTimeFacet"
             }
           }
         },

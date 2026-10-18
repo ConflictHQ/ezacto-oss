@@ -443,6 +443,19 @@ export interface DetailedTimeRowRecord {
   projectActive: boolean;
 }
 
+export interface DetailedTimeFacetRecord {
+  id: number;
+  name: string;
+}
+
+/** What each picker can narrow the report to, each ignoring its own filter. */
+export interface DetailedTimeFacetsRecord {
+  people: readonly DetailedTimeFacetRecord[];
+  tasks: readonly DetailedTimeFacetRecord[];
+  roles: readonly DetailedTimeFacetRecord[];
+  tags: readonly DetailedTimeFacetRecord[];
+}
+
 export interface DetailedTimeCurrencyRecord {
   currency: string;
   billableAmountCents: number | null;
@@ -473,6 +486,7 @@ export interface DetailedTimeReportRecord extends ReportDateRange {
   unclaimedSeconds: number;
   timeEntryCount: number;
   currencies: readonly DetailedTimeCurrencyRecord[];
+  facets: DetailedTimeFacetsRecord;
   rows: readonly DetailedTimeRowRecord[];
 }
 
@@ -708,6 +722,7 @@ export interface ReportReader {
     clientId?: number;
   }): Promise<PaymentsReceivedReportRecord>;
   receivables(filter: {
+    dueState?: "not_due" | "past_due";
     asOf: string;
     clientId?: number;
   }): Promise<ReceivablesReportRecord>;
@@ -767,6 +782,8 @@ export interface ReportReader {
     /** `client` withholds a note a client may not read (D20); absent is `internal`. */
     audience?: "internal" | "client";
     activeProjectsOnly?: boolean;
+    /** Entries whose note contains this text, case-insensitively. */
+    notes?: string;
   }): Promise<DetailedTimeReportResult>;
   filterNames(ids: {
     clientId?: number;
@@ -808,7 +825,7 @@ const profitabilityKeys = new Set([
 ]);
 const invoicedKeys = new Set([...reportKeys, "client_id", "status"]);
 const paymentsReceivedKeys = new Set([...reportKeys, "client_id"]);
-const receivablesKeys = new Set(["as_of", "client_id"]);
+const receivablesKeys = new Set(["as_of", "client_id", "due_state"]);
 const invoicedStates: readonly InvoicedReportState[] = ["draft", "open", "paid", "closed"];
 const timeReportKeys = new Set([...reportKeys, "include_fixed_fee"]);
 // The payroll run is the one report with a file representation, so it is the
@@ -849,6 +866,7 @@ const detailedTimeKeys = new Set([
   "role_id",
   "tag_id",
   "invoice_state",
+  "notes",
 ]);
 // The report's own filters, every one, and the file it is wanted as. Built from
 // the report's set rather than listed again, so a filter added to the report is
@@ -970,6 +988,10 @@ const detailedTimeQuery = (
     "active_projects_only",
     parsed.errors,
   );
+  const notes = parsed.params.get("notes")?.trim();
+  if (notes !== undefined && notes.length > 200) {
+    parsed.errors.push({ field: "notes", code: "too_long", message: "notes must be at most 200 characters" });
+  }
   const includeFixedFee = queryBoolean(parsed.params, "include_fixed_fee", parsed.errors);
   const directClientOnly = queryBoolean(parsed.params, "direct_client_only", parsed.errors);
   const contractorsOnly = queryBoolean(parsed.params, "contractors_only", parsed.errors);
@@ -1007,6 +1029,7 @@ const detailedTimeQuery = (
       ...(audience === undefined ? {} : { audience }),
       ...(invoiceState === undefined ? {} : { invoiceState }),
       ...(activeProjectsOnly === undefined ? {} : { activeProjectsOnly }),
+      ...(notes === undefined || notes === "" ? {} : { notes }),
     },
   };
 };
@@ -1585,6 +1608,7 @@ const serializeDetailedExpense = (
 const serializeDetailedTime = (
   report: Readonly<DetailedTimeReportRecord>,
   viewer: Readonly<UserPrincipal>,
+  self = false,
 ) => {
   const money = canViewMoneyField(viewer, "billable_rate");
   return {
@@ -1612,6 +1636,14 @@ const serializeDetailedTime = (
       entries_without_billable_rate: currency.entriesWithoutBillableRate,
       ...(money ? { billable_amount_cents: currency.billableAmountCents } : {}),
     })),
+    // The people list ignores the person filter, so a My hours drilldown, which
+    // fixes that filter to the viewer, must not be handed every colleague.
+    facets: {
+      people: self ? report.facets.people.filter((person) => person.id === viewer.userId) : report.facets.people,
+      tasks: report.facets.tasks,
+      roles: report.facets.roles,
+      tags: report.facets.tags,
+    },
     rows: report.rows.map((row) => ({
       spent_date: row.spentDate,
       client_id: row.clientId,
@@ -2181,10 +2213,12 @@ export const installReportRoutes = <Bindings extends object>(
       errors.push({ field: "as_of", code: "required", message: "as_of is required" });
     }
     const clientId = queryPositiveInteger(params, "client_id", errors);
+    const dueState = queryEnum(params, "due_state", ["not_due", "past_due"] as const, errors);
     assertFields(errors);
     const report = await reports.receivables({
       asOf: asOf!,
       ...(clientId === undefined ? {} : { clientId }),
+      ...(dueState === undefined ? {} : { dueState }),
     });
     return context.json(
       {
@@ -2259,7 +2293,7 @@ export const installReportRoutes = <Bindings extends object>(
     if (result.kind === "too_many_entries") throw detailedTimeTooWide(result.limit);
     return context.json(
       {
-        data: serializeDetailedTime(result.report, context.get("principal")),
+        data: serializeDetailedTime(result.report, context.get("principal"), query.self),
         links: {
           self:
             new URL(context.req.url).pathname + new URL(context.req.url).search,

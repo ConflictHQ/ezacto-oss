@@ -1,4 +1,5 @@
 import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { loadedRowsSortNotice } from '../components/table-sort.js'
 import { isDemoDeployment } from '../demo.js'
 import { markMoney, moneyText } from '../money-display.js'
 import { invoicePagePath } from '../invoices/model.js'
@@ -467,18 +468,27 @@ export const createRecurringWorkspaceController = (
             key: 'subject',
             label: 'Subject',
             render: (definition) => definition.subject_template,
+            sortValue: (definition) => definition.subject_template,
           },
-          { key: 'cadence', label: 'Cadence', fit: true, render: recurringCadenceLabel },
+          {
+            key: 'cadence',
+            label: 'Cadence',
+            fit: true,
+            render: recurringCadenceLabel,
+            sortValue: (definition) => recurringCadenceLabel(definition),
+          },
           {
             key: 'next',
             fit: true,
             label: 'Next issue',
             render: (definition) => definition.next_issue_on,
+            sortValue: (definition) => definition.next_issue_on,
           },
           {
             key: 'due',
             fit: true,
             label: 'Status',
+            sortValue: (definition) => recurringDueLabel(recurringDueState(definition, today)),
             render: (definition) => {
               const state = recurringDueState(definition, today)
               const pill = document.createElement('span')
@@ -488,11 +498,22 @@ export const createRecurringWorkspaceController = (
               return pill
             },
           },
-          { key: 'basis', label: 'Bills', fit: true, render: recurringBasisLabel },
+          {
+            key: 'basis',
+            label: 'Bills',
+            fit: true,
+            render: recurringBasisLabel,
+            sortValue: (definition) => recurringBasisLabel(definition),
+          },
           {
             key: 'amount',
             label: 'Amount',
             numeric: true,
+            // The label is a phrase for a definition whose amount is not fixed,
+            // so it sorts as the words it reads as; a known amount sorts first
+            // by currency and then by its text.
+            sortValue: (definition) =>
+              recurringAmountLabel(definition, recurringCurrency(definition, clients)),
             render: (definition): CellContent => {
               const label = recurringAmountLabel(definition, recurringCurrency(definition, clients))
               return amountIsKnown(definition) ? moneyText(label) : label
@@ -504,7 +525,7 @@ export const createRecurringWorkspaceController = (
         ],
       }),
     )
-    listStatus.textContent = `${rows.length} ${rows.length === 1 ? 'definition' : 'definitions'} loaded${nextCursor === null ? '.' : '; more are available.'}`
+    listStatus.textContent = `${rows.length} ${rows.length === 1 ? 'definition' : 'definitions'} loaded${nextCursor === null ? '.' : `; more are available.${loadedRowsSortNotice}`}`
   }
 
   const renderConfig = (definition: Readonly<RecurringInvoice>, currency: string): void => {

@@ -1,6 +1,7 @@
 import BetterSqlite3 from "better-sqlite3";
 import { Miniflare } from "miniflare";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { compareInvoiceNumbers } from "@ezacto/core";
 import { SenderIdentityUnavailableError, type SenderBoundQueuedMailer } from "@ezacto/mailer";
 import {
   createContainerDatabase,
@@ -1641,6 +1642,64 @@ for (const [runtime, factory] of factories) {
       };
       expect(restBody.data.map((row) => row.id)).toEqual([500]);
       expect(restBody.page.next_cursor).toBeNull();
+    });
+
+    it("[api] sorts the list on the server, pages in the chosen order, and binds a cursor to its sort", async () => {
+      const test = await setup();
+      await seedInvoicePage(test.database);
+      const walk = async (sort: string): Promise<{ id: number; number: string; amount_cents: number; due_date: string }[]> => {
+        const rows: { id: number; number: string; amount_cents: number; due_date: string }[] = [];
+        let cursor: string | null = null;
+        do {
+          const response = await test.request(
+            `/api/v1/invoices?sort=${sort}&per_page=60${cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`}`,
+          );
+          expect(response.status, sort).toBe(200);
+          const body = (await response.json()) as {
+            data: typeof rows;
+            page: { next_cursor: string | null };
+          };
+          rows.push(...body.data);
+          cursor = body.page.next_cursor;
+        } while (cursor !== null);
+        return rows;
+      };
+
+      const byNumber = await walk("number");
+      expect(byNumber.length).toBeGreaterThan(200);
+      expect(new Set(byNumber.map((row) => row.id)).size).toBe(byNumber.length);
+      expect(byNumber.map((row) => row.number)).toEqual(
+        [...byNumber.map((row) => row.number)].sort(compareInvoiceNumbers),
+      );
+      const byNumberDescending = await walk("-number");
+      expect(byNumberDescending.map((row) => row.id)).toEqual(byNumber.map((row) => row.id).reverse());
+
+      // The one invoice with an amount leads the descending amount order and
+      // closes the ascending one.
+      expect((await walk("-amount"))[0]!.amount_cents).toBe(600);
+      expect((await walk("amount")).at(-1)!.amount_cents).toBe(600);
+
+      const byDue = await walk("due_date");
+      expect(byDue.map((row) => row.due_date)).toEqual([...byDue.map((row) => row.due_date)].sort());
+
+      // No sort is still newest first, so an existing caller is unchanged.
+      const newest = await test.request("/api/v1/invoices?per_page=200");
+      const explicit = await test.request("/api/v1/invoices?sort=-issue_date&per_page=200");
+      expect(((await explicit.json()) as { data: { id: number }[] }).data.map((row) => row.id)).toEqual(
+        ((await newest.json()) as { data: { id: number }[] }).data.map((row) => row.id),
+      );
+
+      for (const bad of ["client", "status", "-", "number,amount", "Number"]) {
+        expect((await test.request(`/api/v1/invoices?sort=${encodeURIComponent(bad)}`)).status, bad).toBe(422);
+      }
+
+      // A cursor is a place in one list: handed to another sort it is refused.
+      const first = await test.request("/api/v1/invoices?sort=number&per_page=10");
+      const cursor = ((await first.json()) as { page: { next_cursor: string } }).page.next_cursor;
+      const moved = await test.request(
+        `/api/v1/invoices?sort=-number&per_page=10&cursor=${encodeURIComponent(cursor)}`,
+      );
+      expect(moved.status).toBe(422);
     });
 
     it("[api] reads a comma-separated state set and rejects an unknown one", async () => {

@@ -440,6 +440,19 @@ for (const [runtime, factory] of factories) {
           days90PlusCents: 0,
         },
       ]);
+      const viaRoute = await harness.request("/reports/receivables?as_of=2026-08-31&due_state=not_due");
+      expect(viaRoute.status).toBe(200);
+      expect(((await viaRoute.json()) as { data: { totals: Array<{ currency: string }> } }).data.totals.map((t) => t.currency)).toEqual(["USD"]);
+      expect((await harness.request("/reports/receivables?as_of=2026-08-31&due_state=late")).status).toBe(422);
+      const pastDue = await harness.reports.receivables({ asOf: "2026-08-31", dueState: "past_due" });
+      expect(pastDue.totals.map((total) => [total.currency, total.outstandingCents, total.notDueCents])).toEqual([
+        ["EUR", 70_000, 0],
+        ["USD", 75_000, 0],
+      ]);
+      const notDue = await harness.reports.receivables({ asOf: "2026-08-31", dueState: "not_due" });
+      expect(notDue.totals.map((total) => [total.currency, total.outstandingCents, total.days1To30Cents])).toEqual([
+        ["USD", 50_000, 0],
+      ]);
       // Draft and cancelled invoices do not become receivables. The USD total
       // is therefore 150,000 rather than the 200,000 shown by Invoiced.
       expect(receivables.rows.reduce((sum, row) => sum + row.invoicedCents, 0)).toBe(220_000);
@@ -2710,6 +2723,74 @@ for (const [runtime, factory] of factories) {
       expect(body.data.rows[0]).toHaveProperty("roles");
     });
 
+    it("[db] narrows to entries whose note contains the text, and facets ignore their own filter", async () => {
+      harness = await factory();
+      await seedDetailedDay(harness);
+      await harness.run(`UPDATE time_entries SET notes = 'Wrote the THING' WHERE id = 111`, []);
+      await harness.run(`UPDATE time_entries SET notes = 'meeting', client_visible = 0 WHERE id = 112`, []);
+      const range = { from: "2026-08-10", to: "2026-08-10", projectId: 1, grain: "entry" as const };
+
+      const found = await harness.reports.detailedTime({ ...range, notes: "the thing" });
+      if (found.kind !== "report") throw new Error("expected a report");
+      expect(found.report.rows.map((row) => row.timeEntryId)).toEqual([111]);
+      // Totals follow the filtered rows.
+      expect(found.report.seconds).toBe(1800);
+      expect(found.report.timeEntryCount).toBe(1);
+
+      const internal = await harness.reports.detailedTime({ ...range, notes: "meeting" });
+      if (internal.kind !== "report") throw new Error("expected a report");
+      expect(internal.report.rows.map((row) => row.timeEntryId)).toEqual([112]);
+      // A note withheld from a client cannot be searched under the client audience.
+      const client = await harness.reports.detailedTime({ ...range, notes: "meeting", audience: "client" });
+      if (client.kind !== "report") throw new Error("expected a report");
+      expect(client.report.rows).toEqual([]);
+
+      // Percent and underscore are text, not wildcards.
+      const wildcard = await harness.reports.detailedTime({ ...range, notes: "%" });
+      if (wildcard.kind !== "report") throw new Error("expected a report");
+      expect(wildcard.report.rows).toEqual([]);
+
+      const faceted = await harness.reports.detailedTime({ ...range, userId: 1, taskId: 1 });
+      if (faceted.kind !== "report") throw new Error("expected a report");
+      expect(faceted.report.facets.people.map((person) => person.id)).toContain(1);
+      expect(faceted.report.facets.tasks.map((task) => task.id)).toContain(1);
+      const nobody = await harness.reports.detailedTime({ ...range, userId: 999 });
+      if (nobody.kind !== "report") throw new Error("expected a report");
+      expect(nobody.report.rows).toEqual([]);
+      // The person list is computed without the person filter, so a miss on a
+      // person still offers everyone the other filters leave.
+      expect(nobody.report.facets.people.map((person) => person.id)).toContain(1);
+      expect(nobody.report.facets.tasks).toEqual([]);
+    });
+
+    it("[api] reads notes through the report and its export, and does not hand a My hours view its colleagues", async () => {
+      harness = await factory();
+      await seedDetailedDay(harness);
+      await harness.run(`UPDATE time_entries SET notes = 'Wrote the thing' WHERE id = 111`, []);
+      const response = await harness.request(
+        "/reports/detailed-time?from=2026-08-10&to=2026-08-10&project_id=1&grain=entry&notes=wrote",
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        data: { rows: Array<{ time_entry_id: number }>; facets: { people: Array<{ id: number }>; tasks: unknown[]; roles: unknown[]; tags: unknown[] } };
+      };
+      expect(body.data.rows.map((row) => row.time_entry_id)).toEqual([111]);
+      expect(body.data.facets.people.length).toBeGreaterThan(0);
+      expect(Array.isArray(body.data.facets.tasks)).toBe(true);
+
+      const tooLong = await harness.request(
+        `/reports/detailed-time?from=2026-08-10&to=2026-08-10&notes=${"x".repeat(201)}`,
+      );
+      expect(tooLong.status).toBe(422);
+
+      const exported = await harness.request(
+        "/reports/detailed-time/export?from=2026-08-10&to=2026-08-10&project_id=1&grain=entry&notes=wrote&audience=internal&format=csv",
+      );
+      expect(exported.status).toBe(200);
+      const csv = await exported.text();
+      expect(csv).toContain("Wrote the thing");
+    });
+
     it("[api] exposes entry workflow fields and echoes the expanded filters", async () => {
       harness = await factory();
       await seedDetailedDay(harness);
@@ -2896,6 +2977,7 @@ describe("detailed time serialization", () => {
     currencies: [
       { currency: "USD", billableAmountCents: 10_000, entriesWithoutBillableRate: 1 },
     ],
+    facets: { people: [], tasks: [], roles: [], tags: [] },
     rows: [
       {
         spentDate: "2026-08-10",
