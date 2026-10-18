@@ -1023,9 +1023,29 @@ describe('week-grid browser behavior', () => {
       '0',
       '2.2583',
     ])
-    // The idle chip is a duration in the same column of numbers as the rest, so
-    // its placeholder follows the setting rather than reading 0:00 beside 2.25.
-    expect(durations.timerElapsed).toBe('0')
+    // The timer chip is a clock, not a total: it reads H:MM whatever the setting.
+    expect(durations.timerElapsed).toBe('0:00')
+  })
+
+  it('[browser] shows a running timer as a clock even when the organisation tracks decimal hours', async () => {
+    // 1,232s is 0.3422 hours; the chip read that and kept incrementing it while
+    // the app showed 0:20 (issue 1003). Totals around it stay decimal.
+    renderBrowserShell()
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-08-28T12:00:00Z'))
+    const api = browserApi()
+    api.timeFormat = 'decimal'
+    api.entries.splice(0, api.entries.length, {
+      ...timeEntry(1, { project_id: 1, task_id: 1, spent_date: '2026-08-28', seconds: 0 }),
+      is_running: true,
+      timer_started_at: '2026-08-28T11:39:28Z',
+    })
+    await mountShell(api)
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-timer-chip]')!.getAttribute('data-state')).toBe('running'),
+    )
+    expect(document.querySelector('[data-timer-elapsed]')!.textContent).toBe('0:20')
   })
 
   it('[browser] agrees with itself on the roundest hour a timesheet carries', async () => {
