@@ -540,6 +540,73 @@ const calendarProposalOperations: ApiContractOperation[] = [
   },
 ];
 
+const allocationOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/allocations",
+    operationId: "listAllocations",
+    summary: "List planned allocations",
+    description:
+      "Planned hours per week for a person on a project over a range of dates. Administrators and executive managers read all of them; a project manager reads their own and those for the people and projects they manage; everyone else reads only their own. `from` and `to` keep the allocations that reach into that span of days. A plan is not work: it is separate from time entries and never billed.",
+    tag: "schedule",
+    responseStatus: 200,
+    responseSchema: "AllocationPage",
+    parameters: [
+      ...pageParameters,
+      query("user_id", integerSchema),
+      query("project_id", integerSchema),
+      query("from", dateSchema),
+      query("to", dateSchema),
+    ],
+  },
+  {
+    method: "post",
+    path: "/api/v1/allocations",
+    operationId: "createAllocation",
+    summary: "Plan hours for a person on a project",
+    description:
+      "Administrators, executive managers and project managers only, a project manager only for people and projects they manage. Dates are plain local days, both included; the figure counts in full for every week the range touches. An end before the start is 422 `invalid_range`, an archived or unknown person or project is 422 `inactive_user`, `inactive_project`, `unknown_user` or `unknown_project`, and a range that overlaps another for the same person and project is 409 `allocation_overlap`. Planning more than a person's capacity is allowed: the capacity view flags it.",
+    tag: "schedule",
+    responseStatus: 201,
+    responseSchema: "AllocationEnvelope",
+    requestSchema: "AllocationInput",
+    requestRequired: true,
+  },
+  ...(["get", "patch", "delete"] as const).map((method) => ({
+    method,
+    path: "/api/v1/allocations/:id",
+    operationId: `${method === "get" ? "get" : method === "patch" ? "update" : "delete"}Allocation`,
+    summary: `${method === "get" ? "Get" : method === "patch" ? "Update" : "Delete"} an allocation`,
+    tag: "schedule",
+    responseStatus: 200,
+    responseSchema: "AllocationEnvelope",
+    ...(method === "patch"
+      ? {
+          description:
+            "Dates and hours only: the person and project of a plan do not change, so to move one, delete it and make another. The same rules as creating apply, and a plan changed by someone else in the meantime is 409 `allocation_changed`.",
+          requestSchema: "AllocationPatch",
+          requestRequired: true,
+        }
+      : {}),
+    parameters: [path("id")],
+  })),
+  {
+    method: "get",
+    path: "/api/v1/capacity",
+    operationId: "getCapacity",
+    summary: "Read planned hours against capacity and tracked time, person by week",
+    description:
+      "Read-only. Weeks begin on the organization's week start day and run from the week holding `from` through the week holding `to`, at most 53. Per person and week: `planned_seconds` (the sum of the allocations touching that week, on active projects), `weekly_capacity_seconds` (the person's current weekly capacity, so part-time is honoured), `tracked_seconds` (rounded time actually logged, a separate figure and never changed by the plan) and `over_allocated` when planned exceeds capacity, which is a flag and never a refusal. Archived people are left out. Administrators and executive managers see everyone, a project manager the people they manage, everyone else only themselves.",
+    tag: "schedule",
+    responseStatus: 200,
+    responseSchema: "CapacityEnvelope",
+    parameters: [
+      { name: "from", location: "query", required: true, schema: dateSchema },
+      { name: "to", location: "query", required: true, schema: dateSchema },
+    ],
+  },
+];
+
 const timesheetApprovalOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -3131,6 +3198,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...rateOperations(),
   ...timeEntryOperations,
   ...calendarProposalOperations,
+  ...allocationOperations,
   ...timesheetApprovalOperations,
   ...timesheetLockPolicyOperations,
   ...expenseOperations,
@@ -5195,6 +5263,96 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   CalendarProposalEnvelope: envelope("CalendarProposal"),
   CalendarProposalPage: page("CalendarProposal"),
+  Allocation: {
+    type: "object",
+    required: [
+      "id",
+      "user_id",
+      "project_id",
+      "start_date",
+      "end_date",
+      "planned_seconds_per_week",
+      "created_at",
+      "updated_at",
+    ],
+    properties: {
+      id: integerSchema,
+      user_id: integerSchema,
+      project_id: integerSchema,
+      start_date: dateSchema,
+      end_date: { ...dateSchema, description: "Included. Never before `start_date`." },
+      planned_seconds_per_week: {
+        ...integerSchema,
+        description: "Planned seconds in each week the range touches, between 1 and 604800.",
+      },
+      created_at: timestampSchema,
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  AllocationInput: {
+    type: "object",
+    required: ["user_id", "project_id", "start_date", "end_date", "planned_seconds_per_week"],
+    properties: {
+      user_id: integerSchema,
+      project_id: integerSchema,
+      start_date: dateSchema,
+      end_date: dateSchema,
+      planned_seconds_per_week: integerSchema,
+    },
+    additionalProperties: false,
+  },
+  AllocationPatch: {
+    type: "object",
+    properties: {
+      start_date: dateSchema,
+      end_date: dateSchema,
+      planned_seconds_per_week: integerSchema,
+    },
+    additionalProperties: false,
+  },
+  AllocationEnvelope: envelope("Allocation"),
+  AllocationPage: page("Allocation"),
+  CapacityWeek: {
+    type: "object",
+    required: ["week_start", "planned_seconds", "tracked_seconds", "over_allocated"],
+    properties: {
+      week_start: dateSchema,
+      planned_seconds: integerSchema,
+      tracked_seconds: {
+        ...integerSchema,
+        description: "Rounded time logged in the week; separate from the plan.",
+      },
+      over_allocated: {
+        ...booleanSchema,
+        description: "Planned exceeds capacity. A flag for the reader, never a refusal.",
+      },
+    },
+    additionalProperties: false,
+  },
+  CapacityPerson: {
+    type: "object",
+    required: ["user_id", "first_name", "last_name", "weekly_capacity_seconds", "weeks"],
+    properties: {
+      user_id: integerSchema,
+      first_name: stringSchema,
+      last_name: stringSchema,
+      weekly_capacity_seconds: integerSchema,
+      weeks: { type: "array", items: reference("CapacityWeek") },
+    },
+    additionalProperties: false,
+  },
+  Capacity: {
+    type: "object",
+    required: ["week_start_day", "weeks", "people"],
+    properties: {
+      week_start_day: { type: "string", enum: ["saturday", "sunday", "monday"] },
+      weeks: { type: "array", items: dateSchema },
+      people: { type: "array", items: reference("CapacityPerson") },
+    },
+    additionalProperties: false,
+  },
+  CapacityEnvelope: envelope("Capacity"),
   TimeEntrySettings: {
     type: "object",
     required: ["time_entry_mode", "time_format", "clock", "week_start_day", "time_rounding"],

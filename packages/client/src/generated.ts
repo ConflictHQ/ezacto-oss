@@ -1291,6 +1291,68 @@ export type CalendarProposalPage = {
   "page": PageMetadata;
 };
 
+export type Allocation = {
+  "id": number;
+  "user_id": number;
+  "project_id": number;
+  "start_date": string;
+  "end_date": string;
+  "planned_seconds_per_week": number;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type AllocationInput = {
+  "user_id": number;
+  "project_id": number;
+  "start_date": string;
+  "end_date": string;
+  "planned_seconds_per_week": number;
+};
+
+export type AllocationPatch = {
+  "start_date"?: string;
+  "end_date"?: string;
+  "planned_seconds_per_week"?: number;
+};
+
+export type AllocationEnvelope = {
+  "data": Allocation;
+  "links": Links;
+};
+
+export type AllocationPage = {
+  "data": Array<Allocation>;
+  "links": PageLinks;
+  "page": PageMetadata;
+};
+
+export type CapacityWeek = {
+  "week_start": string;
+  "planned_seconds": number;
+  "tracked_seconds": number;
+  "over_allocated": boolean;
+};
+
+export type CapacityPerson = {
+  "user_id": number;
+  "first_name": string;
+  "last_name": string;
+  "weekly_capacity_seconds": number;
+  "weeks": Array<CapacityWeek>;
+};
+
+export type Capacity = {
+  "week_start_day": "saturday" | "sunday" | "monday";
+  "weeks": Array<string>;
+  "people": Array<CapacityPerson>;
+};
+
+export type CapacityEnvelope = {
+  "data": Capacity;
+  "links": Links;
+};
+
 export type TimeEntrySettings = {
   "time_rounding": TimeRounding;
   "time_entry_mode": "duration" | "start_end";
@@ -5086,6 +5148,64 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<CalendarProposalEnvelope>("POST", "/api/v1/calendar-proposals/:id/discard".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listAllocations(args: { query?: { "cursor"?: string; "per_page"?: number; "user_id"?: number; "project_id"?: number; "from"?: string; "to"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<AllocationPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AllocationPage>("GET", "/api/v1/allocations", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createAllocation(args: { body: AllocationInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<AllocationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AllocationEnvelope>("POST", "/api/v1/allocations", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getAllocation(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<AllocationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AllocationEnvelope>("GET", "/api/v1/allocations/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateAllocation(args: { "id": number; body: AllocationPatch; signal?: AbortSignal; headers?: HeadersInit }): Promise<AllocationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AllocationEnvelope>("PATCH", "/api/v1/allocations/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async deleteAllocation(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<AllocationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AllocationEnvelope>("DELETE", "/api/v1/allocations/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getCapacity(args: { query: { "from": string; "to": string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<CapacityEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CapacityEnvelope>("GET", "/api/v1/capacity", {
+      query: args.query,
       signal: args.signal,
       headers,
     });

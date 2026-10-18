@@ -213,6 +213,21 @@ reproduces Harvest's inconsistency.
 `use_default_rates` (true → resolve via §2.3 tables; false → this row's
 `hourly_rate_cents`), `budget_seconds` (when `budget_by = person`).
 
+### 2.11a `allocation` (resource planning, issue 1007)
+
+Planned hours per week for one person on one project over a range of dates:
+`user_id`, `project_id`, `start_date`, `end_date` (plain local days, both
+included), `planned_seconds_per_week` (1 to 604800). A separate table from
+`user_assignment` (Harvest-shaped, imported) and from `time_entry`: a plan is
+not work, has no rate or money column, and never reaches a report, lock or
+invoice. A range counts its full weekly figure in every week it touches. Two
+ranges for the same person and project may not overlap; different projects may,
+which is what over-allocation is. Every write leaves an `allocation.created`,
+`updated` or `deleted` outbox event in the same transaction, which the activity
+log records. The capacity view (`GET /api/v1/capacity`) sets planned seconds
+beside `users.weekly_capacity` and tracked `rounded_seconds`, by week, and flags
+a week planned beyond capacity; it never blocks one.
+
 ### 2.12 `time_entry` — the core object
 
 | Field | Type | Notes |

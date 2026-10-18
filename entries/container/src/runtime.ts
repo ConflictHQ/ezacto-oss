@@ -50,6 +50,7 @@ import {
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
   createTeamRepository,
+  DrizzleAllocationRepository,
   DrizzleCalendarProposalRepository,
   DrizzleTrackedResourceRepository,
   enrollInstanceOwnerPasswordContainer,
@@ -774,6 +775,7 @@ export const createContainerRuntime = async (
       team: createTeamRepository(drizzle),
       trackedResources,
       calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
+      allocations: new DrizzleAllocationRepository(drizzle),
       profile: {
         readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
         readIdentity: async (userId) => await readUserIdentity(drizzle, userId),

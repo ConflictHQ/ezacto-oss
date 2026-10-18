@@ -36,6 +36,7 @@ import {
 } from '@conflict-hq/ezacto-client'
 import type { InvoiceState } from '../invoices/model.js'
 import type { ActivityRow } from '../activity/browser.js'
+import type { CapacityApi } from '../capacity/model.js'
 import type { LogPageResult } from '../components/paged-log.js'
 import type {
   EmailLogQuery,
@@ -130,6 +131,11 @@ export interface ShellApi
   listClients?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   /** Whether the Activity log module is on, so the surface is not offered when it is off. */
   getActivityLogEnabled?(signal?: AbortSignal): Promise<boolean>
+  /** Planned hours against capacity and tracked time, person by week (issue 1007). */
+  getCapacity?(
+    range: { readonly from: string; readonly to: string },
+    signal?: AbortSignal,
+  ): ReturnType<CapacityApi['getCapacity']>
   /** The page size a caller may raise when it is walking, not browsing. */
   listActivityLog?(
     query: { readonly from?: string; readonly to?: string; readonly event_type?: string },
@@ -1843,6 +1849,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  getCapacity: (range, signal) =>
+    client.getCapacity({ query: range, ...withSignal(signal) }),
   listActivityLog: (query, signal) =>
     client.listActivityLog({ query: { per_page: 200, ...query }, ...withSignal(signal) }),
   listEmailLog: (query, signal) => client.listEmailLog({ query, ...withSignal(signal) }),

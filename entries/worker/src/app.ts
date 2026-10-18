@@ -70,6 +70,7 @@ import {
   installAccountDeletionStatusRoutes,
   installSessionRoutes,
   installSsoDomainRoutes,
+  installAllocationRoutes,
   installCalendarProposalRoutes,
   installTrackedResourceRoutes,
   installTimesheetApprovalRoutes,
@@ -134,6 +135,7 @@ import {
   type ReportReader,
   type SsoProvisioningDomainService,
   type UserEmailService,
+  type AllocationRepository,
   type CalendarProposalRepository,
   type TrackedResourceRepository,
   type ProfileRepositoryPort,
@@ -338,6 +340,8 @@ export interface RuntimeServices {
   trackedResources: TrackedResourceRepository
   /** Calendar events offered as time, accepted through `trackedResources` (issue 428). */
   calendarProposals: CalendarProposalRepository
+  /** Planned hours per week and the capacity view (issue 1007). */
+  allocations: AllocationRepository
   profile: ProfileRepositoryPort
   isExpensesModuleEnabled(): Promise<boolean>
   moduleSettings: ModuleSettingsService
@@ -705,6 +709,11 @@ export const createApp = (
               clock: systemClock,
               cursorSigningKey: services.cursorSigningKey,
               isExpensesModuleEnabled: services.isExpensesModuleEnabled,
+            })
+            installAllocationRoutes(api, {
+              repository: services.allocations,
+              clock: systemClock,
+              cursorSigningKey: services.cursorSigningKey,
             })
             installCalendarProposalRoutes(api, {
               repository: services.calendarProposals,
@@ -1555,6 +1564,32 @@ export const createApp = (
             ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Team',
             view: 'team-list',
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/capacity', async (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            ...(await shellChrome(context.env, context.req.raw)),
+            activeSection: 'Team',
+            view: 'capacity',
+            tabs: [
+              { label: 'People', href: '/team' },
+              { label: 'Capacity', href: '/capacity', current: true },
+            ],
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),

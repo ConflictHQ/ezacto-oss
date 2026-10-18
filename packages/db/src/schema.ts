@@ -3727,6 +3727,32 @@ export const calendarProposals = sqliteTable(
   ],
 )
 
+/**
+ * Planned hours per week for a person on a project over a range of dates (issue
+ * 1007). Not time entries and not billing: nothing here reaches a report, a
+ * lock or an invoice, and there is no money column. Dates are plain local days.
+ */
+export const allocations = sqliteTable(
+  'allocations',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'restrict' }),
+    startDate: text('start_date').notNull(),
+    endDate: text('end_date').notNull(),
+    plannedSecondsPerWeek: integer('planned_seconds_per_week').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    index('allocations_user_dates').on(table.userId, table.startDate, table.endDate),
+    index('allocations_project_dates').on(table.projectId, table.startDate, table.endDate),
+  ],
+)
+
 export const timeEntryRateReprices = sqliteTable(
   'time_entry_rate_reprices',
   {
