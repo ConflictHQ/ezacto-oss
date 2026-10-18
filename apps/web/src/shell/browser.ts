@@ -69,6 +69,7 @@ import { createPeriodControl, isCalendarDay } from '../components/period.js'
 import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
 import { createActivityController } from '../activity/browser.js'
+import { setSortPreferenceOwner } from '../components/table-sort.js'
 import { createDeliveriesController } from '../deliveries/browser.js'
 import { createCalendarController } from '../calendar/browser.js'
 import { createDashboardController } from '../dashboard/browser.js'
@@ -1793,6 +1794,7 @@ export const mountShell = async (
   }
 
   const showSignedOutScreen = (): void => {
+    setSortPreferenceOwner(null)
     passwordRecovery?.clear()
     sessionCheckOverlay.hidden = true
     authenticatedShell.hidden = true
@@ -4185,6 +4187,8 @@ export const mountShell = async (
     const identity = cached ?? (await api.whoami(operation.signal))
     if (!isGenerationCurrent(operation)) return
     rememberIdentity(identity)
+    // Whose sorted tables are remembered (issue 852).
+    setSortPreferenceOwner(identity.user_id)
     const authenticated = showAuthenticated(identity)
     if (cached !== undefined) {
       // Nothing is granted on the cache's say-so: every protected load below is

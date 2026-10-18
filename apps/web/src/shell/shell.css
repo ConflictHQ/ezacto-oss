@@ -6987,7 +6987,7 @@ dialog textarea {
   white-space: nowrap;
 }
 
-.data-table-sort {
+.table-sort {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -7003,9 +7003,19 @@ dialog textarea {
   cursor: pointer;
 }
 
-.data-table-sort:hover { text-decoration: underline; }
-.data-table-sort:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
-.data-table .is-numeric .data-table-sort { justify-content: flex-end; }
+.table-sort:hover { text-decoration: underline; }
+.table-sort:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+.data-table .is-numeric .table-sort { justify-content: flex-end; }
+
+/* The mark is drawn, and the header's own aria-sort says the same thing aloud:
+   both carets while a column is not the sorted one, and only the caret for the
+   way the sorted column runs at full strength. */
+.table-sort svg { flex: none; width: 16px; height: 16px; }
+.table-sort [data-part] { opacity: 0.45; }
+th[aria-sort="ascending"] .table-sort [data-part="ascending"],
+th[aria-sort="descending"] .table-sort [data-part="descending"] { opacity: 1; }
+th[aria-sort="ascending"] .table-sort [data-part="descending"],
+th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; }
 
 /* The row's own actions are the exception: the overflow menu is a popup inside
    this cell, and clipping the cell clips the menu. */
@@ -7180,7 +7190,7 @@ dialog textarea {
     padding: 12px;
   }
   .data-table-menu button,
-  .data-table-sort {
+  .table-sort {
     min-height: 48px;
   }
 }

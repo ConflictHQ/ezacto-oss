@@ -210,7 +210,9 @@ export const sortableHeader = (
   const label = document.createElement('span')
   label.className = 'table-sort-label'
   label.textContent = options.label
-  button.append(label, icon('sort'))
+  // appendChild, not append: see icons.ts on the worker tsconfig.
+  button.appendChild(label)
+  button.appendChild(icon('sort'))
   button.addEventListener('click', () => {
     options.onSort(nextSort(options.column, options.sort))
   })
