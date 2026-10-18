@@ -29,6 +29,8 @@ test.beforeEach(async ({ page }) => {
 type BrowserFixtureAction =
   | 'banded-invoice-cleanup'
   | 'banded-invoice-seed'
+  | 'end-client-invoice-cleanup'
+  | 'end-client-invoice-seed'
   | 'invoice-generation-cleanup'
   | 'invoice-generation-seed'
   | 'project-directory-cleanup'
@@ -50,7 +52,9 @@ test.afterEach(async ({ request }, testInfo) => {
       ? 'invoice-generation-cleanup'
       : testInfo.title.includes('[e2e:invoice-banded]')
         ? 'banded-invoice-cleanup'
-        : null
+        : testInfo.title.includes('[e2e:invoice-end-clients]')
+          ? 'end-client-invoice-cleanup'
+          : null
   if (action === null) return
   const cleaned = await controlBrowserFixture(request, action)
   expect(cleaned.status()).toBe(204)
@@ -2341,7 +2345,7 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   // The email above was refused before anything was logged -- this worker has
   // no mail transport -- and the table says so rather than failing to load.
   await expect(deliveries.locator('[data-email-log-list]')).toContainText(
-    'No email matches this filter.',
+    'No email has been sent yet.',
   )
 })
 
@@ -3818,4 +3822,85 @@ test('[e2e:keyboard #861] opens the command bar and the menu ready for the keybo
   await page.keyboard.press('Escape')
   await expect(menu).toBeHidden()
   await expect(menuTrigger).toBeFocused()
+})
+
+test('[e2e:invoice-cycle] [e2e:invoice-end-clients] bills a parent for its end-clients and subtotals each to what it had uninvoiced', async ({
+  page,
+  request,
+}) => {
+  const seeded = await controlBrowserFixture(request, 'end-client-invoice-seed')
+  expect(seeded.status()).toBe(204)
+
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/invoices/new')
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  const wizard = page.locator('[data-invoice-new-dialog]')
+  await expect(wizard).toBeVisible()
+  await wizard.getByLabel('Client').selectOption('9200')
+
+  // The parent's own project and one for each end-client beneath it, in the
+  // tree's order, every one with what it has waiting.
+  const projects = wizard.locator('[data-invoice-projects] label')
+  await expect(projects).toHaveCount(4)
+  await expect(projects.nth(0)).toContainText('Browser F7 Project 1')
+  await expect(projects.nth(1)).toContainText('Browser F7 Project 2')
+  await expect(projects.nth(1)).toContainText('For Browser F7 Alpha')
+  await expect(projects.nth(2)).toContainText('Browser F7 Project 3')
+  await expect(projects.nth(3)).toContainText('Browser F7 Project 4')
+  await expect(projects.nth(3)).toContainText('For Browser F7 Charlie')
+  const uninvoiced: Record<string, string> = {
+    '9200': '$100.00',
+    '9201': '$200.00',
+    '9202': '$150.00',
+    '9203': '$50.00',
+  }
+  for (const [projectId, amount] of Object.entries(uninvoiced)) {
+    await expect(wizard.locator(`[data-project-uninvoiced="${projectId}"]`)).toHaveText(amount)
+  }
+  const expenses = wizard.locator('[data-invoice-expense-summary]')
+  if (await expenses.isEnabled()) await expenses.selectOption('')
+
+  const generated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/invoice-generations' &&
+      response.request().method() === 'POST',
+  )
+  await wizard.getByRole('button', { name: 'Create draft' }).click()
+  const generatedResponse = await generated
+  expect(generatedResponse.status()).toBe(201)
+  expect(generatedResponse.request().postDataJSON()).toMatchObject({
+    kind: 'tracked',
+    client_id: 9200,
+    project_ids: [9200, 9201, 9202, 9203],
+  })
+
+  // The draft: one invoice for the parent, its lines in the tree's order, and
+  // a subtotal for each end-client that equals what it had waiting above.
+  const detail = page.locator('[data-invoice-document]')
+  await expect(detail).toBeVisible()
+  await expect(page).toHaveURL(/\/invoices\/[^/]+$/u)
+  await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$500.00')
+  const lines = detail.locator('[data-invoice-detail-lines] tr')
+  await expect(lines).toHaveCount(4)
+  for (const [index, code] of ['F71', 'F72', 'F73', 'F74'].entries()) {
+    await expect(lines.nth(index)).toContainText(`[${code}] Browser F7 Project ${String(index + 1)}`)
+  }
+  const subtotals = detail.locator('[data-invoice-end-client-rows] tr')
+  await expect(subtotals).toHaveCount(4)
+  const read = await subtotals.evaluateAll((rows) =>
+    rows.map((row) => [
+      (row as HTMLElement).dataset['endClient'],
+      row.querySelector('th')?.textContent,
+      row.querySelector('td')?.textContent,
+    ]),
+  )
+  expect(read).toEqual([
+    ['9200', 'Browser F7 Parent', uninvoiced['9200']],
+    ['9201', 'Browser F7 Alpha', uninvoiced['9201']],
+    ['9202', 'Browser F7 Bravo', uninvoiced['9202']],
+    ['9203', 'Browser F7 Charlie', uninvoiced['9203']],
+  ])
 })

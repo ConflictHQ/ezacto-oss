@@ -46,7 +46,10 @@ import {
   lastSeenIntervalFromSeconds,
   createD1SsoProvisioningDomainStore,
   DrizzleTrackedResourceRepository,
+  countBackupRuns,
+  getBackupRunsSnapshot,
   getLatestBackupRuns,
+  pageBackupRuns,
   migrateD1,
   createD1ContactSessionStore,
   createD1MagicLinkStore,
@@ -146,6 +149,7 @@ import {
   type HttpEmailProvider,
   type MailgunOptions,
   type SesMailerOptions,
+  EMAIL_LOG_KIND_TEMPLATES,
 } from "@ezacto/mailer";
 import { createInvoiceDocumentPort } from './invoice-documents.js';
 import type { RuntimeServices } from "./app.js";
@@ -674,7 +678,7 @@ export const createRuntimeServices = async (
                   fetch: options.cloudflareAccessFetch,
                 }),
         });
-  const emailLog = createD1EmailLogStore(database);
+  const emailLog = createD1EmailLogStore(database, { kindTemplates: EMAIL_LOG_KIND_TEMPLATES });
   const emailConfiguration = createD1EmailConfigurationStore(database);
   const emailProvider =
     options.emailProvider ??
@@ -1255,6 +1259,9 @@ export const createRuntimeServices = async (
     outbox,
     backupStatus: {
       latestRuns: (limit: number) => getLatestBackupRuns(database, limit),
+      runsSnapshot: () => getBackupRunsSnapshot(database),
+      pageRuns: (window) => pageBackupRuns(database, window),
+      countRuns: (filter) => countBackupRuns(database, filter),
     },
     // Composed only where the deployment carries Intuit keys. Without them the
     // routes are not mounted, because a connect button that cannot connect is

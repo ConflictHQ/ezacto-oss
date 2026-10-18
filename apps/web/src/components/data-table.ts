@@ -16,14 +16,21 @@
  */
 
 import { icon } from './icons.js'
+import {
+  focusSortHeader,
+  rememberedSort,
+  rememberSort,
+  resolveSort,
+  sortableHeader,
+  sortRows,
+  type SortValue,
+  type TableSort,
+} from './table-sort.js'
 
 /** A cell's content. Strings are text; nodes are appended as given. */
 export type CellContent = string | Node
-export type DataSortValue = string | number | readonly (string | number)[] | null
-export interface DataTableSort {
-  readonly column: string
-  readonly direction: 'ascending' | 'descending'
-}
+export type DataSortValue = SortValue
+export type DataTableSort = TableSort
 
 export interface DataColumn<Row> {
   /** Stable identifier, used for the cell's `data-column`. */
@@ -82,9 +89,31 @@ export interface RowAction {
 export interface DataTableOptions<Row> {
   readonly columns: readonly DataColumn<Row>[]
   readonly rows: readonly Row[]
+  /**
+   * The sort the table shows, when the caller keeps it (in its address, say).
+   * Without one the table falls back to the sort this person last chose for
+   * `table`, then to `defaultSort`.
+   */
   readonly sort?: DataTableSort
   /** Retain the selected sort across caller-driven refreshes and filtering. */
   readonly onSort?: (sort: DataTableSort) => void
+  /**
+   * Names the table for the sort it remembers per person. Without a name the
+   * sort lasts as long as the page.
+   */
+  readonly table?: string
+  /**
+   * The order the rows arrive in, said as a sort, so the table always shows
+   * which column it is ordered by (issue 852).
+   */
+  readonly defaultSort?: DataTableSort
+  /**
+   * The rows arrive already in the order `sort` names, because the server put
+   * them there. The headers still ask for a sort; the table does not reorder,
+   * and `onSort` is what fetches the rows again. A page of a longer list sorted
+   * in the browser would claim an order the rest of the list does not have.
+   */
+  readonly serverSort?: boolean
   /** Distinguishes rows for `data-row-key`; must be stable across renders. */
   readonly rowKey: (row: Row) => string
   /**
@@ -169,48 +198,28 @@ const actionsCell = (actions: readonly RowAction[]): HTMLTableCellElement => {
 }
 
 export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElement => {
-  const { columns, rowKey, groupBy, renderGroup, actions, caption, empty, sort } = options
+  const { columns, rowKey, groupBy, renderGroup, actions, caption, empty } = options
+  const sort = resolveSort(
+    [options.sort, options.table === undefined ? null : rememberedSort(options.table)],
+    (key) => columns.some((column) => column.key === key && column.sortValue !== undefined),
+    options.defaultSort ?? null,
+  )
   const sortValue = columns.find((column) => column.key === sort?.column)?.sortValue
-  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
-  const groups = new Map<string, number>()
-  if (sortValue !== undefined && groupBy !== undefined) {
-    for (const row of options.rows) {
-      const group = groupBy(row)
-      if (!groups.has(group)) groups.set(group, groups.size)
+  let rows: readonly Row[] = options.rows
+  if (sort !== null && sortValue !== undefined && options.serverSort !== true) {
+    if (groupBy === undefined) {
+      rows = sortRows(options.rows, sortValue, sort.direction)
+    } else {
+      // Rows sort inside their bands. The bands keep the order they first
+      // appeared in, so a band's total still closes the band it belongs to.
+      const bands = new Map<string, Row[]>()
+      for (const row of options.rows) {
+        const band = groupBy(row)
+        bands.set(band, [...(bands.get(band) ?? []), row])
+      }
+      rows = [...bands.values()].flatMap((members) => sortRows(members, sortValue, sort.direction))
     }
   }
-  const rows =
-    sortValue === undefined
-      ? options.rows
-      : [...options.rows].sort((a, b) => {
-          // Keep group bands and their totals intact for grouped callers.
-          if (groupBy !== undefined) {
-            const groupOrder = groups.get(groupBy(a))! - groups.get(groupBy(b))!
-            if (groupOrder !== 0) return groupOrder
-          }
-          const left = sortValue(a)
-          const right = sortValue(b)
-          if (left === null) return right === null ? 0 : 1
-          if (right === null) return -1
-          const first: readonly (string | number)[] = typeof left === 'object' ? left : [left]
-          const second: readonly (string | number)[] = typeof right === 'object' ? right : [right]
-          for (let index = 0; index < Math.max(first.length, second.length); index += 1) {
-            const x = first[index]
-            const y = second[index]
-            const order =
-              x === undefined
-                ? y === undefined
-                  ? 0
-                  : -1
-                : y === undefined
-                  ? 1
-                  : typeof x === 'number' && typeof y === 'number'
-                    ? x - y
-                    : collator.compare(String(x), String(y))
-            if (order !== 0) return sort?.direction === 'descending' ? -order : order
-          }
-          return 0
-        })
   const table = document.createElement('table')
   table.className = columns.length > 4 ? 'data-table data-table-wide' : 'data-table'
 
@@ -229,37 +238,25 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
     cell.textContent = column.label
     cell.dataset.column = column.key
     if (column.sortValue !== undefined) {
-      const active = sort?.column === column.key
-      const next: DataTableSort = {
+      sortableHeader(cell, {
         column: column.key,
-        direction: active && sort.direction === 'ascending' ? 'descending' : 'ascending',
-      }
-      cell.setAttribute('aria-sort', active ? sort.direction : 'none')
-      const button = document.createElement('button')
-      button.type = 'button'
-      button.className = 'data-table-sort'
-      button.dataset.sortColumn = column.key
-      button.setAttribute('aria-label', `${column.label}: sort ${next.direction}`)
-      if (column.sortDescription !== undefined) button.title = column.sortDescription
-      button.appendChild(document.createTextNode(column.label))
-      const indicator = document.createElement('span')
-      indicator.setAttribute('aria-hidden', 'true')
-      indicator.textContent = active ? (sort.direction === 'ascending' ? '↑' : '↓') : '↕'
-      button.appendChild(indicator)
-      button.addEventListener('click', () => {
-        options.onSort?.(next)
-        const replacement = renderDataTable({ ...options, sort: next })
-        const scrollLeft = scroll.scrollLeft
-        const scrollTop = scroll.scrollTop
-        scroll.replaceWith(replacement)
-        replacement.scrollLeft = scrollLeft
-        replacement.scrollTop = scrollTop
-        const selectedHeader = [
-          ...replacement.querySelectorAll<HTMLButtonElement>('[data-sort-column]'),
-        ].find((header) => header.dataset.sortColumn === next.column)
-        selectedHeader?.focus({ preventScroll: true })
+        label: column.label,
+        sort,
+        ...(column.sortDescription === undefined ? {} : { description: column.sortDescription }),
+        onSort: (next) => {
+          if (options.table !== undefined) rememberSort(options.table, next)
+          options.onSort?.(next)
+          // Rows the server ordered are drawn again by whoever fetches them.
+          if (options.serverSort === true) return
+          const replacement = renderDataTable({ ...options, sort: next })
+          const scrollLeft = scroll.scrollLeft
+          const scrollTop = scroll.scrollTop
+          scroll.replaceWith(replacement)
+          replacement.scrollLeft = scrollLeft
+          replacement.scrollTop = scrollTop
+          focusSortHeader(replacement, next.column)
+        },
       })
-      cell.replaceChildren(button)
     }
     if (column.numeric === true) cell.classList.add('is-numeric')
     if (column.fit === true) cell.classList.add('is-fit')

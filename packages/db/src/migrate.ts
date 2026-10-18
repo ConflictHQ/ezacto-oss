@@ -16,6 +16,7 @@ import { invoiceTotalsPerInvoiceMigration } from './migrations/0111_invoice_tota
 import { timeRoundingSettingsMigration } from './migrations/0112_time_rounding_settings.js'
 import { projectBudgetAlertsMigration } from './migrations/0113_project_budget_alerts.js'
 import { timeRemindersMigration } from './migrations/0114_time_reminders.js'
+import { endClientInvoicesMigration } from './migrations/0115_end_client_invoices.js'
 import { organizationInvoiceDefaultsMigration } from './migrations/0097_organization_invoice_defaults.js'
 import { journalFormatsInvoiceExtraMigration } from './migrations/0096_journal_formats_invoice_extra.js'
 import { freeFormInvoiceCreateMigration } from './migrations/0095_free_form_invoice_create.js'
@@ -1583,6 +1584,7 @@ const migrations = [
   { id: '0112_time_rounding_settings', statements: timeRoundingSettingsMigration },
   { id: '0113_project_budget_alerts', statements: projectBudgetAlertsMigration },
   { id: '0114_time_reminders', statements: timeRemindersMigration },
+  { id: '0115_end_client_invoices', statements: endClientInvoicesMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { EzactoClient } from '@conflict-hq/ezacto-client'
+import type { LogPageResult } from '../src/components/paged-log.js'
 import { createShellApi } from '../src/shell/model.js'
 import type { NotificationSettingsState } from '../src/module-settings/model.js'
 import {
@@ -135,6 +136,22 @@ describe('company settings', () => {
     })),
     removeSsoDomain: vi.fn(async () => undefined),
     getBackupStatus: vi.fn(async () => backupStatusPayload),
+    listBackupRuns: vi
+      .fn<
+        (query: {
+          per_page: number
+          cursor?: string
+        }) => Promise<LogPageResult<ReturnType<typeof backupRun>>>
+      >()
+      .mockImplementation(async () => ({
+        data: backupStatusPayload.recent_runs,
+        links: { next: null },
+        page: {
+          per_page: 50,
+          next_cursor: null,
+          total: backupStatusPayload.recent_runs.length,
+        },
+      })),
     getInvoiceReminders: vi.fn(async () => ({ first_after_days: 3, every_days: 7 })),
     updateInvoiceReminders: vi.fn(
       async (policy: { first_after_days: number; every_days: number } | null) => ({
@@ -1628,6 +1645,73 @@ describe('company settings', () => {
     expect(document.querySelector('[data-settings-backup-runs]')?.textContent).toContain(
       'nightly',
     )
+  })
+
+  it('[browser] pages the whole backup history, not just the latest runs (#929)', async () => {
+    // The status carries the latest twenty runs, which is enough to say whether
+    // the last one worked and not enough to find the one before it.
+    stubModulesEndpoint()
+    openCompanySettings('backup')
+    const api = companyApi()
+    api.listBackupRuns
+      .mockResolvedValueOnce({
+        data: [backupRun({ id: 9 })],
+        links: { next: '/api/v1/backup/runs?per_page=50&cursor=b1' },
+        page: { per_page: 50, next_cursor: 'b1', total: 61 },
+      })
+      .mockResolvedValueOnce({
+        data: [backupRun({ id: 8, trigger: 'manual' })],
+        links: { next: null },
+        page: { per_page: 50, next_cursor: null, total: 61 },
+      })
+    await mountShell(api)
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-settings-backup-runs] .log-pager-count')?.textContent).toBe(
+        'Rows 1–1 of 61',
+      ),
+    )
+    const older = [
+      ...document.querySelectorAll<HTMLButtonElement>('[data-settings-backup-runs] button'),
+    ].find((button) => button.textContent === 'Older')!
+    older.click()
+    await vi.waitFor(() =>
+      expect(api.listBackupRuns).toHaveBeenLastCalledWith(
+        { per_page: 50, cursor: 'b1' },
+        expect.anything(),
+      ),
+    )
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-settings-backup-runs]')?.textContent).toContain('manual'),
+    )
+    // The place is in the address, beside the section the page is on.
+    expect(globalThis.location.search).toBe('?backup_cursor=b1&backup_offset=1')
+    expect(globalThis.location.hash).toBe('#backup')
+  })
+
+  it('[browser] says when a backup started in the organization timezone (#929)', async () => {
+    stubModulesEndpoint()
+    openCompanySettings('backup')
+    const api = {
+      ...companyApi(),
+      getTimesheetLockPolicy: vi.fn(async () => ({
+        auto_lock: false,
+        timesheet_deadline: null,
+        timezone: 'America/Costa_Rica',
+        week_start_day: 'monday' as const,
+        updated_at: timestamp,
+      })),
+    }
+    await mountShell(api)
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('[data-settings-backup-runs] th[data-column="started"]')?.textContent,
+      ).toBe('Started (America/Costa_Rica)'),
+    )
+    // 03:00 UTC is the evening before at UTC-6.
+    expect(
+      document.querySelector('[data-settings-backup-runs] td[data-column="started"]')?.textContent,
+    ).toBe('2026-09-07 21:00')
   })
 
   it('[browser] raises the last failure above the table rather than in it', async () => {

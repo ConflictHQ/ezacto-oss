@@ -99,7 +99,10 @@ export const WISE_ROUTES: readonly string[] = [
  * is the contract there — so there is no run history for it to report and the
  * absence is deliberate.
  */
-export const WORKER_ONLY_ROUTES: readonly string[] = ['get /api/v1/backup/status']
+export const WORKER_ONLY_ROUTES: readonly string[] = [
+  'get /api/v1/backup/status',
+  'get /api/v1/backup/runs',
+]
 
 /** Mounted by the container and not by the Worker. */
 export const CONTAINER_ONLY_ROUTES: readonly string[] = []
