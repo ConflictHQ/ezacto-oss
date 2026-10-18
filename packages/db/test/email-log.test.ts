@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   EMAIL_RETRY_POLICY,
   processQueuedEmail,
+  type EmailLogPager,
   type EmailLogStore,
   type EmailMessage,
   type HttpEmailProvider,
@@ -13,7 +14,7 @@ import { createContainerEmailLogStore, createD1EmailLogStore } from '../src/emai
 import { migrateContainer, migrateD1, migrationIds } from '../src/migrate.js'
 
 interface Harness {
-  store: EmailLogStore
+  store: EmailLogStore & EmailLogPager
   rows<T>(query: string, ...bindings: unknown[]): Promise<T[]>
   run(query: string, ...bindings: unknown[]): Promise<void>
   migrateAgain(): Promise<void>
@@ -489,6 +490,179 @@ for (const [runtime, factory] of factories) {
       expect((await current.store.list({ status: 'failed' })).map((record) => record.id)).toContain(
         refused.id,
       )
+    })
+
+    describe('paged reads (issue 929)', () => {
+      const send = async (
+        current: Harness,
+        at: string,
+        overrides: Partial<EmailMessage>,
+      ) => {
+        current.setNow(at)
+        return current.store.createQueued({ ...message, ...overrides })
+      }
+
+      const seed = async (current: Harness) => {
+        const ids: Record<string, number> = {}
+        ids.invoice = (
+          await send(current, '2026-09-01T10:00:00.000Z', {
+            template: 'invoice:3',
+            to: [{ email: 'ap@acme.test', name: 'Acme Payables' }],
+            cc: [{ email: 'boss@acme.test' }],
+          })
+        ).id
+        ids.preview = (
+          await send(current, '2026-09-02T10:00:00.000Z', { template: 'invoice_preview:3' })
+        ).id
+        ids.reminder = (
+          await send(current, '2026-09-03T10:00:00.000Z', {
+            template: 'reminder:1',
+            to: [{ email: 'ap@acme.test' }],
+          })
+        ).id
+        ids.signIn = (
+          await send(current, '2026-09-03T10:00:00.000Z', {
+            template: 'staff_magic_link_signin:v1',
+          })
+        ).id
+        ids.reset = (
+          await send(current, '2026-09-04T10:00:00.000Z', {
+            template: 'auth_password_reset:v2',
+            to: [{ email: 'owner@example.test', name: 'Avery' }],
+          })
+        ).id
+        return ids
+      }
+
+      const idsOf = (records: readonly { id: number }[]) => records.map((record) => record.id)
+
+      it('[unit] reads newest first, then oldest first, on a keyset that ties on the instant', async () => {
+        const current = await setup()
+        const ids = await seed(current)
+        const through = (await current.store.snapshot())!
+        expect(through).toBe('2026-09-04T10:00:00.000Z')
+
+        const newest = await current.store.page({
+          order: 'newest',
+          after: null,
+          createdThrough: through,
+          take: 10,
+        })
+        // The two rows made at the same instant fall back to id, descending.
+        expect(idsOf(newest)).toEqual([ids.reset, ids.signIn, ids.reminder, ids.preview, ids.invoice])
+
+        const second = await current.store.page({
+          order: 'newest',
+          after: { createdAt: '2026-09-03T10:00:00.000Z', id: ids.signIn! },
+          createdThrough: through,
+          take: 10,
+        })
+        expect(idsOf(second)).toEqual([ids.reminder, ids.preview, ids.invoice])
+
+        const oldest = await current.store.page({
+          order: 'oldest',
+          after: { createdAt: '2026-09-02T10:00:00.000Z', id: ids.preview! },
+          createdThrough: through,
+          take: 2,
+        })
+        expect(idsOf(oldest)).toEqual([ids.reminder, ids.signIn])
+      })
+
+      it('[unit] leaves out rows created after the traversal began', async () => {
+        const current = await setup()
+        const ids = await seed(current)
+        const through = (await current.store.snapshot())!
+        await send(current, '2026-09-05T10:00:00.000Z', { template: 'invoice:4' })
+        const page = await current.store.page({
+          order: 'newest',
+          after: null,
+          createdThrough: through,
+          take: 10,
+        })
+        expect(idsOf(page)[0]).toBe(ids.reset)
+        expect(page).toHaveLength(5)
+        await expect(current.store.snapshot()).resolves.toBe('2026-09-05T10:00:00.000Z')
+      })
+
+      it('[unit] narrows by kind on the whole template name, not a prefix of it', async () => {
+        const current = await setup()
+        const ids = await seed(current)
+        const through = (await current.store.snapshot())!
+        const ofKind = async (kind: 'invoice' | 'invoice_preview' | 'sign_in' | 'account') =>
+          idsOf(
+            await current.store.page({
+              kind,
+              order: 'newest',
+              after: null,
+              createdThrough: through,
+              take: 10,
+            }),
+          )
+        expect(await ofKind('invoice')).toEqual([ids.invoice])
+        expect(await ofKind('invoice_preview')).toEqual([ids.preview])
+        expect(await ofKind('sign_in')).toEqual([ids.signIn])
+        expect(await ofKind('account')).toEqual([ids.reset])
+        await expect(current.store.count({ kind: 'invoice' })).resolves.toBe(1)
+      })
+
+      it('[unit] narrows by day range and by status, and combines them', async () => {
+        const current = await setup()
+        const ids = await seed(current)
+        await current.store.markRefused(ids.reminder!, 'demo_recipient_not_allowed')
+        const through = (await current.store.snapshot())!
+        const read = async (filter: object) =>
+          idsOf(
+            await current.store.page({
+              ...filter,
+              order: 'oldest',
+              after: null,
+              createdThrough: through,
+              take: 10,
+            }),
+          )
+        expect(
+          await read({
+            createdFrom: '2026-09-02T00:00:00.000Z',
+            createdBefore: '2026-09-04T00:00:00.000Z',
+          }),
+        ).toEqual([ids.preview, ids.reminder, ids.signIn])
+        expect(await read({ status: 'failed' })).toEqual([ids.reminder])
+        expect(
+          await read({
+            status: 'failed',
+            createdFrom: '2026-09-04T00:00:00.000Z',
+          }),
+        ).toEqual([])
+        await expect(
+          current.store.count({
+            createdFrom: '2026-09-02T00:00:00.000Z',
+            createdBefore: '2026-09-04T00:00:00.000Z',
+          }),
+        ).resolves.toBe(3)
+      })
+
+      it('[unit] searches the address or the name in To and Cc, ignoring case and key names', async () => {
+        const current = await setup()
+        const ids = await seed(current)
+        const found = async (recipient: string) =>
+          idsOf(
+            await current.store.page({
+              recipient,
+              order: 'oldest',
+              after: null,
+              createdThrough: (await current.store.snapshot())!,
+              take: 10,
+            }),
+          )
+        // To, by address; and the Cc-only match on the first invoice.
+        expect(await found('AP@ACME')).toEqual([ids.invoice, ids.reminder])
+        expect(await found('boss@acme')).toEqual([ids.invoice])
+        // By name.
+        expect(await found('payables')).toEqual([ids.invoice])
+        // The words the JSON is written with are not recipients.
+        expect(await found('email')).toEqual([])
+        await expect(current.store.count({ recipient: 'avery' })).resolves.toBe(3)
+      })
     })
   })
 }

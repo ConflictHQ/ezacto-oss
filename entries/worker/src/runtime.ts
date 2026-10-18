@@ -46,7 +46,10 @@ import {
   lastSeenIntervalFromSeconds,
   createD1SsoProvisioningDomainStore,
   DrizzleTrackedResourceRepository,
+  countBackupRuns,
+  getBackupRunsSnapshot,
   getLatestBackupRuns,
+  pageBackupRuns,
   migrateD1,
   createD1ContactSessionStore,
   createD1MagicLinkStore,
@@ -1188,6 +1191,9 @@ export const createRuntimeServices = async (
     outbox,
     backupStatus: {
       latestRuns: (limit: number) => getLatestBackupRuns(database, limit),
+      runsSnapshot: () => getBackupRunsSnapshot(database),
+      pageRuns: (window) => pageBackupRuns(database, window),
+      countRuns: (filter) => countBackupRuns(database, filter),
     },
     // Composed only where the deployment carries Intuit keys. Without them the
     // routes are not mounted, because a connect button that cannot connect is

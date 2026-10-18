@@ -1,18 +1,32 @@
 import type { Hono } from 'hono'
-import type {
-  EmailDeliveryStatus,
-  EmailLogRecord,
-  EmailLogStore,
+import {
+  EMAIL_LOG_KINDS,
+  type EmailDeliveryStatus,
+  type EmailLogFilter,
+  type EmailLogPager,
+  type EmailLogRecord,
 } from '@ezacto/mailer'
 import { requireSessionPrincipal } from './auth.js'
 import type { ApiContext } from './context.js'
 import { ApiError, validationError } from './errors.js'
+import {
+  dayRange,
+  logOrder,
+  logOrderFor,
+  singleChoice,
+  singleQuery,
+  withTotal,
+} from './log-paging.js'
+import { keysetCursorPage } from './pagination.js'
 
-export interface EmailLogReader {
-  list(input?: {
-    status?: EmailDeliveryStatus
-    limit?: number
-  }): Promise<EmailLogRecord[]>
+/** What the email log route reads: keyset pages, and a count of what matches. */
+export type EmailLogReader = EmailLogPager
+
+export interface EmailLogRouteOptions {
+  /** Signs the page cursors. */
+  cursorSigningKey: Uint8Array
+  /** The organization's timezone, which decides where a calendar day begins. */
+  timezone(): Promise<string>
 }
 
 const statuses = new Set<EmailDeliveryStatus>([
@@ -47,7 +61,8 @@ const emailLogData = (record: EmailLogRecord) => ({
 
 export const installEmailLogRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
-  log: EmailLogReader | EmailLogStore,
+  log: EmailLogReader,
+  options: EmailLogRouteOptions,
 ): void => {
   api.get('/email-log', async (context) => {
     const principal = requireSessionPrincipal(context)
@@ -58,45 +73,52 @@ export const installEmailLogRoutes = <Bindings extends object>(
         message: 'Only administrators can view outbound email delivery logs.',
       })
     }
-    const presentedStatus = context.req.query('status')
-    if (
-      presentedStatus !== undefined &&
-      !statuses.has(presentedStatus as EmailDeliveryStatus)
-    ) {
+    const requestUrl = new URL(context.req.url)
+    const status = singleChoice(requestUrl, 'status', [...statuses])
+    const kind = singleChoice(requestUrl, 'kind', EMAIL_LOG_KINDS)
+    const recipient = singleQuery(requestUrl, 'q')?.trim()
+    if (recipient !== undefined && [...recipient].length > 200) {
       throw validationError([
-        {
-          field: 'status',
-          code: 'unsupported',
-          message: 'status is not a supported email delivery status',
-        },
+        { field: 'q', code: 'invalid', message: 'q must be at most 200 characters' },
       ])
     }
-    const presentedLimit = context.req.query('per_page')
-    const limit = presentedLimit === undefined ? 100 : Number(presentedLimit)
-    if (
-      !Number.isSafeInteger(limit) ||
-      limit < 1 ||
-      limit > 200 ||
-      (presentedLimit !== undefined && !/^[1-9][0-9]*$/.test(presentedLimit))
-    ) {
-      throw validationError([
-        {
-          field: 'per_page',
-          code: 'invalid',
-          message: 'per_page must be an integer between 1 and 200',
-        },
-      ])
+    const days =
+      requestUrl.searchParams.has('from') || requestUrl.searchParams.has('to')
+        ? dayRange(requestUrl, await options.timezone())
+        : {}
+    const filter: EmailLogFilter = {
+      ...(status === undefined ? {} : { status }),
+      ...(kind === undefined ? {} : { kind }),
+      ...days,
+      ...(recipient === undefined || recipient === '' ? {} : { recipient }),
     }
-    const status = presentedStatus as EmailDeliveryStatus | undefined
-    return context.json(
-      {
-        data: (
-          await log.list({ ...(status === undefined ? {} : { status }), limit })
-        ).map(emailLogData),
-        links: { self: '/api/v1/email-log' },
+    const order = logOrder(requestUrl)
+    type Row = { id: number; created_at: string; record: EmailLogRecord }
+    const page = await keysetCursorPage({
+      requestUrl,
+      cursorSigningKey: options.cursorSigningKey,
+      viewer: principal,
+      serializer: (row: Readonly<Row>) => emailLogData(row.record),
+      order: logOrderFor<Row>(order, ['number'], (row) => [row.created_at, row.id]),
+      source: {
+        snapshot: () => log.snapshot(),
+        list: async (window) =>
+          (
+            await log.page({
+              ...filter,
+              order,
+              after:
+                window.after === null
+                  ? null
+                  : { createdAt: window.after[0], id: window.after[1] as number },
+              createdThrough: window.createdThrough,
+              take: window.take,
+            })
+          ).map((record) => ({ id: record.id, created_at: record.createdAt, record })),
       },
-      200,
-      { 'cache-control': 'no-store' },
-    )
+    })
+    return context.json(withTotal(page, await log.count(filter)), 200, {
+      'cache-control': 'no-store',
+    })
   })
 }

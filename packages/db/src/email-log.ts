@@ -1,11 +1,15 @@
 import type BetterSqlite3 from 'better-sqlite3'
-import type {
-  EmailDeliveryStatus,
-  EmailFailureCode,
-  EmailLogRecord,
-  EmailLogStore,
-  EmailRecipient,
-  EmailSender,
+import {
+  EMAIL_LOG_KIND_TEMPLATES,
+  type EmailDeliveryStatus,
+  type EmailFailureCode,
+  type EmailLogFilter,
+  type EmailLogPageWindow,
+  type EmailLogPager,
+  type EmailLogRecord,
+  type EmailLogStore,
+  type EmailRecipient,
+  type EmailSender,
 } from '@ezacto/mailer'
 
 export interface EmailLogStoreOptions {
@@ -118,10 +122,52 @@ const rowRecord = (row: EmailLogRow | null): EmailLogRecord => {
   }
 }
 
+/**
+ * The WHERE clause a filter asks for, and its bindings.
+ *
+ * A kind is matched on the template's name, the part before the first colon,
+ * so `invoice` does not also take `invoice_preview`. A recipient is searched
+ * in the parsed To and Cc lists, not in their JSON text, so a search for
+ * "name" does not match every row on the key it is stored under.
+ */
+const filterConditions = (filter: EmailLogFilter): { conditions: string[]; bindings: unknown[] } => {
+  const conditions: string[] = []
+  const bindings: unknown[] = []
+  if (filter.status !== undefined) {
+    conditions.push('status = ?')
+    bindings.push(filter.status)
+  }
+  if (filter.kind !== undefined) {
+    const names = EMAIL_LOG_KIND_TEMPLATES[filter.kind]
+    conditions.push(
+      `substr(template, 1, instr(template || ':', ':') - 1) IN (${names.map(() => '?').join(', ')})`,
+    )
+    bindings.push(...names)
+  }
+  if (filter.createdFrom !== undefined) {
+    conditions.push('created_at >= ?')
+    bindings.push(filter.createdFrom)
+  }
+  if (filter.createdBefore !== undefined) {
+    conditions.push('created_at < ?')
+    bindings.push(filter.createdBefore)
+  }
+  if (filter.recipient !== undefined) {
+    const needle = filter.recipient.toLowerCase()
+    const matches = (column: string): string =>
+      `EXISTS (SELECT 1 FROM json_each(${column}) AS who
+         WHERE instr(lower(coalesce(json_extract(who.value, '$.email'), '')), ?) > 0
+            OR instr(lower(coalesce(json_extract(who.value, '$.name'), '')), ?) > 0)`
+    conditions.push(`(${matches('to_json')} OR ${matches('cc_json')})`)
+    bindings.push(needle, needle, needle, needle)
+  }
+  return { conditions, bindings }
+}
+
 const createStore = (
   database: PortableDatabase,
   options: EmailLogStoreOptions,
-): EmailLogStore => {
+): EmailLogStore & EmailLogPager => {
   const now = options.now ?? (() => new Date().toISOString())
   const timestamp = (): string => {
     const value = now()
@@ -386,13 +432,56 @@ const createStore = (
       )
       return rows.map((row) => rowRecord(row))
     },
+
+    async snapshot() {
+      const row = await database.first<{ latest: string | null }>(
+        'SELECT max(created_at) AS latest FROM email_log',
+        [],
+      )
+      return row?.latest ?? null
+    },
+
+    async page(window: EmailLogPageWindow) {
+      if (!Number.isSafeInteger(window.take) || window.take < 1 || window.take > 201) {
+        throw new RangeError('email log page must hold between 1 and 201 rows')
+      }
+      const { conditions, bindings } = filterConditions(window)
+      conditions.push('created_at <= ?')
+      bindings.push(window.createdThrough)
+      const newest = window.order === 'newest'
+      if (window.after !== null) {
+        // Strictly past the last row of the previous page, in the direction
+        // the page runs. Ties on the instant are broken by id.
+        const past = newest ? '<' : '>'
+        conditions.push(`(created_at ${past} ? OR (created_at = ? AND id ${past} ?))`)
+        bindings.push(window.after.createdAt, window.after.createdAt, window.after.id)
+      }
+      const direction = newest ? 'DESC' : 'ASC'
+      const rows = await database.all<EmailLogRow>(
+        `SELECT ${columns} FROM email_log
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY created_at ${direction}, id ${direction} LIMIT ?`,
+        [...bindings, window.take],
+      )
+      return rows.map((row) => rowRecord(row))
+    },
+
+    async count(filter: EmailLogFilter) {
+      const { conditions, bindings } = filterConditions(filter)
+      const row = await database.first<{ total: number }>(
+        `SELECT count(*) AS total FROM email_log
+         ${conditions.length === 0 ? '' : `WHERE ${conditions.join(' AND ')}`}`,
+        bindings,
+      )
+      return row?.total ?? 0
+    },
   }
 }
 
 export const createContainerEmailLogStore = (
   database: BetterSqlite3.Database,
   options: EmailLogStoreOptions = {},
-): EmailLogStore => {
+): EmailLogStore & EmailLogPager => {
   database.pragma('foreign_keys = ON')
   return createStore(
     {
@@ -408,7 +497,7 @@ export const createContainerEmailLogStore = (
 export const createD1EmailLogStore = (
   database: D1Database,
   options: EmailLogStoreOptions = {},
-): EmailLogStore =>
+): EmailLogStore & EmailLogPager =>
   createStore(
     {
       first: async (query, bindings = []) =>

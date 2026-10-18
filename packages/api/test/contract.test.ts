@@ -130,7 +130,17 @@ const passwordAuth = new Proxy(
 ) as PasswordAuthService;
 const authMailer = new Proxy({}, { get: () => unavailable }) as AuthMailer;
 const sessions = new Proxy({}, { get: () => unavailable }) as ApiSessionService;
-const emailLog = { list: unavailable, countByStatus: unavailable };
+const emailLog = {
+  list: unavailable,
+  countByStatus: unavailable,
+  snapshot: unavailable,
+  page: unavailable,
+  count: unavailable,
+};
+const logRouteOptions = {
+  cursorSigningKey: new Uint8Array(32),
+  timezone: async () => "UTC",
+};
 const emailConfiguration = new Proxy(
   {},
   { get: () => unavailable },
@@ -233,13 +243,13 @@ const documentedApp = () =>
         detachFor: async () => false,
         unlink: async () => false,
       });
-      installEmailLogRoutes(api, emailLog);
+      installEmailLogRoutes(api, emailLog, logRouteOptions);
       installEmailHealthRoutes(api, emailLog);
       installEmailConfigurationRoutes(api, {
         service: emailConfiguration,
         clock: () => "2026-08-28T12:00:00.000Z",
       });
-      installOutboxRoutes(api, outbox);
+      installOutboxRoutes(api, outbox, logRouteOptions);
       installGeneralResourceRoutes(api, {
         repository: generalRepository,
         cursorSigningKey: new Uint8Array(32),
@@ -399,7 +409,16 @@ const documentedApp = () =>
       // Mounted only where a deployment composes a reader -- the Worker does,
       // the container does not (`entry-surface.ts`). The fixture composes one so
       // the documented operation has something to be checked against.
-      installBackupStatusRoutes(api, { latestRuns: async () => [] });
+      installBackupStatusRoutes(
+        api,
+        {
+          latestRuns: async () => [],
+          runsSnapshot: unavailable,
+          pageRuns: unavailable,
+          countRuns: unavailable,
+        },
+        { cursorSigningKey: new Uint8Array(32) },
+      );
     },
   });
 

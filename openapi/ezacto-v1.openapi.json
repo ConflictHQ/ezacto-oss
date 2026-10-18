@@ -867,6 +867,7 @@
       "get": {
         "operationId": "listEmailLog",
         "summary": "List outbound email delivery outcomes",
+        "description": "Newest first, or oldest first with order=oldest, a page at a time. The first page fixes the traversal to the mail that existed when it was read: mail sent after it does not appear on later pages of the same traversal. The filters combine. from and to are calendar days in the organization's timezone, both included. q matches part of a recipient's address or name in To or Cc, ignoring case. page.total counts everything the filters match, not only this page.",
         "tags": [
           "email"
         ],
@@ -918,6 +919,24 @@
         "x-ezacto-generate-client": true,
         "parameters": [
           {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
             "name": "status",
             "in": "query",
             "required": false,
@@ -933,13 +952,59 @@
             }
           },
           {
-            "name": "per_page",
+            "name": "kind",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 200
+              "type": "string",
+              "enum": [
+                "invoice",
+                "invoice_preview",
+                "reminder",
+                "thank_you",
+                "sign_in",
+                "account"
+              ]
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "newest",
+                "oldest"
+              ]
             }
           }
         ]
@@ -1913,6 +1978,7 @@
       "get": {
         "operationId": "listOutboxDeliveries",
         "summary": "List domain-event subscriber delivery outcomes",
+        "description": "Newest first, or oldest first with order=oldest, a page at a time, by when the delivery was created. from and to are calendar days in the organization's timezone, both included. page.total counts everything the filters match, not only this page.",
         "tags": [
           "operations"
         ],
@@ -1964,6 +2030,24 @@
         "x-ezacto-generate-client": true,
         "parameters": [
           {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
             "name": "status",
             "in": "query",
             "required": false,
@@ -1978,13 +2062,41 @@
             }
           },
           {
-            "name": "per_page",
+            "name": "event_type",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 200
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "newest",
+                "oldest"
+              ]
             }
           }
         ]
@@ -19341,6 +19453,107 @@
         "x-ezacto-generate-client": true
       }
     },
+    "/api/v1/backup/runs": {
+      "get": {
+        "operationId": "listBackupRuns",
+        "summary": "List backup runs, newest first, a page at a time",
+        "description": "The history behind the backup status, which holds only the latest runs. page.total counts everything the filters match, not only this page.",
+        "tags": [
+          "backup"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupRunPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/backup/runs",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "running",
+                "completed",
+                "failed"
+              ]
+            }
+          },
+          {
+            "name": "trigger",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "nightly",
+                "manual"
+              ]
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/integrations/quickbooks": {
       "get": {
         "operationId": "getQuickBooksConnection",
@@ -26069,7 +26282,8 @@
         "type": "object",
         "required": [
           "data",
-          "links"
+          "links",
+          "page"
         ],
         "properties": {
           "data": {
@@ -26079,7 +26293,10 @@
             }
           },
           "links": {
-            "$ref": "#/components/schemas/Links"
+            "$ref": "#/components/schemas/PageLinks"
+          },
+          "page": {
+            "$ref": "#/components/schemas/CountedPageMetadata"
           }
         },
         "additionalProperties": false
@@ -26742,6 +26959,29 @@
                 "type": "null"
               }
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "BackupRunPage": {
+        "type": "object",
+        "required": [
+          "data",
+          "links",
+          "page"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackupRun"
+            }
+          },
+          "links": {
+            "$ref": "#/components/schemas/PageLinks"
+          },
+          "page": {
+            "$ref": "#/components/schemas/CountedPageMetadata"
           }
         },
         "additionalProperties": false
@@ -27760,7 +28000,8 @@
         "type": "object",
         "required": [
           "data",
-          "links"
+          "links",
+          "page"
         ],
         "properties": {
           "data": {
@@ -27770,7 +28011,10 @@
             }
           },
           "links": {
-            "$ref": "#/components/schemas/Links"
+            "$ref": "#/components/schemas/PageLinks"
+          },
+          "page": {
+            "$ref": "#/components/schemas/CountedPageMetadata"
           }
         },
         "additionalProperties": false
@@ -27847,6 +28091,36 @@
                 "type": "null"
               }
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "CountedPageMetadata": {
+        "type": "object",
+        "required": [
+          "per_page",
+          "next_cursor",
+          "total"
+        ],
+        "properties": {
+          "per_page": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
           }
         },
         "additionalProperties": false
