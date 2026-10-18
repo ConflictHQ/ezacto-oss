@@ -115,6 +115,9 @@ import {
   updateUserNotifications,
   readNotificationSettings,
   updateNotificationSettings,
+  readTimesheetAutoApproval,
+  runTimesheetAutoApproval,
+  updateTimesheetAutoApproval,
   setBillDelivery,
   createD1IdempotencyStore,
   createIdempotentD1,
@@ -128,6 +131,7 @@ import {
   createBudgetAlertSubscriber,
   createTimeReminderService,
   createNotificationSettingsService,
+  createTimesheetAutoApprovalService,
   createInvoiceEmailOutboxSubscriber,
   createInvoiceThankYouSubscriber,
   thankYouInvoiceFromDeliveryContext,
@@ -1094,6 +1098,14 @@ export const createRuntimeServices = async (
     reminders: { processDue: processDueReminders },
     budgetAlerts: { evaluate: (now: string) => evaluateProjectBudgetAlerts(drizzle, now) },
     ...(timeReminders === undefined ? {} : { timeReminders }),
+    timesheetAutoApproval: createTimesheetAutoApprovalService({
+      read: () => readTimesheetAutoApproval(drizzle),
+      update: (actorUserId, patch) =>
+        updateTimesheetAutoApproval(drizzle, actorUserId, patch, new Date().toISOString()),
+    }),
+    timesheetAutoApprovalSweep: {
+      processDue: (now: string) => runTimesheetAutoApproval(drizzle, now),
+    },
     profileNotifications: {
       read: (userId: number) => readUserNotifications(drizzle, userId),
       update: (userId: number, patch) =>

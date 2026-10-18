@@ -251,6 +251,13 @@ export {
   type SubmissionReminderSchedule,
 } from './notification-settings.js'
 export { prepareTimeReminders, type TimeReminderInput } from './time-reminders.js'
+export {
+  readTimesheetAutoApproval,
+  runTimesheetAutoApproval,
+  updateTimesheetAutoApproval,
+  type TimesheetAutoApprovalRun,
+  type TimesheetAutoApprovalSettings,
+} from './timesheet-auto-approval.js'
 export { readUserNotifications, updateUserNotifications } from './profile-notifications.js'
 export {
   evaluateProjectBudgetAlerts,

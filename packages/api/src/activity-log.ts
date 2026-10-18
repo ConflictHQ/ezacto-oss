@@ -22,6 +22,7 @@ export type ActivityEventType =
   | 'api_token.revoked'
   | 'backup.exported'
   | 'backup.restored'
+  | 'timesheet_auto_approval.updated'
 
 export type ActivityActor =
   | { readonly type: 'user'; readonly id: number }

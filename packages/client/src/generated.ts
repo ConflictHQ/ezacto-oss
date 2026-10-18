@@ -3792,6 +3792,21 @@ export type NotificationSettingsEnvelope = {
 };
 };
 
+export type TimesheetAutoApprovalInput = {
+  "enabled"?: boolean;
+  "window_days"?: number;
+};
+
+export type TimesheetAutoApprovalEnvelope = {
+  "data": {
+  "enabled": boolean;
+  "window_days": number | null;
+  "clock_starts_at": "submitted_at";
+  "effective_from": string | null;
+  "approval_module_enabled": boolean;
+};
+};
+
 export type JournalFormats = Array<"pdf" | "csv" | "xlsx">;
 
 export type InvoiceDocumentPreferenceInput = {
@@ -6856,6 +6871,25 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<NotificationSettingsEnvelope>("POST", "/api/v1/settings/notifications", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getTimesheetAutoApproval(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimesheetAutoApprovalEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetAutoApprovalEnvelope>("GET", "/api/v1/settings/timesheet-auto-approval", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setTimesheetAutoApproval(args: { body: TimesheetAutoApprovalInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimesheetAutoApprovalEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimesheetAutoApprovalEnvelope>("POST", "/api/v1/settings/timesheet-auto-approval", {
       body: args.body,
       signal: args.signal,
       headers,

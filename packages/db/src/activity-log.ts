@@ -37,6 +37,11 @@ export const ACTIVITY_EVENT_AGGREGATES = {
   'backup.restored': 'backup_restore',
   // A person asking for their own account to be deleted (account-deletion.ts).
   'account.deletion_requested': 'user_account',
+  // Issue 1009: an administrator changing the automatic-approval policy (subject
+  // 1, the one policy), and the sweep approving a week under it (subject: the
+  // submission).
+  'timesheet_auto_approval.updated': 'timesheet_auto_approval_policy',
+  'timesheet.auto_approved': 'timesheet_auto_approval',
 } as const
 
 export type ActivityEventType = keyof typeof ACTIVITY_EVENT_AGGREGATES

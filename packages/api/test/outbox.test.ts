@@ -245,6 +245,7 @@ describe('outbox observability API', () => {
       'api_token.created',
       'api_token.revoked',
       'account.deletion_requested',
+      'timesheet_auto_approval.updated',
     ]
     const sessionRead = async (profile: UserProfile) => {
       const { app, monitor } = harness(profile)

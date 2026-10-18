@@ -1355,6 +1355,10 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getNotificationSettings(withSignal(signal))).data,
   updateNotificationSettings: async (patch, signal) =>
     (await client.setNotificationSettings({ body: patch, ...withSignal(signal) })).data,
+  getTimesheetAutoApproval: async (signal) =>
+    (await client.getTimesheetAutoApproval(withSignal(signal))).data,
+  updateTimesheetAutoApproval: async (patch, signal) =>
+    (await client.setTimesheetAutoApproval({ body: patch, ...withSignal(signal) })).data,
   getEmailHealth: async (signal) =>
     (await client.getEmailHealth(withSignal(signal))).data,
   getBackupStatus: async (signal) =>

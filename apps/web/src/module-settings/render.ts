@@ -55,6 +55,20 @@ export const renderModuleSettingsPage = (view?: string): string => `
       </form>
       <p class="form-result" data-note-settings-result role="status" aria-live="polite"></p>${renderTimeRoundingSection()}
     </section>
+    <section class="settings-section" data-settings-section="approval" aria-labelledby="settings-approval-title">
+      <header><h2 id="settings-approval-title">Automatic approval</h2>
+      <p>Off unless you turn it on. When on, a submitted week that nobody has approved or rejected within the number of calendar days you choose is approved for you. The days are counted from the moment the week was submitted, and start again if it is rejected and submitted again. A rejected week is never approved this way, and weeks submitted before you turn this on are left for a person to decide. The approval is recorded under the administrator who last saved this setting and shows on the activity log as automatic.</p></header>
+      <p class="form-result" data-auto-approval-status role="status" aria-live="polite">Loading automatic approval…</p>
+      <form class="settings-form" data-auto-approval-form hidden>
+        <label class="settings-toggle"><input name="enabled" type="checkbox" data-auto-approval-enabled>Approve submitted timesheets automatically</label>
+        <label>Days to wait before approving
+          <input name="window_days" type="number" min="1" max="60" step="1" inputmode="numeric" data-auto-approval-days>
+        </label>
+        <p class="hint" data-auto-approval-since></p>
+        <button class="primary-action" type="submit" data-auto-approval-submit>Save automatic approval</button>
+      </form>
+      <p class="form-result" data-auto-approval-result role="status" aria-live="polite"></p>
+    </section>
     <section class="settings-section" data-settings-section="email" aria-labelledby="settings-email-title">
       <header><h2 id="settings-email-title">Email delivery</h2>
       <p>Who this instance sends as, and how that mail has been landing. Transport credentials stay in the deployment; what is shown here is the state they produce.</p></header>
