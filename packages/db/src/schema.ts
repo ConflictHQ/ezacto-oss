@@ -1667,7 +1667,12 @@ export const invoiceLineItems = sqliteTable(
   (table) => [
     uniqueIndex('invoice_line_items_harvest_id_unique').on(table.harvestId),
     uniqueIndex('invoice_line_items_invoice_position_unique').on(table.invoiceId, table.position),
-    index('invoice_line_items_invoice_id').on(table.invoiceId),
+    index('invoice_line_items_invoice_totals').on(
+      table.invoiceId,
+      table.amountCents,
+      table.taxed,
+      table.taxed2,
+    ),
     index('invoice_line_items_project_id').on(table.projectId),
     check('invoice_line_items_position_nonnegative', sql`${table.position} >= 0`),
     check('invoice_line_items_taxed_boolean', sql`${table.taxed} in (0, 1)`),
