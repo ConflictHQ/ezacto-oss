@@ -245,6 +245,20 @@ export {
   type ThankYouPortMessage,
 } from './thank-you-port.js'
 export {
+  readNotificationSettings,
+  updateNotificationSettings,
+  type NotificationSettings,
+  type SubmissionReminderSchedule,
+} from './notification-settings.js'
+export { prepareTimeReminders, type TimeReminderInput } from './time-reminders.js'
+export { readUserNotifications, updateUserNotifications } from './profile-notifications.js'
+export {
+  evaluateProjectBudgetAlerts,
+  prepareBudgetAlertMail,
+  type BudgetAlertEvaluation,
+  type BudgetAlertMailInput,
+} from './project-budget-alerts.js'
+export {
   createReminderPort,
   listReminderDeliveries,
   type ReminderInvoiceSource,

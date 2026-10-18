@@ -27,7 +27,7 @@ import type {
   VersionedRowDeleteInput,
   Whoami,
 } from '@conflict-hq/ezacto-client'
-import { inspectEmailTemplateVariables } from '@ezacto/core'
+import { inspectEmailTemplateVariables, invoicePeriodLabel, sendWeekday } from '@ezacto/core'
 import { parseDurationSeconds } from '../shell/model.js'
 
 /**
@@ -1426,12 +1426,19 @@ export const invoiceLineItemsText = (invoice: Readonly<Invoice>): string => {
 /**
  * The variables an invoice's record of a send fills in the browser, with the
  * same values the server fills the email with. The pay link is the server's to
- * mint, so the record reads it empty; everything else matches.
+ * mint, so the record reads it empty; everything else matches. The weekday is
+ * read in the organization's zone, which the Send dialog's defaults carry;
+ * without it the token is left as typed rather than guessed from this
+ * browser's own zone.
  */
 export const interpolateInvoiceTemplate = (
   template: string,
   invoice: Readonly<Invoice>,
-  names: Readonly<{ clientName: string; companyName: string }> = { clientName: '', companyName: '' },
+  names: Readonly<{ clientName: string; companyName: string; timeZone?: string }> = {
+    clientName: '',
+    companyName: '',
+  },
+  sentAt: string = new Date().toISOString(),
 ): string => {
   // Worked out only for the tokens the text names: the lines and the dates
   // cost something to render, and a token whose value cannot be worked out is
@@ -1464,6 +1471,8 @@ export const interpolateInvoiceTemplate = (
     invoice_payment_url: () => '',
     client_name: () => names.clientName,
     company_name: () => names.companyName,
+    invoice_period: () => invoicePeriodLabel(invoice.period_start, invoice.period_end),
+    send_weekday: () => (names.timeZone === undefined ? null : sendWeekday(sentAt, names.timeZone)),
   }
   return template.replace(/%([A-Za-z][A-Za-z0-9_]*)%/gu, (token, name: string) =>
     Object.hasOwn(variables, name) ? (variables[name]!() ?? token) : token,
