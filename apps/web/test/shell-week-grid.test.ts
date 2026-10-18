@@ -1236,6 +1236,52 @@ describe('week-grid browser behavior', () => {
     )
   })
 
+  it('opens the timer chip on the entry that is running now, not the one the page loaded with (issue 1005)', async () => {
+    // The page was opened while entry 1 ran. The timer was then stopped and a
+    // new one started elsewhere (the CLI), so the loaded snapshot named a
+    // stopped entry. The modal said "Running timer" over that entry's date and
+    // note, and Save note would have written to it.
+    renderBrowserShell()
+    const api = browserApi()
+    api.entries[0] = timeEntry(1, {
+      project_id: 1,
+      task_id: 1,
+      spent_date: '2026-08-27',
+      notes: 'Long note of a different day',
+    })
+    await mountShell(api)
+
+    api.entries[0] = { ...api.entries[0]!, is_running: false, seconds: 3_333 }
+    api.entries.push(
+      timeEntry(3, {
+        project_id: 2,
+        task_id: 2,
+        spent_date: '2026-08-28',
+        notes: 'The running one',
+      }),
+    )
+
+    document.querySelector<HTMLButtonElement>('[data-timer-chip]')!.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLTextAreaElement>('[data-entry-note-input]')!.value).toBe(
+        'The running one',
+      ),
+    )
+    expect(document.querySelector<HTMLInputElement>('[data-entry-date]')!.value).toBe(
+      '2026-08-28',
+    )
+    document.querySelector<HTMLTextAreaElement>('[data-entry-note-input]')!.value = 'Edited'
+    document
+      .querySelector<HTMLFormElement>('[data-entry-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(api.updateTimeEntry).toHaveBeenCalled())
+    expect(api.updateTimeEntry).toHaveBeenLastCalledWith(
+      3,
+      { notes: 'Edited' },
+      expect.any(AbortSignal),
+    )
+  })
+
   // Keep each outcome within the normal test budget: parsing the full shell is
   // expensive on CI, and a second parse plus all outcomes exceeded five seconds.
   it('[e2e:track-week] adds, focuses and persists a row', async () => {
