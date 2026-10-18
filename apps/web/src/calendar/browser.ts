@@ -1052,7 +1052,7 @@ export const createCalendarController = (host: CalendarHost): CalendarController
     const original: Placed = { date: block.entry.spent_date, span: { start: block.start, end: block.end } }
     if (pending === null || pending.entryId !== entryId) pending = { entryId, original, current: original }
     const now = pending.current
-    let next: Placed = now
+    let next: Placed
     if (vertical) {
       const step = event.key === 'ArrowUp' ? -SNAP_MINUTES : SNAP_MINUTES
       if (event.shiftKey && event.altKey) next = { date: now.date, span: resizeSpanStart(now.span, now.span.start + step) }
