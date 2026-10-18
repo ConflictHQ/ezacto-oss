@@ -111,7 +111,6 @@ const at = (instant: string): TimeBoundary => ({
   date: instant.slice(0, 10),
   time: instant.slice(11, 16),
 })
-const ada: TimeEntryActor = { userId: 1, profile: 'administrator' }
 const maya: TimeEntryActor = { userId: 2, profile: 'member' }
 
 /**
