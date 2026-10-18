@@ -9135,7 +9135,7 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   font-size: 13px;
 }
 .cal-head[data-today='true'] .cal-head-number {
-  color: var(--ez-action);
+  color: var(--ez-data);
   font-weight: 700;
 }
 .cal-head-weekday {
@@ -9166,7 +9166,7 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   line-height: 1;
 }
 .cal-dayhead-date[data-today='true'] .cal-dayhead-number {
-  color: var(--ez-action);
+  color: var(--ez-data);
 }
 .cal-dayhead-words {
   display: flex;
@@ -9364,7 +9364,7 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   position: absolute;
   left: 4px;
   top: 1px;
-  color: var(--ez-action);
+  color: var(--ez-data);
   font-size: 10px;
 }
 .cal-now {
