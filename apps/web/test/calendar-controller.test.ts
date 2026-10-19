@@ -1,5 +1,8 @@
 /** @vitest-environment happy-dom */
 
+import { readFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createCalendarController,
@@ -8,6 +11,7 @@ import {
   type CalendarPlacement,
   type CalendarView,
 } from '../src/calendar/browser.js'
+import { renderAppShell } from '../src/shell/render.js'
 
 /**
  * Issue 943: the calendar's drag and key paths, against the real controller
@@ -16,6 +20,7 @@ import {
  * does the rest.
  */
 
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dates = ['2026-10-12', '2026-10-13', '2026-10-14']
 
 const entry = (id: number, patch: Partial<CalendarDisplayEntry> = {}): CalendarDisplayEntry => ({
@@ -300,6 +305,27 @@ describe('an entry whose move is still saving', () => {
     expect(block(1).style.getPropertyValue('--cal-start')).toBe('555')
     expect(block(1).dataset.state).toBe('saving')
     expect(block(1).getAttribute('aria-busy')).toBe('true')
+  })
+})
+
+describe('the status line above the clock', () => {
+  it('keeps a line of height, said or empty, so "Saving…" coming and going never moves the clock', async () => {
+    // How far the clock moves is the browser's to measure (it was 16px, under
+    // a pointer mid-drag); checked here are the rule, and that it reaches the
+    // line the server renders. The controller removes data-calendar-status as
+    // a flag, so the rule cannot be keyed on that.
+    const stylesheet = await readFile(resolve(root, 'src', 'shell', 'shell.css'), 'utf8')
+    const rule = /\.calendar-week > \.form-result \{([^}]*)\}/u.exec(stylesheet)
+    expect(rule?.[1]).toBeDefined()
+    expect(rule![1]).toContain('min-height: 1lh')
+    // Without its links and scripts, which the parser would otherwise fetch.
+    const markup = renderAppShell({ environment: 'test', release: 'test' })
+      .replace(/<script[^>]*>.*?<\/script>/gsu, '')
+      .replace(/<link[^>]*>/gu, '')
+    const page = new DOMParser().parseFromString(markup, 'text/html')
+    const line = page.querySelector('.calendar-week > .form-result')
+    expect(line?.hasAttribute('data-calendar-status')).toBe(true)
+    expect(line?.getAttribute('role')).toBe('status')
   })
 })
 
