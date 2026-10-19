@@ -1,0 +1,28 @@
+{
+  "user": {
+    "telephone": "",
+    "timezone": "Etc/UTC",
+    "hasAccessToAllFutureProjects": true,
+    "isContractor": false,
+    "isActive": true,
+    "weeklyCapacity": 126000,
+    "managerGrants": [],
+    "avatarUrl": null,
+    "samlExempt": false,
+    "isOwner": true,
+    "createdAt": "2024-01-05T10:00:00.123Z",
+    "updatedAt": "2024-03-09T16:45:30.987Z",
+    "id": 401,
+    "firstName": "Sample",
+    "lastName": "Sample-Admin",
+    "email": "admin@example.test",
+    "profile": "administrator"
+  },
+  "context": {
+    "roleNames": [
+      "Sample Lead"
+    ],
+    "defaultHourlyRateCents": 15000,
+    "costRateCents": 8000
+  }
+}

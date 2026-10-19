@@ -1,0 +1,29 @@
+{
+  "user": {
+    "telephone": "",
+    "timezone": "America/Costa_Rica",
+    "hasAccessToAllFutureProjects": false,
+    "isContractor": true,
+    "isActive": false,
+    "weeklyCapacity": 72000,
+    "managerGrants": [],
+    "avatarUrl": null,
+    "samlExempt": false,
+    "isOwner": false,
+    "createdAt": "2024-01-05T10:00:00.123Z",
+    "updatedAt": "2024-03-09T16:45:30.987Z",
+    "id": 403,
+    "firstName": "Sample",
+    "lastName": "Sample-Contractor",
+    "email": null,
+    "profile": "member"
+  },
+  "context": {
+    "roleNames": [
+      "Sample Dev",
+      "Sample QA"
+    ],
+    "defaultHourlyRateCents": 9999,
+    "costRateCents": 5000
+  }
+}
