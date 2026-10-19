@@ -170,6 +170,124 @@ export type StaffPaymentReportEnvelope = {
   "data": StaffPaymentReport;
 };
 
+export type AllocatePayment = {
+  "id": string;
+  "payment_kind": "event" | "run_item";
+  "payment_id": string;
+  "user_id": number;
+  "month": string;
+  "scope": "month" | "project" | "entry";
+  "project_id": number | null;
+  "entry_id": number | null;
+  "seconds": number | null;
+  "amount_cents": number | null;
+  "reason": string;
+};
+
+export type ReversePaymentAllocation = {
+  "id": string;
+  "allocation_id": string;
+  "reason": string;
+};
+
+export type PaymentAllocationPreview = {
+  "scope": "month" | "project" | "entry";
+  "currency": string;
+  "seconds": number | null;
+  "rate_cents": number | null;
+  "amount_cents": number;
+  "payment_cents": number;
+  "payment_allocated_cents": number;
+  "payment_remaining_cents": number;
+  "earning_cents": number;
+  "earning_allocated_cents": number;
+  "earning_remaining_cents": number;
+  "earning_remaining_seconds": number | null;
+};
+
+export type PaymentAllocationPreviewEnvelope = {
+  "data": PaymentAllocationPreview;
+};
+
+export type PaymentAllocation = {
+  "id": string;
+  "payment_kind": "event" | "run_item";
+  "payment_id": string;
+  "user_id": number;
+  "month": string;
+  "currency": string;
+  "scope": "month" | "project" | "entry";
+  "project_id": number | null;
+  "project_name": string | null;
+  "entry_id": number | null;
+  "seconds": number | null;
+  "rate_cents": number | null;
+  "amount_cents": number;
+  "state": "applied" | "reserved" | "released" | "reversed";
+  "reason": string;
+  "actor_id": number;
+  "recorded_at": string;
+};
+
+export type PaymentAllocationEntry = {
+  "entry_id": number;
+  "spent_date": string;
+  "selected_seconds": number;
+  "rate_cents": number | null;
+  "earned_cents": number;
+  "applied_cents": number;
+  "reserved_cents": number;
+  "applied_seconds": number;
+  "reserved_seconds": number;
+  "remaining_cents": number;
+  "remaining_seconds": number;
+  "source_changed": boolean;
+  "over_allocated": boolean;
+};
+
+export type PaymentAllocationProject = {
+  "project_id": number;
+  "project_name": string;
+  "earned_cents": number;
+  "applied_cents": number;
+  "reserved_cents": number;
+  "remaining_cents": number;
+  "entries": Array<PaymentAllocationEntry>;
+};
+
+export type UnallocatedPayment = {
+  "payment_kind": "event" | "run_item";
+  "payment_id": string;
+  "amount_cents": number;
+  "allocated_cents": number;
+  "unallocated_cents": number;
+  "state": "applied" | "reserved";
+};
+
+export type PaymentAllocationPerson = {
+  "user_id": number;
+  "name": string;
+  "currency": string | null;
+  "earned_cents": number;
+  "paid_cents": number;
+  "reserved_cents": number;
+  "allocated_applied_cents": number;
+  "allocated_reserved_cents": number;
+  "remaining_cents": number;
+  "projects": Array<PaymentAllocationProject>;
+  "unallocated_payments": Array<UnallocatedPayment>;
+  "allocations": Array<PaymentAllocation>;
+};
+
+export type PaymentAllocationReport = {
+  "month": string;
+  "people": Array<PaymentAllocationPerson>;
+};
+
+export type PaymentAllocationReportEnvelope = {
+  "data": PaymentAllocationReport;
+};
+
 export type PaymentSelection = {
   "user_id": number;
   "month": string;
@@ -6235,6 +6353,46 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<void>("POST", "/api/v1/staff-payments/events", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getPaymentAllocationReport(args: { query?: { "month"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<PaymentAllocationReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PaymentAllocationReportEnvelope>("GET", "/api/v1/staff-payments/allocations", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async previewPaymentAllocation(args: { body: AllocatePayment; signal?: AbortSignal; headers?: HeadersInit }): Promise<PaymentAllocationPreviewEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PaymentAllocationPreviewEnvelope>("POST", "/api/v1/staff-payments/allocations/preview", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async allocatePayment(args: { body: AllocatePayment; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/api/v1/staff-payments/allocations", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async reversePaymentAllocation(args: { body: ReversePaymentAllocation; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/api/v1/staff-payments/allocations/reversals", {
       body: args.body,
       signal: args.signal,
       headers,

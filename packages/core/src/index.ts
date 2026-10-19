@@ -60,3 +60,5 @@ export * from './apple-lifecycle.js'
 
 export * from './account-retention-review.js'
 export * from './apple-web-custody.js'
+
+export * from './payment-allocations.js'

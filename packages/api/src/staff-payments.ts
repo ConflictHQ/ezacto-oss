@@ -1,5 +1,7 @@
 import {
   StaffPaymentError,
+  type AllocatePayment,
+  type ReversePaymentAllocation,
   previousPaymentMonth,
   type ConfirmPaymentActuals,
   validPaymentMonth,
@@ -127,6 +129,83 @@ export const installStaffPaymentRoutes = <Bindings extends object>(
       )
     } catch (error) {
       return actualsError(error)
+    }
+    return context.body(null, 204, { 'cache-control': 'no-store' })
+  })
+  const allocationError = (error: unknown): never => {
+    if (!(error instanceof StaffPaymentError)) throw error
+    if (error.code === 'invalid') invalid('allocation', error.message)
+    throw new ApiError({
+      status: error.code === 'not_found' ? 404 : 409,
+      code: error.code,
+      message: error.message,
+    })
+  }
+  const allocationCommand = (body: Record<string, unknown>): AllocatePayment => {
+    const text = (key: string): string =>
+      typeof body[key] === 'string' ? (body[key] as string) : invalid(key, `${key} must be text.`)
+    const nullableInteger = (key: string): number | null =>
+      body[key] === null || body[key] === undefined
+        ? null
+        : typeof body[key] === 'number' && Number.isSafeInteger(body[key])
+          ? (body[key] as number)
+          : invalid(key, `${key} must be an integer or null.`)
+    return {
+      id: text('id'),
+      payment_kind: text('payment_kind') as AllocatePayment['payment_kind'],
+      payment_id: text('payment_id'),
+      user_id: nullableInteger('user_id') ?? invalid('user_id', 'Choose a person.'),
+      month: text('month'),
+      scope: text('scope') as AllocatePayment['scope'],
+      project_id: nullableInteger('project_id'),
+      entry_id: nullableInteger('entry_id'),
+      seconds: nullableInteger('seconds'),
+      amount_cents: nullableInteger('amount_cents'),
+      reason: text('reason'),
+    }
+  }
+  const unavailable = (): never => {
+    throw new ApiError({ status: 503, code: 'unavailable', message: 'Payment allocation is unavailable.' })
+  }
+  api.get('/staff-payments/allocations', async (context) => {
+    const month = context.req.query('month') ?? previousPaymentMonth(new Date().toISOString())
+    if (!validPaymentMonth(month)) invalid('month', 'Choose a valid work month.')
+    if (!store.allocationReport) return unavailable()
+    return context.json({ data: await store.allocationReport(month) }, 200, { 'cache-control': 'no-store' })
+  })
+  api.post('/staff-payments/allocations/preview', async (context) => {
+    const command = allocationCommand(await readObjectBody(context))
+    if (!store.previewAllocation) return unavailable()
+    try {
+      return context.json({ data: await store.previewAllocation(command) }, 200, { 'cache-control': 'no-store' })
+    } catch (error) {
+      return allocationError(error)
+    }
+  })
+  api.post('/staff-payments/allocations', async (context) => {
+    const command = allocationCommand(await readObjectBody(context))
+    if (!store.allocatePayment) return unavailable()
+    try {
+      await store.allocatePayment(command, requireSessionPrincipal(context).userId, context.get('requestId'), new Date().toISOString())
+    } catch (error) {
+      return allocationError(error)
+    }
+    return context.body(null, 204, { 'cache-control': 'no-store' })
+  })
+  api.post('/staff-payments/allocations/reversals', async (context) => {
+    const body = await readObjectBody(context)
+    if (typeof body.id !== 'string' || typeof body.allocation_id !== 'string' || typeof body.reason !== 'string')
+      invalid('reversal', 'Provide a reversal identifier, an allocation and a reason.')
+    const command: ReversePaymentAllocation = {
+      id: body.id as string,
+      allocation_id: body.allocation_id as string,
+      reason: body.reason as string,
+    }
+    if (!store.reverseAllocation) return unavailable()
+    try {
+      await store.reverseAllocation(command, requireSessionPrincipal(context).userId, context.get('requestId'), new Date().toISOString())
+    } catch (error) {
+      return allocationError(error)
     }
     return context.body(null, 204, { 'cache-control': 'no-store' })
   })

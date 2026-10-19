@@ -1,4 +1,10 @@
 import type { PaymentActuals, ConfirmPaymentActuals } from './payment-actuals.js'
+import type {
+  AllocatePayment,
+  PaymentAllocationPreview,
+  PaymentAllocationReport,
+  ReversePaymentAllocation,
+} from './payment-allocations.js'
 /** Monthly staff payment register. Recording a payment never initiates a transfer. */
 export type StaffPaymentKind = 'amount' | 'payment' | 'void' | 'opening' | 'reopen' | 'note'
 export type StaffPaymentProvider = 'wise' | 'deel'
@@ -84,6 +90,10 @@ export interface StaffPaymentReport {
 export interface StaffPaymentStore {
   actuals?(month: string, today: string): Promise<PaymentActuals>
   confirmActuals?(command: ConfirmPaymentActuals, actorId: number, requestId: string, now: string): Promise<void>
+  previewAllocation?(command: AllocatePayment): Promise<PaymentAllocationPreview>
+  allocatePayment?(command: AllocatePayment, actorId: number, requestId: string, now: string): Promise<void>
+  reverseAllocation?(command: ReversePaymentAllocation, actorId: number, requestId: string, now: string): Promise<void>
+  allocationReport?(month: string): Promise<PaymentAllocationReport>
   configureProvider(
     command: StaffPaymentProviderCommand,
     actorId: number,
