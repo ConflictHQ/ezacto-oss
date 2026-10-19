@@ -23,6 +23,34 @@ export interface DatedRate {
   endDate: string | null
 }
 
+/** One line of a card version: a task's rate, or the card default when taskId is null. */
+export interface RateCardLine {
+  taskId: number | null
+  amountCents: number
+}
+
+/** One append-only version of a card. A null start date means "all prior". */
+export interface RateCardVersion {
+  startDate: string | null
+  lines: readonly RateCardLine[]
+}
+
+export interface RateCard {
+  clientId: number
+  versions: readonly RateCardVersion[]
+}
+
+/**
+ * The client rate cards that can price an entry (issue 34). `cards` lists the
+ * cards of the project's client and its ancestors, nearest first; a client with
+ * no card is simply absent. Inheritance follows the parent chain only, never
+ * the bill-to relation.
+ */
+export interface RateCardContext {
+  taskId: number
+  cards: readonly RateCard[]
+}
+
 export interface RateResolutionInput {
   spentDate: string
   project: {
@@ -48,6 +76,8 @@ export interface RateResolutionInput {
   }
   userBillableRates: readonly DatedRate[]
   userCostRates: readonly DatedRate[]
+  /** Absent or empty: no card applies and the result is exactly the card-less one. */
+  rateCards?: RateCardContext
 }
 
 export type BudgetGrain =
@@ -147,6 +177,86 @@ const effectiveRate = (
   return effective[0]?.amountCents ?? null
 }
 
+/** The version in force on a date: the latest start on or before it. */
+const effectiveVersion = (
+  spentDate: string,
+  card: RateCard,
+): RateCardVersion | null => {
+  let effective: RateCardVersion | null = null
+  const seen = new Set<string>()
+  for (const version of card.versions) {
+    if (version.startDate !== null)
+      assertDate(version.startDate, 'rate card version start date')
+    const key = version.startDate ?? ''
+    if (seen.has(key))
+      throw new Error('rate card has two versions with the same start date')
+    seen.add(key)
+    for (const line of version.lines) {
+      if (!Number.isSafeInteger(line.amountCents) || line.amountCents < 0)
+        throw new RangeError('rate card line must be a non-negative safe integer')
+    }
+    if (version.startDate !== null && version.startDate > spentDate) continue
+    if (
+      effective === null ||
+      (version.startDate !== null &&
+        (effective.startDate === null || version.startDate > effective.startDate))
+    ) {
+      effective = version
+    }
+  }
+  return effective
+}
+
+/** The card line that priced an entry, and which card and version supplied it. */
+export interface RateCardPick {
+  clientId: number
+  /** Position in `cards`; with nearest-first input, 0 is the project's own client. */
+  position: number
+  versionStartDate: string | null
+  /** The line's task, or null when the card default priced it. */
+  taskId: number | null
+  amountCents: number
+}
+
+/**
+ * The nearest card that prices this task. A card with no version in force, an
+ * empty version (how a card is retired), or no line for the task and no default
+ * line is skipped and the next ancestor is tried; it never prices at zero.
+ */
+export const pickRateCardLine = (
+  spentDate: string,
+  context: RateCardContext,
+): RateCardPick | null => {
+  assertDate(spentDate, 'spent date')
+  for (const [position, card] of context.cards.entries()) {
+    const version = effectiveVersion(spentDate, card)
+    if (version === null) continue
+    const taskLines = version.lines.filter((line) => line.taskId === context.taskId)
+    const defaults = version.lines.filter((line) => line.taskId === null)
+    if (taskLines.length > 1 || defaults.length > 1)
+      throw new Error('rate card version has duplicate lines')
+    const line = taskLines[0] ?? defaults[0]
+    if (line !== undefined) {
+      return {
+        clientId: card.clientId,
+        position,
+        versionStartDate: version.startDate,
+        taskId: line.taskId,
+        amountCents: line.amountCents,
+      }
+    }
+  }
+  return null
+}
+
+const cardRate = (
+  spentDate: string,
+  context: RateCardContext | undefined,
+): number | null =>
+  context === undefined
+    ? null
+    : (pickRateCardLine(spentDate, context)?.amountCents ?? null)
+
 const resolveBudget = (input: RateResolutionInput): BudgetGrain | null => {
   const { project, taskAssignment, userAssignment } = input
   switch (project.budgetBy) {
@@ -236,7 +346,7 @@ export const resolveRates = (input: RateResolutionInput): RateResolution => {
         break
       case 'people':
         billableRateCents = input.userAssignment.useDefaultRates
-          ? datedBillableRate
+          ? (cardRate(input.spentDate, input.rateCards) ?? datedBillableRate)
           : input.userAssignment.hourlyRateCents
         break
       case 'none':

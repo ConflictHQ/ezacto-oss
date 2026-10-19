@@ -125,3 +125,4 @@ export { activityRollStatements } from './activity-partitions.js'
 export { createMyPaymentsStore } from './my-payments.js'
 
 export * from './deel-time-sync.js'
+export * from './client-rate-cards.js'

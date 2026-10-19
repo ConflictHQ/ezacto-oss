@@ -129,6 +129,21 @@ no expenses; otherwise archive.
 No update, no delete (matches Harvest: POST-only). A rate correction is a new row.
 These tables are the source that time-entry snapshots (§3.3) resolve against.
 
+### 2.3b `client_rate_card` / `client_rate_card_version` — append-only, effective-dated (issue 34)
+
+A named card attached to one client node (`client_rate_card`: `client_id` unique, `name`),
+so a node has at most one. Its rates live in `client_rate_card_version` rows:
+`start_date` (nullable, null = "all prior"; future dates allowed) and `lines`, a
+JSON array of `{task_id, amount_cents}` where a null `task_id` is the card default
+and a task line wins for that task. The version in force on a date is the latest
+`start_date` on or before it. Versions are appended in strictly increasing
+`start_date` order, never updated or deleted, and cards are never updated or
+deleted: a correction is a later version, and an empty version retires the card.
+Money is integer cents. Only profiles that may see billable rates read or write a
+card. Writing a card changes nothing already priced: no entry, snapshot or invoice
+line is touched, and moving a client under a new parent affects only later
+resolution. Existing entries change only through the audited reprice.
+
 ### 2.4 `role`, `department`
 
 `role`: `{name, user_ids}` — report-filter labels only. `department`: same shape, from
@@ -645,9 +660,20 @@ billable_rate(entry) :=
   bill_by = project → project.hourly_rate
   bill_by = tasks   → task_assignment.hourly_rate
   bill_by = people  → user_assignment.use_default_rates
-                        ? user_billable_rate effective at entry.spent_date
+                        ? (client_rate_card rate, else) user_billable_rate effective at entry.spent_date
                         : user_assignment.hourly_rate
   bill_by = none    → none
+
+client_rate_card rate (issue 34) := walk the project's client, then its ancestors
+  through parent_client_id only (never bill_to_client_id), nearest first; for each
+  card take the version in force at entry.spent_date and use its line for the
+  entry's task, else its default line. A card with no version in force, an empty
+  version, or no matching line is skipped (never zero) and the next ancestor is
+  tried; no card at all falls through to user_billable_rate, byte-identical to
+  the result before cards existed. Only this leg consults cards: bill_by =
+  project and tasks, and an assignment override (use_default_rates = false), are
+  unchanged, so precedence is assignment override > own card > inherited card >
+  person default.
 
 cost_rate(entry) := user_cost_rate effective at entry.spent_date
 budget grain     := budget_by → which of {project.budget_seconds, project.cost_budget_cents,

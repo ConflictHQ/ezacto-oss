@@ -31,6 +31,7 @@ import { timeOffMigration } from './migrations/0126_time_off.js'
 import { estimateExpiryMigration } from './migrations/0127_estimate_expiry.js'
 import { invoiceViewLinksMigration } from './migrations/0128_invoice_view_links.js'
 import { deelTimeSyncMigration } from './migrations/0129_deel_time_sync.js'
+import { clientRateCardsMigration } from './migrations/0130_client_rate_cards.js'
 import { organizationInvoiceDefaultsMigration } from './migrations/0097_organization_invoice_defaults.js'
 import { journalFormatsInvoiceExtraMigration } from './migrations/0096_journal_formats_invoice_extra.js'
 import { freeFormInvoiceCreateMigration } from './migrations/0095_free_form_invoice_create.js'
@@ -1616,6 +1617,7 @@ const migrations = [
   { id: '0127_estimate_expiry', statements: estimateExpiryMigration },
   { id: '0128_invoice_view_links', statements: invoiceViewLinksMigration },
   { id: '0129_deel_time_sync', statements: deelTimeSyncMigration },
+  { id: '0130_client_rate_cards', statements: clientRateCardsMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

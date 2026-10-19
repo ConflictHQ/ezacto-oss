@@ -29,6 +29,8 @@ import {
   generateOpenApiDocument,
   installAttachmentRoutes,
   installClientTreeRoutes,
+  installClientRateCardRoutes,
+  type ClientRateCardRepository,
   installEmailConfigurationRoutes,
   installEmailHealthRoutes,
   installEmailLogRoutes,
@@ -145,6 +147,7 @@ const recurringGeneration = new Proxy(
 ) as RecurringGenerationPort;
 const team = new Proxy({}, { get: () => unavailable }) as TeamRepository;
 const treeReader = new Proxy({}, { get: () => unavailable }) as ClientTreeReader;
+const rateCards = new Proxy({}, { get: () => unavailable }) as ClientRateCardRepository;
 const tokens = new Proxy({}, { get: () => unavailable }) as ApiTokenService;
 const passwordAuth = new Proxy(
   {},
@@ -473,6 +476,16 @@ const documentedApp = () =>
         isTeamModuleEnabled: async () => true,
       });
       installClientTreeRoutes(api, treeReader);
+      installClientRateCardRoutes(api, {
+        repository: rateCards,
+        clock: {
+          now: () => ({
+            instant: "2026-08-28T12:00:00.000Z",
+            date: "2026-08-28",
+            time: "12:00",
+          }),
+        },
+      });
       // Mounted only where a deployment composes a reader -- the Worker does,
       // the container does not (`entry-surface.ts`). The fixture composes one so
       // the documented operation has something to be checked against.

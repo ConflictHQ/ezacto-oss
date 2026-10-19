@@ -45,6 +45,8 @@ import {
   installInstanceThemeRoutes,
   installInstanceThemeStylesheetRoute,
   installClientTreeRoutes,
+  installClientRateCardRoutes,
+  type ClientRateCardRepository,
   installEmailHealthRoutes,
   installEmailLogRoutes,
   installEmailConfigurationRoutes,
@@ -573,6 +575,8 @@ export interface RuntimeServices {
     isOptedIn(clientId: number): Promise<boolean>
     setOptedIn(clientId: number, enabled: boolean): Promise<boolean>
   }
+  /** Named rate cards on client nodes, inherited down the tree (issue 34). */
+  clientRateCards?: ClientRateCardRepository
 }
 
 export type Health = {
@@ -768,6 +772,7 @@ export const createApp = (
               teamRepository: services.team,
             })
             installClientTreeRoutes(api, services.clientTree)
+            if (services.clientRateCards) installClientRateCardRoutes(api, { repository: services.clientRateCards, clock: systemClock })
             installTeamRoutes(api, {
               repository: services.team,
               costRateBackfill: services.costRateBackfill,

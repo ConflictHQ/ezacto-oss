@@ -2839,6 +2839,65 @@ const clientTreeOperations: ApiContractOperation[] = [
   },
 ];
 
+const clientRateCardOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/clients/:id/rate-card",
+    operationId: "getClientRateCard",
+    summary: "Get the rate card attached to a client",
+    description:
+      "The card attached directly to this client, with every version, oldest first; inheritance is not applied (use the effective lookup for that). 404 `rate_card_not_found` when the client has no card. Billable rates are money: only the profiles that may see billable rates (administrator, accounting, executive manager, and a project manager granted `billable_rates_manager`) read a card, and everyone else is 403 `money_forbidden`.",
+    tag: "client-rate-cards",
+    responseStatus: 200,
+    responseSchema: "ClientRateCardEnvelope",
+    parameters: [path("id")],
+  },
+  {
+    method: "post",
+    path: "/api/v1/clients/:id/rate-card",
+    operationId: "createClientRateCard",
+    summary: "Attach a named rate card to a client",
+    description:
+      "A client has at most one card (409 `rate_card_exists`); change its rates by adding a version. The card starts with no versions and prices nothing until one is added. Same visibility rule as reading, and the caller must also be allowed to write clients.",
+    tag: "client-rate-cards",
+    responseStatus: 201,
+    responseSchema: "ClientRateCardEnvelope",
+    requestSchema: "ClientRateCardInput",
+    requestRequired: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "post",
+    path: "/api/v1/clients/:id/rate-card/versions",
+    operationId: "createClientRateCardVersion",
+    summary: "Append a version to a client's rate card",
+    description:
+      "Versions are append-only and effective-dated: the version in force on a date is the one with the latest `start_date` on or before it, and a null `start_date` means all prior dates. A new version must start after every existing one (409 `rate_card_version_order`); a correction is simply a later version. A line with a null `task_id` is the card default; a task line wins for that task. An empty `lines` array retires the card, so it is skipped and the next ancestor's card applies. Adding a version prices work resolved afterwards; it never changes an existing entry, snapshot or invoice, and existing entries change only through the audited reprice.",
+    tag: "client-rate-cards",
+    responseStatus: 201,
+    responseSchema: "ClientRateCardEnvelope",
+    requestSchema: "ClientRateCardVersionInput",
+    requestRequired: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "get",
+    path: "/api/v1/clients/:id/effective-rate-card",
+    operationId: "getClientEffectiveRateCard",
+    summary: "Look up the card rate that prices a task for a client",
+    description:
+      "Walks the client and its ancestors through `parent_client_id` only (never the bill-to client), nearest first, with the same rules the rate resolver uses: a card with no version in force, an empty version, or no line for the task and no default line is skipped. `supplied_by_client_id` is the node whose card priced it and `depth` how far up that node sits (0 is the client itself). The card prices only projects billed by people that use default rates. `spent_date` defaults to today in the instance time zone. 404 `rate_card_not_found` when no card prices it.",
+    tag: "client-rate-cards",
+    responseStatus: 200,
+    responseSchema: "EffectiveClientRateCardEnvelope",
+    parameters: [
+      path("id"),
+      { ...query("task_id", integerSchema), required: true },
+      query("spent_date", dateSchema),
+    ],
+  },
+];
+
 const teamOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -3522,6 +3581,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...userEmailOperations,
   ...teamOperations,
   ...clientTreeOperations,
+  ...clientRateCardOperations,
 ];
 
 const nullable = (schema: JsonSchema): JsonSchema => ({
@@ -10595,6 +10655,97 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  ClientRateCardLine: {
+    type: "object",
+    required: ["task_id", "amount_cents"],
+    properties: {
+      task_id: {
+        ...nullable(integerSchema),
+        description: "The task this rate is for; null is the card default.",
+      },
+      amount_cents: {
+        type: "integer",
+        minimum: 0,
+        maximum: 1000000000,
+        description: "Hourly rate in integer cents.",
+      },
+    },
+    additionalProperties: false,
+  },
+  ClientRateCardVersion: {
+    type: "object",
+    required: ["id", "start_date", "lines", "created_at"],
+    properties: {
+      id: integerSchema,
+      start_date: {
+        ...nullable(dateSchema),
+        description: "First day this version is in force; null means all prior dates.",
+      },
+      lines: { type: "array", items: reference("ClientRateCardLine") },
+      created_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  ClientRateCard: {
+    type: "object",
+    required: ["id", "client_id", "name", "created_at", "versions"],
+    properties: {
+      id: integerSchema,
+      client_id: integerSchema,
+      name: stringSchema,
+      created_at: timestampSchema,
+      versions: { type: "array", items: reference("ClientRateCardVersion") },
+    },
+    additionalProperties: false,
+  },
+  ClientRateCardInput: {
+    type: "object",
+    required: ["name"],
+    properties: { name: { type: "string", minLength: 1, maxLength: 200 } },
+    additionalProperties: false,
+  },
+  ClientRateCardVersionInput: {
+    type: "object",
+    required: ["start_date", "lines"],
+    properties: {
+      start_date: nullable(dateSchema),
+      lines: {
+        type: "array",
+        maxItems: 200,
+        items: reference("ClientRateCardLine"),
+      },
+    },
+    additionalProperties: false,
+  },
+  ClientRateCardEnvelope: envelope("ClientRateCard"),
+  EffectiveClientRateCard: {
+    type: "object",
+    required: [
+      "client_id",
+      "supplied_by_client_id",
+      "depth",
+      "card_id",
+      "card_name",
+      "version_start_date",
+      "task_id",
+      "amount_cents",
+    ],
+    properties: {
+      client_id: integerSchema,
+      supplied_by_client_id: integerSchema,
+      depth: { type: "integer", minimum: 0 },
+      card_id: integerSchema,
+      card_name: stringSchema,
+      version_start_date: nullable(dateSchema),
+      task_id: {
+        ...nullable(integerSchema),
+        description: "The matching line's task; null when the card default priced it.",
+      },
+      amount_cents: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  EffectiveClientRateCardEnvelope: envelope("EffectiveClientRateCard"),
 };
 
 const openApiPath = (runtimePath: string): string =>
