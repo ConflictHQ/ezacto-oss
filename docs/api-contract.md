@@ -209,6 +209,12 @@ twice (409 `time_off_overlap`). It never touches `time_entries` or invoices, and
 an over-plan is still a flag, never a refusal. Each write leaves a
 `time_off.created`, `updated` or `deleted` outbox event.
 
+Own payments (issue 100): `GET /api/v1/me/payments?month=` returns the signed-in
+person's own hours, recorded amount owed, receipts and upcoming payments. It is
+session only, off until the `own_money` setting is on, and refused (`not_a_payee`)
+unless the person is flagged a contractor or has a recorded obligation. There is
+no person parameter. See `docs/contractor-payments.md`.
+
 General-resource commercial fields are classified in `@ezacto/core`:
 client payment terms/tax/discount defaults, project billing method/bill-by/currency,
 and contact invoice-recipient routing. Finance, executive, administrator, and

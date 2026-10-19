@@ -9,6 +9,7 @@ const stored = {
   notes: 'Beneficiary:\n*CONFLICT LLC*',
   subject: null,
   estimateValidityDays: null,
+  viewReceipts: false,
 }
 
 const app = (profile = 'administrator') => {
@@ -51,6 +52,7 @@ describe('invoice company information and default values', () => {
         notes: 'Beneficiary:\n*CONFLICT LLC*',
         subject: null,
         estimate_validity_days: null,
+        view_receipts: false,
       },
     })
   })
@@ -70,6 +72,34 @@ describe('invoice company information and default values', () => {
     for (const days of [0, -1, 3651, 1.5, '30', true]) {
       expect((await post(instance, { estimate_validity_days: days })).status).toBe(422)
     }
+    expect(service.update).not.toHaveBeenCalled()
+  })
+
+  it('[unit] turns view receipts on and off, and nothing else turns them on', async () => {
+    const { app: instance, service } = app()
+    expect((await post(instance, { view_receipts: true })).status).toBe(200)
+    expect(service.update).toHaveBeenLastCalledWith({ viewReceipts: true })
+    const off = await post(instance, { view_receipts: false })
+    expect(((await off.json()) as { data: { view_receipts: boolean } }).data.view_receipts).toBe(false)
+    expect(service.update).toHaveBeenLastCalledWith({ viewReceipts: false })
+    service.update.mockClear()
+    for (const value of ['true', 1, null, 'yes']) {
+      expect((await post(instance, { view_receipts: value })).status).toBe(422)
+    }
+    expect(service.update).not.toHaveBeenCalled()
+  })
+
+  it('[unit] saves the estimate validity and view receipts together, and neither when one is bad', async () => {
+    const { app: instance, service } = app()
+    const response = await post(instance, { estimate_validity_days: 30, view_receipts: true })
+    expect(response.status).toBe(200)
+    expect(service.update).toHaveBeenLastCalledWith({ estimateValidityDays: 30, viewReceipts: true })
+    expect((await response.json()) as unknown).toMatchObject({
+      data: { estimate_validity_days: 30, view_receipts: true },
+    })
+    service.update.mockClear()
+    expect((await post(instance, { estimate_validity_days: 30, view_receipts: 'yes' })).status).toBe(422)
+    expect((await post(instance, { estimate_validity_days: 0, view_receipts: true })).status).toBe(422)
     expect(service.update).not.toHaveBeenCalled()
   })
 

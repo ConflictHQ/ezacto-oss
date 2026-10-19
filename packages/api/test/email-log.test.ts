@@ -86,6 +86,7 @@ describe('email log API', () => {
           attempt_count: 5,
           failure_code: 'provider_timeout',
           failure_reason: null,
+          viewed_at: null,
           created_at: '2026-08-28T20:00:00.000Z',
           updated_at: '2026-08-28T20:15:00.000Z',
         },
@@ -101,6 +102,60 @@ describe('email log API', () => {
       createdThrough: '2026-08-28T20:00:00.000Z',
       take: 26,
     })
+  })
+
+  it('[api] says when an invoice email was first opened, and only for invoice emails', async () => {
+    const sent: EmailLogRecord = {
+      ...delivery,
+      id: 5,
+      template: 'invoice:1',
+      relatedType: 'invoice_message',
+      relatedId: 100,
+      status: 'sent',
+      createdAt: '2026-08-28T20:03:00.000Z',
+    }
+    const neverOpened: EmailLogRecord = {
+      ...sent,
+      id: 6,
+      relatedId: 101,
+      createdAt: '2026-08-28T20:02:00.000Z',
+    }
+    // A user whose id happens to be a message id with a receipt.
+    const lookalike: EmailLogRecord = {
+      ...delivery,
+      id: 7,
+      relatedType: 'user',
+      relatedId: 100,
+      createdAt: '2026-08-28T20:01:00.000Z',
+    }
+    const { pager, options } = pagerOver([sent, neverOpened, lookalike])
+    const viewReceipts = vi.fn(async (ids: readonly number[]) => {
+      expect(ids).toEqual([100, 101])
+      return new Map([[100, '2026-08-29T09:30:00.000Z']])
+    })
+    const app = createApiApp({
+      authentication: {
+        sessions: {
+          resolve: async () => ({
+            type: 'user' as const,
+            userId: 1,
+            profile: 'administrator' as const,
+            managerGrants: [],
+            authentication: { kind: 'session' as const, sessionId: 'session-1' },
+          }),
+        },
+      },
+      installApi(api) {
+        installEmailLogRoutes(api, pager, { ...options, viewReceipts })
+      },
+    })
+    const response = await app.request('/api/v1/email-log')
+    const body = (await response.json()) as { data: { id: number; viewed_at: string | null }[] }
+    expect(body.data.map(({ id, viewed_at }) => [id, viewed_at])).toEqual([
+      [5, '2026-08-29T09:30:00.000Z'],
+      [6, null],
+      [7, null],
+    ])
   })
 
   it('[api] turns days into the instants they span in the organization timezone', async () => {

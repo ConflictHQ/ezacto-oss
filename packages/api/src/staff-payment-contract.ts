@@ -228,6 +228,31 @@ export const staffPaymentSchemas = {
     people: { type: 'array', items: ref('PaymentAllocationPerson') },
   }),
   PaymentAllocationReportEnvelope: object({ data: ref('PaymentAllocationReport') }),
+  MyPayments: object({
+    month: string,
+    hours_seconds: integer,
+    status: {
+      type: 'string',
+      enum: ['pending_review', 'in_progress', 'pending', 'partial', 'paid', 'settled'],
+    },
+    owed: nullable(object({ amount_cents: integer, currency: string })),
+    paid_cents: integer,
+    balance_cents: nullable(integer),
+    payments: {
+      type: 'array',
+      items: object({ amount_cents: integer, currency: string, paid_on: string }),
+    },
+    upcoming: {
+      type: 'array',
+      items: object({
+        amount_cents: integer,
+        currency: string,
+        scheduled_on: string,
+        status: { type: 'string', enum: ['scheduled', 'processing'] },
+      }),
+    },
+  }),
+  MyPaymentsEnvelope: object({ data: ref('MyPayments') }),
 }
 export const staffPaymentOperations: readonly ApiContractOperation[] = [
   {
@@ -329,5 +354,16 @@ export const staffPaymentOperations: readonly ApiContractOperation[] = [
     requestSchema: 'ReversePaymentAllocation',
     requestRequired: true,
     sessionOnly: true,
+  },
+  {
+    method: 'get',
+    path: '/api/v1/me/payments',
+    operationId: 'getMyPayments',
+    summary: 'Own payment summary and upcoming payments for the signed-in person',
+    tag: 'staff-payments',
+    responseStatus: 200,
+    responseSchema: 'MyPaymentsEnvelope',
+    sessionOnly: true,
+    parameters: [{ name: 'month', location: 'query', schema: string }],
   },
 ]

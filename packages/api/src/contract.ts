@@ -3965,6 +3965,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "attempt_count",
       "failure_code",
       "failure_reason",
+      "viewed_at",
       "created_at",
       "updated_at",
     ],
@@ -3996,6 +3997,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         enum: ["queue_unavailable", "provider_timeout", "provider_rejected"],
       }),
       failure_reason: nullable(stringSchema),
+      // When the client first opened the invoice this email carried a link to
+      // (issue 936); null for every email that carried none, and until opened.
+      viewed_at: nullable(timestampSchema),
       created_at: timestampSchema,
       updated_at: timestampSchema,
     },
@@ -10246,6 +10250,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "notes",
       "subject",
       "estimate_validity_days",
+      "view_receipts",
     ],
     properties: {
       company_name: { type: "string" },
@@ -10255,6 +10260,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       subject: nullable({ type: "string" }),
       // Days an estimate stays answerable from the day it is first sent (issue 1010).
       estimate_validity_days: nullable({ type: "integer", minimum: 1, maximum: 3650 }),
+      // Link the invoice online in the email and record when it is first opened.
+      view_receipts: { type: "boolean" },
     },
     additionalProperties: false,
   },
@@ -10269,6 +10276,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       notes: nullable({ type: "string", maxLength: 100000 }),
       subject: nullable({ type: "string", maxLength: 998 }),
       estimate_validity_days: nullable({ type: "integer", minimum: 1, maximum: 3650 }),
+      view_receipts: { type: "boolean" },
     },
     additionalProperties: false,
   },

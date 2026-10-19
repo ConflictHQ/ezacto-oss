@@ -27,6 +27,12 @@ export interface EmailLogRouteOptions {
   cursorSigningKey: Uint8Array
   /** The organization's timezone, which decides where a calendar day begins. */
   timezone(): Promise<string>
+  /**
+   * When the invoice emails among these were first opened from their link
+   * (issue 936), by invoice message id. Absent where a deployment issues no
+   * links, in which case no row has been opened.
+   */
+  viewReceipts?(invoiceMessageIds: readonly number[]): Promise<ReadonlyMap<number, string>>
 }
 
 const statuses = new Set<EmailDeliveryStatus>([
@@ -37,7 +43,7 @@ const statuses = new Set<EmailDeliveryStatus>([
   'failed',
 ])
 
-const emailLogData = (record: EmailLogRecord) => ({
+const emailLogData = (record: EmailLogRecord, viewedAt: string | null) => ({
   id: record.id,
   from: record.from === null ? null : { ...record.from },
   reply_to: record.replyTo.map((recipient) => ({ ...recipient })),
@@ -55,6 +61,7 @@ const emailLogData = (record: EmailLogRecord) => ({
   attempt_count: record.attemptCount,
   failure_code: record.failureCode,
   failure_reason: record.failureReason,
+  viewed_at: viewedAt,
   created_at: record.createdAt,
   updated_at: record.updatedAt,
 })
@@ -93,28 +100,51 @@ export const installEmailLogRoutes = <Bindings extends object>(
       ...(recipient === undefined || recipient === '' ? {} : { recipient }),
     }
     const order = logOrder(requestUrl)
-    type Row = { id: number; created_at: string; record: EmailLogRecord }
+    type Row = {
+      id: number
+      created_at: string
+      record: EmailLogRecord
+      viewed_at: string | null
+    }
     const page = await keysetCursorPage({
       requestUrl,
       cursorSigningKey: options.cursorSigningKey,
       viewer: principal,
-      serializer: (row: Readonly<Row>) => emailLogData(row.record),
+      serializer: (row: Readonly<Row>) => emailLogData(row.record, row.viewed_at),
       order: logOrderFor<Row>(order, ['number'], (row) => [row.created_at, row.id]),
       source: {
         snapshot: () => log.snapshot(),
-        list: async (window) =>
-          (
-            await log.page({
-              ...filter,
-              order,
-              after:
-                window.after === null
-                  ? null
-                  : { createdAt: window.after[0], id: window.after[1] as number },
-              createdThrough: window.createdThrough,
-              take: window.take,
-            })
-          ).map((record) => ({ id: record.id, created_at: record.createdAt, record })),
+        list: async (window) => {
+          const records = await log.page({
+            ...filter,
+            order,
+            after:
+              window.after === null
+                ? null
+                : { createdAt: window.after[0], id: window.after[1] as number },
+            createdThrough: window.createdThrough,
+            take: window.take,
+          })
+          const opened =
+            options.viewReceipts === undefined
+              ? new Map<number, string>()
+              : await options.viewReceipts(
+                  records
+                    .filter(
+                      (record) => record.relatedType === 'invoice_message' && record.relatedId !== null,
+                    )
+                    .map((record) => record.relatedId!),
+                )
+          return records.map((record) => ({
+            id: record.id,
+            created_at: record.createdAt,
+            record,
+            viewed_at:
+              record.relatedType === 'invoice_message' && record.relatedId !== null
+                ? (opened.get(record.relatedId) ?? null)
+                : null,
+          }))
+        },
       },
     })
     return context.json(withTotal(page, await log.count(filter)), 200, {

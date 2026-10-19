@@ -4,6 +4,7 @@ import { createContainerAppleWebCustodyStore } from '@ezacto/db'
 import { createPaymentRunsService } from '@ezacto/db'
 import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createStaffPaymentStore } from '@ezacto/db'
+import { createMyPaymentsStore } from '@ezacto/db'
 import { sql } from 'drizzle-orm'
 import { chmod, lstat, mkdir, realpath, stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
@@ -99,6 +100,10 @@ import {
   createReminderPort,
   createReminderSettings,
   readInvoiceDefaults,
+  createInvoiceViewLinkIssuer,
+  createInvoiceViewService,
+  invoiceViewLinkOrigin,
+  readViewReceipts,
   updateInvoiceDefaults,
   readThankYouPreference,
   readOrganizationThankYouPolicy,
@@ -865,6 +870,7 @@ export const createContainerRuntime = async (
       ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
       paymentRuns,
       staffPayments: createStaffPaymentStore(drizzle),
+      myPayments: createMyPaymentsStore(drizzle),
       payoutAccounts: (() => {
         const store = createPayoutAccountStore(drizzle)
         return {
@@ -996,6 +1002,23 @@ export const createContainerRuntime = async (
       update: (patch) => updateNotificationSettings(drizzle, patch, new Date().toISOString()),
     }),
       reminderSettings: createReminderSettings(drizzle, reminders, () => new Date().toISOString()),
+      // The hosted invoice page and its receipts (issue 936), mounted exactly
+      // where the Worker mounts them. This entry keeps no rendered invoice
+      // documents, so its page offers none to download.
+      invoiceView: createInvoiceViewService({
+        database: drizzle,
+        paymentUrl: invoicePaymentUrlForMail({ bill, stripe }),
+      }),
+      ...(invoiceViewLinkOrigin(config.appBaseUrl) === null
+        ? {}
+        : {
+            invoiceViewLinks: createInvoiceViewLinkIssuer(
+              drizzle,
+              invoiceViewLinkOrigin(config.appBaseUrl)!,
+            ),
+          }),
+      invoiceViewReceipts: (invoiceMessageIds: readonly number[]) =>
+        readViewReceipts(drizzle, invoiceMessageIds),
       // Invoices › Configure: what every invoice prints and every draft starts with.
       invoiceDefaults: {
         read: () => readInvoiceDefaults(drizzle),

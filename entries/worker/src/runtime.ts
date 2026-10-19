@@ -5,6 +5,7 @@ import { captureException } from '@sentry/cloudflare'
 import { createPaymentRunsService } from '@ezacto/db/d1'
 import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createStaffPaymentStore } from '@ezacto/db/d1'
+import { createMyPaymentsStore } from '@ezacto/db/d1'
 import {
   bootstrapInstanceD1,
   createAttachmentStore,
@@ -108,6 +109,10 @@ import {
   createReminderSettings,
   readInvoiceDefaults,
   updateInvoiceDefaults,
+  createInvoiceViewLinkIssuer,
+  createInvoiceViewService,
+  invoiceViewLinkOrigin,
+  readViewReceipts,
   readThankYouPreference,
   readOrganizationThankYouPolicy,
   setInvoiceThankYouPolicy,
@@ -1339,6 +1344,7 @@ export const createRuntimeServices = async (
     ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
     paymentRuns,
     staffPayments: createStaffPaymentStore(drizzle),
+    myPayments: createMyPaymentsStore(drizzle),
     payoutAccounts: (() => {
       const store = createPayoutAccountStore(drizzle)
       return {
@@ -1428,6 +1434,33 @@ export const createRuntimeServices = async (
         countInvoicePreviewsSince(drizzle, invoiceId, since),
     },
     ...(invoiceDocuments === undefined ? {} : { invoiceDocuments }),
+    // The hosted invoice page and its receipts (issue 936). The page is always
+    // mounted -- a link only exists once a send minted one -- and the link is
+    // minted only where there is a configured origin to point it at.
+    invoiceView: createInvoiceViewService({
+      database: drizzle,
+      paymentUrl: invoicePaymentUrlForMail({ bill, stripe }),
+      ...(env.ATTACHMENTS === undefined
+        ? {}
+        : {
+            readDocument: async (key: string) => {
+              const object = await createR2AttachmentObjectStore(env.ATTACHMENTS!).get(key);
+              return object === null
+                ? null
+                : new Uint8Array(await new Response(object.body).arrayBuffer());
+            },
+          }),
+    }),
+    ...(invoiceViewLinkOrigin(env.APP_BASE_URL) === null
+      ? {}
+      : {
+          invoiceViewLinks: createInvoiceViewLinkIssuer(
+            drizzle,
+            invoiceViewLinkOrigin(env.APP_BASE_URL)!,
+          ),
+        }),
+    invoiceViewReceipts: (invoiceMessageIds: readonly number[]) =>
+      readViewReceipts(drizzle, invoiceMessageIds),
     // The same journal as a download (647), from the same store the email
     // reads, so the file an operator checks is the file a client is sent.
     invoiceHoursReport: {

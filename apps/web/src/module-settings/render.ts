@@ -103,6 +103,9 @@ export const renderModuleSettingsPage = (view?: string): string => `
           <input name="estimate_validity_days" type="number" min="1" max="3650" step="1" inputmode="numeric" data-invoice-defaults-estimate-days aria-describedby="settings-estimate-days-hint">
         </label>
         <p class="hint" id="settings-estimate-days-hint">How long a customer can answer an estimate, counted from the day it is first sent. Leave blank for estimates that do not expire. An expiry set on an estimate overrides this.</p>
+        <h3>Online invoice</h3>
+        <label class="invoice-defaults-check"><input type="checkbox" name="view_receipts" data-invoice-defaults-view-receipts aria-describedby="settings-invoice-view-receipts-hint">Link the invoice online in the email, and record when it is first opened</label>
+        <p class="hint" id="settings-invoice-view-receipts-hint">Off, the email is exactly what it is today. On, its &ldquo;View invoice&rdquo; line opens a private page for that email: the invoice, its PDF, and a pay button where online payment is set up. The first time someone opens it, the invoice's History and Settings &rsaquo; Deliveries show when. There is no tracking image, and a mail scanner that only fetches the link does not count. An invoice email goes to everyone on it, so this shows that the email was opened, not by whom.</p>
         <h3 data-invoice-defaults-sending hidden>Sending</h3>
         <label class="invoice-defaults-check" data-invoice-defaults-sending hidden><input type="checkbox" name="attach_pdf" data-invoice-defaults-attach-pdf>Attach the invoice PDF by default</label>
         <label class="invoice-defaults-check" data-invoice-defaults-sending hidden><input type="checkbox" name="attach_journal" data-invoice-defaults-attach-journal>Attach the hours report by default</label>

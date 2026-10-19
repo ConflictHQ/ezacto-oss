@@ -469,6 +469,7 @@ export * from './notification-settings.js'
 export * from './timesheet-auto-approval.js'
 export * from './notification-preferences.js'
 export * from './invoice-defaults.js'
+export * from './invoice-view.js'
 
 export * from './recurring-repair.js'
 export {
@@ -506,3 +507,4 @@ export {
 } from './apple-web.js'
 
 export { createAppleWebLifecycle, assertAppleWebCustodyConfig, APPLE_WEB_CONNECTION_COOKIE, type AppleWebCustodyConfig } from './apple-web-lifecycle.js'
+export { installMyPaymentRoutes } from './my-payments.js'

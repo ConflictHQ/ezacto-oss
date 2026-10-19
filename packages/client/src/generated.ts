@@ -288,6 +288,33 @@ export type PaymentAllocationReportEnvelope = {
   "data": PaymentAllocationReport;
 };
 
+export type MyPayments = {
+  "month": string;
+  "hours_seconds": number;
+  "status": "pending_review" | "in_progress" | "pending" | "partial" | "paid" | "settled";
+  "owed": {
+  "amount_cents": number;
+  "currency": string;
+} | null;
+  "paid_cents": number;
+  "balance_cents": number | null;
+  "payments": Array<{
+  "amount_cents": number;
+  "currency": string;
+  "paid_on": string;
+}>;
+  "upcoming": Array<{
+  "amount_cents": number;
+  "currency": string;
+  "scheduled_on": string;
+  "status": "scheduled" | "processing";
+}>;
+};
+
+export type MyPaymentsEnvelope = {
+  "data": MyPayments;
+};
+
 export type PaymentSelection = {
   "user_id": number;
   "month": string;
@@ -498,6 +525,7 @@ export type EmailLog = {
   "attempt_count": number;
   "failure_code": "queue_unavailable" | "provider_timeout" | "provider_rejected" | null;
   "failure_reason": string | null;
+  "viewed_at": string | null;
   "created_at": string;
   "updated_at": string;
 };
@@ -4164,6 +4192,7 @@ export type InvoiceDefaults = {
   "notes": string | null;
   "subject": string | null;
   "estimate_validity_days": number | null;
+  "view_receipts": boolean;
 };
 
 export type InvoiceDefaultsEnvelope = {
@@ -4177,6 +4206,7 @@ export type InvoiceDefaultsInput = {
   "notes"?: string | null;
   "subject"?: string | null;
   "estimate_validity_days"?: number | null;
+  "view_receipts"?: boolean;
 };
 
 export type InvoiceDocumentPreferenceEnvelope = {
@@ -6526,6 +6556,16 @@ export class EzactoClient {
 
     return this.request<void>("POST", "/api/v1/staff-payments/allocations/reversals", {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getMyPayments(args: { query?: { "month"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<MyPaymentsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<MyPaymentsEnvelope>("GET", "/api/v1/me/payments", {
+      query: args.query,
       signal: args.signal,
       headers,
     });

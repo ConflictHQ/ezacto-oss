@@ -17452,6 +17452,71 @@
         }
       }
     },
+    "/api/v1/me/payments": {
+      "get": {
+        "operationId": "getMyPayments",
+        "summary": "Own payment summary and upcoming payments for the signed-in person",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyPaymentsEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/me/payments",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/payment-runs/report": {
       "get": {
         "operationId": "getPaymentRunReport",
@@ -29196,6 +29261,141 @@
           }
         }
       },
+      "MyPayments": {
+        "type": "object",
+        "required": [
+          "month",
+          "hours_seconds",
+          "status",
+          "owed",
+          "paid_cents",
+          "balance_cents",
+          "payments",
+          "upcoming"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "month": {
+            "type": "string"
+          },
+          "hours_seconds": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending_review",
+              "in_progress",
+              "pending",
+              "partial",
+              "paid",
+              "settled"
+            ]
+          },
+          "owed": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "amount_cents",
+                  "currency"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "amount_cents": {
+                    "type": "integer"
+                  },
+                  "currency": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paid_cents": {
+            "type": "integer"
+          },
+          "balance_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "amount_cents",
+                "currency",
+                "paid_on"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "amount_cents": {
+                  "type": "integer"
+                },
+                "currency": {
+                  "type": "string"
+                },
+                "paid_on": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "upcoming": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "amount_cents",
+                "currency",
+                "scheduled_on",
+                "status"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "amount_cents": {
+                  "type": "integer"
+                },
+                "currency": {
+                  "type": "string"
+                },
+                "scheduled_on": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "scheduled",
+                    "processing"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "MyPaymentsEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/MyPayments"
+          }
+        }
+      },
       "PaymentSelection": {
         "type": "object",
         "required": [
@@ -30033,6 +30233,7 @@
           "attempt_count",
           "failure_code",
           "failure_reason",
+          "viewed_at",
           "created_at",
           "updated_at"
         ],
@@ -30171,6 +30372,17 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "viewed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -48592,7 +48804,8 @@
           "company_address",
           "notes",
           "subject",
-          "estimate_validity_days"
+          "estimate_validity_days",
+          "view_receipts"
         ],
         "properties": {
           "company_name": {
@@ -48639,6 +48852,9 @@
                 "type": "null"
               }
             ]
+          },
+          "view_receipts": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -48712,6 +48928,9 @@
                 "type": "null"
               }
             ]
+          },
+          "view_receipts": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false

@@ -28,6 +28,7 @@ const email = (overrides: Partial<EmailLogRow> = {}): EmailLogRow => ({
   attempt_count: 1,
   failure_code: null,
   failure_reason: null,
+  viewed_at: null,
   created_at: '2026-09-13T09:00:00.000Z',
   ...overrides,
 })

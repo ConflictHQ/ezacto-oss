@@ -27,6 +27,7 @@ const email = (overrides: Partial<EmailLogRow> = {}): EmailLogRow => ({
   attempt_count: 1,
   failure_code: null,
   failure_reason: null,
+  viewed_at: null,
   created_at: '2026-09-13T09:00:00.000Z',
   ...overrides,
 })
@@ -134,6 +135,30 @@ describe('what was sent (#485)', () => {
     expect(cells).toContain('Invoice 1315')
     expect(cells).toContain('Sent')
     expect(cells).toContain('2026-09-13 09:00')
+  })
+
+  it('[browser #936] says when an invoice email was first opened, and leaves the rest blank', async () => {
+    // One receipt per send: the column does not claim which recipient opened it.
+    mount()
+    await activate(
+      api({
+        listEmailLog: vi.fn(async () =>
+          pageOf([
+            email({ id: 2, subject: 'Opened one', viewed_at: '2026-09-14T15:45:00.000Z' }),
+            email({ id: 1, subject: 'Unopened one' }),
+          ]),
+        ),
+      }),
+    )
+    const headings = [...document.querySelectorAll('[data-email-log-list] th')].map(
+      (heading) => heading.textContent,
+    )
+    expect(headings).toContain('Opened')
+    const rows = [...document.querySelectorAll('[data-email-log-list] tbody tr')].map((row) =>
+      [...row.querySelectorAll('td')].map((cell) => cell.textContent),
+    )
+    const column = headings.indexOf('Opened')
+    expect(rows.map((cells) => cells[column])).toEqual(['2026-09-14 15:45', ''])
   })
 
   it('[browser] puts the reason in the row, so failures are not all alike', async () => {

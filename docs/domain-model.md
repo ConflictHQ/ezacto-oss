@@ -373,6 +373,12 @@ Invoice messages additionally carry `attach_pdf`, `thank_you`, `reminder`, and
 `send_reminder_on`. Estimate messages do not grow those invoice-only columns, and
 their recipients are required on native sends, matching the source contract.
 
+A `view` message is the receipt of issue 936: written by the system the first
+time a client opens the hosted invoice page behind the link a `send` message
+carried (`invoice_view_links`, one row per send, token stored only as a hash). It
+repeats that send's To and Cc and says which day the email went; it does not say
+who opened it, because the email is one message to everyone on it.
+
 Writable invoice `event_type`: `send|close|re-open|draft`. Estimate:
 `send|accept|decline|re-open`; `view` and `invoice` are **system-emitted only** and
 rejected on write.

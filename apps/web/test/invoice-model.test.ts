@@ -309,6 +309,10 @@ describe('invoice workspace model', () => {
     expect(invoiceMessageLabel({ event_type: null } as InvoiceMessage)).toBe(
       'Invoice activity',
     )
+    // The receipt of issue 936: a client opening the emailed invoice.
+    expect(invoiceMessageLabel({ event_type: 'view' } as InvoiceMessage)).toBe(
+      'viewed online',
+    )
     expect(
       invoicePaymentDate({
         paid_date: '2026-08-21',

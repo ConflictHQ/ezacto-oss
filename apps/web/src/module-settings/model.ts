@@ -136,6 +136,8 @@ export interface InvoiceDefaultsSetting {
   readonly subject: string | null
   /** Days an estimate stays answerable after it is first sent; null means no default expiry. */
   readonly estimate_validity_days: number | null
+  /** Link the invoice online in the email, and record when it is first opened. */
+  readonly view_receipts: boolean
 }
 
 /**

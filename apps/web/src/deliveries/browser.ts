@@ -59,6 +59,11 @@ export interface EmailLogRow {
   readonly attempt_count: number
   readonly failure_code: string | null
   readonly failure_reason: string | null
+  /**
+   * When the client first opened the invoice this email linked to (issue 936).
+   * Null for an email with no link and for a link not yet opened.
+   */
+  readonly viewed_at: string | null
   readonly created_at: string
 }
 
@@ -317,6 +322,14 @@ export const createDeliveriesController = (api: DeliveriesApi): DeliveriesContro
           },
           { key: 'status', label: 'Status', fit: true, render: (row) => deliveryLabel(row.status) },
           { key: 'attempts', label: 'Attempts', fit: true, render: (row) => String(row.attempt_count) },
+          {
+            key: 'opened',
+            label: 'Opened',
+            fit: true,
+            // First opened from this email's link; one receipt per send, so it
+            // does not say which of its recipients opened it.
+            render: (row) => (row.viewed_at === null ? '' : when(row.viewed_at)),
+          },
           {
             key: 'why',
             label: 'Why',

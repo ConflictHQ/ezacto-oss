@@ -30,6 +30,7 @@ describe('invoice defaults', () => {
       notes: null,
       subject: null,
       estimateValidityDays: null,
+      viewReceipts: false,
     })
     const notes = 'Beneficiary:\n*CONFLICT LLC*\n100 Example Ave STE 200\nSpringfield, IL 62701\n\n*Account details*'
     const saved = await updateInvoiceDefaults(
@@ -47,6 +48,7 @@ describe('invoice defaults', () => {
       notes,
       subject: 'Conflict <> CLIENT Invoice: MONTH YEAR',
       estimateValidityDays: null,
+      viewReceipts: false,
     })
     // Line breaks and the *bold* markup are the author's and survive verbatim.
     expect((await readInvoiceDefaults(orm)).notes).toBe(notes)
@@ -60,6 +62,20 @@ describe('invoice defaults', () => {
     await expect(updateInvoiceDefaults(orm, { estimateValidityDays: 0 }, 't4')).rejects.toThrow()
     await expect(updateInvoiceDefaults(orm, { estimateValidityDays: 3651 }, 't5')).rejects.toThrow()
     expect(database.prepare('SELECT estimate_validity_days AS days FROM organizations').get()).toEqual({ days: null })
+  })
+
+  it('[unit] saves the estimate validity and view receipts in one change, and each leaves the other alone', async () => {
+    const { orm } = await fixture()
+    const both = await updateInvoiceDefaults(orm, { estimateValidityDays: 30, viewReceipts: true }, 't1')
+    expect(both).toMatchObject({ estimateValidityDays: 30, viewReceipts: true })
+    expect(await updateInvoiceDefaults(orm, { estimateValidityDays: 14 }, 't2')).toMatchObject({
+      estimateValidityDays: 14,
+      viewReceipts: true,
+    })
+    expect(await updateInvoiceDefaults(orm, { viewReceipts: false }, 't3')).toMatchObject({
+      estimateValidityDays: 14,
+      viewReceipts: false,
+    })
   })
 
   it('[unit] stores blank as no default and leaves fields it was not given alone', async () => {

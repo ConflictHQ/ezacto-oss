@@ -1,6 +1,6 @@
 import { renderStaffPayments } from '../staff-payments/render.js'
 import { PASSWORD_MIN_CODE_POINTS, PASSWORD_MAX_CODE_POINTS } from '@ezacto/core'
-import { appleSignInIcon, googleSignInIcon, portalEstimatesJavascript, shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
+import { appleSignInIcon, googleSignInIcon, portalEstimatesJavascript, portalInvoiceJavascript, shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
 import { iconMarkup, type IconName } from '../components/icons.js'
 import { INSTANCE_THEME_STYLESHEET_PATH } from '../instance-theme.js'
 import { defaultTheme, themeManifest } from '../theme.js'
@@ -26,6 +26,7 @@ import { renderEmailConfigPage } from '../email-config/render.js'
 import { renderRecurringEditorPage, renderRecurringPage } from '../recurring/render.js'
 import { renderEstimatesPage } from '../estimates/render.js'
 import { renderCapacityPage } from '../capacity/render.js'
+import { renderMyPaymentsPage } from '../my-payments/render.js'
 import { renderRetainerDialogs, renderRetainerPage } from '../retainers/render.js'
 import {
   renderActivityLogPage,
@@ -127,6 +128,7 @@ export interface AppShellOptions {
     | 'team-list'
     | 'team-person'
     | 'capacity'
+    | 'my-payments'
     | 'not-found'
   /**
    * The level-2 strip under the header. Time supplies its own Week/Day pair
@@ -1112,6 +1114,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   ${renderClientDirectoryPages(view)}
   ${renderTeamPages(view)}
   ${renderCapacityPage(view)}
+  ${renderMyPaymentsPage(view)}
   ${renderProjectDirectoryPages(view)}
   ${renderTaskAdminPage(view)}
   ${renderDashboardPage(view)}
@@ -1249,11 +1252,12 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
  * declaration file, which `tsc` refuses past a million characters (TS7056).
  */
 export const webAssets: Readonly<
-  Record<'stylesheet' | 'javascript' | 'portalEstimatesJavascript', string>
+  Record<'stylesheet' | 'javascript' | 'portalEstimatesJavascript' | 'portalInvoiceJavascript', string>
 > = {
   stylesheet: shellStylesheet,
   javascript: shellJavascript,
   portalEstimatesJavascript,
+  portalInvoiceJavascript,
 }
 
 /** Standalone confirmation: no workspace session authorizes Apple revocation. */

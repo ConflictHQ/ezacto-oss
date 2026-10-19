@@ -7,6 +7,8 @@ import { workItemProviders, type WorkItemProviderId } from '@ezacto/core'
 import { installPaymentRunRoutes } from '@ezacto/api'
 import { installStaffPaymentRoutes } from '@ezacto/api'
 import type { StaffPaymentStore } from '@ezacto/core'
+import { installMyPaymentRoutes } from '@ezacto/api'
+import type { MyPaymentsStore } from '@ezacto/core'
 import { captureException } from "@sentry/cloudflare";
 import type { BillRuntime, QuickBooksService, WiseRuntime } from "@ezacto/integrations";
 import type {
@@ -21,6 +23,7 @@ import type {
   TimesheetAutoApprovalService,
   ProfileNotificationsPort,
   InvoiceDefaultsService,
+  InvoiceViewRouteService,
   RecurringRepairService,
   InvoiceTimeClaimService,
   StripeService,
@@ -90,6 +93,7 @@ import {
   installTimesheetAutoApprovalRoutes,
   installProfileNotificationRoutes,
   installInvoiceDefaultsRoutes,
+  installInvoiceViewRoutes,
   installRecurringRepairRoutes,
   installInvoiceTimeClaimRoutes,
   installStripeRoutes,
@@ -172,6 +176,8 @@ import {
   renderAppShell,
   renderAppleDisconnect,
   renderPortalEstimatesPage,
+  renderPortalInvoicePage,
+  type PortalInvoicePage,
   reportKindTabs,
   resolveDeploymentBrand,
   webAssets,
@@ -501,6 +507,17 @@ export interface RuntimeServices {
   }
   invoiceDefaults?: InvoiceDefaultsService
   /**
+   * The hosted invoice page and its receipts (issue 936). Both entries compose
+   * it, so `entry-surface.ts` lists its three routes for both.
+   */
+  invoiceView?: InvoiceViewRouteService<PortalInvoicePage>
+  /** Mints the link an invoice email carries, where the deployment has an origin to link to. */
+  invoiceViewLinks?: NonNullable<MoneyResourceRouteOptions['invoiceViewLinks']>
+  /** When invoice emails were first opened, for Settings > Deliveries. */
+  invoiceViewReceipts?: (
+    invoiceMessageIds: readonly number[],
+  ) => Promise<ReadonlyMap<number, string>>
+  /**
    * Sends the reminders that have come due. Called from the daily cron in the
    * Worker and from the outbox tick in the container; either way it is the
    * only thing that turns a scheduled row into mail.
@@ -537,6 +554,8 @@ export interface RuntimeServices {
   /** Administrator payment register, available without provider credentials. */
   paymentRuns?: PaymentRunsService
   staffPayments?: StaffPaymentStore
+  /** A person's own payment summary (issue 100). */
+  myPayments?: MyPaymentsStore
   /** Linking a person to their payout provider account (#421). */
   payoutAccounts?: PayoutAccountService
   billDelivery?: {
@@ -710,6 +729,9 @@ export const createApp = (
             installEmailLogRoutes(api, services.emailLog, {
               cursorSigningKey: services.cursorSigningKey,
               timezone: organizationTimezone,
+              ...(services.invoiceViewReceipts === undefined
+                ? {}
+                : { viewReceipts: services.invoiceViewReceipts }),
             })
             installEmailHealthRoutes(api, services.emailLog)
             installEmailConfigurationRoutes(api, {
@@ -797,6 +819,9 @@ export const createApp = (
               // than inside the money routes so those keep knowing nothing
               // about a payment provider; a deployment with neither BILL nor
               // Stripe passes nothing and the email renders as it always did.
+              ...(services.invoiceViewLinks === undefined
+                ? {}
+                : { invoiceViewLinks: services.invoiceViewLinks }),
               ...(services.stripe === undefined && services.bill === undefined
                 ? {}
                 : {
@@ -814,6 +839,7 @@ export const createApp = (
             if (services.staffPayments !== undefined) {
               installStaffPaymentRoutes(api, services.staffPayments)
             }
+            if (services.myPayments !== undefined) installMyPaymentRoutes(api, services.myPayments)
             if (services.backupStatus !== undefined) {
               installBackupStatusRoutes(api, services.backupStatus, {
                 cursorSigningKey: services.cursorSigningKey,
@@ -1020,6 +1046,22 @@ export const createApp = (
       // API surface.
       if (services?.wiseWebhook !== undefined) {
         installWiseWebhookRoute(app, services.wiseWebhook)
+      }
+      // The page a client reaches from the link in an emailed invoice (issue
+      // 936). No session, so the link's token is the whole of the authorisation
+      // and these sit outside the API surface, beside the webhooks.
+      if (services?.invoiceView !== undefined) {
+        installInvoiceViewRoutes(app, {
+          service: services.invoiceView,
+          clock: () => systemClock.now().instant,
+          clientKey: (request) =>
+            request.headers.get('cf-connecting-ip') ?? 'unknown-client',
+          render: renderPortalInvoicePage,
+          pageHeaders: {
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+          },
+        })
       }
       if (services !== undefined) {
         // One policy object, consulted by every sign-in family. Composing it
@@ -1335,6 +1377,13 @@ export const createApp = (
 
       app.get('/assets/ezacto.js', (context) =>
         context.body(webAssets.javascript, 200, {
+          'cache-control': 'public, max-age=0, must-revalidate',
+          'content-type': 'text/javascript; charset=utf-8',
+        }),
+      )
+
+      app.get('/assets/portal-invoice.js', (context) =>
+        context.body(webAssets.portalInvoiceJavascript, 200, {
           'cache-control': 'public, max-age=0, must-revalidate',
           'content-type': 'text/javascript; charset=utf-8',
         }),
@@ -1728,6 +1777,29 @@ export const createApp = (
               { label: 'Payments', href: '/payments', current: context.req.path === '/payments' },
               { label: 'Payments report', href: '/payments/report', current: context.req.path === '/payments/report' },
             ],
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/my-payments', async (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            ...(await shellChrome(context.env, context.req.raw)),
+            activeSection: 'Settings',
+            view: 'my-payments',
+            tabs: [],
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
