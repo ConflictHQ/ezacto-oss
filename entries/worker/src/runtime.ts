@@ -5,6 +5,7 @@ import { captureException } from '@sentry/cloudflare'
 import { createPaymentRunsService } from '@ezacto/db/d1'
 import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createStaffPaymentStore } from '@ezacto/db/d1'
+import { createMyPaymentsStore } from '@ezacto/db/d1'
 import {
   bootstrapInstanceD1,
   createAttachmentStore,
@@ -1339,6 +1340,7 @@ export const createRuntimeServices = async (
     ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
     paymentRuns,
     staffPayments: createStaffPaymentStore(drizzle),
+    myPayments: createMyPaymentsStore(drizzle),
     payoutAccounts: (() => {
       const store = createPayoutAccountStore(drizzle)
       return {

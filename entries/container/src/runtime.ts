@@ -4,6 +4,7 @@ import { createContainerAppleWebCustodyStore } from '@ezacto/db'
 import { createPaymentRunsService } from '@ezacto/db'
 import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createStaffPaymentStore } from '@ezacto/db'
+import { createMyPaymentsStore } from '@ezacto/db'
 import { sql } from 'drizzle-orm'
 import { chmod, lstat, mkdir, realpath, stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
@@ -865,6 +866,7 @@ export const createContainerRuntime = async (
       ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
       paymentRuns,
       staffPayments: createStaffPaymentStore(drizzle),
+      myPayments: createMyPaymentsStore(drizzle),
       payoutAccounts: (() => {
         const store = createPayoutAccountStore(drizzle)
         return {
