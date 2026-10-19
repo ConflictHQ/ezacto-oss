@@ -50,6 +50,7 @@ const removedTables = new Set([
   'teammate_assignments',
   'saved_report_pins',
   'saved_report_shares',
+  'saved_report_role_shares',
   'saved_reports',
   'quickbooks_oauth_states',
   'calendar_proposals',

@@ -2448,7 +2448,7 @@ const reportOperations: ApiContractOperation[] = [
   },
   {
     method: "delete", path: "/api/v1/report-definitions/:reportId",
-    operationId: "deleteSavedReport", summary: "Delete an owned saved report",
+    operationId: "deleteSavedReport", summary: "Delete a saved report you own, or any saved report as an administrator",
     tag: "reports", responseStatus: 204,
     parameters: [stringPath("reportId")],
   },
@@ -2479,6 +2479,18 @@ const reportOperations: ApiContractOperation[] = [
     operationId: "unshareSavedReport", summary: "Revoke a teammate's report share",
     tag: "reports", responseStatus: 204,
     parameters: [stringPath("reportId"), path("userId")],
+  },
+  {
+    method: "post", path: "/api/v1/report-definitions/:reportId/role-shares/:profile",
+    operationId: "shareSavedReportWithRole", summary: "Share an owned report with everyone in a role",
+    tag: "reports", responseStatus: 204,
+    parameters: [stringPath("reportId"), stringPath("profile")],
+  },
+  {
+    method: "delete", path: "/api/v1/report-definitions/:reportId/role-shares/:profile",
+    operationId: "unshareSavedReportWithRole", summary: "Revoke a role's access to an owned report",
+    tag: "reports", responseStatus: 204,
+    parameters: [stringPath("reportId"), stringPath("profile")],
   },
   {
     method: "post", path: "/api/v1/report-definitions/:reportId/run",
@@ -8779,7 +8791,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   SavedReport: {
     type: "object",
-    required: ["id", "name", "version", "fields", "metrics", "filters", "group_by", "presentation", "owner", "is_custom", "pinned", "shared", "created_at", "updated_at"],
+    required: ["id", "name", "version", "fields", "metrics", "filters", "group_by", "presentation", "owner", "is_custom", "pinned", "shared", "shared_with", "owned_by_viewer", "can_delete", "created_at", "updated_at"],
     properties: {
       id: stringSchema, name: stringSchema, version: integerSchema,
       fields: { type: "array", items: { type: "object", additionalProperties: true } },
@@ -8789,6 +8801,22 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       presentation: { $ref: "#/components/schemas/ReportDefinitionPresentation" },
       owner: { type: "object", additionalProperties: true },
       is_custom: booleanSchema, pinned: booleanSchema, shared: booleanSchema,
+      // Who the owner shared it with. Empty for everyone but the owner.
+      shared_with: {
+        type: "object", required: ["users", "profiles"],
+        properties: {
+          users: {
+            type: "array",
+            items: {
+              type: "object", required: ["user_id", "name"],
+              properties: { user_id: integerSchema, name: stringSchema }, additionalProperties: false,
+            },
+          },
+          profiles: { type: "array", items: { type: "string", enum: ["member", "project_manager", "people_admin", "accounting", "executive_manager", "administrator"] } },
+        },
+        additionalProperties: false,
+      },
+      owned_by_viewer: booleanSchema, can_delete: booleanSchema,
       created_at: timestampSchema, updated_at: timestampSchema,
     },
     additionalProperties: false,

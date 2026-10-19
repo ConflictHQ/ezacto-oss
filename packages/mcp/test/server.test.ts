@@ -121,6 +121,7 @@ const reportReader: ReportReader = {
   createSavedReport: async () => { throw new Error('not used') },
   updateSavedReport: async () => 'not_found',
   shareSavedReport: async () => false,
+  shareSavedReportWithProfile: async () => false,
   pinSavedReport: async () => false,
   deleteSavedReport: async () => false,
   runSavedReport: async () => null,

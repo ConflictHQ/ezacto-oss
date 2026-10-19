@@ -36,6 +36,7 @@ import { sortToken, type SortValue, type TableSort } from '../components/table-s
 import { createPeriodControl } from '../components/period.js'
 import { invoiceIdentityCanWrite, invoicePagePath } from '../invoices/model.js'
 import { moneyText } from '../money-display.js'
+import { personLabel } from '../projects/model.js'
 // The team roster's own formatter. Utilization is one figure with one meaning,
 // and a second renderer for it here is how the same person comes to read 17%
 // on one screen and 17.4% on another.
@@ -48,6 +49,7 @@ import {
   canReadFinancialReports,
   contractorCostCsv,
   profitabilityDelta,
+  shareableReportRoles,
   decimalHours,
   detailedExpenseCsv,
   detailedExpenseOptionsFromUrl,
@@ -231,6 +233,13 @@ const textElement = <Tag extends keyof HTMLElementTagNameMap>(
   const result = element(tag, className)
   result.textContent = text
   return result
+}
+
+/** Who can open a saved report, from the viewer's side of it. */
+const sharingSummary = (report: SavedReport): string => {
+  if (!report.owned_by_viewer) return report.shared ? 'Shared with you' : 'Visible to you as an administrator'
+  const count = report.shared_with.users.length + report.shared_with.profiles.length
+  return count === 0 ? 'Private' : `Shared with ${count}`
 }
 
 const linkElement = (href: string, text: string): HTMLAnchorElement => {
@@ -2959,6 +2968,17 @@ export const createReportsController = (
   const savedCustomOnly = required<HTMLInputElement>('[data-saved-custom-only]')
   const savedStatus = required<HTMLElement>('[data-saved-status]')
   const savedList = required<HTMLElement>('[data-saved-list]')
+  const shareDialog = required<HTMLDialogElement>('[data-saved-share-dialog]')
+  const shareTitle = required<HTMLElement>('[data-saved-share-title]')
+  const shareRoles = required<HTMLElement>('[data-saved-share-roles]')
+  const sharePeople = required<HTMLElement>('[data-saved-share-people]')
+  const sharePerson = required<HTMLSelectElement>('[data-saved-share-person]')
+  const shareAdd = required<HTMLButtonElement>('[data-saved-share-add]')
+  const shareResult = required<HTMLElement>('[data-saved-share-result]')
+  const shareClose = required<HTMLButtonElement>('[data-saved-share-close]')
+  const deleteDialog = required<HTMLDialogElement>('[data-saved-delete-dialog]')
+  const deleteTitle = required<HTMLElement>('[data-saved-delete-title]')
+  const deleteConfirm = required<HTMLButtonElement>('[data-saved-delete-confirm]')
   const builderOpen = required<HTMLButtonElement>('[data-report-builder-open]')
   const builder = required<HTMLDialogElement>('[data-report-builder]')
   const builderClose = required<HTMLButtonElement>('[data-report-builder-close]')
@@ -3068,6 +3088,8 @@ export const createReportsController = (
   let savedView: 'all' | 'yours' | 'shared' = 'all'
   let builderRegistry: ReportDefinitionRegistry | null = null
   let editingSaved: SavedReport | null = null
+  let deleting: SavedReport | null = null
+  let directoryPeople: readonly GeneralResource[] | null = null
 
   const currentSession = (): ActiveSession | null =>
     session === null || session.signal.aborted ? null : session
@@ -3188,6 +3210,89 @@ export const createReportsController = (
     results.replaceChildren(fragment)
   }
 
+  const openShare = async (report: SavedReport): Promise<void> => {
+    const active = currentSession()
+    if (active === null) return
+    const signal = active.signal
+    const people = [...report.shared_with.users]
+    const roles = new Set<string>(report.shared_with.profiles)
+    shareTitle.textContent = `Share ${report.name}`
+    shareResult.textContent = ''
+    const fail = (error: unknown): void => { shareResult.textContent = messageFor(error) }
+    const renderPeople = (): void => {
+      sharePeople.replaceChildren(...people.map((person) => {
+        const item = element('li')
+        const remove = textElement('button', 'Remove')
+        remove.type = 'button'
+        remove.setAttribute('aria-label', `Stop sharing with ${person.name}`)
+        remove.addEventListener('click', () => {
+          if (api.unshareSavedReport === undefined) return
+          void api.unshareSavedReport(report.id, person.user_id, signal).then(() => {
+            people.splice(people.findIndex((candidate) => candidate.user_id === person.user_id), 1)
+            renderPeople()
+            shareResult.textContent = `No longer shared with ${person.name}.`
+          }).catch(fail)
+        })
+        item.append(textElement('span', `${person.name} `), remove)
+        return item
+      }))
+      const taken = new Set(people.map((person) => person.user_id))
+      const choices = (directoryPeople ?? []).filter((person) =>
+        person.id !== report.owner.user_id && !taken.has(person.id))
+      sharePerson.replaceChildren(...choices.map((person) => {
+        const option = element('option')
+        option.value = String(person.id)
+        option.textContent = personLabel(person.id, directoryPeople ?? [])
+        return option
+      }))
+      shareAdd.disabled = choices.length === 0
+    }
+    shareRoles.replaceChildren(...shareableReportRoles.map((role) => {
+      const label = element('label', 'report-check-field')
+      const box = element('input')
+      box.type = 'checkbox'
+      box.checked = roles.has(role.profile)
+      box.addEventListener('change', () => {
+        const action = box.checked ? api.shareSavedReportWithRole : api.unshareSavedReportWithRole
+        if (action === undefined) { box.checked = !box.checked; return }
+        void action(report.id, role.profile, signal).then(() => {
+          if (box.checked) roles.add(role.profile)
+          else roles.delete(role.profile)
+          shareResult.textContent = box.checked ? `Shared with ${role.label}.` : `No longer shared with ${role.label}.`
+        }).catch((error: unknown) => { box.checked = !box.checked; fail(error) })
+      })
+      label.append(box, document.createTextNode(` ${role.label}`))
+      return label
+    }))
+    renderPeople()
+    shareDialog.showModal()
+    if (directoryPeople === null && api.listDirectoryUsers !== undefined) {
+      try {
+        const loaded: GeneralResource[] = []
+        let cursor: string | undefined
+        do {
+          const page = await api.listDirectoryUsers(cursor, signal)
+          loaded.push(...page.data.filter((person) => person['is_active'] !== false))
+          cursor = page.page.next_cursor ?? undefined
+        } while (cursor !== undefined)
+        directoryPeople = loaded
+        renderPeople()
+      } catch (error) {
+        fail(error)
+      }
+    }
+    shareAdd.onclick = () => {
+      const userId = Number(sharePerson.value)
+      if (api.shareSavedReport === undefined || !Number.isSafeInteger(userId) || userId < 1) return
+      void api.shareSavedReport(report.id, userId, signal).then(() => {
+        const name = personLabel(userId, directoryPeople ?? [])
+        people.push({ user_id: userId, name })
+        renderPeople()
+        shareResult.textContent = `Shared with ${name}.`
+      }).catch(fail)
+    }
+  }
+
   const loadSavedReports = async (): Promise<void> => {
     const active = currentSession()
     if (active === null || api.listSavedReports === undefined) return
@@ -3229,8 +3334,7 @@ export const createReportsController = (
           if (api.duplicateSavedReport === undefined) return
           void api.duplicateSavedReport(report.id, active.signal).then(loadSavedReports)
         })
-        const ownerId = typeof report.owner.user_id === 'number' ? report.owner.user_id : null
-        const owned = ownerId === active.identity.user_id
+        const owned = report.owned_by_viewer
         const edit = textElement('button', 'Edit')
         edit.type = 'button'
         edit.hidden = !owned
@@ -3251,24 +3355,18 @@ export const createReportsController = (
         const share = textElement('button', 'Share')
         share.type = 'button'
         share.hidden = !owned
-        share.addEventListener('click', () => {
-          if (api.shareSavedReport === undefined) return
-          const answer = globalThis.prompt('Share with user ID')
-          const userId = Number(answer)
-          if (!Number.isSafeInteger(userId) || userId < 1) return
-          savedStatus.textContent = `Sharing ${report.name}…`
-          void api.shareSavedReport(report.id, userId, active.signal)
-            .then(() => { savedStatus.textContent = `${report.name} shared.` })
-            .catch((error: unknown) => { savedStatus.textContent = messageFor(error) })
-        })
+        share.addEventListener('click', () => { void openShare(report) })
         const remove = textElement('button', 'Delete')
         remove.type = 'button'
-        remove.hidden = !owned
+        remove.hidden = !report.can_delete
         remove.addEventListener('click', () => {
-          if (api.deleteSavedReport === undefined || !globalThis.confirm(`Delete ${report.name}?`)) return
-          void api.deleteSavedReport(report.id, active.signal).then(loadSavedReports)
+          if (api.deleteSavedReport === undefined) return
+          deleting = report
+          deleteTitle.textContent = `Delete ${report.name}?`
+          deleteDialog.showModal()
         })
-        card.append(open, metadata, pin, duplicate, edit, share, remove)
+        const audience = textElement('span', sharingSummary(report), 'report-saved-audience')
+        card.append(open, metadata, audience, pin, duplicate, edit, share, remove)
         return card
       }))
       savedStatus.textContent = reports.length === 0 ? 'No saved reports match.' : `${reports.length} saved reports.`
@@ -4121,6 +4219,24 @@ export const createReportsController = (
     void loadSavedReports()
   })
   savedClose.addEventListener('click', () => { savedLibrary.hidden = true })
+  shareClose.addEventListener('click', () => shareDialog.close())
+  // Sharing changes are saved as they are made, so the library only needs to
+  // read them back once the dialog is done.
+  shareDialog.addEventListener('close', () => { void loadSavedReports() })
+  for (const cancel of deleteDialog.querySelectorAll<HTMLButtonElement>('[data-saved-delete-cancel]')) {
+    cancel.addEventListener('click', () => { deleting = null; deleteDialog.close() })
+  }
+  deleteConfirm.addEventListener('click', () => {
+    const active = currentSession()
+    const target = deleting
+    if (active === null || target === null || api.deleteSavedReport === undefined) return
+    deleting = null
+    deleteDialog.close()
+    savedStatus.textContent = `Deleting ${target.name}…`
+    void api.deleteSavedReport(target.id, active.signal)
+      .then(() => loadSavedReports().then(() => { savedStatus.textContent = `${target.name} deleted.` }))
+      .catch((error: unknown) => { savedStatus.textContent = messageFor(error) })
+  })
   for (const choice of document.querySelectorAll<HTMLButtonElement>('[data-saved-view]')) {
     choice.addEventListener('click', () => {
       const view = choice.dataset.savedView

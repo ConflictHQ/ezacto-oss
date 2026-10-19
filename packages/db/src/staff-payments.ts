@@ -1,5 +1,6 @@
 import { createReportRepository } from './reports.js'
 import { createPaymentActualsStore } from './payment-actuals.js'
+import { createPaymentAllocationStore } from './payment-allocations.js'
 import { createStaffPaymentProviderStore } from './staff-payment-providers.js'
 import { sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -132,6 +133,7 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
   }
   return {
     ...createPaymentActualsStore(database, { report }),
+    ...createPaymentAllocationStore(database),
     report,
     configureProvider: providers.append,
     append: async (command, actorId, requestId, now) => {

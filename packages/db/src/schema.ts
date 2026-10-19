@@ -768,6 +768,21 @@ export const savedReportPins = sqliteTable(
   (table) => [primaryKey({ columns: [table.reportId, table.userId] })],
 )
 
+export const savedReportRoleShares = sqliteTable(
+  'saved_report_role_shares',
+  {
+    reportId: text('report_id').notNull().references(() => savedReports.id, { onDelete: 'cascade' }),
+    profile: text('profile', {
+      enum: ['member', 'project_manager', 'people_admin', 'accounting', 'executive_manager', 'administrator'],
+    }).notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.reportId, table.profile] }),
+    index('saved_report_role_shares_profile').on(table.profile, table.reportId),
+  ],
+)
+
 export const reportTimeCommands = sqliteTable(
   'report_time_commands',
   {

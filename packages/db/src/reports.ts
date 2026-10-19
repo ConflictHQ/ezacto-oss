@@ -14,7 +14,7 @@ import { monthEndManifest, type MonthEndManifest } from './month-end-manifest.js
 import { createReportDefinition, listMetrics, listReportFields, type MetricDefinition, type ReportDefinition, type ReportFieldDefinition, type UpdateReportDefinitionInput } from './report-definitions.js'
 import { runReportDefinition, type ReportRunnerResult } from './report-runner.js'
 import { executeReportTimeAction, type ReportTimeActionInput, type ReportTimeActionResult } from './report-time-actions.js'
-import { createSavedReportStore, type SavedReportPresentation, type SavedReportRecord, type SavedReportView } from './saved-reports.js'
+import { createSavedReportStore, type SavedReportProfile, type SavedReportPresentation, type SavedReportRecord, type SavedReportView } from './saved-reports.js'
 // The same anchoring the engine issues by, so a short month answers once (#709).
 import { anchoredDate } from './recurring-invoice-engine.js'
 
@@ -806,8 +806,9 @@ export interface ReportRepository {
   createSavedReport(input: { id: string; name: string; fields: ReportDefinition['fields']; metrics: ReportDefinition['metrics']; filters: ReportDefinition['filters']; groupBy: ReportDefinition['groupBy']; ownerUserId: number; presentation: SavedReportPresentation; createdAt: string }): Promise<SavedReportRecord>
   updateSavedReport(input: { reportId: string; ownerUserId: number; expectedVersion: number; changes: UpdateReportDefinitionInput; presentation?: SavedReportPresentation }): Promise<'not_found' | 'version_conflict' | SavedReportRecord>
   shareSavedReport(reportId: string, ownerUserId: number, userId: number, shared: boolean, at: string): Promise<boolean>
+  shareSavedReportWithProfile(reportId: string, ownerUserId: number, profile: SavedReportProfile, shared: boolean, at: string): Promise<boolean>
   pinSavedReport(reportId: string, viewerUserId: number, pinned: boolean, at: string): Promise<boolean>
-  deleteSavedReport(reportId: string, ownerUserId: number): Promise<boolean>
+  deleteSavedReport(reportId: string, actorUserId: number): Promise<boolean>
   runSavedReport(reportId: string, viewerUserId: number, authority: { billableMoney: boolean; costMoney: boolean }): Promise<ReportRunnerResult | null>
   previewReport(definition: ReportDefinition, presentation: SavedReportPresentation, authority: { billableMoney: boolean; costMoney: boolean }): Promise<ReportRunnerResult>
   executeTimeAction(input: ReportTimeActionInput): Promise<ReportTimeActionResult | 'command_conflict' | 'invoice_unavailable'>
@@ -3959,8 +3960,9 @@ export const createReportRepository = (database: Database): ReportRepository => 
     }),
     updateSavedReport: (input) => saved.update(input),
     shareSavedReport: (reportId, ownerUserId, userId, shared, at) => saved.setShared(reportId, ownerUserId, userId, shared, at),
+    shareSavedReportWithProfile: (reportId, ownerUserId, profile, shared, at) => saved.setSharedWithProfile(reportId, ownerUserId, profile, shared, at),
     pinSavedReport: (reportId, viewerUserId, pinned, at) => saved.setPinned(reportId, viewerUserId, pinned, at),
-    deleteSavedReport: (reportId, ownerUserId) => saved.delete(reportId, ownerUserId),
+    deleteSavedReport: (reportId, actorUserId) => saved.delete(reportId, actorUserId),
     runSavedReport: async (reportId, viewerUserId, authority) => {
       const report = await saved.read(reportId, viewerUserId)
       return report === null ? null : runReportDefinition(database, report.definition, report.presentation, authority)

@@ -365,6 +365,79 @@ for (const [runtime, factory] of factories) {
       expect((await harness.request(`/report-definitions/${id}`, "accounting", [], 2)).status).toBe(404);
     });
 
+    it("[api #933] a private report is invisible to others, shares by person and role, and admins see all", async () => {
+      harness = await factory();
+      await harness.run(
+        `INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+         VALUES (3, 'Alma', 'Accounts', 'accounting', '[]', ?, ?), (4, 'Eli', 'Exec', 'executive_manager', '[]', ?, ?),
+                (5, 'Ana', 'Another', 'accounting', '[]', ?, ?)`,
+        [now, now, now, now, now, now],
+      );
+      const json = (body: unknown): RequestInit => ({
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      });
+      // User 3 (accounting) authors the report; user 1 is the administrator, user 4 an
+      // executive manager, user 5 another accountant, user 2 a member who has no reports.
+      const create = await harness.request("/report-definitions", "accounting", [], 3, json({
+        name: "Mine",
+        fields: [{ id: "client_name", label: "Client", visible: true }],
+        metrics: ["hours"], filters: [], group_by: { dimension: "client" },
+        presentation: { result: "summary", grouped: true, include_zero_values: false },
+      }));
+      expect(create.status, await create.clone().text()).toBe(201);
+      const created = (await create.json()) as { data: { id: string; owned_by_viewer: boolean; shared_with: unknown } };
+      const id = created.data.id;
+      expect(created.data).toMatchObject({ owned_by_viewer: true, shared_with: { users: [], profiles: [] } });
+
+      const asAccountant = (path: string, init?: RequestInit) => harness!.request(path, "accounting", [], 5, init);
+      const asExec = (path: string, init?: RequestInit) => harness!.request(path, "executive_manager", [], 4, init);
+      // Private: neither run, read, list, pin nor duplicate reaches it for anyone else.
+      for (const other of [asAccountant, asExec]) {
+        expect((await other(`/report-definitions/${id}`)).status).toBe(404);
+        expect((await other(`/report-definitions/${id}/run`, { method: "POST" })).status).toBe(404);
+        expect((await other(`/report-definitions/${id}/pin`, { method: "POST" })).status).toBe(404);
+        expect((await other(`/report-definitions/${id}/duplicate`, { method: "POST" })).status).toBe(404);
+        expect(await (await other("/report-definitions")).json()).toMatchObject({ data: [] });
+        expect((await other(`/report-definitions/${id}`, { method: "DELETE" })).status).toBe(404);
+      }
+      // A member has no reports at all, whatever is shared.
+      expect((await harness.request(`/report-definitions/${id}`, "member", [], 2)).status).toBe(403);
+      // Only the owner changes sharing; even an administrator may not.
+      expect((await harness.request(`/report-definitions/${id}/role-shares/accounting`, "administrator", [], 1, { method: "POST" })).status).toBe(404);
+      expect((await asAccountant(`/report-definitions/${id}/role-shares/accounting`, { method: "POST" })).status).toBe(404);
+      expect((await harness.request(`/report-definitions/${id}/role-shares/member`, "accounting", [], 3, { method: "POST" })).status).toBe(422);
+      expect((await harness.request(`/report-definitions/${id}/role-shares/janitor`, "accounting", [], 3, { method: "POST" })).status).toBe(422);
+
+      // Administrators read, run and see every report.
+      expect((await harness.request(`/report-definitions/${id}`, "administrator", [], 1)).status).toBe(200);
+      expect((await harness.request(`/report-definitions/${id}/run`, "administrator", [], 1, { method: "POST" })).status).toBe(200);
+      expect(await (await harness.request("/report-definitions", "administrator", [], 1)).json())
+        .toMatchObject({ data: [{ id, owned_by_viewer: false, can_delete: true, shared: false }] });
+
+      // A role share reaches that role only: user 5 is an accountant, user 4 is not.
+      expect((await harness.request(`/report-definitions/${id}/role-shares/accounting`, "accounting", [], 3, { method: "POST" })).status).toBe(204);
+      expect(await (await asAccountant(`/report-definitions/${id}`)).json())
+        .toMatchObject({ data: { id, shared: true, can_delete: false, shared_with: { users: [], profiles: [] } } });
+      expect((await asAccountant(`/report-definitions/${id}/run`, { method: "POST" })).status).toBe(200);
+      expect((await asExec(`/report-definitions/${id}`)).status).toBe(404);
+      expect((await asAccountant(`/report-definitions/${id}`, { method: "DELETE" })).status).toBe(404);
+      expect(await (await harness.request(`/report-definitions/${id}`, "accounting", [], 3)).json())
+        .toMatchObject({ data: { shared_with: { profiles: ["accounting"] } } });
+
+      // A named share reaches that person only.
+      expect((await harness.request(`/report-definitions/${id}/shares/4`, "accounting", [], 3, { method: "POST" })).status).toBe(204);
+      expect((await asExec(`/report-definitions/${id}/run`, { method: "POST" })).status).toBe(200);
+      expect((await asExec(`/report-definitions/${id}`, { method: "DELETE" })).status).toBe(404);
+
+      // Revoking closes the door again.
+      expect((await harness.request(`/report-definitions/${id}/role-shares/accounting`, "accounting", [], 3, { method: "DELETE" })).status).toBe(204);
+      expect((await asAccountant(`/report-definitions/${id}/run`, { method: "POST" })).status).toBe(404);
+
+      // Delete: the owner or an administrator.
+      expect((await harness.request(`/report-definitions/${id}`, "administrator", [], 1, { method: "DELETE" })).status).toBe(204);
+      expect((await harness.request(`/report-definitions/${id}`, "accounting", [], 3)).status).toBe(404);
+    });
+
     it("[db] reconciles invoiced, received, and aged receivable ledgers by currency", async () => {
       harness = await factory();
       await harness.seedAccounting();

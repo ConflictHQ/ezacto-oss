@@ -16627,6 +16627,250 @@
         }
       }
     },
+    "/api/v1/staff-payments/allocations": {
+      "get": {
+        "operationId": "getPaymentAllocationReport",
+        "summary": "Reconcile earned, paid, reserved and remaining by month, project and entry",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentAllocationReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-payments/allocations",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "allocatePayment",
+        "summary": "Allocate part of a payment to a month, project, or reviewed time entry and hours",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-payments/allocations",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AllocatePayment"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/staff-payments/allocations/preview": {
+      "post": {
+        "operationId": "previewPaymentAllocation",
+        "summary": "Preview what a payment allocation would record and what remains, without saving",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentAllocationPreviewEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-payments/allocations/preview",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AllocatePayment"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/staff-payments/allocations/reversals": {
+      "post": {
+        "operationId": "reversePaymentAllocation",
+        "summary": "Reverse a payment allocation with a reason, keeping its history",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-payments/allocations/reversals",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReversePaymentAllocation"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/payment-runs/report": {
       "get": {
         "operationId": "getPaymentRunReport",
@@ -17404,7 +17648,7 @@
       },
       "delete": {
         "operationId": "deleteSavedReport",
-        "summary": "Delete an owned saved report",
+        "summary": "Delete a saved report you own, or any saved report as an administrator",
         "tags": [
           "reports"
         ],
@@ -17783,6 +18027,142 @@
             "schema": {
               "type": "integer",
               "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/report-definitions/{reportId}/role-shares/{profile}": {
+      "post": {
+        "operationId": "shareSavedReportWithRole",
+        "summary": "Share an owned report with everyone in a role",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-definitions/:reportId/role-shares/:profile",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "profile",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "unshareSavedReportWithRole",
+        "summary": "Revoke a role's access to an owned report",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-definitions/:reportId/role-shares/:profile",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "profile",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
           }
         ]
@@ -27585,6 +27965,585 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/StaffPaymentReport"
+          }
+        }
+      },
+      "AllocatePayment": {
+        "type": "object",
+        "required": [
+          "id",
+          "payment_kind",
+          "payment_id",
+          "user_id",
+          "month",
+          "scope",
+          "project_id",
+          "entry_id",
+          "seconds",
+          "amount_cents",
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "payment_kind": {
+            "type": "string",
+            "enum": [
+              "event",
+              "run_item"
+            ]
+          },
+          "payment_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "month": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "month",
+              "project",
+              "entry"
+            ]
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entry_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "amount_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "ReversePaymentAllocation": {
+        "type": "object",
+        "required": [
+          "id",
+          "allocation_id",
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "allocation_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "PaymentAllocationPreview": {
+        "type": "object",
+        "required": [
+          "scope",
+          "currency",
+          "seconds",
+          "rate_cents",
+          "amount_cents",
+          "payment_cents",
+          "payment_allocated_cents",
+          "payment_remaining_cents",
+          "earning_cents",
+          "earning_allocated_cents",
+          "earning_remaining_cents",
+          "earning_remaining_seconds"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "month",
+              "project",
+              "entry"
+            ]
+          },
+          "currency": {
+            "type": "string"
+          },
+          "seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rate_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "payment_cents": {
+            "type": "integer"
+          },
+          "payment_allocated_cents": {
+            "type": "integer"
+          },
+          "payment_remaining_cents": {
+            "type": "integer"
+          },
+          "earning_cents": {
+            "type": "integer"
+          },
+          "earning_allocated_cents": {
+            "type": "integer"
+          },
+          "earning_remaining_cents": {
+            "type": "integer"
+          },
+          "earning_remaining_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "PaymentAllocationPreviewEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PaymentAllocationPreview"
+          }
+        }
+      },
+      "PaymentAllocation": {
+        "type": "object",
+        "required": [
+          "id",
+          "payment_kind",
+          "payment_id",
+          "user_id",
+          "month",
+          "currency",
+          "scope",
+          "project_id",
+          "project_name",
+          "entry_id",
+          "seconds",
+          "rate_cents",
+          "amount_cents",
+          "state",
+          "reason",
+          "actor_id",
+          "recorded_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "payment_kind": {
+            "type": "string",
+            "enum": [
+              "event",
+              "run_item"
+            ]
+          },
+          "payment_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer"
+          },
+          "month": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "month",
+              "project",
+              "entry"
+            ]
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entry_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rate_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "applied",
+              "reserved",
+              "released",
+              "reversed"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "actor_id": {
+            "type": "integer"
+          },
+          "recorded_at": {
+            "type": "string"
+          }
+        }
+      },
+      "PaymentAllocationEntry": {
+        "type": "object",
+        "required": [
+          "entry_id",
+          "spent_date",
+          "selected_seconds",
+          "rate_cents",
+          "earned_cents",
+          "applied_cents",
+          "reserved_cents",
+          "applied_seconds",
+          "reserved_seconds",
+          "remaining_cents",
+          "remaining_seconds",
+          "source_changed",
+          "over_allocated"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "entry_id": {
+            "type": "integer"
+          },
+          "spent_date": {
+            "type": "string"
+          },
+          "selected_seconds": {
+            "type": "integer"
+          },
+          "rate_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "earned_cents": {
+            "type": "integer"
+          },
+          "applied_cents": {
+            "type": "integer"
+          },
+          "reserved_cents": {
+            "type": "integer"
+          },
+          "applied_seconds": {
+            "type": "integer"
+          },
+          "reserved_seconds": {
+            "type": "integer"
+          },
+          "remaining_cents": {
+            "type": "integer"
+          },
+          "remaining_seconds": {
+            "type": "integer"
+          },
+          "source_changed": {
+            "type": "boolean"
+          },
+          "over_allocated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PaymentAllocationProject": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "project_name",
+          "earned_cents",
+          "applied_cents",
+          "reserved_cents",
+          "remaining_cents",
+          "entries"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "project_id": {
+            "type": "integer"
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "earned_cents": {
+            "type": "integer"
+          },
+          "applied_cents": {
+            "type": "integer"
+          },
+          "reserved_cents": {
+            "type": "integer"
+          },
+          "remaining_cents": {
+            "type": "integer"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaymentAllocationEntry"
+            }
+          }
+        }
+      },
+      "UnallocatedPayment": {
+        "type": "object",
+        "required": [
+          "payment_kind",
+          "payment_id",
+          "amount_cents",
+          "allocated_cents",
+          "unallocated_cents",
+          "state"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "payment_kind": {
+            "type": "string",
+            "enum": [
+              "event",
+              "run_item"
+            ]
+          },
+          "payment_id": {
+            "type": "string"
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "allocated_cents": {
+            "type": "integer"
+          },
+          "unallocated_cents": {
+            "type": "integer"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "applied",
+              "reserved"
+            ]
+          }
+        }
+      },
+      "PaymentAllocationPerson": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "name",
+          "currency",
+          "earned_cents",
+          "paid_cents",
+          "reserved_cents",
+          "allocated_applied_cents",
+          "allocated_reserved_cents",
+          "remaining_cents",
+          "projects",
+          "unallocated_payments",
+          "allocations"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "user_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "earned_cents": {
+            "type": "integer"
+          },
+          "paid_cents": {
+            "type": "integer"
+          },
+          "reserved_cents": {
+            "type": "integer"
+          },
+          "allocated_applied_cents": {
+            "type": "integer"
+          },
+          "allocated_reserved_cents": {
+            "type": "integer"
+          },
+          "remaining_cents": {
+            "type": "integer"
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaymentAllocationProject"
+            }
+          },
+          "unallocated_payments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnallocatedPayment"
+            }
+          },
+          "allocations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaymentAllocation"
+            }
+          }
+        }
+      },
+      "PaymentAllocationReport": {
+        "type": "object",
+        "required": [
+          "month",
+          "people"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "month": {
+            "type": "string"
+          },
+          "people": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaymentAllocationPerson"
+            }
+          }
+        }
+      },
+      "PaymentAllocationReportEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PaymentAllocationReport"
           }
         }
       },
@@ -43544,6 +44503,9 @@
           "is_custom",
           "pinned",
           "shared",
+          "shared_with",
+          "owned_by_viewer",
+          "can_delete",
           "created_at",
           "updated_at"
         ],
@@ -43603,6 +44565,56 @@
             "type": "boolean"
           },
           "shared": {
+            "type": "boolean"
+          },
+          "shared_with": {
+            "type": "object",
+            "required": [
+              "users",
+              "profiles"
+            ],
+            "properties": {
+              "users": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "user_id",
+                    "name"
+                  ],
+                  "properties": {
+                    "user_id": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "profiles": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "member",
+                    "project_manager",
+                    "people_admin",
+                    "accounting",
+                    "executive_manager",
+                    "administrator"
+                  ]
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "owned_by_viewer": {
+            "type": "boolean"
+          },
+          "can_delete": {
             "type": "boolean"
           },
           "created_at": {
