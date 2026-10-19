@@ -42,6 +42,7 @@ export * from './time-rounding.js'
 export * from './magic-link.js'
 export * from './totp.js'
 export * from './staff-payments.js'
+export * from './my-payments.js'
 
 export * from './payment-runs.js'
 
@@ -63,3 +64,4 @@ export * from './apple-web-custody.js'
 
 export * from './payment-allocations.js'
 export * from './time-off.js'
+export * from './my-payments.js'
