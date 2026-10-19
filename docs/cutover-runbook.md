@@ -227,11 +227,12 @@ that does not.
 Two things to settle here rather than discover later:
 
 - The loader's own bookkeeping tables (`_ezacto_load_admission`,
-  `_ezacto_load_progress`, `_ezacto_load_anomalies` and six siblings, plus two
-  indexes) are created by the load and never dropped. They go into prod with
-  everything else. Keeping them is defensible — `_ezacto_load_anomalies` is the
+  `_ezacto_load_progress`, `_ezacto_load_anomalies` and nine siblings, three of
+  them the load lease, its log and its fence guard, plus two indexes) are
+  created by the load and never dropped. They go into prod with everything
+  else. Keeping them is defensible — `_ezacto_load_anomalies` is the
   on-database record of the load's anomalies — but decide it, and note the
-  decision, so the next schema audit is not surprised by nine unexplained
+  decision, so the next schema audit is not surprised by twelve unexplained
   tables. They cannot simply be dropped before the dump if you may ever need to
   resume a load: reconcile and the worksheet path both read them.
 - `_ezacto_load_anomalies` is the itemised list behind

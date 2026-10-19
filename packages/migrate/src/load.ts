@@ -1,7 +1,11 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
+import {
+  fileChildIndexStore,
+  type ChildIndexStore,
+  type IndexFile,
+} from './child-index-store.js'
 import { fileSnapshotSource, type SnapshotSource } from './snapshot-source.js'
-import { mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises'
-import { hostname } from 'node:os'
+import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   ensureHarvestExpenseReceipt,
@@ -14,6 +18,20 @@ import {
   type ImportDatabase,
 } from '@ezacto/db/importer'
 import { type ChildLineage } from './jsonl.js'
+import {
+  assertNoLiveLease,
+  assertPins,
+  claimLease,
+  fenceStatement,
+  LEASE_SCHEMA,
+  releaseLease,
+  renewLease,
+  sourceFingerprint,
+  translateFenceFailure,
+  type LeaseDatabase,
+  type LeasePins,
+  type LoadLease,
+} from './load-lease.js'
 import { readManifest, type Manifest } from './manifest.js'
 import { RESOURCES } from './resources.js'
 import { normalizeTimezone } from './timezone.js'
@@ -41,7 +59,6 @@ export const D1_INVOCATION_QUERY_RESERVE = 250
 export const DEFAULT_INVOCATION_STATEMENT_BUDGET = 700
 const RATE_CLEANUP_ROWS_PER_INVOCATION = 100
 const LINEAGE_RECOVERY_ROWS_PER_INVOCATION = 100
-const CHILD_INDEX_REMOTE_LOCK_STALE_MS = 5 * 60 * 1000
 
 export interface PlannedStatement {
   sql: string
@@ -160,18 +177,44 @@ const all = async <T>(
 const execute = async (
   database: RawDatabase,
   statements: readonly PlannedStatement[],
+  lease: LoadLease | null = null,
 ): Promise<void> => {
-  const planned = compactInsertStatements(statements)
+  // Under a lease the guard is the batch's first statement, so a holder that
+  // has lost the lease writes nothing at all: the guard fails and takes the
+  // rest of the batch with it.
+  const planned = compactInsertStatements(
+    lease === null ? statements : [fenceStatement(lease), ...statements],
+  )
   assertD1Statements(planned)
-  if (isD1(database)) {
-    await database.batch(
-      planned.map((statement) => database.prepare(statement.sql).bind(...statement.bindings)),
-    )
-    return
+  try {
+    if (isD1(database)) {
+      await database.batch(
+        planned.map((statement) => database.prepare(statement.sql).bind(...statement.bindings)),
+      )
+      return
+    }
+    database.transaction(() => {
+      for (const statement of planned) database.prepare(statement.sql).run(...statement.bindings)
+    })()
+  } catch (error) {
+    throw lease === null ? error : translateFenceFailure(error)
   }
-  database.transaction(() => {
-    for (const statement of planned) database.prepare(statement.sql).run(...statement.bindings)
-  })()
+}
+
+/** `execute` for a load: fenced by the lease the load holds, if it holds one. */
+const executeFor = (
+  options: ResolvedLoadOptions,
+  statements: readonly PlannedStatement[],
+): Promise<void> => execute(options.database.$client, statements, options.lease ?? null)
+
+/**
+ * The importer package writes through its own statements, which cannot carry
+ * this module's guard. Checking the lease immediately before each of those
+ * writes narrows the window in which a holder that has just lost the lease can
+ * still land one; it does not close it, and the guard in `execute` does.
+ */
+const assertLeaseHeld = async (options: ResolvedLoadOptions): Promise<void> => {
+  if (options.lease) await executeFor(options, [])
 }
 
 interface RawRow {
@@ -441,17 +484,31 @@ export interface UserIdentityInput {
 }
 
 /** `LoadNextChunkOptions` once the raw-row source has been chosen. */
-type ResolvedLoadOptions = LoadNextChunkOptions & { source: SnapshotSource }
+type ResolvedLoadOptions = LoadNextChunkOptions & {
+  source: SnapshotSource
+  indexStore: ChildIndexStore
+}
 
 export interface LoadNextChunkOptions {
   database: ImportDatabase
   snapshotDir: string
   /**
    * Where raw rows are read from. Defaults to the files under `snapshotDir`.
-   * The directory still holds the manifest, checksums, child-index cache and
-   * lock, which are local-disk by design for now.
+   * The directory still holds the manifest and checksums, which are
+   * local-disk by design for now.
    */
   source?: SnapshotSource
+  /**
+   * Where the child index is built and read (issue 409). Defaults to files
+   * under `snapshotDir`; a platform run with no disk passes a memory store.
+   */
+  indexStore?: ChildIndexStore
+  /**
+   * The lease this load holds on the target database (see `claimLoadLease`).
+   * Held: every write is fenced by it and the snapshot is checked against what
+   * the lease pinned. Absent: the load refuses to run while another holds one.
+   */
+  lease?: LoadLease
   organizationCurrency?: string
   organizationAddress?: string | null
   maxStatements?: number
@@ -922,6 +979,11 @@ const ensureProgressSchema = async (database: RawDatabase): Promise<void> => {
     ) STRICT`,
       bindings: [],
     })
+  const leasePresent = await first<{ present: number }>(
+    database,
+    `SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = '_ezacto_load_lease'`,
+  )
+  if (!leasePresent) statements.push(...LEASE_SCHEMA)
   if (statements.length > 0) await execute(database, statements)
 }
 
@@ -1268,163 +1330,13 @@ interface ChildIndexRecord {
   count: number
 }
 
-const childIndexPath = (snapshotDir: string, resource: string, digest: string): string =>
-  join(snapshotDir, 'raw', '.load-index', `${resource}.${digest}.idx`)
+const childIndexName = (resource: string, digest: string): string => `${resource}.${digest}.idx`
 
-const childIndexPartialPath = (snapshotDir: string, resource: string, digest: string): string =>
-  `${childIndexPath(snapshotDir, resource, digest)}.partial`
+const childIndexPartialName = (resource: string, digest: string): string =>
+  `${childIndexName(resource, digest)}.partial`
 
-const childIndexStatePath = (snapshotDir: string, resource: string, digest: string): string =>
-  `${childIndexPath(snapshotDir, resource, digest)}.state.json`
-
-const childIndexDirectory = (snapshotDir: string): string => join(snapshotDir, 'raw', '.load-index')
-
-interface ChildIndexLock {
-  path: string
-  directory: string
-  token: string
-}
-
-interface ChildIndexLockOwner {
-  pid: number
-  host: string
-  token: string
-  startedAt: number
-}
-
-const childIndexQueues = new Map<string, Promise<void>>()
-
-const childIndexPidIsLive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== 'ESRCH'
-  }
-}
-
-const syncDirectory = async (path: string): Promise<void> => {
-  const handle = await open(path, 'r')
-  try {
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
-}
-
-const createChildIndexLock = async (snapshotDir: string): Promise<ChildIndexLock> => {
-  const directory = childIndexDirectory(snapshotDir)
-  const path = join(directory, '.builder.lock')
-  const token = randomUUID()
-  const temporary = join(directory, `.builder.lock.claim-${process.pid}-${token}`)
-  await mkdir(temporary)
-  const ownerPath = join(temporary, 'owner.json')
-  let installed = false
-  try {
-    const owner = await open(ownerPath, 'wx')
-    try {
-      const value: ChildIndexLockOwner = {
-        pid: process.pid,
-        host: hostname(),
-        token,
-        startedAt: Date.now(),
-      }
-      await owner.writeFile(`${JSON.stringify(value)}\n`, 'utf8')
-      await owner.sync()
-    } finally {
-      await owner.close()
-    }
-    await syncDirectory(temporary)
-    await rename(temporary, path)
-    installed = true
-    await syncDirectory(directory)
-  } catch (error) {
-    await rm(temporary, { recursive: true, force: true })
-    if (installed) await rm(path, { recursive: true, force: true })
-    throw error
-  }
-  return { path, directory, token }
-}
-
-const acquireChildIndexLock = async (snapshotDir: string): Promise<ChildIndexLock> => {
-  const directory = childIndexDirectory(snapshotDir)
-  const path = join(directory, '.builder.lock')
-  await mkdir(directory, { recursive: true })
-  try {
-    return await createChildIndexLock(snapshotDir)
-  } catch (error) {
-    if (!['EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
-  }
-  let owner: ChildIndexLockOwner
-  try {
-    owner = JSON.parse(await readFile(join(path, 'owner.json'), 'utf8')) as ChildIndexLockOwner
-    if (
-      !Number.isSafeInteger(owner.pid) ||
-      owner.pid < 1 ||
-      typeof owner.host !== 'string' ||
-      typeof owner.token !== 'string' ||
-      !Number.isSafeInteger(owner.startedAt) ||
-      owner.startedAt < 0
-    ) {
-      throw new Error('invalid child-index lock owner')
-    }
-  } catch {
-    throw new Error(`child index lock at ${path} has no readable owner metadata`)
-  }
-  const remote = owner.host !== hostname()
-  // A child-index turn is capped at 100 source rows and D1 itself caps an
-  // invocation at 30 seconds. Preserve fresh cross-host owners, but let a new
-  // executor recover a lock whose originating host disappeared long ago.
-  const remoteExpired = remote && Date.now() - owner.startedAt > CHILD_INDEX_REMOTE_LOCK_STALE_MS
-  if ((!remote && childIndexPidIsLive(owner.pid)) || (remote && !remoteExpired)) {
-    throw new Error(`child index is already being built by pid ${owner.pid} on ${owner.host}`)
-  }
-  const staleGeneration = createHash('sha256').update(owner.token).digest('hex')
-  const quarantine = `${path}.stale-${staleGeneration}`
-  try {
-    await rename(path, quarantine)
-    await syncDirectory(directory)
-    return await createChildIndexLock(snapshotDir)
-  } catch (error) {
-    if (['ENOENT', 'EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) {
-      throw new Error('child index is being reclaimed by another loader')
-    }
-    throw error
-  }
-}
-
-const releaseChildIndexLock = async (lock: ChildIndexLock): Promise<void> => {
-  const owner = JSON.parse(
-    await readFile(join(lock.path, 'owner.json'), 'utf8'),
-  ) as ChildIndexLockOwner
-  if (owner.token !== lock.token) throw new Error('refusing to release a changed child-index lock')
-  await rm(lock.path, { recursive: true, force: true })
-  await syncDirectory(lock.directory)
-}
-
-const withChildIndexLock = async <T>(snapshotDir: string, action: () => Promise<T>): Promise<T> => {
-  const key = childIndexDirectory(snapshotDir)
-  const previous = childIndexQueues.get(key) ?? Promise.resolve()
-  let releaseTurn!: () => void
-  const turn = new Promise<void>((resolve) => {
-    releaseTurn = resolve
-  })
-  const queued = previous.catch(() => undefined).then(() => turn)
-  childIndexQueues.set(key, queued)
-  await previous.catch(() => undefined)
-  let lock: ChildIndexLock | null = null
-  try {
-    lock = await acquireChildIndexLock(snapshotDir)
-    return await action()
-  } finally {
-    try {
-      if (lock !== null) await releaseChildIndexLock(lock)
-    } finally {
-      releaseTurn()
-      if (childIndexQueues.get(key) === queued) childIndexQueues.delete(key)
-    }
-  }
-}
+const childIndexStateName = (resource: string, digest: string): string =>
+  `${childIndexName(resource, digest)}.state.json`
 
 const childIndexLine = (record: ChildIndexRecord): string => {
   const fields = [
@@ -1539,26 +1451,16 @@ const parseChildIndexBuildState = (
 }
 
 const writeChildIndexBuildState = async (
-  snapshotDir: string,
+  store: ChildIndexStore,
   resource: string,
   digest: string,
   state: ChildIndexBuildState,
 ): Promise<void> => {
-  const path = childIndexStatePath(snapshotDir, resource, digest)
-  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
-  const handle = await open(temporary, 'wx')
-  try {
-    await handle.writeFile(`${JSON.stringify(state)}\n`, 'utf8')
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
-  await rename(temporary, path)
-  await syncDirectory(childIndexDirectory(snapshotDir))
+  await store.writeText(childIndexStateName(resource, digest), `${JSON.stringify(state)}\n`)
 }
 
 const completedChildIndex = async (
-  snapshotDir: string,
+  store: ChildIndexStore,
   source: SnapshotSource,
   resource: string,
   digest: string,
@@ -1566,9 +1468,9 @@ const completedChildIndex = async (
   childCount: number,
 ): Promise<boolean> => {
   try {
-    const handle = await open(childIndexPath(snapshotDir, resource, digest), 'r')
+    const handle = await store.open(childIndexName(resource, digest), 'read')
     try {
-      if ((await handle.stat()).size !== parentCount * CHILD_INDEX_RECORD_BYTES) return false
+      if ((await handle.size()) !== parentCount * CHILD_INDEX_RECORD_BYTES) return false
       const [rawSize, lineageSize] = await Promise.all([
         source.size(resource),
         source.size(`${resource}.lineage`),
@@ -1598,7 +1500,7 @@ interface ChildIndexAdvanceResult {
 }
 
 const advanceChildIndex = async (
-  snapshotDir: string,
+  store: ChildIndexStore,
   source: SnapshotSource,
   resource: string,
   parentResource: string,
@@ -1607,22 +1509,21 @@ const advanceChildIndex = async (
   childCount: number,
   workBudget: number,
 ): Promise<ChildIndexAdvanceResult> => {
-  if (await completedChildIndex(snapshotDir, source, resource, digest, parentCount, childCount)) {
-    await rm(childIndexStatePath(snapshotDir, resource, digest), { force: true })
-    await rm(childIndexPartialPath(snapshotDir, resource, digest), { force: true })
+  if (await completedChildIndex(store, source, resource, digest, parentCount, childCount)) {
+    await store.remove(childIndexStateName(resource, digest))
+    await store.remove(childIndexPartialName(resource, digest))
     return { complete: true, workRows: 0 }
   }
-  await mkdir(childIndexDirectory(snapshotDir), { recursive: true })
-  await rm(childIndexPath(snapshotDir, resource, digest), { force: true })
-  const statePath = childIndexStatePath(snapshotDir, resource, digest)
+  await store.remove(childIndexName(resource, digest))
+  const statePath = childIndexStateName(resource, digest)
   let state: ChildIndexBuildState
   try {
-    state = parseChildIndexBuildState(await readFile(statePath, 'utf8'), resource, digest)
+    state = parseChildIndexBuildState(await store.readText(statePath), resource, digest)
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
     if (code !== undefined && code !== 'ENOENT') throw error
-    await rm(statePath, { force: true })
-    await rm(childIndexPartialPath(snapshotDir, resource, digest), { force: true })
+    await store.remove(statePath)
+    await store.remove(childIndexPartialName(resource, digest))
     state = {
       version: 1,
       resource,
@@ -1639,18 +1540,18 @@ const advanceChildIndex = async (
   if (state.parentOrdinal > parentCount || state.childRowOffset > childCount) {
     throw new Error(`${resource} child index checkpoint exceeds the manifest`)
   }
-  const partialPath = childIndexPartialPath(snapshotDir, resource, digest)
+  const partialPath = childIndexPartialName(resource, digest)
   // The index file is always flushed before its state. A crash between those
   // writes can only leave the file ahead, so resumption safely truncates it to
   // the last durable record instead of rescanning any completed parent.
-  let output: Awaited<ReturnType<typeof open>>
+  let output: IndexFile
   try {
-    output = await open(partialPath, state.indexRecords === 0 ? 'w+' : 'r+')
+    output = await store.open(partialPath, state.indexRecords === 0 ? 'create' : 'update')
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || state.indexRecords === 0) throw error
-    await rm(statePath, { force: true })
+    await store.remove(statePath)
     return advanceChildIndex(
-      snapshotDir,
+      store,
       source,
       resource,
       parentResource,
@@ -1661,13 +1562,13 @@ const advanceChildIndex = async (
     )
   }
   const expectedBytes = state.indexRecords * CHILD_INDEX_RECORD_BYTES
-  const partialBytes = (await output.stat()).size
+  const partialBytes = await output.size()
   if (partialBytes < expectedBytes) {
     await output.close()
-    await rm(statePath, { force: true })
-    await rm(partialPath, { force: true })
+    await store.remove(statePath)
+    await store.remove(partialPath)
     return advanceChildIndex(
-      snapshotDir,
+      store,
       source,
       resource,
       parentResource,
@@ -1701,10 +1602,10 @@ const advanceChildIndex = async (
     }
   } catch {
     await output.close()
-    await rm(statePath, { force: true })
-    await rm(partialPath, { force: true })
+    await store.remove(statePath)
+    await store.remove(partialPath)
     return advanceChildIndex(
-      snapshotDir,
+      store,
       source,
       resource,
       parentResource,
@@ -1791,7 +1692,6 @@ const advanceChildIndex = async (
           count: active.count,
         }),
         state.indexRecords * CHILD_INDEX_RECORD_BYTES,
-        'utf8',
       )
       state.indexRecords += 1
       state.parentOrdinal += 1
@@ -1799,7 +1699,6 @@ const advanceChildIndex = async (
       pendingChild = child
     }
     await output.sync()
-    await syncDirectory(childIndexDirectory(snapshotDir))
     if (state.parentOrdinal === parentCount && state.activeParent === null) {
       if (state.childRowOffset !== childCount) {
         throw new Error(
@@ -1807,23 +1706,17 @@ const advanceChildIndex = async (
         )
       }
       await output.close()
-      await rename(partialPath, childIndexPath(snapshotDir, resource, digest))
-      await syncDirectory(childIndexDirectory(snapshotDir))
-      await rm(statePath, { force: true })
-      await syncDirectory(childIndexDirectory(snapshotDir))
+      await store.rename(partialPath, childIndexName(resource, digest))
+      await store.remove(statePath)
       return { complete: true, workRows }
     }
-    await writeChildIndexBuildState(snapshotDir, resource, digest, state)
+    await writeChildIndexBuildState(store, resource, digest, state)
     return { complete: false, workRows }
   } finally {
     await parent.close()
     await raw.close()
     await lineage.close()
-    try {
-      await output.close()
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EBADF') throw error
-    }
+    await output.close()
   }
 }
 
@@ -1855,28 +1748,24 @@ const parseChildIndexRecord = (line: string, resource: string): ChildIndexRecord
 }
 
 const readChildIndexRecord = async (
-  handle: Awaited<ReturnType<typeof open>>,
+  handle: IndexFile,
   resource: string,
   ordinal: number,
 ): Promise<ChildIndexRecord> => {
-  const buffer = Buffer.alloc(CHILD_INDEX_RECORD_BYTES)
-  const { bytesRead } = await handle.read(
-    buffer,
-    0,
-    buffer.length,
-    ordinal * CHILD_INDEX_RECORD_BYTES,
-  )
-  if (bytesRead !== buffer.length) throw new Error(`${resource} child index is truncated`)
-  return parseChildIndexRecord(buffer.toString('utf8'), resource)
+  const bytes = await handle.read(ordinal * CHILD_INDEX_RECORD_BYTES, CHILD_INDEX_RECORD_BYTES)
+  if (bytes.length !== CHILD_INDEX_RECORD_BYTES) {
+    throw new Error(`${resource} child index is truncated`)
+  }
+  return parseChildIndexRecord(new TextDecoder().decode(bytes), resource)
 }
 
 const validateChildIndexNeighborhood = async (
-  handle: Awaited<ReturnType<typeof open>>,
+  handle: IndexFile,
   resource: string,
   ordinal: number,
   record: ChildIndexRecord,
 ): Promise<void> => {
-  const records = (await handle.stat()).size / CHILD_INDEX_RECORD_BYTES
+  const records = (await handle.size()) / CHILD_INDEX_RECORD_BYTES
   if (!Number.isInteger(records) || ordinal < 0 || ordinal >= records) {
     throw new Error(`${resource} child index ordinal is corrupt`)
   }
@@ -1916,31 +1805,21 @@ const validateChildIndexNeighborhood = async (
 }
 
 const advanceChildIndexes = async (
-  snapshotDir: string,
+  store: ChildIndexStore,
   source: SnapshotSource,
   manifest: Manifest,
   digest: string,
   workBudget: number,
 ): Promise<boolean> => {
-  const indexDirectory = childIndexDirectory(snapshotDir)
-  try {
-    for (const entry of await readdir(indexDirectory)) {
-      if (entry.includes('.state.json.') && entry.endsWith('.tmp')) {
-        await rm(join(indexDirectory, entry), { force: true })
-      } else if (entry.startsWith('.builder.lock.claim-')) {
-        await rm(join(indexDirectory, entry), { recursive: true, force: true })
-      }
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-  }
+  await store.tidy()
+  assertChildIndexFits(store, manifest)
   let remaining = Math.min(workBudget, CHILD_INDEX_WORK_ROWS_PER_INVOCATION)
   for (const step of RESOURCES) {
     const expectedCount = manifest.resources[step.name]?.count ?? 0
     if (step.kind !== 'child' || expectedCount === 0) continue
     if (remaining < 1) return false
     const advanced = await advanceChildIndex(
-      snapshotDir,
+      store,
       source,
       step.name,
       step.parent,
@@ -1955,17 +1834,42 @@ const advanceChildIndexes = async (
   return true
 }
 
+/**
+ * One record per parent, per child resource, is all an index ever holds, so
+ * what a snapshot needs is known from its manifest before any of it is built.
+ * A runtime with a memory ceiling is told at once that the snapshot does not
+ * fit, instead of dying partway through with the load half done.
+ */
+const childIndexBytesNeeded = (manifest: Manifest): number => {
+  let needed = 0
+  for (const step of RESOURCES) {
+    if (step.kind !== 'child' || (manifest.resources[step.name]?.count ?? 0) === 0) continue
+    needed += (manifest.resources[step.parent]?.count ?? 0) * CHILD_INDEX_RECORD_BYTES
+  }
+  return needed
+}
+
+const assertChildIndexFits = (store: ChildIndexStore, manifest: Manifest): void => {
+  const needed = childIndexBytesNeeded(manifest)
+  if (store.budgetBytes !== null && needed > store.budgetBytes) {
+    throw new Error(
+      `this snapshot needs ${needed} bytes of child index and the index store allows ` +
+        `${store.budgetBytes}; load it where the index can live on disk`,
+    )
+  }
+}
+
 const findChildIndex = async (
-  snapshotDir: string,
+  store: ChildIndexStore,
   resource: string,
   digest: string,
   parentOrdinal: number,
   parentId: number,
 ): Promise<ChildIndexRecord | null> => {
   try {
-    const handle = await open(childIndexPath(snapshotDir, resource, digest), 'r')
+    const handle = await store.open(childIndexName(resource, digest), 'read')
     try {
-      const size = (await handle.stat()).size
+      const size = await handle.size()
       if (size % CHILD_INDEX_RECORD_BYTES !== 0)
         throw new Error(`${resource} child index is corrupt`)
       if (parentOrdinal < 0 || parentOrdinal >= size / CHILD_INDEX_RECORD_BYTES) return null
@@ -1978,7 +1882,7 @@ const findChildIndex = async (
       await handle.close()
     }
   } catch (error) {
-    await rm(childIndexPath(snapshotDir, resource, digest), { force: true })
+    await store.remove(childIndexName(resource, digest))
     throw error
   }
 }
@@ -1989,7 +1893,7 @@ interface ChildIndexSlice {
 }
 
 const childIndexSlices = async (
-  snapshotDir: string,
+  store: ChildIndexStore,
   resource: string,
   digest: string,
   rowOffset: number,
@@ -1997,9 +1901,9 @@ const childIndexSlices = async (
 ): Promise<ChildIndexSlice[]> => {
   if (count === 0) return []
   try {
-    const handle = await open(childIndexPath(snapshotDir, resource, digest), 'r')
+    const handle = await store.open(childIndexName(resource, digest), 'read')
     try {
-      const size = (await handle.stat()).size
+      const size = await handle.size()
       if (size % CHILD_INDEX_RECORD_BYTES !== 0)
         throw new Error(`${resource} child index is corrupt`)
       const records = size / CHILD_INDEX_RECORD_BYTES
@@ -2034,7 +1938,7 @@ const childIndexSlices = async (
       await handle.close()
     }
   } catch (error) {
-    await rm(childIndexPath(snapshotDir, resource, digest), { force: true })
+    await store.remove(childIndexName(resource, digest))
     throw error
   }
 }
@@ -2145,7 +2049,7 @@ const sequentialLineageChunk = async (
 }
 
 const lineageFor = async (
-  snapshotDir: string,
+  store: ChildIndexStore,
   snapshotSource: SnapshotSource,
   resource: string,
   digest: string,
@@ -2153,7 +2057,7 @@ const lineageFor = async (
   lineageByteOffset: number,
   rows: readonly RawRow[],
 ): Promise<{ rows: ChildLineage[]; endByteOffsets: number[] }> => {
-  const slices = await childIndexSlices(snapshotDir, resource, digest, offset, rows.length)
+  const slices = await childIndexSlices(store, resource, digest, offset, rows.length)
   const lineage: ChildLineage[] = []
   const endByteOffsets: number[] = []
   let source = 0
@@ -2178,7 +2082,7 @@ const lineageFor = async (
 }
 
 const advanceLineageCursor = async (
-  snapshotDir: string,
+  store: ChildIndexStore,
   snapshotSource: SnapshotSource,
   resource: string,
   digest: string,
@@ -2186,7 +2090,7 @@ const advanceLineageCursor = async (
   byteOffset: number,
   count: number,
 ): Promise<number> => {
-  const slices = await childIndexSlices(snapshotDir, resource, digest, rowOffset, count)
+  const slices = await childIndexSlices(store, resource, digest, rowOffset, count)
   let nextByteOffset = byteOffset
   for (const [sliceIndex, slice] of slices.entries()) {
     const advanced = await lineageChunkAt(
@@ -2420,7 +2324,7 @@ const loadRateChunk = async (
         stage.lastHarvestId,
       ),
     )
-    await execute(options.database.$client, statements)
+    await executeFor(options, statements)
     return {
       complete: false,
       resource,
@@ -2459,7 +2363,7 @@ const loadRateChunk = async (
           stage.lastHarvestId,
         ),
       ]
-      await execute(options.database.$client, statements)
+      await executeFor(options, statements)
       return {
         complete: false,
         resource,
@@ -2482,7 +2386,7 @@ const loadRateChunk = async (
         timestamp,
       ),
     ]
-    await execute(options.database.$client, statements)
+    await executeFor(options, statements)
     return {
       complete: false,
       resource,
@@ -2597,7 +2501,7 @@ const loadRateChunk = async (
       timestamp,
     ),
   )
-  await execute(options.database.$client, statements)
+  await executeFor(options, statements)
   return {
     complete: false,
     resource,
@@ -3524,7 +3428,7 @@ const estimateStatements = (
 }
 
 const childRowsForParent = async (
-  snapshotDir: string,
+  store: ChildIndexStore,
   source: SnapshotSource,
   resource: string,
   parentOrdinal: number,
@@ -3533,7 +3437,7 @@ const childRowsForParent = async (
   digest: string,
 ): Promise<{ rows: RawRow[]; lineage: ChildLineage[] }> => {
   if (total === 0) return { rows: [], lineage: [] }
-  const record = await findChildIndex(snapshotDir, resource, digest, parentOrdinal, parentId)
+  const record = await findChildIndex(store, resource, digest, parentOrdinal, parentId)
   if (record === null) return { rows: [], lineage: [] }
   const chunk = await rawChunkFrom(source, resource, record.startByte, 0, record.count)
   if (chunk.rows.length !== record.count || chunk.nextByteOffset !== record.endByte) {
@@ -3892,6 +3796,7 @@ const resolveOrganizationCurrency = async (
   manifest: Manifest,
   digest: string,
   override: string | undefined,
+  lease: LoadLease | null,
 ): Promise<string | null> => {
   if (override) return override.toUpperCase()
   if (manifest.preflight.organization_currency)
@@ -3942,9 +3847,11 @@ const resolveOrganizationCurrency = async (
       'Harvest Company omits organization currency; pass --organization-currency (client currencies are absent or mixed)',
     )
   }
-  await execute(database, [
-    currencyInferenceStatement(digest, chunk.nextByteOffset, scanned, currency, complete),
-  ])
+  await execute(
+    database,
+    [currencyInferenceStatement(digest, chunk.nextByteOffset, scanned, currency, complete)],
+    lease,
+  )
   return complete ? currency : null
 }
 
@@ -4073,9 +3980,9 @@ const admitSnapshot = async (
     }
     return {
       snapshotSha256: existing.snapshotSha256,
-      indexingComplete: await withChildIndexLock(options.snapshotDir, () =>
+      indexingComplete: await options.indexStore.exclusive(() =>
         advanceChildIndexes(
-          options.snapshotDir,
+          options.indexStore,
           options.source,
           manifest,
           expectedDigest,
@@ -4101,9 +4008,9 @@ const admitSnapshot = async (
     }
   }
   processAdmissions.set(options.database.$client, actualDigest)
-  const indexingComplete = await withChildIndexLock(options.snapshotDir, () =>
+  const indexingComplete = await options.indexStore.exclusive(() =>
     advanceChildIndexes(
-      options.snapshotDir,
+      options.indexStore,
       options.source,
       manifest,
       actualDigest,
@@ -4111,7 +4018,7 @@ const admitSnapshot = async (
     ),
   )
   if (!indexingComplete) return { snapshotSha256: actualDigest, indexingComplete: false }
-  await execute(options.database.$client, [
+  await executeFor(options, [
     {
       sql: `INSERT INTO _ezacto_load_admission
       (singleton, snapshot_sha256, manifest_sha256, load_options_json, admitted_at)
@@ -4229,8 +4136,11 @@ const loadExpense = async (
       }
     }
   }
-  await execute(database.$client, statements)
-  if (receiptInput) await ensureHarvestExpenseReceipt(database, receiptInput)
+  await executeFor(options, statements)
+  if (receiptInput) {
+    await assertLeaseHeld(options)
+    await ensureHarvestExpenseReceipt(database, receiptInput)
+  }
   return statements.length + (receiptInput ? 8 : 0)
 }
 
@@ -4268,7 +4178,7 @@ const loadComplexRow = async (
           ? deleteSubprogressStatement(resource, source.index)
           : subprogressStatement(resource, source.index, aggregateOffset + take, 0, 0),
       ]
-      await execute(options.database.$client, statements)
+      await executeFor(options, statements)
       return { statements: statements.length, complete }
     }
     const childTotal = manifest.resources.estimate_messages?.count ?? 0
@@ -4276,7 +4186,7 @@ const loadComplexRow = async (
       childTotal === 0
         ? null
         : await findChildIndex(
-            options.snapshotDir,
+            options.indexStore,
             'estimate_messages',
             digest,
             source.index,
@@ -4287,7 +4197,7 @@ const loadComplexRow = async (
         ...estimateStatements(source, [], [], identity, anomalies, 0, 0),
         deleteSubprogressStatement(resource, source.index),
       ]
-      await execute(options.database.$client, statements)
+      await executeFor(options, statements)
       return { statements: statements.length, complete: true }
     }
     const childOffset = aggregateOffset - lineItems.length
@@ -4337,7 +4247,7 @@ const loadComplexRow = async (
             childLineage.nextByteOffset,
           ),
     ]
-    await execute(options.database.$client, statements)
+    await executeFor(options, statements)
     return { statements: statements.length, complete }
   }
   // Reconciliation fingerprints the complete source-owned message/payment sets,
@@ -4346,7 +4256,7 @@ const loadComplexRow = async (
   // this never scans either child resource beyond this invoice. DB mutations are
   // still bounded and resumed through the pending reconciliation receipt below.
   const messages = await childRowsForParent(
-    options.snapshotDir,
+    options.indexStore,
     options.source,
     'invoice_messages',
     source.index,
@@ -4355,7 +4265,7 @@ const loadComplexRow = async (
     digest,
   )
   const payments = await childRowsForParent(
-    options.snapshotDir,
+    options.indexStore,
     options.source,
     'invoice_payments',
     source.index,
@@ -4364,6 +4274,7 @@ const loadComplexRow = async (
     digest,
   )
   const lineCount = Array.isArray(source.row.line_items) ? source.row.line_items.length : 0
+  await assertLeaseHeld(options)
   const input = await invoiceInput(
     options.database,
     source,
@@ -4374,6 +4285,7 @@ const loadComplexRow = async (
     identity,
     anomalies,
   )
+  await assertLeaseHeld(options)
   if (input.retainerId !== null)
     await ensureHarvestRetainerStub(options.database, {
       invoiceId: input.ensured.id,
@@ -4393,6 +4305,7 @@ const loadComplexRow = async (
   const reconciliationBudget = maxStatements - 10
   if (reconciliationBudget < 3)
     throw new Error('invoice row has no reconciliation statement budget')
+  await assertLeaseHeld(options)
   const result = await reconcileHarvestInvoice(options.database, {
     ...input.reconciliation,
     maximumStatements: reconciliationBudget,
@@ -4426,10 +4339,66 @@ const loadComplexRow = async (
   }
 }
 
+const leaseDatabase = (database: RawDatabase): LeaseDatabase => ({
+  first: (sql, bindings) => first(database, sql, bindings),
+  run: (statements) => execute(database, statements),
+})
+
+const leasePins = async (
+  options: { snapshotDir: string; source: SnapshotSource },
+  manifest: Manifest,
+): Promise<LeasePins> => ({
+  snapshotSha256: await checksumDigest(options.snapshotDir),
+  manifestSha256: createHash('sha256')
+    .update(await readFile(join(options.snapshotDir, 'manifest.json')))
+    .digest('hex'),
+  sourceFingerprint: await sourceFingerprint(options.source, manifest),
+})
+
+export interface ClaimLoadLeaseOptions {
+  database: ImportDatabase
+  snapshotDir: string
+  /** Defaults to the files under `snapshotDir`, as for `loadNextChunk`. */
+  source?: SnapshotSource
+  /** How long the lease lives without a renewal. Defaults to five minutes. */
+  ttlMs?: number
+  /** Injected so a test can stop the clock. Defaults to `Date.now`. */
+  now?: () => number
+}
+
+/**
+ * Claims the right to load into this database, pinning the snapshot's verified
+ * digest, its manifest and the identity of every object it will read. Pass the
+ * result to `loadNextChunk` on every invocation; give it back with
+ * `releaseLoadLease` when the load is done. Refuses with `LoadLeaseHeldError`
+ * while another holder's lease is live.
+ */
+export const claimLoadLease = async (input: ClaimLoadLeaseOptions): Promise<LoadLease> => {
+  const source = input.source ?? fileSnapshotSource(input.snapshotDir)
+  const manifest = await readManifest(input.snapshotDir)
+  await ensureProgressSchema(input.database.$client)
+  return claimLease(
+    leaseDatabase(input.database.$client),
+    await leasePins({ snapshotDir: input.snapshotDir, source }, manifest),
+    { ttlMs: input.ttlMs, now: input.now },
+  )
+}
+
+export const releaseLoadLease = (database: ImportDatabase, lease: LoadLease): Promise<void> =>
+  releaseLease(leaseDatabase(database.$client), lease)
+
+export {
+  LoadLeaseHeldError,
+  LoadLeaseLostError,
+  LoadSnapshotChangedError,
+  type LoadLease,
+} from './load-lease.js'
+
 export const loadNextChunk = async (input: LoadNextChunkOptions): Promise<LoadChunkResult> => {
   const options: ResolvedLoadOptions = {
     ...input,
     source: input.source ?? fileSnapshotSource(input.snapshotDir),
+    indexStore: input.indexStore ?? fileChildIndexStore(input.snapshotDir),
   }
   const manifest = await readManifest(options.snapshotDir)
   if (!manifest.preflight.user.is_administrator) {
@@ -4438,6 +4407,13 @@ export const loadNextChunk = async (input: LoadNextChunkOptions): Promise<LoadCh
     )
   }
   await ensureProgressSchema(options.database.$client)
+  if (options.lease) {
+    const database = leaseDatabase(options.database.$client)
+    await renewLease(database, options.lease)
+    await assertPins(database, options.lease, await leasePins(options, manifest))
+  } else {
+    await assertNoLiveLease(leaseDatabase(options.database.$client))
+  }
   const timestamp = sourceTimestamp(manifest)
   const maxStatements = options.maxStatements ?? DEFAULT_INVOCATION_STATEMENT_BUDGET
   const maximumStatements = isD1(options.database.$client)
@@ -4490,6 +4466,7 @@ export const loadNextChunk = async (input: LoadNextChunkOptions): Promise<LoadCh
       manifest,
       expectedDigest,
       options.organizationCurrency,
+      options.lease ?? null,
     )
     if (organizationCurrency === null) {
       return {
@@ -4565,7 +4542,7 @@ export const loadNextChunk = async (input: LoadNextChunkOptions): Promise<LoadCh
         true,
         timestamp,
       )
-      await execute(options.database.$client, [checkpoint])
+      await executeFor(options, [checkpoint])
       return {
         complete: false,
         resource,
@@ -4615,7 +4592,7 @@ export const loadNextChunk = async (input: LoadNextChunkOptions): Promise<LoadCh
         ...ownerStatements,
         progressStatement(resource, digest, loadOptionsJson, 0, 1, 1, true, timestamp),
       ]
-      await execute(options.database.$client, statements)
+      await executeFor(options, statements)
       return {
         complete: false,
         resource,
@@ -4639,7 +4616,7 @@ export const loadNextChunk = async (input: LoadNextChunkOptions): Promise<LoadCh
       if (rowsScanned < offset) {
         const take = Math.min(LINEAGE_RECOVERY_ROWS_PER_INVOCATION, offset - rowsScanned)
         const nextByteOffset = await advanceLineageCursor(
-          options.snapshotDir,
+          options.indexStore,
           options.source,
           resource,
           digest,
@@ -4647,7 +4624,7 @@ export const loadNextChunk = async (input: LoadNextChunkOptions): Promise<LoadCh
           childCursor?.byteOffset ?? 0,
           take,
         )
-        await execute(options.database.$client, [
+        await executeFor(options, [
           lineageProgressStatement(resource, digest, nextByteOffset, rowsScanned + take),
         ])
         return {
@@ -4719,7 +4696,7 @@ export const loadNextChunk = async (input: LoadNextChunkOptions): Promise<LoadCh
       } else {
         statements.push(subprogressStatement(resource, row.index, childOffset + take, 0, 0))
       }
-      await execute(options.database.$client, statements)
+      await executeFor(options, statements)
       return {
         complete: false,
         resource,
@@ -4754,7 +4731,7 @@ export const loadNextChunk = async (input: LoadNextChunkOptions): Promise<LoadCh
           }
         }
         const loaded = offset + 1
-        await execute(options.database.$client, [
+        await executeFor(options, [
           ...anomalyStatements(digest, anomalies),
           progressStatement(
             resource,
@@ -4784,7 +4761,7 @@ export const loadNextChunk = async (input: LoadNextChunkOptions): Promise<LoadCh
     const lineage =
       step && 'parent' in step
         ? await lineageFor(
-            options.snapshotDir,
+            options.indexStore,
             options.source,
             resource,
             digest,
@@ -4865,7 +4842,7 @@ export const loadNextChunk = async (input: LoadNextChunkOptions): Promise<LoadCh
         timestamp,
       ),
     )
-    await execute(options.database.$client, statements)
+    await executeFor(options, statements)
     return {
       complete: false,
       resource,
