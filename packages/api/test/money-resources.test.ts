@@ -21,6 +21,7 @@ import {
   type InvoiceDocumentPort,
   type InvoiceSendingPort,
   type InvoiceGenerationCommand,
+  type MoneyResourceRouteOptions,
 } from "../src/money-resources.js";
 
 interface TestDatabase {
@@ -595,6 +596,7 @@ interface DeliveryTemplate {
 interface DeliveryPorts {
   documents?: InvoiceDocumentPort;
   sending?: InvoiceSendingPort;
+  viewLinks?: NonNullable<MoneyResourceRouteOptions["invoiceViewLinks"]>;
 }
 
 const harness = async (
@@ -652,6 +654,9 @@ const harness = async (
               },
             }),
         ...(invoicePaymentUrl === undefined ? {} : { invoicePaymentUrl }),
+        ...(deliveryPorts?.viewLinks === undefined
+          ? {}
+          : { invoiceViewLinks: deliveryPorts.viewLinks }),
         ...(deliveryMailer === undefined
           ? {}
           : {
@@ -951,6 +956,136 @@ for (const [runtime, factory] of factories) {
         "Happy Friday! Invoice INV-DRAFT covers [August – September 2026].",
       );
     }, slowRuntimeTimeout);
+
+    describe("view receipts (issue 936)", () => {
+      const origin = "https://billing.example.test";
+      const sha256 = async (value: string): Promise<string> =>
+        Array.from(
+          new Uint8Array(
+            await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)),
+          ),
+          (byte) => byte.toString(16).padStart(2, "0"),
+        ).join("");
+      const links = (enabled: boolean) => {
+        const mint = vi.fn(async (sentAt: string) => {
+          const token = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+          return {
+            url: `${origin}/portal/invoices/${token}`,
+            tokenHash: await sha256(token),
+            expiresAt: new Date(Date.parse(sentAt) + 86_400_000).toISOString(),
+          };
+        });
+        return {
+          mint,
+          ports: {
+            viewLinks: {
+              enabled: async () => enabled,
+              previewUrl: `${origin}/portal/invoices/a-link-is-created-when-sent`,
+              mint,
+            },
+          } satisfies DeliveryPorts,
+        };
+      };
+      const mailer = () =>
+        ({
+          assertAvailable: vi.fn(async () => undefined),
+          enqueue: vi.fn(),
+        }) satisfies SenderBoundQueuedMailer;
+      const body = {
+        expected_version: 0,
+        recipients: [{ name: "Client", email: "client@example.net" }],
+      };
+      const intent = async (test: Harness) =>
+        (
+          await test.database.rows<{ text_body: string }>(
+            "SELECT text_body FROM invoice_email_intents",
+          )
+        )[0]?.text_body;
+
+      it("[api] links the invoice online and stores only the hash, in the send's own transaction", async () => {
+        const on = links(true);
+        const test = await setup(undefined, undefined, mailer(), undefined, undefined, on.ports);
+        await seedInvoiceDeliveryConfiguration(test.database);
+        const response = await test.request(
+          "/api/v1/invoices/1/deliveries",
+          jsonRequest("POST", { ...body, confirmed: true }, "invoice-delivery-view-link"),
+        );
+        expect(response.status).toBe(202);
+        expect(on.mint).toHaveBeenCalledTimes(1);
+        const text = await intent(test);
+        const token = new RegExp(`View invoice\\n${origin}/portal/invoices/([A-Za-z0-9_-]{43})`, "u").exec(
+          text ?? "",
+        )?.[1];
+        expect(token).toBeDefined();
+        const rows = await test.database.rows<Record<string, unknown>>(
+          "SELECT * FROM invoice_view_links",
+        );
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+          token_hash: await sha256(token!),
+          invoice_id: 1,
+          first_viewed_at: null,
+        });
+        expect(JSON.stringify(rows)).not.toContain(token!);
+        const [message] = await test.database.rows<{ id: number; event_type: string }>(
+          "SELECT id, event_type FROM invoice_messages",
+        );
+        expect(rows[0]!.invoice_message_id).toBe(message!.id);
+        expect(message!.event_type).toBe("send");
+      }, slowRuntimeTimeout);
+
+      it("[api] with the setting off the email is exactly what it was and no link exists", async () => {
+        const off = links(false);
+        const withPort = await setup(undefined, undefined, mailer(), undefined, undefined, off.ports);
+        await seedInvoiceDeliveryConfiguration(withPort.database);
+        const response = await withPort.request(
+          "/api/v1/invoices/1/deliveries",
+          jsonRequest("POST", { ...body, confirmed: true }, "invoice-delivery-view-off"),
+        );
+        expect(response.status).toBe(202);
+        expect(off.mint).not.toHaveBeenCalled();
+        const offText = await intent(withPort);
+        expect(offText).not.toContain("/portal/invoices/");
+        expect(await withPort.database.rows("SELECT * FROM invoice_view_links")).toEqual([]);
+        await withPort.database.close();
+
+        const without = await setup(undefined, undefined, mailer());
+        await seedInvoiceDeliveryConfiguration(without.database);
+        await without.request(
+          "/api/v1/invoices/1/deliveries",
+          jsonRequest("POST", { ...body, confirmed: true }, "invoice-delivery-view-off"),
+        );
+        expect(offText).toBe(await intent(without));
+        // Two databases in one test, so twice the time the others get.
+      }, slowRuntimeTimeout === undefined ? undefined : slowRuntimeTimeout * 3);
+
+      it("[api] a preview shows where the link would be and mints none", async () => {
+        const on = links(true);
+        const test = await setup(undefined, undefined, mailer(), undefined, undefined, on.ports);
+        await seedInvoiceDeliveryConfiguration(test.database);
+        const response = await test.request(
+          "/api/v1/invoices/1/deliveries/preview",
+          jsonRequest("POST", body),
+        );
+        expect(response.status).toBe(200);
+        const { data } = (await response.json()) as { data: { text: string } };
+        expect(data.text).toContain(`View invoice\n${origin}/portal/invoices/a-link-is-created-when-sent`);
+        expect(on.mint).not.toHaveBeenCalled();
+        expect(await test.database.rows("SELECT * FROM invoice_view_links")).toEqual([]);
+      }, slowRuntimeTimeout);
+
+      it("[api] a send the version check refuses leaves no link", async () => {
+        const on = links(true);
+        const test = await setup(undefined, undefined, mailer(), undefined, undefined, on.ports);
+        await seedInvoiceDeliveryConfiguration(test.database);
+        const response = await test.request(
+          "/api/v1/invoices/1/deliveries",
+          jsonRequest("POST", { ...body, expected_version: 9, confirmed: true }, "invoice-delivery-view-stale"),
+        );
+        expect(response.status).toBe(409);
+        expect(await test.database.rows("SELECT * FROM invoice_view_links")).toEqual([]);
+      }, slowRuntimeTimeout);
+    });
 
     it("[security] a provider that fails does not stop the invoice going out", async () => {
       // Minting a convenience must never be why a client does not get billed.

@@ -215,6 +215,21 @@ session only, off until the `own_money` setting is on, and refused (`not_a_payee
 unless the person is flagged a contractor or has a recorded obligation. There is
 no person parameter. See `docs/contractor-payments.md`.
 
+Client rate cards (issue 34): `/api/v1/clients/:id/rate-card` reads or attaches the
+named card of one client node (409 `rate_card_exists` for a second), and
+`POST .../rate-card/versions` appends an effective-dated version of task lines or a
+single default line (409 `rate_card_version_order` unless it starts after every
+existing version; an empty `lines` array retires the card). There is no update or
+delete. `GET /api/v1/clients/:id/effective-rate-card?task_id=&spent_date=` returns
+the rate the resolver would use and which ancestor supplied it
+(`supplied_by_client_id`, `depth`); inheritance follows `parent_client_id` only,
+never the bill-to client. Billable rates are money, so only the profiles that may
+see them (administrator, accounting, executive manager, and a project manager
+granted `billable_rates_manager`) read or write; others get 403 `money_forbidden`.
+A card prices only projects billed by people that use default rates, applies to
+work resolved after it is written, and never changes an existing entry, snapshot
+or invoice.
+
 General-resource commercial fields are classified in `@ezacto/core`:
 client payment terms/tax/discount defaults, project billing method/bill-by/currency,
 and contact invoice-recipient routing. Finance, executive, administrator, and

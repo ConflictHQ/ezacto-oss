@@ -59,6 +59,7 @@ import {
   DrizzleTrackedResourceRepository,
   enrollInstanceOwnerPasswordContainer,
   listClientAncestors,
+  createClientRateCardRepository,
   listClientDescendants,
   migrateContainer,
   createBillLinkStore,
@@ -101,6 +102,10 @@ import {
   createReminderPort,
   createReminderSettings,
   readInvoiceDefaults,
+  createInvoiceViewLinkIssuer,
+  createInvoiceViewService,
+  invoiceViewLinkOrigin,
+  readViewReceipts,
   updateInvoiceDefaults,
   readThankYouPreference,
   readOrganizationThankYouPolicy,
@@ -794,6 +799,7 @@ export const createContainerRuntime = async (
         descendants: (clientId) => listClientDescendants(drizzle, clientId),
       },
       team: createTeamRepository(drizzle),
+      clientRateCards: createClientRateCardRepository(drizzle),
       trackedResources,
       calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
       allocations: new DrizzleAllocationRepository(drizzle),
@@ -999,6 +1005,23 @@ export const createContainerRuntime = async (
       update: (patch) => updateNotificationSettings(drizzle, patch, new Date().toISOString()),
     }),
       reminderSettings: createReminderSettings(drizzle, reminders, () => new Date().toISOString()),
+      // The hosted invoice page and its receipts (issue 936), mounted exactly
+      // where the Worker mounts them. This entry keeps no rendered invoice
+      // documents, so its page offers none to download.
+      invoiceView: createInvoiceViewService({
+        database: drizzle,
+        paymentUrl: invoicePaymentUrlForMail({ bill, stripe }),
+      }),
+      ...(invoiceViewLinkOrigin(config.appBaseUrl) === null
+        ? {}
+        : {
+            invoiceViewLinks: createInvoiceViewLinkIssuer(
+              drizzle,
+              invoiceViewLinkOrigin(config.appBaseUrl)!,
+            ),
+          }),
+      invoiceViewReceipts: (invoiceMessageIds: readonly number[]) =>
+        readViewReceipts(drizzle, invoiceMessageIds),
       // Invoices › Configure: what every invoice prints and every draft starts with.
       invoiceDefaults: {
         read: () => readInvoiceDefaults(drizzle),

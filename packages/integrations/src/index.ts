@@ -125,6 +125,23 @@ export {
   type UnsyncableReason,
 } from './deel/time-sync.js'
 export {
+  reconcileTransferLog,
+  type EditedTransfer,
+  type DeelReconciliationReport,
+  type LoggedTransfer,
+} from './deel/reconcile.js'
+export {
+  createDeelSyncRuntime,
+  type DeelSyncClient,
+  type DeelSyncConfig,
+  type DeelSyncRunResult,
+  type DeelSyncRuntime,
+  type DeelSyncRuntimeOptions,
+  type DeelSyncSource,
+  type DeelSyncSummary,
+  type DeelSyncWindow,
+} from './deel/runtime.js'
+export {
   QUICKBOOKS_ACCOUNTING_SCOPE,
   QUICKBOOKS_DEFAULT_ENDPOINTS,
   QUICKBOOKS_DISCOVERY_URL,

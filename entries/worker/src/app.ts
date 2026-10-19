@@ -10,7 +10,7 @@ import type { StaffPaymentStore } from '@ezacto/core'
 import { installMyPaymentRoutes } from '@ezacto/api'
 import type { MyPaymentsStore } from '@ezacto/core'
 import { captureException } from "@sentry/cloudflare";
-import type { BillRuntime, QuickBooksService, WiseRuntime } from "@ezacto/integrations";
+import type { BillRuntime, DeelSyncRuntime, QuickBooksService, WiseRuntime } from "@ezacto/integrations";
 import type {
   InvoiceDocumentPreferenceService,
   InvoiceDocumentPort,
@@ -23,6 +23,7 @@ import type {
   TimesheetAutoApprovalService,
   ProfileNotificationsPort,
   InvoiceDefaultsService,
+  InvoiceViewRouteService,
   RecurringRepairService,
   InvoiceTimeClaimService,
   StripeService,
@@ -44,6 +45,8 @@ import {
   installInstanceThemeRoutes,
   installInstanceThemeStylesheetRoute,
   installClientTreeRoutes,
+  installClientRateCardRoutes,
+  type ClientRateCardRepository,
   installEmailHealthRoutes,
   installEmailLogRoutes,
   installEmailConfigurationRoutes,
@@ -92,6 +95,7 @@ import {
   installTimesheetAutoApprovalRoutes,
   installProfileNotificationRoutes,
   installInvoiceDefaultsRoutes,
+  installInvoiceViewRoutes,
   installRecurringRepairRoutes,
   installInvoiceTimeClaimRoutes,
   installStripeRoutes,
@@ -175,6 +179,8 @@ import {
   renderAppShell,
   renderAppleDisconnect,
   renderPortalEstimatesPage,
+  renderPortalInvoicePage,
+  type PortalInvoicePage,
   reportKindTabs,
   resolveDeploymentBrand,
   webAssets,
@@ -329,6 +335,15 @@ export type WorkerEnv = AppEnv & {
    */
   STRIPE_API_KEY?: string
   STRIPE_WEBHOOK_SECRET?: string
+  /**
+   * Deel time sync (issue 103). Both are needed before anything is sent: the
+   * API token, and the first day (ISO) whose approved time may be submitted.
+   * The start date is the guard against a first run submitting every earlier
+   * month that was paid by other means. Neither is wired through the stock
+   * deploy workflow; set them as Worker secrets.
+   */
+  DEEL_TOKEN?: string
+  DEEL_SYNC_START_DATE?: string
   /** SES credentials are Worker secrets; never place them in wrangler vars. */
   AWS_ACCESS_KEY_ID?: string
   AWS_SECRET_ACCESS_KEY?: string
@@ -506,6 +521,17 @@ export interface RuntimeServices {
   }
   invoiceDefaults?: InvoiceDefaultsService
   /**
+   * The hosted invoice page and its receipts (issue 936). Both entries compose
+   * it, so `entry-surface.ts` lists its three routes for both.
+   */
+  invoiceView?: InvoiceViewRouteService<PortalInvoicePage>
+  /** Mints the link an invoice email carries, where the deployment has an origin to link to. */
+  invoiceViewLinks?: NonNullable<MoneyResourceRouteOptions['invoiceViewLinks']>
+  /** When invoice emails were first opened, for Settings > Deliveries. */
+  invoiceViewReceipts?: (
+    invoiceMessageIds: readonly number[],
+  ) => Promise<ReadonlyMap<number, string>>
+  /**
    * Sends the reminders that have come due. Called from the daily cron in the
    * Worker and from the outbox tick in the container; either way it is the
    * only thing that turns a scheduled row into mail.
@@ -534,6 +560,8 @@ export interface RuntimeServices {
   profileNotifications?: ProfileNotificationsPort
   recurringRepair?: RecurringRepairService
   bill?: BillRuntime
+  /** Deel time sync, run from the daily cron. Absent on the demo. */
+  deelSync?: DeelSyncRuntime
   /**
    * The per-client opt-in. Separate from the runtime because turning it on is a
    * database write with no BILL call in it -- the runtime is the thing that
@@ -550,6 +578,8 @@ export interface RuntimeServices {
     isOptedIn(clientId: number): Promise<boolean>
     setOptedIn(clientId: number, enabled: boolean): Promise<boolean>
   }
+  /** Named rate cards on client nodes, inherited down the tree (issue 34). */
+  clientRateCards?: ClientRateCardRepository
 }
 
 export type Health = {
@@ -717,6 +747,9 @@ export const createApp = (
             installEmailLogRoutes(api, services.emailLog, {
               cursorSigningKey: services.cursorSigningKey,
               timezone: organizationTimezone,
+              ...(services.invoiceViewReceipts === undefined
+                ? {}
+                : { viewReceipts: services.invoiceViewReceipts }),
             })
             installEmailHealthRoutes(api, services.emailLog)
             installEmailConfigurationRoutes(api, {
@@ -743,6 +776,7 @@ export const createApp = (
               teamRepository: services.team,
             })
             installClientTreeRoutes(api, services.clientTree)
+            if (services.clientRateCards) installClientRateCardRoutes(api, { repository: services.clientRateCards, clock: systemClock })
             installTeamRoutes(api, {
               repository: services.team,
               costRateBackfill: services.costRateBackfill,
@@ -805,6 +839,9 @@ export const createApp = (
               // than inside the money routes so those keep knowing nothing
               // about a payment provider; a deployment with neither BILL nor
               // Stripe passes nothing and the email renders as it always did.
+              ...(services.invoiceViewLinks === undefined
+                ? {}
+                : { invoiceViewLinks: services.invoiceViewLinks }),
               ...(services.stripe === undefined && services.bill === undefined
                 ? {}
                 : {
@@ -1029,6 +1066,22 @@ export const createApp = (
       // API surface.
       if (services?.wiseWebhook !== undefined) {
         installWiseWebhookRoute(app, services.wiseWebhook)
+      }
+      // The page a client reaches from the link in an emailed invoice (issue
+      // 936). No session, so the link's token is the whole of the authorisation
+      // and these sit outside the API surface, beside the webhooks.
+      if (services?.invoiceView !== undefined) {
+        installInvoiceViewRoutes(app, {
+          service: services.invoiceView,
+          clock: () => systemClock.now().instant,
+          clientKey: (request) =>
+            request.headers.get('cf-connecting-ip') ?? 'unknown-client',
+          render: renderPortalInvoicePage,
+          pageHeaders: {
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+          },
+        })
       }
       if (services !== undefined) {
         // One policy object, consulted by every sign-in family. Composing it
@@ -1344,6 +1397,13 @@ export const createApp = (
 
       app.get('/assets/ezacto.js', (context) =>
         context.body(webAssets.javascript, 200, {
+          'cache-control': 'public, max-age=0, must-revalidate',
+          'content-type': 'text/javascript; charset=utf-8',
+        }),
+      )
+
+      app.get('/assets/portal-invoice.js', (context) =>
+        context.body(webAssets.portalInvoiceJavascript, 200, {
           'cache-control': 'public, max-age=0, must-revalidate',
           'content-type': 'text/javascript; charset=utf-8',
         }),

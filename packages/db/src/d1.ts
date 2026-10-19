@@ -289,6 +289,25 @@ export {
   type InvoiceDefaultsPatch,
 } from './invoice-defaults.js'
 export {
+  allowViewLinkRequest,
+  createInvoiceViewLinkIssuer,
+  hashViewLinkToken,
+  invoiceViewLinkOrigin,
+  mintViewLinkToken,
+  readInvoiceViewPage,
+  readViewReceiptsEnabled,
+  readViewReceipts,
+  recordInvoiceView,
+  viewLinkExpiry,
+  type InvoiceViewLinkIssuer,
+  type InvoiceViewPage,
+} from './invoice-view-links.js'
+export {
+  createInvoiceViewService,
+  type InvoiceViewPageData,
+  type InvoiceViewService,
+} from './invoice-view-service.js'
+export {
   readTimeEntryClaim,
   releaseInvoicedTimeEntries,
   type ReleaseOutcome,
@@ -480,3 +499,6 @@ export * from './apple-lifecycle.js'
 export { createAccountRetentionReviewRepository } from './account-retention-review.js'
 export { createD1AppleWebCustodyStore } from './apple-web-custody.js'
 export { createMyPaymentsStore } from './my-payments.js'
+
+export * from './deel-time-sync.js'
+export { createClientRateCardRepository } from './client-rate-cards.js'

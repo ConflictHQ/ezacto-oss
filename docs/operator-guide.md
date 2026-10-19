@@ -26,7 +26,7 @@ Set up and operate an eZacto instance: identity, email, error reporting, account
 | Daily payment operations | [Staff payments](staff-payments.md) | The operator understands approvals, scheduling, uncertain outcomes and reconciliation |
 | Storage and recovery | [Attachment storage](attachment-storage.md), [backup and restore](../RESTORE.md) | Durable files and a recoverable database exist independently of a running process |
 
-These guides cover the OSS application. Hosted subscription billing, marketing analytics, beta admission and the hosted router have separate operators and deployment configuration. A provider name in the data model or an adapter package does not mean a deployable connection exists: for example, do not invent `DEEL_TOKEN`, PayPal or Mercury setup variables from their appearance in payment history. GitHub login exists in the API, but its credential pair is not wired through the current stock Worker deploy workflow or container config parser; enabling it needs an explicit deployment change.
+These guides cover the OSS application. Hosted subscription billing, marketing analytics, beta admission and the hosted router have separate operators and deployment configuration. A provider name in the data model or an adapter package does not mean a deployable connection exists: for example, do not invent PayPal or Mercury setup variables (`DEEL_TOKEN` and `DEEL_SYNC_START_DATE` are real, but only for the Deel time sync in [Integrations](integrations.md)) from their appearance in payment history. GitHub login exists in the API, but its credential pair is not wired through the current stock Worker deploy workflow or container config parser; enabling it needs an explicit deployment change.
 
 ## Readiness record
 

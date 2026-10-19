@@ -198,6 +198,7 @@ instance brand.
 | `email-sender` | The mailer takes the provider From value and nothing from the brand; `emailSenderName` is read only by the demo | `packages/mailer/src/index.ts` | gap |
 | `apple-disconnect` | The standalone Apple disconnect page links neither the instance stylesheet nor a mark, and names the product in its title and copy | `apps/web/src/shell/render.ts` | gap |
 | `portal-estimate-review` | The standalone page a client's contact reads and answers an estimate on (`GET /portal/estimate-review`) links neither the instance stylesheet nor a mark, and carries only the deployment name, in its title and above its heading | `apps/web/src/portal-estimates/render.ts` | gap |
+| `portal-invoice` | The standalone page a client reaches from the link in an emailed invoice (`GET /portal/invoices/:token`) links neither the instance stylesheet nor a mark, and carries only the company name, in its title and above its heading | `apps/web/src/portal-invoice/render.ts` | gap |
 | `stripe-checkout` | Branded in Stripe's dashboard; see the note above | none | external |
 | `native-apps` | Mobile themes are owned by ConflictHQ/ezacto-mobile#25 | none | none |
 

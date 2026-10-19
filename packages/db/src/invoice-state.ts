@@ -211,6 +211,14 @@ export interface ExecuteInvoiceLifecycleCommand {
       role: 'to' | 'cc'
     }>[]
   }>
+  /**
+   * The hosted-page link this send carries (issue 936): the SHA-256 of a
+   * random token, never the token. Written in the same batch as the message,
+   * so a send that did not commit leaves no link and a link never exists for
+   * an email that did not go. Not part of the command's fingerprint: a retry
+   * of the same send mints a different token, and the first one stands.
+   */
+  viewLink?: Readonly<{ tokenHash: string; expiresAt: string }>
   authorize: InvoiceCommandAuthorization
 }
 
@@ -1647,6 +1655,29 @@ const mutationStatements = (
           input.occurredAt,
         ],
       })
+    })
+  }
+  if (input.viewLink !== undefined) {
+    statements.push({
+      text: `INSERT INTO invoice_view_links (
+          invoice_message_id, invoice_id, token_hash, expires_at, created_at
+        )
+        SELECT message.id, message.invoice_id, ?, ?, ?
+        FROM invoice_messages message
+        WHERE message.id = ? AND message.invoice_id = ? AND message.event_type = 'send'
+          AND EXISTS (
+            SELECT 1 FROM invoice_command_ledger
+            WHERE invoice_id = ? AND command_id = ? AND completed = 0
+          )`,
+      params: [
+        input.viewLink.tokenHash,
+        input.viewLink.expiresAt,
+        input.occurredAt,
+        input.messageId,
+        input.invoiceId,
+        input.invoiceId,
+        input.commandId,
+      ],
     })
   }
   statements.push(completionStatement(input, events.length))

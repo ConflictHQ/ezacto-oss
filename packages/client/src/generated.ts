@@ -525,6 +525,7 @@ export type EmailLog = {
   "attempt_count": number;
   "failure_code": "queue_unavailable" | "provider_timeout" | "provider_rejected" | null;
   "failure_reason": string | null;
+  "viewed_at": string | null;
   "created_at": string;
   "updated_at": string;
 };
@@ -4217,6 +4218,7 @@ export type InvoiceDefaults = {
   "notes": string | null;
   "subject": string | null;
   "estimate_validity_days": number | null;
+  "view_receipts": boolean;
 };
 
 export type InvoiceDefaultsEnvelope = {
@@ -4230,6 +4232,7 @@ export type InvoiceDefaultsInput = {
   "notes"?: string | null;
   "subject"?: string | null;
   "estimate_validity_days"?: number | null;
+  "view_receipts"?: boolean;
 };
 
 export type InvoiceDocumentPreferenceEnvelope = {
@@ -4389,6 +4392,56 @@ export type UserEmailAcceptedEnvelope = {
 
 export type ModulePatch = {
   "enabled": boolean;
+};
+
+export type ClientRateCardLine = {
+  "task_id": number | null;
+  "amount_cents": number;
+};
+
+export type ClientRateCardVersion = {
+  "id": number;
+  "start_date": string | null;
+  "lines": Array<ClientRateCardLine>;
+  "created_at": string;
+};
+
+export type ClientRateCard = {
+  "id": number;
+  "client_id": number;
+  "name": string;
+  "created_at": string;
+  "versions": Array<ClientRateCardVersion>;
+};
+
+export type ClientRateCardInput = {
+  "name": string;
+};
+
+export type ClientRateCardVersionInput = {
+  "start_date": string | null;
+  "lines": Array<ClientRateCardLine>;
+};
+
+export type ClientRateCardEnvelope = {
+  "data": ClientRateCard;
+  "links": Links;
+};
+
+export type EffectiveClientRateCard = {
+  "client_id": number;
+  "supplied_by_client_id": number;
+  "depth": number;
+  "card_id": number;
+  "card_name": string;
+  "version_start_date": string | null;
+  "task_id": number | null;
+  "amount_cents": number;
+};
+
+export type EffectiveClientRateCardEnvelope = {
+  "data": EffectiveClientRateCard;
+  "links": Links;
 };
 
 export interface EzactoClientOptions {
@@ -7945,6 +7998,45 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<ClientHierarchyListEnvelope>("GET", "/api/v1/clients/:id/descendants".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getClientRateCard(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<ClientRateCardEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ClientRateCardEnvelope>("GET", "/api/v1/clients/:id/rate-card".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createClientRateCard(args: { "id": number; body: ClientRateCardInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<ClientRateCardEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ClientRateCardEnvelope>("POST", "/api/v1/clients/:id/rate-card".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createClientRateCardVersion(args: { "id": number; body: ClientRateCardVersionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<ClientRateCardEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ClientRateCardEnvelope>("POST", "/api/v1/clients/:id/rate-card/versions".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getClientEffectiveRateCard(args: { "id": number; query: { "task_id": number; "spent_date"?: string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<EffectiveClientRateCardEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<EffectiveClientRateCardEnvelope>("GET", "/api/v1/clients/:id/effective-rate-card".replace(":id", encodeURIComponent(String(args["id"]))), {
+      query: args.query,
       signal: args.signal,
       headers,
     });

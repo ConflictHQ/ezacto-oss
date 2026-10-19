@@ -4226,3 +4226,35 @@ export const timeOff = sqliteTable(
   },
   (table) => [index('time_off_user_dates').on(table.userId, table.startDate, table.endDate)],
 )
+
+/**
+ * A named rate card attached to one client node (issue 34). Never updated or
+ * deleted: its rates are the append-only versions below.
+ */
+export const clientRateCards = sqliteTable('client_rate_cards', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  clientId: integer('client_id')
+    .notNull()
+    .unique()
+    .references(() => clients.id, { onDelete: 'restrict' }),
+  name: text('name').notNull(),
+  ...timestamps,
+})
+
+export const clientRateCardVersions = sqliteTable(
+  'client_rate_card_versions',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    cardId: integer('card_id')
+      .notNull()
+      .references(() => clientRateCards.id, { onDelete: 'restrict' }),
+    startDate: text('start_date'),
+    /** JSON array of {task_id: number | null, amount_cents: number}. */
+    lines: text('lines').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('client_rate_card_versions_card_start_unique').on(table.cardId, table.startDate),
+    index('client_rate_card_versions_card').on(table.cardId),
+  ],
+)

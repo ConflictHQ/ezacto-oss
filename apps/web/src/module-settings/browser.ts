@@ -431,6 +431,7 @@ export const createModuleSettingsController = (
   const invoiceDefaultsEstimateDays = required<HTMLInputElement>(
     '[data-invoice-defaults-estimate-days]',
   )
+  const invoiceDefaultsViewReceipts = required<HTMLInputElement>('[data-invoice-defaults-view-receipts]')
   const invoiceDefaultsSubmit = required<HTMLButtonElement>('[data-invoice-defaults-submit]')
   const invoiceDefaultsResult = required<HTMLElement>('[data-invoice-defaults-result]')
   // The public demo (issue 931). The company information and default values
@@ -448,6 +449,7 @@ export const createModuleSettingsController = (
     invoiceDefaultsSubject,
     invoiceDefaultsNotes,
     invoiceDefaultsEstimateDays,
+    invoiceDefaultsViewReceipts,
   ]) {
     field.disabled = demo
   }
@@ -648,6 +650,7 @@ export const createModuleSettingsController = (
     invoiceDefaultsNotes.value = defaults.notes ?? ''
     invoiceDefaultsEstimateDays.value =
       defaults.estimate_validity_days === null ? '' : String(defaults.estimate_validity_days)
+    invoiceDefaultsViewReceipts.checked = defaults.view_receipts === true
   }
 
   invoiceDefaultsForm.addEventListener('submit', async (event) => {
@@ -693,6 +696,7 @@ export const createModuleSettingsController = (
             subject: text(invoiceDefaultsSubject.value),
             notes: text(invoiceDefaultsNotes.value),
             estimate_validity_days: estimateDays === '' ? null : Number(estimateDays),
+            view_receipts: invoiceDefaultsViewReceipts.checked,
           },
           active.signal,
         )

@@ -27,6 +27,7 @@ import {
   createGeneralResourceRepository,
   createMoneyResourceRepository,
   listClientAncestors,
+  createClientRateCardRepository,
   listClientDescendants,
   createInvoiceGenerationService,
   createReportRepository,
@@ -73,6 +74,7 @@ import {
   createBillMirrorSource,
   createPayoutAccountStore,
   createWiseDeliveryStore,
+  createDeelSyncStore,
   createStripeLinkStore,
   readAttachPreference,
   readFilesPreference,
@@ -110,6 +112,10 @@ import {
   createReminderSettings,
   readInvoiceDefaults,
   updateInvoiceDefaults,
+  createInvoiceViewLinkIssuer,
+  createInvoiceViewService,
+  invoiceViewLinkOrigin,
+  readViewReceipts,
   readThankYouPreference,
   readOrganizationThankYouPolicy,
   setInvoiceThankYouPolicy,
@@ -179,6 +185,7 @@ import {
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
   createWiseRuntime,
+  createDeelSyncRuntime,
 } from "@ezacto/integrations";
 import {
   createCloudflareEmailQueue,
@@ -608,6 +615,8 @@ type ProviderCredentials = Pick<
   | "BILL_REPLY_TO_USER_ID"
   | "STRIPE_API_KEY"
   | "STRIPE_WEBHOOK_SECRET"
+  | "DEEL_TOKEN"
+  | "DEEL_SYNC_START_DATE"
 >;
 
 /**
@@ -1110,6 +1119,7 @@ export const createRuntimeServices = async (
       descendants: (clientId) => listClientDescendants(drizzle, clientId),
     },
     team: createTeamRepository(drizzle),
+    clientRateCards: createClientRateCardRepository(drizzle),
     moneyResources,
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     recurringInvoices: createRecurringInvoiceEngine(drizzle),
@@ -1432,6 +1442,33 @@ export const createRuntimeServices = async (
         countInvoicePreviewsSince(drizzle, invoiceId, since),
     },
     ...(invoiceDocuments === undefined ? {} : { invoiceDocuments }),
+    // The hosted invoice page and its receipts (issue 936). The page is always
+    // mounted -- a link only exists once a send minted one -- and the link is
+    // minted only where there is a configured origin to point it at.
+    invoiceView: createInvoiceViewService({
+      database: drizzle,
+      paymentUrl: invoicePaymentUrlForMail({ bill, stripe }),
+      ...(env.ATTACHMENTS === undefined
+        ? {}
+        : {
+            readDocument: async (key: string) => {
+              const object = await createR2AttachmentObjectStore(env.ATTACHMENTS!).get(key);
+              return object === null
+                ? null
+                : new Uint8Array(await new Response(object.body).arrayBuffer());
+            },
+          }),
+    }),
+    ...(invoiceViewLinkOrigin(env.APP_BASE_URL) === null
+      ? {}
+      : {
+          invoiceViewLinks: createInvoiceViewLinkIssuer(
+            drizzle,
+            invoiceViewLinkOrigin(env.APP_BASE_URL)!,
+          ),
+        }),
+    invoiceViewReceipts: (invoiceMessageIds: readonly number[]) =>
+      readViewReceipts(drizzle, invoiceMessageIds),
     // The same journal as a download (647), from the same store the email
     // reads, so the file an operator checks is the file a client is sent.
     invoiceHoursReport: {
@@ -1465,6 +1502,18 @@ export const createRuntimeServices = async (
       },
     },
     bill,
+    // Always composed; it reports itself unconfigured, and does nothing, until
+    // the deployment carries both a token and a start date. Never on the demo,
+    // whose `credentials` are empty.
+    deelSync: createDeelSyncRuntime({
+      config: {
+        token: credentials.DEEL_TOKEN,
+        startDate: credentials.DEEL_SYNC_START_DATE,
+      },
+      source: createDeelSyncStore(drizzle),
+      fetch: (request: Request) => fetch(request),
+      now: () => new Date(),
+    }),
     billDelivery: {
       isOptedIn: (clientId: number) =>
         createBillMirrorSource(drizzle, () => new Date()).isOptedIn(clientId),

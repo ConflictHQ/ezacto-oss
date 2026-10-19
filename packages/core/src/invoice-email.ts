@@ -431,6 +431,13 @@ export const composeInvoiceEmail = (
     subjectTemplate: string;
     messageTemplate: string;
     paymentUrl: string | null;
+    /**
+     * The hosted invoice page the "View invoice" line points at (issue 936),
+     * where the company has turned view receipts on. Absent, the line points
+     * at the payment page exactly as it always did. `%invoice_payment_url%`
+     * is the payment page either way.
+     */
+    viewUrl?: string | null;
     pdfAttached: boolean;
     /** The instant the message is composed to go, which `%send_weekday%` reads. */
     sentAt: string;
@@ -444,7 +451,7 @@ export const composeInvoiceEmail = (
     text: invoiceEmailBody({
       message,
       invoice: input.invoice,
-      viewUrl: input.paymentUrl,
+      viewUrl: input.viewUrl ?? input.paymentUrl,
       pdfAttached: input.pdfAttached,
     }),
   };

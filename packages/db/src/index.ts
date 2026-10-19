@@ -54,6 +54,8 @@ export * from './checkout-payments.js'
 export * from './invoice-extras.js'
 export * from './reminder-preference.js'
 export * from './invoice-defaults.js'
+export * from './invoice-view-links.js'
+export * from './invoice-view-service.js'
 export * from './automatic-thank-you.js'
 export * from './thank-you-port.js'
 export * from './reminder-port.js'
@@ -129,3 +131,6 @@ export {
   type ActivityRollRefusal,
 } from './activity-partitions.js'
 export { createMyPaymentsStore } from './my-payments.js'
+
+export * from './deel-time-sync.js'
+export * from './client-rate-cards.js'

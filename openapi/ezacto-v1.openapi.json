@@ -27794,6 +27794,322 @@
           }
         ]
       }
+    },
+    "/api/v1/clients/{id}/rate-card": {
+      "get": {
+        "operationId": "getClientRateCard",
+        "summary": "Get the rate card attached to a client",
+        "description": "The card attached directly to this client, with every version, oldest first; inheritance is not applied (use the effective lookup for that). 404 `rate_card_not_found` when the client has no card. Billable rates are money: only the profiles that may see billable rates (administrator, accounting, executive manager, and a project manager granted `billable_rates_manager`) read a card, and everyone else is 403 `money_forbidden`.",
+        "tags": [
+          "client-rate-cards"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientRateCardEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/clients/:id/rate-card",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "createClientRateCard",
+        "summary": "Attach a named rate card to a client",
+        "description": "A client has at most one card (409 `rate_card_exists`); change its rates by adding a version. The card starts with no versions and prices nothing until one is added. Same visibility rule as reading, and the caller must also be allowed to write clients.",
+        "tags": [
+          "client-rate-cards"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientRateCardEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/clients/:id/rate-card",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientRateCardInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/clients/{id}/rate-card/versions": {
+      "post": {
+        "operationId": "createClientRateCardVersion",
+        "summary": "Append a version to a client's rate card",
+        "description": "Versions are append-only and effective-dated: the version in force on a date is the one with the latest `start_date` on or before it, and a null `start_date` means all prior dates. A new version must start after every existing one (409 `rate_card_version_order`); a correction is simply a later version. A line with a null `task_id` is the card default; a task line wins for that task. An empty `lines` array retires the card, so it is skipped and the next ancestor's card applies. Adding a version prices work resolved afterwards; it never changes an existing entry, snapshot or invoice, and existing entries change only through the audited reprice.",
+        "tags": [
+          "client-rate-cards"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientRateCardEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/clients/:id/rate-card/versions",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientRateCardVersionInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/clients/{id}/effective-rate-card": {
+      "get": {
+        "operationId": "getClientEffectiveRateCard",
+        "summary": "Look up the card rate that prices a task for a client",
+        "description": "Walks the client and its ancestors through `parent_client_id` only (never the bill-to client), nearest first, with the same rules the rate resolver uses: a card with no version in force, an empty version, or no line for the task and no default line is skipped. `supplied_by_client_id` is the node whose card priced it and `depth` how far up that node sits (0 is the client itself). The card prices only projects billed by people that use default rates. `spent_date` defaults to today in the instance time zone. 404 `rate_card_not_found` when no card prices it.",
+        "tags": [
+          "client-rate-cards"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveClientRateCardEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/clients/:id/effective-rate-card",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "spent_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -30352,6 +30668,7 @@
           "attempt_count",
           "failure_code",
           "failure_reason",
+          "viewed_at",
           "created_at",
           "updated_at"
         ],
@@ -30490,6 +30807,17 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "viewed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -49004,7 +49332,8 @@
           "company_address",
           "notes",
           "subject",
-          "estimate_validity_days"
+          "estimate_validity_days",
+          "view_receipts"
         ],
         "properties": {
           "company_name": {
@@ -49051,6 +49380,9 @@
                 "type": "null"
               }
             ]
+          },
+          "view_receipts": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -49124,6 +49456,9 @@
                 "type": "null"
               }
             ]
+          },
+          "view_receipts": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -49810,6 +50145,242 @@
         "properties": {
           "enabled": {
             "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientRateCardLine": {
+        "type": "object",
+        "required": [
+          "task_id",
+          "amount_cents"
+        ],
+        "properties": {
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The task this rate is for; null is the card default."
+          },
+          "amount_cents": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000000,
+            "description": "Hourly rate in integer cents."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientRateCardVersion": {
+        "type": "object",
+        "required": [
+          "id",
+          "start_date",
+          "lines",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "start_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "First day this version is in force; null means all prior dates."
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientRateCardLine"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientRateCard": {
+        "type": "object",
+        "required": [
+          "id",
+          "client_id",
+          "name",
+          "created_at",
+          "versions"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientRateCardVersion"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientRateCardInput": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientRateCardVersionInput": {
+        "type": "object",
+        "required": [
+          "start_date",
+          "lines"
+        ],
+        "properties": {
+          "start_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lines": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/ClientRateCardLine"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientRateCardEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ClientRateCard"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EffectiveClientRateCard": {
+        "type": "object",
+        "required": [
+          "client_id",
+          "supplied_by_client_id",
+          "depth",
+          "card_id",
+          "card_name",
+          "version_start_date",
+          "task_id",
+          "amount_cents"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "supplied_by_client_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "card_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "card_name": {
+            "type": "string"
+          },
+          "version_start_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The matching line's task; null when the card default priced it."
+          },
+          "amount_cents": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "EffectiveClientRateCardEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/EffectiveClientRateCard"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
           }
         },
         "additionalProperties": false

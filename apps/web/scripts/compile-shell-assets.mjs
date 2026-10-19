@@ -28,6 +28,7 @@ const bundleEntry = async (...entry) => {
 }
 const javascript = await bundleEntry('shell', 'browser-entry.ts')
 const portalEstimatesJavascript = await bundleEntry('portal-estimates', 'browser-entry.ts')
+const portalInvoiceJavascript = await bundleEntry('portal-invoice', 'browser-entry.ts')
 
 const [themeCss, providerCss, shellCss] = await Promise.all([
   readFile(resolve(root, 'generated', 'themes.css'), 'utf8'),
@@ -44,6 +45,7 @@ const output = [
   `export const shellStylesheet = ${JSON.stringify(stylesheet)}`,
   `export const shellJavascript = ${JSON.stringify(javascript.trim())}`,
   `export const portalEstimatesJavascript = ${JSON.stringify(portalEstimatesJavascript.trim())}`,
+  `export const portalInvoiceJavascript = ${JSON.stringify(portalInvoiceJavascript.trim())}`,
   '',
 ].join('\n')
 
