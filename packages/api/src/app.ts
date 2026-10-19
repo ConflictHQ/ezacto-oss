@@ -5,7 +5,7 @@ import {
   installTwoFactorRoutes,
 } from './auth.js'
 import type { ApiContext, CreateApiAppOptions } from './context.js'
-import { errorResponse, notFoundResponse } from './errors.js'
+import { ApiError, errorResponse, notFoundResponse } from './errors.js'
 
 export const createApiApp = <Bindings extends object = object>(
   options: CreateApiAppOptions<Bindings> = {},
@@ -44,6 +44,21 @@ export const createApiApp = <Bindings extends object = object>(
     return next()
   })
 
+  // The shim speaks Harvest's credential: `Authorization: Bearer <token>`, where
+  // the token is one of ours. A cookie never reaches it, so a browser holding a
+  // session cannot be made to read the shim by a third-party page.
+  app.use('/harvest/v2/*', async (context, next) => {
+    if (context.req.header('authorization') === undefined) {
+      context.header('www-authenticate', 'Bearer realm="ezacto"')
+      throw new ApiError({
+        status: 401,
+        code: 'authentication_required',
+        message: 'A valid API token is required.',
+      })
+    }
+    await authenticateApi(context, next)
+    context.header('cache-control', 'no-store')
+  })
   app.onError((error, context) => errorResponse(error, context, options.reportError))
   app.notFound((context) => notFoundResponse(context))
   options.installApp?.(app)
@@ -95,6 +110,11 @@ export const createApiApp = <Bindings extends object = object>(
   }
   options.installApi?.(api)
   app.route('/api/v1', api)
+  if (options.installHarvestV2 !== undefined) {
+    const harvest = new Hono<ApiContext<Bindings>>()
+    options.installHarvestV2(harvest)
+    app.route('/harvest/v2', harvest)
+  }
 
   return app
 }

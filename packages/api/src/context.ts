@@ -34,6 +34,11 @@ export interface CreateApiAppOptions<Bindings extends object> {
   /** Canonical resource routes mounted below `/api/v1`. */
   installApi?: ApiInstaller<Bindings>
   /**
+   * The Harvest v2 compatibility shim, mounted below `/harvest/v2`. It is
+   * reached with an API token as a bearer credential and never with a session.
+   */
+  installHarvestV2?: ApiInstaller<Bindings>
+  /**
    * Told about every error the app answers with a 5xx (issue 807). The app
    * handles the exception itself, so a crash reporter wrapped around the entry
    * never sees it; this is how the Worker hands it to Sentry. Never given the

@@ -46,6 +46,7 @@ import {
   installEmailLogRoutes,
   installEmailConfigurationRoutes,
   installGeneralResourceRoutes,
+  installHarvestV2Routes,
   installMagicLinkRoutes,
   installModuleSettingsRoutes,
   installAppleRoutes,
@@ -957,6 +958,12 @@ export const createApp = (
                 request.headers.get('cf-connecting-ip') ?? 'unknown-client',
             })
           },
+          installHarvestV2: (harvest) =>
+            installHarvestV2Routes(harvest, {
+              repository: services.generalResources,
+              isTeamModuleEnabled: services.isTeamModuleEnabled,
+              clock: () => systemClock.now().instant,
+            }),
         }),
     installApp(app) {
       // What the public demo refuses (#931): ahead of every route, and after
@@ -2199,7 +2206,12 @@ export const createApp = (
       // would have got had the path existed.
       app.notFound(async (context) => {
         const path = context.req.path
-        if (path === '/api/v1' || path.startsWith('/api/v1/')) {
+        if (
+          path === '/api/v1' ||
+          path.startsWith('/api/v1/') ||
+          path === '/harvest/v2' ||
+          path.startsWith('/harvest/v2/')
+        ) {
           return notFoundResponse(context)
         }
         return context.html(
