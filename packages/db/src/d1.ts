@@ -394,6 +394,14 @@ export {
   type InstanceOwnerPasswordResult,
 } from './instance-bootstrap.js'
 export {
+  BackupArchiveError,
+  getBackupRun,
+  openBackupArchive,
+  r2BackupSource,
+  type BackupArchiveErrorCode,
+  type BackupObjectSource,
+} from './backup-archive.js'
+export {
   EPHEMERAL_TABLES,
   backupTables,
   BUNDLE_VERSION,
