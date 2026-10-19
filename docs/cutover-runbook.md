@@ -704,6 +704,7 @@ is the last thing you set before dispatching.
 | `MAGIC_LINK_SIGNING_KEY` | secret | only for the client portal | the portal routes are not served, so every magic link a client is sent answers 404 |
 | `OIDC_GOOGLE_CLIENT_ID` / `_SECRET` | secrets | pair | no Google sign-in; a half-pair fails the deploy |
 | `MAILGUN_API_KEY` + `MAILGUN_DOMAIN` | secret + variable | for mail | no outbound mail; configuring SES as well fails the deploy |
+| `MAILGUN_WEBHOOK_SIGNING_KEY` | secret | for bounce and complaint tracking | `/webhooks/mailgun` is not mounted (404), so bounces and complaints never reach the message log |
 
 `OIDC_REDIRECT_ORIGIN` fails the deploy rather than the worker, which is the
 better of the two failures but still a failure at the end of the night. It is an

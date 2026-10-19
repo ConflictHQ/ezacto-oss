@@ -89,6 +89,7 @@ export {
   type InvoiceBandClaim,
   type InvoiceGenerationService,
 } from './invoice-generation.js'
+export { createD1EmailFeedbackLedger } from './email-feedback-events.js'
 export {
   createD1EmailLogStore,
   type EmailLogStoreOptions,

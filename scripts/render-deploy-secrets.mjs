@@ -199,6 +199,9 @@ export const deploySecretPayload = (environment) => {
     AWS_SECRET_ACCESS_KEY: secretAccessKey,
     AWS_SESSION_TOKEN: sessionToken,
     MAILGUN_API_KEY: mailgunApiKey,
+    // Mailgun's HTTP webhook signing key. Without it /webhooks/mailgun is not
+    // mounted, so bounce and complaint events are never recorded.
+    MAILGUN_WEBHOOK_SIGNING_KEY: optionalCredential(environment.MAILGUN_WEBHOOK_SIGNING_KEY),
     QUICKBOOKS_CLIENT_ID: quickBooksClientId,
     QUICKBOOKS_CLIENT_SECRET: quickBooksClientSecret,
     QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN: optionalCredential(

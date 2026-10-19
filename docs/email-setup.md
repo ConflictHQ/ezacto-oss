@@ -10,7 +10,9 @@ Email carries sign-in links, password recovery and application messages. Verify 
 4. Set GitHub environment variables `SES_REGION`, `SES_FROM` and, if used, `SES_CONFIGURATION_SET`. The first four required values are the access key, secret key, region and sender; a partial SES configuration is rejected.
 5. Deploy through CI. Confirm queue/scheduler bindings and an approved organization sender, then send one controlled message to an operator-owned inbox. Check actual inbox receipt and provider delivery/bounce evidence as well as application queue state.
 
-The Worker also supports Mailgun: `MAILGUN_API_KEY` is a secret, with `MAILGUN_DOMAIN`, `MAILGUN_REGION` and `MAIL_FROM` as deployment variables. Configure exactly one Worker transport. The secret renderer rejects simultaneous SES and Mailgun configuration; it does not select a provider silently.
+The Worker also supports Mailgun: `MAILGUN_API_KEY` is a secret, with `MAILGUN_DOMAIN`, `MAILGUN_REGION` and `MAIL_FROM` as deployment variables. Configure exactly one Worker transport.
+
+**Bounce and complaint feedback (Mailgun).** Set `MAILGUN_WEBHOOK_SIGNING_KEY` to the HTTP webhook signing key from Mailgun's Webhooks page (not the API key), then add `<APP_BASE_URL>/webhooks/mailgun` for the `delivered`, `permanent_fail` and `complained` events. Without the key the route is not mounted and answers 404. Each post is checked against its HMAC signature, must carry a timestamp within 15 minutes, and its token can be used once. A permanent failure moves a sent message to `bounced`, a complaint to `complained`, and both show in the per-identity rates on `/email-health`; an event for a message we did not send, or for an address it was not addressed to, is recorded and ignored. Every verified event is kept in `email_feedback_events`. Mailgun retries a 401 or 503 for about eight hours, so a key fixed within that window loses nothing. The secret renderer rejects simultaneous SES and Mailgun configuration; it does not select a provider silently.
 
 ## Container: SMTP
 
