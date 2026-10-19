@@ -61,6 +61,13 @@ export interface TeamDirectoryApi {
     signal?: AbortSignal,
   ): Promise<{ readonly name: string | null }>
   removeWisePayoutDestination?(userId: number, signal?: AbortSignal): Promise<void>
+  /**
+   * Whether a person gets a sign-in code by email (issue 770), and an
+   * administrator's way to turn it off for someone who lost their mailbox.
+   * Optional for the same reason as the payout pair.
+   */
+  getUserEmailFactor?(userId: number, signal?: AbortSignal): Promise<boolean>
+  disableUserEmailFactor?(userId: number, signal?: AbortSignal): Promise<void>
   getTeamCatalog(signal?: AbortSignal): Promise<TeamCatalog>
   createTeamPerson(
     input: TeamPersonCreate,

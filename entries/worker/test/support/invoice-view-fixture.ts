@@ -215,7 +215,14 @@ export const invoicePageSuite = (
       }
       expect(statuses).toContain(429)
       expect(statuses.filter((status) => status === 404).length).toBeGreaterThan(0)
-      const refused = await runtime.request(`/portal/invoices/${runtime.token}`, forwarded('192.0.2.77'))
+      // The allowance is per clock minute, and on a loaded runner the loop above
+      // can straddle the turn of one: the request right after it may open a fresh
+      // window and be answered 200. Keep asking until the caller is refused again
+      // (a whole window's worth is more than enough), then assert on that refusal.
+      let refused = await runtime.request(`/portal/invoices/${runtime.token}`, forwarded('192.0.2.77'))
+      for (let request = 0; refused.status !== 429 && request < 70; request += 1) {
+        refused = await runtime.request(`/portal/invoices/${runtime.token}`, forwarded('192.0.2.77'))
+      }
       expect(refused.status).toBe(429)
       expect(refused.headers.get('retry-after')).toBe('60')
       // Somebody else is unaffected.

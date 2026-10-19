@@ -4362,6 +4362,15 @@ export type TwoFactorEmailCodeInput = {
   "challenge"?: string;
 };
 
+export type TwoFactorEmailState = {
+  "user_id": number;
+  "email_enabled": boolean;
+};
+
+export type TwoFactorEmailStateEnvelope = {
+  "data": TwoFactorEmailState;
+};
+
 export type TwoFactorEmailDisabled = {
   "user_id": number;
   "email_enabled": false;
@@ -7875,6 +7884,15 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<TwoFactorStatusEnvelope>("DELETE", "/api/v1/two-factor/email", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getUserTwoFactorEmail(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<TwoFactorEmailStateEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TwoFactorEmailStateEnvelope>("GET", "/api/v1/users/:id/two-factor/email".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });

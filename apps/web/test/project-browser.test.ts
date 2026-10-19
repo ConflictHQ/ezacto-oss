@@ -748,6 +748,39 @@ describe('Projects V1 browser controller', () => {
       'No projects match these filters.',
     )
   })
+  it('[browser #852] sorts projects by a header inside their client bands, money by size', async () => {
+    writeDocument('project-list', '/projects')
+    const small: GeneralResource = { ...project, id: 8, name: 'Alpha', code: null, budget_seconds: 3_600 }
+    const big: GeneralResource = { ...project, id: 9, name: 'Zulu', code: null, budget_seconds: 72_000 }
+    const controller = createProjectDirectoryController({
+      listDirectoryProjects: vi.fn(async () => page([big, small])),
+      listProjectClients: vi.fn(async () => page([client])),
+    })
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+
+    const names = (): string[] =>
+      [...document.querySelectorAll('[data-project-list] tbody tr[data-row] td[data-column="name"]')].map(
+        (cell) => cell.textContent ?? '',
+      )
+    const header = (column: string): HTMLButtonElement =>
+      document.querySelector<HTMLButtonElement>(
+        `[data-project-list] thead button[data-sort-column="${column}"]`,
+      )!
+    // The list arrives by name inside the client's band, and says so.
+    expect(names()).toEqual(['Alpha', 'Zulu'])
+    expect(
+      document.querySelector('[data-project-list] thead th[data-column="name"]')?.getAttribute('aria-sort'),
+    ).toBe('ascending')
+
+    header('budget').click()
+    expect(names()).toEqual(['Alpha', 'Zulu'])
+    header('budget').click()
+    expect(names()).toEqual(['Zulu', 'Alpha'])
+    expect(
+      document.querySelector('[data-project-list] thead th[data-column="budget"]')?.getAttribute('aria-sort'),
+    ).toBe('descending')
+  })
+
   it('[browser] keeps the Costs column when a viewer can see cost', async () => {
     writeDocument('project-list', '/projects')
     const controller = createProjectDirectoryController({

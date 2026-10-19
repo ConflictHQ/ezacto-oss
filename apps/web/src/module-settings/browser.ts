@@ -916,16 +916,28 @@ export const createModuleSettingsController = (
   const senderTable = (identities: readonly SenderIdentity[]): HTMLElement =>
     renderDataTable<SenderIdentity>({
       caption: 'Sender identities',
+      table: 'settings-senders',
       rows: identities,
       rowKey: (identity) => String(identity.id),
       empty: 'No sender identity is configured, so nothing this instance sends has a from address.',
       columns: [
-        { key: 'email', label: 'Sends as', render: (identity) => identity.email },
-        { key: 'display_name', label: 'Display name', render: (identity) => identity.display_name },
-        { key: 'provider', label: 'Transport', render: (identity) => identity.provider },
+        { key: 'email', label: 'Sends as', sortValue: (identity) => identity.email, render: (identity) => identity.email },
+        {
+          key: 'display_name',
+          label: 'Display name',
+          sortValue: (identity) => identity.display_name,
+          render: (identity) => identity.display_name,
+        },
+        {
+          key: 'provider',
+          label: 'Transport',
+          sortValue: (identity) => identity.provider,
+          render: (identity) => identity.provider,
+        },
         {
           key: 'verification',
           label: 'Verification',
+          sortValue: (identity) => senderVerificationLabel(identity),
           render: (identity) => senderVerificationLabel(identity),
         },
         {
@@ -957,6 +969,7 @@ export const createModuleSettingsController = (
     ssoDomains.replaceChildren(
       renderDataTable<SsoDomain>({
         caption: 'SSO provisioning domains',
+        table: 'settings-sso-domains',
         rows: ssoState,
         rowKey: (domain) => String(domain.id),
         empty:
@@ -965,12 +978,25 @@ export const createModuleSettingsController = (
         // is what an operator copies into a zone file, so it takes the rest and
         // wraps rather than ending in an ellipsis on a narrow window.
         columns: [
-          { key: 'domain', label: 'Domain', fit: true, render: (domain) => domain.domain },
-          { key: 'status', label: 'Status', fit: true, render: (domain) => ssoDomainStatus(domain) },
+          {
+            key: 'domain',
+            label: 'Domain',
+            fit: true,
+            sortValue: (domain) => domain.domain,
+            render: (domain) => domain.domain,
+          },
+          {
+            key: 'status',
+            label: 'Status',
+            fit: true,
+            sortValue: (domain) => ssoDomainStatus(domain),
+            render: (domain) => ssoDomainStatus(domain),
+          },
           {
             key: 'checked',
             label: 'Last checked',
             fit: true,
+            sortValue: (domain) => domain.last_checked_at,
             render: (domain) => ssoLastCheckedLabel(domain),
           },
           { key: 'record', label: 'DNS record', wrap: true, render: (domain) => ssoRecordCell(domain) },
@@ -1515,6 +1541,7 @@ export const createModuleSettingsController = (
   const backupRunTable = (runs: readonly BackupRun[]): HTMLElement =>
     renderDataTable<BackupRun>({
       caption: 'Recent backup runs',
+      table: 'settings-backup-runs',
       rows: runs,
       rowKey: (run) => String(run.id),
       empty: 'No backup has run yet.',
@@ -1522,16 +1549,18 @@ export const createModuleSettingsController = (
         {
           key: 'started',
           label: `Started (${backupZone})`,
+          sortValue: (run) => run.started_at,
           // In the organization's timezone, to the minute, like the other logs.
           render: (run) =>
             Number.isNaN(Date.parse(run.started_at))
               ? run.started_at
               : `${dateInTimeZone(run.started_at, backupZone)} ${timeInTimeZone(run.started_at, backupZone)}`,
         },
-        { key: 'trigger', label: 'Trigger', render: (run) => run.trigger },
+        { key: 'trigger', label: 'Trigger', sortValue: (run) => run.trigger, render: (run) => run.trigger },
         {
           key: 'status',
           label: 'Result',
+          sortValue: (run) => run.status,
           render: (run) => {
             const pill = document.createElement('span')
             pill.className = 'invoice-state'
@@ -1544,6 +1573,7 @@ export const createModuleSettingsController = (
           key: 'rows',
           label: 'Rows',
           numeric: true,
+          sortValue: (run) => run.total_rows,
           render: (run) =>
             run.total_rows === null ? '—' : run.total_rows.toLocaleString('en-US'),
         },
@@ -1551,6 +1581,7 @@ export const createModuleSettingsController = (
           key: 'tables',
           label: 'Tables',
           numeric: true,
+          sortValue: (run) => run.table_count,
           render: (run) => (run.table_count === null ? '—' : String(run.table_count)),
         },
         // The reason it failed, where there is one. A failed run whose message

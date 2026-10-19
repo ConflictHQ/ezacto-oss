@@ -802,18 +802,34 @@ export const installTwoFactorRoutes = <Bindings extends object>(
     return statusResponse(context, principal.userId)
   })
 
-  // Lockout recovery for someone who lost their mailbox: an administrator can
-  // turn a user's emailed factor off. Audited, and the audit names whose
-  // factor it was and who turned it off.
-  api.delete('/users/:id/two-factor/email', async (context) => {
+  const requireAdministrator = (context: Context<ApiContext<Bindings>>) => {
     const principal = requireSessionPrincipal(context)
     if (principal.profile !== 'administrator') {
       throw new ApiError({
         status: 403,
         code: 'profile_forbidden',
-        message: "Only administrators can turn off another user's emailed second factor.",
+        message: "Only administrators can manage another user's emailed second factor.",
       })
     }
+    return principal
+  }
+
+  // What the administrator screen shows before it offers to turn the factor off.
+  api.get('/users/:id/two-factor/email', async (context) => {
+    requireAdministrator(context)
+    const userId = resourceId(context.req.param('id'), 'user')
+    return context.json(
+      { data: { user_id: userId, email_enabled: await service.isEmailFactorEnabled(userId) } },
+      200,
+      noStore,
+    )
+  })
+
+  // Lockout recovery for someone who lost their mailbox: an administrator can
+  // turn a user's emailed factor off. Audited, and the audit names whose
+  // factor it was and who turned it off.
+  api.delete('/users/:id/two-factor/email', async (context) => {
+    requireAdministrator(context)
     const userId = resourceId(context.req.param('id'), 'user')
     if (!(await service.disableEmailFactor(userId))) {
       throw new ApiError({
