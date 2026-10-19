@@ -119,5 +119,13 @@ export * from './apple-lifecycle.js'
 
 export { createAccountRetentionReviewRepository } from './account-retention-review.js'
 export * from './apple-web-custody.js'
-export { activityRollStatements } from './activity-partitions.js'
+export {
+  activityRollStatements,
+  ActivityRollError,
+  rollActivityLog,
+  createActivityRoll,
+  rollableActivityYears,
+  type ActivityRollInput,
+  type ActivityRollRefusal,
+} from './activity-partitions.js'
 export { createMyPaymentsStore } from './my-payments.js'

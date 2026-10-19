@@ -66,6 +66,7 @@ import {
   createRecurringInvoiceEngine,
   createD1ReminderScheduler,
   captureActivityEvent,
+  createActivityRoll,
   createTwoFactorService,
   deriveTwoFactorEmailCodeKey,
   createBillLinkStore,
@@ -1159,6 +1160,7 @@ export const createRuntimeServices = async (
         await captureActivityEvent(drizzle, request);
       },
     },
+    activityRoll: createActivityRoll(drizzle, () => new Date().toISOString()),
     trackedResources,
     calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
     allocations: new DrizzleAllocationRepository(drizzle),

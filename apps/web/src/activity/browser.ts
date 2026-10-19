@@ -40,6 +40,15 @@ export interface ActivityApi {
   ): Promise<{ readonly blob: Blob; readonly filename: string; readonly truncated: boolean }>
   /** The people the actor picker offers. Absent where the build cannot list them. */
   listActors?(signal?: AbortSignal): Promise<readonly { readonly id: number; readonly name: string }[]>
+  /**
+   * Finished years the live log still holds (issue 8). Absent where the build
+   * cannot roll, which leaves the section hidden.
+   */
+  listRollableYears?(
+    signal?: AbortSignal,
+  ): Promise<readonly { readonly year: number; readonly entries: number }[]>
+  /** Rolls one finished year into its archive table. Administrators only. */
+  rollActivityYear?(year: number, signal?: AbortSignal): Promise<void>
 }
 
 export interface ActivityViewer {
@@ -176,6 +185,8 @@ export const createActivityController = (api: ActivityApi): ActivityController =
   const clear = required<HTMLButtonElement>('[data-activity-clear]')
   const exportButton = required<HTMLButtonElement>('[data-activity-export]')
   const more = required<HTMLButtonElement>('[data-activity-more]')
+  const rollSection = required<HTMLElement>('[data-activity-roll]')
+  const rollYears = required<HTMLElement>('[data-activity-roll-years]')
   const controls = [from, to, type, actor, entity, entityId, clear, exportButton, more]
   exportButton.hidden = api.exportActivityLog === undefined
 
@@ -255,6 +266,62 @@ export const createActivityController = (api: ActivityApi): ActivityController =
     } catch {
       // The picker stays at "Anyone"; the log itself is unaffected.
       actorsLoaded = false
+    }
+  }
+
+  /**
+   * The operator roll is offered, not scheduled (issue 8): it appears when the
+   * live log holds a finished year, to an administrator, and nowhere else. The
+   * server refuses anyone else; this only declines to show a button that would
+   * fail.
+   */
+  const loadRollable = async (signal: AbortSignal): Promise<void> => {
+    rollSection.hidden = true
+    rollYears.replaceChildren()
+    if (!viewer.administrator || api.listRollableYears === undefined) return
+    let years: readonly { readonly year: number; readonly entries: number }[]
+    try {
+      years = await api.listRollableYears(signal)
+    } catch {
+      // A prompt that cannot be drawn leaves the log itself unaffected.
+      return
+    }
+    if (signal.aborted || years.length === 0) return
+    rollYears.replaceChildren(
+      ...years.map(({ year, entries }) => {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.dataset.activityRollYear = String(year)
+        button.textContent = `Archive ${year} (${entries} ${entries === 1 ? 'entry' : 'entries'})`
+        button.addEventListener('click', () => void roll(year, entries, button))
+        return button
+      }),
+    )
+    rollSection.hidden = false
+  }
+
+  const roll = async (year: number, entries: number, button: HTMLButtonElement): Promise<void> => {
+    const signal = active
+    const rollYear = api.rollActivityYear
+    if (signal === null || rollYear === undefined) return
+    if (
+      !globalThis.confirm(
+        `Move ${entries} ${entries === 1 ? 'entry' : 'entries'} to the ${year} archive? Nothing is deleted, and this cannot be undone.`,
+      )
+    ) {
+      return
+    }
+    button.disabled = true
+    status.textContent = `Archiving ${year}…`
+    try {
+      await rollYear(year, signal)
+      if (signal.aborted) return
+      await Promise.all([load(), loadRollable(signal)])
+      status.textContent = `${year} archived. ${status.textContent ?? ''}`.trim()
+    } catch (error) {
+      if (signal.aborted) return
+      button.disabled = false
+      status.textContent = error instanceof Error ? error.message : `${year} could not be archived.`
     }
   }
 
@@ -343,7 +410,7 @@ export const createActivityController = (api: ActivityApi): ActivityController =
       active = signal
       viewer = presentedViewer ?? { administrator: false }
       if (page.hidden) return
-      await Promise.all([load(), loadActors(signal)])
+      await Promise.all([load(), loadActors(signal), loadRollable(signal)])
     },
   }
 }

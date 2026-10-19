@@ -123,6 +123,7 @@ import {
   type EmailConfigurationRouteOptions,
   type MagicLinkRouteOptions,
   type ActivityRecorder,
+  type ActivityRollPort,
   type TwoFactorEmailCodeMailer,
   type TwoFactorService,
   type AppleProviderConfig,
@@ -385,6 +386,8 @@ export interface RuntimeServices {
   isTeamModuleEnabled(): Promise<boolean>
   /** The `activity_log` switch; absent key means on, so evidence is never hidden by an upgrade. */
   isActivityLogModuleEnabled(): Promise<boolean>
+  /** The operator roll of a finished activity year (issue 8). */
+  activityRoll?: ActivityRollPort
   /**
    * Whether this organization lets a person read their own rates and take-home
    * (#520). Composed into `authentication` rather than a route's options: the
@@ -728,6 +731,7 @@ export const createApp = (
             })
             installOutboxRoutes(api, services.outbox, {
               isActivityLogModuleEnabled: services.isActivityLogModuleEnabled,
+              ...(services.activityRoll === undefined ? {} : { roll: services.activityRoll }),
               cursorSigningKey: services.cursorSigningKey,
               timezone: organizationTimezone,
             })
