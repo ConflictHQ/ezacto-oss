@@ -2,6 +2,7 @@ import type BetterSqlite3 from 'better-sqlite3'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { defaultInvoiceListSort, type InvoiceListPosition, type InvoiceListSort } from '@ezacto/core'
+import { estimateContentHash } from './estimates.js'
 import type * as schema from './schema.js'
 import {
   deleteInvoicePayment,
@@ -323,6 +324,65 @@ export interface ExecuteEstimateMessageInput {
   occurredAt: string
 }
 
+export interface CustomerEstimateSummary {
+  id: number
+  number: string
+  subject: string | null
+  currency: string
+  state: 'sent' | 'accepted' | 'declined'
+  issue_date: string
+  amount_cents: number
+  sent_at: string | null
+  accepted_at: string | null
+  declined_at: string | null
+}
+
+export interface CustomerEstimateResponse {
+  decision: 'accept' | 'decline'
+  at: string
+  /** The contact's name as it was when they answered; null for a staff-recorded answer. */
+  by: string | null
+  /** The content version that was answered; null when staff recorded it on the customer's behalf. */
+  version: string | null
+  /** False once the estimate has been edited since this answer. */
+  current: boolean
+}
+
+export interface CustomerEstimate extends CustomerEstimateSummary {
+  purchase_order: string | null
+  notes: string | null
+  tax_rate_ppm: number | null
+  tax2_rate_ppm: number | null
+  discount_rate_ppm: number | null
+  tax_amount_cents: number
+  tax2_amount_cents: number
+  discount_amount_cents: number
+  line_items: Array<{
+    position: number
+    kind: string
+    description: string | null
+    quantity: number
+    unit_price_cents: number
+    amount_cents: number
+    taxed: boolean
+    taxed2: boolean
+  }>
+  /** What a response must quote: the hash of the content shown. */
+  version: string
+  /** False when the estimate was edited after it was sent, until it is sent again. */
+  answerable: boolean
+  response: CustomerEstimateResponse | null
+}
+
+export interface RespondToEstimateInput {
+  estimateId: number
+  clientId: number
+  contactId: number
+  decision: 'accept' | 'decline'
+  version: string
+  occurredAt: string
+}
+
 export interface ConvertEstimateInput {
   estimateId: number
   commandId: string
@@ -529,6 +589,8 @@ export type MoneyResourceOperationErrorCode =
   | 'estimate_not_found'
   | 'estimate_version_conflict'
   | 'estimate_state_conflict'
+  | 'estimate_content_changed'
+  | 'estimate_needs_resend'
   | 'estimate_already_converted'
   | 'command_id_reused'
 
@@ -1442,6 +1504,13 @@ export class MoneyResourceRepository {
     }
     const commandKind = `estimate.${input.eventType}` as EstimateCommandKind
     const recipients = JSON.stringify(input.recipients)
+    // What the customer will be shown, recorded so that a later edit is
+    // noticed. The UPDATE below is guarded by `version`, so a stale read here
+    // fails the whole command rather than recording the wrong hash; any edit to
+    // a sent estimate has to bump `version` like every other command does.
+    const sentSnapshot =
+      input.eventType === 'send' ? await readConsistentEstimate(this.database, input.estimateId) : null
+    const sentContentHash = sentSnapshot === null ? null : await estimateContentHash(sentSnapshot)
     const inputFingerprint = await fingerprint({
       schema_version: 1,
       command_kind: commandKind,
@@ -1583,6 +1652,7 @@ export class MoneyResourceRepository {
             WHEN 're-open' THEN 'sent'
           END,
           version = version + 1,
+          sent_content_hash = CASE WHEN ? = 'send' THEN ? ELSE sent_content_hash END,
           sent_at = CASE WHEN ? = 'send' THEN COALESCE(sent_at, ?) ELSE sent_at END,
           accepted_at = CASE WHEN ? = 'accept' THEN ? WHEN ? = 're-open' THEN NULL ELSE accepted_at END,
           declined_at = CASE WHEN ? = 'decline' THEN ? WHEN ? = 're-open' THEN NULL ELSE declined_at END,
@@ -1602,6 +1672,8 @@ export class MoneyResourceRepository {
           )`,
         params: [
           input.eventType,
+          input.eventType,
+          sentContentHash,
           input.eventType,
           input.occurredAt,
           input.eventType,
@@ -1679,6 +1751,234 @@ export class MoneyResourceRepository {
       )
     }
     return { estimate, message: hydrateEstimateMessage(messageRow) }
+  }
+
+  async listCustomerEstimates(clientId: number): Promise<CustomerEstimateSummary[]> {
+    assertPositiveId(clientId, 'clientId')
+    return all<CustomerEstimateSummary>(this.database, {
+      text: `SELECT id, number, subject, currency, state, issue_date, amount_cents,
+        sent_at, accepted_at, declined_at FROM estimates
+        WHERE client_id = ? AND state <> 'draft' ORDER BY id DESC LIMIT 200`,
+      params: [clientId],
+    })
+  }
+
+  /** Null for an estimate that does not exist, belongs to another client, or is still a draft. */
+  async getCustomerEstimate(clientId: number, estimateId: number): Promise<CustomerEstimate | null> {
+    assertPositiveId(clientId, 'clientId')
+    assertPositiveId(estimateId, 'estimateId')
+    const estimate = await readConsistentEstimate(this.database, estimateId)
+    if (estimate === null || estimate.client_id !== clientId || estimate.state === 'draft') {
+      return null
+    }
+    return this.customerView(estimate)
+  }
+
+  private async customerView(estimate: EstimateResource): Promise<CustomerEstimate> {
+    const version = await estimateContentHash(estimate)
+    const sent = await first<{ sentContentHash: string | null }>(this.database, {
+      text: `SELECT sent_content_hash AS "sentContentHash" FROM estimates WHERE id = ?`,
+      params: [estimate.id],
+    })
+    let response: CustomerEstimateResponse | null = null
+    if (estimate.state === 'accepted' || estimate.state === 'declined') {
+      const message = await first<{
+        eventType: 'accept' | 'decline'
+        createdAt: string
+        sentBy: string | null
+        contentHash: string | null
+      }>(this.database, {
+        text: `SELECT event_type AS "eventType", created_at AS "createdAt", sent_by AS "sentBy",
+          content_hash AS "contentHash" FROM estimate_messages
+          WHERE estimate_id = ? AND event_type IN ('accept', 'decline')
+          ORDER BY created_at DESC, id DESC LIMIT 1`,
+        params: [estimate.id],
+      })
+      if (message !== null) {
+        response = {
+          decision: message.eventType,
+          at: message.createdAt,
+          by: message.contentHash === null ? null : message.sentBy,
+          version: message.contentHash,
+          current: message.contentHash === version,
+        }
+      }
+    }
+    return {
+      id: estimate.id,
+      number: estimate.number,
+      subject: estimate.subject,
+      currency: estimate.currency,
+      state: estimate.state as CustomerEstimate['state'],
+      issue_date: estimate.issue_date,
+      amount_cents: estimate.amount_cents,
+      sent_at: estimate.sent_at,
+      accepted_at: estimate.accepted_at,
+      declined_at: estimate.declined_at,
+      purchase_order: estimate.purchase_order,
+      notes: estimate.notes,
+      tax_rate_ppm: estimate.tax_rate_ppm,
+      tax2_rate_ppm: estimate.tax2_rate_ppm,
+      discount_rate_ppm: estimate.discount_rate_ppm,
+      tax_amount_cents: estimate.tax_amount_cents,
+      tax2_amount_cents: estimate.tax2_amount_cents,
+      discount_amount_cents: estimate.discount_amount_cents,
+      line_items: estimate.line_items.map((line) => ({
+        position: line.position,
+        kind: line.kind,
+        description: line.description,
+        quantity: line.quantity,
+        unit_price_cents: line.unit_price_cents,
+        amount_cents: line.amount_cents,
+        taxed: line.taxed,
+        taxed2: line.taxed2,
+      })),
+      version,
+      answerable: estimate.state === 'sent' && sent?.sentContentHash === version,
+      response,
+    }
+  }
+
+  /**
+   * A contact of the estimate's client answers it. The answer is bound to the
+   * content version the contact was shown, never charges anyone and never
+   * creates an invoice. The first valid answer wins: the same answer to the same
+   * version again is a replay and writes nothing, any other answer is refused
+   * until staff re-open the estimate.
+   */
+  async respondToEstimate(
+    input: RespondToEstimateInput,
+  ): Promise<{ estimate: CustomerEstimate; replayed: boolean }> {
+    assertPositiveId(input.estimateId, 'estimateId')
+    assertPositiveId(input.clientId, 'clientId')
+    assertPositiveId(input.contactId, 'contactId')
+    assertTimestamp(input.occurredAt, 'occurredAt')
+    if (input.decision !== 'accept' && input.decision !== 'decline') {
+      throw new TypeError('decision must be accept or decline')
+    }
+    if (!/^[0-9a-f]{64}$/.test(input.version)) throw new TypeError('version must be a content hash')
+    const notFound = () =>
+      new MoneyResourceOperationError('estimate_not_found', 'estimate does not exist')
+    const contact = await first<{ firstName: string; lastName: string | null; email: string | null }>(
+      this.database,
+      {
+        text: `SELECT first_name AS "firstName", last_name AS "lastName", email
+          FROM contacts WHERE id = ? AND client_id = ?`,
+        params: [input.contactId, input.clientId],
+      },
+    )
+    if (contact === null) throw notFound()
+    const name = [contact.firstName, contact.lastName].filter(Boolean).join(' ')
+    const target = input.decision === 'accept' ? 'accepted' : 'declined'
+
+    for (let attempt = 0; ; attempt += 1) {
+      const estimate = await readConsistentEstimate(this.database, input.estimateId)
+      if (estimate === null || estimate.client_id !== input.clientId || estimate.state === 'draft') {
+        throw notFound()
+      }
+      if (estimate.state !== 'sent') {
+        const view = await this.customerView(estimate)
+        if (
+          estimate.state === target &&
+          view.response?.decision === input.decision &&
+          view.response.version === input.version
+        ) {
+          return { estimate: view, replayed: true }
+        }
+        throw new MoneyResourceOperationError(
+          'estimate_state_conflict',
+          'estimate has already been answered',
+        )
+      }
+      const hash = await estimateContentHash(estimate)
+      if (input.version !== hash) {
+        throw new MoneyResourceOperationError(
+          'estimate_content_changed',
+          'estimate changed since the version that was answered',
+        )
+      }
+      const sent = await first<{ sentContentHash: string | null }>(this.database, {
+        text: `SELECT sent_content_hash AS "sentContentHash" FROM estimates WHERE id = ?`,
+        params: [estimate.id],
+      })
+      if (sent?.sentContentHash !== hash) {
+        throw new MoneyResourceOperationError(
+          'estimate_needs_resend',
+          'estimate was edited after it was sent and has to be sent again',
+        )
+      }
+      try {
+        await runAtomic(this.database, [
+          {
+            text: `INSERT INTO estimate_messages (
+              estimate_id, sent_by, sent_by_email, recipients, send_me_a_copy, event_type,
+              contact_id, content_hash, estimate_version, created_at, updated_at
+            ) SELECT id, ?, ?, '[]', 0, ?, ?, ?, version, ?, ? FROM estimates
+              WHERE id = ? AND version = ? AND state = 'sent' AND sent_content_hash = ?`,
+            params: [
+              name,
+              contact.email,
+              input.decision,
+              input.contactId,
+              hash,
+              input.occurredAt,
+              input.occurredAt,
+              estimate.id,
+              estimate.version,
+              hash,
+            ],
+          },
+          {
+            text: `UPDATE estimates SET
+              state = ?, version = version + 1,
+              accepted_at = CASE WHEN ? = 'accept' THEN ? ELSE accepted_at END,
+              declined_at = CASE WHEN ? = 'decline' THEN ? ELSE declined_at END,
+              updated_at = ?
+              WHERE id = ? AND version = ? AND state = 'sent' AND sent_content_hash = ?
+                AND EXISTS (
+                  SELECT 1 FROM estimate_messages message
+                  WHERE message.estimate_id = estimates.id AND message.estimate_version = ?
+                    AND message.contact_id = ? AND message.event_type = ?
+                )`,
+            params: [
+              target,
+              input.decision,
+              input.occurredAt,
+              input.decision,
+              input.occurredAt,
+              input.occurredAt,
+              estimate.id,
+              estimate.version,
+              hash,
+              estimate.version,
+              input.contactId,
+              input.decision,
+            ],
+          },
+        ])
+      } catch (error) {
+        // Another answer won the unique (estimate, version) slot between the read
+        // and the write. Read again and classify rather than report a 500.
+        if (attempt > 0) throw error
+        continue
+      }
+      const written = await first<{ id: number }>(this.database, {
+        text: `SELECT id FROM estimate_messages
+          WHERE estimate_id = ? AND estimate_version = ? AND contact_id = ? AND event_type = ?`,
+        params: [estimate.id, estimate.version, input.contactId, input.decision],
+      })
+      if (written !== null) {
+        const after = await readConsistentEstimate(this.database, estimate.id)
+        if (after === null) throw notFound()
+        return { estimate: await this.customerView(after), replayed: false }
+      }
+      if (attempt > 0) {
+        throw new MoneyResourceOperationError(
+          'estimate_state_conflict',
+          'estimate could not be answered in its current state',
+        )
+      }
+    }
   }
 
   async convertEstimate(input: ConvertEstimateInput): Promise<EstimateConversionResult> {
