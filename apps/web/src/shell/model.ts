@@ -1664,6 +1664,10 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.listSavedReports({ query: filter, ...withSignal(signal) })).data,
   createSavedReport: async (input, signal) =>
     (await client.createSavedReport({ body: input, ...withSignal(signal) })).data,
+  createReportView: async (input, signal) =>
+    (await client.createReportView({ body: input, ...withSignal(signal) })).data,
+  getSavedReport: async (reportId, signal) =>
+    (await client.getSavedReport({ reportId, ...withSignal(signal) })).data,
   previewReportDefinition: async (input, signal) =>
     (await client.previewReportDefinition({ body: input, ...withSignal(signal) })).data,
   runSavedReport: async (reportId, signal) =>

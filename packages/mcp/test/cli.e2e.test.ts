@@ -47,6 +47,7 @@ const reports: ReportReader = {
   listSavedReports: async () => [],
   readSavedReport: async () => null,
   createSavedReport: async () => { throw new Error('not used') },
+  createReportView: async () => { throw new Error('not used') },
   updateSavedReport: async () => 'not_found',
   shareSavedReport: async () => false,
   shareSavedReportWithProfile: async () => false,

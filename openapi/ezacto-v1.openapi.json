@@ -17822,6 +17822,74 @@
         }
       }
     },
+    "/api/v1/report-views": {
+      "post": {
+        "operationId": "createReportView",
+        "summary": "Save the report on screen: a report kind and its address, private to the author",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-views",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedReportViewInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/report-definitions/preview": {
       "post": {
         "operationId": "previewReportDefinition",
@@ -45096,8 +45164,45 @@
               }
             ]
           },
+          "view": {
+            "$ref": "#/components/schemas/SavedReportAddress"
+          },
           "presentation": {
             "$ref": "#/components/schemas/ReportDefinitionPresentation"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SavedReportAddress": {
+        "type": "object",
+        "required": [
+          "report",
+          "query"
+        ],
+        "properties": {
+          "report": {
+            "type": "string",
+            "description": "The Reports kind, such as time or invoiced."
+          },
+          "query": {
+            "type": "string",
+            "description": "The report's query string: filters, grouping, sort and range."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SavedReportViewInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "view"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "view": {
+            "$ref": "#/components/schemas/SavedReportAddress"
           }
         },
         "additionalProperties": false
@@ -45115,6 +45220,7 @@
           "presentation",
           "owner",
           "is_custom",
+          "view",
           "pinned",
           "shared",
           "shared_with",
@@ -45180,6 +45286,16 @@
           },
           "shared": {
             "type": "boolean"
+          },
+          "view": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedReportAddress"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "shared_with": {
             "type": "object",

@@ -660,6 +660,7 @@ interface SavedReportRecord {
   ownerUserId: number;
   ownerName: string;
   isCustom: boolean;
+  view: { report: string; query: string } | null;
   presentation: { result: "summary" | "detailed"; grouped: boolean; includeZeroValues: boolean };
   pinned: boolean;
   shared: boolean;
@@ -698,7 +699,8 @@ export interface ReportReader {
   listSavedReports(input: { viewerUserId: number; view?: "all" | "yours" | "shared"; query?: string; customOnly?: boolean }): Promise<readonly SavedReportRecord[]>;
   readSavedReport(reportId: string, viewerUserId: number): Promise<SavedReportRecord | null>;
   createSavedReport(input: { id: string; name: string; fields: SavedReportDefinitionRecord["fields"]; metrics: SavedReportDefinitionRecord["metrics"]; filters: SavedReportDefinitionRecord["filters"]; groupBy: SavedReportDefinitionRecord["groupBy"]; ownerUserId: number; presentation: SavedReportRecord["presentation"]; createdAt: string }): Promise<SavedReportRecord>;
-  updateSavedReport(input: { reportId: string; ownerUserId: number; expectedVersion: number; changes: SavedReportChanges; presentation?: SavedReportRecord["presentation"] }): Promise<"not_found" | "version_conflict" | SavedReportRecord>;
+  createReportView(input: { id: string; name: string; view: { report: string; query: string }; ownerUserId: number; createdAt: string }): Promise<SavedReportRecord>;
+  updateSavedReport(input: { reportId: string; ownerUserId: number; expectedVersion: number; changes: SavedReportChanges; view?: { report: string; query: string }; presentation?: SavedReportRecord["presentation"] }): Promise<"not_found" | "version_conflict" | SavedReportRecord>;
   shareSavedReport(reportId: string, ownerUserId: number, userId: number, shared: boolean, at: string): Promise<boolean>;
   shareSavedReportWithProfile(reportId: string, ownerUserId: number, profile: UserPrincipal["profile"], shared: boolean, at: string): Promise<boolean>;
   pinSavedReport(reportId: string, viewerUserId: number, pinned: boolean, at: string): Promise<boolean>;
@@ -1917,6 +1919,7 @@ export const installReportRoutes = <Bindings extends object>(
     },
     owner: { user_id: report.ownerUserId, name: report.ownerName },
     is_custom: report.isCustom,
+    view: report.view,
     pinned: report.pinned,
     shared: report.shared,
     shared_with: {
@@ -1927,6 +1930,11 @@ export const installReportRoutes = <Bindings extends object>(
     can_delete: report.canDelete,
     created_at: report.definition.createdAt,
     updated_at: report.definition.updatedAt,
+  });
+  // A 422 names the field it is about; the reason is the validator's own words.
+  const invalidDefinition = (message: string): ApiError => new ApiError({
+    status: 422, code: "validation_failed", message: "The request contains invalid fields.",
+    fields: [{ field: "report", code: "invalid_report_definition", message }],
   });
   const savedId = (value: string): string => {
     if (!/^[A-Za-z0-9_-]{1,128}$/u.test(value)) throw notFound("saved report");
@@ -1940,7 +1948,7 @@ export const installReportRoutes = <Bindings extends object>(
       typeof record.grouped !== "boolean" ||
       typeof record.include_zero_values !== "boolean"
     ) {
-      throw new ApiError({ status: 422, code: "invalid_report_definition", message: "presentation is invalid" });
+      throw invalidDefinition("presentation is invalid");
     }
     return {
       result: record.result,
@@ -2008,7 +2016,30 @@ export const installReportRoutes = <Bindings extends object>(
       return context.json(reportEnvelope(context, saved(created)), 201);
     } catch (error) {
       if (error instanceof TypeError || error instanceof RangeError) {
-        throw new ApiError({ status: 422, code: "invalid_report_definition", message: error.message });
+        throw invalidDefinition(error.message);
+      }
+      throw error;
+    }
+  });
+
+  // Save the report on screen: its kind and its address, not a builder
+  // definition. Private to the author until they share it.
+  api.post("/report-views", async (context) => {
+    requireApiScope(context, "reports:read");
+    const body = await context.req.json<Record<string, unknown>>();
+    const principal = context.get("principal");
+    try {
+      const created = await reports.createReportView({
+        id: crypto.randomUUID(),
+        name: String(body.name ?? ""),
+        view: body.view as { report: string; query: string },
+        ownerUserId: principal.userId,
+        createdAt: new Date().toISOString(),
+      });
+      return context.json(reportEnvelope(context, saved(created)), 201);
+    } catch (error) {
+      if (error instanceof TypeError || error instanceof RangeError) {
+        throw invalidDefinition(error.message);
       }
       throw error;
     }
@@ -2056,13 +2087,22 @@ export const installReportRoutes = <Bindings extends object>(
         ? { groupBy: (body.group_by ?? null) as SavedReportDefinitionRecord["groupBy"] }
         : {}),
     };
-    const result = await reports.updateSavedReport({
-      reportId: savedId(context.req.param("reportId")),
-      ownerUserId: principal.userId,
-      expectedVersion: Number(version),
-      changes,
-      ...(body.presentation === undefined ? {} : { presentation: parsePresentation(body.presentation) }),
-    });
+    let result: Awaited<ReturnType<ReportReader["updateSavedReport"]>>;
+    try {
+      result = await reports.updateSavedReport({
+        reportId: savedId(context.req.param("reportId")),
+        ownerUserId: principal.userId,
+        expectedVersion: Number(version),
+        changes,
+        ...(body.view === undefined ? {} : { view: body.view as { report: string; query: string } }),
+        ...(body.presentation === undefined ? {} : { presentation: parsePresentation(body.presentation) }),
+      });
+    } catch (error) {
+      if (error instanceof TypeError || error instanceof RangeError) {
+        throw invalidDefinition(error.message);
+      }
+      throw error;
+    }
     if (result === "not_found") throw notFound("saved report");
     if (result === "version_conflict") {
       throw new ApiError({ status: 409, code: "report_version_conflict", message: "the saved report changed; reload before editing" });
@@ -2083,11 +2123,16 @@ export const installReportRoutes = <Bindings extends object>(
     const source = await reports.readSavedReport(savedId(context.req.param("reportId")), principal.userId);
     if (source === null) throw notFound("saved report");
     const at = new Date().toISOString();
-    const copy = await reports.createSavedReport({
-      id: crypto.randomUUID(), name: `${source.definition.name} copy`, fields: source.definition.fields,
-      metrics: source.definition.metrics, filters: source.definition.filters, groupBy: source.definition.groupBy,
-      ownerUserId: principal.userId, presentation: source.presentation, createdAt: at,
-    });
+    const name = `${source.definition.name} copy`;
+    const copy = source.view === null
+      ? await reports.createSavedReport({
+        id: crypto.randomUUID(), name, fields: source.definition.fields,
+        metrics: source.definition.metrics, filters: source.definition.filters, groupBy: source.definition.groupBy,
+        ownerUserId: principal.userId, presentation: source.presentation, createdAt: at,
+      })
+      : await reports.createReportView({
+        id: crypto.randomUUID(), name, view: source.view, ownerUserId: principal.userId, createdAt: at,
+      });
     return context.json(reportEnvelope(context, saved(copy)), 201);
   });
 
@@ -2128,7 +2173,19 @@ export const installReportRoutes = <Bindings extends object>(
   api.post("/report-definitions/:reportId/run", async (context) => {
     requireApiScope(context, "reports:read");
     const principal = context.get("principal");
-    const result = await reports.runSavedReport(savedId(context.req.param("reportId")), principal.userId, authority(principal));
+    let result: Awaited<ReturnType<ReportReader["runSavedReport"]>>;
+    try {
+      result = await reports.runSavedReport(savedId(context.req.param("reportId")), principal.userId, authority(principal));
+    } catch (error) {
+      // A saved view is the address of a report; that report's own route runs it.
+      if (error instanceof RangeError) {
+        throw new ApiError({
+          status: 422, code: "validation_failed", message: "The request contains invalid fields.",
+          fields: [{ field: "report_id", code: "report_view_not_runnable", message: error.message }],
+        });
+      }
+      throw error;
+    }
     if (result === null) throw notFound("saved report");
     return context.json(reportEnvelope(context, result));
   });

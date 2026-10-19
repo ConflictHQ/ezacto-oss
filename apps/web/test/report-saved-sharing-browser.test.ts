@@ -55,6 +55,7 @@ const saved = (overrides: Partial<SavedReport> = {}): SavedReport => ({
   presentation: { result: 'summary', grouped: true, include_zero_values: false },
   owner: { user_id: 1, name: 'Ada Byron' },
   is_custom: true,
+  view: null,
   pinned: false,
   shared: false,
   shared_with: { users: [], profiles: [] },

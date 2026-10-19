@@ -3479,7 +3479,18 @@ export type SavedReportUpdate = {
   "group_by"?: {
   [key: string]: unknown;
 } | null;
+  "view"?: SavedReportAddress;
   "presentation"?: ReportDefinitionPresentation;
+};
+
+export type SavedReportAddress = {
+  "report": string;
+  "query": string;
+};
+
+export type SavedReportViewInput = {
+  "name": string;
+  "view": SavedReportAddress;
 };
 
 export type SavedReport = {
@@ -3503,6 +3514,7 @@ export type SavedReport = {
   "is_custom": boolean;
   "pinned": boolean;
   "shared": boolean;
+  "view": SavedReportAddress | null;
   "shared_with": {
   "users": Array<{
   "user_id": number;
@@ -6560,6 +6572,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<SavedReportEnvelope>("POST", "/api/v1/report-definitions", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createReportView(args: { body: SavedReportViewInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<SavedReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<SavedReportEnvelope>("POST", "/api/v1/report-views", {
       body: args.body,
       signal: args.signal,
       headers,

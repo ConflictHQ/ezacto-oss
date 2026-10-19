@@ -438,6 +438,77 @@ for (const [runtime, factory] of factories) {
       expect((await harness.request(`/report-definitions/${id}`, "accounting", [], 3)).status).toBe(404);
     });
 
+    it("[api #933] saves the report on screen as a view, renames and re-saves it, and never runs it as a definition", async () => {
+      harness = await factory();
+      await harness.run(
+        `INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+         VALUES (3, 'Alma', 'Accounts', 'accounting', '[]', ?, ?), (5, 'Ana', 'Another', 'accounting', '[]', ?, ?)`,
+        [now, now, now, now],
+      );
+      const send = (path: string, method: string, body: unknown, userId = 3): Promise<Response> =>
+        harness!.request(path, "accounting", [], userId, {
+          method, headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+        });
+      const create = await send("/report-views", "POST", {
+        name: "Q3 by client",
+        view: { report: "time", query: "from=2026-07-01&to=2026-09-30&tab=client&saved=stale&sort=hours.desc" },
+      });
+      expect(create.status, await create.clone().text()).toBe(201);
+      const created = (await create.json()) as { data: { id: string; version: number } };
+      // The address is stored without the pointer back to a saved report, and the
+      // report is a view, not a custom definition.
+      expect(created.data).toMatchObject({
+        name: "Q3 by client", is_custom: false, owned_by_viewer: true,
+        view: { report: "time", query: "from=2026-07-01&to=2026-09-30&tab=client&sort=hours.desc" },
+      });
+      const id = created.data.id;
+
+      expect((await send("/report-views", "POST", { name: "Bad", view: { report: "../x", query: "" } })).status).toBe(422);
+      expect((await send("/report-views", "POST", { name: " ", view: { report: "time", query: "" } })).status).toBe(422);
+      expect((await send("/report-views", "POST", { name: "Long", view: { report: "time", query: "a=".padEnd(2001, "b") } })).status).toBe(422);
+
+      // Private to the author, like any saved report; it is also never run.
+      expect((await harness.request(`/report-definitions/${id}`, "accounting", [], 5)).status).toBe(404);
+      const run = await harness.request(`/report-definitions/${id}/run`, "accounting", [], 3, { method: "POST" });
+      expect(run.status).toBe(422);
+      expect(JSON.stringify(await run.json())).toContain("report_view_not_runnable");
+
+      // Save changes moves the address and the version; a stale version is refused.
+      const resave = await send(`/report-definitions/${id}`, "PATCH", {
+        version: 1, view: { report: "time", query: "from=2026-10-01&to=2026-10-31" },
+      });
+      expect(resave.status, await resave.clone().text()).toBe(200);
+      expect(await resave.json()).toMatchObject({
+        data: { version: 2, name: "Q3 by client", view: { report: "time", query: "from=2026-10-01&to=2026-10-31" } },
+      });
+      expect((await send(`/report-definitions/${id}`, "PATCH", { version: 1, name: "Stale" })).status).toBe(409);
+      expect(await (await send(`/report-definitions/${id}`, "PATCH", { version: 2, name: "October" })).json())
+        .toMatchObject({ data: { version: 3, name: "October", view: { query: "from=2026-10-01&to=2026-10-31" } } });
+      // A view has no fields to edit, and a builder definition has no address.
+      expect((await send(`/report-definitions/${id}`, "PATCH", { version: 3, metrics: ["hours"] })).status).toBe(422);
+      const builder = await send("/report-definitions", "POST", {
+        name: "Builder",
+        fields: [{ id: "client_name", label: "Client", visible: true }],
+        metrics: ["hours"], filters: [], group_by: null,
+        presentation: { result: "summary", grouped: false, include_zero_values: false },
+      });
+      const builderId = ((await builder.json()) as { data: { id: string } }).data.id;
+      expect((await send(`/report-definitions/${builderId}`, "PATCH", { version: 1, view: { report: "time", query: "" } })).status).toBe(422);
+      expect(await (await harness.request(`/report-definitions/${builderId}`, "accounting", [], 3)).json())
+        .toMatchObject({ data: { view: null, is_custom: true } });
+
+      // Shared, pinned and duplicated like any other saved report; a copy is a view too.
+      expect((await send(`/report-definitions/${id}/role-shares/accounting`, "POST", {})).status).toBe(204);
+      const copy = await harness.request(`/report-definitions/${id}/duplicate`, "accounting", [], 5, { method: "POST" });
+      expect(copy.status).toBe(201);
+      expect(await copy.json()).toMatchObject({
+        data: { name: "October copy", owned_by_viewer: true, view: { report: "time", query: "from=2026-10-01&to=2026-10-31" } },
+      });
+      expect((await harness.request(`/report-definitions/${id}/pin`, "accounting", [], 5, { method: "POST" })).status).toBe(204);
+      const library = await harness.request("/report-definitions?custom_only=true", "accounting", [], 5);
+      expect(await library.json()).toMatchObject({ data: [] });
+    });
+
     it("[db] reconciles invoiced, received, and aged receivable ledgers by currency", async () => {
       harness = await factory();
       await harness.seedAccounting();
