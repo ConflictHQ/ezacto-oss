@@ -1,5 +1,6 @@
 export * from './adapters.js'
 export * from './backup.js'
+export * from './backup-archive.js'
 export * from './api-tokens.js'
 export * from './contact-sessions.js'
 export * from './attachments.js'

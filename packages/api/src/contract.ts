@@ -2388,6 +2388,19 @@ const twoFactorOperations: ApiContractOperation[] = [
     sessionOnly: true,
   },
   {
+    method: "get",
+    path: "/api/v1/users/:id/two-factor/email",
+    operationId: "getUserTwoFactorEmail",
+    summary: "Whether a user has the emailed second factor on (administrator)",
+    description:
+      "Lets an administrator see the state before turning it off. Administrators only; session only.",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorEmailStateEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
     method: "delete",
     path: "/api/v1/users/:id/two-factor/email",
     operationId: "disableUserTwoFactorEmail",
@@ -4112,11 +4125,34 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  EmailIdentityReputation: {
+    type: "object",
+    required: [
+      "sender",
+      "sent",
+      "bounced",
+      "complained",
+      "failed",
+      "bounce_rate_ppm",
+      "complaint_rate_ppm",
+    ],
+    properties: {
+      sender: stringSchema,
+      sent: { type: "integer", minimum: 0 },
+      bounced: { type: "integer", minimum: 0 },
+      complained: { type: "integer", minimum: 0 },
+      failed: { type: "integer", minimum: 0 },
+      bounce_rate_ppm: { type: "integer", minimum: 0, maximum: 1_000_000 },
+      complaint_rate_ppm: { type: "integer", minimum: 0, maximum: 1_000_000 },
+    },
+    additionalProperties: false,
+  },
   EmailHealth: {
     type: "object",
-    required: ["reputation"],
+    required: ["reputation", "identities"],
     properties: {
       reputation: reference("EmailReputationSnapshot"),
+      identities: { type: "array", items: reference("EmailIdentityReputation") },
     },
     additionalProperties: false,
   },
@@ -10636,6 +10672,18 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // Omitted by anything that kept the cookie the sign-in set.
       challenge: stringSchema,
     },
+    additionalProperties: false,
+  },
+  TwoFactorEmailState: {
+    type: "object",
+    required: ["user_id", "email_enabled"],
+    properties: { user_id: integerSchema, email_enabled: { type: "boolean" } },
+    additionalProperties: false,
+  },
+  TwoFactorEmailStateEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("TwoFactorEmailState") },
     additionalProperties: false,
   },
   TwoFactorEmailDisabled: {

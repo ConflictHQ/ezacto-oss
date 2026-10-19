@@ -827,7 +827,10 @@ const createService = (
 
     async listActivity(input = {}) {
       const limit = input.limit ?? 100
-      assertLimit(limit, 200, 'activity log limit')
+      // The pager asks for one row beyond its largest page (200) to know whether
+      // another page exists, so a full page arrives as 201. At 200 the biggest
+      // page threw here and answered 500.
+      assertLimit(limit, 201, 'activity log limit')
       const conditions: string[] = []
       const params: unknown[] = []
       if (input.from !== undefined) {

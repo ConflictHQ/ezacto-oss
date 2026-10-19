@@ -26715,6 +26715,71 @@
       }
     },
     "/api/v1/users/{id}/two-factor/email": {
+      "get": {
+        "operationId": "getUserTwoFactorEmail",
+        "summary": "Whether a user has the emailed second factor on (administrator)",
+        "description": "Lets an administrator see the state before turning it off. Administrators only; session only.",
+        "tags": [
+          "two-factor"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TwoFactorEmailStateEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/users/:id/two-factor/email",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
       "delete": {
         "operationId": "disableUserTwoFactorEmail",
         "summary": "Turn off a user's emailed second factor (administrator)",
@@ -30898,14 +30963,65 @@
         },
         "additionalProperties": false
       },
+      "EmailIdentityReputation": {
+        "type": "object",
+        "required": [
+          "sender",
+          "sent",
+          "bounced",
+          "complained",
+          "failed",
+          "bounce_rate_ppm",
+          "complaint_rate_ppm"
+        ],
+        "properties": {
+          "sender": {
+            "type": "string"
+          },
+          "sent": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bounced": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "complained": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bounce_rate_ppm": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "complaint_rate_ppm": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          }
+        },
+        "additionalProperties": false
+      },
       "EmailHealth": {
         "type": "object",
         "required": [
-          "reputation"
+          "reputation",
+          "identities"
         ],
         "properties": {
           "reputation": {
             "$ref": "#/components/schemas/EmailReputationSnapshot"
+          },
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EmailIdentityReputation"
+            }
           }
         },
         "additionalProperties": false
@@ -50000,6 +50116,35 @@
         "properties": {
           "challenge": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TwoFactorEmailState": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "email_enabled"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "email_enabled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TwoFactorEmailStateEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TwoFactorEmailState"
           }
         },
         "additionalProperties": false

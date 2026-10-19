@@ -115,6 +115,12 @@ export const renderTeamPages = (view?: string): string => `
           <p class="form-result" data-team-permissions-result role="status" aria-live="polite"></p>
           <button class="primary-action" type="submit" data-team-permissions-submit>Save permission profile</button>
         </form>
+        <section class="team-status-actions" aria-labelledby="team-email-factor-heading" data-team-email-factor hidden>
+          <h3 id="team-email-factor-heading">Emailed sign-in code</h3>
+          <p data-team-email-factor-state>Checking…</p>
+          <button type="button" class="danger-action" data-team-email-factor-off hidden>Turn off emailed code</button>
+          <p class="form-result" data-team-email-factor-result role="status" aria-live="polite"></p>
+        </section>
       </section>
 
       <section class="team-person-panel" id="team-panel-payout" role="tabpanel" aria-labelledby="team-tab-payout" data-team-panel="payout" hidden>
@@ -183,6 +189,15 @@ export const renderTeamPages = (view?: string): string => `
       <p class="hint">Past entries keep their snapshotted rate. The prior rate period closes the day before this date.</p>
       <p class="form-result" data-team-rate-result role="status" aria-live="polite"></p>
       <button class="primary-action" type="submit" data-team-rate-submit>Add rate</button>
+    </form>
+  </dialog>
+
+  <dialog class="team-deactivate-dialog" data-team-email-factor-dialog aria-labelledby="team-email-factor-dialog-title">
+    <form data-team-email-factor-form>
+      <header><div><p class="eyebrow">Sign-in security</p><h2 id="team-email-factor-dialog-title">Turn off the emailed code?</h2></div><button type="button" data-team-email-factor-close aria-label="Close">×</button></header>
+      <p>This person will no longer be sent a code by email when they sign in with a password. If they have an authenticator app, that still applies. Use this when they have lost access to their mailbox. The change is recorded in the activity log.</p>
+      <p class="form-result" data-team-email-factor-dialog-result role="status" aria-live="polite"></p>
+      <div class="team-confirm-actions"><button type="button" data-team-email-factor-cancel>Cancel</button><button class="danger-action" type="submit" data-team-email-factor-confirm>Turn off emailed code</button></div>
     </form>
   </dialog>
 

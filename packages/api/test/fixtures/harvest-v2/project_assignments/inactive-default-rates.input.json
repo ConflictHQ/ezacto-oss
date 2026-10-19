@@ -1,0 +1,32 @@
+{
+  "assignment": {
+    "id": 501,
+    "projectId": 301,
+    "userId": 401,
+    "isActive": false,
+    "isProjectManager": false,
+    "useDefaultRates": true,
+    "hourlyRateCents": null,
+    "budgetSeconds": null,
+    "createdAt": "2024-01-05T10:00:00.123Z",
+    "updatedAt": "2024-03-09T16:45:30.987Z"
+  },
+  "project": {
+    "id": 301,
+    "clientId": 101,
+    "name": "Sample Retired",
+    "code": null,
+    "createdAt": "2024-01-05T10:00:00.123Z",
+    "updatedAt": "2024-03-09T16:45:30.987Z"
+  },
+  "client": {
+    "id": 101,
+    "name": "Sample Widgets Ltd",
+    "address": null,
+    "currency": "EUR",
+    "isActive": true,
+    "createdAt": "2024-01-05T10:00:00.123Z",
+    "updatedAt": "2024-03-09T16:45:30.987Z"
+  },
+  "taskAssignments": []
+}

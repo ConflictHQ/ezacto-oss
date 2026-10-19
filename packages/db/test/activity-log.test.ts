@@ -546,6 +546,20 @@ for (const [runtime, factory] of factories) {
       expect(sequences).toEqual([1, 2, 1])
     })
 
+    it('[unit] reads a full page of 200 and its lookahead row, and refuses more', async () => {
+      // The activity log pager asks for one row past its largest page; reading 200
+      // through it once threw and answered 500 on the deployed demo.
+      database = await factory()
+      const service = database.outbox()
+      await expect(service.listActivity({ limit: 201 })).resolves.toEqual([])
+      await expect(service.listActivity({ limit: 202 })).rejects.toThrow(
+        'activity log limit must be an integer between 1 and 201',
+      )
+      await expect(service.listActivity({ limit: 0 })).rejects.toThrow(
+        'activity log limit must be an integer between 1 and 201',
+      )
+    })
+
     it('[unit] refuses input the log cannot represent', async () => {
       database = await factory()
       const base = {

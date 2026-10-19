@@ -60,6 +60,31 @@ describe('my payments screen (issue 100)', () => {
     expect(getMyPayments.mock.calls[0]![0]).toMatch(/^\d{4}-\d{2}$/)
   })
 
+  it('[browser #852] sorts upcoming payments by a header, amounts by size', async () => {
+    mount()
+    const data: MyPayments = {
+      ...recorded,
+      upcoming: [
+        { amount_cents: 5_000, currency: 'USD', scheduled_on: '2026-10-19', status: 'scheduled' },
+        { amount_cents: 20_000, currency: 'USD', scheduled_on: '2026-11-02', status: 'scheduled' },
+        { amount_cents: 900, currency: 'USD', scheduled_on: '2026-09-30', status: 'scheduled' },
+      ],
+    }
+    await createMyPaymentsController({ getMyPayments: async () => ({ data }) }).activate(new AbortController().signal)
+    const amounts = (): string[] =>
+      [...document.querySelectorAll('[data-my-payments-upcoming] tbody tr[data-row] td[data-column="amount"]')].map(
+        (cell) => cell.textContent ?? '',
+      )
+    const header = (): HTMLButtonElement =>
+      document.querySelector<HTMLButtonElement>('[data-my-payments-upcoming] thead button[data-sort-column="amount"]')!
+    expect(amounts()).toEqual(['USD 50.00', 'USD 200.00', 'USD 9.00'])
+    // Ascending reads 9 before 50 before 200, which is size, not text.
+    header().click()
+    expect(amounts()).toEqual(['USD 9.00', 'USD 50.00', 'USD 200.00'])
+    header().click()
+    expect(amounts()).toEqual(['USD 200.00', 'USD 50.00', 'USD 9.00'])
+  })
+
   it('[browser] shows hours and pending review, never an amount, before an obligation is recorded', async () => {
     mount()
     await createMyPaymentsController({ getMyPayments: async () => ({ data: unrecorded }) }).activate(new AbortController().signal)

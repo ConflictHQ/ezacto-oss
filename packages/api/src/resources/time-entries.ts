@@ -167,7 +167,7 @@ const listKeys = new Set([
  * administrator's alone (#917). Everyone else may name only themselves, which
  * is the same as naming nobody.
  */
-const assertMayNameUser = (
+export const assertMayNameUser = (
   principal: Readonly<UserPrincipal>,
   userId: number | undefined,
 ): void => {

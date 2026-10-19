@@ -178,7 +178,11 @@ export {
   type AuthEmailTemplate,
   type AuthEmailTemplateSource,
 } from './auth-email.js'
-export { installHarvestV2Routes, type HarvestV2RouteOptions } from './harvest-v2/routes.js'
+export {
+  installHarvestV2Routes,
+  type HarvestTimeEntrySource,
+  type HarvestV2RouteOptions,
+} from './harvest-v2/routes.js'
 export {
   installGeneralResourceRoutes,
   type GeneralResourceRouteOptions,
