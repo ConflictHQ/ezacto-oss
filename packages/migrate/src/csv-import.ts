@@ -15,7 +15,14 @@ import {
   isDuplicateCsvImportKey,
   type CsvImportRun,
 } from '@ezacto/db'
-import { nameKey, parseCsv, sourceKeys, type CsvIssue, type CsvRow } from './csv-contract.js'
+import {
+  nameKey,
+  parseCsv,
+  sourceKeys,
+  type CsvAdapter,
+  type CsvIssue,
+  type CsvRow,
+} from './csv-contract.js'
 import { canonicalMapping, emptyMapping, parseMapping, type CsvMapping } from './csv-mapping.js'
 
 /**
@@ -149,9 +156,9 @@ const pair = (left: Entity, right: Entity): string => `${left.key}|${right.key}`
 export const planCsvImport = async (
   database: Database,
   bytes: Uint8Array,
-  options: { sourceId: string; mapping?: CsvMapping },
+  options: { sourceId: string; mapping?: CsvMapping; adapter?: CsvAdapter },
 ): Promise<Plan> => {
-  const parsed = parseCsv(bytes)
+  const parsed = parseCsv(bytes, options.adapter)
   const store = createCsvImportStore(database)
   const stored = (await store.available())
     ? await store.findRun(options.sourceId, parsed.sha256)
@@ -569,7 +576,7 @@ export const planCsvImport = async (
 export const dryRunCsvImport = async (
   sqlite: BetterSqlite3.Database,
   bytes: Uint8Array,
-  options: { sourceId: string; mapping?: CsvMapping },
+  options: { sourceId: string; mapping?: CsvMapping; adapter?: CsvAdapter },
 ): Promise<CsvImportReport> => {
   sqlite.exec('BEGIN')
   try {
@@ -582,6 +589,8 @@ export const dryRunCsvImport = async (
 export interface ApplyOptions {
   sourceId: string
   mapping?: CsvMapping
+  /** Reads a vendor's export into the contract (see `csv-toggl.ts`). */
+  adapter?: CsvAdapter
   /** Apply the rows that can be applied and leave the rest listed. */
   skipRejected?: boolean
   /** Checked between rows; aborting stops further rows and rolls nothing back. */
@@ -638,6 +647,7 @@ export const applyCsvImport = async (
   const plan = await planCsvImport(database, bytes, {
     sourceId: options.sourceId,
     ...(options.mapping !== undefined ? { mapping: options.mapping } : {}),
+    ...(options.adapter !== undefined ? { adapter: options.adapter } : {}),
   })
   const refuse = (reason: string): ApplyResult => ({
     status: 'refused',
