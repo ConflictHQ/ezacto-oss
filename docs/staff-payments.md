@@ -23,7 +23,7 @@ The preferred provider preselects the source when recording a payment. Each rece
 
 Setting changes require an administrator session and a reason. They have immutable history, actor, timestamp, request ID, idempotency and version checks. **Provider settings history** shows changes across all dates. Monthly exports include current preferences and both providers’ readiness; audit exports include all provider-setting changes alongside the selected month's payment events.
 
-The existing optional Deel adapter remains available for people/contract matching, timesheet submission and transfer-log deduplication. See [`packages/integrations`](../packages/integrations/README.md). Selecting Deel here does not configure credentials, submit timesheets or confirm a payout automatically; organizations configure that integration separately.
+The existing optional Deel adapter remains available for people/contract matching, timesheet submission and transfer-log deduplication. See [`packages/integrations`](../packages/integrations/README.md). Selecting Deel here does not configure credentials or confirm a payout. Once an organization sets `DEEL_TOKEN` and `DEEL_SYNC_START_DATE` (see [Integrations](integrations.md)), the daily sync submits one Deel timesheet per person-day of approved time for people whose provider is Deel, never twice for the same entry; an entry edited after it was sent is reported, not resent.
 
 ## Sorting tables
 

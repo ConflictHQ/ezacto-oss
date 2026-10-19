@@ -283,6 +283,22 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
         },
       })()
     }
+    if (controller.cron === '0 3 * * *' && services.deelSync?.status().configured === true) {
+      // Deel time sync and its reconciliation (issue 103). Daily: it submits
+      // whole approved days that have ended. Does nothing, and is not reached,
+      // without a token and a start date. A failed run is recorded in
+      // `deel_sync_runs`, reported, and never stops the drain below.
+      try {
+        const run = await services.deelSync.run()
+        if (run.status === 'failed') {
+          console.error('[worker] Deel time sync failed', run.error, run.failed)
+          Sentry.captureException(new Error(run.error ?? 'Deel time sync had failed submissions'))
+        }
+      } catch (error) {
+        console.error('[worker] Deel time sync failed', error)
+        Sentry.captureException(error)
+      }
+    }
     // Refuses on any deployment that is not the demo, so this line is safe to
     // read as unconditional. See `runDemoMaintenance`.
     const maintenance = await runDemoMaintenance(env, controller.cron)

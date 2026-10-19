@@ -8,7 +8,7 @@ import { installPaymentRunRoutes } from '@ezacto/api'
 import { installStaffPaymentRoutes } from '@ezacto/api'
 import type { StaffPaymentStore } from '@ezacto/core'
 import { captureException } from "@sentry/cloudflare";
-import type { BillRuntime, QuickBooksService, WiseRuntime } from "@ezacto/integrations";
+import type { BillRuntime, DeelSyncRuntime, QuickBooksService, WiseRuntime } from "@ezacto/integrations";
 import type {
   InvoiceDocumentPreferenceService,
   InvoiceDocumentPort,
@@ -326,6 +326,15 @@ export type WorkerEnv = AppEnv & {
    */
   STRIPE_API_KEY?: string
   STRIPE_WEBHOOK_SECRET?: string
+  /**
+   * Deel time sync (issue 103). Both are needed before anything is sent: the
+   * API token, and the first day (ISO) whose approved time may be submitted.
+   * The start date is the guard against a first run submitting every earlier
+   * month that was paid by other means. Neither is wired through the stock
+   * deploy workflow; set them as Worker secrets.
+   */
+  DEEL_TOKEN?: string
+  DEEL_SYNC_START_DATE?: string
   /** SES credentials are Worker secrets; never place them in wrangler vars. */
   AWS_ACCESS_KEY_ID?: string
   AWS_SECRET_ACCESS_KEY?: string
@@ -529,6 +538,8 @@ export interface RuntimeServices {
   profileNotifications?: ProfileNotificationsPort
   recurringRepair?: RecurringRepairService
   bill?: BillRuntime
+  /** Deel time sync, run from the daily cron. Absent on the demo. */
+  deelSync?: DeelSyncRuntime
   /**
    * The per-client opt-in. Separate from the runtime because turning it on is a
    * database write with no BILL call in it -- the runtime is the thing that

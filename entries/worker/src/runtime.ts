@@ -71,6 +71,7 @@ import {
   createBillMirrorSource,
   createPayoutAccountStore,
   createWiseDeliveryStore,
+  createDeelSyncStore,
   createStripeLinkStore,
   readAttachPreference,
   readFilesPreference,
@@ -177,6 +178,7 @@ import {
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
   createWiseRuntime,
+  createDeelSyncRuntime,
 } from "@ezacto/integrations";
 import {
   createCloudflareEmailQueue,
@@ -606,6 +608,8 @@ type ProviderCredentials = Pick<
   | "BILL_REPLY_TO_USER_ID"
   | "STRIPE_API_KEY"
   | "STRIPE_WEBHOOK_SECRET"
+  | "DEEL_TOKEN"
+  | "DEEL_SYNC_START_DATE"
 >;
 
 /**
@@ -1461,6 +1465,18 @@ export const createRuntimeServices = async (
       },
     },
     bill,
+    // Always composed; it reports itself unconfigured, and does nothing, until
+    // the deployment carries both a token and a start date. Never on the demo,
+    // whose `credentials` are empty.
+    deelSync: createDeelSyncRuntime({
+      config: {
+        token: credentials.DEEL_TOKEN,
+        startDate: credentials.DEEL_SYNC_START_DATE,
+      },
+      source: createDeelSyncStore(drizzle),
+      fetch: (request: Request) => fetch(request),
+      now: () => new Date(),
+    }),
     billDelivery: {
       isOptedIn: (clientId: number) =>
         createBillMirrorSource(drizzle, () => new Date()).isOptedIn(clientId),
