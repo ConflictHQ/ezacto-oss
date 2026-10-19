@@ -17,6 +17,11 @@ export interface PaymentAllocationsApi {
   previewPaymentAllocation?(command: AllocatePayment, signal?: AbortSignal): Promise<PaymentAllocationPreview>
   allocatePayment?(command: AllocatePayment, signal?: AbortSignal): Promise<void>
 }
+// appendChild, never append, and `field` accepts any Node: the api, worker and
+// container typechecks compile this file too (via shell/model.ts), under
+// workers-types, whose HTMLRewriter Element merges into the DOM one. There
+// `append` takes string | Response | ReadableStream and an HTMLSelectElement
+// is not an HTMLElement. apps/web's own typecheck is clean either way.
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, label = ''): HTMLElementTagNameMap[K] => {
   const element = document.createElement(tag)
   element.textContent = label
@@ -53,7 +58,7 @@ export const createAllocationsController = (
     moneyText(staffPaymentMoney(cents, currency))
   const cell = (row: HTMLElement, value: string | HTMLElement): void => {
     const td = node('td')
-    td.append(value)
+    td.appendChild(typeof value === 'string' ? document.createTextNode(value) : value)
     row.appendChild(td)
   }
   const table = (caption: string, titles: string[]): [HTMLElement, HTMLElement] => {
@@ -67,7 +72,8 @@ export const createAllocationsController = (
     for (const title of titles) head.appendChild(node('th', title))
     const thead = node('thead')
     thead.appendChild(head)
-    grid.append(thead, body)
+    grid.appendChild(thead)
+    grid.appendChild(body)
     wrapper.appendChild(grid)
     return [wrapper, body]
   }
@@ -124,13 +130,18 @@ export const createAllocationsController = (
     detail.replaceChildren()
     const currency = person.currency
     const summary = node('p', `${person.name} · ${month} · Earned: `)
-    summary.append(money(person.earned_cents, currency), ' · Paid: ', money(person.paid_cents, currency))
-    summary.append(' · Reserved: ', money(person.reserved_cents, currency))
-    summary.append(
+    for (const part of [
+      money(person.earned_cents, currency),
+      ' · Paid: ',
+      money(person.paid_cents, currency),
+      ' · Reserved: ',
+      money(person.reserved_cents, currency),
       ' · Allocated to earnings: ',
       money(person.allocated_applied_cents + person.allocated_reserved_cents, currency),
-    )
-    summary.append(' · Not yet paid or reserved: ', money(person.remaining_cents, currency))
+      ' · Not yet paid or reserved: ',
+      money(person.remaining_cents, currency),
+    ])
+      summary.appendChild(typeof part === 'string' ? document.createTextNode(part) : part)
     detail.appendChild(summary)
 
     const [paymentsTable, paymentsBody] = table('Payments not fully allocated', [
@@ -248,7 +259,7 @@ export const createAllocationsController = (
     const form = node('form')
     form.dataset.allocationForm = ''
     form.appendChild(node('h3', 'Allocate a payment'))
-    const field = <T extends HTMLElement>(text: string, control: T): T => {
+    const field = <T extends Node>(text: string, control: T): T => {
       const wrap = node('label', `${text} `)
       wrap.appendChild(control)
       form.appendChild(wrap)
@@ -436,7 +447,10 @@ export const createAllocationsController = (
           review.disabled = false
         })
     })
-    form.append(review, confirm, message, result)
+    form.appendChild(review)
+    form.appendChild(confirm)
+    form.appendChild(message)
+    form.appendChild(result)
     detail.appendChild(form)
   }
   return {
