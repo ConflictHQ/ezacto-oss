@@ -12,13 +12,14 @@
  * `_ezacto_load_progress` checkpoints a byte offset and a row index. Anything
  * wider would be inventing a shape for a consumer that does not exist yet.
  *
- * Every raw read the loader makes, rows and lineage alike, and the sizing of
- * those files, goes through this port. A lineage file is the resource named
- * `<resource>.lineage`. What this does NOT cover, recorded here because it is
- * the rest of the work and is easy to discover too late: the loader still keeps
- * a child-index cache under `raw/.load-index` and takes a lock through an
- * `owner.json` beside it, on local disk, keyed by the snapshot directory. A
- * queue consumer does not satisfy those, and they are separate work.
+ * Every raw read the loader makes, rows and lineage alike, and the sizing and
+ * fingerprinting of those files, goes through this port. A lineage file is the
+ * resource named `<resource>.lineage`. The child index is no longer on local
+ * disk by necessity: it is built through a `ChildIndexStore`, and ownership of
+ * the target database is a lease row (`load-lease.ts`), not a file. What the
+ * loader still reads from the snapshot directory is `manifest.json` and
+ * `checksums.json`, which a queue consumer will need delivered alongside the
+ * raw objects.
  */
 
 import { createReadStream } from 'node:fs'
@@ -41,6 +42,13 @@ export interface SnapshotSource {
    * count of anything read.
    */
   size(resource: string): Promise<number>
+  /**
+   * A value that changes whenever the object's bytes are replaced or rewritten:
+   * the entity tag for R2, size and modification time for a file. A load that
+   * claims a lease records these and refuses a source that no longer matches,
+   * so an upload landing mid-load cannot be read as if it were the snapshot.
+   */
+  fingerprint(resource: string): Promise<string>
   /** Named for error messages, so a failure says which snapshot it was reading. */
   describe(resource: string): string
 }
@@ -55,6 +63,10 @@ export const fileSnapshotSource = (snapshotDir: string): SnapshotSource => ({
       crlfDelay: Infinity,
     }),
   size: async (resource) => (await stat(join(snapshotDir, 'raw', `${resource}.jsonl`))).size,
+  fingerprint: async (resource) => {
+    const found = await stat(join(snapshotDir, 'raw', `${resource}.jsonl`))
+    return `${found.size}:${found.mtimeMs}`
+  },
   describe: (resource) => join(snapshotDir, 'raw', `${resource}.jsonl`),
 })
 
@@ -64,7 +76,7 @@ export interface SnapshotBucket {
     key: string,
     options?: { range?: { offset: number } },
   ): Promise<{ body: ReadableStream<Uint8Array> } | null>
-  head(key: string): Promise<{ size: number } | null>
+  head(key: string): Promise<{ size: number; etag: string } | null>
 }
 
 /**
@@ -127,6 +139,11 @@ export const r2SnapshotSource = (
       const object = await bucket.head(key(resource))
       if (object === null) throw new Error(`${key(resource)} is not in the snapshot bucket`)
       return object.size
+    },
+    fingerprint: async (resource) => {
+      const object = await bucket.head(key(resource))
+      if (object === null) throw new Error(`${key(resource)} is not in the snapshot bucket`)
+      return `${object.size}:${object.etag}`
     },
     describe: key,
   }

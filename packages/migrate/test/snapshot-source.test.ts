@@ -43,9 +43,13 @@ const collect = async (lines: AsyncIterable<string>): Promise<string[]> => {
 }
 
 /** An R2 stand-in that honours a range offset, which is the whole contract. */
-const bucket = (body: string, key = 'snapshots/run-1/raw/clients.jsonl'): SnapshotBucket => ({
+const bucket = (
+  body: string,
+  key = 'snapshots/run-1/raw/clients.jsonl',
+  etag = 'etag-1',
+): SnapshotBucket => ({
   head: async (requested) =>
-    requested === key ? { size: new TextEncoder().encode(body).length } : null,
+    requested === key ? { size: new TextEncoder().encode(body).length, etag } : null,
   get: async (requested, options) => {
     if (requested !== key) return null
     const bytes = new TextEncoder().encode(body).slice(options?.range?.offset ?? 0)
@@ -72,6 +76,18 @@ describe('reading a snapshot from disk (#409)', () => {
     // Resuming past the first row is what the loader's checkpoint asks for.
     const offset = Buffer.byteLength(`${ROWS[0]!}\n`, 'utf8')
     expect(await collect(source.openRaw('clients', offset))).toEqual(ROWS.slice(1))
+  })
+
+  it('[unit] fingerprints a file by size and modification time, so an edit reads differently', async () => {
+    const body = `${ROWS.join('\n')}\n`
+    const root = await onDisk(body)
+    const source = fileSnapshotSource(root)
+    const before = await source.fingerprint('clients')
+    expect(await source.fingerprint('clients')).toBe(before)
+    // Same length, so only the modification time can tell.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await writeFile(join(root, 'raw', 'clients.jsonl'), body.replace('Northpeak', 'Northpeek'), 'utf8')
+    expect(await source.fingerprint('clients')).not.toBe(before)
   })
 
   it('[unit] sizes a resource by its bytes, not its characters', async () => {
@@ -116,6 +132,18 @@ describe('reading the same snapshot from a bucket (#409)', () => {
     const source = r2SnapshotSource(bucket(body), 'snapshots/run-1')
     expect(await source.size('clients')).toBe(Buffer.byteLength(body, 'utf8'))
     await expect(source.size('invoices')).rejects.toThrow(/is not in the snapshot bucket/u)
+  })
+
+  it('[unit] fingerprints an object by its entity tag, so a replaced object reads differently', async () => {
+    const body = `${ROWS.join('\n')}\n`
+    const key = 'snapshots/run-1/raw/clients.jsonl'
+    const first = r2SnapshotSource(bucket(body, key, 'etag-1'), 'snapshots/run-1')
+    const same = r2SnapshotSource(bucket(body, key, 'etag-1'), 'snapshots/run-1')
+    const replaced = r2SnapshotSource(bucket(body, key, 'etag-2'), 'snapshots/run-1')
+    expect(await same.fingerprint('clients')).toBe(await first.fingerprint('clients'))
+    // Same bytes, new upload: the size cannot tell, the entity tag can.
+    expect(await replaced.fingerprint('clients')).not.toBe(await first.fingerprint('clients'))
+    await expect(first.fingerprint('invoices')).rejects.toThrow(/is not in the snapshot bucket/u)
   })
 
   it('[unit] tolerates a trailing slash on the prefix', async () => {
