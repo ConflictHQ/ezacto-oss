@@ -9727,3 +9727,22 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   min-height: 44px;
   text-decoration: none;
 }
+
+/* The own payments screen (issue 100). */
+.my-payments-intro {
+  max-width: 70ch;
+  color: var(--ez-muted);
+}
+.my-payments-summary {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 0;
+}
+.my-payments-summary dt {
+  color: var(--ez-muted);
+}
+.my-payments-summary dd {
+  margin: 0;
+  font-weight: 600;
+}

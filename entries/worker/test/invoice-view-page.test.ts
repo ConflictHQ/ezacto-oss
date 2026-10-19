@@ -86,7 +86,7 @@ describe('the hosted invoice page on the Worker: its document', () => {
       })
       const env: WorkerEnv = {
         DB: database,
-        ATTACHMENTS: bucket,
+        ATTACHMENTS: bucket as unknown as R2Bucket,
         API_CURSOR_SIGNING_KEY: 'A'.repeat(43),
         ENVIRONMENT: 'test',
         RELEASE: 'invoice-view-page-test',

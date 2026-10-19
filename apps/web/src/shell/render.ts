@@ -26,6 +26,7 @@ import { renderEmailConfigPage } from '../email-config/render.js'
 import { renderRecurringEditorPage, renderRecurringPage } from '../recurring/render.js'
 import { renderEstimatesPage } from '../estimates/render.js'
 import { renderCapacityPage } from '../capacity/render.js'
+import { renderMyPaymentsPage } from '../my-payments/render.js'
 import { renderRetainerDialogs, renderRetainerPage } from '../retainers/render.js'
 import {
   renderActivityLogPage,
@@ -127,6 +128,7 @@ export interface AppShellOptions {
     | 'team-list'
     | 'team-person'
     | 'capacity'
+    | 'my-payments'
     | 'not-found'
   /**
    * The level-2 strip under the header. Time supplies its own Week/Day pair
@@ -1112,6 +1114,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   ${renderClientDirectoryPages(view)}
   ${renderTeamPages(view)}
   ${renderCapacityPage(view)}
+  ${renderMyPaymentsPage(view)}
   ${renderProjectDirectoryPages(view)}
   ${renderTaskAdminPage(view)}
   ${renderDashboardPage(view)}

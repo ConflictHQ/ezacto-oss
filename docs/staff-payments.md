@@ -183,3 +183,5 @@ explicitly. Hour splits are never inferred.
   for existing monthly payments. Neither step moves money.
 - A work-month correction is refused while allocations are live; reverse them
   first.
+
+People see only their own figures, read-only, at `/my-payments` (`GET /api/v1/me/payments`) when the `own_money` setting is on; see [`contractor-payments.md`](contractor-payments.md). These administrator routes are unchanged.
