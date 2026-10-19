@@ -155,6 +155,17 @@ export const createTeamDirectoryController = (
   const payoutForm = required<HTMLFormElement>('[data-team-payout-form]')
   const payoutResult = required<HTMLElement>('[data-team-payout-result]')
   const payoutSubmit = required<HTMLButtonElement>('[data-team-payout-submit]')
+  const emailFactorSection = required<HTMLElement>('[data-team-email-factor]')
+  const emailFactorState = required<HTMLElement>('[data-team-email-factor-state]')
+  const emailFactorOff = required<HTMLButtonElement>('[data-team-email-factor-off]')
+  const emailFactorResult = required<HTMLElement>('[data-team-email-factor-result]')
+  const emailFactorDialog = required<HTMLDialogElement>('[data-team-email-factor-dialog]')
+  const emailFactorForm = required<HTMLFormElement>('[data-team-email-factor-form]')
+  const emailFactorDialogResult = required<HTMLElement>(
+    '[data-team-email-factor-dialog-result]',
+  )
+  const emailFactorConfirm = required<HTMLButtonElement>('[data-team-email-factor-confirm]')
+  const emailFactorCancel = required<HTMLButtonElement>('[data-team-email-factor-cancel]')
   const personStatus = required<HTMLElement>('[data-team-person-status]')
   const personRetry = required<HTMLButtonElement>('[data-team-person-retry]')
   const editor = required<HTMLElement>('[data-team-person-editor]')
@@ -241,6 +252,9 @@ export const createTeamDirectoryController = (
   // to be conflicted on, so it guards only its own dialog.
   let addPersonPending = false
   const commandIds = new Map<string, string>()
+  // The person whose emailed sign-in code the Permissions panel is showing.
+  let emailFactorUserId: number | null = null
+  let emailFactorPending = false
 
   const currentSession = (): ActiveSession | null =>
     session === null || session.signal.aborted ? null : session
@@ -266,6 +280,7 @@ export const createTeamDirectoryController = (
   const closeDialogs = (): void => {
     if (rateDialog.open) rateDialog.close()
     if (deactivateDialog.open) deactivateDialog.close()
+    if (emailFactorDialog.open) emailFactorDialog.close()
     if (addPersonDialog.open) addPersonDialog.close()
   }
 
@@ -357,6 +372,12 @@ export const createTeamDirectoryController = (
     rateResult.textContent = ''
     deactivateResult.textContent = ''
     addPersonResult.textContent = ''
+    emailFactorUserId = null
+    emailFactorSection.hidden = true
+    emailFactorOff.hidden = true
+    emailFactorState.textContent = ''
+    emailFactorResult.textContent = ''
+    emailFactorDialogResult.textContent = ''
     closeDialogs()
   }
 
@@ -1258,6 +1279,97 @@ export const createTeamDirectoryController = (
     })()
   })
 
+  /**
+   * The emailed sign-in code (issue 770). An administrator's lockout recovery
+   * for someone who lost their mailbox, so it shows to administrators only and
+   * the public demo, which signs nobody in for real, refuses it like the other
+   * mutations. Its own request and its own message: a state that will not
+   * load does not take the person off the screen.
+   */
+  const loadEmailFactor = async (active: ActiveSession, userId: number): Promise<void> => {
+    emailFactorUserId = userId
+    const read = api.getUserEmailFactor
+    emailFactorOff.hidden = true
+    emailFactorResult.textContent = ''
+    emailFactorSection.hidden =
+      !active.capabilities.canChangeProfile || read === undefined
+    if (emailFactorSection.hidden || read === undefined) return
+    if (demo) {
+      emailFactorState.textContent = demoUnavailable('Turning off an emailed sign-in code')
+      return
+    }
+    emailFactorState.textContent = 'Checking…'
+    try {
+      const enabled = await read(userId, active.signal)
+      if (currentSession() !== active || emailFactorUserId !== userId) return
+      emailFactorState.textContent = enabled
+        ? 'On. A code is emailed to this person when they sign in with a password.'
+        : 'Off. This person is not sent a code by email when they sign in.'
+      emailFactorOff.hidden = !enabled || api.disableUserEmailFactor === undefined
+    } catch {
+      if (currentSession() !== active || emailFactorUserId !== userId) return
+      emailFactorState.textContent = 'Whether this person gets an emailed code could not be loaded.'
+    }
+  }
+
+  emailFactorOff.addEventListener('click', () => {
+    if (demo || emailFactorPending) return
+    emailFactorDialogResult.textContent = ''
+    emailFactorDialog.showModal()
+    // Cancel takes the focus, not the destructive button.
+    emailFactorCancel.focus()
+  })
+
+  for (const control of [
+    required<HTMLButtonElement>('[data-team-email-factor-close]'),
+    emailFactorCancel,
+  ]) {
+    control.addEventListener('click', () => {
+      if (emailFactorPending) return
+      emailFactorDialog.close()
+    })
+  }
+
+  emailFactorForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    const userId = emailFactorUserId
+    const disable = api.disableUserEmailFactor
+    if (active === null || userId === null || disable === undefined || demo) return
+    if (emailFactorPending) return
+    emailFactorPending = true
+    emailFactorConfirm.disabled = true
+    emailFactorCancel.disabled = true
+    emailFactorDialogResult.textContent = 'Turning off…'
+    void (async () => {
+      try {
+        await disable(userId, active.signal)
+        if (currentSession() !== active) return
+        emailFactorDialog.close()
+        emailFactorResult.textContent = 'Emailed code turned off.'
+        await loadEmailFactor(active, userId)
+        // loadEmailFactor clears the line it shares with this one.
+        emailFactorResult.textContent = 'Emailed code turned off.'
+      } catch (error) {
+        if (currentSession() !== active) return
+        // 404: someone turned it off first. Say so and show the truth.
+        if (error instanceof EzactoApiError && error.status === 404) {
+          emailFactorDialog.close()
+          await loadEmailFactor(active, userId)
+          emailFactorResult.textContent = 'It was already off.'
+          return
+        }
+        emailFactorDialogResult.textContent = messageFor(error)
+      } finally {
+        emailFactorPending = false
+        if (currentSession() === active) {
+          emailFactorConfirm.disabled = false
+          emailFactorCancel.disabled = false
+        }
+      }
+    })()
+  })
+
   const renderPerson = (active: ActiveSession, value: TeamPerson): void => {
     personName.textContent = `${value.first_name} ${value.last_name}`
     formInput(infoForm, 'first_name').value = value.first_name
@@ -1289,6 +1401,7 @@ export const createTeamDirectoryController = (
     // Not awaited. The payout destination is a second request and a slow or
     // refusing one must not keep the rest of the person off the screen.
     void loadPayout(active, value.id)
+    void loadEmailFactor(active, value.id)
     editor.hidden = false
     personStatus.textContent = `${value.is_active ? 'Active' : 'Inactive'} · version ${value.version}`
   }

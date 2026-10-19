@@ -1530,6 +1530,12 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   removeWisePayoutDestination: async (userId, signal) => {
     await client.removeWisePayoutDestination({ userId, ...withSignal(signal) })
   },
+  getUserEmailFactor: async (userId, signal) =>
+    (await client.getUserTwoFactorEmail({ id: userId, ...withSignal(signal) })).data
+      .email_enabled,
+  disableUserEmailFactor: async (userId, signal) => {
+    await client.disableUserTwoFactorEmail({ id: userId, ...withSignal(signal) })
+  },
   createTeamPerson: async (input, signal) =>
     (await client.createUser({ body: input, ...withSignal(signal) })).data,
   updateTeamPerson: async (id, commandId, body, signal) =>

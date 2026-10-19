@@ -135,7 +135,10 @@ stronger one that does not.
 A person turns it on and off under *Settings* (`POST` and `DELETE
 /api/v1/two-factor/email`, session only, and the address must be verified). An
 administrator can turn off someone else's, for the person who lost their mailbox
-(`DELETE /api/v1/users/:id/two-factor/email`). Both are audited as
+(`DELETE /api/v1/users/:id/two-factor/email`, and `GET` on the same path for
+whether it is on). On the web that is the *Emailed sign-in code* section of the
+person's Permissions tab in Team, with a confirm step; it is refused on the
+public demo. Both are audited as
 `two_factor.email_enabled` and `two_factor.email_disabled`.
 
 - **A code and no link.** A link in a second-factor email is a phishing target,
