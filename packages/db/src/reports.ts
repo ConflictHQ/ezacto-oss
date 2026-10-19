@@ -1337,6 +1337,25 @@ interface ClientNodeRow {
   budgetCents: number | null
 }
 
+/**
+ * Whether a time entry counts toward its project's budget (issue 1028). One
+ * predicate for the budget report, the project list, the rollup and the budget
+ * alerts, so they cannot read different figures.
+ *
+ * Time carried over from Harvest keeps Harvest's own `budgeted` flag. Time
+ * tracked natively (no `harvest_id`) follows the project's budget setting: a
+ * fee budget (`task_fees`) counts billable time only, every other budget counts
+ * all time. Reading the rule rather than storing it means existing native
+ * entries are covered with no data rewrite, and an entry that moves project or
+ * changes billable status, or a project whose budget changes, needs no repair.
+ * An entry flagged `budgeted` explicitly always counts.
+ */
+export const countsTowardBudget = (entry: string, project: string) =>
+  sql.raw(
+    `(${entry}.budgeted = 1 OR (${entry}.harvest_id IS NULL AND ` +
+      `(${project}.budget_by <> 'task_fees' OR ${entry}.billable = 1)))`,
+  )
+
 interface RollupTimeRow {
   id: number
   clientId: number
@@ -1512,7 +1531,8 @@ const clientRollupReport = async (
         project.is_active AS "projectActive",
         upper(coalesce(project.billing_currency, client.currency)) AS "currency",
         entry.rounded_seconds AS "roundedSeconds", entry.billable AS "billable",
-        entry.budgeted AS "budgeted", entry.invoice_id AS "invoiceId",
+        CASE WHEN ${countsTowardBudget('entry', 'project')} THEN 1 ELSE 0 END AS "budgeted",
+        entry.invoice_id AS "invoiceId",
         entry.timer_started_at AS "timerStartedAt", entry.started_time AS "startedTime",
         entry.ended_time AS "endedTime", entry.billable_rate_cents AS "billableRateCents",
         entry.cost_rate_cents AS "costRateCents"
@@ -1746,11 +1766,13 @@ const projectBudgetSummaryReport = async (
     billableRateCents: number | null
     costRateCents: number | null
   }>(sql`
-    SELECT project_id AS "projectId", rounded_seconds AS "roundedSeconds",
-      billable_rate_cents AS "billableRateCents", cost_rate_cents AS "costRateCents"
-    FROM time_entries
-    WHERE budgeted = 1 AND spent_date BETWEEN ${range.from} AND ${range.to}
-    ORDER BY id
+    SELECT entry.project_id AS "projectId", entry.rounded_seconds AS "roundedSeconds",
+      entry.billable_rate_cents AS "billableRateCents", entry.cost_rate_cents AS "costRateCents"
+    FROM time_entries entry
+    JOIN projects project ON project.id = entry.project_id
+    WHERE ${countsTowardBudget('entry', 'project')}
+      AND entry.spent_date BETWEEN ${range.from} AND ${range.to}
+    ORDER BY entry.id
   `)
   const expenses = await database.all<{ projectId: number; cents: number }>(sql`
     SELECT project_id AS "projectId", total_cost_cents AS "cents"
@@ -1870,13 +1892,14 @@ const projectBudgetReport = async (
   const project = projects[0]
   if (project === undefined) return null
   const entries = await database.all<BudgetEntryRow>(sql`
-    SELECT task_assignment_id AS "taskAssignmentId",
-      user_assignment_id AS "userAssignmentId", rounded_seconds AS "roundedSeconds",
-      billable_rate_cents AS "billableRateCents", cost_rate_cents AS "costRateCents"
-    FROM time_entries
-    WHERE project_id = ${projectId} AND budgeted = 1
-      AND spent_date BETWEEN ${range.from} AND ${range.to}
-    ORDER BY id
+    SELECT entry.task_assignment_id AS "taskAssignmentId",
+      entry.user_assignment_id AS "userAssignmentId", entry.rounded_seconds AS "roundedSeconds",
+      entry.billable_rate_cents AS "billableRateCents", entry.cost_rate_cents AS "costRateCents"
+    FROM time_entries entry
+    JOIN projects project ON project.id = entry.project_id
+    WHERE entry.project_id = ${projectId} AND ${countsTowardBudget('entry', 'project')}
+      AND entry.spent_date BETWEEN ${range.from} AND ${range.to}
+    ORDER BY entry.id
   `)
   const grains: ProjectBudgetGrainRecord[] = []
   if (project.budgetBy === 'project') {
