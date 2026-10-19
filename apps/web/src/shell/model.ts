@@ -150,6 +150,12 @@ export interface ShellApi
     query: ActivityExportQuery,
     signal?: AbortSignal,
   ): Promise<{ readonly blob: Blob; readonly filename: string; readonly truncated: boolean }>
+  /** Finished years the live activity log still holds (issue 8). */
+  listRollableActivityYears?(
+    signal?: AbortSignal,
+  ): Promise<readonly { readonly year: number; readonly entries: number }[]>
+  /** Rolls one finished year of the activity log into its archive. Administrators only. */
+  rollActivityYear?(year: number, signal?: AbortSignal): Promise<void>
   /**
    * The tokens you have issued, and issuing another (issue 485).
    *
@@ -1906,6 +1912,11 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     client.getCapacity({ query: range, ...withSignal(signal) }),
   listActivityLog: (query, signal) =>
     client.listActivityLog({ query: { per_page: 200, ...query }, ...withSignal(signal) }),
+  listRollableActivityYears: async (signal) =>
+    (await client.listRollableActivityYears({ ...withSignal(signal) })).data.rollable,
+  rollActivityYear: async (year, signal) => {
+    await client.rollActivityYear({ body: { year }, ...withSignal(signal) })
+  },
   listEmailLog: (query, signal) => client.listEmailLog({ query, ...withSignal(signal) }),
   listOutboxDeliveries: (query, signal) =>
     client.listOutboxDeliveries({ query, ...withSignal(signal) }),

@@ -260,6 +260,9 @@ export {
 } from './email-configuration.js'
 export {
   installOutboxRoutes,
+  type ActivityRollOutcome,
+  type ActivityRollPort,
+  type RollableActivityYear,
   type ActivityLogActor,
   type ActivityLogResource,
   type OutboxDeliveryFilter,

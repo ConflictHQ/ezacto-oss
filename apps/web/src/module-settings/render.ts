@@ -463,6 +463,11 @@ export const renderActivityLogPage = (view?: string): string => `
       <button type="button" data-activity-clear>Clear filters</button>
       <button type="button" data-activity-export>Export CSV</button>
     </div>
+    <section class="activity-roll" data-activity-roll hidden>
+      <h2>Archive a finished year</h2>
+      <p class="module-settings-intro">Entries from a finished year can be moved out of the live log into their own archive table. Nothing is deleted: archived entries stay append-only and still appear here. The archive takes everything recorded up to the moment you roll.</p>
+      <div data-activity-roll-years></div>
+    </section>
     <p class="form-result module-settings-status" data-activity-log-status role="status" aria-live="polite">Loading activity…</p>
     <div data-activity-log-list></div>
     <p><button type="button" data-activity-more hidden>Load more</button></p>

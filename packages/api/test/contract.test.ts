@@ -274,6 +274,7 @@ const documentedApp = () =>
       installOutboxRoutes(api, outbox, {
         ...logRouteOptions,
         isActivityLogModuleEnabled: async () => true,
+        roll: { rollable: async () => [], roll: async () => "rolled" },
       });
       installGeneralResourceRoutes(api, {
         repository: generalRepository,

@@ -2,7 +2,7 @@ import type { Hono } from 'hono'
 import { ACTIVITY_EXPORT_ROW_LIMIT, renderActivityCsv } from './activity-export.js'
 import { requireApiScope, requireSessionPrincipal } from './auth.js'
 import type { ApiContext } from './context.js'
-import { ApiError, validationError } from './errors.js'
+import { ApiError, readJsonBody, validationError } from './errors.js'
 import {
   dayRange,
   logOrder,
@@ -83,6 +83,33 @@ export interface OutboxRouteOptions {
    * recorded while nobody is looking at it.
    */
   isActivityLogModuleEnabled(): Promise<boolean>
+  /**
+   * The operator roll (issue 8). Absent where the deployment cannot roll, and
+   * the routes are then not mounted rather than mounted to refuse.
+   */
+  roll?: ActivityRollPort
+}
+
+/** A year the hot table still holds rows for, and how many. */
+export interface RollableActivityYear {
+  year: number
+  entries: number
+}
+
+export type ActivityRollOutcome = 'rolled' | 'current_year' | 'partition_exists'
+
+export interface ActivityRollPort {
+  /** Finished years the hot table still holds. The port owns the clock. */
+  rollable(): Promise<RollableActivityYear[]>
+  /**
+   * Rolls `year` into its own table and records the roll as an activity event,
+   * atomically. `requestId` makes a retried request record it once.
+   */
+  roll(input: {
+    year: number
+    actorUserId: number
+    requestId: string
+  }): Promise<ActivityRollOutcome>
 }
 
 export interface ActivityLogQuery {
@@ -134,6 +161,7 @@ const ADMINISTRATOR_ONLY_ACTIVITY_EVENTS: readonly string[] = [
   'two_factor.email_disabled',
   'account.deletion_requested',
   'timesheet_auto_approval.updated',
+  'activity_log.rolled',
 ]
 
 const identifierQuery = (requestUrl: URL, name: string): string | undefined => {
@@ -371,6 +399,61 @@ export const installOutboxRoutes = <Bindings extends object>(
       },
     })
   })
+
+  // The operator roll (issue 8). Session-only and administrator-only, and no
+  // scope opens it: a bearer token never reaches a route that moves history
+  // between tables. Module-gated like the surface that prompts for it.
+  const roll = options.roll
+  if (roll !== undefined) {
+    api.get('/activity-log/rolls', async (context) => {
+      requireAdministratorSession(context)
+      await requireActivityLogModule(options)
+      return context.json(
+        {
+          data: { rollable: await roll.rollable() },
+          links: { self: '/api/v1/activity-log/rolls' },
+        },
+        200,
+        { 'cache-control': 'no-store' },
+      )
+    })
+
+    api.post('/activity-log/rolls', async (context) => {
+      const principal = requireAdministratorSession(context)
+      await requireActivityLogModule(options)
+      const body = await readJsonBody<unknown>(context)
+      const year = typeof body === 'object' && body !== null ? (body as { year?: unknown }).year : undefined
+      if (typeof year !== 'number' || !Number.isInteger(year) || year < 2000 || year > 9999) {
+        throw validationError([
+          { field: 'year', code: 'invalid', message: 'year must be a four-digit year' },
+        ])
+      }
+      const outcome = await roll.roll({
+        year,
+        actorUserId: principal.userId,
+        requestId: context.get('requestId'),
+      })
+      if (outcome === 'current_year') {
+        throw new ApiError({
+          status: 409,
+          code: 'activity_year_not_finished',
+          message: 'Only a finished year can be rolled; the current year is still being written.',
+        })
+      }
+      if (outcome === 'partition_exists') {
+        throw new ApiError({
+          status: 409,
+          code: 'activity_year_already_rolled',
+          message: 'That year has already been rolled.',
+        })
+      }
+      return context.json(
+        { data: { year, rolled: true }, links: { self: '/api/v1/activity-log/rolls' } },
+        201,
+        { 'cache-control': 'no-store' },
+      )
+    })
+  }
 
   api.get('/outbox-deliveries', async (context) => {
     const principal = requireAdministratorSession(context)

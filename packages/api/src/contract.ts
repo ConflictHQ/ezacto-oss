@@ -3320,6 +3320,32 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   },
   {
     method: "get",
+    path: "/api/v1/activity-log/rolls",
+    operationId: "listRollableActivityYears",
+    summary: "List the finished years the Activity log can still roll (administrator session; 403 `module_disabled` when the module is off)",
+    tag: "activity",
+    responseStatus: 200,
+    responseSchema: "RollableActivityYearsEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/activity-log/rolls",
+    operationId: "rollActivityYear",
+    summary: "Roll a finished year of the Activity log into its own table (administrator session; 403 `module_disabled` when the module is off)",
+    tag: "activity",
+    responseStatus: 201,
+    responseSchema: "ActivityYearRolledEnvelope",
+    requestSchema: "RollActivityYearInput",
+    requestRequired: true,
+    sessionOnly: true,
+    description:
+      "Nothing is deleted: the year's entries move to activity_log_<year>, still append-only, and stay readable. " +
+      "The current year and a year that has already been rolled are refused with 409. " +
+      "The roll is recorded in the log as activity_log.rolled. An API token cannot call this.",
+  },
+  {
+    method: "get",
     path: "/api/v1/outbox-deliveries",
     operationId: "listOutboxDeliveries",
     summary: "List domain-event subscriber delivery outcomes",
@@ -4994,6 +5020,36 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   ActivityLogStatusEnvelope: envelope("ActivityLogStatus"),
+  RollableActivityYearsEnvelope: envelope("RollableActivityYears"),
+  RollableActivityYears: {
+    type: "object",
+    required: ["rollable"],
+    properties: {
+      rollable: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["year", "entries"],
+          properties: { year: integerSchema, entries: integerSchema },
+          additionalProperties: false,
+        },
+      },
+    },
+    additionalProperties: false,
+  },
+  ActivityYearRolledEnvelope: envelope("ActivityYearRolled"),
+  ActivityYearRolled: {
+    type: "object",
+    required: ["year", "rolled"],
+    properties: { year: integerSchema, rolled: booleanSchema },
+    additionalProperties: false,
+  },
+  RollActivityYearInput: {
+    type: "object",
+    required: ["year"],
+    properties: { year: { type: "integer", minimum: 2000, maximum: 9999 } },
+    additionalProperties: false,
+  },
   TeamNamedRelation: {
     type: "object",
     required: ["id", "name"],

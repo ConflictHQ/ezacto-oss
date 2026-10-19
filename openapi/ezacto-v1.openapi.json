@@ -2234,6 +2234,125 @@
         ]
       }
     },
+    "/api/v1/activity-log/rolls": {
+      "get": {
+        "operationId": "listRollableActivityYears",
+        "summary": "List the finished years the Activity log can still roll (administrator session; 403 `module_disabled` when the module is off)",
+        "tags": [
+          "activity"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RollableActivityYearsEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/activity-log/rolls",
+        "x-ezacto-generate-client": true
+      },
+      "post": {
+        "operationId": "rollActivityYear",
+        "summary": "Roll a finished year of the Activity log into its own table (administrator session; 403 `module_disabled` when the module is off)",
+        "description": "Nothing is deleted: the year's entries move to activity_log_<year>, still append-only, and stay readable. The current year and a year that has already been rolled are refused with 409. The roll is recorded in the log as activity_log.rolled. An API token cannot call this.",
+        "tags": [
+          "activity"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityYearRolledEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/activity-log/rolls",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RollActivityYearInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/outbox-deliveries": {
       "get": {
         "operationId": "listOutboxDeliveries",
@@ -32703,6 +32822,99 @@
           },
           "links": {
             "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RollableActivityYearsEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RollableActivityYears"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RollableActivityYears": {
+        "type": "object",
+        "required": [
+          "rollable"
+        ],
+        "properties": {
+          "rollable": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "year",
+                "entries"
+              ],
+              "properties": {
+                "year": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "entries": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ActivityYearRolledEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ActivityYearRolled"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ActivityYearRolled": {
+        "type": "object",
+        "required": [
+          "year",
+          "rolled"
+        ],
+        "properties": {
+          "year": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rolled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RollActivityYearInput": {
+        "type": "object",
+        "required": [
+          "year"
+        ],
+        "properties": {
+          "year": {
+            "type": "integer",
+            "minimum": 2000,
+            "maximum": 9999
           }
         },
         "additionalProperties": false

@@ -1051,6 +1051,32 @@ export type ActivityLogStatusEnvelope = {
   "links": Links;
 };
 
+export type RollableActivityYearsEnvelope = {
+  "data": RollableActivityYears;
+  "links": Links;
+};
+
+export type RollableActivityYears = {
+  "rollable": Array<{
+  "year": number;
+  "entries": number;
+}>;
+};
+
+export type ActivityYearRolledEnvelope = {
+  "data": ActivityYearRolled;
+  "links": Links;
+};
+
+export type ActivityYearRolled = {
+  "year": number;
+  "rolled": boolean;
+};
+
+export type RollActivityYearInput = {
+  "year": number;
+};
+
 export type TeamNamedRelation = {
   "id": number;
   "name": string;
@@ -4693,6 +4719,25 @@ export class EzactoClient {
       query: args.query,
       signal: args.signal,
       binary: true,
+      headers,
+    });
+  }
+
+  async listRollableActivityYears(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<RollableActivityYearsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<RollableActivityYearsEnvelope>("GET", "/api/v1/activity-log/rolls", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async rollActivityYear(args: { body: RollActivityYearInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<ActivityYearRolledEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ActivityYearRolledEnvelope>("POST", "/api/v1/activity-log/rolls", {
+      body: args.body,
+      signal: args.signal,
       headers,
     });
   }

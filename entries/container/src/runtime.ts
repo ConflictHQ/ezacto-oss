@@ -34,6 +34,7 @@ import {
   createRecurringInvoiceEngine,
   createContainerReminderScheduler,
   captureActivityEvent,
+  createActivityRoll,
   createTwoFactorService,
   deriveTwoFactorEmailCodeKey,
   createGeneralResourceRepository,
@@ -1038,6 +1039,7 @@ export const createContainerRuntime = async (
           await captureActivityEvent(drizzle, request)
         },
       },
+      activityRoll: createActivityRoll(drizzle, () => new Date().toISOString()),
       reports: createReportRepository(drizzle),
       moduleSettings: createModuleSettingsRepository(drizzle),
       signInMethods: createSignInMethodRepository(drizzle),

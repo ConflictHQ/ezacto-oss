@@ -322,6 +322,7 @@ describe('outbox observability API', () => {
       'two_factor.email_disabled',
       'account.deletion_requested',
       'timesheet_auto_approval.updated',
+      'activity_log.rolled',
     ]
     const sessionRead = async (profile: UserProfile) => {
       const { app, monitor } = harness(profile)

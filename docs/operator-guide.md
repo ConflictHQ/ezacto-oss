@@ -45,6 +45,12 @@ Update the authoritative environment secret store, deploy through CI, verify the
 
 Before disconnecting a money provider, review pending invoices, scheduled payments and uncertain transfers with their operator. Preserve provider IDs and audit records for reconciliation. Before disabling an identity provider, verify another working administrator login. Disabling a login method is separate from deleting an account or revoking provider grants.
 
+## Archive a finished year of the activity log
+
+The activity log is append-only and nothing in it is ever deleted. Once a year has finished, an administrator can move the live log into its own archive table from Settings > Activity ("Archive a finished year"). The roll is an operator action, never a schedule: the page offers it, and it runs only when you confirm. It renames the live table to `activity_log_<year>`, keeps every guard on the archive, starts a fresh live table, and records itself in the log as `activity_log.rolled`, all in one transaction. Archived entries still appear in the log, the export and the backup bundle.
+
+The archive takes everything recorded up to the moment of the roll, so entries from the first days of the new year travel with it if you roll late. The current year and a year that was already rolled are refused. The roll needs an administrator session; an API token cannot run it. On Cloudflare D1, take a Time Travel bookmark first, as for any schema operation.
+
 ## Troubleshooting order
 
 Check the deployment/environment first, then its configuration status, provider permissions, exact callback or webhook URL, and finally the request ID and provider logs. A `401` from eZacto may mean the operator session expired; a provider `401` means something different. Never paste tokens or complete webhook payloads into public issues.
