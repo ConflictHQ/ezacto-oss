@@ -136,6 +136,41 @@ An invoice not yet linked by the mirror is paired with QuickBooks by number and
 shown as not linked. A company with more than 20,000 invoices is refused rather
 than reported on partially.
 
+The same report lists **payments voided or deleted in QuickBooks** that a
+receipt here came from, next to the invoice differences, with the receipts and
+their invoices. The receipt stays on the invoice and nothing is corrected: it is
+a fact for the bookkeeper to settle, by hand, on whichever side is wrong. A
+void or delete of a QuickBooks payment no receipt here came from is not listed.
+It is learned from the webhook (`Void` and `Delete`), from the catch-up below,
+or from a payment read that finds the payment gone.
+
+### Catching up on missed webhooks
+
+A webhook Intuit never delivered, or one delivered while ezacto was down, leaves
+no trace. Once an hour the Worker asks Intuit's change data capture for the
+payments changed since a stored cursor (`quickbooks_sync_cursors`, one row per
+company) and applies them exactly as the webhook would, through the same claim,
+so a change the webhook already processed is skipped and a payment is never
+recorded twice.
+
+- The first run only places the cursor at that moment. History before it is not
+  replayed into the books unasked; the reconciliation report compares it.
+- The cursor moves only after a whole window of changes has been applied. A
+  failed run leaves it where it was, records `failed`, and is retried.
+- Each run reads from five minutes before the cursor, because re-applying is
+  free and a gap is not.
+- Intuit throttles with 429. Catch-up waits out `Retry-After` (otherwise 2, 4
+  and 8 seconds) and fails the run after four attempts.
+- Intuit replays 30 days at most. A cursor older than 29 days is not read; the
+  run records `full_reconcile_needed`, the report says so, and the report is
+  the way to compare the books. Disconnecting and reconnecting starts a fresh
+  cursor.
+
+The report shows how the last run ended. The self-hosted container has no cron
+and does not run catch-up. Only payments are caught up: an
+invoice's webhook has no effect here either, so nothing is lost by not reading
+invoices.
+
 ## 5. Keys
 
 **Keys and credentials**, per environment. The client ID and secret are revealed

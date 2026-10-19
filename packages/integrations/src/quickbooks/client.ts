@@ -31,8 +31,15 @@ export class QuickBooksApiError extends Error {
   /** Intuit's own error code, where the Fault carried one. */
   readonly code: string | null
   readonly detail: string | null
+  /** Seconds Intuit asked us to wait, from `Retry-After` on a throttled answer. */
+  readonly retryAfterSeconds: number | null
 
-  constructor(status: number, code: string | null, detail: string | null) {
+  constructor(
+    status: number,
+    code: string | null,
+    detail: string | null,
+    retryAfterSeconds: number | null = null,
+  ) {
     super(
       `QuickBooks request failed with status ${String(status)}${
         code === null ? '' : ` (${code})`
@@ -42,6 +49,7 @@ export class QuickBooksApiError extends Error {
     this.status = status
     this.code = code
     this.detail = detail
+    this.retryAfterSeconds = retryAfterSeconds
   }
 }
 
@@ -119,7 +127,29 @@ export interface QuickBooksPayment {
   readonly CustomerRef?: QuickBooksRef
   readonly Line?: readonly QuickBooksPaymentLine[]
   readonly PaymentRefNum?: string
+  /** QuickBooks voids a payment by zeroing it and replacing this with "Voided". */
+  readonly PrivateNote?: string
+  readonly MetaData?: { readonly CreateTime?: string; readonly LastUpdatedTime?: string }
 }
+
+/**
+ * A payment as change data capture reports it: the whole document, or -- for
+ * one deleted since -- only its id and `status: 'Deleted'`.
+ */
+export type QuickBooksCapturedPayment =
+  | (QuickBooksPayment & { readonly status?: undefined })
+  | { readonly Id: string; readonly status: 'Deleted' }
+
+/** One window of captured payments, and the instant Intuit answered at. */
+export interface QuickBooksPaymentChanges {
+  readonly time: string
+  readonly payments: readonly QuickBooksCapturedPayment[]
+  /** Intuit returns at most this many per window; a full one may have more behind it. */
+  readonly full: boolean
+}
+
+/** Intuit's ceiling for the objects of one entity in one change-data-capture answer. */
+export const QUICKBOOKS_CDC_PAGE_SIZE = 1000
 
 export interface QuickBooksClientOptions {
   readonly realmId: string
@@ -199,7 +229,13 @@ export class QuickBooksClient {
       } catch {
         // A non-JSON error body is itself the diagnosis; the status says the rest.
       }
-      throw new QuickBooksApiError(response.status, code, detail)
+      const retryAfter = Number(response.headers.get('retry-after'))
+      throw new QuickBooksApiError(
+        response.status,
+        code,
+        detail,
+        Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : null,
+      )
     }
     return object(await response.json(), 'response body')
   }
@@ -232,6 +268,43 @@ export class QuickBooksClient {
       throw new QuickBooksResponseError(`QueryResponse.${entity} must be an array`)
     }
     return rows as Entity[]
+  }
+
+  /**
+   * Payments created, changed, voided or deleted since an instant, from
+   * Intuit's change data capture. Read-only. Intuit answers for the last 30
+   * days only; the caller checks the horizon, because an older instant is
+   * refused here rather than answered partially.
+   */
+  async paymentChangesSince(changedSince: string): Promise<QuickBooksPaymentChanges> {
+    const body = await this.#send(
+      this.#request('/cdc', { method: 'GET' }, { entities: 'Payment', changedSince }),
+    )
+    const time = body['time']
+    if (typeof time !== 'string') {
+      throw new QuickBooksResponseError('the change data capture answer carries no time')
+    }
+    const responses = body['CDCResponse']
+    if (!Array.isArray(responses)) {
+      throw new QuickBooksResponseError('CDCResponse must be an array')
+    }
+    const payments: QuickBooksCapturedPayment[] = []
+    for (const response of responses) {
+      const queries = object(response, 'CDCResponse entry')['QueryResponse']
+      if (queries === undefined) continue
+      if (!Array.isArray(queries)) {
+        throw new QuickBooksResponseError('CDCResponse.QueryResponse must be an array')
+      }
+      for (const query of queries) {
+        const rows = object(query, 'QueryResponse entry')['Payment']
+        if (rows === undefined) continue
+        if (!Array.isArray(rows)) {
+          throw new QuickBooksResponseError('QueryResponse.Payment must be an array')
+        }
+        payments.push(...(rows as QuickBooksCapturedPayment[]))
+      }
+    }
+    return { time, payments, full: payments.length >= QUICKBOOKS_CDC_PAGE_SIZE }
   }
 
   async findCustomerByDisplayName(displayName: string): Promise<QuickBooksCustomer | null> {

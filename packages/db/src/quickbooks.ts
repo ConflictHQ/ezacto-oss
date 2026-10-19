@@ -46,6 +46,15 @@ export interface QuickBooksMirrorOutcomeRecord {
   readonly attemptedAt: string
 }
 
+export type QuickBooksSyncOutcome = 'caught_up' | 'failed' | 'full_reconcile_needed'
+
+/** Where change-data-capture catch-up resumes for a company (issue 1013). */
+export interface QuickBooksSyncCursorRecord {
+  readonly cdcCursor: string
+  readonly lastRunAt: string
+  readonly lastOutcome: QuickBooksSyncOutcome
+}
+
 export interface QuickBooksLinkRecord {
   readonly realmId: string
   readonly kind: 'customer' | 'invoice'
@@ -196,6 +205,47 @@ export interface QuickBooksStore {
     now: string
     skippedReason?: string
   }): Promise<void>
+  /**
+   * Claims a change catch-up found, unless it was already processed under any
+   * operation: the webhook says Create where catch-up can only see an update,
+   * and one change must not be applied twice. A claim never completed (a
+   * crash between accepting and handling) is taken over.
+   */
+  claimRecoveredDelivery(input: {
+    realmId: string
+    entityName: string
+    entityId: string
+    operation: string
+    lastUpdated: string
+    now: string
+  }): Promise<boolean>
+  readSyncCursor(realmId: string): Promise<QuickBooksSyncCursorRecord | null>
+  /** Places or moves the cursor, with the outcome of the run that did. */
+  saveSyncCursor(input: {
+    realmId: string
+    cdcCursor: string
+    lastRunAt: string
+    lastOutcome: QuickBooksSyncOutcome
+  }): Promise<void>
+  /** Records how a run ended without moving the cursor. */
+  recordSyncOutcome(input: {
+    realmId: string
+    lastRunAt: string
+    lastOutcome: QuickBooksSyncOutcome
+  }): Promise<void>
+  /**
+   * Notes that a QuickBooks payment was voided or deleted there, and answers
+   * whether a receipt of ours came from it. Writes only where one did. It never
+   * touches a receipt, an invoice or QuickBooks, and repeating it changes
+   * nothing; a report older than the one held is ignored.
+   */
+  flagPaymentDivergence(input: {
+    realmId: string
+    quickBooksPaymentId: string
+    kind: 'voided' | 'deleted'
+    quickBooksUpdatedAt: string
+    now: string
+  }): Promise<boolean>
 }
 
 export const createQuickBooksStore = (database: Database): QuickBooksStore => ({
@@ -390,5 +440,79 @@ export const createQuickBooksStore = (database: Database): QuickBooksStore => ({
        WHERE realm_id = ${input.realmId} AND entity_name = ${input.entityName}
          AND entity_id = ${input.entityId} AND operation = ${input.operation}
          AND last_updated = ${input.lastUpdated}`)
+  },
+
+  claimRecoveredDelivery: async (input) => {
+    // The webhook and catch-up describe one change differently (Create versus
+    // Update), so "already handled" ignores the operation: same payment, same
+    // instant, processed under any name.
+    const handled = await database.all<{ entity_id: string }>(sql`SELECT entity_id
+       FROM quickbooks_webhook_deliveries
+       WHERE realm_id = ${input.realmId} AND entity_name = ${input.entityName}
+         AND entity_id = ${input.entityId} AND last_updated = ${input.lastUpdated}
+         AND processed_at IS NOT NULL`)
+    if (handled.length > 0) return false
+    await database.run(sql`INSERT INTO quickbooks_webhook_deliveries
+         (realm_id, entity_name, entity_id, operation, last_updated, received_at)
+       VALUES (${input.realmId}, ${input.entityName}, ${input.entityId}, ${input.operation}, ${input.lastUpdated}, ${input.now})
+       ON CONFLICT DO NOTHING`)
+    return true
+  },
+
+  readSyncCursor: async (realmId) => {
+    const rows = await database.all<{
+      cdc_cursor: string
+      last_run_at: string
+      last_outcome: QuickBooksSyncOutcome
+    }>(sql`SELECT cdc_cursor, last_run_at, last_outcome
+       FROM quickbooks_sync_cursors WHERE realm_id = ${realmId}`)
+    const row = rows[0]
+    return row === undefined
+      ? null
+      : { cdcCursor: row.cdc_cursor, lastRunAt: row.last_run_at, lastOutcome: row.last_outcome }
+  },
+
+  saveSyncCursor: async (input) => {
+    await database.run(sql`INSERT INTO quickbooks_sync_cursors
+         (realm_id, cdc_cursor, last_run_at, last_outcome)
+       VALUES (${input.realmId}, ${input.cdcCursor}, ${input.lastRunAt}, ${input.lastOutcome})
+       ON CONFLICT(realm_id) DO UPDATE SET
+         cdc_cursor = excluded.cdc_cursor,
+         last_run_at = excluded.last_run_at,
+         last_outcome = excluded.last_outcome`)
+  },
+
+  recordSyncOutcome: async (input) => {
+    await database.run(sql`UPDATE quickbooks_sync_cursors
+       SET last_run_at = ${input.lastRunAt}, last_outcome = ${input.lastOutcome}
+       WHERE realm_id = ${input.realmId}`)
+  },
+
+  flagPaymentDivergence: async (input) => {
+    // A receipt "came from" a QuickBooks payment when QuickBooks recorded it
+    // (its provider reference is `<payment>:<invoice>`, or the bare id on an
+    // older one) or when the mirror made the payment from a receipt of ours.
+    await database.run(sql`INSERT INTO quickbooks_payment_divergences
+         (realm_id, quickbooks_payment_id, kind, quickbooks_updated_at, detected_at)
+       SELECT ${input.realmId}, ${input.quickBooksPaymentId}, ${input.kind}, ${input.quickBooksUpdatedAt}, ${input.now}
+       WHERE EXISTS (
+         SELECT 1 FROM invoice_payments p
+         WHERE (p.provider = 'quickbooks'
+             AND (p.provider_transaction_id = ${input.quickBooksPaymentId}
+               OR substr(p.provider_transaction_id, 1, length(${input.quickBooksPaymentId}) + 1) = ${input.quickBooksPaymentId} || ':')
+             AND p.provider_account_id IN (
+               SELECT id FROM payment_provider_accounts
+               WHERE provider = 'quickbooks' AND external_account_id = ${input.realmId}))
+           OR p.id IN (
+             SELECT payment_id FROM quickbooks_payment_links
+             WHERE realm_id = ${input.realmId} AND quickbooks_id = ${input.quickBooksPaymentId}))
+       ON CONFLICT(realm_id, quickbooks_payment_id) DO UPDATE SET
+         kind = excluded.kind,
+         quickbooks_updated_at = excluded.quickbooks_updated_at
+       WHERE excluded.quickbooks_updated_at >= quickbooks_payment_divergences.quickbooks_updated_at`)
+    const flagged = await database.all<{ kind: string }>(sql`SELECT kind
+       FROM quickbooks_payment_divergences
+       WHERE realm_id = ${input.realmId} AND quickbooks_payment_id = ${input.quickBooksPaymentId}`)
+    return flagged.length > 0
   },
 })

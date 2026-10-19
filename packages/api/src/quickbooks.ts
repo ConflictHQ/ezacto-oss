@@ -63,11 +63,22 @@ export interface QuickBooksReconciliationRow {
   detail: string
 }
 
+/** A QuickBooks payment voided or deleted there that a receipt here came from. */
+export interface QuickBooksPaymentDivergence {
+  quickBooksPaymentId: string
+  kind: string
+  quickBooksUpdatedAt: string
+  detectedAt: string
+  receipts: readonly { paymentId: number; invoiceId: number; invoiceNumber: string; amountCents: number }[]
+}
+
 export interface QuickBooksReconciliation {
   realmId: string
   generatedAt: string
   counts: Readonly<Record<string, number>>
   rows: readonly QuickBooksReconciliationRow[]
+  paymentDivergences: readonly QuickBooksPaymentDivergence[]
+  recovery: { cdcCursor: string; lastRunAt: string; lastOutcome: string } | null
 }
 
 /**
@@ -286,6 +297,26 @@ export const installQuickBooksRoutes = <Bindings extends object>(
             quickbooks_paid_cents: row.quickBooksPaidCents,
             detail: row.detail,
           })),
+          payment_divergences: report.paymentDivergences.map((divergence) => ({
+            quickbooks_payment_id: divergence.quickBooksPaymentId,
+            kind: divergence.kind,
+            quickbooks_updated_at: divergence.quickBooksUpdatedAt,
+            detected_at: divergence.detectedAt,
+            receipts: divergence.receipts.map((receipt) => ({
+              payment_id: receipt.paymentId,
+              invoice_id: receipt.invoiceId,
+              invoice_number: receipt.invoiceNumber,
+              amount_cents: receipt.amountCents,
+            })),
+          })),
+          recovery:
+            report.recovery === null
+              ? null
+              : {
+                  cdc_cursor: report.recovery.cdcCursor,
+                  last_run_at: report.recovery.lastRunAt,
+                  last_outcome: report.recovery.lastOutcome,
+                },
         },
       },
       200,

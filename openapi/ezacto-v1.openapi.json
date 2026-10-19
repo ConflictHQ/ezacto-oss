@@ -32157,7 +32157,9 @@
               "realm_id",
               "generated_at",
               "counts",
-              "rows"
+              "rows",
+              "payment_divergences",
+              "recovery"
             ],
             "properties": {
               "realm_id": {
@@ -32309,6 +32311,104 @@
                   },
                   "additionalProperties": false
                 }
+              },
+              "payment_divergences": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "quickbooks_payment_id",
+                    "kind",
+                    "quickbooks_updated_at",
+                    "detected_at",
+                    "receipts"
+                  ],
+                  "properties": {
+                    "quickbooks_payment_id": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "voided",
+                        "deleted"
+                      ]
+                    },
+                    "quickbooks_updated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "detected_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "receipts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "payment_id",
+                          "invoice_id",
+                          "invoice_number",
+                          "amount_cents"
+                        ],
+                        "properties": {
+                          "payment_id": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "invoice_id": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "invoice_number": {
+                            "type": "string"
+                          },
+                          "amount_cents": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "recovery": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "cdc_cursor",
+                      "last_run_at",
+                      "last_outcome"
+                    ],
+                    "properties": {
+                      "cdc_cursor": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "last_run_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "last_outcome": {
+                        "type": "string",
+                        "enum": [
+                          "caught_up",
+                          "failed",
+                          "full_reconcile_needed"
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "additionalProperties": false

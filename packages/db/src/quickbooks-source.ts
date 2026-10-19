@@ -13,6 +13,7 @@ import type { InvoiceStateDatabase } from "./invoice-state.js";
 import type {
   MirrorClient,
   QuickBooksMirrorSource,
+  QuickBooksPaymentDivergence,
   QuickBooksReconciliationSource,
   QuickBooksSourceInvoice,
   QuickBooksSourcePayment,
@@ -214,5 +215,57 @@ export const createQuickBooksReconciliationSource = (
       paidCents: row.paid_cents,
       quickBooksId: row.quickbooks_id,
     }));
+  },
+
+  /**
+   * The payments QuickBooks voided or deleted (issue 1013, slice 3), each with
+   * the receipts of ours that came from it. Two SELECTs; the report cannot write.
+   */
+  paymentDivergences: async (realmId) => {
+    const flagged = await database.all<{
+      quickbooks_payment_id: string;
+      kind: "voided" | "deleted";
+      quickbooks_updated_at: string;
+      detected_at: string;
+    }>(sql`
+      SELECT quickbooks_payment_id, kind, quickbooks_updated_at, detected_at
+      FROM quickbooks_payment_divergences
+      WHERE realm_id = ${realmId}
+      ORDER BY detected_at, quickbooks_payment_id`);
+    const divergences: QuickBooksPaymentDivergence[] = [];
+    for (const row of flagged) {
+      const receipts = await database.all<{
+        id: number;
+        invoice_id: number;
+        number: string;
+        amount_cents: number;
+      }>(sql`
+        SELECT p.id, p.invoice_id, i.number, p.amount_cents
+        FROM invoice_payments p
+        JOIN invoices i ON i.id = p.invoice_id
+        WHERE (p.provider = 'quickbooks'
+            AND (p.provider_transaction_id = ${row.quickbooks_payment_id}
+              OR substr(p.provider_transaction_id, 1, length(${row.quickbooks_payment_id}) + 1) = ${row.quickbooks_payment_id} || ':')
+            AND p.provider_account_id IN (
+              SELECT id FROM payment_provider_accounts
+              WHERE provider = 'quickbooks' AND external_account_id = ${realmId}))
+          OR p.id IN (
+            SELECT payment_id FROM quickbooks_payment_links
+            WHERE realm_id = ${realmId} AND quickbooks_id = ${row.quickbooks_payment_id})
+        ORDER BY p.id`);
+      divergences.push({
+        quickBooksPaymentId: row.quickbooks_payment_id,
+        kind: row.kind,
+        quickBooksUpdatedAt: row.quickbooks_updated_at,
+        detectedAt: row.detected_at,
+        receipts: receipts.map((receipt) => ({
+          paymentId: receipt.id,
+          invoiceId: receipt.invoice_id,
+          invoiceNumber: receipt.number,
+          amountCents: receipt.amount_cents,
+        })),
+      });
+    }
+    return divergences;
   },
 });

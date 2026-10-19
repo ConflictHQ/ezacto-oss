@@ -433,7 +433,9 @@ describe("payments coming back", () => {
     const row = sqlite!
       .prepare("SELECT skipped_reason FROM quickbooks_webhook_deliveries WHERE entity_id = 'qb-pay-1'")
       .get() as { skipped_reason: string | null };
-    expect(row.skipped_reason).toBe("the payment no longer exists");
+    expect(row.skipped_reason).toBe(
+      "the payment was deleted in QuickBooks; no receipt of ours came from it",
+    );
   });
 
   it("[money #853] a payment made in QuickBooks against an invoice never linked adopts it by number, then records", async () => {
