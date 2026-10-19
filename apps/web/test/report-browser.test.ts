@@ -793,7 +793,7 @@ describe('Reports Stage 1 browser controller', () => {
       () => false,
     )
 
-    const tabs = [...document.querySelectorAll<HTMLAnchorElement>('.tabstrip a[href^="/reports"]')]
+    const tabs = [...document.querySelectorAll<HTMLAnchorElement>('.tabstrip a[href^="/reports?"]')]
     expect(tabs.map((tab) => tab.textContent)).toEqual([
       'My hours',
       'Time',
@@ -1017,7 +1017,7 @@ describe('Reports Stage 1 browser controller', () => {
     // Hidden, not disabled: a member is told nothing by a control that refuses
     // to work, so the two financial kinds are simply not in the strip.
     expect(
-      [...document.querySelectorAll('.tabstrip a[href^="/reports"]')].map(
+      [...document.querySelectorAll('.tabstrip a[href^="/reports?"]')].map(
         (tab) => tab.textContent,
       ),
     ).toEqual(['My hours', 'Detailed time', 'Project budget'])
@@ -1064,7 +1064,7 @@ describe('Reports Stage 1 browser controller', () => {
       () => false,
     )
 
-    const tabs = [...document.querySelectorAll('.tabstrip a[href^="/reports"]')]
+    const tabs = [...document.querySelectorAll('.tabstrip a[href^="/reports?"]')]
     expect(tabs.map((tab) => tab.textContent)).toEqual(['My hours', 'Detailed time', 'Project budget'])
     // A surviving tab is the marked one, rather than nothing being marked. The
     // fallback is the personal report because it is the one that answers with
@@ -1994,7 +1994,7 @@ describe('Reports Stage 1 browser controller', () => {
       () => false,
     )
 
-    const tabs = [...document.querySelectorAll('.tabstrip a[href^="/reports"]')]
+    const tabs = [...document.querySelectorAll('.tabstrip a[href^="/reports?"]')]
     expect(tabs.map((tab) => tab.textContent)).toEqual([
       'My hours',
       'Time',
@@ -2050,7 +2050,7 @@ describe('Reports Stage 1 browser controller', () => {
     )
 
     const tab = [
-      ...document.querySelectorAll<HTMLAnchorElement>('.tabstrip a[href^="/reports"]'),
+      ...document.querySelectorAll<HTMLAnchorElement>('.tabstrip a[href^="/reports?"]'),
     ].at(-1)!
     expect(tab.textContent).toBe('Contractor cost')
     // Neither id follows the kind into the address: the endpoint takes neither.
@@ -3143,7 +3143,7 @@ describe('Reports Stage 1 browser controller', () => {
       metrics: ['hours'], filters: [{ field: 'spent_date', operator: 'between', value: [] }],
       group_by: { dimension: 'client' },
       presentation: { result: 'summary' as const, grouped: true, include_zero_values: false },
-      owner: { user_id: 1, name: 'Ada Byron' }, is_custom: true, pinned: true, shared: false,
+      owner: { user_id: 1, name: 'Ada Byron' }, is_custom: true, view: null, pinned: true, shared: false,
       shared_with: { users: [], profiles: [] }, owned_by_viewer: true, can_delete: true,
       created_at: timestamp, updated_at: timestamp,
     }])

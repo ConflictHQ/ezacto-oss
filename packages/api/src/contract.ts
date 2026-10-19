@@ -699,6 +699,57 @@ const workItemOperations: ApiContractOperation[] = [
   },
 ];
 
+const timeOffOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/time-off",
+    operationId: "listTimeOff",
+    summary: "List time off",
+    description:
+      "Days a person is away, entered by an administrator. Administrators and executive managers read all of it; a project manager reads their own and that of the people they manage; everyone else reads only their own. `from` and `to` keep the entries that reach into that span of days. Time off reduces the capacity the capacity view counts as available; it is not work, is never billed, and has no approval step.",
+    tag: "schedule",
+    responseStatus: 200,
+    responseSchema: "TimeOffPage",
+    parameters: [
+      ...pageParameters,
+      query("user_id", integerSchema),
+      query("from", dateSchema),
+      query("to", dateSchema),
+    ],
+  },
+  {
+    method: "post",
+    path: "/api/v1/time-off",
+    operationId: "createTimeOff",
+    summary: "Enter time off for a person",
+    description:
+      "Administrators, executive managers and project managers only, a project manager only for the people they manage. Dates are plain local days, both included; only Monday to Friday remove capacity. `seconds_per_day` null is a whole day (a fifth of the person's weekly capacity); a figure is that many seconds away on each working day. An end before the start or an unknown `kind` is 422, an archived or unknown person is 422 `inactive_user` or `unknown_user`, and a range that overlaps other time off for the same person is 409 `time_off_overlap`, so a day is never taken off twice.",
+    tag: "schedule",
+    responseStatus: 201,
+    responseSchema: "TimeOffEnvelope",
+    requestSchema: "TimeOffInput",
+    requestRequired: true,
+  },
+  ...(["get", "patch", "delete"] as const).map((method) => ({
+    method,
+    path: "/api/v1/time-off/:id",
+    operationId: `${method === "get" ? "get" : method === "patch" ? "update" : "delete"}TimeOff`,
+    summary: `${method === "get" ? "Get" : method === "patch" ? "Update" : "Delete"} time off`,
+    tag: "schedule",
+    responseStatus: 200,
+    responseSchema: "TimeOffEnvelope",
+    ...(method === "patch"
+      ? {
+          description:
+            "Dates, kind and hours only: the person does not change, so to move time off to someone else, delete it and make another. The same rules as creating apply, and an entry changed by someone else in the meantime is 409 `time_off_changed`.",
+          requestSchema: "TimeOffPatch",
+          requestRequired: true,
+        }
+      : {}),
+    parameters: [path("id")],
+  })),
+];
+
 const timesheetApprovalOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -2428,6 +2479,12 @@ const reportOperations: ApiContractOperation[] = [
     requestSchema: "SavedReportInput", requestRequired: true,
   },
   {
+    method: "post", path: "/api/v1/report-views",
+    operationId: "createReportView", summary: "Save the report on screen: a report kind and its address, private to the author",
+    tag: "reports", responseStatus: 201, responseSchema: "SavedReportEnvelope",
+    requestSchema: "SavedReportViewInput", requestRequired: true,
+  },
+  {
     method: "post", path: "/api/v1/report-definitions/preview",
     operationId: "previewReportDefinition", summary: "Run an unsaved report definition",
     tag: "reports", responseStatus: 200, responseSchema: "ReportRunnerEnvelope",
@@ -3417,6 +3474,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...timeEntryOperations,
   ...calendarProposalOperations,
   ...allocationOperations,
+  ...timeOffOperations,
   ...workItemOperations,
   ...timesheetApprovalOperations,
   ...timesheetLockPolicyOperations,
@@ -5593,17 +5651,34 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   AllocationPage: page("Allocation"),
   CapacityWeek: {
     type: "object",
-    required: ["week_start", "planned_seconds", "tracked_seconds", "over_allocated"],
+    required: [
+      "week_start",
+      "planned_seconds",
+      "time_off_seconds",
+      "available_capacity_seconds",
+      "tracked_seconds",
+      "over_allocated",
+    ],
     properties: {
       week_start: dateSchema,
       planned_seconds: integerSchema,
+      time_off_seconds: {
+        ...integerSchema,
+        description:
+          "Capacity removed by the person's time off in the week (Monday to Friday only, never more than the capacity).",
+      },
+      available_capacity_seconds: {
+        ...integerSchema,
+        description: "`weekly_capacity_seconds` less `time_off_seconds`; what the plan is held against.",
+      },
       tracked_seconds: {
         ...integerSchema,
         description: "Rounded time logged in the week; separate from the plan.",
       },
       over_allocated: {
         ...booleanSchema,
-        description: "Planned exceeds capacity. A flag for the reader, never a refusal.",
+        description:
+          "Planned exceeds available capacity (capacity less time off). A flag for the reader, never a refusal.",
       },
     },
     additionalProperties: false,
@@ -5631,6 +5706,58 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   CapacityEnvelope: envelope("Capacity"),
+  TimeOff: {
+    type: "object",
+    required: [
+      "id",
+      "user_id",
+      "start_date",
+      "end_date",
+      "kind",
+      "seconds_per_day",
+      "created_at",
+      "updated_at",
+    ],
+    properties: {
+      id: integerSchema,
+      user_id: integerSchema,
+      start_date: dateSchema,
+      end_date: { ...dateSchema, description: "Included. Never before `start_date`." },
+      kind: { type: "string", enum: ["vacation", "sick", "holiday", "other"] },
+      seconds_per_day: {
+        ...nullable(integerSchema),
+        description:
+          "Seconds away on each working day, between 1 and 86400; null is a whole day.",
+      },
+      created_at: timestampSchema,
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  TimeOffInput: {
+    type: "object",
+    required: ["user_id", "start_date", "end_date", "kind"],
+    properties: {
+      user_id: integerSchema,
+      start_date: dateSchema,
+      end_date: dateSchema,
+      kind: { type: "string", enum: ["vacation", "sick", "holiday", "other"] },
+      seconds_per_day: nullable(integerSchema),
+    },
+    additionalProperties: false,
+  },
+  TimeOffPatch: {
+    type: "object",
+    properties: {
+      start_date: dateSchema,
+      end_date: dateSchema,
+      kind: { type: "string", enum: ["vacation", "sick", "holiday", "other"] },
+      seconds_per_day: nullable(integerSchema),
+    },
+    additionalProperties: false,
+  },
+  TimeOffEnvelope: envelope("TimeOff"),
+  TimeOffPage: page("TimeOff"),
   WorkItemConnection: {
     type: "object",
     required: [
@@ -6727,6 +6854,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "event_type",
       "delivery_status",
       "provider_message_id",
+      "contact_id",
+      "content_hash",
+      "estimate_version",
       "created_at",
       "updated_at",
     ],
@@ -6750,6 +6880,12 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         enum: ["queued", "sent", "bounced", "complained", "failed"],
       }),
       provider_message_id: nullable(stringSchema),
+      // Set only on an answer a contact gave through the customer page: who
+      // answered, the content version they were shown, and the estimate version
+      // the answer was recorded against.
+      contact_id: nullable(integerSchema),
+      content_hash: nullable({ type: "string", pattern: "^[0-9a-f]{64}$" }),
+      estimate_version: nullable({ type: "integer", minimum: 0 }),
       created_at: timestampSchema,
       updated_at: timestampSchema,
     },
@@ -8806,13 +8942,30 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       metrics: { type: "array", items: { type: "string" } },
       filters: { type: "array", items: { type: "object", additionalProperties: true } },
       group_by: nullable({ type: "object", additionalProperties: true }),
+      // Only for a saved view: the report's new address.
+      view: { $ref: "#/components/schemas/SavedReportAddress" },
       presentation: { $ref: "#/components/schemas/ReportDefinitionPresentation" },
     },
     additionalProperties: false,
   },
+  SavedReportAddress: {
+    type: "object",
+    required: ["report", "query"],
+    properties: {
+      report: { type: "string", description: "The Reports kind, such as time or invoiced." },
+      query: { type: "string", description: "The report's query string: filters, grouping, sort and range." },
+    },
+    additionalProperties: false,
+  },
+  SavedReportViewInput: {
+    type: "object",
+    required: ["name", "view"],
+    properties: { name: stringSchema, view: { $ref: "#/components/schemas/SavedReportAddress" } },
+    additionalProperties: false,
+  },
   SavedReport: {
     type: "object",
-    required: ["id", "name", "version", "fields", "metrics", "filters", "group_by", "presentation", "owner", "is_custom", "pinned", "shared", "shared_with", "owned_by_viewer", "can_delete", "created_at", "updated_at"],
+    required: ["id", "name", "version", "fields", "metrics", "filters", "group_by", "presentation", "owner", "is_custom", "view", "pinned", "shared", "shared_with", "owned_by_viewer", "can_delete", "created_at", "updated_at"],
     properties: {
       id: stringSchema, name: stringSchema, version: integerSchema,
       fields: { type: "array", items: { type: "object", additionalProperties: true } },
@@ -8822,6 +8975,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       presentation: { $ref: "#/components/schemas/ReportDefinitionPresentation" },
       owner: { type: "object", additionalProperties: true },
       is_custom: booleanSchema, pinned: booleanSchema, shared: booleanSchema,
+      // The report's address when this is a saved view of a report; null for a builder definition.
+      view: nullable({ $ref: "#/components/schemas/SavedReportAddress" }),
       // Who the owner shared it with. Empty for everyone but the owner.
       shared_with: {
         type: "object", required: ["users", "profiles"],

@@ -22,8 +22,8 @@ const report: CapacityData = {
       last_name: 'Member',
       weekly_capacity_seconds: hours(20),
       weeks: [
-        { week_start: '2026-10-05', planned_seconds: hours(16), tracked_seconds: hours(7), over_allocated: false },
-        { week_start: '2026-10-12', planned_seconds: hours(24), tracked_seconds: 0, over_allocated: true },
+        { week_start: '2026-10-05', planned_seconds: hours(16), time_off_seconds: 0, available_capacity_seconds: hours(20), tracked_seconds: hours(7), over_allocated: false },
+        { week_start: '2026-10-12', planned_seconds: hours(24), time_off_seconds: 0, available_capacity_seconds: hours(20), tracked_seconds: 0, over_allocated: true },
       ],
     },
   ],
@@ -38,12 +38,13 @@ describe('capacity model (issue 1007)', () => {
 
   it('[unit] says over-allocated in words, not only in colour', () => {
     const [first, second] = report.people[0]!.weeks
-    expect(capacityCellText(first!, hours(20))).toEqual({
+    expect(capacityCellText(first!)).toEqual({
       main: '16h of 20h',
       detail: '7h tracked',
+      timeOff: null,
       flag: null,
     })
-    expect(capacityCellText(second!, hours(20)).flag).toBe('Over-allocated')
+    expect(capacityCellText(second!).flag).toBe('Over-allocated')
   })
 
   it('[unit] asks for eight-week windows either side of today', () => {

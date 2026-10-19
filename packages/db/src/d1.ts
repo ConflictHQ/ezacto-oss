@@ -419,6 +419,7 @@ export {
 export { migrateD1, migrationIds } from './migrate.js'
 export { DrizzleCalendarProposalRepository } from './calendar-proposals.js'
 export { DrizzleAllocationRepository } from './allocations.js'
+export { DrizzleTimeOffRepository } from './time-off.js'
 export { DrizzleWorkItemRepository } from './work-items.js'
 export {
   DrizzleTrackedResourceRepository,

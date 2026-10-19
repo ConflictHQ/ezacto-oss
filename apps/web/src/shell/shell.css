@@ -877,6 +877,14 @@
 }
 .report-saved-card p { flex: 1; margin: 0; color: var(--ez-muted); }
 .report-saved-audience { color: var(--ez-muted); white-space: nowrap; }
+.report-quick-links,
+.report-saved-open,
+.report-saved-screen { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-block: 12px; }
+.report-saved-screen { display: grid; align-items: stretch; }
+.report-quick-links[hidden],
+.report-saved-open[hidden],
+.report-saved-screen[hidden] { display: none; }
+.report-saved-open { margin: 0; }
 .report-share-dialog fieldset { display: grid; gap: 8px; margin: 0 0 12px; padding: 12px; border: 1px solid var(--ez-border); border-radius: var(--ez-radius); }
 .report-share-dialog ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 [data-report-builder] {
@@ -9166,6 +9174,15 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   background: var(--ez-action);
   color: var(--ez-action-fg);
 }
+/* The status line above the clock holds a line's height whether it has
+   anything to say or not. "Saving…" comes and goes with every move, and a line
+   that opened and closed moved the whole clock by its height -- under a pointer
+   still dragging, a time it never moved to. Selected by where it sits, not by
+   data-calendar-status: the controller uses that attribute as a flag and
+   removes it. */
+.calendar-week > .form-result {
+  min-height: 1lh;
+}
 .calendar-surface {
   --cal-hour: 48px;
   --cal-ruler: 56px;
@@ -9636,4 +9653,55 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   font-size: 13px;
   font-style: normal;
   font-weight: 600;
+}
+
+/* The customer estimate page (issue 1010): a contact's own page, outside the
+   staff shell. Built from the shared table, facts and button rules. */
+.portal-estimates {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+.portal-estimates-header h1 {
+  margin: 0 0 16px;
+}
+.portal-estimates-totals {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0 0;
+  padding: 0;
+}
+.portal-estimates-totals > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.portal-estimates-totals dt {
+  color: var(--ez-muted);
+}
+.portal-estimates-totals dd {
+  margin: 0;
+}
+.portal-estimates-total {
+  padding-top: 8px;
+  border-top: 1px solid var(--ez-border);
+  font-weight: 600;
+}
+.portal-estimates-total dt {
+  color: inherit;
+}
+.portal-estimates-notes {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.portal-estimates-actions,
+.portal-estimates-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+.portal-estimates-confirm p {
+  flex: 1 1 100%;
+  margin: 0;
 }

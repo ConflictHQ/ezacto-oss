@@ -1166,6 +1166,9 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     client.configureStaffPaymentProvider({ body, ...withSignal(signal) }),
   getPaymentActuals: async (month, signal) => (await client.getPaymentActuals({ query: { month }, ...withSignal(signal) })).data,
   confirmPaymentActuals: (body, signal) => client.confirmPaymentActuals({ body, ...withSignal(signal) }),
+  getPaymentAllocationReport: async (month, signal) => (await client.getPaymentAllocationReport({ query: { month }, ...withSignal(signal) })).data,
+  previewPaymentAllocation: async (body, signal) => (await client.previewPaymentAllocation({ body, ...withSignal(signal) })).data,
+  allocatePayment: (body, signal) => client.allocatePayment({ body, ...withSignal(signal) }),
   getStaffPaymentReport: async (month, signal) =>
     (await client.getStaffPaymentReport({ query: { month }, ...withSignal(signal) })).data,
   recordStaffPaymentEvent: (body, signal) =>
@@ -1666,6 +1669,10 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.listSavedReports({ query: filter, ...withSignal(signal) })).data,
   createSavedReport: async (input, signal) =>
     (await client.createSavedReport({ body: input, ...withSignal(signal) })).data,
+  createReportView: async (input, signal) =>
+    (await client.createReportView({ body: input, ...withSignal(signal) })).data,
+  getSavedReport: async (reportId, signal) =>
+    (await client.getSavedReport({ reportId, ...withSignal(signal) })).data,
   previewReportDefinition: async (input, signal) =>
     (await client.previewReportDefinition({ body: input, ...withSignal(signal) })).data,
   runSavedReport: async (reportId, signal) =>
@@ -1971,6 +1978,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     }),
   getEstimate: async (id, signal) =>
     (await client.getEstimate({ id, ...withSignal(signal) })).data,
+  listEstimateMessages: async (id, signal) =>
+    (await client.listEstimateMessages({ id, ...withSignal(signal) })).data,
   convertEstimate: async (id, body, idempotencyKey, signal) =>
     (
       await client.convertEstimate({

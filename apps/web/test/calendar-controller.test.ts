@@ -1,5 +1,8 @@
 /** @vitest-environment happy-dom */
 
+import { readFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createCalendarController,
@@ -8,6 +11,7 @@ import {
   type CalendarPlacement,
   type CalendarView,
 } from '../src/calendar/browser.js'
+import { renderAppShell } from '../src/shell/render.js'
 
 /**
  * Issue 943: the calendar's drag and key paths, against the real controller
@@ -16,6 +20,7 @@ import {
  * does the rest.
  */
 
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dates = ['2026-10-12', '2026-10-13', '2026-10-14']
 
 const entry = (id: number, patch: Partial<CalendarDisplayEntry> = {}): CalendarDisplayEntry => ({
@@ -166,7 +171,7 @@ describe('move and resize', () => {
     })
   })
 
-  it('resizes from the bottom edge and from the top edge', () => {
+  it('resizes from the bottom edge and from the top edge', async () => {
     const { host, controller } = mount()
     controller.render(view([entry(1)]))
     layOut()
@@ -179,6 +184,9 @@ describe('move and resize', () => {
       startedTime: '09:00',
       endedTime: '11:15',
     })
+    // An entry still saving takes no new drag; the top edge goes once it has
+    // landed. This host redraws nothing, so the entry is still 09:00-10:00.
+    await vi.waitFor(() => expect(block(1).hasAttribute('aria-busy')).toBe(false))
     const start = block(1).querySelector<HTMLElement>('[data-calendar-handle="start"]')!
     pointer(start, 'pointerdown', 150, 9 * 60)
     pointer(start, 'pointermove', 150, 8 * 60 + 29)
@@ -205,6 +213,119 @@ describe('move and resize', () => {
       ),
     )
     expect(block(1).style.getPropertyValue('--cal-start')).toBe('540')
+  })
+})
+
+/**
+ * The CI flake on calendar-drag.browser.ts: the spec grabbed the bottom edge
+ * while the keyboard move was still saving, and the resize began from the
+ * entry as last drawn -- before the move -- so it saved the old start back.
+ */
+describe('an entry whose move is still saving', () => {
+  /** The host's next save waits for the returned call, as a save waits for the network. */
+  const holdNextSave = (host: ReturnType<typeof mount>['host']): (() => void) => {
+    let land: () => void = () => {}
+    host.moveEntry.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          land = resolve
+        }),
+    )
+    return () => land()
+  }
+
+  it('takes no new drag until the save lands, and the next one starts where the move went', async () => {
+    const { host, controller } = mount()
+    const land = holdNextSave(host)
+    controller.render(view([entry(1)]))
+    layOut()
+    const status = document.querySelector<HTMLElement>('[data-calendar-status]')!
+    key(block(1), 'ArrowDown')
+    key(block(1), 'Enter')
+    expect(host.moveEntry).toHaveBeenCalledTimes(1)
+    expect(block(1).getAttribute('aria-busy')).toBe('true')
+
+    // The bottom edge, drawn at 10:15 now, dragged down half an hour.
+    const end = (): HTMLElement => block(1).querySelector<HTMLElement>('[data-calendar-handle="end"]')!
+    pointer(end(), 'pointerdown', 150, 10 * 60 + 14)
+    pointer(end(), 'pointermove', 150, 10 * 60 + 45)
+    pointer(end(), 'pointerup', 150, 10 * 60 + 45)
+    expect(host.moveEntry).toHaveBeenCalledTimes(1)
+    expect(status.textContent).toBe('This entry is still saving. Try again once it has saved.')
+    expect(block(1).style.getPropertyValue('--cal-start')).toBe('555')
+    expect(block(1).style.getPropertyValue('--cal-span')).toBe('60')
+
+    // The shell redraws with the move in it, then the save answers.
+    controller.render(view([entry(1, { started_time: '09:15', ended_time: '10:15' })]))
+    land()
+    await vi.waitFor(() => expect(block(1).hasAttribute('aria-busy')).toBe(false))
+    layOut()
+    pointer(end(), 'pointerdown', 150, 10 * 60 + 14)
+    pointer(end(), 'pointermove', 150, 10 * 60 + 45)
+    pointer(end(), 'pointerup', 150, 10 * 60 + 45)
+    expect(host.moveEntry).toHaveBeenLastCalledWith(1, {
+      date: '2026-10-13',
+      startedTime: '09:15',
+      endedTime: '10:45',
+    })
+  })
+
+  it('refuses the keys and the editor the same way', async () => {
+    const { host, controller } = mount()
+    const land = holdNextSave(host)
+    controller.render(view([entry(1)]))
+    layOut()
+    const status = document.querySelector<HTMLElement>('[data-calendar-status]')!
+    key(block(1), 'ArrowDown')
+    key(block(1), 'Enter')
+    // A second step before the first has saved would start from 09:00 and
+    // save 09:15 again, losing it.
+    key(block(1), 'ArrowDown')
+    key(block(1), 'Enter')
+    expect(host.moveEntry).toHaveBeenCalledTimes(1)
+    expect(status.textContent).toBe('This entry is still saving. Try again once it has saved.')
+    // The editor would open on 09:00-10:00, and saving it would put the move back.
+    block(1).click()
+    expect(host.openEntry).not.toHaveBeenCalled()
+    land()
+    await vi.waitFor(() => expect(block(1).hasAttribute('aria-busy')).toBe(false))
+    block(1).click()
+    expect(host.openEntry).toHaveBeenCalledWith(1)
+  })
+
+  it('stays drawn where it is going, and busy, through a redraw from before the save', () => {
+    const { host, controller } = mount()
+    holdNextSave(host)
+    controller.render(view([entry(1)]))
+    layOut()
+    key(block(1), 'ArrowDown')
+    key(block(1), 'Enter')
+    // A redraw from the entries as they were, as the minute tick makes.
+    controller.render(view([entry(1)]))
+    expect(block(1).style.getPropertyValue('--cal-start')).toBe('555')
+    expect(block(1).dataset.state).toBe('saving')
+    expect(block(1).getAttribute('aria-busy')).toBe('true')
+  })
+})
+
+describe('the status line above the clock', () => {
+  it('keeps a line of height, said or empty, so "Saving…" coming and going never moves the clock', async () => {
+    // How far the clock moves is the browser's to measure (it was 16px, under
+    // a pointer mid-drag); checked here are the rule, and that it reaches the
+    // line the server renders. The controller removes data-calendar-status as
+    // a flag, so the rule cannot be keyed on that.
+    const stylesheet = await readFile(resolve(root, 'src', 'shell', 'shell.css'), 'utf8')
+    const rule = /\.calendar-week > \.form-result \{([^}]*)\}/u.exec(stylesheet)
+    expect(rule?.[1]).toBeDefined()
+    expect(rule![1]).toContain('min-height: 1lh')
+    // Without its links and scripts, which the parser would otherwise fetch.
+    const markup = renderAppShell({ environment: 'test', release: 'test' })
+      .replace(/<script[^>]*>.*?<\/script>/gsu, '')
+      .replace(/<link[^>]*>/gu, '')
+    const page = new DOMParser().parseFromString(markup, 'text/html')
+    const line = page.querySelector('.calendar-week > .form-result')
+    expect(line?.hasAttribute('data-calendar-status')).toBe(true)
+    expect(line?.getAttribute('role')).toBe('status')
   })
 })
 

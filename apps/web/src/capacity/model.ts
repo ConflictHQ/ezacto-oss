@@ -10,6 +10,8 @@
 export interface CapacityWeekData {
   readonly week_start: string
   readonly planned_seconds: number
+  readonly time_off_seconds: number
+  readonly available_capacity_seconds: number
   readonly tracked_seconds: number
   readonly over_allocated: boolean
 }
@@ -63,13 +65,22 @@ export const hoursText = (seconds: number): string => {
   return `${tenths % 10 === 0 ? tenths / 10 : (tenths / 10).toFixed(1)}h`
 }
 
-/** One cell, as words, so the over-allocated flag never rests on colour alone. */
+/**
+ * One cell, as words, so the over-allocated flag never rests on colour alone. The
+ * plan is held against the capacity left after time off, which is named when
+ * there is any (administrator-entered, issue 1007 slice 3).
+ */
 export const capacityCellText = (
   week: Readonly<CapacityWeekData>,
-  capacitySeconds: number,
-): { readonly main: string; readonly detail: string; readonly flag: string | null } => ({
-  main: `${hoursText(week.planned_seconds)} of ${hoursText(capacitySeconds)}`,
+): {
+  readonly main: string
+  readonly detail: string
+  readonly timeOff: string | null
+  readonly flag: string | null
+} => ({
+  main: `${hoursText(week.planned_seconds)} of ${hoursText(week.available_capacity_seconds)}`,
   detail: `${hoursText(week.tracked_seconds)} tracked`,
+  timeOff: week.time_off_seconds > 0 ? `${hoursText(week.time_off_seconds)} time off` : null,
   flag: week.over_allocated ? 'Over-allocated' : null,
 })
 

@@ -9,6 +9,8 @@ import {
   estimateDueDate,
   estimateIdentityCanWrite,
   estimateMoney,
+  estimateResponseSummary,
+  estimateResponseText,
   estimateStateLabel,
   type EstimateConversionRequest,
   type EstimateWorkspaceApi,
@@ -244,6 +246,31 @@ export const createEstimateWorkspaceController = (
     detailStatus.textContent = ''
   }
 
+  /**
+   * The answer on file, loaded beside the estimate. Its failure is a line of
+   * text rather than a failed screen: the quote itself is what was asked for.
+   */
+  const showResponse = async (estimate: Estimate, signal: AbortSignal): Promise<void> => {
+    const target = required<HTMLElement>('[data-estimate-response]')
+    if (estimate.state !== 'accepted' && estimate.state !== 'declined') {
+      target.textContent = estimateResponseText(null)
+      return
+    }
+    if (api.listEstimateMessages === undefined) {
+      target.textContent = 'This deployment does not serve estimate correspondence.'
+      return
+    }
+    target.textContent = 'Loading response…'
+    try {
+      const messages = await api.listEstimateMessages(estimate.id, signal)
+      if (signal.aborted) return
+      target.textContent = estimateResponseText(estimateResponseSummary(estimate.state, messages))
+    } catch {
+      if (signal.aborted) return
+      target.textContent = 'The response on file could not be loaded.'
+    }
+  }
+
   const openDetail = async (id: number, signal: AbortSignal): Promise<void> => {
     listView.hidden = true
     detailView.hidden = false
@@ -256,7 +283,9 @@ export const createEstimateWorkspaceController = (
       return
     }
     try {
-      renderDetail(await api.getEstimate(id, signal))
+      const estimate = await api.getEstimate(id, signal)
+      renderDetail(estimate)
+      void showResponse(estimate, signal)
     } catch (error) {
       if (signal.aborted) return
       detailStatus.textContent = messageFor(error)

@@ -19,6 +19,7 @@ export const renderStaffPayments = (view?: string): string =>
           ${[
             ['balances', 'Balances'],
             ['actuals', 'Review actuals'],
+            ['allocations', 'Allocations'],
             ['send', 'Send or schedule'],
             ['history', 'History'],
             ['settings', 'Settings'],
@@ -76,6 +77,13 @@ export const renderStaffPayments = (view?: string): string =>
         <button type="button" data-actuals-load>Load actuals for work month</button>
         <p role="status" aria-live="polite" data-actuals-status></p>
         <div data-actuals-review></div>
+      </section>
+      <section id="payment-panel-allocations" role="tabpanel" aria-labelledby="payment-tab-allocations" data-payment-panel="allocations" data-payment-allocations hidden>
+        <h2>Allocate payments to earnings</h2>
+        <p>Link a payment to the project, time entry or hours it pays. Existing monthly payments stay unallocated until you reconcile them here; hours are never split for you.</p>
+        <button type="button" data-allocations-load>Load allocations for work month</button>
+        <p role="status" aria-live="polite" data-allocations-status></p>
+        <div data-allocations-content></div>
       </section>
       ${renderPaymentRuns()}
       <section id="payment-panel-settings" role="tabpanel" aria-labelledby="payment-tab-settings" data-payment-panel="settings" hidden>

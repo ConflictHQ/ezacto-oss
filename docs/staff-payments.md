@@ -172,5 +172,14 @@ explicitly. Hour splits are never inferred.
   paid, reserved and remaining by person, project and entry, and lists
   unallocated payments; `POST .../allocations/preview`, `POST .../allocations`
   and `POST .../allocations/reversals` (administrator sessions only).
+- **Screen**: the Allocations tab on Payments loads the report for the work
+  month. Choosing a payment, target and hours or amount and selecting **Review
+  allocation** calls the preview endpoint and shows the selected hours, captured
+  rate, amount, what is already allocated and what remains on the payment and
+  the earnings. **Confirm allocation** appears only for the reviewed command and
+  sends that same command; changing any input withdraws the review.
+  **Reconcile to month** on an unallocated payment prefills a whole-month,
+  amount-only allocation of its unallocated cents, which is the explicit path
+  for existing monthly payments. Neither step moves money.
 - A work-month correction is refused while allocations are live; reverse them
   first.

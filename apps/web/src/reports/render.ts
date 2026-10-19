@@ -32,19 +32,38 @@ const reportKindNames: readonly { readonly kind: ReportKind; readonly label: str
  * address the browser pushes; the browser re-marks the current tab, and drops
  * the kinds a profile cannot read, once whoami has answered.
  */
-export const reportKindTabs = (kind: string | null): readonly ShellTab[] =>
-  reportKindNames.map((entry) => ({
+export const reportKindTabs = (kind: string | null): readonly ShellTab[] => [
+  ...reportKindNames.map((entry) => ({
     label: entry.label,
     href: `/reports?report=${entry.kind}`,
     current: entry.kind === (kind ?? 'uninvoiced'),
-  }))
+  })),
+  // Last, and not a kind: the saved views of reports (#933), at its own address.
+  { label: 'Saved', href: '/reports/saved', current: kind === 'saved' },
+]
+
+/** The strip's name for a report kind, for the places that list kinds by name. */
+export const reportKindLabel = (kind: string): string =>
+  reportKindNames.find((entry) => entry.kind === kind)?.label ?? kind
 
 export const renderReportsPage = (view?: string): string => `
   <main class="app-content reports-workspace page--grid" data-reports-page${view === 'reports' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Analysis</p><h1>Reports</h1></div>
-      <div class="report-actions"><a href="/payments/report" data-staff-payments-nav hidden>Payments report</a><button type="button" data-saved-reports-open>Saved reports</button><button class="primary-action" type="button" data-report-builder-open>New report</button></div>
+      <div class="report-actions"><a href="/payments/report" data-staff-payments-nav hidden>Payments report</a><button type="button" data-saved-reports-open>Saved reports</button><button type="button" data-saved-save-open hidden>Save report</button><button class="primary-action" type="button" data-report-builder-open>New report</button></div>
     </header>
+    <nav class="report-quick-links" data-saved-quick-links aria-label="Pinned reports" hidden></nav>
+    <p class="report-saved-open" data-saved-open hidden><strong data-saved-open-name></strong> <button type="button" data-saved-open-save hidden>Save changes</button> <span data-saved-open-result role="status" aria-live="polite"></span></p>
+    <section class="report-saved-screen" data-saved-screen aria-label="Saved reports" hidden>
+      <div class="report-actions" role="group" aria-label="Saved report view">
+        <button type="button" data-saved-screen-view="all" aria-pressed="true">All</button>
+        <button type="button" data-saved-screen-view="yours" aria-pressed="false">Your reports</button>
+        <button type="button" data-saved-screen-view="shared" aria-pressed="false">Shared with you</button>
+        <label>Search <input type="search" data-saved-screen-search></label>
+      </div>
+      <p class="form-result" data-saved-screen-status role="status" aria-live="polite"></p>
+      <div data-saved-screen-table></div>
+    </section>
     <p class="reports-intro">Review live operational totals. Each currency remains separate.</p>
     <form class="report-filters" data-report-form>
       <!--
@@ -147,6 +166,15 @@ export const renderReportsPage = (view?: string): string => `
         </fieldset>
         <p class="form-result" data-saved-share-result role="status" aria-live="polite"></p>
         <div class="report-actions"><button class="primary-action" type="submit">Done</button></div>
+      </form>
+    </dialog>
+    <dialog class="project-dialog report-share-dialog" data-saved-name-dialog aria-labelledby="saved-name-title">
+      <form method="dialog" data-saved-name-form>
+        <header><div><p class="eyebrow" data-saved-name-eyebrow>Save report</p><h2 id="saved-name-title" data-saved-name-title>Name this report</h2></div><button type="button" data-saved-name-cancel aria-label="Close">×</button></header>
+        <p data-saved-name-hint>The report is saved as you see it now. It stays private to you until you share it.</p>
+        <label>Name <input data-saved-name-input maxlength="120" autocomplete="off"></label>
+        <p class="form-result" data-saved-name-result role="status" aria-live="polite"></p>
+        <div class="report-actions"><button class="primary-action" type="submit" data-saved-name-submit>Save</button><button type="button" data-saved-name-cancel>Cancel</button></div>
       </form>
     </dialog>
     <dialog class="project-dialog report-share-dialog" data-saved-delete-dialog aria-labelledby="saved-delete-title">

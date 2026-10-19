@@ -29,9 +29,10 @@ import {
   type TimesheetSubmissionDetail,
   type Whoami,
 } from '@conflict-hq/ezacto-client'
-import { vi } from 'vitest'
+import { afterEach, vi } from 'vitest'
 import { createModuleSettingsController } from '../../src/module-settings/browser.js'
 import { mountShell } from '../../src/shell/browser.js'
+import { shellPendingWrites } from '../../src/shell/net.js'
 import {
   defaultTheme,
   invoiceTabs,
@@ -40,6 +41,75 @@ import {
   webAssets,
   type ShellApi,
 } from '../../src/index.js'
+
+/**
+ * What a mounted shell leaves behind after its test (issue 745).
+ *
+ * `mountShell` starts a one-second timer-clock interval and listens on the
+ * window and the document, and the write-status bar subscribes to the shell's
+ * module-level pending-writes tracker, which outlives every page. Each of those
+ * closes over the DOM it was mounted on, so a finished test kept its whole
+ * parsed page reachable: about 36 MB of heap per mount, measured with a forced
+ * collection after the test yielded. Across the 54 mounts of
+ * shell-company-settings that was most of the 4 GB a CI fork may use, and the
+ * collector working against it is what pushed single tests past the 5 s budget.
+ *
+ * They are recorded as they are made (timeouts expire on their own, and a
+ * page's own listeners go with its tree), and `unmount()` releases them and
+ * drops the page. It runs after every test that imports this module, last, so
+ * a file's own `afterEach` still sees the page. No production code changes:
+ * a real page mounts once and is never replaced.
+ */
+const mountedIntervals = new Set<ReturnType<typeof globalThis.setInterval>>()
+const mountedReleases: (() => void)[] = []
+
+const realSetInterval = globalThis.setInterval.bind(globalThis)
+globalThis.setInterval = ((...args: Parameters<typeof globalThis.setInterval>) => {
+  const handle = realSetInterval(...args)
+  mountedIntervals.add(handle)
+  return handle
+}) as typeof globalThis.setInterval
+
+const recordListeners = (target: EventTarget): void => {
+  const realAdd = target.addEventListener.bind(target)
+  target.addEventListener = ((
+    type: string,
+    listener: EventListenerOrEventListenerObject | null,
+    options?: boolean | AddEventListenerOptions,
+  ): void => {
+    realAdd(type, listener, options)
+    if (listener !== null) {
+      mountedReleases.push(() => target.removeEventListener(type, listener, options))
+    }
+  }) as typeof target.addEventListener
+}
+recordListeners(globalThis)
+recordListeners(document)
+
+const realSubscribe = shellPendingWrites.subscribe.bind(shellPendingWrites)
+shellPendingWrites.subscribe = (listener) => {
+  const release = realSubscribe(listener)
+  mountedReleases.push(release)
+  return release
+}
+
+/**
+ * Stops everything a mounted shell started, empties the page and lets the
+ * collector have it. Returns after one macrotask: happy-dom holds a parsed
+ * page until its own queued work has run, so releasing the references alone
+ * is not enough.
+ */
+export const unmount = async (): Promise<void> => {
+  for (const handle of mountedIntervals) globalThis.clearInterval(handle)
+  mountedIntervals.clear()
+  for (const release of mountedReleases.splice(0)) release()
+  vi.clearAllMocks()
+  document.open()
+  document.close()
+  await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
+}
+
+afterEach(unmount)
 
 export const timestamp = '2026-08-28T12:00:00.000Z'
 

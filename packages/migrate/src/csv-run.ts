@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { applyCsvImport, dryRunCsvImport, type CsvImportReport } from './csv-import.js'
+import { togglAdapter } from './csv-toggl.js'
 import { parseMapping, type CsvMapping } from './csv-mapping.js'
 
 export interface RunCsvImportOptions {
@@ -7,6 +8,8 @@ export interface RunCsvImportOptions {
   filePath: string
   mappingPath?: string
   sourceId: string
+  /** The vendor whose export the file is; omitted for the generic contract. */
+  format?: 'toggl'
   dryRun: boolean
   skipRejected: boolean
   signal?: AbortSignal
@@ -74,7 +77,11 @@ export const runCsvImport = async (
       : parseMapping(await readFile(options.mappingPath, 'utf8'))
   const sqlite = new BetterSqlite3(options.databasePath, { fileMustExist: true })
   try {
-    const input = { sourceId: options.sourceId, ...(mapping !== undefined ? { mapping } : {}) }
+    const input = {
+      sourceId: options.sourceId,
+      ...(mapping !== undefined ? { mapping } : {}),
+      ...(options.format === 'toggl' ? { adapter: togglAdapter } : {}),
+    }
     if (options.dryRun) {
       const report = await dryRunCsvImport(sqlite, bytes, input)
       const clean = report.fileErrors.length === 0 && report.rejected.length === 0

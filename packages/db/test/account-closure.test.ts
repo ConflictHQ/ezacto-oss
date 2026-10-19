@@ -261,6 +261,26 @@ for (const runtime of ['SQLite', 'D1'])
       })
       expect(await rows('SELECT user_id FROM allocations ORDER BY id')).toEqual([{ user_id: 3 }])
     })
+    it('erases the closed person’s time off (issue 1007) and nobody else’s', async () => {
+      const { closure, rows, exec } = await setup()
+      await exec(
+        `INSERT INTO time_off(user_id,start_date,end_date,kind,created_at,updated_at) VALUES
+        (2,'2026-10-12','2026-10-14','vacation','${at}','${at}'),
+        (3,'2026-10-12','2026-10-14','vacation','${at}','${at}')`,
+      )
+      const preview = await closure.preview(1, 'close-pat')
+      expect(JSON.stringify(preview)).not.toContain('time_off')
+      await closure.close({
+        actorUserId: 1,
+        id: 'close-pat',
+        reviewToken: preview.review_token,
+        expectedVersion: 1,
+        expectedPolicyVersion: 1,
+        now: later,
+        acknowledged: true as const,
+      })
+      expect(await rows('SELECT user_id FROM time_off ORDER BY id')).toEqual([{ user_id: 3 }])
+    })
     it('removes every local secret and refuses already-issued session, API, email and app-handoff credentials', async () => {
       const { closure, db, rows, exec, sessions, magic, codes } = await setup()
       const session = await sessions.issue(2)
