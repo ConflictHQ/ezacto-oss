@@ -1,4 +1,5 @@
 import { createActualsController, type PaymentActualsApi } from './actuals-browser.js'
+import { createAllocationsController, type PaymentAllocationsApi } from './allocations-browser.js'
 import { createPaymentTabs } from './tabs.js'
 import { canPayNow } from './runs-model.js'
 import { createPaymentRunsController, type PaymentRunsApi } from './runs-browser.js'
@@ -23,7 +24,7 @@ import {
   staffPaymentStatus,
 } from './model.js'
 
-export interface StaffPaymentsApi extends PaymentRunsApi, PaymentActualsApi {
+export interface StaffPaymentsApi extends PaymentRunsApi, PaymentActualsApi, PaymentAllocationsApi {
   configureStaffPaymentProvider?(
     command: StaffPaymentProviderCommand,
     signal?: AbortSignal,
@@ -118,6 +119,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     },
     failure,
   )
+  const allocations = createAllocationsController(page, api, failure)
   const payNow = element<HTMLButtonElement>(page, '[data-payment-pay-now]')
   payNow.addEventListener('click', () => {
     tabs.select('send')
@@ -576,6 +578,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       paint()
       runs.ledger(response)
       actuals.ledger(response, active)
+      allocations.ledger(response, active)
       status.textContent = ''
     } catch (error) {
       if (!active.aborted && generation === ownGeneration) status.textContent = failure(error)
@@ -584,6 +587,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   month.addEventListener('change', () => {
     runs.resetSelection()
     actuals.reset()
+    allocations.reset()
     selected = null
     command = null
     void load()
@@ -856,6 +860,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       const heading = page.querySelector('h1')
       if (heading) heading.textContent = reportMode ? 'Payments report' : 'Payments'
       actuals.activate(active)
+      allocations.activate(active)
       await runs.activate(active)
       tabs.activate(reportMode, api.previewPaymentRun !== undefined)
       if (!reportMode) await load()
