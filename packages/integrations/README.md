@@ -13,6 +13,8 @@ variable, and no test touches the network.
 |---|---|
 | `src/deel/client.ts` | `DeelClient` over `/rest`: list people, create a timesheet. The `fetch` is supplied by the caller. |
 | `src/deel/matching.ts` | Person to contract, matched on the **payroll-kind** address, refusing to guess when Deel is ambiguous. |
+| `src/deel/runtime.ts` | `createDeelSyncRuntime`: the scheduled run. Refuses without a token and a start date, takes a one-run lock, logs each timesheet as Deel accepts it, then reconciles. |
+| `src/deel/reconcile.ts` | `reconcileTransferLog`: the log against the books (edited, removed, unmatched). Not against Deel, whose client has no read side for timesheets. |
 | `src/deel/time-sync.ts` | `planTimeTransfer` (dedupe against the log, group per person-day) and `submitTransferPlan` (post, and write log records only for what Deel took). |
 
 A run is: `listPeople` → `matchPayrollContracts` → `planTimeTransfer` →

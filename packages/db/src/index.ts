@@ -123,3 +123,5 @@ export { createAccountRetentionReviewRepository } from './account-retention-revi
 export * from './apple-web-custody.js'
 export { activityRollStatements } from './activity-partitions.js'
 export { createMyPaymentsStore } from './my-payments.js'
+
+export * from './deel-time-sync.js'
