@@ -1,5 +1,5 @@
 // Provenance: ezacto-pvt #899 (parent #891). Allocation of payments to earnings.
-// The triggers in migration 0126 are the invariants; this store resolves a
+// The triggers in migration 0125 are the invariants; this store resolves a
 // command against the confirmed actuals review, gives friendly errors before the
 // write, and builds the reconciliation report. It never writes to the register.
 import { sql } from 'drizzle-orm'
