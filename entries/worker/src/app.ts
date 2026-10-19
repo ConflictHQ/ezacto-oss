@@ -170,7 +170,9 @@ import {
   readDisplayPreferences,
   renderAppShell,
   renderAppleDisconnect,
+  renderPortalEstimatesPage,
   reportKindTabs,
+  resolveDeploymentBrand,
   webAssets,
   type DemoSignInAccount,
   type SignInProvider,
@@ -1112,6 +1114,25 @@ export const createApp = (
         }
         if (services.portalAuth !== undefined) {
           installMagicLinkRoutes(app, services.portalAuth)
+          // The page a contact reads an estimate on and answers it (issue 1010).
+          // It carries no session of its own: the emailed link's token arrives
+          // in the fragment and the page spends it on /portal/verify. Mounted
+          // with the routes it calls, so it exists exactly where they do.
+          app.get('/portal/estimate-review', async (context) =>
+            context.html(
+              renderPortalEstimatesPage({
+                brand: resolveDeploymentBrand(await shellBrand(context.env)).name,
+              }),
+              200,
+              {
+                'cache-control': 'no-store',
+                'content-security-policy': shellContentSecurityPolicy,
+                'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+                'referrer-policy': 'no-referrer',
+                'x-content-type-options': 'nosniff',
+              },
+            ),
+          )
         }
         // The app-handoff leg mints a single-use OIDC app code, so staff
         // magic-link needs the same store the OIDC sign-in does.
@@ -1307,6 +1328,13 @@ export const createApp = (
 
       app.get('/assets/ezacto.js', (context) =>
         context.body(webAssets.javascript, 200, {
+          'cache-control': 'public, max-age=0, must-revalidate',
+          'content-type': 'text/javascript; charset=utf-8',
+        }),
+      )
+
+      app.get('/assets/portal-estimates.js', (context) =>
+        context.body(webAssets.portalEstimatesJavascript, 200, {
           'cache-control': 'public, max-age=0, must-revalidate',
           'content-type': 'text/javascript; charset=utf-8',
         }),

@@ -420,6 +420,27 @@ describe.each([
     expect(unchanged.version).toBe(stamp.version)
   })
 
+  it('shows staff who answered, the version they were shown and the version it was recorded against', async () => {
+    const db = await ready()
+    const { version } = (await db.repo.getCustomerEstimate(1, 2))!
+    await respond(db, { estimateId: 2, contactId: 2, decision: 'accept', version })
+    const answer = (await db.repo.listEstimateMessages(2))!.find(
+      (message) => message.event_type === 'accept',
+    )
+    expect(answer).toMatchObject({
+      sent_by: 'Bob Tester',
+      contact_id: 2,
+      content_hash: version,
+      estimate_version: 1,
+      created_at: t2,
+    })
+    // What staff recorded themselves carries no contact, hash or version.
+    const send = (await db.repo.listEstimateMessages(2))!.find(
+      (message) => message.event_type === 'send',
+    )
+    expect(send).toMatchObject({ contact_id: null, content_hash: null, estimate_version: null })
+  })
+
   it('refuses the opposite answer after one is recorded, in both directions', async () => {
     const db = await ready()
     const two = (await db.repo.getCustomerEstimate(1, 2))!.version

@@ -6706,6 +6706,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "event_type",
       "delivery_status",
       "provider_message_id",
+      "contact_id",
+      "content_hash",
+      "estimate_version",
       "created_at",
       "updated_at",
     ],
@@ -6729,6 +6732,12 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         enum: ["queued", "sent", "bounced", "complained", "failed"],
       }),
       provider_message_id: nullable(stringSchema),
+      // Set only on an answer a contact gave through the customer page: who
+      // answered, the content version they were shown, and the estimate version
+      // the answer was recorded against.
+      contact_id: nullable(integerSchema),
+      content_hash: nullable({ type: "string", pattern: "^[0-9a-f]{64}$" }),
+      estimate_version: nullable({ type: "integer", minimum: 0 }),
       created_at: timestampSchema,
       updated_at: timestampSchema,
     },

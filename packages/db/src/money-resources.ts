@@ -302,6 +302,12 @@ export interface EstimateMessageResource {
   event_type: 'send' | 'accept' | 'decline' | 're-open' | 'view' | 'invoice' | null
   delivery_status: 'queued' | 'sent' | 'bounced' | 'complained' | 'failed' | null
   provider_message_id: string | null
+  /** The contact who answered (issue 1010); null for everything staff recorded. */
+  contact_id: number | null
+  /** The content version the contact was shown; null unless a contact answered. */
+  content_hash: string | null
+  /** The estimate version their answer was recorded against; null unless a contact answered. */
+  estimate_version: number | null
   created_at: string
   updated_at: string
 }
@@ -1138,7 +1144,8 @@ const hydrateEstimateMessage = (row: RawEstimateMessage): EstimateMessageResourc
 
 const estimateMessageSelect = `SELECT id, estimate_id, sent_by, sent_by_email,
   sent_from, sent_from_email, recipients, subject, body, send_me_a_copy, event_type,
-  delivery_status, provider_message_id, created_at, updated_at FROM estimate_messages`
+  delivery_status, provider_message_id, contact_id, content_hash, estimate_version,
+  created_at, updated_at FROM estimate_messages`
 
 type EstimateCommandKind =
   'estimate.send' | 'estimate.accept' | 'estimate.decline' | 'estimate.re-open' | 'estimate.convert'

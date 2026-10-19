@@ -39,6 +39,7 @@ export const UNDOCUMENTED_ROUTES: readonly string[] = [
   'get /portal/estimates',
   'get /portal/estimates/:id',
   'post /portal/estimates/:id/response',
+  'get /portal/estimate-review',
   // Staff magic-link sign-in, the user-facing sibling of the portal set above
   // and gated on the same key. The verify leg is a browser/app redirect with no
   // client call; request and exchange are called by the native app over raw
@@ -136,6 +137,7 @@ export const PORTAL_ROUTES: readonly string[] = [
   'get /portal/estimates',
   'get /portal/estimates/:id',
   'post /portal/estimates/:id/response',
+  'get /portal/estimate-review',
 ]
 
 /** Staff magic-link sign-in, gated on `MAGIC_LINK_SIGNING_KEY` alone. */

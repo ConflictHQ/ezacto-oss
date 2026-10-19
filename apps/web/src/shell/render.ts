@@ -1,6 +1,6 @@
 import { renderStaffPayments } from '../staff-payments/render.js'
 import { PASSWORD_MIN_CODE_POINTS, PASSWORD_MAX_CODE_POINTS } from '@ezacto/core'
-import { appleSignInIcon, googleSignInIcon, shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
+import { appleSignInIcon, googleSignInIcon, portalEstimatesJavascript, shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
 import { iconMarkup, type IconName } from '../components/icons.js'
 import { INSTANCE_THEME_STYLESHEET_PATH } from '../instance-theme.js'
 import { defaultTheme, themeManifest } from '../theme.js'
@@ -1246,6 +1246,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
 export const webAssets = {
   stylesheet: shellStylesheet,
   javascript: shellJavascript,
+  portalEstimatesJavascript,
 } as const
 
 /** Standalone confirmation: no workspace session authorizes Apple revocation. */
