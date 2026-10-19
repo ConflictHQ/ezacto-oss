@@ -1582,6 +1582,7 @@ export const mountShell = async (
       api.listActivityLog === undefined
         ? { data: [] }
         : api.listActivityLog(query, signal),
+    ...(api.exportActivityLog === undefined ? {} : { exportActivityLog: api.exportActivityLog }),
     // Everyone the directory lists, active or not: the log keeps the actions of
     // people who have since been archived, and the picker must reach them too.
     listActors: async (signal) => {

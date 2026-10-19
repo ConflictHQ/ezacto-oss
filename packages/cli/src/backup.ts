@@ -88,8 +88,23 @@ const exportTableCsv = (
   columns: string[],
 ): { rowCount: number; content: string } => {
   const header = columns.map(csvEscape).join(',')
+  // A WITHOUT ROWID table has no rowid to order by, and the real schema has
+  // some (project tag assignments, outbox delivery receipts); its primary key
+  // is the stable order instead.
+  const withoutRowid = database
+    .prepare(`SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ? AND sql LIKE '%WITHOUT ROWID%'`)
+    .get(table) !== undefined
+  const order = withoutRowid
+    ? (
+        database.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name: string; pk: number }>
+      )
+        .filter((column) => column.pk > 0)
+        .sort((left, right) => left.pk - right.pk)
+        .map((column) => `"${column.name}"`)
+        .join(', ')
+    : 'rowid'
   const rows = database
-    .prepare(`SELECT * FROM "${table}" ORDER BY rowid`)
+    .prepare(`SELECT * FROM "${table}" ORDER BY ${order}`)
     .all() as Array<Record<string, unknown>>
   const lines = [header]
   for (const row of rows) {

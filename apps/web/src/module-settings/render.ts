@@ -461,6 +461,7 @@ export const renderActivityLogPage = (view?: string): string => `
         <input id="ez-activity-entity-id" type="number" min="1" step="1" inputmode="numeric" data-activity-entity-id>
       </label>
       <button type="button" data-activity-clear>Clear filters</button>
+      <button type="button" data-activity-export>Export CSV</button>
     </div>
     <p class="form-result module-settings-status" data-activity-log-status role="status" aria-live="polite">Loading activity…</p>
     <div data-activity-log-list></div>

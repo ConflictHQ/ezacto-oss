@@ -3299,6 +3299,27 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   },
   {
     method: "get",
+    path: "/api/v1/activity-log/export",
+    operationId: "exportActivityLog",
+    summary: "Download the filtered Activity log as CSV (403 `module_disabled` when the module is off)",
+    tag: "activity",
+    responseStatus: 200,
+    binaryResponse: true,
+    description:
+      "The same filters as the list, applied together, and the same entries a reader may see. " +
+      "At most 5000 entries, newest first; a longer log is cut and the file ends with a Truncated line, " +
+      "with the x-export-truncated response header set to true. Event payloads are not included.",
+    parameters: [
+      query("from", dateSchema),
+      query("to", dateSchema),
+      query("event_type", stringSchema),
+      query("actor_id", integerSchema),
+      query("aggregate_type", stringSchema),
+      query("aggregate_id", integerSchema),
+    ],
+  },
+  {
+    method: "get",
     path: "/api/v1/outbox-deliveries",
     operationId: "listOutboxDeliveries",
     summary: "List domain-event subscriber delivery outcomes",

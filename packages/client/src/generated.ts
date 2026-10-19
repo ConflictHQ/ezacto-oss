@@ -4686,6 +4686,17 @@ export class EzactoClient {
     });
   }
 
+  async exportActivityLog(args: { query?: { "from"?: string; "to"?: string; "event_type"?: string; "actor_id"?: number; "aggregate_type"?: string; "aggregate_id"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ArrayBuffer> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ArrayBuffer>("GET", "/api/v1/activity-log/export", {
+      query: args.query,
+      signal: args.signal,
+      binary: true,
+      headers,
+    });
+  }
+
   async listOutboxDeliveries(args: { query?: { "cursor"?: string; "per_page"?: number; "status"?: "pending" | "processing" | "delivered" | "failed"; "event_type"?: string; "from"?: string; "to"?: string; "order"?: "newest" | "oldest" }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<OutboxDeliveryPage> {
     const headers = new Headers(args.headers);
 

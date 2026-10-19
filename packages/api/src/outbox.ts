@@ -1,4 +1,5 @@
 import type { Hono } from 'hono'
+import { ACTIVITY_EXPORT_ROW_LIMIT, renderActivityCsv } from './activity-export.js'
 import { requireApiScope, requireSessionPrincipal } from './auth.js'
 import type { ApiContext } from './context.js'
 import { ApiError, validationError } from './errors.js'
@@ -229,6 +230,43 @@ const requireActivityLogModule = async (options: OutboxRouteOptions): Promise<vo
   })
 }
 
+/**
+ * The filters the activity list and its export share, so a file holds the rows
+ * the screen shows (issue 8). `administrator` decides whether the sign-in,
+ * token and account-deletion events are left out.
+ */
+const activityFilter = (requestUrl: URL, administrator: boolean): ActivityLogQuery => {
+  // Each filter is validated here and refused with a 422 when it is not one:
+  // a bad value that quietly matched nothing would read as "nothing happened".
+  const from = calendarDateQuery(requestUrl, 'from')
+  const to = calendarDateQuery(requestUrl, 'to')
+  if (from !== undefined && to !== undefined && from > to) {
+    throw validationError([{ field: 'to', code: 'invalid', message: 'to must not be before from' }])
+  }
+  const eventType = identifierQuery(requestUrl, 'event_type')
+  const aggregateType = identifierQuery(requestUrl, 'aggregate_type')
+  const actorId = rowIdQuery(requestUrl, 'actor_id')
+  const aggregateId = rowIdQuery(requestUrl, 'aggregate_id')
+  if (aggregateId !== undefined && aggregateType === undefined) {
+    throw validationError([
+      {
+        field: 'aggregate_type',
+        code: 'required',
+        message: 'aggregate_type is required with aggregate_id',
+      },
+    ])
+  }
+  return {
+    ...(from === undefined ? {} : { from }),
+    ...(to === undefined ? {} : { to }),
+    ...(eventType === undefined ? {} : { eventType }),
+    ...(actorId === undefined ? {} : { actorId }),
+    ...(aggregateType === undefined ? {} : { aggregateType }),
+    ...(aggregateId === undefined ? {} : { aggregateId }),
+    ...(administrator ? {} : { excludeEventTypes: ADMINISTRATOR_ONLY_ACTIVITY_EVENTS }),
+  }
+}
+
 export const installOutboxRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   monitor: OutboxMonitor,
@@ -257,35 +295,7 @@ export const installOutboxRoutes = <Bindings extends object>(
     const principal = context.get('principal')
     const administrator = principal.profile === 'administrator'
     const requestUrl = new URL(context.req.url)
-    // Each filter is validated here and refused with a 422 when it is not one:
-    // a bad value that quietly matched nothing would read as "nothing happened".
-    const from = calendarDateQuery(requestUrl, 'from')
-    const to = calendarDateQuery(requestUrl, 'to')
-    if (from !== undefined && to !== undefined && from > to) {
-      throw validationError([{ field: 'to', code: 'invalid', message: 'to must not be before from' }])
-    }
-    const eventType = identifierQuery(requestUrl, 'event_type')
-    const aggregateType = identifierQuery(requestUrl, 'aggregate_type')
-    const actorId = rowIdQuery(requestUrl, 'actor_id')
-    const aggregateId = rowIdQuery(requestUrl, 'aggregate_id')
-    if (aggregateId !== undefined && aggregateType === undefined) {
-      throw validationError([
-        {
-          field: 'aggregate_type',
-          code: 'required',
-          message: 'aggregate_type is required with aggregate_id',
-        },
-      ])
-    }
-    const filter: ActivityLogQuery = {
-      ...(from === undefined ? {} : { from }),
-      ...(to === undefined ? {} : { to }),
-      ...(eventType === undefined ? {} : { eventType }),
-      ...(actorId === undefined ? {} : { actorId }),
-      ...(aggregateType === undefined ? {} : { aggregateType }),
-      ...(aggregateId === undefined ? {} : { aggregateId }),
-      ...(administrator ? {} : { excludeEventTypes: ADMINISTRATOR_ONLY_ACTIVITY_EVENTS }),
-    }
+    const filter = activityFilter(requestUrl, administrator)
     type Row = { id: number; created_at: string; record: ActivityLogResource }
     const page = await keysetCursorPage({
       requestUrl,
@@ -316,6 +326,50 @@ export const installOutboxRoutes = <Bindings extends object>(
       },
     })
     return context.json(page, 200, { 'cache-control': 'no-store' })
+  })
+
+  // The filtered view as a file (issue 8). The same module gate, scope,
+  // filters and administrator-only exclusions as the list above, so a file
+  // never holds a row the screen would have refused the reader.
+  api.get('/activity-log/export', async (context) => {
+    requireApiScope(context, 'reports:read')
+    await requireActivityLogModule(options)
+    const principal = context.get('principal')
+    const requestUrl = new URL(context.req.url)
+    const filter = activityFilter(requestUrl, principal.profile === 'administrator')
+    // Walked to the cap, one past it, so a log that is exactly at the cap is
+    // not reported as cut. Held still at the snapshot so a row recorded while
+    // the walk runs cannot shift a page boundary.
+    const through = await monitor.activitySnapshot()
+    const records: ActivityLogResource[] = []
+    let after: { recordedAt: string; eventId: string } | null = null
+    while (through !== null && records.length <= ACTIVITY_EXPORT_ROW_LIMIT) {
+      const page: ActivityLogResource[] = await monitor.listActivity({
+        ...filter,
+        limit: 200,
+        after,
+        recordedThrough: through,
+      })
+      records.push(...page)
+      const last = page[page.length - 1]
+      if (page.length < 200 || last === undefined) break
+      after = { recordedAt: last.recordedAt, eventId: last.id }
+    }
+    const truncated = records.length > ACTIVITY_EXPORT_ROW_LIMIT
+    const named = [
+      ...(filter.from === undefined ? [] : [`from-${filter.from}`]),
+      ...(filter.to === undefined ? [] : [`to-${filter.to}`]),
+    ]
+    return new Response(renderActivityCsv(records.slice(0, ACTIVITY_EXPORT_ROW_LIMIT), truncated), {
+      status: 200,
+      headers: {
+        'content-type': 'text/csv; charset=utf-8',
+        'cache-control': 'no-store',
+        'content-disposition': `attachment; filename="${['activity-log', ...named].join('-')}.csv"`,
+        'x-export-truncated': String(truncated),
+        'x-export-row-limit': String(ACTIVITY_EXPORT_ROW_LIMIT),
+      },
+    })
   })
 
   api.get('/outbox-deliveries', async (context) => {
