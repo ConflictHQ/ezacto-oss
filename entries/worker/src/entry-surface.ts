@@ -40,6 +40,13 @@ export const UNDOCUMENTED_ROUTES: readonly string[] = [
   'get /portal/estimates/:id',
   'post /portal/estimates/:id/response',
   'get /portal/estimate-review',
+  // The hosted invoice page behind the link in an emailed invoice (issue 936).
+  // Browser-facing like the portal set above, but unlike it neither gated on a
+  // key nor on a session: the link's token is the authorisation, and both
+  // entries mount all three.
+  'get /portal/invoices/:token',
+  'post /portal/invoices/:token/viewed',
+  'get /portal/invoices/:token/document',
   // Staff magic-link sign-in, the user-facing sibling of the portal set above
   // and gated on the same key. The verify leg is a browser/app redirect with no
   // client call; request and exchange are called by the native app over raw

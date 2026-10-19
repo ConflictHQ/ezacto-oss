@@ -629,6 +629,7 @@ export const invoiceMessageLabel = (
   if (event === undefined || event === null || event === '')
     return 'Invoice activity'
   if (event === 'send') return 'marked sent'
+  if (event === 'view') return 'viewed online'
   return event.replaceAll('_', ' ').replaceAll('-', ' ')
 }
 

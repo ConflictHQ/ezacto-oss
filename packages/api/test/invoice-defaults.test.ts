@@ -8,6 +8,7 @@ const stored = {
   companyAddress: '100 Example Ave, STE 200\nSpringfield, IL, 62701',
   notes: 'Beneficiary:\n*CONFLICT LLC*',
   subject: null,
+  viewReceipts: false,
 }
 
 const app = (profile = 'administrator') => {
@@ -49,8 +50,23 @@ describe('invoice company information and default values', () => {
         company_address: '100 Example Ave, STE 200\nSpringfield, IL, 62701',
         notes: 'Beneficiary:\n*CONFLICT LLC*',
         subject: null,
+        view_receipts: false,
       },
     })
+  })
+
+  it('[unit] turns view receipts on and off, and nothing else turns them on', async () => {
+    const { app: instance, service } = app()
+    expect((await post(instance, { view_receipts: true })).status).toBe(200)
+    expect(service.update).toHaveBeenLastCalledWith({ viewReceipts: true })
+    const off = await post(instance, { view_receipts: false })
+    expect(((await off.json()) as { data: { view_receipts: boolean } }).data.view_receipts).toBe(false)
+    expect(service.update).toHaveBeenLastCalledWith({ viewReceipts: false })
+    service.update.mockClear()
+    for (const value of ['true', 1, null, 'yes']) {
+      expect((await post(instance, { view_receipts: value })).status).toBe(422)
+    }
+    expect(service.update).not.toHaveBeenCalled()
   })
 
   it('[unit] saves a partial change and clears a default with null', async () => {

@@ -134,6 +134,8 @@ export interface InvoiceDefaultsSetting {
   readonly company_address: string | null
   readonly notes: string | null
   readonly subject: string | null
+  /** Link the invoice online in the email, and record when it is first opened. */
+  readonly view_receipts: boolean
 }
 
 /**

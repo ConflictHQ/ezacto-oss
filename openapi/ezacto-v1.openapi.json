@@ -29953,6 +29953,7 @@
           "attempt_count",
           "failure_code",
           "failure_reason",
+          "viewed_at",
           "created_at",
           "updated_at"
         ],
@@ -30091,6 +30092,17 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "viewed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
@@ -48461,7 +48473,8 @@
           "company_name",
           "company_address",
           "notes",
-          "subject"
+          "subject",
+          "view_receipts"
         ],
         "properties": {
           "company_name": {
@@ -48496,6 +48509,9 @@
                 "type": "null"
               }
             ]
+          },
+          "view_receipts": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -48557,6 +48573,9 @@
                 "type": "null"
               }
             ]
+          },
+          "view_receipts": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false

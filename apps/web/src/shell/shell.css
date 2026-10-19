@@ -9705,3 +9705,25 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   flex: 1 1 100%;
   margin: 0;
 }
+
+/* The hosted invoice page a client reaches from the emailed link (issue 936). */
+.portal-invoice {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+.portal-invoice h1 {
+  margin: 0 0 8px;
+}
+.portal-invoice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 24px 0 16px;
+}
+.portal-invoice-actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  text-decoration: none;
+}

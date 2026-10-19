@@ -21,6 +21,7 @@ import type {
   TimesheetAutoApprovalService,
   ProfileNotificationsPort,
   InvoiceDefaultsService,
+  InvoiceViewRouteService,
   RecurringRepairService,
   InvoiceTimeClaimService,
   StripeService,
@@ -90,6 +91,7 @@ import {
   installTimesheetAutoApprovalRoutes,
   installProfileNotificationRoutes,
   installInvoiceDefaultsRoutes,
+  installInvoiceViewRoutes,
   installRecurringRepairRoutes,
   installInvoiceTimeClaimRoutes,
   installStripeRoutes,
@@ -172,6 +174,8 @@ import {
   renderAppShell,
   renderAppleDisconnect,
   renderPortalEstimatesPage,
+  renderPortalInvoicePage,
+  type PortalInvoicePage,
   reportKindTabs,
   resolveDeploymentBrand,
   webAssets,
@@ -501,6 +505,17 @@ export interface RuntimeServices {
   }
   invoiceDefaults?: InvoiceDefaultsService
   /**
+   * The hosted invoice page and its receipts (issue 936). Both entries compose
+   * it, so `entry-surface.ts` lists its three routes for both.
+   */
+  invoiceView?: InvoiceViewRouteService<PortalInvoicePage>
+  /** Mints the link an invoice email carries, where the deployment has an origin to link to. */
+  invoiceViewLinks?: NonNullable<MoneyResourceRouteOptions['invoiceViewLinks']>
+  /** When invoice emails were first opened, for Settings > Deliveries. */
+  invoiceViewReceipts?: (
+    invoiceMessageIds: readonly number[],
+  ) => Promise<ReadonlyMap<number, string>>
+  /**
    * Sends the reminders that have come due. Called from the daily cron in the
    * Worker and from the outbox tick in the container; either way it is the
    * only thing that turns a scheduled row into mail.
@@ -710,6 +725,9 @@ export const createApp = (
             installEmailLogRoutes(api, services.emailLog, {
               cursorSigningKey: services.cursorSigningKey,
               timezone: organizationTimezone,
+              ...(services.invoiceViewReceipts === undefined
+                ? {}
+                : { viewReceipts: services.invoiceViewReceipts }),
             })
             installEmailHealthRoutes(api, services.emailLog)
             installEmailConfigurationRoutes(api, {
@@ -797,6 +815,9 @@ export const createApp = (
               // than inside the money routes so those keep knowing nothing
               // about a payment provider; a deployment with neither BILL nor
               // Stripe passes nothing and the email renders as it always did.
+              ...(services.invoiceViewLinks === undefined
+                ? {}
+                : { invoiceViewLinks: services.invoiceViewLinks }),
               ...(services.stripe === undefined && services.bill === undefined
                 ? {}
                 : {
@@ -1020,6 +1041,22 @@ export const createApp = (
       // API surface.
       if (services?.wiseWebhook !== undefined) {
         installWiseWebhookRoute(app, services.wiseWebhook)
+      }
+      // The page a client reaches from the link in an emailed invoice (issue
+      // 936). No session, so the link's token is the whole of the authorisation
+      // and these sit outside the API surface, beside the webhooks.
+      if (services?.invoiceView !== undefined) {
+        installInvoiceViewRoutes(app, {
+          service: services.invoiceView,
+          clock: () => systemClock.now().instant,
+          clientKey: (request) =>
+            request.headers.get('cf-connecting-ip') ?? 'unknown-client',
+          render: renderPortalInvoicePage,
+          pageHeaders: {
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+          },
+        })
       }
       if (services !== undefined) {
         // One policy object, consulted by every sign-in family. Composing it
@@ -1335,6 +1372,13 @@ export const createApp = (
 
       app.get('/assets/ezacto.js', (context) =>
         context.body(webAssets.javascript, 200, {
+          'cache-control': 'public, max-age=0, must-revalidate',
+          'content-type': 'text/javascript; charset=utf-8',
+        }),
+      )
+
+      app.get('/assets/portal-invoice.js', (context) =>
+        context.body(webAssets.portalInvoiceJavascript, 200, {
           'cache-control': 'public, max-age=0, must-revalidate',
           'content-type': 'text/javascript; charset=utf-8',
         }),

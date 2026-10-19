@@ -173,6 +173,41 @@ If both the authenticator and the recovery codes are lost, an administrator has
 to remove the enrolment directly in the database — there is no self-service
 reset, because a reset a stranger can trigger is not a second factor.
 
+## The hosted invoice page
+
+`GET /portal/invoices/<token>` is the one invoice surface a client reaches with
+no sign-in (issue 936). It exists only for an organization that turned on
+Settings > Company > Invoices > "Link the invoice online in the email", which is
+off by default; off, the invoice email is exactly what it was and no link is
+ever made.
+
+The token in the link is the whole credential, so it is handled as one:
+
+- **Unguessable.** 256 random bits from the platform's CSPRNG, base64url.
+- **Hashed at rest.** Only the SHA-256 is stored (`invoice_view_links.token_hash`),
+  compared in constant time after the lookup. A copy of the database cannot open
+  an invoice. The token is in the email the client was sent and nowhere else:
+  not in the message row, the event, a log line or an error.
+- **No enumeration.** A malformed token, one never issued, an expired one and one
+  whose invoice is no longer sent all get the same plain `404 Not found`. The
+  token is never echoed back.
+- **Rate limited.** 60 requests a minute per caller address (`cf-connecting-ip`,
+  which the container sets from its trusted-proxy rule), counted before the token
+  is looked at and stored only as a hash. Over it, `429` with `Retry-After`.
+- **Expires.** 180 days after the send that carried it.
+- **Private.** `no-store`, `no-referrer`, `noindex`, no cookie, no third-party
+  script, image or font. There is no tracking pixel.
+- **One link per send.** Since an invoice email is a single message to everyone
+  on it, a receipt says the email was opened, not by whom.
+
+Fetching the page records nothing, so a mail scanner that only follows the link
+is not a view. A view is the page reporting it was shown in a visible browser
+tab, or the PDF being downloaded; the first one runs the `invoice.view` command
+as the system, which writes a "Viewed online" row into the invoice's history and
+emits `invoice.viewed`. Settings > Deliveries shows the same time against the
+email. Request URLs carry the token, so an operator should treat access logs for
+`/portal/invoices/` as holding secrets.
+
 ## Backups
 
 Two of them, in different formats, from different code paths, on different

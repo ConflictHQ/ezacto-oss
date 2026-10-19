@@ -289,6 +289,25 @@ export {
   type InvoiceDefaultsPatch,
 } from './invoice-defaults.js'
 export {
+  allowViewLinkRequest,
+  createInvoiceViewLinkIssuer,
+  hashViewLinkToken,
+  invoiceViewLinkOrigin,
+  mintViewLinkToken,
+  readInvoiceViewPage,
+  readViewReceiptsEnabled,
+  readViewReceipts,
+  recordInvoiceView,
+  viewLinkExpiry,
+  type InvoiceViewLinkIssuer,
+  type InvoiceViewPage,
+} from './invoice-view-links.js'
+export {
+  createInvoiceViewService,
+  type InvoiceViewPageData,
+  type InvoiceViewService,
+} from './invoice-view-service.js'
+export {
   readTimeEntryClaim,
   releaseInvoicedTimeEntries,
   type ReleaseOutcome,

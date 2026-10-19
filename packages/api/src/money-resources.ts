@@ -543,6 +543,8 @@ interface MoneyResourceService {
       messageId: number;
       eventId: string;
       message?: LifecycleMessage;
+      /** The hash of this send's hosted-page token; the token is never passed. */
+      viewLink?: { tokenHash: string; expiresAt: string };
       delivery?: {
         templateVersion: number;
         senderIdentityId: number;
@@ -804,6 +806,17 @@ export interface MoneyResourceRouteOptions {
    * invoice does not go out.
    */
   invoicePaymentUrl?: (invoiceId: number) => Promise<string | null>;
+  /**
+   * The hosted invoice page link (issue 936). Absent where the deployment has
+   * no origin to link to; present, it is asked per send whether the company
+   * turned view receipts on, and if so the email carries a link of its own.
+   */
+  invoiceViewLinks?: {
+    enabled(): Promise<boolean>;
+    /** What a preview shows in a link's place: it opens nothing. */
+    previewUrl: string;
+    mint(sentAt: string): Promise<{ url: string; tokenHash: string; expiresAt: string }>;
+  };
 }
 
 type ResolvedMoneyResourceRouteOptions = Omit<
@@ -2936,6 +2949,8 @@ interface ComposedDelivery {
   readonly subject: string;
   readonly text: string;
   readonly pdfAttached: boolean;
+  /** The hosted-page link this send carries, when the company asked for one. */
+  readonly viewLink: { readonly tokenHash: string; readonly expiresAt: string } | null;
 }
 
 /** The refusal for a deployment that composes no organization mail at all. */
@@ -3026,6 +3041,7 @@ const composeDelivery = async (
   invoiceId: number,
   request: DeliveryRequest,
   pdfAttached: (invoiceId: number) => Promise<boolean>,
+  purpose: "send" | "preview" = "send",
 ): Promise<ComposedDelivery> => {
   if (options.invoiceDelivery === undefined) throw deliveryUnavailable();
   const delivery = options.invoiceDelivery;
@@ -3092,6 +3108,17 @@ const composeDelivery = async (
       ? null
       : await options.invoicePaymentUrl(invoiceId).catch(() => null);
   const attached = await pdfAttached(invoiceId);
+  // A link only where the company turned view receipts on; off, the email is
+  // composed exactly as it was before. A preview shows where the link would
+  // be and mints nothing.
+  const links = options.invoiceViewLinks;
+  const sentAt = options.clock();
+  const minted =
+    links !== undefined && (await links.enabled())
+      ? purpose === "send"
+        ? await links.mint(sentAt)
+        : { url: links.previewUrl, tokenHash: null, expiresAt: null }
+      : null;
   let composed: { subject: string; text: string };
   try {
     composed = composeInvoiceEmail({
@@ -3099,10 +3126,11 @@ const composeDelivery = async (
       subjectTemplate: request.subject ?? template.subjectTemplate,
       messageTemplate: request.message ?? template.textTemplate,
       paymentUrl,
+      ...(minted === null ? {} : { viewUrl: minted.url }),
       pdfAttached: attached,
       // The send and its preview both read the weekday at the moment they are
       // composed, which for the send is the moment it is recorded.
-      sentAt: options.clock(),
+      sentAt,
     });
   } catch (error) {
     if (error instanceof EmailTemplateVariableError) {
@@ -3143,6 +3171,10 @@ const composeDelivery = async (
     subject: composed.subject,
     text: composed.text,
     pdfAttached: attached,
+    viewLink:
+      minted === null || minted.tokenHash === null
+        ? null
+        : { tokenHash: minted.tokenHash, expiresAt: minted.expiresAt },
   };
 };
 
@@ -3188,6 +3220,7 @@ const installInvoiceDelivery = <Bindings extends object>(
         expectedVersion: request.version!,
         messageId: await stableId("invoice-message", invoiceId, commandId),
         eventId,
+        ...(composed.viewLink === null ? {} : { viewLink: composed.viewLink }),
         message: {
           sentBy: composed.author.name,
           sentByEmail: composed.author.email,
@@ -3247,8 +3280,13 @@ const installInvoiceDelivery = <Bindings extends object>(
     const port = documents();
     const attachments =
       port === undefined ? [] : await port.preview({ invoiceId, choices });
-    const composed = await composeDelivery(options, principal, invoiceId, request, async () =>
-      attachments.some(({ kind }) => kind === "invoice"),
+    const composed = await composeDelivery(
+      options,
+      principal,
+      invoiceId,
+      request,
+      async () => attachments.some(({ kind }) => kind === "invoice"),
+      "preview",
     );
     return context.json(
       {
@@ -3360,8 +3398,13 @@ const installInvoiceDelivery = <Bindings extends object>(
     }
     const port = documents();
     const manifest = port === undefined ? [] : await port.preview({ invoiceId, choices });
-    const composed = await composeDelivery(options, principal, invoiceId, request, async () =>
-      manifest.some(({ kind }) => kind === "invoice"),
+    const composed = await composeDelivery(
+      options,
+      principal,
+      invoiceId,
+      request,
+      async () => manifest.some(({ kind }) => kind === "invoice"),
+      "preview",
     );
     const stamped = invoiceEmailPreview({
       subject: composed.subject,

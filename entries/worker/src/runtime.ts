@@ -108,6 +108,10 @@ import {
   createReminderSettings,
   readInvoiceDefaults,
   updateInvoiceDefaults,
+  createInvoiceViewLinkIssuer,
+  createInvoiceViewService,
+  invoiceViewLinkOrigin,
+  readViewReceipts,
   readThankYouPreference,
   readOrganizationThankYouPolicy,
   setInvoiceThankYouPolicy,
@@ -1428,6 +1432,33 @@ export const createRuntimeServices = async (
         countInvoicePreviewsSince(drizzle, invoiceId, since),
     },
     ...(invoiceDocuments === undefined ? {} : { invoiceDocuments }),
+    // The hosted invoice page and its receipts (issue 936). The page is always
+    // mounted -- a link only exists once a send minted one -- and the link is
+    // minted only where there is a configured origin to point it at.
+    invoiceView: createInvoiceViewService({
+      database: drizzle,
+      paymentUrl: invoicePaymentUrlForMail({ bill, stripe }),
+      ...(env.ATTACHMENTS === undefined
+        ? {}
+        : {
+            readDocument: async (key: string) => {
+              const object = await createR2AttachmentObjectStore(env.ATTACHMENTS!).get(key);
+              return object === null
+                ? null
+                : new Uint8Array(await new Response(object.body).arrayBuffer());
+            },
+          }),
+    }),
+    ...(invoiceViewLinkOrigin(env.APP_BASE_URL) === null
+      ? {}
+      : {
+          invoiceViewLinks: createInvoiceViewLinkIssuer(
+            drizzle,
+            invoiceViewLinkOrigin(env.APP_BASE_URL)!,
+          ),
+        }),
+    invoiceViewReceipts: (invoiceMessageIds: readonly number[]) =>
+      readViewReceipts(drizzle, invoiceMessageIds),
     // The same journal as a download (647), from the same store the email
     // reads, so the file an operator checks is the file a client is sent.
     invoiceHoursReport: {

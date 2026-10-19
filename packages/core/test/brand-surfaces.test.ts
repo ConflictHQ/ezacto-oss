@@ -33,6 +33,7 @@ interface Surface {
 
 const SHELL = "apps/web/src/shell/render.ts";
 const PORTAL_ESTIMATE_REVIEW = "apps/web/src/portal-estimates/render.ts";
+const PORTAL_INVOICE = "apps/web/src/portal-invoice/render.ts";
 
 const surfaces: readonly Surface[] = [
   { id: "shell-colours", status: "delivered", sources: [SHELL], anchor: "export const renderAppShell", reads: /INSTANCE_THEME_STYLESHEET_PATH/ },
@@ -78,6 +79,12 @@ const surfaces: readonly Surface[] = [
     id: "portal-estimate-review",
     status: "gap",
     sources: [PORTAL_ESTIMATE_REVIEW],
+    absent: /INSTANCE_THEME_STYLESHEET_PATH|wordmark|favicon|instance-theme/i,
+  },
+  {
+    id: "portal-invoice",
+    status: "gap",
+    sources: [PORTAL_INVOICE],
     absent: /INSTANCE_THEME_STYLESHEET_PATH|wordmark|favicon|instance-theme/i,
   },
   { id: "stripe-checkout", status: "external", sources: [] },
@@ -179,7 +186,7 @@ describe("brand surface audit (#1011)", () => {
     expect(
       found,
       "an HTML document builder changed: add or update its row in docs/instance-theme.md and surfaces here",
-    ).toEqual({ [SHELL]: 2, [PORTAL_ESTIMATE_REVIEW]: 1 });
+    ).toEqual({ [SHELL]: 2, [PORTAL_ESTIMATE_REVIEW]: 1, [PORTAL_INVOICE]: 1 });
   });
 
   it("[unit] every PDF writer has an audit row", () => {

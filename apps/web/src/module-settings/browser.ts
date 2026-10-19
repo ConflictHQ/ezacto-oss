@@ -428,6 +428,7 @@ export const createModuleSettingsController = (
   const invoiceDefaultsAddress = required<HTMLTextAreaElement>('[data-invoice-defaults-address]')
   const invoiceDefaultsSubject = required<HTMLInputElement>('[data-invoice-defaults-subject]')
   const invoiceDefaultsNotes = required<HTMLTextAreaElement>('[data-invoice-defaults-notes]')
+  const invoiceDefaultsViewReceipts = required<HTMLInputElement>('[data-invoice-defaults-view-receipts]')
   const invoiceDefaultsSubmit = required<HTMLButtonElement>('[data-invoice-defaults-submit]')
   const invoiceDefaultsResult = required<HTMLElement>('[data-invoice-defaults-result]')
   // The public demo (issue 931). The company information and default values
@@ -444,6 +445,7 @@ export const createModuleSettingsController = (
     invoiceDefaultsAddress,
     invoiceDefaultsSubject,
     invoiceDefaultsNotes,
+    invoiceDefaultsViewReceipts,
   ]) {
     field.disabled = demo
   }
@@ -642,6 +644,7 @@ export const createModuleSettingsController = (
     invoiceDefaultsAddress.value = defaults.company_address ?? ''
     invoiceDefaultsSubject.value = defaults.subject ?? ''
     invoiceDefaultsNotes.value = defaults.notes ?? ''
+    invoiceDefaultsViewReceipts.checked = defaults.view_receipts === true
   }
 
   invoiceDefaultsForm.addEventListener('submit', async (event) => {
@@ -677,6 +680,7 @@ export const createModuleSettingsController = (
             company_address: text(invoiceDefaultsAddress.value),
             subject: text(invoiceDefaultsSubject.value),
             notes: text(invoiceDefaultsNotes.value),
+            view_receipts: invoiceDefaultsViewReceipts.checked,
           },
           active.signal,
         )

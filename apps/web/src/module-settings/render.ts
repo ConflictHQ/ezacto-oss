@@ -99,6 +99,9 @@ export const renderModuleSettingsPage = (view?: string): string => `
           <textarea name="notes" data-invoice-defaults-notes rows="9" maxlength="100000"></textarea>
         </label>
         <p class="hint">Printed below the line items: how to pay, bank and wire details, terms. Formatting: <code>*bold*</code> and <code>_italic_</code>.</p>
+        <h3>Online invoice</h3>
+        <label class="invoice-defaults-check"><input type="checkbox" name="view_receipts" data-invoice-defaults-view-receipts aria-describedby="settings-invoice-view-receipts-hint">Link the invoice online in the email, and record when it is first opened</label>
+        <p class="hint" id="settings-invoice-view-receipts-hint">Off, the email is exactly what it is today. On, its &ldquo;View invoice&rdquo; line opens a private page for that email: the invoice, its PDF, and a pay button where online payment is set up. The first time someone opens it, the invoice's History and Settings &rsaquo; Deliveries show when. There is no tracking image, and a mail scanner that only fetches the link does not count. An invoice email goes to everyone on it, so this shows that the email was opened, not by whom.</p>
         <h3 data-invoice-defaults-sending hidden>Sending</h3>
         <label class="invoice-defaults-check" data-invoice-defaults-sending hidden><input type="checkbox" name="attach_pdf" data-invoice-defaults-attach-pdf>Attach the invoice PDF by default</label>
         <label class="invoice-defaults-check" data-invoice-defaults-sending hidden><input type="checkbox" name="attach_journal" data-invoice-defaults-attach-journal>Attach the hours report by default</label>

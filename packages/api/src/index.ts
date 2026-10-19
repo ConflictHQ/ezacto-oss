@@ -469,6 +469,7 @@ export * from './notification-settings.js'
 export * from './timesheet-auto-approval.js'
 export * from './notification-preferences.js'
 export * from './invoice-defaults.js'
+export * from './invoice-view.js'
 
 export * from './recurring-repair.js'
 export {

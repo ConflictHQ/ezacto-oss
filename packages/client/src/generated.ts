@@ -498,6 +498,7 @@ export type EmailLog = {
   "attempt_count": number;
   "failure_code": "queue_unavailable" | "provider_timeout" | "provider_rejected" | null;
   "failure_reason": string | null;
+  "viewed_at": string | null;
   "created_at": string;
   "updated_at": string;
 };
@@ -4156,6 +4157,7 @@ export type InvoiceDefaults = {
   "company_address": string | null;
   "notes": string | null;
   "subject": string | null;
+  "view_receipts": boolean;
 };
 
 export type InvoiceDefaultsEnvelope = {
@@ -4168,6 +4170,7 @@ export type InvoiceDefaultsInput = {
   "company_address"?: string | null;
   "notes"?: string | null;
   "subject"?: string | null;
+  "view_receipts"?: boolean;
 };
 
 export type InvoiceDocumentPreferenceEnvelope = {
