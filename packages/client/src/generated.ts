@@ -545,8 +545,19 @@ export type EmailReputationSnapshot = {
   "complaint_rate_ppm": number;
 };
 
+export type EmailIdentityReputation = {
+  "sender": string;
+  "sent": number;
+  "bounced": number;
+  "complained": number;
+  "failed": number;
+  "bounce_rate_ppm": number;
+  "complaint_rate_ppm": number;
+};
+
 export type EmailHealth = {
   "reputation": EmailReputationSnapshot;
+  "identities": Array<EmailIdentityReputation>;
 };
 
 export type EmailHealthEnvelope = {
