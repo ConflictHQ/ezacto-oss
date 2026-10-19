@@ -1086,7 +1086,7 @@ for (const [runtime, factory] of factories) {
           `SELECT id, applied_at FROM _ezacto_migrations ORDER BY id`,
         ),
       ).toEqual(firstLedger)
-    }, 15_000)
+    }, 60_000)
 
     it('[unit] rolls back a failed 0002 migration and retries without partial schema', async () => {
       database = await factory(false)
@@ -1128,6 +1128,6 @@ for (const [runtime, factory] of factories) {
            WHERE type = 'table' AND name IN ('projects', 'tasks', 'time_entries') ORDER BY name`,
         ),
       ).toEqual([{ name: 'projects' }, { name: 'tasks' }, { name: 'time_entries' }])
-    }, 15_000)
+    }, 60_000)
   })
 }

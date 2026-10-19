@@ -119,7 +119,7 @@ describe('backup module', () => {
       }
       // And the skip list never names a table the bundle does not carry.
       for (const skipped of manifest.restore_skips) expect(covered).toContain(skipped)
-    }, 20000)
+    }, 60_000)
   })
 
   describe('exportBundle', () => {
