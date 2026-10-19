@@ -63,6 +63,12 @@ const surfaces: readonly Surface[] = [
   },
   {
     id: "email-body",
+    status: "delivered",
+    sources: ["packages/core/src/email-brand.ts", "packages/api/src/email-brand.ts"],
+    reads: /wordmark_light[\s\S]*\['action'\]/,
+  },
+  {
+    id: "email-text-body",
     status: "gap",
     sources: ["packages/core/src/invoice-email.ts", "packages/core/src/email-templates.ts"],
     absent: /wordmark|palette|brand|instance-theme/i,
@@ -216,7 +222,11 @@ describe("brand surface audit (#1011)", () => {
     expect(
       builders,
       "an email body builder was added or removed: give it a row in docs/instance-theme.md and surfaces here",
-    ).toEqual(["packages/core/src/email-templates.ts", "packages/core/src/invoice-email.ts"]);
+    ).toEqual([
+      "packages/core/src/email-brand.ts",
+      "packages/core/src/email-templates.ts",
+      "packages/core/src/invoice-email.ts",
+    ]);
   });
 
   it("[unit] states what is deliberately never branded", () => {

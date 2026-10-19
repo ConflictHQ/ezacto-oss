@@ -77,6 +77,11 @@ export {
   type StoredBrandAsset,
 } from './brand-assets.js'
 export {
+  emailBrandFrom,
+  withEmailBrand,
+  type EmailBrandSource,
+} from './email-brand.js'
+export {
   installInstanceThemeRoutes,
   installInstanceThemeStylesheetRoute,
   instanceThemeCssVariable,

@@ -135,7 +135,7 @@ import {
   createIdempotentD1,
 } from "@ezacto/db/d1";
 import { createPortalSessionService, type BandClaimBackfillPort, type CostRateBackfillPort } from "@ezacto/api";
-import { deriveIdempotencySecret } from "@ezacto/api";
+import { deriveIdempotencySecret, emailBrandFrom, withEmailBrand } from "@ezacto/api";
 import {
   createApiSessionService,
   createCloudflareAccessSessionResolver,
@@ -169,7 +169,9 @@ import {
   EMAIL_LOG_KIND_TEMPLATES,
 } from "@ezacto/mailer";
 import { createInvoiceDocumentPort } from './invoice-documents.js';
-import type { RuntimeServices } from "./app.js";
+import type { AppEnv, RuntimeServices } from "./app.js";
+import { workerBrandAssetSurface } from "./brand-assets.js";
+import { workerInstanceThemeSurface } from "./instance-theme.js";
 import {
   cloudflareAccessConfig,
   DEMO_API_TOKEN_MAX_LIFETIME_MS,
@@ -730,13 +732,28 @@ export const createRuntimeServices = async (
   const emailQueue: EmailQueue | undefined =
     env.EMAIL_QUEUE === undefined
       ? undefined
-      : mailDomains === null
-        ? createCloudflareEmailQueue(env.EMAIL_QUEUE)
-        : createRecipientAllowlistQueue(
-            createCloudflareEmailQueue(env.EMAIL_QUEUE),
-            emailLog,
-            mailDomains,
-          );
+      : withEmailBrand(
+          mailDomains === null
+            ? createCloudflareEmailQueue(env.EMAIL_QUEUE)
+            : createRecipientAllowlistQueue(
+                createCloudflareEmailQueue(env.EMAIL_QUEUE),
+                emailLog,
+                mailDomains,
+              ),
+          // HTML mail wears the instance header (#1011): read when each
+          // message is queued, so a changed logo or colour reaches the next send.
+          async () =>
+            env.APP_BASE_URL === undefined
+              ? null
+              : emailBrandFrom(
+                  {
+                    assets: await workerBrandAssetSurface.list(env as AppEnv),
+                    palette: (await workerInstanceThemeSurface.read(env as AppEnv))?.palette ?? null,
+                    organizationName: await organizationName(),
+                  },
+                  env.APP_BASE_URL,
+                ),
+        );
   const mailFrom = resolveMailFrom(env);
   const deploymentAuthMailer =
     !emailQueueReady || mailFrom === undefined
