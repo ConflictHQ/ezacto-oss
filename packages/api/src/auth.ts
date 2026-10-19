@@ -365,6 +365,28 @@ const isCanonicalTimestamp = (value: string): boolean => {
 const isJsonObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+/**
+ * Issue 599 owner decision (2026-10-19): no refresh tokens. A token a person
+ * issues for themselves lasts at most one year; only an administrator may ask
+ * for longer, or for none. Tokens already issued without an expiry are left
+ * alone -- see docs/api-token-lifetime.md.
+ */
+const addOneYear = (from: Date): Date => {
+  const result = new Date(from)
+  result.setUTCFullYear(result.getUTCFullYear() + 1)
+  return result
+}
+
+/** The last instant of the UTC day one year out, so a date picked a year ahead is accepted. */
+const endOfDayOneYearOut = (from: Date): number => {
+  const day = addOneYear(from)
+  day.setUTCHours(23, 59, 59, 999)
+  return day.getTime()
+}
+
+export const tokenLifetimeRefusal =
+  'expires_at is more than one year away. A token you issue yourself lasts at most one year; ask an administrator for a longer one.'
+
 export const installApiTokenRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   tokens: ApiTokenService,
@@ -373,6 +395,7 @@ export const installApiTokenRoutes = <Bindings extends object>(
   // credential, and "one was issued and we cannot say who by" is not a state
   // this should be able to reach.
   activity?: ActivityRecorder,
+  now: () => Date = () => new Date(),
 ): void => {
   api.get('/api-tokens', async (context) => {
     const principal = requireSessionPrincipal(context)
@@ -412,14 +435,31 @@ export const installApiTokenRoutes = <Bindings extends object>(
           'The acting user profile cannot grant one or more requested scopes.',
       })
     }
+    const issuedAt = now()
+    const mayExceedMaximum = principal.profile === 'administrator'
+    let expiresAt: string | null | undefined =
+      'expires_at' in body ? (body.expires_at as string | null) : undefined
+    if (expiresAt === undefined) {
+      expiresAt = addOneYear(issuedAt).toISOString()
+    } else if (
+      !mayExceedMaximum &&
+      (expiresAt === null ||
+        Date.parse(expiresAt) > endOfDayOneYearOut(issuedAt))
+    ) {
+      throw validationError([
+        {
+          field: 'expires_at',
+          code: 'too_long',
+          message: tokenLifetimeRefusal,
+        },
+      ])
+    }
     try {
       const issued = await tokens.issue({
         userId: principal.userId,
         name: (body.name as string).trim(),
         scopes,
-        ...('expires_at' in body
-          ? { expiresAt: body.expires_at as string | null }
-          : {}),
+        expiresAt,
       })
       if (activity !== undefined) {
         await captureRequestActivity(context, activity, {

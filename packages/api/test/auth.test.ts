@@ -11,6 +11,7 @@ import {
 // src/index.ts, which this lane does not own.
 import {
   installTwoFactorRoutes,
+  tokenLifetimeRefusal,
   type TwoFactorService,
 } from '../src/auth.js'
 
@@ -589,6 +590,75 @@ describe('API token lifecycle routes', () => {
         error: { code: 'validation_failed' },
       })
     }
+  })
+
+  describe('maximum lifetime (issue 599)', () => {
+    const issue = (cookie: string, scopes: string[], extra: object) =>
+      createAuthApp().request('/api/v1/api-tokens', {
+        method: 'POST',
+        headers: {
+          cookie,
+          origin: 'http://localhost',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ name: 'App', scopes, ...extra }),
+      })
+    const inDays = (days: number) =>
+      new Date(Date.now() + days * 86_400_000).toISOString()
+    const expiryOf = async (response: Response) =>
+      ((await response.json()) as { data: { expires_at: string | null } }).data
+        .expires_at
+
+    it('[api] defaults an omitted expiry to one year, for everyone', async () => {
+      for (const [cookie, scopes] of [
+        ['session=user', ['reports:read']],
+        ['session=member', ['time_entries:read']],
+      ] as const) {
+        const response = await issue(cookie, [...scopes], {})
+        expect(response.status).toBe(201)
+        const days = (Date.parse((await expiryOf(response))!) - Date.now()) / 86_400_000
+        expect(days).toBeGreaterThan(364)
+        expect(days).toBeLessThanOrEqual(366)
+      }
+    })
+
+    it('[api] lets a member choose a sooner expiry', async () => {
+      const sooner = inDays(30)
+      const response = await issue('session=member', ['time_entries:read'], {
+        expires_at: sooner,
+      })
+      expect(response.status).toBe(201)
+      expect(await expiryOf(response)).toBe(sooner)
+    })
+
+    it('[security] refuses a member a token beyond one year or with no expiry', async () => {
+      for (const extra of [{ expires_at: null }, { expires_at: inDays(400) }]) {
+        const response = await issue('session=member', ['time_entries:read'], extra)
+        expect(response.status).toBe(422)
+        expect(await response.json()).toMatchObject({
+          error: {
+            code: 'validation_failed',
+            fields: [
+              {
+                field: 'expires_at',
+                code: 'too_long',
+                message: tokenLifetimeRefusal,
+              },
+            ],
+          },
+        })
+      }
+    })
+
+    it('[api] lets an administrator mint longer, or never', async () => {
+      const longer = inDays(1000)
+      const long = await issue('session=user', ['reports:read'], { expires_at: longer })
+      expect(long.status).toBe(201)
+      expect(await expiryOf(long)).toBe(longer)
+      const never = await issue('session=user', ['reports:read'], { expires_at: null })
+      expect(never.status).toBe(201)
+      expect(await expiryOf(never)).toBeNull()
+    })
   })
 
   it('[security] prevents a session from minting scopes above its current profile', async () => {
