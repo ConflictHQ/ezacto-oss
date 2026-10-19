@@ -434,6 +434,33 @@ const createStore = (
       return counts as Record<EmailDeliveryStatus, number>
     },
 
+    async countByStatusPerSender() {
+      // Same filter as countByStatus, grouped by the From address. Rows from
+      // before the sender was recorded have no From and stay in the aggregate.
+      const rows = await database.all<{ sender: string; status: string; count: number }>(
+        `SELECT lower(json_extract(from_json, '$.email')) AS sender, status, count(*) AS count
+         FROM email_log
+         WHERE from_json IS NOT NULL
+           AND NOT (status = 'failed' AND failure_code = 'provider_rejected' AND provider IS NULL)
+         GROUP BY sender, status
+         ORDER BY sender`,
+        [],
+      )
+      const bySender = new Map<string, Record<string, number>>()
+      for (const row of rows) {
+        let counts = bySender.get(row.sender)
+        if (counts === undefined) {
+          counts = { queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0 }
+          bySender.set(row.sender, counts)
+        }
+        counts[row.status] = row.count
+      }
+      return [...bySender].map(([sender, counts]) => ({
+        sender,
+        counts: counts as Record<EmailDeliveryStatus, number>,
+      }))
+    },
+
     async list(input = {}) {
       const limit = input.limit ?? 100
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {

@@ -1961,9 +1961,20 @@ const exerciseExpenseReceipt = async (page: Page): Promise<void> => {
   await page.goto(
     '/expenses?from=2026-08-25&to=2026-08-25&client_id=1&project_id=1&expense_category_id=1&approval_status=unsubmitted&reimbursement_status=none',
   )
-  await expect(
-    page.locator(`[data-expense-list] tbody tr[data-row-key="${expenseId}"]`),
-  ).toContainText('Reviewed detail')
+  // The expense that carries the receipt is still listed with every filter
+  // applied: the form echoes the narrowed query and the row shows the edit.
+  const filteredForm = page.locator('[data-expense-filter-form]')
+  await expect(filteredForm.locator('select[name="client_id"]')).toHaveValue('1')
+  await expect(filteredForm.locator('select[name="project_id"]')).toHaveValue('1')
+  await expect(filteredForm.locator('select[name="expense_category_id"]')).toHaveValue('1')
+  await expect(filteredForm.locator('select[name="approval_status"]')).toHaveValue('unsubmitted')
+  await expect(filteredForm.locator('select[name="reimbursement_status"]')).toHaveValue('none')
+  const receiptRow = page.locator(`[data-expense-list] tbody tr[data-row-key="${expenseId}"]`)
+  await expect(receiptRow).toBeVisible()
+  await expect(receiptRow).toContainText('Reviewed detail')
+  // The row opens the expense, and the receipt is on it.
+  await receiptRow.getByRole('link').click()
+  await expect(page.getByRole('link', { name: 'airport-shuttle.txt' })).toBeVisible()
 }
 
 test('[e2e:invoice-cycle] generates a real draft through the authenticated wizard', async ({

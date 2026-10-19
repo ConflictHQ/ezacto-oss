@@ -226,6 +226,12 @@ export interface EmailLogStore {
   markComplained(deliveryId: number): Promise<EmailLogRecord>
   getByProviderMessageId(providerMessageId: string): Promise<EmailLogRecord | null>
   countByStatus(): Promise<Record<EmailDeliveryStatus, number>>
+  /**
+   * The same counts as `countByStatus`, one entry per sender address (the
+   * From of the message, lower-cased), ordered by address. A message logged
+   * without a sender is in the aggregate only.
+   */
+  countByStatusPerSender(): Promise<EmailSenderStatusCounts[]>
   list(input?: {
     status?: EmailDeliveryStatus
     limit?: number
@@ -981,6 +987,11 @@ export interface EmailFeedbackEvent {
   providerMessageId: string
   timestamp?: string
   details?: string
+}
+
+export interface EmailSenderStatusCounts {
+  sender: string
+  counts: Record<EmailDeliveryStatus, number>
 }
 
 export interface EmailReputationSnapshot {

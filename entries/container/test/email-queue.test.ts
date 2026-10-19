@@ -59,6 +59,7 @@ describe('container in-process email queue', () => {
       markComplained: async () => record(attempts, 'complained'),
       getByProviderMessageId: async () => null,
       countByStatus: async () => ({ queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0 }),
+      countByStatusPerSender: async () => [],
       list: async () => [],
     }
     const provider: HttpEmailProvider = {
@@ -129,6 +130,7 @@ describe('container in-process email queue', () => {
       markComplained: async () => record(attempts, 'complained'),
       getByProviderMessageId: async () => null,
       countByStatus: async () => ({ queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0 }),
+      countByStatusPerSender: async () => [],
       list: async () => [],
     }
     const provider: HttpEmailProvider = {
@@ -185,6 +187,7 @@ describe('container in-process email queue', () => {
       markComplained: async () => record(1, 'complained'),
       getByProviderMessageId: async () => null,
       countByStatus: async () => ({ queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0 }),
+      countByStatusPerSender: async () => [],
       list: async () => [],
     }
     const provider: HttpEmailProvider = {
