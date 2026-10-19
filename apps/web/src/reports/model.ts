@@ -30,6 +30,7 @@ import type {
   Whoami,
 } from '@conflict-hq/ezacto-client'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
+import type { ProjectDirectoryApi } from '../projects/model.js'
 
 export type ReportKind = ReportCapabilityId
 
@@ -238,6 +239,16 @@ export const profitabilityDelta = (
   return (current - previous) / Math.abs(previous)
 }
 
+/**
+ * The roles a saved report can be shared with: the ones that can open Reports
+ * at all. Administrators are left out because they see every saved report
+ * already; a member has no Reports section to open it in.
+ */
+export const shareableReportRoles: readonly { readonly profile: string; readonly label: string }[] = [
+  { profile: 'accounting', label: 'Accounting' },
+  { profile: 'executive_manager', label: 'Executive managers' },
+]
+
 export interface ReportCatalogPage {
   readonly data: readonly GeneralResource[]
   readonly page: { readonly next_cursor: string | null }
@@ -255,6 +266,11 @@ export interface ReportWorkspaceApi {
   updateSavedReport?(reportId: string, input: SavedReportUpdate, signal?: AbortSignal): Promise<SavedReport>
   deleteSavedReport?(reportId: string, signal?: AbortSignal): Promise<void>
   shareSavedReport?(reportId: string, userId: number, signal?: AbortSignal): Promise<void>
+  unshareSavedReport?(reportId: string, userId: number, signal?: AbortSignal): Promise<void>
+  shareSavedReportWithRole?(reportId: string, profile: string, signal?: AbortSignal): Promise<void>
+  unshareSavedReportWithRole?(reportId: string, profile: string, signal?: AbortSignal): Promise<void>
+  /** The people a report can be shared with by name. */
+  listDirectoryUsers?: ProjectDirectoryApi['listDirectoryUsers']
   executeDetailedTimeAction?(input: ReportTimeActionInput, signal?: AbortSignal): Promise<ReportTimeAction>
   /**
    * Removing one entry from a Detailed time row: an administrator correcting

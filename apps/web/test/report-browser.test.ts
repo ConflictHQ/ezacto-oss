@@ -3144,6 +3144,7 @@ describe('Reports Stage 1 browser controller', () => {
       group_by: { dimension: 'client' },
       presentation: { result: 'summary' as const, grouped: true, include_zero_values: false },
       owner: { user_id: 1, name: 'Ada Byron' }, is_custom: true, pinned: true, shared: false,
+      shared_with: { users: [], profiles: [] }, owned_by_viewer: true, can_delete: true,
       created_at: timestamp, updated_at: timestamp,
     }])
     const getReportDefinitionRegistry = vi.fn(async () => ({

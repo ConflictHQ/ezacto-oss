@@ -136,6 +136,26 @@ export const renderReportsPage = (view?: string): string => `
       <label><input type="checkbox" data-saved-custom-only> Custom reports only</label>
       <p data-saved-status role="status"></p><div data-saved-list></div>
     </section>
+    <dialog class="project-dialog report-share-dialog" data-saved-share-dialog aria-labelledby="saved-share-title">
+      <form method="dialog" data-saved-share-form>
+        <header><div><p class="eyebrow">Share report</p><h2 id="saved-share-title" data-saved-share-title>Share</h2></div><button type="button" data-saved-share-close aria-label="Close">×</button></header>
+        <p>A saved report is private to you until you share it. Administrators can always see it.</p>
+        <fieldset><legend>Roles</legend><div data-saved-share-roles></div></fieldset>
+        <fieldset><legend>People</legend>
+          <ul data-saved-share-people></ul>
+          <div class="report-actions"><label>Add a person<select data-saved-share-person></select></label><button type="button" data-saved-share-add>Add person</button></div>
+        </fieldset>
+        <p class="form-result" data-saved-share-result role="status" aria-live="polite"></p>
+        <div class="report-actions"><button class="primary-action" type="submit">Done</button></div>
+      </form>
+    </dialog>
+    <dialog class="project-dialog report-share-dialog" data-saved-delete-dialog aria-labelledby="saved-delete-title">
+      <form method="dialog" data-saved-delete-form>
+        <header><div><p class="eyebrow">Delete report</p><h2 id="saved-delete-title" data-saved-delete-title>Delete this report?</h2></div><button type="button" data-saved-delete-cancel aria-label="Close">×</button></header>
+        <p>This removes the saved report for everyone it was shared with. It cannot be undone.</p>
+        <div class="report-actions"><button class="primary-action" type="button" data-saved-delete-confirm>Delete report</button><button type="button" data-saved-delete-cancel>Cancel</button></div>
+      </form>
+    </dialog>
     <dialog data-report-builder aria-labelledby="report-builder-title">
       <form method="dialog" data-report-builder-form>
         <header><div><p class="eyebrow">New report</p><h2 id="report-builder-title">Custom report builder</h2></div><button type="button" data-report-builder-close aria-label="Close">×</button></header>

@@ -17404,7 +17404,7 @@
       },
       "delete": {
         "operationId": "deleteSavedReport",
-        "summary": "Delete an owned saved report",
+        "summary": "Delete a saved report you own, or any saved report as an administrator",
         "tags": [
           "reports"
         ],
@@ -17783,6 +17783,142 @@
             "schema": {
               "type": "integer",
               "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/report-definitions/{reportId}/role-shares/{profile}": {
+      "post": {
+        "operationId": "shareSavedReportWithRole",
+        "summary": "Share an owned report with everyone in a role",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-definitions/:reportId/role-shares/:profile",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "profile",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "unshareSavedReportWithRole",
+        "summary": "Revoke a role's access to an owned report",
+        "tags": [
+          "reports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/report-definitions/:reportId/role-shares/:profile",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "profile",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
           }
         ]
@@ -43544,6 +43680,9 @@
           "is_custom",
           "pinned",
           "shared",
+          "shared_with",
+          "owned_by_viewer",
+          "can_delete",
           "created_at",
           "updated_at"
         ],
@@ -43603,6 +43742,56 @@
             "type": "boolean"
           },
           "shared": {
+            "type": "boolean"
+          },
+          "shared_with": {
+            "type": "object",
+            "required": [
+              "users",
+              "profiles"
+            ],
+            "properties": {
+              "users": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "user_id",
+                    "name"
+                  ],
+                  "properties": {
+                    "user_id": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "profiles": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "member",
+                    "project_manager",
+                    "people_admin",
+                    "accounting",
+                    "executive_manager",
+                    "administrator"
+                  ]
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "owned_by_viewer": {
+            "type": "boolean"
+          },
+          "can_delete": {
             "type": "boolean"
           },
           "created_at": {

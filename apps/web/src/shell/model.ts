@@ -1658,6 +1658,15 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   shareSavedReport: async (reportId, userId, signal) => {
     await client.shareSavedReport({ reportId, userId, ...withSignal(signal) })
   },
+  unshareSavedReport: async (reportId, userId, signal) => {
+    await client.unshareSavedReport({ reportId, userId, ...withSignal(signal) })
+  },
+  shareSavedReportWithRole: async (reportId, profile, signal) => {
+    await client.shareSavedReportWithRole({ reportId, profile, ...withSignal(signal) })
+  },
+  unshareSavedReportWithRole: async (reportId, profile, signal) => {
+    await client.unshareSavedReportWithRole({ reportId, profile, ...withSignal(signal) })
+  },
   executeDetailedTimeAction: async (input, signal) =>
     (await client.executeDetailedTimeAction({ body: input, ...withSignal(signal) })).data,
   getClientRollupReport: async (clientId, filter, signal) =>

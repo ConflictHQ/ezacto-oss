@@ -3343,6 +3343,15 @@ export type SavedReport = {
   "is_custom": boolean;
   "pinned": boolean;
   "shared": boolean;
+  "shared_with": {
+  "users": Array<{
+  "user_id": number;
+  "name": string;
+}>;
+  "profiles": Array<"member" | "project_manager" | "people_admin" | "accounting" | "executive_manager" | "administrator">;
+};
+  "owned_by_viewer": boolean;
+  "can_delete": boolean;
   "created_at": string;
   "updated_at": string;
 };
@@ -6387,6 +6396,24 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<void>("DELETE", "/api/v1/report-definitions/:reportId/shares/:userId".replace(":reportId", encodeURIComponent(String(args["reportId"]))).replace(":userId", encodeURIComponent(String(args["userId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async shareSavedReportWithRole(args: { "reportId": string; "profile": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/api/v1/report-definitions/:reportId/role-shares/:profile".replace(":reportId", encodeURIComponent(String(args["reportId"]))).replace(":profile", encodeURIComponent(String(args["profile"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async unshareSavedReportWithRole(args: { "reportId": string; "profile": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/report-definitions/:reportId/role-shares/:profile".replace(":reportId", encodeURIComponent(String(args["reportId"]))).replace(":profile", encodeURIComponent(String(args["profile"]))), {
       signal: args.signal,
       headers,
     });
