@@ -2408,6 +2408,19 @@ const twoFactorOperations: ApiContractOperation[] = [
     sessionOnly: true,
   },
   {
+    method: "get",
+    path: "/api/v1/users/:id/two-factor/email",
+    operationId: "getUserTwoFactorEmail",
+    summary: "Whether a user has the emailed second factor on (administrator)",
+    description:
+      "Lets an administrator see the state before turning it off. Administrators only; session only.",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorEmailStateEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
     method: "delete",
     path: "/api/v1/users/:id/two-factor/email",
     operationId: "disableUserTwoFactorEmail",
@@ -10702,6 +10715,18 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // Omitted by anything that kept the cookie the sign-in set.
       challenge: stringSchema,
     },
+    additionalProperties: false,
+  },
+  TwoFactorEmailState: {
+    type: "object",
+    required: ["user_id", "email_enabled"],
+    properties: { user_id: integerSchema, email_enabled: { type: "boolean" } },
+    additionalProperties: false,
+  },
+  TwoFactorEmailStateEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("TwoFactorEmailState") },
     additionalProperties: false,
   },
   TwoFactorEmailDisabled: {

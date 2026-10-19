@@ -225,6 +225,39 @@ describe('Clients V1 browser controller', () => {
     expect(createClientContact.mock.calls[0]![0]).not.toHaveProperty('invoice_recipient_status')
   })
 
+  it('[browser #852] sorts a client\'s projects and contacts by a header', async () => {
+    writeDocument()
+    const later: GeneralResource = { ...project, id: 32, name: 'Alpha site', code: null }
+    const api: Partial<ClientDirectoryApi> = {
+      listDirectoryClients: vi.fn(async () => page([child, parent])),
+      getDirectoryClient: vi.fn(async () => child),
+      listClientContacts: vi.fn(async () => page([contact])),
+      listClientProjects: vi.fn(async () => page([project, later])),
+    }
+    const identity: Whoami = {
+      user_id: 1,
+      profile: 'member',
+      manager_grants: [],
+      authentication: { kind: 'session' },
+    }
+    await createClientDirectoryController(api).activate(identity, new AbortController().signal, () => false)
+
+    const names = (): string[] =>
+      [...document.querySelectorAll('[data-client-projects] tbody tr[data-row] td[data-column="name"] a')].map(
+        (link) => link.textContent ?? '',
+      )
+    const header = (): HTMLButtonElement =>
+      document.querySelector<HTMLButtonElement>(
+        '[data-client-projects] thead button[data-sort-column="name"]',
+      )!
+    expect(names()).toEqual(['[WEB] Launch', 'Alpha site'])
+    // The table draws itself again on a sort, so the header is found afresh.
+    header().click()
+    expect(names()).toEqual(['Alpha site', '[WEB] Launch'])
+    header().click()
+    expect(names()).toEqual(['[WEB] Launch', 'Alpha site'])
+  })
+
   it('[security #466] renders operational relations but no commercial facts for members', async () => {
     writeDocument()
     const api: Partial<ClientDirectoryApi> = {

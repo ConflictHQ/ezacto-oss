@@ -201,6 +201,26 @@ export const composeSubmissionReminder = (input: {
   ].join("\n"),
 });
 
+export const composeAutoApprovalWarning = (input: {
+  readonly companyName: string;
+  readonly firstName: string;
+  readonly week: ReminderWeek;
+  /** When it will be approved, on the person's own wall clock. */
+  readonly deadline: { readonly date: string; readonly time: string; readonly zone: string };
+  readonly links: ReminderLinks;
+}): { readonly subject: string; readonly text: string } => ({
+  subject: `Timesheet notice: your week of ${dayName(input.week.start)} will be approved automatically`,
+  text: [
+    `Hi ${input.firstName},`,
+    "",
+    `Your submitted time for ${rangeText(input.week)} will be approved automatically on ${dayName(input.deadline.date)} at ${input.deadline.time} (${input.deadline.zone}) unless an approver decides on it first.`,
+    "",
+    `If something in it needs changing, withdraw the week from your timesheet before then: ${input.links.timesheet}`,
+    "",
+    footer(input.links, `${input.companyName} approves timesheets automatically after a review window`),
+  ].join("\n"),
+});
+
 export const composeSubmissionDigest = (input: {
   readonly companyName: string;
   readonly firstName: string;

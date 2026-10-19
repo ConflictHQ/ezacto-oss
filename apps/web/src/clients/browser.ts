@@ -475,6 +475,7 @@ export const createClientDirectoryController = (
     projectsList.replaceChildren(
       renderDataTable<GeneralResource>({
         caption: 'Projects for this client',
+        table: 'client-projects',
         rows: projects,
         rowKey: (project) => String(project.id),
         empty: 'No projects for this client.',
@@ -482,6 +483,7 @@ export const createClientDirectoryController = (
           {
             key: 'name',
             label: 'Project',
+            sortValue: (project) => clientText(project, 'name') ?? `Project #${project.id}`,
             render: (project) => {
               const name = clientText(project, 'name') ?? `Project #${project.id}`
               const code = clientText(project, 'code')
@@ -495,6 +497,8 @@ export const createClientDirectoryController = (
             key: 'billing',
             fit: true,
             label: 'Billing',
+            sortValue: (project: GeneralResource) =>
+              clientText(project, 'billing_method')?.replaceAll('_', ' ') ?? null,
             render: (project: GeneralResource) =>
               clientText(project, 'billing_method')?.replaceAll('_', ' ') ?? '—',
           }] : []),
@@ -502,6 +506,7 @@ export const createClientDirectoryController = (
             key: 'status',
             fit: true,
             label: 'Status',
+            sortValue: (project) => (project['is_active'] === false ? 'Archived' : 'Active'),
             render: (project) => (project['is_active'] === false ? 'Archived' : 'Active'),
           },
         ],
@@ -565,15 +570,25 @@ export const createClientDirectoryController = (
     contactsList.replaceChildren(
       renderDataTable<GeneralResource>({
         caption: 'Contacts for this client',
+        table: 'client-contacts',
         rows: contacts,
         rowKey: (contact) => String(contact.id),
         empty: 'No contacts have been added for this client.',
         columns: [
-          { key: 'name', label: 'Contact', render: contactName },
-          { key: 'email', label: 'Email', render: (c) => clientText(c, 'email') ?? '—' },
+          { key: 'name', label: 'Contact', sortValue: contactName, render: contactName },
+          {
+            key: 'email',
+            label: 'Email',
+            sortValue: (c) => clientText(c, 'email'),
+            render: (c) => clientText(c, 'email') ?? '—',
+          },
           {
             key: 'phone',
             label: 'Phone',
+            sortValue: (c) =>
+              [clientText(c, 'phone_office'), clientText(c, 'phone_mobile')]
+                .filter((value): value is string => value !== null)
+                .join(' · ') || null,
             render: (c) =>
               [clientText(c, 'phone_office'), clientText(c, 'phone_mobile')]
                 .filter((value): value is string => value !== null)
@@ -582,6 +597,8 @@ export const createClientDirectoryController = (
           ...(session !== null && canManageClientTerms(session.identity) ? [{
             key: 'recipient',
             label: 'Invoices',
+            sortValue: (contact: GeneralResource) =>
+              recipientLabel(clientText(contact, 'invoice_recipient_status')),
             render: (contact: GeneralResource) => {
               const pill = document.createElement('span')
               pill.className = 'client-recipient-pill'
