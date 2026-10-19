@@ -119,6 +119,7 @@ describe('the second factor at sign-in', () => {
         status: 'two_factor_required',
         challenge: CHALLENGE,
         expires_at: '2026-09-09T12:05:00.000Z',
+        methods: ['totp'],
       },
     })
     // The whole of the bug, in one assertion.

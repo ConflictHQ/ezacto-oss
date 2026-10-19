@@ -16,6 +16,7 @@ import {
   installThankYouPreferenceRoutes,
   installReminderSettingsRoutes,
   installNotificationSettingsRoutes,
+  installTimesheetAutoApprovalRoutes,
   installProfileNotificationRoutes,
   installInvoiceDefaultsRoutes,
   installRecurringRepairRoutes,
@@ -49,6 +50,7 @@ import {
   installSessionRoutes,
   installSsoDomainRoutes,
   installTwoFactorRoutes,
+  installAllocationRoutes,
   installCalendarProposalRoutes,
   installWorkItemRoutes,
   installTrackedResourceRoutes,
@@ -72,6 +74,7 @@ import {
   type MoneyResourceRouteOptions,
   type ReportReader,
   type SsoProvisioningDomainService,
+  type AllocationRepository,
   type CalendarProposalRepository,
   type WorkItemRepository,
   type TrackedResourceRepository,
@@ -93,6 +96,10 @@ const trackedRepository = new Proxy(
   {},
   { get: () => unavailable },
 ) as TrackedResourceRepository;
+const allocationRepository = new Proxy(
+  {},
+  { get: () => unavailable },
+) as AllocationRepository;
 const calendarProposals = new Proxy(
   {},
   { get: () => unavailable },
@@ -238,6 +245,7 @@ const documentedApp = () =>
         newState: () => "contract-fixture-state",
         sync: async () => null,
         syncState: async () => null,
+        reconcile: async () => null,
       });
       installWiseRoutes(api, {
         configured: () => true,
@@ -284,6 +292,17 @@ const documentedApp = () =>
           }),
         },
         isExpensesModuleEnabled: async () => true,
+      });
+      installAllocationRoutes(api, {
+        repository: allocationRepository,
+        cursorSigningKey: new Uint8Array(32),
+        clock: {
+          now: () => ({
+            instant: "2026-08-28T12:00:00.000Z",
+            date: "2026-08-28",
+            time: "12:00",
+          }),
+        },
       });
       installCalendarProposalRoutes(api, {
         repository: calendarProposals,
@@ -385,6 +404,10 @@ const documentedApp = () =>
       installNotificationSettingsRoutes(api, {
         read: async () => ({ budget_alerts_include_admins: false, submission_reminder: null }),
         update: async () => ({ budget_alerts_include_admins: false, submission_reminder: null }),
+      });
+      installTimesheetAutoApprovalRoutes(api, {
+        service: new Proxy({}, { get: () => unavailable }) as never,
+        clock: () => "2026-10-18T12:00:00.000Z",
       });
       installInvoiceDefaultsRoutes(api, {
         read: async () => ({ companyName: "Org", companyAddress: null, notes: null, subject: null }),

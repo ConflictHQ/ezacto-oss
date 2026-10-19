@@ -36,6 +36,9 @@ export const UNDOCUMENTED_ROUTES: readonly string[] = [
   'post /portal/magic-link',
   'get /portal/verify',
   'get /portal/statements',
+  'get /portal/estimates',
+  'get /portal/estimates/:id',
+  'post /portal/estimates/:id/response',
   // Staff magic-link sign-in, the user-facing sibling of the portal set above
   // and gated on the same key. The verify leg is a browser/app redirect with no
   // client call; request and exchange are called by the native app over raw
@@ -75,6 +78,7 @@ export const QUICKBOOKS_ROUTES: readonly string[] = [
   'post /api/v1/integrations/quickbooks/settings',
   'delete /api/v1/integrations/quickbooks',
   'post /api/v1/integrations/quickbooks/webhook',
+  'get /api/v1/integrations/quickbooks/reconciliation',
   'get /api/v1/invoices/:id/quickbooks',
   'post /api/v1/invoices/:id/quickbooks/sync',
 ]
@@ -129,6 +133,9 @@ export const PORTAL_ROUTES: readonly string[] = [
   'post /portal/magic-link',
   'get /portal/verify',
   'get /portal/statements',
+  'get /portal/estimates',
+  'get /portal/estimates/:id',
+  'post /portal/estimates/:id/response',
 ]
 
 /** Staff magic-link sign-in, gated on `MAGIC_LINK_SIGNING_KEY` alone. */

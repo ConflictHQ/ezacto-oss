@@ -631,6 +631,7 @@ const twoFactorService = (): TwoFactorService => {
       expect(userId).toBe(42)
       return {
         enrolled: state === 'enabled',
+        emailEnabled: false,
         pendingConfirmation: state === 'pending',
         recoveryCodesRemaining: remaining,
       }
@@ -658,6 +659,11 @@ const twoFactorService = (): TwoFactorService => {
       remaining = 0
       return 'disabled'
     },
+    enableEmailFactor: async () => 'enabled',
+    disableEmailFactor: async () => false,
+    isEmailFactorEnabled: async () => false,
+    issueEmailCodeChallenge: async () => ({ status: 'unavailable' }),
+    resendEmailCode: async () => ({ status: 'refused' }),
     // The gate half of the interface. These routes never call it; it is here
     // because the type refuses to describe a factor that can be enrolled and
     // not enforced, which is the shape issue 731 was.

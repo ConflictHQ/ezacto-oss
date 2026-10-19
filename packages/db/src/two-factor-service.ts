@@ -30,6 +30,8 @@ import {
 
 export interface TwoFactorStatus {
   enrolled: boolean
+  /** The user asked for a mailed code. Independent of the authenticator. */
+  emailEnabled: boolean
   pendingConfirmation: boolean
   recoveryCodesRemaining: number
 }
@@ -57,6 +59,48 @@ export const TWO_FACTOR_LOCK_MS = 15 * 60 * 1_000
  * password attempt, which is already rate-limited.
  */
 export const TWO_FACTOR_EMAIL_CODE_MAX_ATTEMPTS = 5
+/** Mails to one person: at most one a minute, and five an hour, sign-in included. */
+export const TWO_FACTOR_EMAIL_SEND_INTERVAL_MS = 60 * 1_000
+export const TWO_FACTOR_EMAIL_SENDS_PER_HOUR = 5
+
+/**
+ * A send was refused for being too soon. Named rather than `instanceof`-checked
+ * because the API layer does not import this package, the same way it reads
+ * `TwoFactorEnrolmentLockedError`.
+ */
+export class TwoFactorEmailRateLimitError extends Error {
+  readonly retryAfterSeconds: number
+  constructor(retryAfterMs: number) {
+    super('too many two-factor code emails; wait before asking for another')
+    this.name = 'TwoFactorEmailRateLimitError'
+    this.retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1_000))
+  }
+}
+
+/** The key mailed codes are hashed under, derived so there is no new secret to provision. */
+export const deriveTwoFactorEmailCodeKey = async (
+  cursorSigningKey: Uint8Array,
+): Promise<Uint8Array> => {
+  const base = await crypto.subtle.importKey(
+    'raw',
+    new Uint8Array(cursorSigningKey),
+    'HKDF',
+    false,
+    ['deriveBits'],
+  )
+  return new Uint8Array(
+    await crypto.subtle.deriveBits(
+      {
+        name: 'HKDF',
+        hash: 'SHA-256',
+        salt: new Uint8Array(0),
+        info: new TextEncoder().encode('ezacto two-factor email code'),
+      },
+      base,
+      256,
+    ),
+  )
+}
 
 export interface TwoFactorChallengeOffer {
   /** Bearer material. The caller stores it, and it is never written down here. */
@@ -68,7 +112,19 @@ export interface TwoFactorChallengeOffer {
    * store keeps a keyed hash, and nothing here logs it.
    */
   emailCode?: string
+  /** Where to mail it: the user's verified address, resolved when the code was issued. */
+  emailTo?: string
 }
+
+export type TwoFactorEmailResend =
+  | ({ status: 'sent' } & TwoFactorChallengeOffer & { userId: number; emailCode: string; emailTo: string })
+  /** The token names no live challenge. */
+  | { status: 'unknown_challenge' }
+  /** The challenge was not issued by a password sign-in, or the user has no email factor. */
+  | { status: 'refused' }
+  | { status: 'rate_limited'; retryAfterSeconds: number }
+
+export type TwoFactorEmailEnable = 'enabled' | 'already_enabled' | 'no_verified_email'
 
 export interface TwoFactorServiceOptions {
   store: TwoFactorStore
@@ -86,6 +142,13 @@ export interface TwoFactorServiceOptions {
    */
   emailCodeKey?: Uint8Array
   emailCodeMaxAttempts?: number
+  /**
+   * The user's primary verified address, or null. The emailed factor needs one
+   * to turn on and to send to; absent, the factor cannot be turned on at all.
+   */
+  emailAddress?: (userId: number) => Promise<string | null>
+  emailSendIntervalMs?: number
+  emailSendsPerHour?: number
   now?: () => Date
   maxAttempts?: number
   lockMs?: number
@@ -153,6 +216,9 @@ export const createTwoFactorService = ({
   issuer,
   emailCodeKey,
   emailCodeMaxAttempts = TWO_FACTOR_EMAIL_CODE_MAX_ATTEMPTS,
+  emailAddress,
+  emailSendIntervalMs = TWO_FACTOR_EMAIL_SEND_INTERVAL_MS,
+  emailSendsPerHour = TWO_FACTOR_EMAIL_SENDS_PER_HOUR,
   now = () => new Date(),
   maxAttempts = TWO_FACTOR_MAX_ATTEMPTS,
   lockMs = TWO_FACTOR_LOCK_MS,
@@ -222,8 +288,117 @@ export const createTwoFactorService = ({
     return lockedUntil === null ? 'rejected' : 'locked'
   }
 
+  /**
+   * What a sign-in gets instead of a session. The plain token is returned
+   * once and only its digest is stored, so a database leak yields challenges
+   * nobody can present -- the same bargain the session store makes.
+   */
+  const issueChallenge = async (
+    userId: number,
+    {
+      emailCode = false,
+      emailCodeAllowed = false,
+    }: { emailCode?: boolean; emailCodeAllowed?: boolean } = {},
+  ): Promise<TwoFactorChallengeOffer> => {
+    if (emailCode && emailCodeKey === undefined) {
+      throw new Error('an emailed two-factor code needs emailCodeKey')
+    }
+    const issuedAt = now().toISOString()
+    const expiresAt = new Date(Date.parse(issuedAt) + challengeTtlMs).toISOString()
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const token = base64Url(crypto.getRandomValues(new Uint8Array(32)))
+      const code = emailCode ? generateEmailCode() : undefined
+      const created = await store.createChallenge({
+        userId,
+        tokenHash: await sha256Hex(token),
+        expiresAt,
+        createdAt: issuedAt,
+        cleanupBefore: new Date(Date.parse(issuedAt) - challengeTtlMs).toISOString(),
+        ...(code === undefined ? {} : { codeHash: await hmacHex(code, emailCodeKey!) }),
+        ...(emailCodeAllowed ? { emailCodeAllowed: true } : {}),
+      })
+      if (created === 'created') {
+        return code === undefined ? { token, expiresAt } : { token, expiresAt, emailCode: code }
+      }
+    }
+    throw new Error('could not issue a two-factor challenge')
+  }
+
+  /**
+   * A challenge that carries a mailed code, and the address to mail it to.
+   *
+   * Every mail goes through the send ledger, the sign-in's own included: a
+   * password that is right is still not a licence to fill an inbox. Nothing
+   * is issued unless the user turned the factor on and has a verified address
+   * to send to, so asking for a code for someone who never opted in is
+   * refused here and not left to each route to remember.
+   */
+  const issueEmailCodeChallenge = async (
+    userId: number,
+  ): Promise<
+    | { status: 'issued'; offer: TwoFactorChallengeOffer & { emailCode: string; emailTo: string } }
+    | { status: 'rate_limited'; retryAfterSeconds: number }
+    | { status: 'unavailable' }
+  > => {
+    if (emailCodeKey === undefined || emailAddress === undefined) {
+      return { status: 'unavailable' }
+    }
+    if (!(await store.emailFactorEnabled(userId))) return { status: 'unavailable' }
+    const to = await emailAddress(userId)
+    if (to === null) return { status: 'unavailable' }
+    const claim = await store.claimEmailCodeSend(
+      userId,
+      now().toISOString(),
+      emailSendIntervalMs,
+      emailSendsPerHour,
+    )
+    if (claim.status === 'limited') {
+      return {
+        status: 'rate_limited',
+        retryAfterSeconds: new TwoFactorEmailRateLimitError(claim.retryAfterMs)
+          .retryAfterSeconds,
+      }
+    }
+    const offer = await issueChallenge(userId, { emailCode: true })
+    return { status: 'issued', offer: { ...offer, emailCode: offer.emailCode!, emailTo: to } }
+  }
+
+  /**
+   * The second half of a sign-in for a challenge that carries a mailed code.
+   *
+   * The count is the challenge's own, not the enrolment's: an email-only user
+   * has no enrolment row. A malformed code is rejected without touching the
+   * store, so it costs no guess -- it could never have matched.
+   */
+  const redeemEmailCode = async (token: string, code: string): Promise<TwoFactorChallengeVerdict> => {
+    if (emailCodeKey === undefined) {
+      throw new Error('an emailed two-factor code needs emailCodeKey')
+    }
+    if (!CHALLENGE_TOKEN_PATTERN.test(token)) return { status: 'unknown_challenge' }
+    if (!EMAIL_CODE_PATTERN.test(code)) return { status: 'rejected' }
+    const verdict = await store.redeemChallengeCode(
+      await sha256Hex(token),
+      await hmacHex(code, emailCodeKey),
+      now().toISOString(),
+      emailCodeMaxAttempts,
+    )
+    switch (verdict.status) {
+      case 'accepted':
+        return { status: 'accepted', userId: verdict.userId }
+      case 'rejected':
+        return { status: 'rejected' }
+      case 'exhausted':
+        return { status: 'locked' }
+      case 'unknown':
+        return { status: 'unknown_challenge' }
+    }
+  }
+
   return {
     verifyCode,
+    redeemEmailCode,
+    issueChallenge,
+    issueEmailCodeChallenge,
 
     /**
      * Whether a sign-in has to stop for this user. Anything short of a
@@ -236,35 +411,37 @@ export const createTwoFactorService = ({
     },
 
     /**
-     * What a sign-in gets instead of a session. The plain token is returned
-     * once and only its digest is stored, so a database leak yields challenges
-     * nobody can present -- the same bargain the session store makes.
+     * "Email me a code" for a user who holds a challenge. The old challenge is
+     * superseded by the new one, so the response carries a new token. Only a
+     * challenge a password sign-in issued may ask: the same request made with a
+     * magic-link challenge is refused here, on the row's own say-so.
      */
-    async issueChallenge(
-      userId: number,
-      { emailCode = false }: { emailCode?: boolean } = {},
-    ): Promise<TwoFactorChallengeOffer> {
-      if (emailCode && emailCodeKey === undefined) {
-        throw new Error('an emailed two-factor code needs emailCodeKey')
-      }
-      const issuedAt = now().toISOString()
-      const expiresAt = new Date(Date.parse(issuedAt) + challengeTtlMs).toISOString()
-      for (let attempt = 0; attempt < 4; attempt += 1) {
-        const token = base64Url(crypto.getRandomValues(new Uint8Array(32)))
-        const code = emailCode ? generateEmailCode() : undefined
-        const created = await store.createChallenge({
-          userId,
-          tokenHash: await sha256Hex(token),
-          expiresAt,
-          createdAt: issuedAt,
-          cleanupBefore: new Date(Date.parse(issuedAt) - challengeTtlMs).toISOString(),
-          ...(code === undefined ? {} : { codeHash: await hmacHex(code, emailCodeKey!) }),
-        })
-        if (created === 'created') {
-          return code === undefined ? { token, expiresAt } : { token, expiresAt, emailCode: code }
-        }
-      }
-      throw new Error('could not issue a two-factor challenge')
+    async resendEmailCode(token: string): Promise<TwoFactorEmailResend> {
+      if (!CHALLENGE_TOKEN_PATTERN.test(token)) return { status: 'unknown_challenge' }
+      const state = await store.challengeState(await sha256Hex(token), now().toISOString())
+      if (state === null) return { status: 'unknown_challenge' }
+      if (!state.emailCodeAllowed) return { status: 'refused' }
+      const issued = await issueEmailCodeChallenge(state.userId)
+      if (issued.status === 'rate_limited') return issued
+      if (issued.status === 'unavailable') return { status: 'refused' }
+      return { status: 'sent', userId: state.userId, ...issued.offer }
+    },
+
+    async isEmailFactorEnabled(userId: number): Promise<boolean> {
+      return store.emailFactorEnabled(userId)
+    },
+
+    /** Needs a verified address: a factor that cannot be mailed would lock the person out. */
+    async enableEmailFactor(userId: number): Promise<TwoFactorEmailEnable> {
+      if (emailCodeKey === undefined || emailAddress === undefined) return 'no_verified_email'
+      if ((await emailAddress(userId)) === null) return 'no_verified_email'
+      return (await store.enableEmailFactor(userId, now().toISOString()))
+        ? 'enabled'
+        : 'already_enabled'
+    },
+
+    async disableEmailFactor(userId: number): Promise<boolean> {
+      return store.disableEmailFactor(userId)
     },
 
     /**
@@ -278,10 +455,27 @@ export const createTwoFactorService = ({
     ): Promise<TwoFactorChallengeVerdict> {
       if (!CHALLENGE_TOKEN_PATTERN.test(token)) return { status: 'unknown_challenge' }
       const tokenHash = await sha256Hex(token)
-      const holder = await store.challengeHolder(tokenHash, now().toISOString())
+      const holder = await store.challengeState(tokenHash, now().toISOString())
       if (holder === null) return { status: 'unknown_challenge' }
+      // A mailed code is tried first, and only when this challenge was mailed
+      // one and the user still has the factor on -- an administrator turning it
+      // off must not leave a code in flight that still signs someone in. A
+      // miss falls through to the authenticator: a user with both is entitled
+      // to either, and a six-digit TOTP code looks exactly like a mailed one.
+      let emailExhausted = false
+      if (
+        holder.hasCode &&
+        emailCodeKey !== undefined &&
+        EMAIL_CODE_PATTERN.test(code) &&
+        (await store.emailFactorEnabled(holder.userId))
+      ) {
+        const emailed = await redeemEmailCode(token, code)
+        if (emailed.status === 'accepted') return emailed
+        emailExhausted = emailed.status === 'locked'
+      }
       const verdict = await verifyCode(holder.userId, code)
       if (verdict === 'locked') return { status: 'locked' }
+      if (emailExhausted && verdict !== 'accepted') return { status: 'locked' }
       // A challenge for someone who disabled the factor in between is spent
       // rather than honoured: it was only ever a promise to ask for a code.
       if (verdict !== 'accepted') return { status: 'rejected' }
@@ -290,37 +484,6 @@ export const createTwoFactorService = ({
       const consumed = await store.consumeChallenge(tokenHash, now().toISOString())
       if (consumed === null) return { status: 'unknown_challenge' }
       return { status: 'accepted', userId: consumed.userId }
-    },
-
-    /**
-     * The second half of a sign-in for a challenge that carries a mailed code.
-     *
-     * The count is the challenge's own, not the enrolment's: an email-only user
-     * has no enrolment row. A malformed code is rejected without touching the
-     * store, so it costs no guess -- it could never have matched.
-     */
-    async redeemEmailCode(token: string, code: string): Promise<TwoFactorChallengeVerdict> {
-      if (emailCodeKey === undefined) {
-        throw new Error('an emailed two-factor code needs emailCodeKey')
-      }
-      if (!CHALLENGE_TOKEN_PATTERN.test(token)) return { status: 'unknown_challenge' }
-      if (!EMAIL_CODE_PATTERN.test(code)) return { status: 'rejected' }
-      const verdict = await store.redeemChallengeCode(
-        await sha256Hex(token),
-        await hmacHex(code, emailCodeKey),
-        now().toISOString(),
-        emailCodeMaxAttempts,
-      )
-      switch (verdict.status) {
-        case 'accepted':
-          return { status: 'accepted', userId: verdict.userId }
-        case 'rejected':
-          return { status: 'rejected' }
-        case 'exhausted':
-          return { status: 'locked' }
-        case 'unknown':
-          return { status: 'unknown_challenge' }
-      }
     },
 
     /**
@@ -361,6 +524,7 @@ export const createTwoFactorService = ({
       const enrolment = await store.enrolment(userId)
       return {
         enrolled: enrolment?.confirmedAt !== null && enrolment !== null,
+        emailEnabled: await store.emailFactorEnabled(userId),
         pendingConfirmation: enrolment !== null && enrolment.confirmedAt === null,
         recoveryCodesRemaining:
           enrolment === null ? 0 : await store.unusedRecoveryCodeCount(userId),

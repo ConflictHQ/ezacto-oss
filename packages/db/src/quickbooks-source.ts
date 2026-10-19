@@ -13,6 +13,7 @@ import type { InvoiceStateDatabase } from "./invoice-state.js";
 import type {
   MirrorClient,
   QuickBooksMirrorSource,
+  QuickBooksReconciliationSource,
   QuickBooksSourceInvoice,
   QuickBooksSourcePayment,
 } from "@ezacto/integrations";
@@ -178,4 +179,40 @@ export const createQuickBooksMirrorSource = (
       paidOn: input.paidOn,
       now: now().toISOString(),
     }),
+});
+
+/**
+ * What the reconciliation report reads (issue 1013): every invoice of record
+ * -- open or paid, the same two states the mirror treats as documents -- with
+ * the signed sum of its receipts and the QuickBooks invoice it is linked to in
+ * this company. One SELECT, so the report cannot write.
+ */
+export const createQuickBooksReconciliationSource = (
+  database: Pick<Database, "all">,
+): QuickBooksReconciliationSource => ({
+  invoicesOfRecord: async (realmId) => {
+    const rows = await database.all<{
+      id: number;
+      number: string;
+      currency: string;
+      amount_cents: number;
+      paid_cents: number;
+      quickbooks_id: string | null;
+    }>(sql`
+      SELECT i.id, i.number, i.currency, i.amount_cents,
+        COALESCE((SELECT SUM(p.amount_cents) FROM invoice_payments p WHERE p.invoice_id = i.id), 0) AS paid_cents,
+        (SELECT l.quickbooks_id FROM quickbooks_links l
+          WHERE l.realm_id = ${realmId} AND l.kind = 'invoice' AND l.ezacto_id = i.id) AS quickbooks_id
+      FROM invoices i
+      WHERE i.state IN ('open', 'paid')
+      ORDER BY i.id`);
+    return rows.map((row) => ({
+      id: row.id,
+      number: row.number,
+      currency: row.currency,
+      amountCents: row.amount_cents,
+      paidCents: row.paid_cents,
+      quickBooksId: row.quickbooks_id,
+    }));
+  },
 });

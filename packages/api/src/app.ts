@@ -79,7 +79,12 @@ export const createApiApp = <Bindings extends object = object>(
     )
   })
   if (options.authentication?.twoFactor !== undefined) {
-    installTwoFactorRoutes(api, options.authentication.twoFactor)
+    installTwoFactorRoutes(api, options.authentication.twoFactor, {
+      emailCodes: options.authentication.twoFactorEmailCodes === true,
+      ...(options.authentication.activity === undefined
+        ? {}
+        : { activity: options.authentication.activity }),
+    })
   }
   if (options.authentication?.tokens !== undefined) {
     installApiTokenRoutes(

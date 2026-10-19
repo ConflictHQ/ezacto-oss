@@ -167,8 +167,12 @@ export {
   TWO_FACTOR_CHALLENGE_COOKIE,
   type TwoFactorChallengeRouteOptions,
   type TwoFactorChallengeVerdict,
+  type TwoFactorEmailCodeDelivery,
+  type TwoFactorEmailCodeMailer,
   type TwoFactorGate,
+  type TwoFactorMethod,
 } from './two-factor-challenge.js'
+export { createQueuedTwoFactorEmailCodeMailer } from './two-factor-email-code-email.js'
 export {
   createQueuedAuthMailer,
   type AuthEmailTemplate,
@@ -276,6 +280,7 @@ export {
   type MagicLinkMailer,
   type MagicLinkRouteOptions,
   type MagicLinkService,
+  type PortalEstimateService,
   type PortalInvoiceSummary,
   type PortalSessionIssuer,
   type PortalSessionStore,
@@ -433,6 +438,8 @@ export {
   installQuickBooksWebhookRoute,
   type QuickBooksConnectionStatus,
   type QuickBooksInvoiceSyncState,
+  type QuickBooksReconciliation,
+  type QuickBooksReconciliationRow,
   type QuickBooksService,
   type QuickBooksSyncResult,
   type QuickBooksTokenSet,
@@ -458,6 +465,7 @@ export * from './notification-mail.js'
 export * from './thank-you-preference.js'
 export * from './reminder-settings.js'
 export * from './notification-settings.js'
+export * from './timesheet-auto-approval.js'
 export * from './notification-preferences.js'
 export * from './invoice-defaults.js'
 

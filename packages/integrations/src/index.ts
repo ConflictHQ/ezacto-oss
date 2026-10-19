@@ -147,7 +147,9 @@ export {
   type TokenRevokeInput,
 } from './quickbooks/oauth.js'
 export {
+  QUICKBOOKS_MAXIMUM_LISTED_INVOICES,
   QUICKBOOKS_MINOR_VERSION,
+  QUICKBOOKS_QUERY_PAGE_SIZE,
   QUICKBOOKS_PRODUCTION_BASE_URL,
   QUICKBOOKS_SANDBOX_BASE_URL,
   QuickBooksApiError,
@@ -207,6 +209,14 @@ export {
   type MirrorQuickBooks,
 } from './quickbooks/mirror.js'
 export {
+  reconcileInvoices,
+  type ReconcileIssue,
+  type ReconcileLocalInvoice,
+  type ReconcileStatus,
+  type ReconciliationReport,
+  type ReconciliationRow,
+} from './quickbooks/reconcile.js'
+export {
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
   type QuickBooksConfig,
@@ -216,6 +226,8 @@ export {
   type QuickBooksMirrorOutcomeKind,
   type QuickBooksMirrorSource,
   type QuickBooksPaymentRecording,
+  type QuickBooksReconciliation,
+  type QuickBooksReconciliationSource,
   type QuickBooksRuntime,
   type QuickBooksRuntimeOptions,
   type QuickBooksService,

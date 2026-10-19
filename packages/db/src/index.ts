@@ -61,6 +61,7 @@ export * from './notification-mail.js'
 export * from './notification-settings.js'
 export * from './project-budget-alerts.js'
 export * from './time-reminders.js'
+export * from './timesheet-auto-approval.js'
 export * from './profile-notifications.js'
 export * from './reminder-settings.js'
 export * from './release-invoiced-time.js'
@@ -88,13 +89,18 @@ export * from './timesheet-approvals.js'
 export * from './timesheet-lock-policy.js'
 export * from './tracked-resource-repository.js'
 export * from './calendar-proposals.js'
+export * from './allocations.js'
+export * from './csv-imports.js'
 export * from './work-items.js'
 export * from './tracked-state.js'
 export * from './team.js'
 export * from './team-access.js'
 export * from './demo-seed.js'
 export * from './demo-reset.js'
-export { createQuickBooksMirrorSource } from './quickbooks-source.js'
+export {
+  createQuickBooksMirrorSource,
+  createQuickBooksReconciliationSource,
+} from './quickbooks-source.js'
 
 export { createStaffPaymentStore } from './staff-payments.js'
 

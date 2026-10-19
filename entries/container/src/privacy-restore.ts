@@ -209,6 +209,8 @@ export function replayClosureHistory(
           "two_factor_challenges",
           "user_totp_enrolments",
           "user_recovery_codes",
+          "user_email_second_factors",
+          "two_factor_email_code_sends",
           "user_identities",
           "user_emails",
         ])

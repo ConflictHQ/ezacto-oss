@@ -46,6 +46,30 @@ export interface QuickBooksSyncResult {
   payments: readonly { paymentId: number; outcome: { kind: string; reason?: string } }[]
 }
 
+/** One line of the reconciliation report (issue 1013), structurally. */
+export interface QuickBooksReconciliationRow {
+  status: string
+  issues: readonly string[]
+  ezactoInvoiceId: number | null
+  number: string
+  quickBooksId: string | null
+  linked: boolean
+  ezactoAmountCents: number | null
+  quickBooksAmountCents: number | null
+  ezactoCurrency: string | null
+  quickBooksCurrency: string | null
+  ezactoPaidCents: number | null
+  quickBooksPaidCents: number | null
+  detail: string
+}
+
+export interface QuickBooksReconciliation {
+  realmId: string
+  generatedAt: string
+  counts: Readonly<Record<string, number>>
+  rows: readonly QuickBooksReconciliationRow[]
+}
+
 /**
  * What the routes need from the rest of the system.
  *
@@ -86,6 +110,8 @@ export interface QuickBooksService {
   /** Both answer null for an invoice that does not exist, which is the route's 404. */
   sync(invoiceId: number): Promise<QuickBooksSyncResult | null>
   syncState(invoiceId: number): Promise<QuickBooksInvoiceSyncState | null>
+  /** Read-only comparison with the company; null where QuickBooks is not connected. */
+  reconcile(): Promise<QuickBooksReconciliation | null>
 }
 
 const requireAdministrator = <Bindings extends object>(
@@ -118,6 +144,24 @@ const requireMoneyWriter = <Bindings extends object>(
       status: 403,
       code: 'profile_forbidden',
       message: 'Only administrators and accounting can sync an invoice to QuickBooks.',
+    })
+  }
+}
+
+/**
+ * The report shows every invoice and every receipt total in the book next to
+ * the books' own, so it is for the people who keep them: administrators and
+ * accounting, and nobody else.
+ */
+const requireAccountant = <Bindings extends object>(
+  context: Context<ApiContext<Bindings>>,
+): void => {
+  const principal = requireSessionPrincipal(context)
+  if (!['administrator', 'accounting'].includes(principal.profile)) {
+    throw new ApiError({
+      status: 403,
+      code: 'profile_forbidden',
+      message: 'Only administrators and accounting can read the QuickBooks reconciliation.',
     })
   }
 }
@@ -200,6 +244,48 @@ export const installQuickBooksRoutes = <Bindings extends object>(
         data: {
           configured: service.clientId() !== null && service.callbackUrl() !== null,
           connection: status === null ? null : serialize(status),
+        },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  // The reconciliation report (issue 1013): differences between our invoices
+  // and the company's, listed and never corrected. A GET that reads QuickBooks
+  // and writes nothing -- not an invoice, not a receipt, not a QuickBooks
+  // document.
+  api.get('/integrations/quickbooks/reconciliation', async (context) => {
+    requireAccountant(context)
+    const report = await service.reconcile()
+    if (report === null) {
+      throw new ApiError({
+        status: 409,
+        code: 'quickbooks_not_connected',
+        message: 'QuickBooks is not connected.',
+      })
+    }
+    return context.json(
+      {
+        data: {
+          realm_id: report.realmId,
+          generated_at: report.generatedAt,
+          counts: report.counts,
+          rows: report.rows.map((row) => ({
+            status: row.status,
+            issues: row.issues,
+            invoice_id: row.ezactoInvoiceId,
+            number: row.number,
+            quickbooks_id: row.quickBooksId,
+            linked: row.linked,
+            ezacto_amount_cents: row.ezactoAmountCents,
+            quickbooks_amount_cents: row.quickBooksAmountCents,
+            ezacto_currency: row.ezactoCurrency,
+            quickbooks_currency: row.quickBooksCurrency,
+            ezacto_paid_cents: row.ezactoPaidCents,
+            quickbooks_paid_cents: row.quickBooksPaidCents,
+            detail: row.detail,
+          })),
         },
       },
       200,

@@ -153,7 +153,7 @@ const drain = async (
 
 describe('work item migration ledger', () => {
   it('[unit] carries the reserved migration in the real ledger', () => {
-    expect(migrationIds).toContain('0124_work_item_links')
+    expect(migrationIds).toContain('0123_work_item_links')
   })
 })
 

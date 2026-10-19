@@ -19,7 +19,12 @@ import { timeRemindersMigration } from './migrations/0114_time_reminders.js'
 import { endClientInvoicesMigration } from './migrations/0115_end_client_invoices.js'
 import { twoFactorChallengeEmailCodeMigration } from './migrations/0116_two_factor_challenge_email_code.js'
 import { calendarProposalsMigration } from './migrations/0117_calendar_proposals.js'
-import { workItemLinksMigration } from './migrations/0124_work_item_links.js'
+import { timesheetAutoApprovalMigration } from './migrations/0118_timesheet_auto_approval.js'
+import { allocationsMigration } from './migrations/0119_allocations.js'
+import { estimateCustomerResponseMigration } from './migrations/0120_estimate_customer_response.js'
+import { emailSecondFactorMigration } from './migrations/0121_email_second_factor.js'
+import { csvImportsMigration } from './migrations/0122_csv_imports.js'
+import { workItemLinksMigration } from './migrations/0123_work_item_links.js'
 import { organizationInvoiceDefaultsMigration } from './migrations/0097_organization_invoice_defaults.js'
 import { journalFormatsInvoiceExtraMigration } from './migrations/0096_journal_formats_invoice_extra.js'
 import { freeFormInvoiceCreateMigration } from './migrations/0095_free_form_invoice_create.js'
@@ -1593,7 +1598,12 @@ const migrations = [
     statements: twoFactorChallengeEmailCodeMigration,
   },
   { id: '0117_calendar_proposals', statements: calendarProposalsMigration },
-  { id: '0124_work_item_links', statements: workItemLinksMigration },
+  { id: '0118_timesheet_auto_approval', statements: timesheetAutoApprovalMigration },
+  { id: '0119_allocations', statements: allocationsMigration },
+  { id: '0120_estimate_customer_response', statements: estimateCustomerResponseMigration },
+  { id: '0121_email_second_factor', statements: emailSecondFactorMigration },
+  { id: '0122_csv_imports', statements: csvImportsMigration },
+  { id: '0123_work_item_links', statements: workItemLinksMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

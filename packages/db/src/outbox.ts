@@ -114,7 +114,17 @@ export interface OutboxService {
     actorId?: number
     /** Event types to leave out, for a reader who may not see them. */
     excludeEventTypes?: readonly string[]
+    /** The kind of record the event is about, such as `invoice`. */
+    aggregateType?: string
+    /** One record of that kind. Needs `aggregateType`: an id alone names no subject. */
+    aggregateId?: number
+    /** Where the previous page ended, newest first; null or absent on the first page. */
+    after?: { recordedAt: string; eventId: string } | null
+    /** Entries recorded later than this are left out, so a traversal holds still. */
+    recordedThrough?: string
   }): Promise<ActivityLogRecord[]>
+  /** The latest instant an entry was recorded, or null when the log is empty. */
+  activitySnapshot(): Promise<string | null>
   listDeliveries(input?: {
     status?: OutboxDeliveryStatus
     limit?: number
@@ -816,6 +826,30 @@ const createService = (
         conditions.push("json_extract(event.payload_json, '$.actor.id') = ?")
         params.push(input.actorId)
       }
+      if (input.aggregateId !== undefined && input.aggregateType === undefined) {
+        throw new RangeError('activity log aggregate id needs an aggregate type')
+      }
+      if (input.aggregateType !== undefined) {
+        assertIdentifier(input.aggregateType, 'activity log aggregate type')
+        conditions.push('event.aggregate_type = ?')
+        params.push(input.aggregateType)
+      }
+      if (input.aggregateId !== undefined) {
+        assertRowId(input.aggregateId, 'activity log aggregate id')
+        conditions.push('event.aggregate_id = ?')
+        params.push(input.aggregateId)
+      }
+      if (input.recordedThrough !== undefined) {
+        assertCanonicalTimestamp(input.recordedThrough, 'activity log recorded through')
+        conditions.push('activity.recorded_at <= ?')
+        params.push(input.recordedThrough)
+      }
+      if (input.after !== undefined && input.after !== null) {
+        assertCanonicalTimestamp(input.after.recordedAt, 'activity log cursor recorded_at')
+        assertIdentifier(input.after.eventId, 'activity log cursor event id')
+        conditions.push('(activity.recorded_at, activity.event_id) < (?, ?)')
+        params.push(input.after.recordedAt, input.after.eventId)
+      }
       if (input.excludeEventTypes !== undefined && input.excludeEventTypes.length > 0) {
         for (const type of input.excludeEventTypes) assertIdentifier(type, 'activity log excluded event type')
         conditions.push(`event.event_type NOT IN (${input.excludeEventTypes.map(() => '?').join(', ')})`)
@@ -852,6 +886,14 @@ const createService = (
           actor: activityActor(event.payload, row.actorName),
         }
       })
+    },
+
+    async activitySnapshot() {
+      const rows = await database.all<{ recordedAt: string | null }>(
+        'SELECT max(recorded_at) AS recordedAt FROM activity_log',
+        [],
+      )
+      return rows[0]?.recordedAt ?? null
     },
 
     async listDeliveries(input = {}) {

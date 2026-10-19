@@ -251,6 +251,13 @@ export {
   type SubmissionReminderSchedule,
 } from './notification-settings.js'
 export { prepareTimeReminders, type TimeReminderInput } from './time-reminders.js'
+export {
+  readTimesheetAutoApproval,
+  runTimesheetAutoApproval,
+  updateTimesheetAutoApproval,
+  type TimesheetAutoApprovalRun,
+  type TimesheetAutoApprovalSettings,
+} from './timesheet-auto-approval.js'
 export { readUserNotifications, updateUserNotifications } from './profile-notifications.js'
 export {
   evaluateProjectBudgetAlerts,
@@ -411,6 +418,7 @@ export {
 } from './demo-reset.js'
 export { migrateD1, migrationIds } from './migrate.js'
 export { DrizzleCalendarProposalRepository } from './calendar-proposals.js'
+export { DrizzleAllocationRepository } from './allocations.js'
 export { DrizzleWorkItemRepository } from './work-items.js'
 export {
   DrizzleTrackedResourceRepository,
@@ -426,7 +434,7 @@ export { createD1MagicLinkStore } from './magic-link-state.js'
 export { createD1ContactSessionStore } from './contact-sessions.js'
 export { createMagicLinkService } from './magic-link-service.js'
 export { createD1TwoFactorStore } from './two-factor.js'
-export { createTwoFactorService } from './two-factor-service.js'
+export { createTwoFactorService, deriveTwoFactorEmailCodeKey } from './two-factor-service.js'
 export {
   createRecurringInvoiceEngine,
   type RecurringGenerationPrincipal,
@@ -448,7 +456,10 @@ export {
   type QuickBooksMirrorOutcomeRecord,
   type QuickBooksStore,
 } from './quickbooks.js'
-export { createQuickBooksMirrorSource } from './quickbooks-source.js'
+export {
+  createQuickBooksMirrorSource,
+  createQuickBooksReconciliationSource,
+} from './quickbooks-source.js'
 
 export { createStaffPaymentStore } from './staff-payments.js'
 

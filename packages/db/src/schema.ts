@@ -1127,6 +1127,7 @@ export const estimates = sqliteTable(
     sentAt: text('sent_at'),
     acceptedAt: text('accepted_at'),
     declinedAt: text('declined_at'),
+    sentContentHash: text('sent_content_hash'),
     clientKey: text('client_key')
       .notNull()
       .default(sql`lower(hex(randomblob(32)))`),
@@ -1273,10 +1274,16 @@ export const estimateMessages = sqliteTable(
       enum: ['queued', 'sent', 'bounced', 'complained', 'failed'],
     }),
     providerMessageId: text('provider_message_id'),
+    contactId: integer('contact_id').references(() => contacts.id, { onDelete: 'set null' }),
+    contentHash: text('content_hash'),
+    estimateVersion: integer('estimate_version'),
     ...timestamps,
   },
   (table) => [
     uniqueIndex('estimate_messages_harvest_id_unique').on(table.harvestId),
+    uniqueIndex('estimate_messages_customer_response_unique')
+      .on(table.estimateId, table.estimateVersion)
+      .where(sql`${table.estimateVersion} is not null`),
     uniqueIndex('estimate_messages_invoice_event_unique')
       .on(table.estimateId)
       .where(sql`${table.eventType} = 'invoice'`),
@@ -3724,6 +3731,79 @@ export const calendarProposals = sqliteTable(
     uniqueIndex('calendar_proposals_time_entry')
       .on(table.timeEntryId)
       .where(sql`${table.timeEntryId} is not null`),
+  ],
+)
+
+/**
+ * Planned hours per week for a person on a project over a range of dates (issue
+ * 1007). Not time entries and not billing: nothing here reaches a report, a
+ * lock or an invoice, and there is no money column. Dates are plain local days.
+ */
+export const allocations = sqliteTable(
+  'allocations',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'restrict' }),
+    startDate: text('start_date').notNull(),
+    endDate: text('end_date').notNull(),
+    plannedSecondsPerWeek: integer('planned_seconds_per_week').notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    index('allocations_user_dates').on(table.userId, table.startDate, table.endDate),
+    index('allocations_project_dates').on(table.projectId, table.startDate, table.endDate),
+  ],
+)
+
+/**
+ * One application of a CSV time file (issue 1012): the file's sha-256 under a
+ * source id, with the mapping it was applied through. The same file is the same
+ * run however often it is applied.
+ */
+export const csvImportRuns = sqliteTable(
+  'csv_import_runs',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    sourceId: text('source_id').notNull(),
+    fileSha256: text('file_sha256').notNull(),
+    mappingJson: text('mapping_json').notNull(),
+    mappingSha256: text('mapping_sha256').notNull(),
+    status: text('status', { enum: ['partial', 'aborted', 'complete'] }).notNull(),
+    totalRows: integer('total_rows').notNull(),
+    rejectedRows: integer('rejected_rows').notNull().default(0),
+    lastError: text('last_error'),
+    ...timestamps,
+    finishedAt: text('finished_at'),
+  },
+  (table) => [uniqueIndex('csv_import_runs_identity').on(table.sourceId, table.fileSha256)],
+)
+
+/** The source key of one CSV row and the time entry it became. */
+export const csvImportEntries = sqliteTable(
+  'csv_import_entries',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    runId: integer('run_id')
+      .notNull()
+      .references(() => csvImportRuns.id, { onDelete: 'restrict' }),
+    sourceId: text('source_id').notNull(),
+    sourceKey: text('source_key').notNull(),
+    timeEntryId: integer('time_entry_id').references(() => timeEntries.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('csv_import_entries_source_key').on(table.sourceId, table.sourceKey),
+    uniqueIndex('csv_import_entries_time_entry')
+      .on(table.timeEntryId)
+      .where(sql`${table.timeEntryId} is not null`),
+    index('csv_import_entries_run').on(table.runId),
   ],
 )
 

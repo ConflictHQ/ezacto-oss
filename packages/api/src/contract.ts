@@ -540,6 +540,73 @@ const calendarProposalOperations: ApiContractOperation[] = [
   },
 ];
 
+const allocationOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/allocations",
+    operationId: "listAllocations",
+    summary: "List planned allocations",
+    description:
+      "Planned hours per week for a person on a project over a range of dates. Administrators and executive managers read all of them; a project manager reads their own and those for the people and projects they manage; everyone else reads only their own. `from` and `to` keep the allocations that reach into that span of days. A plan is not work: it is separate from time entries and never billed.",
+    tag: "schedule",
+    responseStatus: 200,
+    responseSchema: "AllocationPage",
+    parameters: [
+      ...pageParameters,
+      query("user_id", integerSchema),
+      query("project_id", integerSchema),
+      query("from", dateSchema),
+      query("to", dateSchema),
+    ],
+  },
+  {
+    method: "post",
+    path: "/api/v1/allocations",
+    operationId: "createAllocation",
+    summary: "Plan hours for a person on a project",
+    description:
+      "Administrators, executive managers and project managers only, a project manager only for people and projects they manage. Dates are plain local days, both included; the figure counts in full for every week the range touches. An end before the start is 422 `invalid_range`, an archived or unknown person or project is 422 `inactive_user`, `inactive_project`, `unknown_user` or `unknown_project`, and a range that overlaps another for the same person and project is 409 `allocation_overlap`. Planning more than a person's capacity is allowed: the capacity view flags it.",
+    tag: "schedule",
+    responseStatus: 201,
+    responseSchema: "AllocationEnvelope",
+    requestSchema: "AllocationInput",
+    requestRequired: true,
+  },
+  ...(["get", "patch", "delete"] as const).map((method) => ({
+    method,
+    path: "/api/v1/allocations/:id",
+    operationId: `${method === "get" ? "get" : method === "patch" ? "update" : "delete"}Allocation`,
+    summary: `${method === "get" ? "Get" : method === "patch" ? "Update" : "Delete"} an allocation`,
+    tag: "schedule",
+    responseStatus: 200,
+    responseSchema: "AllocationEnvelope",
+    ...(method === "patch"
+      ? {
+          description:
+            "Dates and hours only: the person and project of a plan do not change, so to move one, delete it and make another. The same rules as creating apply, and a plan changed by someone else in the meantime is 409 `allocation_changed`.",
+          requestSchema: "AllocationPatch",
+          requestRequired: true,
+        }
+      : {}),
+    parameters: [path("id")],
+  })),
+  {
+    method: "get",
+    path: "/api/v1/capacity",
+    operationId: "getCapacity",
+    summary: "Read planned hours against capacity and tracked time, person by week",
+    description:
+      "Read-only. Weeks begin on the organization's week start day and run from the week holding `from` through the week holding `to`, at most 53. Per person and week: `planned_seconds` (the sum of the allocations touching that week, on active projects), `weekly_capacity_seconds` (the person's current weekly capacity, so part-time is honoured), `tracked_seconds` (rounded time actually logged, a separate figure and never changed by the plan) and `over_allocated` when planned exceeds capacity, which is a flag and never a refusal. Archived people are left out. Administrators and executive managers see everyone, a project manager the people they manage, everyone else only themselves.",
+    tag: "schedule",
+    responseStatus: 200,
+    responseSchema: "CapacityEnvelope",
+    parameters: [
+      { name: "from", location: "query", required: true, schema: dateSchema },
+      { name: "to", location: "query", required: true, schema: dateSchema },
+    ],
+  },
+];
+
 const workItemOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -1471,6 +1538,16 @@ const quickBooksOperations: ApiContractOperation[] = [
     responseStatus: 204,
     sessionOnly: true,
   },
+  {
+    method: "get",
+    path: "/api/v1/integrations/quickbooks/reconciliation",
+    operationId: "getQuickBooksReconciliation",
+    summary: "Differences between our invoices and the QuickBooks company, listed and never corrected",
+    tag: "integrations",
+    responseStatus: 200,
+    responseSchema: "QuickBooksReconciliationEnvelope",
+    sessionOnly: true,
+  },
   // Where one invoice stands with QuickBooks, and the button that mirrors it
   // now (issue 819). Gated with the connection routes: same keys, same
   // feature, and `entry-surface.ts` lists them together.
@@ -1919,6 +1996,32 @@ const notificationSettingsOperations: ApiContractOperation[] = [
   },
 ];
 
+// Issue 1009: the optional automatic approval of submitted timesheets.
+const timesheetAutoApprovalOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/settings/timesheet-auto-approval",
+    operationId: "getTimesheetAutoApproval",
+    summary: "The automatic timesheet approval policy",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "TimesheetAutoApprovalEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/timesheet-auto-approval",
+    operationId: "setTimesheetAutoApproval",
+    summary: "Turn automatic timesheet approval on or off, or change its window",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "TimesheetAutoApprovalEnvelope",
+    requestSchema: "TimesheetAutoApprovalInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+];
+
 // Invoices › Configure: company information and default values.
 const invoiceDefaultsOperations: ApiContractOperation[] = [
   {
@@ -2194,6 +2297,43 @@ const twoFactorOperations: ApiContractOperation[] = [
     requestSchema: "TwoFactorCodeInput",
     requestRequired: true,
     sessionOnly: true,
+  },
+  // Issue 770: a code by email, alongside the authenticator rather than
+  // instead of it. Password sign-in only.
+  {
+    method: "post",
+    path: "/api/v1/two-factor/email",
+    operationId: "enableTwoFactorEmail",
+    summary: "Turn on the emailed second factor",
+    description:
+      "Needs a verified email address. A code is mailed at password sign-in; magic-link and federated sign-in never use this factor.",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorStatusEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/two-factor/email",
+    operationId: "disableTwoFactorEmail",
+    summary: "Turn off the emailed second factor",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorStatusEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/users/:id/two-factor/email",
+    operationId: "disableUserTwoFactorEmail",
+    summary: "Turn off a user's emailed second factor (administrator)",
+    description:
+      "Lockout recovery for a user who lost their mailbox. Administrators only; the change is recorded in the activity log.",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorEmailDisabledEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
   },
 ];
 
@@ -2838,6 +2978,20 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   },
   {
     method: "post",
+    path: "/auth/two-factor/email-code",
+    operationId: "sendTwoFactorEmailCode",
+    summary: "Email a verification code for a pending sign-in",
+    description:
+      "Supersedes the earlier challenge: the response carries the new one. Limited to one a minute and five an hour per user. Only a password sign-in can ask.",
+    tag: "authentication",
+    responseStatus: 200,
+    responseSchema: "TwoFactorChallengeIssuedEnvelope",
+    requestSchema: "TwoFactorEmailCodeInput",
+    requestRequired: true,
+    public: true,
+  },
+  {
+    method: "post",
     path: "/auth/password/forgot",
     operationId: "requestPasswordReset",
     summary: "Request a password-reset email",
@@ -3060,12 +3214,18 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     tag: "activity",
     responseStatus: 200,
     responseSchema: "ActivityLogPage",
+    description:
+      "Newest first, a page at a time, ordered by when each entry was recorded and then its event id. " +
+      "Every filter narrows together; a value that is not valid is a 422, never an empty page. " +
+      "aggregate_id needs aggregate_type. Sign-in, token and account-deletion events are left out unless the reader is an administrator.",
     parameters: [
-      query("per_page", { type: "integer", minimum: 1, maximum: 200 }),
+      ...pageParameters,
       query("from", dateSchema),
       query("to", dateSchema),
       query("event_type", stringSchema),
       query("actor_id", integerSchema),
+      query("aggregate_type", stringSchema),
+      query("aggregate_id", integerSchema),
     ],
   },
   {
@@ -3223,6 +3383,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...rateOperations(),
   ...timeEntryOperations,
   ...calendarProposalOperations,
+  ...allocationOperations,
   ...workItemOperations,
   ...timesheetApprovalOperations,
   ...timesheetLockPolicyOperations,
@@ -3247,6 +3408,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...invoiceDocumentPreferenceOperations,
   ...invoiceDefaultsOperations,
   ...notificationSettingsOperations,
+  ...timesheetAutoApprovalOperations,
   ...invoiceThankYouPreferenceOperations,
   ...recurringRepairOperations,
   ...payoutAccountOperations,
@@ -4266,6 +4428,72 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: { allow_online_payment: { type: "boolean" } },
     additionalProperties: false,
   },
+  QuickBooksReconciliationEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["realm_id", "generated_at", "counts", "rows"],
+        properties: {
+          realm_id: stringSchema,
+          generated_at: timestampSchema,
+          // Rows per status, every status present (zero included).
+          counts: { type: "object", additionalProperties: integerSchema },
+          rows: {
+            type: "array",
+            items: {
+              type: "object",
+              required: [
+                "status",
+                "issues",
+                "invoice_id",
+                "number",
+                "quickbooks_id",
+                "linked",
+                "ezacto_amount_cents",
+                "quickbooks_amount_cents",
+                "ezacto_currency",
+                "quickbooks_currency",
+                "ezacto_paid_cents",
+                "quickbooks_paid_cents",
+                "detail",
+              ],
+              properties: {
+                status: {
+                  type: "string",
+                  enum: [
+                    "matched",
+                    "voided_in_quickbooks",
+                    "missing_in_quickbooks",
+                    "amount_differs",
+                    "currency_differs",
+                    "payments_differ",
+                    "missing_here",
+                  ],
+                },
+                issues: { type: "array", items: stringSchema },
+                invoice_id: nullable(integerSchema),
+                number: stringSchema,
+                quickbooks_id: nullable(stringSchema),
+                linked: booleanSchema,
+                ezacto_amount_cents: nullable(integerSchema),
+                quickbooks_amount_cents: nullable(integerSchema),
+                ezacto_currency: nullable(stringSchema),
+                quickbooks_currency: nullable(stringSchema),
+                ezacto_paid_cents: nullable(integerSchema),
+                quickbooks_paid_cents: nullable(integerSchema),
+                detail: stringSchema,
+              },
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
   InvoiceQuickBooksEnvelope: {
     type: "object",
     required: ["data"],
@@ -4417,15 +4645,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
-  ActivityLogPage: {
-    type: "object",
-    required: ["data", "links"],
-    properties: {
-      data: { type: "array", items: reference("ActivityLog") },
-      links: reference("Links"),
-    },
-    additionalProperties: false,
-  },
+  ActivityLogPage: page("ActivityLog"),
   OutboxDelivery: {
     type: "object",
     required: [
@@ -5288,6 +5508,96 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   CalendarProposalEnvelope: envelope("CalendarProposal"),
   CalendarProposalPage: page("CalendarProposal"),
+  Allocation: {
+    type: "object",
+    required: [
+      "id",
+      "user_id",
+      "project_id",
+      "start_date",
+      "end_date",
+      "planned_seconds_per_week",
+      "created_at",
+      "updated_at",
+    ],
+    properties: {
+      id: integerSchema,
+      user_id: integerSchema,
+      project_id: integerSchema,
+      start_date: dateSchema,
+      end_date: { ...dateSchema, description: "Included. Never before `start_date`." },
+      planned_seconds_per_week: {
+        ...integerSchema,
+        description: "Planned seconds in each week the range touches, between 1 and 604800.",
+      },
+      created_at: timestampSchema,
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  AllocationInput: {
+    type: "object",
+    required: ["user_id", "project_id", "start_date", "end_date", "planned_seconds_per_week"],
+    properties: {
+      user_id: integerSchema,
+      project_id: integerSchema,
+      start_date: dateSchema,
+      end_date: dateSchema,
+      planned_seconds_per_week: integerSchema,
+    },
+    additionalProperties: false,
+  },
+  AllocationPatch: {
+    type: "object",
+    properties: {
+      start_date: dateSchema,
+      end_date: dateSchema,
+      planned_seconds_per_week: integerSchema,
+    },
+    additionalProperties: false,
+  },
+  AllocationEnvelope: envelope("Allocation"),
+  AllocationPage: page("Allocation"),
+  CapacityWeek: {
+    type: "object",
+    required: ["week_start", "planned_seconds", "tracked_seconds", "over_allocated"],
+    properties: {
+      week_start: dateSchema,
+      planned_seconds: integerSchema,
+      tracked_seconds: {
+        ...integerSchema,
+        description: "Rounded time logged in the week; separate from the plan.",
+      },
+      over_allocated: {
+        ...booleanSchema,
+        description: "Planned exceeds capacity. A flag for the reader, never a refusal.",
+      },
+    },
+    additionalProperties: false,
+  },
+  CapacityPerson: {
+    type: "object",
+    required: ["user_id", "first_name", "last_name", "weekly_capacity_seconds", "weeks"],
+    properties: {
+      user_id: integerSchema,
+      first_name: stringSchema,
+      last_name: stringSchema,
+      weekly_capacity_seconds: integerSchema,
+      weeks: { type: "array", items: reference("CapacityWeek") },
+    },
+    additionalProperties: false,
+  },
+  Capacity: {
+    type: "object",
+    required: ["week_start_day", "weeks", "people"],
+    properties: {
+      week_start_day: { type: "string", enum: ["saturday", "sunday", "monday"] },
+      weeks: { type: "array", items: dateSchema },
+      people: { type: "array", items: reference("CapacityPerson") },
+    },
+    additionalProperties: false,
+  },
+  CapacityEnvelope: envelope("Capacity"),
   WorkItemConnection: {
     type: "object",
     required: [
@@ -9623,6 +9933,34 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  TimesheetAutoApprovalInput: {
+    type: "object",
+    properties: {
+      enabled: { type: "boolean" },
+      // Calendar days from the week's submission. Needed once, to enable.
+      window_days: { type: "integer", minimum: 1, maximum: 60 },
+    },
+    additionalProperties: false,
+  },
+  TimesheetAutoApprovalEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["enabled", "window_days", "clock_starts_at", "effective_from", "approval_module_enabled"],
+        properties: {
+          enabled: { type: "boolean" },
+          window_days: { anyOf: [{ type: "integer", minimum: 1, maximum: 60 }, { type: "null" }] },
+          clock_starts_at: { type: "string", enum: ["submitted_at"] },
+          effective_from: { anyOf: [{ type: "string", format: "date-time" }, { type: "null" }] },
+          approval_module_enabled: { type: "boolean" },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
   // The files the work journal goes as (issue 647): a non-empty set, held in
   // this order, which is the order they attach in. One level serves them all.
   JournalFormats: {
@@ -9848,9 +10186,16 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   TwoFactorStatus: {
     type: "object",
-    required: ["enrolled", "pending_confirmation", "recovery_codes_remaining"],
+    required: [
+      "enrolled",
+      "email_enabled",
+      "pending_confirmation",
+      "recovery_codes_remaining",
+    ],
     properties: {
       enrolled: booleanSchema,
+      // Issue 770: a code by email. Independent of the authenticator.
+      email_enabled: booleanSchema,
       pending_confirmation: booleanSchema,
       // Counts down as codes are spent, so zero is a real answer.
       recovery_codes_remaining: { type: "integer", minimum: 0 },
@@ -9898,13 +10243,41 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   // a confirmed second factor. No session accompanies it.
   TwoFactorChallengeIssued: {
     type: "object",
-    required: ["status", "challenge", "expires_at"],
+    required: ["status", "challenge", "expires_at", "methods"],
     properties: {
       status: { type: "string", enum: ["two_factor_required"] },
       // Also set as an HttpOnly cookie. Named here for clients that keep none.
       challenge: stringSchema,
       expires_at: stringSchema,
+      // What can answer it: an authenticator or recovery code, or a mailed one.
+      methods: { type: "array", items: { type: "string", enum: ["totp", "email"] } },
     },
+    additionalProperties: false,
+  },
+  TwoFactorChallengeIssuedEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("TwoFactorChallengeIssued") },
+    additionalProperties: false,
+  },
+  TwoFactorEmailCodeInput: {
+    type: "object",
+    properties: {
+      // Omitted by anything that kept the cookie the sign-in set.
+      challenge: stringSchema,
+    },
+    additionalProperties: false,
+  },
+  TwoFactorEmailDisabled: {
+    type: "object",
+    required: ["user_id", "email_enabled"],
+    properties: { user_id: integerSchema, email_enabled: { type: "boolean", enum: [false] } },
+    additionalProperties: false,
+  },
+  TwoFactorEmailDisabledEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("TwoFactorEmailDisabled") },
     additionalProperties: false,
   },
   TwoFactorChallengeInput: {

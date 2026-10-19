@@ -22,6 +22,7 @@ import {
   mirrorPayment,
   parseWebhookNotification,
   receiptIdFromRefNumber,
+  reconcileInvoices,
   refreshAccessToken,
   revokeConnection,
   verifyWebhookSignature,
@@ -30,6 +31,8 @@ import {
   type MirrorOutcome,
   type MirrorPayment,
   type MirrorPaymentOutcome,
+  type ReconcileLocalInvoice,
+  type ReconciliationReport,
 } from "../index.js";
 
 
@@ -115,6 +118,17 @@ export interface QuickBooksService {
    */
   sync(invoiceId: number): Promise<QuickBooksSyncResult | null>;
   syncState(invoiceId: number): Promise<QuickBooksInvoiceSyncState | null>;
+  /**
+   * Compares our invoices with the company's and lists the differences (issue
+   * 1013). Read-only on both sides. Null where QuickBooks is not connected.
+   */
+  reconcile(): Promise<QuickBooksReconciliation | null>;
+}
+
+/** The report, with the company it was read from and when. */
+export interface QuickBooksReconciliation extends ReconciliationReport {
+  readonly realmId: string;
+  readonly generatedAt: string;
 }
 
 /**
@@ -226,6 +240,15 @@ export interface QuickBooksConnectionStore {
   }): Promise<void>;
 }
 
+/**
+ * The invoices of record for the reconciliation report: every open or paid
+ * invoice, with what has been received against it and the QuickBooks invoice
+ * it is linked to in that company, if any. Read-only.
+ */
+export interface QuickBooksReconciliationSource {
+  invoicesOfRecord(realmId: string): Promise<readonly ReconcileLocalInvoice[]>;
+}
+
 export interface QuickBooksConfig {
   readonly clientId: string | undefined;
   readonly clientSecret: string | undefined;
@@ -313,6 +336,7 @@ export interface QuickBooksRuntimeOptions {
   readonly config: QuickBooksConfig;
   readonly store: QuickBooksConnectionStore;
   readonly source: QuickBooksMirrorSource;
+  readonly reconciliation: QuickBooksReconciliationSource;
   readonly fetch: (request: Request) => Promise<Response>;
   readonly now: () => Date;
   /** Injected so a test can state the value rather than tolerate randomness. */
@@ -364,6 +388,7 @@ export interface QuickBooksRuntime {
   /** The invoice, then every unmirrored receipt on it. What the Sync button runs. */
   sync(invoiceId: number): Promise<QuickBooksSyncResult | null>;
   syncState(invoiceId: number): Promise<QuickBooksInvoiceSyncState | null>;
+  reconcile(): Promise<QuickBooksReconciliation | null>;
 }
 
 export const createQuickBooksRuntime = (
@@ -724,6 +749,25 @@ export const createQuickBooksRuntime = (
     };
   };
 
+  /**
+   * Reads, never writes: one listing of the company's invoices and one read of
+   * ours. The access token may be refreshed on the way, which is the existing
+   * connection custody and not an accounting write.
+   */
+  const reconcile = async (): Promise<QuickBooksReconciliation | null> => {
+    const connection = await store.readConnection();
+    if (connection === null) return null;
+    const client = await authorizedClient();
+    if (client === null) return null;
+    const remote = await client.listInvoices();
+    const local = await options.reconciliation.invoicesOfRecord(connection.realmId);
+    return {
+      ...reconcileInvoices(local, remote),
+      realmId: connection.realmId,
+      generatedAt: options.now().toISOString(),
+    };
+  };
+
   /** Whether a receipt of ours, not one QuickBooks recorded, is on an invoice those lines settle. */
   const isReceiptOn = async (
     receiptId: number,
@@ -957,9 +1001,10 @@ export const createQuickBooksRuntime = (
 
     sync,
     syncState,
+    reconcile,
   };
 
-  return { service, mirror, mirrorPayment: mirrorPaymentOnto, sync, syncState };
+  return { service, mirror, mirrorPayment: mirrorPaymentOnto, sync, syncState, reconcile };
 };
 
 /**

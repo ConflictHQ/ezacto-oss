@@ -18,6 +18,7 @@ import type {
   ThankYouPreferenceService,
   ReminderSettingsService,
   NotificationSettingsService,
+  TimesheetAutoApprovalService,
   ProfileNotificationsPort,
   InvoiceDefaultsService,
   RecurringRepairService,
@@ -71,6 +72,7 @@ import {
   installAccountDeletionStatusRoutes,
   installSessionRoutes,
   installSsoDomainRoutes,
+  installAllocationRoutes,
   installCalendarProposalRoutes,
   installWorkItemRoutes,
   installTrackedResourceRoutes,
@@ -84,6 +86,7 @@ import {
   installThankYouPreferenceRoutes,
   installReminderSettingsRoutes,
   installNotificationSettingsRoutes,
+  installTimesheetAutoApprovalRoutes,
   installProfileNotificationRoutes,
   installInvoiceDefaultsRoutes,
   installRecurringRepairRoutes,
@@ -117,6 +120,7 @@ import {
   type EmailConfigurationRouteOptions,
   type MagicLinkRouteOptions,
   type ActivityRecorder,
+  type TwoFactorEmailCodeMailer,
   type TwoFactorService,
   type AppleProviderConfig,
   type GitHubProviderConfig,
@@ -136,6 +140,7 @@ import {
   type ReportReader,
   type SsoProvisioningDomainService,
   type UserEmailService,
+  type AllocationRepository,
   type CalendarProposalRepository,
   type WorkItemRepository,
   type TrackedResourceRepository,
@@ -346,6 +351,8 @@ export interface RuntimeServices {
   trackedResources: TrackedResourceRepository
   /** Calendar events offered as time, accepted through `trackedResources` (issue 428). */
   calendarProposals: CalendarProposalRepository
+  /** Planned hours per week and the capacity view (issue 1007). */
+  allocations: AllocationRepository
   /** Issue tracker connections and the links to their items (issue 1008). */
   workItems: {
     repository: WorkItemRepository
@@ -435,6 +442,8 @@ export interface RuntimeServices {
   portalAuth?: MagicLinkRouteOptions
   /** The second factor for signed-in users. Absent only where there is no store. */
   twoFactor?: TwoFactorService
+  /** Sends the emailed second-factor code; absent without a mail queue (issue 770). */
+  twoFactorEmailCodes?: TwoFactorEmailCodeMailer
   /** Where credential events are recorded. Absent leaves them unrecorded. */
   activity?: ActivityRecorder
   backupStatus?: BackupStatusReader
@@ -474,6 +483,19 @@ export interface RuntimeServices {
   reminderSettings?: ReminderSettingsService
   /** Company settings for the mail the instance sends its own people (issue 934). */
   notificationSettings?: NotificationSettingsService
+  /** The optional automatic approval of submitted timesheets (issue 1009). */
+  timesheetAutoApproval?: TimesheetAutoApprovalService
+  /**
+   * Approves the submitted weeks the policy above has made due, a bounded batch
+   * at a time. Called from the minute cron in the Worker and the outbox tick in
+   * the container; a no-op while the policy is off.
+   */
+  timesheetAutoApprovalSweep?: {
+    processDue(now: string): Promise<{
+      readonly approved: readonly number[]
+      readonly failed: readonly { readonly submissionId: number; readonly message: string }[]
+    }>
+  }
   invoiceDefaults?: InvoiceDefaultsService
   /**
    * Sends the reminders that have come due. Called from the daily cron in the
@@ -655,7 +677,10 @@ export const createApp = (
             sessions: services.authenticationSessions ?? services.sessions,
             ...(services.twoFactor === undefined
               ? {}
-              : { twoFactor: services.twoFactor }),
+              : {
+                  twoFactor: services.twoFactor,
+                  twoFactorEmailCodes: services.twoFactorEmailCodes !== undefined,
+                }),
             ...(services.activity === undefined
               ? {}
               : { activity: services.activity }),
@@ -718,6 +743,11 @@ export const createApp = (
               clock: systemClock,
               cursorSigningKey: services.cursorSigningKey,
               isExpensesModuleEnabled: services.isExpensesModuleEnabled,
+            })
+            installAllocationRoutes(api, {
+              repository: services.allocations,
+              clock: systemClock,
+              cursorSigningKey: services.cursorSigningKey,
             })
             installCalendarProposalRoutes(api, {
               repository: services.calendarProposals,
@@ -839,6 +869,13 @@ export const createApp = (
             }
             if (services.notificationSettings !== undefined) {
               installNotificationSettingsRoutes(api, services.notificationSettings)
+            }
+            if (services.timesheetAutoApproval !== undefined) {
+              installTimesheetAutoApprovalRoutes(api, {
+                service: services.timesheetAutoApproval,
+                clock: () => systemClock.now().instant,
+                ...(services.activity === undefined ? {} : { activity: services.activity }),
+              })
             }
             if (services.profileNotifications !== undefined) {
               installProfileNotificationRoutes(api, services.profileNotifications)
@@ -1052,6 +1089,9 @@ export const createApp = (
           ...(services.twoFactor === undefined
             ? {}
             : { twoFactor: services.twoFactor }),
+          ...(services.twoFactorEmailCodes === undefined
+            ? {}
+            : { twoFactorEmailCodes: services.twoFactorEmailCodes }),
           ...(services.deploymentAuthMailer === undefined
             ? {}
             : { deploymentMailer: services.deploymentAuthMailer }),
@@ -1065,6 +1105,9 @@ export const createApp = (
           installTwoFactorChallengeRoutes(app, {
             gate: services.twoFactor,
             sessions: services.sessions,
+            ...(services.twoFactorEmailCodes === undefined
+              ? {}
+              : { emailCodes: services.twoFactorEmailCodes }),
           })
         }
         if (services.portalAuth !== undefined) {
@@ -1575,6 +1618,32 @@ export const createApp = (
             ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Team',
             view: 'team-list',
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/capacity', async (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            ...(await shellChrome(context.env, context.req.raw)),
+            activeSection: 'Team',
+            view: 'capacity',
+            tabs: [
+              { label: 'People', href: '/team' },
+              { label: 'Capacity', href: '/capacity', current: true },
+            ],
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),

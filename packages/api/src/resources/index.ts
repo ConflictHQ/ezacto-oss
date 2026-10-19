@@ -24,6 +24,18 @@ export const installTrackedResourceRoutes = <Bindings extends object>(
 }
 
 export {
+  installAllocationRoutes,
+  serializeAllocation,
+  serializeCapacity,
+  type AllocationFilters,
+  type AllocationRecord,
+  type AllocationRepository,
+  type AllocationRouteOptions,
+  type CapacityReportRecord,
+  type CreateAllocationRequest,
+  type UpdateAllocationRequest,
+} from './allocations.js'
+export {
   installCalendarProposalRoutes,
   serializeCalendarProposal,
   type AcceptCalendarProposalRequest,
