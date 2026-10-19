@@ -9,17 +9,17 @@ import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
 import { runDrill } from './restore-drill.mjs'
 
-// Synthetic data only. SECRET stands in for a client name or a rate: it must
+// Synthetic data only. PLACEHOLDER_TEXT stands in for a client name or a rate: it must
 // never appear in anything the drill prints.
-const SECRET = 'ACME-SECRET-RATE-98765'
+const PLACEHOLDER_TEXT = 'ACME-PLACEHOLDER_TEXT-RATE-98765'
 
 const GOOD = [
   'PRAGMA defer_foreign_keys=TRUE;',
   'CREATE TABLE clients (id INTEGER PRIMARY KEY, name TEXT NOT NULL);',
   'CREATE TABLE invoices (id INTEGER PRIMARY KEY, client_id INTEGER NOT NULL REFERENCES clients(id), amount INTEGER);',
   'CREATE INDEX invoices_client ON invoices(client_id);',
-  `INSERT INTO invoices VALUES(1,1,${SECRET.length});`,
-  `INSERT INTO clients VALUES(1,'${SECRET}');`,
+  `INSERT INTO invoices VALUES(1,1,${PLACEHOLDER_TEXT.length});`,
+  `INSERT INTO clients VALUES(1,'${PLACEHOLDER_TEXT}');`,
   "INSERT INTO clients VALUES(2,'Other');",
   '',
 ].join('\n')
@@ -84,7 +84,7 @@ test('a good dump passes every check and reports counts only', async () => {
   assert.equal(mode, 0o600)
   assert.equal(dirMode, 0o700)
   assert.equal(r.scratch_removed, true)
-  assert.ok(!JSON.stringify(r).includes(SECRET))
+  assert.ok(!JSON.stringify(r).includes(PLACEHOLDER_TEXT))
   await scratchEmpty()
 })
 
@@ -133,10 +133,10 @@ test('a truncated dump whose manifest was rewritten fails on gzip', async () => 
 })
 
 test('a matching checksum over broken SQL fails the load and leaks no row text', async () => {
-  const broken = GOOD.replace("'Other');", `'Other', '${SECRET}' ??? ;`)
+  const broken = GOOD.replace("'Other');", `'Other', '${PLACEHOLDER_TEXT}' ??? ;`)
   const r = await drill(bundle(broken, { tables: undefined, insert_statements: undefined }))
   assert.equal(r.failed, 'load')
-  assert.ok(!JSON.stringify(r).includes(SECRET))
+  assert.ok(!JSON.stringify(r).includes(PLACEHOLDER_TEXT))
   assert.equal(r.scratch_removed, true)
   await scratchEmpty()
 })
@@ -146,7 +146,7 @@ test('a foreign-key violation fails foreign_key_check', async () => {
   const r = await drill(bundle(orphan, { insert_statements: 4 }))
   assert.equal(r.failed, 'foreign_key_check')
   assert.equal(r.checks.integrity_check.ok, true)
-  assert.ok(!JSON.stringify(r).includes(SECRET))
+  assert.ok(!JSON.stringify(r).includes(PLACEHOLDER_TEXT))
   await scratchEmpty()
 })
 
@@ -188,7 +188,7 @@ test('the command exits 0 on a good dump, 1 on a corrupt one, 2 on bad usage', a
   const bad = run(join(root, 'cli.sql.gz'), join(root, 'cli-bad.manifest.json'))
   assert.equal(bad.status, 1)
   assert.match(bad.stderr, /sha256/)
-  assert.ok(!(bad.stdout + bad.stderr).includes(SECRET))
+  assert.ok(!(bad.stdout + bad.stderr).includes(PLACEHOLDER_TEXT))
 
   assert.equal(run().status, 2)
 })

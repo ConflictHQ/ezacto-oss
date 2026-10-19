@@ -40,3 +40,11 @@ c39dd69f59d2baddb8a7108b7269badbb93d22e3:packages/migrate/test/cli.test.ts:harve
 # runtime; the historical occurrence is pinned because history is scanned.
 96607e35f2f4069469b000389f91341bcabd0fdc:packages/api/test/sso-domains.test.ts:generic-api-key:28
 b1a775fa97d6f916bc03946ea32c876d6198d37b:packages/api/test/sso-domains.test.ts:generic-api-key:28
+
+# A restore-drill test fixture (scripts/restore-drill.test.mjs): a synthetic
+# placeholder standing in for a client name or a rate, used to prove the drill
+# never prints row contents. Not a credential. Fixed forward: the constant is
+# renamed so the line no longer reads as a key assignment; the two historical
+# occurrences on this branch are pinned because history is scanned.
+ebbbacf79c2f758f0a81b0ae6def0aa0c9117fde:scripts/restore-drill.test.mjs:generic-api-key:14
+86e1d59be5018028e41709a7691bb9ce33b22542:scripts/restore-drill.test.mjs:generic-api-key:14
