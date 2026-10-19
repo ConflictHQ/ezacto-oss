@@ -176,6 +176,8 @@ const refusalFor = (entry: CalendarEntry): string =>
     ? 'This entry is running. Stop it before moving it.'
     : `This entry cannot be moved: ${entry.locked_reason ?? 'it is locked'}.`
 
+const STILL_SAVING = 'This entry is still saving. Try again once it has saved.'
+
 const setSpanStyle = (node: HTMLElement, span: CalendarSpan, lane = 0, lanes = 1): void => {
   const offset = Math.min(Math.max(span.start, 0), MINUTES_IN_DAY)
   const drawn = Math.max(0, Math.min(span.end, MINUTES_IN_DAY) - offset)
@@ -201,6 +203,15 @@ export const createCalendarController = (host: CalendarHost): CalendarController
   let pending: PendingKeyMove | null = null
   /** The new entry being drawn, and then edited, before it exists. */
   let draft: Placed | null = null
+  /**
+   * Moves sent to the host and not answered yet, by entry: where each is going.
+   * Until the answer, and the redraw the shell makes before giving it, `days`
+   * still has the entry where it was -- so a drag, a key move or the editor
+   * started now would begin from the old span and save it back over the move
+   * just made. The block is drawn where it is going, through any redraw, and
+   * takes nothing new until the save lands.
+   */
+  const saving = new Map<number, Placed>()
   /**
    * A press that became a drag, or a click that became a new entry, still ends
    * in a click on whatever was under it. It is swallowed rather than opening
@@ -253,6 +264,10 @@ export const createCalendarController = (host: CalendarHost): CalendarController
     }
     return undefined
   }
+
+  /** Why an entry cannot be moved just now, or null when it can. */
+  const refusalNow = (entry: CalendarEntry): string | null =>
+    saving.has(entry.id) ? STILL_SAVING : movable(entry) ? null : refusalFor(entry)
 
   const scroller = (): HTMLElement | null =>
     surface.querySelector<HTMLElement>('[data-calendar-scroll]')
@@ -563,6 +578,9 @@ export const createCalendarController = (host: CalendarHost): CalendarController
         showPlacement(pending.entryId, pending.current)
       }
     }
+    // So does a move being saved: until it lands, `next` can still have the
+    // entry where it was.
+    for (const entryId of saving.keys()) showSaving(entryId)
     if (draft !== null) drawDraft(draft)
 
     const scrollKey = `${next.layout}|${shown[0] ?? ''}`
@@ -587,6 +605,16 @@ export const createCalendarController = (host: CalendarHost): CalendarController
     setSpanStyle(node, placed.span)
     node.dataset.state = 'moving'
     drawBlockTime(node, placed.span, false)
+  }
+
+  /** Draw a block whose move is being saved where it is going, and say it is busy. */
+  function showSaving(entryId: number): void {
+    const placed = saving.get(entryId)
+    const node = blockElements.get(entryId)
+    if (placed === undefined || node === undefined) return
+    showPlacement(entryId, placed)
+    node.dataset.state = 'saving'
+    node.setAttribute('aria-busy', 'true')
   }
 
   /** Put a block back where its entry says it is. */
@@ -643,22 +671,27 @@ export const createCalendarController = (host: CalendarHost): CalendarController
       restoreBlock(entryId)
       return
     }
-    const node = blockElements.get(entryId)
-    if (node !== undefined) {
-      node.dataset.state = 'saving'
-      node.setAttribute('aria-busy', 'true')
-    }
+    saving.set(entryId, placed)
+    showSaving(entryId)
     const where = `${longDay(placed.date)}, ${spokenRange(placed.span)}`
     delete status.dataset.calendarStatus
     status.textContent = 'Saving…'
     host
       .moveEntry(entryId, placementOf(placed))
       .then(() => {
-        // The shell refreshes and redraws; this only says what happened.
+        saving.delete(entryId)
+        // The shell has refreshed and redrawn with the move in it, unless a
+        // drag on something else held that redraw back; then the block stays
+        // where it went until the drag ends and the redraw is drawn.
+        if (deferred === null) {
+          restoreBlock(entryId)
+          blockElements.get(entryId)?.removeAttribute('aria-busy')
+        }
         announce(`Saved: ${where}.`)
         if (status.textContent === 'Saving…') status.textContent = ''
       })
       .catch((error: unknown) => {
+        saving.delete(entryId)
         restoreBlock(entryId)
         blockElements.get(entryId)?.removeAttribute('aria-busy')
         const reason = error instanceof Error ? error.message : 'It could not be saved.'
@@ -807,7 +840,7 @@ export const createCalendarController = (host: CalendarHost): CalendarController
         entryId,
         original,
         element: blockNode,
-        refusal: movable(block.entry) ? null : refusalFor(block.entry),
+        refusal: refusalNow(block.entry),
         lastX: event.clientX,
         lastY: event.clientY,
         active: false,
@@ -954,7 +987,14 @@ export const createCalendarController = (host: CalendarHost): CalendarController
     const entry = target.closest<HTMLElement>('[data-calendar-entry]')
     if (entry !== null) {
       if (pending !== null) return
-      host.openEntry(Number(entry.dataset.calendarEntry))
+      const entryId = Number(entry.dataset.calendarEntry)
+      // The editor would open on the entry as it was before the move, and
+      // saving it there would put the move back.
+      if (saving.has(entryId)) {
+        tell(STILL_SAVING)
+        return
+      }
+      host.openEntry(entryId)
     }
   })
 
@@ -1050,8 +1090,9 @@ export const createCalendarController = (host: CalendarHost): CalendarController
     }
     if (!vertical && !horizontal) return
     event.preventDefault()
-    if (!movable(block.entry)) {
-      tell(refusalFor(block.entry))
+    const refusal = refusalNow(block.entry)
+    if (refusal !== null) {
+      tell(refusal)
       return
     }
     const original: Placed = { date: block.entry.spent_date, span: { start: block.start, end: block.end } }
@@ -1141,6 +1182,7 @@ export const createCalendarController = (host: CalendarHost): CalendarController
       drag = null
       pending = null
       deferred = null
+      saving.clear()
       view = null
       days = []
       guide = null
