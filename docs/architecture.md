@@ -8,6 +8,13 @@
   nightly R2 and portable logical exports remain tracked by #37 and #28.
   D1 limits designed against: 100 bound params/statement, 1000 statements/invocation,
   30s/query, 10 GB/db.
+  D1 reads retry once the connection drops: a read-only statement that fails with
+  `D1_ERROR: Network connection lost` is retried at most twice (50 ms, then 200 ms)
+  before the original error surfaces. This lives in one place, the idempotency
+  wrapper every Worker request's D1 handle goes through
+  (`packages/db/src/d1-read-retry.ts`, applied in `idempotency.ts`). Writes and
+  batches are never retried, since a write that lost its answer may already have
+  been applied; any other error is not retried either.
 - **API:** REST `/api/v1` (canonical, honest) + `/harvest/v2` shim (compat quirks at
   the serializer only). OpenAPI generated and published; cli/mcp/mobile/extension
   consume generated clients. Webhooks are additive (Harvest has none).

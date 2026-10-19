@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import type BetterSqlite3 from 'better-sqlite3'
+import { retryTransientD1Read } from './d1-read-retry.js'
 
 /**
  * Idempotency keys in the database (issue 952): the claim a keyed write makes,
@@ -295,8 +296,11 @@ class RidingD1Database {
     direct: (statement: D1PreparedStatement) => Promise<T>,
     fromBatch: (result: D1Result) => T,
   ): Promise<T> {
+    // The one place every D1 read passes through, so the only place a read is
+    // retried (issue 745). A write is sent once, however it fails.
+    if (isReadOnlySql(statement.sql)) return retryTransientD1Read(() => direct(statement.inner))
     const state = activeClaim()
-    if (state === undefined || isReadOnlySql(statement.sql)) return direct(statement.inner)
+    if (state === undefined) return direct(statement.inner)
     const [result] = await this.ride(state, [statement.inner])
     return fromBatch(result!)
   }
