@@ -587,6 +587,9 @@ Axes are independent; conflating them is the classic clone mistake.
    the window (calendar days) has passed, only for weeks submitted on or after
    `auto_approval_effective_from`, and only through the version-checked bulk
    approval path. A resubmission rewrites `submitted_at`, so it restarts the clock.
+   The submitter is mailed a notice (`auto_approval_warning`, in the notification
+   ledger keyed by submission and `submitted_at`) 24 hours before the deadline, or
+   half the window when that is shorter, by the same pass as the time reminders.
 2. **Invoicing**: `invoice_id` nullable. `is_billed` is `invoice_id IS NOT NULL`.
 3. **Editability**: `locked = derived(entry)` — true when invoiced, approved,
    an already-computed policy-lock fact is present, or any parent
