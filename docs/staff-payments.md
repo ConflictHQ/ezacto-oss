@@ -145,3 +145,32 @@ confirmed earnings; amounts, reservations and payment history also keep a person
 visible. A blanket historical settlement by itself does not count as activity.
 Monthly and filtered report exports follow this checkbox; the full audit export
 keeps all records. The filter changes visibility only, not ledger records.
+
+## Payment allocations
+
+An allocation links part of one payment to the earnings it pays. It is an
+additive layer: monthly totals, payments and payment runs are unchanged, and
+existing monthly payments stay unallocated until an administrator allocates them
+explicitly. Hour splits are never inferred.
+
+- **Payment**: a recorded payment, or a payment run item (reserved while
+  scheduled or processing, applied once paid).
+- **Target**: the whole work month (amount only, the reconciliation path for
+  existing payments), a project, or one reviewed time entry with optional hours.
+  Hours are valued at the rate captured in the confirmed actuals review; the
+  allocation taking the last hours takes the remaining cents. An explicit amount
+  needs the reason every allocation carries.
+- **Invariants** (database triggers, identical on SQLite and D1): same person,
+  month and currency as the payment; never more than the payment, the month's
+  earnings, the project's or the entry's reviewed earnings or hours.
+- **History**: rows are append-only. A reversal (with a reason), a void of the
+  payment, or a failed or cancelled run item releases the allocation; nothing is
+  deleted. Allocations snapshot the review, and the report flags entries whose
+  source time no longer matches (`source_changed`) or that are over-allocated
+  after a later review, for explicit reversal and re-allocation.
+- **API**: `GET /api/v1/staff-payments/allocations?month=` reconciles earned,
+  paid, reserved and remaining by person, project and entry, and lists
+  unallocated payments; `POST .../allocations/preview`, `POST .../allocations`
+  and `POST .../allocations/reversals` (administrator sessions only).
+- A work-month correction is refused while allocations are live; reverse them
+  first.
