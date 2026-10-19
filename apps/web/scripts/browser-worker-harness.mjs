@@ -335,6 +335,208 @@ const restoreTeamRateState = async () => {
   activeTeamRateBaseline = null
 }
 
+/**
+ * Client 360's three-level fixture (issue 65): 9300 Root (USD) > 9301 Child
+ * (EUR) > 9302 Grandchild (USD), every row invented and every id in 9300-9303
+ * so nothing another spec counts moves. The Grandchild is worked for under
+ * the Child and billed to the Root, so the two relations differ. The money, all dated inside the
+ * fixture's own month so the burn window reaches it:
+ *
+ *   open invoices   Root USD 100.00 (overdue), Child EUR 250.00,
+ *                   Grandchild USD 75.00, plus a Grandchild USD draft of
+ *                   999.00 that is owed by nobody
+ *   retainers       Root money 500.00 USD, Child money 300.00 EUR,
+ *                   Child hours 10, Grandchild money 200.00 USD
+ *   cost + expense  Root 1h at cost 40.00 + expense 25.00 USD,
+ *                   Child 0.5h at cost 60.00 (organization currency, USD)
+ *                   + expense 30.00 EUR, Grandchild 0.25h at cost 50.00
+ *                   + expense 15.00 USD
+ *
+ * An invoice can only be sent, and a ledger only appended to, through their
+ * commands, and neither command is a thing a fixture should fake. So the seed
+ * and the clear take the triggers that insist on a pending command (and the
+ * ledger's append-only delete) off for the length of one write and put back
+ * the exact text the migrations wrote, whether or not the write succeeded. The
+ * totals triggers stay on: an invoice's amount still comes from its line.
+ */
+const withoutCommandGuards = async (work, includeLedgerDelete) => {
+  const guards = (
+    await database
+      .prepare(
+        `SELECT name, sql FROM sqlite_master
+         WHERE type = 'trigger' AND (
+           sql LIKE '%requires its pending command%'
+           ${includeLedgerDelete ? "OR name = 'retainer_ledger_append_only_delete'" : ''}
+         )`,
+      )
+      .all()
+  ).results
+  if (guards.length === 0) throw new Error('invoice command guards are missing')
+  for (const guard of guards) {
+    await database.prepare(`DROP TRIGGER "${guard.name}"`).run()
+  }
+  try {
+    await work()
+  } finally {
+    for (const guard of guards) await database.prepare(guard.sql).run()
+  }
+}
+
+const client360Projects = [9300, 9301, 9302]
+const client360Clear = () =>
+  withoutCommandGuards(
+    () =>
+      database.batch([
+        database.prepare('DELETE FROM retainer_ledger WHERE retainer_id BETWEEN 9300 AND 9303'),
+        database.prepare('DELETE FROM retainers WHERE id BETWEEN 9300 AND 9303'),
+        database.prepare('DELETE FROM invoices WHERE id BETWEEN 9300 AND 9303'),
+        database.prepare('DELETE FROM expenses WHERE id BETWEEN 9300 AND 9302'),
+        database.prepare('DELETE FROM time_entries WHERE id BETWEEN 9300 AND 9302'),
+        database.prepare('DELETE FROM task_assignments WHERE id BETWEEN 9300 AND 9302'),
+        database.prepare('DELETE FROM user_assignments WHERE id BETWEEN 9300 AND 9302'),
+        database.prepare('DELETE FROM projects WHERE id BETWEEN 9300 AND 9302'),
+        database.prepare('DELETE FROM clients WHERE id = 9302'),
+        database.prepare('DELETE FROM clients WHERE id = 9301'),
+        database.prepare('DELETE FROM clients WHERE id = 9300'),
+        database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+      ]),
+    true,
+  )
+
+const client360Seed = async () => {
+  await client360Clear()
+  await withoutCommandGuards(() => client360Insert(), false)
+}
+
+const client360Insert = async () => {
+  const at = [timestamp, timestamp]
+  const statements = [
+    database
+      .prepare(
+        `INSERT INTO clients (id, name, parent_client_id, currency, created_at, updated_at)
+         VALUES (9300, 'Browser 360 Root', NULL, 'USD', ?, ?)`,
+      )
+      .bind(...at),
+    database
+      .prepare(
+        `INSERT INTO clients (id, name, parent_client_id, currency, created_at, updated_at)
+         VALUES (9301, 'Browser 360 Child', 9300, 'EUR', ?, ?)`,
+      )
+      .bind(...at),
+    database
+      .prepare(
+        `INSERT INTO clients (
+           id, name, parent_client_id, bill_to_client_id, currency, created_at, updated_at
+         ) VALUES (9302, 'Browser 360 Grandchild', 9301, 9300, 'USD', ?, ?)`,
+      )
+      .bind(...at),
+    ...client360Projects.map((id) =>
+      database
+        .prepare(
+          `INSERT INTO projects (id, client_id, name, code, hourly_rate_cents, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 10000, ?, ?)`,
+        )
+        .bind(id, id, `Browser 360 Project ${id - 9299}`, `B360${id - 9299}`, ...at),
+    ),
+    ...client360Projects.map((id) =>
+      database
+        .prepare(
+          `INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+           VALUES (?, ?, 1, ?, ?)`,
+        )
+        .bind(id, id, ...at),
+    ),
+    ...client360Projects.map((id) =>
+      database
+        .prepare(
+          `INSERT INTO task_assignments (id, project_id, task_id, billable, created_at, updated_at)
+           VALUES (?, ?, 1, 1, ?, ?)`,
+        )
+        .bind(id, id, ...at),
+    ),
+    ...[
+      [9300, 3600, 4000],
+      [9301, 1800, 6000],
+      [9302, 900, 5000],
+    ].map(([id, seconds, cost]) =>
+      database
+        .prepare(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, notes, created_at, updated_at
+           ) VALUES (?, 1, ?, 1, ?, ?, ?, ?, ?, ?, 1, 10000, ?, 'Browser 360 fixture', ?, ?)`,
+        )
+        .bind(id, id, id, id, spentDate, seconds, seconds, seconds, cost, ...at),
+    ),
+    ...[
+      [9300, 2500],
+      [9301, 3000],
+      [9302, 1500],
+    ].map(([id, cents]) =>
+      database
+        .prepare(
+          `INSERT INTO expenses (
+             id, user_id, project_id, expense_category_id, spent_date,
+             total_cost_cents, billable, created_at, updated_at
+           ) VALUES (?, 1, ?, 1, ?, ?, 1, ?, ?)`,
+        )
+        .bind(id, id, spentDate, cents, ...at),
+    ),
+    ...[
+      [9300, 9300, 'USD', 'open', '2026-08-01', 10000],
+      [9301, 9301, 'EUR', 'open', '2026-09-30', 25000],
+      [9302, 9302, 'USD', 'open', '2026-09-30', 7500],
+      [9303, 9302, 'USD', 'draft', '2026-09-30', 99900],
+    ].flatMap(([id, clientId, currency, state, dueDate, cents]) => [
+      database
+        .prepare(
+          `INSERT INTO invoices (
+             id, client_id, number, currency, issue_date, due_date, state, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, '2026-07-15', ?, ?, ?, ?)`,
+        )
+        .bind(id, clientId, `B360-${id - 9299}`, currency, dueDate, state, ...at),
+      database
+        .prepare(
+          `INSERT INTO invoice_line_items (
+             invoice_id, position, kind, description, quantity, unit_price_cents,
+             amount_cents, created_at, updated_at
+           ) VALUES (?, 1, 'Service', 'Browser 360 fixture', 1, ?, ?, ?, ?)`,
+        )
+        .bind(id, cents, cents, ...at),
+    ]),
+    ...[
+      [9300, 9300, 'money', 'cents', 50000],
+      [9301, 9301, 'money', 'cents', 30000],
+      [9302, 9301, 'hours', 'seconds', 36000],
+      [9303, 9302, 'money', 'cents', 20000],
+    ].flatMap(([id, clientId, denomination, unit, amount]) => [
+      database
+        .prepare(
+          `INSERT INTO retainers (
+             id, client_id, denomination, amount_cents, seconds, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          id,
+          clientId,
+          denomination,
+          denomination === 'money' ? amount : null,
+          denomination === 'hours' ? amount : null,
+          ...at,
+        ),
+      database
+        .prepare(
+          `INSERT INTO retainer_ledger (
+             id, retainer_id, kind, unit, amount, occurred_on, notes, created_at
+           ) VALUES (?, ?, 'adjustment', ?, ?, '2026-08-01', 'Browser 360 opening balance', ?)`,
+        )
+        .bind(`browser-360-${id}`, id, unit, amount, timestamp),
+    ]),
+  ]
+  await database.batch(statements)
+}
+
 const fixtureControl = async (request, response) => {
   if (
     request.method !== 'POST' ||
@@ -1080,6 +1282,10 @@ const fixtureControl = async (request, response) => {
     // spec that signs in late in a run, after the rest of the suite has spent
     // the limit, and has nothing to do with payment runs.
     await database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`).run()
+  } else if (action === 'client-360-seed') {
+    await client360Seed()
+  } else if (action === 'client-360-cleanup') {
+    await client360Clear()
   } else if (action === 'task-admin-cleanup') {
     await database.batch([
       database.prepare(
