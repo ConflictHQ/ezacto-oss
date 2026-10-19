@@ -2,6 +2,7 @@ import { resolveRates, type RateResolution, type RateResolutionInput } from '@ez
 import { eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
+import { loadRateCardContext } from './client-rate-cards.js'
 import type * as schema from './schema.js'
 import {
   projects,
@@ -102,6 +103,12 @@ export const resolveEntryRates = async (
     throw new Error('user assignment does not match the rate subject')
   }
 
+  // Cards price only the people leg, so no other project pays for the lookup.
+  const rateCards =
+    project.billBy === 'people'
+      ? await loadRateCardContext(database, project.clientId, subject.taskId)
+      : undefined
+
   const input: RateResolutionInput = {
     spentDate: subject.spentDate,
     project: {
@@ -135,6 +142,7 @@ export const resolveEntryRates = async (
       startDate,
       endDate,
     })),
+    ...(rateCards === undefined ? {} : { rateCards }),
   }
   return resolveRates(input)
 }

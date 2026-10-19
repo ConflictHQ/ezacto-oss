@@ -506,3 +506,9 @@ export {
 } from './apple-web.js'
 
 export { createAppleWebLifecycle, assertAppleWebCustodyConfig, APPLE_WEB_CONNECTION_COOKIE, type AppleWebCustodyConfig } from './apple-web-lifecycle.js'
+
+export {
+  installClientRateCardRoutes,
+  type ClientRateCardRepository,
+  type ClientRateCardRouteOptions,
+} from './client-rate-cards.js'
