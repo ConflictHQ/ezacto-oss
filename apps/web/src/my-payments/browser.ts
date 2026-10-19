@@ -70,14 +70,17 @@ export const createMyPaymentsController = (api: MyPaymentsApi): MyPaymentsContro
     receipts.replaceChildren(
       renderDataTable<MyPayments['payments'][number]>({
         caption: 'Payments recorded for this month',
+        table: 'my-payments-recorded',
         rows: [...data.payments],
         rowKey: (payment) => `${payment.paid_on}-${payment.currency}-${payment.amount_cents}`,
         empty: 'No payments recorded for this month.',
         columns: [
-          { key: 'paid_on', label: 'Paid on', render: (payment) => payment.paid_on },
+          { key: 'paid_on', label: 'Paid on', sortValue: (payment) => payment.paid_on, render: (payment) => payment.paid_on },
           {
             key: 'amount',
             label: 'Amount',
+            numeric: true,
+            sortValue: (payment) => [payment.currency, payment.amount_cents],
             render: (payment) => myPaymentsMoney(payment.amount_cents, payment.currency),
           },
         ],
@@ -86,17 +89,30 @@ export const createMyPaymentsController = (api: MyPaymentsApi): MyPaymentsContro
     upcoming.replaceChildren(
       renderDataTable<MyPayments['upcoming'][number]>({
         caption: 'Upcoming payments',
+        table: 'my-payments-upcoming',
         rows: [...data.upcoming],
         rowKey: (payment) => `${payment.scheduled_on}-${payment.currency}-${payment.amount_cents}-${payment.status}`,
         empty: 'No payments are scheduled.',
         columns: [
-          { key: 'scheduled_on', label: 'Scheduled for', render: (payment) => payment.scheduled_on },
+          {
+            key: 'scheduled_on',
+            label: 'Scheduled for',
+            sortValue: (payment) => payment.scheduled_on,
+            render: (payment) => payment.scheduled_on,
+          },
           {
             key: 'amount',
             label: 'Amount',
+            numeric: true,
+            sortValue: (payment) => [payment.currency, payment.amount_cents],
             render: (payment) => myPaymentsMoney(payment.amount_cents, payment.currency),
           },
-          { key: 'status', label: 'Status', render: (payment) => myUpcomingStatusText(payment.status) },
+          {
+            key: 'status',
+            label: 'Status',
+            sortValue: (payment) => myUpcomingStatusText(payment.status),
+            render: (payment) => myUpcomingStatusText(payment.status),
+          },
         ],
       }),
     )

@@ -9,7 +9,7 @@ import {
 } from '@ezacto/core'
 import { EzactoApiError, type Attachment, type GeneralResource, type Whoami } from '@conflict-hq/ezacto-client'
 
-import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { renderDataTable, type CellContent, type DataSortValue } from '../components/data-table.js'
 import { isDemoDeployment } from '../demo.js'
 import { moneyText } from '../money-display.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
@@ -581,8 +581,48 @@ export const createProjectDirectoryController = (
       return '—'
     }
 
+    // What each money column sorts by. Hours and money are different things, and
+    // two currencies are not one amount, so a value leads with its unit or
+    // currency and a list sorts by that before it compares sizes. A project the
+    // column says nothing about has no value and sorts last either way.
+    const budgetValue = (project: Readonly<GeneralResource>): DataSortValue => {
+      const by = projectText(project, 'budget_by')
+      if (by === 'project' || by === 'task' || by === 'person') {
+        return ['hours', projectNumber(project, 'budget_seconds') ?? 0]
+      }
+      if (by === 'project_cost') {
+        return [currencyFor(project), projectNumber(project, 'cost_budget_cents') ?? 0]
+      }
+      if (by === 'task_fees') return [currencyFor(project), projectNumber(project, 'fee_cents') ?? 0]
+      return null
+    }
+    const spentValue = (project: Readonly<GeneralResource>): DataSortValue => {
+      const summary = budgets.get(project.id)
+      if (summary?.unit === 'seconds') return ['hours', summary.spent_seconds ?? 0]
+      if (summary?.unit === 'cents' && summary.spent_cents !== undefined) {
+        return [currencyFor(project), summary.spent_cents]
+      }
+      return null
+    }
+    const remainingValue = (project: Readonly<GeneralResource>): DataSortValue => {
+      const summary = budgets.get(project.id)
+      if (summary?.unit === 'seconds') {
+        return summary.remaining_seconds == null ? null : ['hours', summary.remaining_seconds]
+      }
+      return summary === undefined || summary.remaining_cents == null
+        ? null
+        : [currencyFor(project), summary.remaining_cents]
+    }
+    const costValue = (project: Readonly<GeneralResource>): DataSortValue => {
+      const cents = budgets.get(project.id)?.cost_cents
+      return cents === undefined ? null : [currencyFor(project), cents]
+    }
+
     const table = renderDataTable<Readonly<GeneralResource>>({
       caption: 'Projects',
+      table: 'projects',
+      // Client bands, and inside each of them the project's name.
+      defaultSort: { column: 'name', direction: 'ascending' },
       rows: visible,
       rowKey: (project) => String(project.id),
       // The client is the band, so it stops repeating on every row. Grouped on
@@ -603,6 +643,7 @@ export const createProjectDirectoryController = (
         {
           key: 'name',
           label: 'Project',
+          sortValue: projectDisplayName,
           render: (project) => {
             const link = document.createElement('a')
             link.href = `/projects/${project.id}`
@@ -614,22 +655,32 @@ export const createProjectDirectoryController = (
           key: 'billing',
           fit: true,
           label: 'Billing',
+          sortValue: (project: GeneralResource) => projectEnumLabel(projectText(project, 'billing_method')),
           render: (project: GeneralResource) => projectEnumLabel(projectText(project, 'billing_method')),
         }] : []),
-        { key: 'budget', label: 'Budget', numeric: true, render: budgetLabel },
-        { key: 'spent', label: 'Spent', numeric: true, render: spentLabel },
-        { key: 'remaining', label: 'Remaining', numeric: true, render: remainingLabel },
+        { key: 'budget', label: 'Budget', numeric: true, sortValue: budgetValue, render: budgetLabel },
+        { key: 'spent', label: 'Spent', numeric: true, sortValue: spentValue, render: spentLabel },
+        {
+          key: 'remaining',
+          label: 'Remaining',
+          numeric: true,
+          sortValue: remainingValue,
+          render: remainingLabel,
+        },
         // A viewer whose profile cannot see cost gets no cost_cents at all, on
         // any row. Rendering the column anyway put an em dash in every cell of
         // it, which reads as "no cost recorded" rather than "not yours to see"
         // -- and it costs a column of width on a table that wants it.
         ...(costVisible
-          ? [{ key: 'costs', label: 'Costs', numeric: true, render: costLabel } as const]
+          ? [
+              { key: 'costs', label: 'Costs', numeric: true, sortValue: costValue, render: costLabel } as const,
+            ]
           : []),
         {
           key: 'status',
           fit: true,
           label: 'Status',
+          sortValue: (project) => (projectIsActive(project) ? 'Active' : 'Archived'),
           render: (project) => {
             if (projectIsActive(project)) return 'Active'
             const pill = document.createElement('span')

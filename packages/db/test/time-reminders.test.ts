@@ -9,6 +9,7 @@ import {
   migrateD1,
   migrateD1Through,
 } from '../src/migrate.js'
+import { createTimesheetApprovalRepository } from '../src/timesheet-approvals.js'
 import { prepareTimeReminders } from '../src/time-reminders.js'
 
 /**
@@ -487,6 +488,113 @@ const d1Before0114 = async (): Promise<UpgradeHarness> => {
     upgrade: () => migrateD1(database),
     close: async () => miniflare.dispose(),
   }
+}
+
+for (const [name, factory] of [
+  ['SQLite', container],
+  ['real D1', d1],
+] as const) {
+  describe(`auto-approval warning (${name})`, () => {
+    let db: Harness | undefined
+    afterEach(async () => db?.close())
+
+    // A three-day window: Mo's week, submitted Monday 12 October 09:00Z, is
+    // approved at Thursday 15 October 09:00Z, and the notice goes out from
+    // Wednesday 14 October 09:00Z.
+    const submittedAt = '2026-10-12T09:00:00.000Z'
+    const open = async (policy = true): Promise<Harness> => {
+      db = await factory()
+      await seed(db)
+      if (policy) {
+        await db.run(
+          `UPDATE organizations SET auto_approval_enabled = 1, auto_approval_window_days = 3,
+             auto_approval_effective_from = '2026-10-01T00:00:00.000Z', auto_approval_actor_user_id = 1`,
+        )
+      }
+      await track(db, 3, 6, '2026-10-06')
+      await db.run(
+        `INSERT INTO timesheet_submissions (user_id, period_start, period_end, status,
+           submitted_by_user_id, submitted_at, version, created_at, updated_at)
+         VALUES (3, '2026-10-05', '2026-10-11', 'submitted', 3, ?, 0, ?, ?)`,
+        submittedAt,
+        submittedAt,
+        submittedAt,
+      )
+      return db
+    }
+    const warnings = (test: Harness) =>
+      test.rows<{ user_id: number; scope: string; period: string; outcome: string }>(
+        `SELECT user_id, scope, period, outcome FROM notification_deliveries
+         WHERE kind = 'auto_approval_warning' ORDER BY id`,
+      )
+
+    it('[unit] tells the submitter the day before, in their own time, once', async () => {
+      const test = await open()
+      expect(await run(test, '2026-10-14T08:59:00.000Z')).toHaveLength(0)
+
+      const sent = await run(test, '2026-10-14T10:00:00.000Z')
+      expect(sent).toHaveLength(1)
+      expect(sent[0]).toMatchObject({
+        to: { email: 'mo@example.test', name: 'Mo Member' },
+        template: 'auto_approval_warning:v1',
+        from,
+      })
+      expect(sent[0]!.subject).toBe(
+        'Timesheet notice: your week of Monday, October 5 will be approved automatically',
+      )
+      expect(sent[0]!.text).toContain('Thursday, October 15 at 11:00 (Europe/Warsaw)')
+      expect(await warnings(test)).toEqual([
+        { user_id: 3, scope: '1', period: submittedAt, outcome: 'queued' },
+      ])
+      expect(await run(test, '2026-10-14T10:01:00.000Z')).toHaveLength(0)
+      expect(await warnings(test)).toHaveLength(1)
+    })
+
+    it("[unit] says nothing while the policy is off, the week is settled, or it is not the sweep's", async () => {
+      const off = await open(false)
+      expect(await run(off, '2026-10-14T10:00:00.000Z')).toHaveLength(0)
+      await off.close()
+
+      const test = await open()
+      // Submitted before the policy took effect: the sweep never takes it.
+      await test.run(`UPDATE organizations SET auto_approval_effective_from = '2026-10-13T00:00:00.000Z'`)
+      expect(await run(test, '2026-10-14T10:00:00.000Z')).toHaveLength(0)
+      await test.run(`UPDATE organizations SET auto_approval_effective_from = '2026-10-01T00:00:00.000Z'`)
+      // Already past its deadline: too late to warn, and the sweep owns it.
+      expect(await run(test, '2026-10-15T10:00:00.000Z')).toHaveLength(0)
+      // The submitter archived, or the Approval module off.
+      await test.run(`UPDATE users SET is_active = 0 WHERE id = 3`)
+      expect(await run(test, '2026-10-14T10:00:00.000Z')).toHaveLength(0)
+      await test.run(`UPDATE users SET is_active = 1 WHERE id = 3`)
+      await test.run(`UPDATE organizations SET modules = '{"approval":false}'`)
+      expect(await run(test, '2026-10-14T10:00:00.000Z')).toHaveLength(0)
+      await test.run(`UPDATE organizations SET modules = '{"approval":true}'`)
+      // Approved by hand before the deadline: nothing left to warn about.
+      await test.run(
+        `UPDATE timesheet_submissions SET status = 'approved', reviewed_by_user_id = 1,
+           reviewed_at = ?, version = version + 1, updated_at = ?`,
+        '2026-10-13T09:00:00.000Z',
+        '2026-10-13T09:00:00.000Z',
+      )
+      expect(await run(test, '2026-10-14T10:00:00.000Z')).toHaveLength(0)
+      expect(await warnings(test)).toEqual([])
+    })
+
+    it('[unit] a resubmission restarts the clock and is warned about again', async () => {
+      const test = await open()
+      expect(await run(test, '2026-10-14T10:00:00.000Z')).toHaveLength(1)
+      // Rejected and submitted again a day later: a new deadline, a new notice.
+      const approvals = createTimesheetApprovalRepository(test.orm)
+      await approvals.reject({ userId: 1, profile: 'administrator' }, 1, 'Wrong project', '2026-10-12T15:00:00.000Z')
+      await approvals.submit(3, '2026-10-05', '2026-10-11', '2026-10-13T09:00:00.000Z')
+      expect(await run(test, '2026-10-14T10:00:00.000Z')).toHaveLength(0)
+      expect(await run(test, '2026-10-15T10:00:00.000Z')).toHaveLength(1)
+      expect((await warnings(test)).map((row) => row.period)).toEqual([
+        submittedAt,
+        '2026-10-13T09:00:00.000Z',
+      ])
+    })
+  })
 }
 
 for (const [name, factory] of [

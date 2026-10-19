@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   composeDailyTimeReminder,
   composeSubmissionDigest,
+  composeAutoApprovalWarning,
   composeSubmissionReminder,
   effectiveTimeZone,
   localMoment,
@@ -139,6 +140,20 @@ describe("the reminder messages (issue 935)", () => {
       links,
     });
     expect(some.text).toContain("logged 2 hours for Wednesday, October 14, short of your usual 7 hours");
+  });
+
+  it("[unit] tells the submitter when the week will be approved and how to stop it", () => {
+    const week = { start: "2026-10-12", end: "2026-10-18" };
+    const notice = composeAutoApprovalWarning({
+      companyName: "CONFLICT",
+      firstName: "Mo",
+      week,
+      deadline: { date: "2026-10-21", time: "09:30", zone: "Europe/Warsaw" },
+      links,
+    });
+    expect(notice.subject).toBe("Timesheet notice: your week of Monday, October 12 will be approved automatically");
+    expect(notice.text).toContain("Wednesday, October 21 at 09:30 (Europe/Warsaw)");
+    expect(notice.text).toContain(`withdraw the week from your timesheet before then: ${links.timesheet}`);
   });
 
   it("[unit] names the week to submit, and who has not submitted", () => {

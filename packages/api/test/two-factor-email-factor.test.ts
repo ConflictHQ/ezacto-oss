@@ -557,6 +557,7 @@ const settingsService = (state: ServiceState): TwoFactorService & Record<string,
       state.email = true
       return 'enabled' as const
     }),
+    isEmailFactorEnabled: vi.fn(async () => state.email),
     disableEmailFactor: vi.fn(async () => {
       const was = state.email
       state.email = false
@@ -755,6 +756,37 @@ describe('an administrator turning off a user\'s emailed factor', () => {
       expect(response.status, id).toBe(404)
     }
     expect(service.disableEmailFactor).not.toHaveBeenCalled()
+  })
+
+  it('[api] reads whether a user has the factor on, for the administrator screen', async () => {
+    const on = settingsApp({ email: true, verified: true })
+    const yes = await call(on.app, 'GET', '/api/v1/users/7/two-factor/email')
+    expect(yes.status).toBe(200)
+    expect(yes.headers.get('cache-control')).toBe('no-store')
+    expect(await yes.json()).toEqual({ data: { user_id: 7, email_enabled: true } })
+    expect(on.service.isEmailFactorEnabled).toHaveBeenCalledWith(7)
+
+    const off = settingsApp({ email: false, verified: true })
+    const no = await call(off.app, 'GET', '/api/v1/users/7/two-factor/email')
+    expect(await no.json()).toEqual({ data: { user_id: 7, email_enabled: false } })
+  })
+
+  it('[security] the read is administrators and sessions only, and asks the service nothing otherwise', async () => {
+    const { app, service } = settingsApp({ email: true, verified: true })
+    const member = await call(app, 'GET', '/api/v1/users/7/two-factor/email', 'session=member')
+    expect(member.status).toBe(403)
+    expect(await member.json()).toMatchObject({ error: { code: 'profile_forbidden' } })
+    const token = await app.request('/api/v1/users/7/two-factor/email', {
+      headers: { authorization: `Bearer ${bearer}`, origin: 'http://localhost' },
+    })
+    expect(token.status).toBe(403)
+    const anonymous = await app.request('/api/v1/users/7/two-factor/email', {
+      headers: { origin: 'http://localhost' },
+    })
+    expect(anonymous.status).toBe(401)
+    const badId = await call(app, 'GET', '/api/v1/users/abc/two-factor/email')
+    expect(badId.status).toBe(404)
+    expect(service.isEmailFactorEnabled).not.toHaveBeenCalled()
   })
 
   it('[security] does not touch the sign-in challenge gate it shares an interface with', async () => {
