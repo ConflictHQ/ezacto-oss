@@ -228,6 +228,19 @@ log records. The capacity view (`GET /api/v1/capacity`) sets planned seconds
 beside `users.weekly_capacity` and tracked `rounded_seconds`, by week, and flags
 a week planned beyond capacity; it never blocks one.
 
+### 2.11b `time_off` (resource planning, issue 1007)
+
+Days one person is away: `user_id`, `start_date`, `end_date` (plain local days,
+both included), `kind` (`vacation`, `sick`, `holiday`, `other`), `seconds_per_day`
+(NULL is a whole day, a fifth of the person's weekly capacity). Entered by an
+administrator; there is no request or approval state. Entries for one person may
+not overlap. Only Monday to Friday remove capacity, and the removal in a week is
+capped at that person's weekly capacity. The capacity view holds the plan against
+capacity less time off and still only flags an over-plan. Org-wide holidays and
+self-service requests are not part of this slice. Every write leaves a
+`time_off.created`, `updated` or `deleted` outbox event; account closure erases a
+closed person's rows.
+
 ### 2.12 `time_entry` — the core object
 
 | Field | Type | Notes |

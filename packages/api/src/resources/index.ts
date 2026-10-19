@@ -36,6 +36,16 @@ export {
   type UpdateAllocationRequest,
 } from './allocations.js'
 export {
+  installTimeOffRoutes,
+  serializeTimeOff,
+  type CreateTimeOffRequest,
+  type TimeOffFilters,
+  type TimeOffRecord,
+  type TimeOffRepository,
+  type TimeOffRouteOptions,
+  type UpdateTimeOffRequest,
+} from './time-off.js'
+export {
   installCalendarProposalRoutes,
   serializeCalendarProposal,
   type AcceptCalendarProposalRequest,

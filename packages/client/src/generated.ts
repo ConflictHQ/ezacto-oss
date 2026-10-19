@@ -1474,6 +1474,8 @@ export type AllocationPage = {
 export type CapacityWeek = {
   "week_start": string;
   "planned_seconds": number;
+  "time_off_seconds": number;
+  "available_capacity_seconds": number;
   "tracked_seconds": number;
   "over_allocated": boolean;
 };
@@ -1495,6 +1497,43 @@ export type Capacity = {
 export type CapacityEnvelope = {
   "data": Capacity;
   "links": Links;
+};
+
+export type TimeOff = {
+  "id": number;
+  "user_id": number;
+  "start_date": string;
+  "end_date": string;
+  "kind": "vacation" | "sick" | "holiday" | "other";
+  "seconds_per_day": number | null;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type TimeOffInput = {
+  "user_id": number;
+  "start_date": string;
+  "end_date": string;
+  "kind": "vacation" | "sick" | "holiday" | "other";
+  "seconds_per_day"?: number | null;
+};
+
+export type TimeOffPatch = {
+  "start_date"?: string;
+  "end_date"?: string;
+  "kind"?: "vacation" | "sick" | "holiday" | "other";
+  "seconds_per_day"?: number | null;
+};
+
+export type TimeOffEnvelope = {
+  "data": TimeOff;
+  "links": Links;
+};
+
+export type TimeOffPage = {
+  "data": Array<TimeOff>;
+  "links": PageLinks;
+  "page": PageMetadata;
 };
 
 export type WorkItemConnection = {
@@ -2295,6 +2334,9 @@ export type EstimateMessage = {
   "event_type": "send" | "accept" | "decline" | "re-open" | "view" | "invoice" | null;
   "delivery_status": "queued" | "sent" | "bounced" | "complained" | "failed" | null;
   "provider_message_id": string | null;
+  "contact_id": number | null;
+  "content_hash": string | null;
+  "estimate_version": number | null;
   "created_at": string;
   "updated_at": string;
 };
@@ -5460,6 +5502,54 @@ export class EzactoClient {
 
     return this.request<CapacityEnvelope>("GET", "/api/v1/capacity", {
       query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listTimeOff(args: { query?: { "cursor"?: string; "per_page"?: number; "user_id"?: number; "from"?: string; "to"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TimeOffPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimeOffPage>("GET", "/api/v1/time-off", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createTimeOff(args: { body: TimeOffInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimeOffEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimeOffEnvelope>("POST", "/api/v1/time-off", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getTimeOff(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimeOffEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimeOffEnvelope>("GET", "/api/v1/time-off/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateTimeOff(args: { "id": number; body: TimeOffPatch; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimeOffEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimeOffEnvelope>("PATCH", "/api/v1/time-off/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async deleteTimeOff(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimeOffEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TimeOffEnvelope>("DELETE", "/api/v1/time-off/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });

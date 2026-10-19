@@ -4201,3 +4201,24 @@ export const accountDeletionCompletionAudit = sqliteTable('account_deletion_comp
 export const accountRestoreQuarantine = sqliteTable('account_restore_quarantine', {
  id:integer('id').primaryKey(),quarantined:integer('quarantined',{mode:'boolean'}).notNull(),sourceDigest:text('source_digest'),evidence:text('evidence'),updatedAt:text('updated_at').notNull(),
 })
+
+/**
+ * Days a person is away, entered by an administrator (issue 1007). They reduce
+ * the capacity the planning view counts as available; they are not work, not
+ * leave management and not billing. `secondsPerDay` null is a whole day.
+ */
+export const timeOff = sqliteTable(
+  'time_off',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    startDate: text('start_date').notNull(),
+    endDate: text('end_date').notNull(),
+    kind: text('kind', { enum: ['vacation', 'sick', 'holiday', 'other'] }).notNull(),
+    secondsPerDay: integer('seconds_per_day'),
+    ...timestamps,
+  },
+  (table) => [index('time_off_user_dates').on(table.userId, table.startDate, table.endDate)],
+)

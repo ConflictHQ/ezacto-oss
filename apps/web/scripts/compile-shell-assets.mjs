@@ -8,21 +8,26 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const outputPath = resolve(root, 'src', 'generated', 'shell-assets.ts')
 const check = process.argv.includes('--check')
 
-const bundle = await build({
-  entryPoints: [resolve(root, 'src', 'shell', 'browser-entry.ts')],
-  bundle: true,
-  write: false,
-  platform: 'browser',
-  format: 'iife',
-  target: 'es2022',
-  conditions: ['browser', 'development'],
-  minify: true,
-  legalComments: 'none',
-  charset: 'utf8',
-})
-const javascript = bundle.outputFiles?.[0]?.text
-if (javascript === undefined)
-  throw new Error('shell compiler did not emit JavaScript')
+const bundleEntry = async (...entry) => {
+  const bundle = await build({
+    entryPoints: [resolve(root, 'src', ...entry)],
+    bundle: true,
+    write: false,
+    platform: 'browser',
+    format: 'iife',
+    target: 'es2022',
+    conditions: ['browser', 'development'],
+    minify: true,
+    legalComments: 'none',
+    charset: 'utf8',
+  })
+  const text = bundle.outputFiles?.[0]?.text
+  if (text === undefined)
+    throw new Error('shell compiler did not emit JavaScript')
+  return text
+}
+const javascript = await bundleEntry('shell', 'browser-entry.ts')
+const portalEstimatesJavascript = await bundleEntry('portal-estimates', 'browser-entry.ts')
 
 const [themeCss, providerCss, shellCss] = await Promise.all([
   readFile(resolve(root, 'generated', 'themes.css'), 'utf8'),
@@ -38,6 +43,7 @@ const output = [
   `export const appleSignInIcon = ${JSON.stringify('data:image/png;base64,' + appleIcon.toString('base64'))}`,
   `export const shellStylesheet = ${JSON.stringify(stylesheet)}`,
   `export const shellJavascript = ${JSON.stringify(javascript.trim())}`,
+  `export const portalEstimatesJavascript = ${JSON.stringify(portalEstimatesJavascript.trim())}`,
   '',
 ].join('\n')
 

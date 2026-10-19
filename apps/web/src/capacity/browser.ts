@@ -29,7 +29,7 @@ const localToday = (): string => {
 const cell = (person: CapacityPersonData, weekStart: string): CellContent => {
   const week = person.weeks.find((candidate) => candidate.week_start === weekStart)
   if (week === undefined) return ''
-  const text = capacityCellText(week, person.weekly_capacity_seconds)
+  const text = capacityCellText(week)
   const wrapper = document.createElement('span')
   wrapper.className = 'capacity-cell'
   if (text.flag !== null) wrapper.dataset.overAllocated = 'true'
@@ -38,6 +38,11 @@ const cell = (person: CapacityPersonData, weekStart: string): CellContent => {
   const detail = document.createElement('span')
   detail.textContent = text.detail
   wrapper.append(main, detail)
+  if (text.timeOff !== null) {
+    const away = document.createElement('span')
+    away.textContent = text.timeOff
+    wrapper.append(away)
+  }
   if (text.flag !== null) {
     const flag = document.createElement('em')
     flag.textContent = text.flag

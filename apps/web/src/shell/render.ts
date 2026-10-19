@@ -1,6 +1,6 @@
 import { renderStaffPayments } from '../staff-payments/render.js'
 import { PASSWORD_MIN_CODE_POINTS, PASSWORD_MAX_CODE_POINTS } from '@ezacto/core'
-import { appleSignInIcon, googleSignInIcon, shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
+import { appleSignInIcon, googleSignInIcon, portalEstimatesJavascript, shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
 import { iconMarkup, type IconName } from '../components/icons.js'
 import { INSTANCE_THEME_STYLESHEET_PATH } from '../instance-theme.js'
 import { defaultTheme, themeManifest } from '../theme.js'
@@ -1243,10 +1243,18 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
 </html>`
 }
 
-export const webAssets = {
+/**
+ * Annotated, not inferred: each generated bundle is a string literal type the
+ * length of the bundle, and an inferred type here carries all of them into the
+ * declaration file, which `tsc` refuses past a million characters (TS7056).
+ */
+export const webAssets: Readonly<
+  Record<'stylesheet' | 'javascript' | 'portalEstimatesJavascript', string>
+> = {
   stylesheet: shellStylesheet,
   javascript: shellJavascript,
-} as const
+  portalEstimatesJavascript,
+}
 
 /** Standalone confirmation: no workspace session authorizes Apple revocation. */
 export const renderAppleDisconnect = (options: {

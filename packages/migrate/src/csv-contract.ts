@@ -84,9 +84,23 @@ const emptyResult = (bytes: Uint8Array, fileErrors: CsvIssue[]): ParsedCsv => ({
   bytes: bytes.byteLength,
 })
 
-interface RawRecord {
+export interface RawRecord {
   line: number
   fields: string[]
+}
+
+/**
+ * A vendor adapter: turns the records of a vendor's export (header first) into
+ * records of this contract, header first, keeping each record's physical line so
+ * every report still points at the vendor's own file. A record it cannot turn
+ * into a row is dropped and listed in `invalid`; a file it cannot read at all is
+ * a file error.
+ */
+export type CsvAdapter = (records: readonly RawRecord[]) => {
+  records: RawRecord[]
+  fileErrors: CsvIssue[]
+  invalid: CsvIssue[]
+  warnings: CsvIssue[]
 }
 
 /**
@@ -365,7 +379,7 @@ const parseRow = (
  * breaks the contract is listed in `invalid` with its line while the rest are
  * still read.
  */
-export const parseCsv = (bytes: Uint8Array): ParsedCsv => {
+export const parseCsv = (bytes: Uint8Array, adapter?: CsvAdapter): ParsedCsv => {
   if (bytes.byteLength > MAX_CSV_BYTES) {
     // Refused before it is decoded or hashed: the size is the whole answer.
     return {
@@ -398,17 +412,27 @@ export const parseCsv = (bytes: Uint8Array): ParsedCsv => {
       { line: 0, code: 'binary_content', message: 'The file contains NUL bytes; it is not a CSV.' },
     ])
   }
-  const { records, error } = readRecords(text)
+  const { records: read, error } = readRecords(text)
   if (error !== null) return emptyResult(bytes, [error])
-  if (records.length === 0) {
+  if (read.length === 0) {
     return emptyResult(bytes, [
       { line: 1, code: 'empty_file', message: 'The file has no header row.' },
     ])
   }
 
-  const header = records[0]!
+  const dataRows = read.length - 1
   const fileErrors: CsvIssue[] = []
+  const invalid: CsvIssue[] = []
   const warnings: CsvIssue[] = []
+  let records: readonly RawRecord[] = read
+  if (adapter !== undefined) {
+    const adapted = adapter(read)
+    if (adapted.fileErrors.length > 0) return emptyResult(bytes, adapted.fileErrors)
+    records = adapted.records
+    invalid.push(...adapted.invalid)
+    warnings.push(...adapted.warnings)
+  }
+  const header = records[0]!
   const columns = new Map<string, number>()
   if (header.fields.length > MAX_CSV_COLUMNS) {
     fileErrors.push({
@@ -452,7 +476,7 @@ export const parseCsv = (bytes: Uint8Array): ParsedCsv => {
       message: 'Give an hours column, or both start_time and end_time columns.',
     })
   }
-  if (records.length - 1 > MAX_CSV_ROWS) {
+  if (dataRows > MAX_CSV_ROWS) {
     fileErrors.push({
       line: 1,
       code: 'too_many_rows',
@@ -462,7 +486,6 @@ export const parseCsv = (bytes: Uint8Array): ParsedCsv => {
   if (fileErrors.length > 0) return emptyResult(bytes, fileErrors)
 
   const rows: CsvRow[] = []
-  const invalid: CsvIssue[] = []
   for (const record of records.slice(1)) {
     if (record.fields.length !== header.fields.length) {
       invalid.push({
@@ -482,7 +505,7 @@ export const parseCsv = (bytes: Uint8Array): ParsedCsv => {
     rows,
     invalid,
     warnings,
-    dataRows: records.length - 1,
+    dataRows,
     sha256: createHash('sha256').update(bytes).digest('hex'),
     bytes: bytes.byteLength,
   }
