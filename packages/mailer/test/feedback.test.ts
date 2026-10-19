@@ -53,6 +53,7 @@ const store = (): EmailLogStore => {
       complained: 5,
       failed: 15,
     })),
+    countByStatusPerSender: vi.fn(async () => []),
     list: vi.fn(async () => []),
   }
 }

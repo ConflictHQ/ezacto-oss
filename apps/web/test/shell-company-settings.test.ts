@@ -181,6 +181,7 @@ describe('company settings', () => {
         bounce_rate_ppm: 7_200,
         complaint_rate_ppm: 2_400,
       },
+      identities: [],
     })),
   })
 
