@@ -43,6 +43,7 @@ import {
   createTimesheetLockPolicyRepository,
   createTeamRepository,
   createD1EmailLogStore,
+  createD1EmailFeedbackLedger,
   createD1EmailConfigurationStore,
   createD1PasswordAuthService,
   createD1SessionStore,
@@ -159,6 +160,7 @@ import type {
 import {
   MailgunMailer,
   SenderIdentityUnavailableError,
+  createMailgunFeedbackService,
   SesMailer,
   configuredEmailSender,
   createRecipientAllowlistQueue,
@@ -615,6 +617,7 @@ type ProviderCredentials = Pick<
   | "BILL_REPLY_TO_USER_ID"
   | "STRIPE_API_KEY"
   | "STRIPE_WEBHOOK_SECRET"
+  | "MAILGUN_WEBHOOK_SIGNING_KEY"
   | "DEEL_TOKEN"
   | "DEEL_SYNC_START_DATE"
 >;
@@ -1350,6 +1353,19 @@ export const createRuntimeServices = async (
     ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
     ...(wise === null ? {} : { wise: wise.service }),
     ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
+    // Mailgun's event webhook is composed only where the signing key is set.
+    // Without it the route is not mounted and answers 404, so an unsigned post
+    // is never read.
+    ...(credentials.MAILGUN_WEBHOOK_SIGNING_KEY === undefined ||
+    credentials.MAILGUN_WEBHOOK_SIGNING_KEY === ""
+      ? {}
+      : {
+          mailgunFeedback: createMailgunFeedbackService({
+            signingKey: credentials.MAILGUN_WEBHOOK_SIGNING_KEY,
+            log: emailLog,
+            ledger: createD1EmailFeedbackLedger(database),
+          }),
+        }),
     paymentRuns,
     staffPayments: createStaffPaymentStore(drizzle),
     myPayments: createMyPaymentsStore(drizzle),

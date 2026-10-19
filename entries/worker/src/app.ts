@@ -101,6 +101,7 @@ import {
   installInvoiceTimeClaimRoutes,
   installStripeRoutes,
   installStripeWebhookRoute,
+  installMailgunWebhookRoute,
   installQuickBooksRoutes,
   installQuickBooksWebhookRoute,
   installWiseRoutes,
@@ -191,6 +192,7 @@ import {
 import type {
   EmailLogPager,
   EmailLogStore,
+  MailgunFeedbackService,
   QueuedEmailJob,
   SenderBoundQueuedMailer,
 } from '@ezacto/mailer'
@@ -356,6 +358,11 @@ export type WorkerEnv = AppEnv & {
   MAILGUN_API_KEY?: string
   MAILGUN_DOMAIN?: string
   MAILGUN_REGION?: 'us' | 'eu'
+  /**
+   * Mailgun's HTTP webhook signing key (not the API key). Without it the
+   * /webhooks/mailgun route is not mounted, so no unsigned post is accepted.
+   */
+  MAILGUN_WEBHOOK_SIGNING_KEY?: string
   MAIL_FROM?: string
 }
 
@@ -492,6 +499,8 @@ export interface RuntimeServices {
    */
   wiseWebhook?: NonNullable<WiseRuntime["webhook"]>
   stripe?: StripeService
+  /** Mailgun's bounce, complaint and delivery events; see the route. */
+  mailgunFeedback?: MailgunFeedbackService
   invoiceTimeClaims?: InvoiceTimeClaimService
   invoiceDocumentPreference?: InvoiceDocumentPreferenceService
   /** The client's sending profile, the organization's copies, the dialog's defaults. */
@@ -1055,6 +1064,11 @@ export const createApp = (
       // surface and the signature is the authorisation.
       if (services?.stripe !== undefined) {
         installStripeWebhookRoute(app, services.stripe)
+      }
+      // Mailgun has no session with us either, and the signature is the
+      // authorisation. Mounted only where the signing key is configured.
+      if (services?.mailgunFeedback !== undefined) {
+        installMailgunWebhookRoute(app, services.mailgunFeedback)
       }
       // Intuit has no session with us either, and the signature is the
       // authorisation. It lived under /api/v1 until #739, where the

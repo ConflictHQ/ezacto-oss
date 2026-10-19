@@ -84,6 +84,7 @@ export {
   type InstanceThemeRecord,
   type InstanceThemeSurface,
 } from './instance-theme.js'
+export { installMailgunWebhookRoute } from './mailgun-webhook.js'
 export {
   installStripeRoutes,
   installStripeWebhookRoute,
