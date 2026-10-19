@@ -5,7 +5,13 @@ import { createContainerDatabase, createD1Database } from '../../db/src/adapters
 import { createGeneralResourceRepository } from '../../db/src/general-resources.js'
 import { createTeamRepository } from '../../db/src/team.js'
 import { migrateContainer, migrateD1 } from '../../db/src/migrate.js'
-import { createApiApp, installGeneralResourceRoutes, installHarvestV2Routes } from '../src/index.js'
+import { DrizzleTrackedResourceRepository } from '../../db/src/tracked-resource-repository.js'
+import {
+  createApiApp,
+  installGeneralResourceRoutes,
+  installHarvestV2Routes,
+  installTrackedResourceRoutes,
+} from '../src/index.js'
 import type { ApiAuthentication } from '../src/auth.js'
 import type { UserProfile } from '../src/context.js'
 
@@ -24,10 +30,19 @@ const bearers: Readonly<
   admin: {
     userId: 1,
     profile: 'administrator',
-    scopes: ['clients:read', 'projects:read', 'team:read'],
+    scopes: ['clients:read', 'projects:read', 'team:read', 'time_entries:read'],
+  },
+  'admin-invoices': {
+    userId: 1,
+    profile: 'administrator',
+    scopes: ['clients:read', 'projects:read', 'team:read', 'time_entries:read', 'invoices:read'],
   },
   'clients-only': { userId: 1, profile: 'administrator', scopes: ['clients:read'] },
-  'member-ada': { userId: 2, profile: 'member', scopes: ['clients:read', 'projects:read'] },
+  'member-ada': {
+    userId: 2,
+    profile: 'member',
+    scopes: ['clients:read', 'projects:read', 'time_entries:read'],
+  },
 }
 
 const authentication: ApiAuthentication = {
@@ -64,28 +79,41 @@ interface Harness {
   native(path: string, init?: RequestInit): Promise<Response>
   shim(path: string, token?: string | null, init?: RequestInit): Promise<Response>
   setTeamModuleEnabled(enabled: boolean): void
+  /** Run SQL against the organization's database, for state the API cannot reach. */
+  exec(statement: string): Promise<void>
   close(): Promise<void>
 }
 
 const compose = (
-  repository: ReturnType<typeof createGeneralResourceRepository>,
-  teamRepository: ReturnType<typeof createTeamRepository>,
+  database: Parameters<typeof createGeneralResourceRepository>[0],
+  exec: (statement: string) => Promise<void>,
   close: () => Promise<void>,
 ): Harness => {
+  const repository = createGeneralResourceRepository(database)
+  const teamRepository = createTeamRepository(database)
+  const tracked = new DrizzleTrackedResourceRepository(database, { isLocked: async () => false })
   let teamModuleEnabled = true
   const app = createApiApp({
     authentication,
-    installApi: (api) =>
+    installApi: (api) => {
       installGeneralResourceRoutes(api, {
         repository,
         cursorSigningKey: signingKey,
         clock: () => now,
         isExpensesModuleEnabled: async () => true,
         teamRepository,
-      }),
+      })
+      installTrackedResourceRoutes(api, {
+        repository: tracked,
+        clock: { now: () => ({ instant: now, date: '2026-08-28', time: '12:00' }) },
+        cursorSigningKey: signingKey,
+        isExpensesModuleEnabled: async () => true,
+      })
+    },
     installHarvestV2: (harvest) =>
       installHarvestV2Routes(harvest, {
         repository,
+        timeEntries: tracked,
         isTeamModuleEnabled: async () => teamModuleEnabled,
         clock: () => now,
       }),
@@ -104,6 +132,7 @@ const compose = (
     setTeamModuleEnabled: (enabled) => {
       teamModuleEnabled = enabled
     },
+    exec,
     close,
   }
 }
@@ -115,9 +144,15 @@ const containerHarness = async (): Promise<Harness> => {
     .prepare('INSERT INTO organizations (name, modules, created_at, updated_at) VALUES (?, ?, ?, ?)')
     .run('Test org', '{}', now, now)
   const database = createContainerDatabase(sqlite)
-  return compose(createGeneralResourceRepository(database), createTeamRepository(database), async () => {
-    sqlite.close()
-  })
+  return compose(
+    database,
+    async (statement) => {
+      sqlite.exec(statement)
+    },
+    async () => {
+      sqlite.close()
+    },
+  )
 }
 
 const d1Harness = async (): Promise<Harness> => {
@@ -133,8 +168,12 @@ const d1Harness = async (): Promise<Harness> => {
     .bind('Test org', '{}', now, now)
     .run()
   const database = createD1Database(d1)
-  return compose(createGeneralResourceRepository(database), createTeamRepository(database), () =>
-    miniflare.dispose(),
+  return compose(
+    database,
+    async (statement) => {
+      await d1.exec(statement.replaceAll('\n', ' '))
+    },
+    () => miniflare.dispose(),
   )
 }
 
@@ -423,5 +462,215 @@ describe.each([
     const body = (await response.json()) as { data: Array<{ id: number }>; page: { next_cursor: string | null } }
     expect(body.data.map((client) => client.id)).toEqual([ids.clientA])
     expect(body.page.next_cursor).not.toBeNull()
+  })
+
+  describe('time entries and project assignments', () => {
+    let taskOne = 0
+    let entries: { duration: number; startEnd: number }
+
+    const post = async (path: string, body: unknown): Promise<number> =>
+      created(await harness.native(path, json(body)))
+
+    beforeEach(async () => {
+      const tasks = await page<'tasks'>(await harness.shim('/tasks'))
+      taskOne = tasks.tasks[0]!.id as number
+      const taskTwo = tasks.tasks[1]!.id as number
+      await post('/task-assignments', {
+        project_id: ids.projectA,
+        task_id: taskOne,
+        hourly_rate_cents: 9_500,
+        budget_seconds: 7_200,
+      })
+      await post('/task-assignments', { project_id: ids.projectA, task_id: taskTwo, billable: false })
+      const duration = await post('/time-entries', {
+        user_id: ids.ada,
+        project_id: ids.projectA,
+        task_id: taskOne,
+        spent_date: '2026-08-27',
+        seconds: 5_400,
+        notes: 'Invented note.',
+      })
+      await harness.exec("UPDATE organizations SET time_entry_mode = 'start_end', clock = '12h'")
+      const startEnd = await post('/time-entries', {
+        user_id: ids.ada,
+        project_id: ids.projectA,
+        task_id: taskOne,
+        spent_date: '2026-08-26',
+        started_time: '08:05',
+        ended_time: '17:30',
+      })
+      entries = { duration, startEnd }
+    })
+
+    const list = (query = '', token = 'admin') => harness.shim(`/time_entries${query}`, token)
+
+    it('needs a bearer with the time_entries:read scope', async () => {
+      expect((await list('', 'clients-only')).status).toBe(403)
+      expect((await harness.shim('/time_entries', null)).status).toBe(401)
+      expect((await harness.shim(`/time_entries/${entries.duration}`, 'clients-only')).status).toBe(403)
+    })
+
+    it('lists every person\'s entries for an administrator, in the Harvest envelope', async () => {
+      const body = await page<'time_entries'>(await list())
+      expect(body).toMatchObject({ per_page: 2000, total_pages: 1, total_entries: 2, page: 1 })
+      expect(body.links.first).toBe('/harvest/v2/time_entries?page=1&per_page=2000')
+      expect(body.time_entries.map((entry) => entry.id)).toEqual([entries.duration, entries.startEnd])
+    })
+
+    it('renders the start/end entry in the organization clock with embedded rows', async () => {
+      const body = await page<'time_entries'>(await list(`?user_id=${ids.ada}&from=2026-08-26&to=2026-08-26`))
+      expect(body.total_entries).toBe(1)
+      expect(body.time_entries[0]).toEqual({
+        id: entries.startEnd,
+        spent_date: '2026-08-26',
+        hours: 9.42,
+        hours_without_timer: 9.42,
+        rounded_hours: 9.42,
+        notes: null,
+        is_locked: false,
+        locked_reason: null,
+        is_closed: false,
+        approval_status: 'unsubmitted',
+        is_billed: null,
+        timer_started_at: null,
+        started_time: '8:05am',
+        ended_time: '5:30pm',
+        is_running: false,
+        billable: true,
+        budgeted: false,
+        // The project bills by project, so the entry took the project's rate.
+        billable_rate: 150,
+        cost_rate: 80,
+        created_at: '2026-08-28T12:00:00Z',
+        updated_at: '2026-08-28T12:00:00Z',
+        user: { id: ids.ada, name: 'Sample Ada' },
+        client: { id: ids.clientA, name: 'Sample Client A', currency: 'USD' },
+        project: { id: ids.projectA, name: 'Sample Project A', code: 'SMP-1' },
+        task: { id: taskOne, name: 'Sample Task One' },
+        user_assignment: expect.objectContaining({ is_active: true, is_project_manager: false }),
+        task_assignment: expect.objectContaining({ billable: true, hourly_rate: 95, budget: 2 }),
+        invoice: null,
+        external_reference: null,
+      })
+    })
+
+    it('shows the same entry on a 24h clock once the organization changes it', async () => {
+      await harness.exec("UPDATE organizations SET clock = '24h'")
+      const entry = await (await harness.shim(`/time_entries/${entries.startEnd}`)).json()
+      expect(entry).toMatchObject({ started_time: '08:05', ended_time: '17:30' })
+    })
+
+    it('renders a duration-mode entry with hours and no clock times', async () => {
+      const entry = (await (await harness.shim(`/time_entries/${entries.duration}`)).json()) as Record<string, unknown>
+      expect(entry).toMatchObject({
+        hours: 1.5,
+        notes: 'Invented note.',
+        started_time: null,
+        ended_time: null,
+        is_running: false,
+      })
+    })
+
+    it('pages by offset and filters in the repository', async () => {
+      const second = await page<'time_entries'>(await list('?per_page=1&page=2'))
+      expect(second.time_entries.map((entry) => entry.id)).toEqual([entries.startEnd])
+      expect(second).toMatchObject({ total_pages: 2, total_entries: 2, next_page: null, previous_page: 1 })
+      const beyond = await page<'time_entries'>(await list('?per_page=1&page=3'))
+      expect(beyond.time_entries).toEqual([])
+      const byProject = await page<'time_entries'>(await list(`?project_id=${ids.projectB}`))
+      expect(byProject.total_entries).toBe(0)
+      const byDate = await page<'time_entries'>(await list('?from=2026-08-27'))
+      expect(byDate.time_entries.map((entry) => entry.id)).toEqual([entries.duration])
+      expect((await list('?from=2026-02-30')).status).toBe(422)
+    })
+
+    it('shows a member only their own time, with no rates unless the organization allows it', async () => {
+      // The member is Ada (id 2): her entries only, and an id that is not hers is not found.
+      const own = await page<'time_entries'>(await list('', 'member-ada'))
+      expect(own.time_entries.map((entry) => entry.id)).toEqual([entries.duration, entries.startEnd])
+      expect(own.time_entries[0]).toMatchObject({ billable_rate: null, cost_rate: null })
+      expect((await list(`?user_id=${ids.owner}`, 'member-ada')).status).toBe(403)
+      const mine = await harness.shim(`/time_entries/${entries.duration}`, 'member-ada')
+      expect(mine.status).toBe(200)
+    })
+
+    it('hides invoice state without the invoices:read scope and refuses the filters', async () => {
+      expect((await list('?is_billed=true')).status).toBe(403)
+      expect((await list('?is_billed=false', 'admin-invoices')).status).toBe(200)
+      const body = await page<'time_entries'>(await list('', 'admin'))
+      expect(body.time_entries.every((entry) => entry.is_billed === null && entry.invoice === null)).toBe(true)
+    })
+
+    it('embeds the invoice number for a billed entry and says it is locked', async () => {
+      await harness.exec(`INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date, state,
+        foregone_billable_cents, created_at, updated_at)
+        VALUES (900, ${ids.clientA}, 'SMP-0042', 'USD', '2026-08-28', '2026-09-28', 'open', 0,
+        '${now}', '${now}');
+        UPDATE time_entries SET invoice_id = 900 WHERE id = ${entries.duration}`)
+      const billed = (await (await harness.shim(`/time_entries/${entries.duration}`, 'admin-invoices')).json()) as Record<string, unknown>
+      expect(billed).toMatchObject({
+        is_billed: true,
+        is_locked: true,
+        locked_reason: 'Invoiced',
+        invoice: { id: 900, number: 'SMP-0042' },
+      })
+      const hidden = (await (await harness.shim(`/time_entries/${entries.duration}`, 'admin')).json()) as Record<string, unknown>
+      expect(hidden).toMatchObject({ is_billed: null, invoice: null, locked_reason: 'This record is locked.' })
+      const billedList = await page<'time_entries'>(await list('?is_billed=true', 'admin-invoices'))
+      expect(billedList.time_entries.map((entry) => entry.id)).toEqual([entries.duration])
+    })
+
+    it('answers 404 for an unknown or malformed entry id', async () => {
+      for (const path of ['/time_entries/9999', '/time_entries/abc', '/time_entries/0'])
+        expect((await harness.shim(path)).status, path).toBe(404)
+    })
+
+    it('serves the bootstrap project assignments of the caller and of a named user', async () => {
+      const mine = await page<'project_assignments'>(await harness.shim('/users/me/project_assignments', 'member-ada'))
+      expect(mine.total_entries).toBe(1)
+      expect(mine.links.first).toBe('/harvest/v2/users/me/project_assignments?page=1&per_page=2000')
+      expect(mine.project_assignments[0]).toMatchObject({
+        is_project_manager: false,
+        is_active: true,
+        use_default_rates: true,
+        // Rates are not a member's to read.
+        hourly_rate: null,
+        budget: null,
+        project: { id: ids.projectA, name: 'Sample Project A', code: 'SMP-1' },
+        client: { id: ids.clientA, name: 'Sample Client A', currency: 'USD' },
+      })
+      expect(mine.project_assignments[0]!.task_assignments).toEqual([
+        expect.objectContaining({ billable: true, hourly_rate: null, budget: 2, task: { id: taskOne, name: 'Sample Task One' } }),
+        expect.objectContaining({ billable: false, task: expect.objectContaining({ name: 'Sample Task Two' }) }),
+      ])
+      const named = await page<'project_assignments'>(await harness.shim(`/users/${ids.ada}/project_assignments`))
+      expect(named.project_assignments[0]!.task_assignments).toEqual([
+        expect.objectContaining({ hourly_rate: 95 }),
+        expect.objectContaining({ hourly_rate: null }),
+      ])
+    })
+
+    it('pages and filters assignments, and refuses what the caller may not reach', async () => {
+      const inactive = await page<'project_assignments'>(
+        await harness.shim(`/users/${ids.ada}/project_assignments?is_active=false`),
+      )
+      expect(inactive.total_entries).toBe(0)
+      const beyond = await page<'project_assignments'>(
+        await harness.shim(`/users/${ids.ada}/project_assignments?per_page=1&page=2`),
+      )
+      expect(beyond).toMatchObject({ total_entries: 1, total_pages: 1, project_assignments: [] })
+      expect((await harness.shim(`/users/${ids.ada}/project_assignments?page=0`)).status).toBe(422)
+      expect((await harness.shim('/users/9999/project_assignments')).status).toBe(404)
+      expect((await harness.shim('/users/abc/project_assignments')).status).toBe(404)
+      // Another person's assignments are Team data: not a member's to list.
+      expect((await harness.shim(`/users/${ids.owner}/project_assignments`, 'member-ada')).status).toBe(403)
+      expect((await harness.shim('/users/me/project_assignments', 'clients-only')).status).toBe(403)
+      // With the Team module off a person still reads their own, and nobody else's.
+      harness.setTeamModuleEnabled(false)
+      expect((await harness.shim('/users/me/project_assignments', 'member-ada')).status).toBe(200)
+      const refused = await harness.shim(`/users/${ids.ada}/project_assignments`)
+      expect(refused.status).toBe(403)
+      expect(await refused.json()).toMatchObject({ error: { code: 'module_disabled' } })
+    })
   })
 })

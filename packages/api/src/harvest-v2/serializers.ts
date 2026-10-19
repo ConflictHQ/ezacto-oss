@@ -1,4 +1,5 @@
 import type { GeneralResourceRecord } from '@ezacto/core'
+import type { TimeEntryRecord } from '../resources/tracked-repository.js'
 
 /**
  * Canonical record -> Harvest v2 object. Every compat quirk (decimal hours and
@@ -228,3 +229,234 @@ export const serializeHarvestUser = (
   created_at: harvestInstant(user.createdAt),
   updated_at: harvestInstant(user.updatedAt),
 })
+
+/**
+ * A canonical 24h `HH:MM` as the organization's clock shows it. Harvest renders
+ * a 12h clock as "8:00am" (no leading zero, lower-case meridiem, midnight as
+ * 12:00am, noon as 12:00pm); a 24h clock keeps the canonical form.
+ */
+export const harvestClockTime = (time: string | null, clock: '12h' | '24h'): string | null => {
+  if (time === null) return null
+  const parts = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time)
+  if (parts === null)
+    throw new Error(`Harvest shim: ${JSON.stringify(time)} is not a canonical HH:MM time`)
+  if (clock === '24h') return time
+  const hour = Number(parts[1])
+  return `${hour % 12 === 0 ? 12 : hour % 12}:${parts[2]}${hour < 12 ? 'am' : 'pm'}`
+}
+
+const personName = (user: GeneralResourceRecord): string =>
+  `${requiredText(user, 'firstName')} ${requiredText(user, 'lastName')}`.trim()
+
+export interface HarvestUserAssignmentSummary {
+  id: number
+  is_project_manager: boolean
+  is_active: boolean
+  budget: number | null
+  created_at: string
+  updated_at: string
+  hourly_rate: number | null
+}
+
+export interface HarvestTaskAssignmentSummary {
+  id: number
+  billable: boolean
+  is_active: boolean
+  created_at: string
+  updated_at: string
+  hourly_rate: number | null
+  budget: number | null
+}
+
+/** The embedded user assignment; the rate is null where the viewer may not read it. */
+export const serializeHarvestUserAssignmentSummary = (
+  assignment: GeneralResourceRecord,
+): HarvestUserAssignmentSummary => ({
+  id: assignment.id,
+  is_project_manager: flag(assignment, 'isProjectManager'),
+  is_active: flag(assignment, 'isActive'),
+  budget: harvestHours(number(assignment, 'budgetSeconds')),
+  created_at: harvestInstant(assignment.createdAt),
+  updated_at: harvestInstant(assignment.updatedAt),
+  hourly_rate: harvestMoney(number(assignment, 'hourlyRateCents')),
+})
+
+/** The embedded task assignment; the rate is null where the viewer may not read it. */
+export const serializeHarvestTaskAssignmentSummary = (
+  assignment: GeneralResourceRecord,
+): HarvestTaskAssignmentSummary => ({
+  id: assignment.id,
+  billable: flag(assignment, 'billable'),
+  is_active: flag(assignment, 'isActive'),
+  created_at: harvestInstant(assignment.createdAt),
+  updated_at: harvestInstant(assignment.updatedAt),
+  hourly_rate: harvestMoney(number(assignment, 'hourlyRateCents')),
+  budget: harvestHours(number(assignment, 'budgetSeconds')),
+})
+
+export interface HarvestTimeEntry {
+  id: number
+  spent_date: string
+  hours: number
+  hours_without_timer: number
+  rounded_hours: number
+  notes: string | null
+  is_locked: boolean
+  locked_reason: string | null
+  is_closed: boolean
+  approval_status: string
+  is_billed: boolean | null
+  timer_started_at: string | null
+  started_time: string | null
+  ended_time: string | null
+  is_running: boolean
+  billable: boolean
+  budgeted: boolean
+  billable_rate: number | null
+  cost_rate: number | null
+  created_at: string
+  updated_at: string
+  user: { id: number; name: string }
+  client: { id: number; name: string; currency: string }
+  project: { id: number; name: string; code: string | null }
+  task: { id: number; name: string }
+  user_assignment: HarvestUserAssignmentSummary
+  task_assignment: HarvestTaskAssignmentSummary
+  invoice: { id: number; number: string } | null
+  external_reference: {
+    id: string
+    group_id: string | null
+    account_id: string | null
+    permalink: string | null
+  } | null
+}
+
+/**
+ * What an entry does not carry. The records are the rows it points at, already
+ * stripped of what the viewer may not read; the rates, lock reason and invoice
+ * are decided by the route the way the native serializer decides them.
+ */
+export interface HarvestTimeEntryContext {
+  clock: '12h' | '24h'
+  user: GeneralResourceRecord
+  client: GeneralResourceRecord
+  project: GeneralResourceRecord
+  task: GeneralResourceRecord
+  userAssignment: GeneralResourceRecord
+  taskAssignment: GeneralResourceRecord
+  billableRateCents: number | null
+  costRateCents: number | null
+  /** Null when the viewer may not read invoices, as the native API omits it. */
+  isBilled: boolean | null
+  lockedReason: string | null
+  invoice: { id: number; number: string } | null
+}
+
+const externalReference = (
+  reference: Record<string, unknown> | null,
+): HarvestTimeEntry['external_reference'] => {
+  if (reference === null) return null
+  const id = reference.id
+  if (typeof id !== 'string' && typeof id !== 'number') return null
+  const optional = (value: unknown): string | null =>
+    typeof value === 'string' || typeof value === 'number' ? String(value) : null
+  return {
+    id: String(id),
+    group_id: optional(reference.group_id),
+    account_id: optional(reference.account_id),
+    permalink: optional(reference.permalink),
+  }
+}
+
+/**
+ * Both entry modes render through here: a duration-mode entry carries hours and
+ * maybe a timer start and no clock times; a start/end entry carries clock times,
+ * shown in the organization's clock. `hours` is the stored seconds whatever the
+ * mode, so a running start/end entry reports what was stored, not a figure up
+ * to now.
+ */
+export const serializeHarvestTimeEntry = (
+  entry: Readonly<TimeEntryRecord>,
+  context: HarvestTimeEntryContext,
+): HarvestTimeEntry => ({
+  id: entry.id,
+  spent_date: entry.spentDate,
+  hours: harvestHours(entry.seconds) ?? 0,
+  hours_without_timer: harvestHours(entry.secondsWithoutTimer) ?? 0,
+  rounded_hours: harvestHours(entry.roundedSeconds) ?? 0,
+  notes: entry.notes,
+  is_locked: entry.state.isLocked,
+  locked_reason: context.lockedReason,
+  // Harvest's deprecated is_closed is the approved state; both are rendered.
+  is_closed: entry.state.approvalStatus === 'approved',
+  approval_status: entry.state.approvalStatus,
+  is_billed: context.isBilled,
+  timer_started_at: entry.timerStartedAt === null ? null : harvestInstant(entry.timerStartedAt),
+  started_time: harvestClockTime(entry.startedTime, context.clock),
+  ended_time: harvestClockTime(entry.endedTime, context.clock),
+  is_running:
+    entry.timerStartedAt !== null || (entry.startedTime !== null && entry.endedTime === null),
+  billable: entry.billable,
+  budgeted: entry.budgeted,
+  billable_rate: harvestMoney(context.billableRateCents),
+  cost_rate: harvestMoney(context.costRateCents),
+  created_at: harvestInstant(entry.createdAt),
+  updated_at: harvestInstant(entry.updatedAt),
+  user: { id: context.user.id, name: personName(context.user) },
+  client: {
+    id: context.client.id,
+    name: requiredText(context.client, 'name'),
+    currency: requiredText(context.client, 'currency'),
+  },
+  project: {
+    id: context.project.id,
+    name: requiredText(context.project, 'name'),
+    code: text(context.project, 'code'),
+  },
+  task: { id: context.task.id, name: requiredText(context.task, 'name') },
+  user_assignment: serializeHarvestUserAssignmentSummary(context.userAssignment),
+  task_assignment: serializeHarvestTaskAssignmentSummary(context.taskAssignment),
+  invoice: context.invoice,
+  external_reference: externalReference(entry.externalRef),
+})
+
+export interface HarvestProjectAssignment extends HarvestUserAssignmentSummary {
+  use_default_rates: boolean
+  project: { id: number; name: string; code: string | null }
+  client: { id: number; name: string; currency: string }
+  task_assignments: Array<HarvestTaskAssignmentSummary & { task: { id: number; name: string } }>
+}
+
+/** A person's assignment to a project with the project's task assignments embedded. */
+export const serializeHarvestProjectAssignment = (
+  assignment: GeneralResourceRecord,
+  project: GeneralResourceRecord,
+  client: GeneralResourceRecord,
+  taskAssignments: ReadonlyArray<{ assignment: GeneralResourceRecord; task: GeneralResourceRecord }>,
+): HarvestProjectAssignment => {
+  const summary = serializeHarvestUserAssignmentSummary(assignment)
+  return {
+    id: summary.id,
+    is_project_manager: summary.is_project_manager,
+    is_active: summary.is_active,
+    use_default_rates: flag(assignment, 'useDefaultRates'),
+    budget: summary.budget,
+    created_at: summary.created_at,
+    updated_at: summary.updated_at,
+    hourly_rate: summary.hourly_rate,
+    project: {
+      id: project.id,
+      name: requiredText(project, 'name'),
+      code: text(project, 'code'),
+    },
+    client: {
+      id: client.id,
+      name: requiredText(client, 'name'),
+      currency: requiredText(client, 'currency'),
+    },
+    task_assignments: taskAssignments.map(({ assignment: taskAssignment, task }) => ({
+      ...serializeHarvestTaskAssignmentSummary(taskAssignment),
+      task: { id: task.id, name: requiredText(task, 'name') },
+    })),
+  }
+}

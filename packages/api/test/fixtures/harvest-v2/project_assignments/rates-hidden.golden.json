@@ -1,0 +1,35 @@
+{
+  "id": 501,
+  "is_project_manager": false,
+  "is_active": true,
+  "use_default_rates": false,
+  "budget": 20,
+  "created_at": "2024-01-05T10:00:00Z",
+  "updated_at": "2024-03-09T16:45:30Z",
+  "hourly_rate": null,
+  "project": {
+    "id": 301,
+    "name": "Sample Rollout",
+    "code": "SMP-1"
+  },
+  "client": {
+    "id": 101,
+    "name": "Sample Widgets Ltd",
+    "currency": "USD"
+  },
+  "task_assignments": [
+    {
+      "id": 601,
+      "billable": true,
+      "is_active": true,
+      "created_at": "2024-01-05T10:00:00Z",
+      "updated_at": "2024-03-09T16:45:30Z",
+      "hourly_rate": null,
+      "budget": 10,
+      "task": {
+        "id": 201,
+        "name": "Sample Design"
+      }
+    }
+  ]
+}
