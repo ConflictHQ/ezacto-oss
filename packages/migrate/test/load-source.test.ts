@@ -42,6 +42,7 @@ const memorySource = async (
       sizes.add(resource)
       return held(resource).length
     },
+    fingerprint: async (resource) => `${held(resource).length}`,
     describe: (resource) => `memory:${resource}`,
   }
   return { source, reads, sizes }
@@ -75,7 +76,9 @@ const dump = (path: string): Record<string, string[]> => {
 describe('the loader reads rows only through its source (#409)', () => {
   it('[unit] the loader builds no raw path of its own', async () => {
     const text = await readFile(join(sourceRoot, 'load.ts'), 'utf8')
-    expect(text).not.toMatch(/join\(\s*snapshotDir,\s*'raw',(?!\s*'\.load-index')/u)
+    expect(text).not.toMatch(/join\(\s*snapshotDir,\s*'raw',/u)
+    // Nor does it know where the child index lives: that is the index store's (slice 2).
+    expect(text).not.toContain('.load-index')
   })
 
   describe('against the sanitized fixture', () => {
