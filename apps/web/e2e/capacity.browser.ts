@@ -36,7 +36,9 @@ test('[e2e:capacity] shows the signed-in person against their weekly capacity, r
   await expect(rows.first()).toBeVisible()
   // Zero planned against a weekly capacity; a plan beyond capacity would say
   // "Over-allocated" here, and nothing is planned.
-  await expect(rows.first()).toContainText(/\b0h of \d/)
+  // No \b: the cells' text runs together in the DOM ("Owner0h of 35h"), so there
+  // is no word boundary before the figure.
+  await expect(rows.first()).toContainText(/0h of \d/)
   await expect(grid).not.toContainText('Over-allocated')
   await expect(page.locator('[data-capacity-status]')).toHaveText('')
 
