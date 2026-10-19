@@ -1,0 +1,9 @@
+{
+  "id": 103,
+  "name": "Sample Café Ltd",
+  "address": "",
+  "currency": "GBP",
+  "isActive": true,
+  "createdAt": "2024-01-05T10:00:00.123Z",
+  "updatedAt": "2024-03-09T16:45:30.987Z"
+}
