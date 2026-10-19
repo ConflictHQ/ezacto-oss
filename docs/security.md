@@ -124,6 +124,44 @@ would be a free measurement of a shared budget.
 
 An accepted code returns the budget to full.
 
+### The emailed code
+
+A second factor for people who will not set up an authenticator app. It sits
+beside TOTP and recovery codes: a person may have any of them, and the challenge
+accepts whichever they hold. It counts as the second factor wherever an instance
+requires one, because a weaker factor that gets used protects more than a
+stronger one that does not.
+
+A person turns it on and off under *Settings* (`POST` and `DELETE
+/api/v1/two-factor/email`, session only, and the address must be verified). An
+administrator can turn off someone else's, for the person who lost their mailbox
+(`DELETE /api/v1/users/:id/two-factor/email`). Both are audited as
+`two_factor.email_enabled` and `two_factor.email_disabled`.
+
+- **A code and no link.** A link in a second-factor email is a phishing target,
+  and mail scanners follow links, which would spend the factor before its owner
+  saw it.
+- **Password sign-in only, on purpose.** Magic-link sign-in is already a
+  credential delivered to the mailbox, so a code to the same mailbox adds a step
+  and no factor. That path never issues the emailed factor, and a person whose
+  only second factor is the emailed code signs in by magic link as they would
+  with none. Federated sign-in is exempt for the reasons above.
+- **Sent automatically for email-only people.** Someone who also has an
+  authenticator gets the code only after choosing *Email me a code* on the
+  challenge screen, so a stolen password cannot be used to fill an inbox.
+- **Limits.** The code lives as long as its challenge (five minutes) and is
+  stored as a hash only. Five wrong attempts exhaust the challenge; the correct
+  code is refused after that, and after one use. Asking for a code again
+  replaces the challenge and kills the earlier code. A person can be mailed one
+  code a minute and five an hour, the sign-in's own mail included.
+- **The trade-off.** It is weaker than an authenticator app. It defends against
+  a stolen password; it does not defend against someone who holds the password
+  and the mailbox, or who can read the mail in transit. Prefer an authenticator
+  app where people will use one.
+- **Recovery.** The emailed factor has no recovery codes of its own. Someone who
+  loses the mailbox and has no authenticator needs an administrator to turn it
+  off.
+
 ### Recovery codes
 
 Ten, shown once at enrolment, stored as Argon2id hashes under the same

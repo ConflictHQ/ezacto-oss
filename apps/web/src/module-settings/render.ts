@@ -294,10 +294,17 @@ export const renderModuleSettingsPage = (view?: string): string => `
     </section>
     <section class="settings-two-factor" data-settings-2fa aria-labelledby="settings-2fa-heading" hidden>
       <h2 id="settings-2fa-heading">Two-step sign-in</h2>
-      <p class="hint">A code from an authenticator app, on top of your password. Setting one up has been impossible from inside this app until now, which is awkward for an instance that can require it.</p>
+      <p class="hint">A code on top of your password: from an authenticator app, or sent to your email address. Setting one up has been impossible from inside this app until now, which is awkward for an instance that can require it.</p>
       <p class="form-result" data-settings-2fa-status role="status" aria-live="polite">Loading two-step sign-in…</p>
       <dl class="settings-facts" data-settings-2fa-facts hidden></dl>
       <button type="button" class="primary-action" data-settings-2fa-begin hidden>Set up two-step sign-in</button>
+      <div class="settings-2fa-email" data-settings-2fa-email hidden>
+        <h3>Emailed code</h3>
+        <p class="hint" data-settings-2fa-email-hint>At sign-in with your password, a six-digit code is sent to your email address. It never contains a link. It is weaker than an authenticator app: anyone who holds both your password and your mailbox gets in. Signing in by emailed link or through your identity provider never asks for it.</p>
+        <p class="form-result" data-settings-2fa-email-result role="status" aria-live="polite"></p>
+        <button type="button" class="primary-action" data-settings-2fa-email-on hidden>Turn on emailed codes</button>
+        <button type="button" class="danger-action" data-settings-2fa-email-off hidden>Turn off emailed codes</button>
+      </div>
       <div class="settings-2fa-enrolment" data-settings-2fa-enrolment hidden>
         <h3>Add this to your authenticator</h3>
         <p class="hint">Type the key in, or paste the setup link. Both describe the same secret.</p>

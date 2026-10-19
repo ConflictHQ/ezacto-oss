@@ -29,6 +29,7 @@ import {
   type ApiToken,
   type CreateApiTokenInput,
   type IssuedApiToken,
+  type TwoFactorChallengeIssued,
   type TwoFactorEnrolment,
   type TwoFactorStatus,
   type ProfileNotificationInput,
@@ -160,6 +161,17 @@ export interface ShellApi
   beginTwoFactorEnrolment?(signal?: AbortSignal): Promise<TwoFactorEnrolment>
   confirmTwoFactorEnrolment?(code: string, signal?: AbortSignal): Promise<TwoFactorStatus>
   disableTwoFactor?(code: string, signal?: AbortSignal): Promise<TwoFactorStatus>
+  /** Issue 770: the emailed second factor. Turning it off needs no code; it is session-only. */
+  enableTwoFactorEmail?(signal?: AbortSignal): Promise<TwoFactorStatus>
+  disableTwoFactorEmail?(signal?: AbortSignal): Promise<TwoFactorStatus>
+  /**
+   * Mails a code for an open challenge. The earlier challenge dies with this
+   * call, so the answer carries the token to use from now on.
+   */
+  sendTwoFactorEmailCode?(
+    input: { readonly challenge?: string },
+    signal?: AbortSignal,
+  ): Promise<TwoFactorChallengeIssued>
   listApiTokens?(signal?: AbortSignal): Promise<readonly ApiToken[]>
   createApiToken?(
     input: CreateApiTokenInput,
@@ -1444,6 +1456,17 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.confirmTwoFactorEnrolment({ body: { code }, ...withSignal(signal) })).data,
   disableTwoFactor: async (code, signal) =>
     (await client.disableTwoFactor({ body: { code }, ...withSignal(signal) })).data,
+  enableTwoFactorEmail: async (signal) =>
+    (await client.enableTwoFactorEmail(withSignal(signal))).data,
+  disableTwoFactorEmail: async (signal) =>
+    (await client.disableTwoFactorEmail(withSignal(signal))).data,
+  sendTwoFactorEmailCode: async (input, signal) =>
+    (
+      await client.sendTwoFactorEmailCode({
+        body: input.challenge === undefined ? {} : { challenge: input.challenge },
+        ...withSignal(signal),
+      })
+    ).data,
   listApiTokens: async (signal) => (await client.listApiTokens(withSignal(signal))).data,
   createApiToken: async (input, signal) =>
     (await client.createApiToken({ body: input, ...withSignal(signal) })).data,
