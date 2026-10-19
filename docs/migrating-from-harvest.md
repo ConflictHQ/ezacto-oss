@@ -26,6 +26,43 @@ Four things do not, because Harvest has no API for them:
 The first two are filled in by hand from worksheets. Plan for that — **it needs
 the Harvest UI open**, which means it has to happen before you close the account.
 
+## Running it
+
+`ezacto-migrate` is published as `@conflict-hq/ezacto-migrate`. It needs Node 22
+or newer and nothing else installed; there is nothing to clone or build.
+
+```sh
+npx @conflict-hq/ezacto-migrate            # prints the command list
+```
+
+The package installs a single bin, so `npx` runs it without naming it. The rest
+of this guide writes `ezacto-migrate <command>`; put `npx @conflict-hq/` in front
+of it, or install it once and use the short form:
+
+```sh
+npm install --global @conflict-hq/ezacto-migrate
+ezacto-migrate auth --snapshot-dir ./snapshot
+```
+
+It reads a Harvest personal access token from `HARVEST_PAT` (Harvest ID >
+Developers), or from a `.dev.vars` file in the working directory, and optionally
+`HARVEST_ACCOUNT_ID`. The token needs administrator scope: a member-scoped token
+sweeps a fraction of the account and `auth` says so. The token is never written
+into the snapshot, but the snapshot is your account's data, so keep the
+directory private and out of version control.
+
+`better-sqlite3` is a native module, so install with lifecycle scripts enabled
+(the npm default). If `npx` fails on a machine with no C++ toolchain, that is the
+first place to look.
+
+To prove an install works before pointing it at a real account, run the smoke
+test from a checkout: `npm run test:package -w @conflict-hq/ezacto-migrate`
+packs the package, installs it into an empty prefix, and drives the installed
+binary through `npx` and the global bin. Add `--live` with `HARVEST_PAT` and
+`HARVEST_ACCOUNT_ID` set (`node packages/migrate/scripts/test-package.mjs --live`)
+and it also sweeps, verifies, loads and reconciles a real account into
+temporary files, printing only exit codes and counts.
+
 ## The order, and why it is the order
 
 ```
@@ -57,6 +94,53 @@ against your snapshot and your loaded database. The number to look at is
 `unexplained`. Zero means every difference is accounted for; anything else means
 one is not. Gaps are differences matched against the known-limitations list in
 [`migration-spec.md`](migration-spec.md) §7 — they are accepted, not ignored.
+
+## Running in parallel
+
+A parallel run keeps Harvest as the book while you try ezacto on a copy of its
+data. It works, with two limits that decide how to do it.
+
+**What parallel means here.** `extract` and `sync` keep the *snapshot* current:
+run them as often as you like while people keep working in Harvest. Loading is
+the expensive, one-way step. Treat every load before the real one as a rehearsal
+into a throwaway database file, and delete it afterwards:
+
+```sh
+ezacto-migrate sync    --snapshot-dir ./snapshot
+ezacto-migrate verify  --snapshot-dir ./snapshot
+ezacto-migrate load    --snapshot-dir ./snapshot --database ./rehearsal.sqlite
+ezacto-migrate reconcile --snapshot-dir ./snapshot --database ./rehearsal.sqlite
+```
+
+**Limit 1: load is insert-if-absent, not upsert (issue 407).** A row is written
+only if no row with its `harvest_id` exists. After a load, a row edited in
+Harvest keeps its old values in the database even though `sync` refreshed it in
+the snapshot, and a row deleted in Harvest stays in the database. Neither shows
+up as a row-count difference. `reconcile` reports it: a nonzero `load currency`
+row means the database is behind the snapshot, and `upstream_deletion` gaps name
+the deleted rows still held. There is no refresh in place. The remedy is a new
+load into an **empty** database file.
+
+So do not enter real work into a database you may have to rebuild. Time typed
+into a rehearsal copy is lost when it is replaced. The one database that people
+work in is the one loaded after the freeze.
+
+**Limit 2: worksheets are bound to the snapshot digest.** Retainer and
+recurring-invoice completions are tied to the exact snapshot a load was admitted
+under. Any later `sync` or `extract` that changes the snapshot moves the digest,
+and every completion is void with no in-app repair; `load` also refuses a
+database admitted under a different snapshot. A rebuild therefore means a
+virgin database, a full reload, and the worksheet rows entered again. Keep the
+filled worksheet JSON files: only their header digests need regenerating.
+
+The order that follows from both: parallel-run on rehearsal databases, freeze,
+final `sync`, `verify`, one real `load`, worksheets, `reconcile`, ship. No sync
+after the real load. [`cutover-runbook.md`](cutover-runbook.md) section 1 walks
+through the sequencing and what a late sync costs.
+
+If the instance has already moved on (people are working in it) and you only
+need invoices it is missing, `carry-invoices` below is the supported path; it
+does not touch anything else.
 
 ## For an instance that has already moved on
 

@@ -1,11 +1,30 @@
 {
-  "name": "ezacto-migrate",
-  "version": "0.0.0",
-  "description": "Standalone CLI: extract a Harvest account into a snapshot, load it into ezacto, reconcile, sync.",
+  "name": "@conflict-hq/ezacto-migrate",
+  "version": "0.1.3",
+  "description": "Move a Harvest account into ezacto: extract a snapshot, verify it, load it, reconcile, sync.",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ConflictHQ/ezacto-oss.git",
+    "directory": "packages/migrate"
+  },
+  "homepage": "https://ezacto.dev",
+  "bugs": {
+    "url": "https://github.com/ConflictHQ/ezacto-oss/issues"
+  },
+  "keywords": [
+    "ezacto",
+    "harvest",
+    "migration",
+    "time-tracking"
+  ],
   "type": "module",
   "bin": {
     "ezacto-migrate": "./dist/cli.js"
   },
+  "files": [
+    "dist/cli.js"
+  ],
   "engines": {
     "node": ">=22"
   },
@@ -13,23 +32,30 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run --testTimeout=30000 --hookTimeout=30000",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/bundle.mjs",
+    "test:package": "node scripts/test-package.mjs",
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@ezacto/core": "0.0.0",
-    "@ezacto/db": "0.0.0",
-    "better-sqlite3": "^13.0.3"
+    "@noble/hashes": "2.4.0",
+    "better-sqlite3": "^13.0.3",
+    "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/better-sqlite3": "^7.6.13",
     "@cloudflare/workers-types": "^5.20260826.1",
+    "@ezacto/core": "0.0.0",
+    "@ezacto/db": "0.0.0",
+    "esbuild": "^0.28.1",
     "eslint": "^10.9.1",
     "miniflare": "^4.20260730.0",
     "prettier": "^3.9.6",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.68.0",
     "vitest": "^4.1.11"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
