@@ -282,8 +282,21 @@ for (const [name, create] of runtimes) {
 
     it('[api] a retry while the first attempt still runs is told to come back, then gets the replay', async () => {
       const held = gate()
-      const first = send(`${name}-slow`, `${name} slow`, route({ afterWrite: () => held.opened }))
-      await new Promise((resolve) => setTimeout(resolve, 50))
+      const reached = gate()
+      // Wait for the first attempt to have written and be holding its claim, not
+      // for a guessed 50 ms: on a loaded runner the store can be slower than that
+      // and the second request would then claim first.
+      const first = send(
+        `${name}-slow`,
+        `${name} slow`,
+        route({
+          afterWrite: () => {
+            reached.open()
+            return held.opened
+          },
+        }),
+      )
+      await reached.opened
       const meanwhile = await send(`${name}-slow`, `${name} slow`, route())
       expect(meanwhile.status).toBe(503)
       expect(meanwhile.headers.get('retry-after')).toBe('1')
@@ -301,8 +314,18 @@ for (const [name, create] of runtimes) {
 
     it('[api] a duplicate that arrives while the first attempt runs is handed its answer when it lands', async () => {
       const held = gate()
-      const first = send(`${name}-handed`, `${name} handed`, route({ afterWrite: () => held.opened }))
-      await new Promise((resolve) => setTimeout(resolve, 50))
+      const reached = gate()
+      const first = send(
+        `${name}-handed`,
+        `${name} handed`,
+        route({
+          afterWrite: () => {
+            reached.open()
+            return held.opened
+          },
+        }),
+      )
+      await reached.opened
       const duplicate = send(`${name}-handed`, `${name} handed`, route(), {}, { waitForClaimMs: 5_000 })
       await new Promise((resolve) => setTimeout(resolve, 100))
       held.open()
