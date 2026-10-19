@@ -36,6 +36,10 @@ const EPHEMERAL_TABLES: readonly string[] = [
   'oidc_app_codes',
   'oidc_transactions',
   'quickbooks_oauth_states',
+  // A spent link restored as unspent, or a lapsed one as live, is a credential
+  // for a copy of the database (issue 39).
+  'backup_download_links',
+  'backup_download_limits',
 ]
 
 /**

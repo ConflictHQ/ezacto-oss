@@ -52,6 +52,13 @@ import {
   DrizzleCalendarProposalRepository,
   DrizzleWorkItemRepository,
   DrizzleTrackedResourceRepository,
+  allowBackupDownloadRequest,
+  consumeBackupDownloadLink,
+  getBackupRun,
+  latestCompletedBackupRunId,
+  mintBackupDownloadLink,
+  openBackupArchive,
+  r2BackupSource,
   countBackupRuns,
   getBackupRunsSnapshot,
   getLatestBackupRuns,
@@ -1103,6 +1110,37 @@ export const createRuntimeServices = async (
       createBillMirrorSubscriber(bill),
     ],
   });
+  const twoFactor = createTwoFactorService({
+    store: createD1TwoFactorStore(database),
+    accountName: async (userId) =>
+      (
+        await database
+          .prepare(
+            `SELECT address FROM user_emails
+               WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
+               ORDER BY is_primary DESC, id LIMIT 1`,
+          )
+          .bind(userId)
+          .first<{ address: string }>()
+      )?.address ?? `user-${userId}`,
+    issuer: env.BRAND_NAME === undefined || env.BRAND_NAME === "" ? "ezacto" : env.BRAND_NAME,
+    // The emailed second factor (issue 770). Its hash key is derived from the
+    // cursor signing key every deployment already has, so there is no new
+    // secret to provision, and it goes to the person's own verified address.
+    emailCodeKey: await deriveTwoFactorEmailCodeKey(cursorSigningKey),
+    emailAddress: async (userId) =>
+      (
+        await database
+          .prepare(
+            `SELECT address FROM user_emails
+               WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
+               ORDER BY is_primary DESC, id LIMIT 1`,
+          )
+          .bind(userId)
+          .first<{ address: string }>()
+      )?.address ?? null,
+  })
+
   return {
     bootstrap: (input) => bootstrapInstanceD1(database, input),
     enrollOwnerPassword: (input) =>
@@ -1265,36 +1303,7 @@ export const createRuntimeServices = async (
     // Unlike portal auth, the second factor is opt-in on nothing: it holds no
     // deployment secret to get wrong, and a factor no one can turn on is not a
     // safe default -- it is the feature missing.
-    twoFactor: createTwoFactorService({
-      store: createD1TwoFactorStore(database),
-      accountName: async (userId) =>
-        (
-          await database
-            .prepare(
-              `SELECT address FROM user_emails
-                 WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
-                 ORDER BY is_primary DESC, id LIMIT 1`,
-            )
-            .bind(userId)
-            .first<{ address: string }>()
-        )?.address ?? `user-${userId}`,
-      issuer: env.BRAND_NAME === undefined || env.BRAND_NAME === "" ? "ezacto" : env.BRAND_NAME,
-      // The emailed second factor (issue 770). Its hash key is derived from the
-      // cursor signing key every deployment already has, so there is no new
-      // secret to provision, and it goes to the person's own verified address.
-      emailCodeKey: await deriveTwoFactorEmailCodeKey(cursorSigningKey),
-      emailAddress: async (userId) =>
-        (
-          await database
-            .prepare(
-              `SELECT address FROM user_emails
-                 WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
-                 ORDER BY is_primary DESC, id LIMIT 1`,
-            )
-            .bind(userId)
-            .first<{ address: string }>()
-        )?.address ?? null,
-    }),
+    twoFactor,
     ...(twoFactorEmailCodeMailer === undefined
       ? {}
       : { twoFactorEmailCodes: twoFactorEmailCodeMailer }),
@@ -1337,6 +1346,31 @@ export const createRuntimeServices = async (
           }
         : {}),
     outbox,
+    // The signed download of a nightly bundle (issue 39). Mounted wherever
+    // backup status is, like it; a deployment with no bucket still answers, and
+    // every download is the same plain refusal because there is no bundle.
+    backupDownloads: {
+      origin: invoiceViewLinkOrigin(env.APP_BASE_URL),
+      allow: (scope: 'mint' | 'redeem', key: string, now: string) =>
+        allowBackupDownloadRequest(drizzle, scope, key, now),
+      latestCompletedRunId: () => latestCompletedBackupRunId(drizzle),
+      mint: (input: { backupRunId: number; userId: number; now: string }) =>
+        mintBackupDownloadLink(drizzle, input),
+      redeem: (token: string, now: string) => consumeBackupDownloadLink(drizzle, token, now),
+      openArchive: async (backupRunId: number) => {
+        if (env.ATTACHMENTS === undefined) throw new Error('no bucket holds the backups')
+        const run = await getBackupRun(database, backupRunId)
+        if (run === null) throw new Error('backup run not found')
+        return {
+          stream: await openBackupArchive(run, r2BackupSource(env.ATTACHMENTS)),
+          filename: `ezacto-backup-${run.started_at.slice(0, 10)}.zip`,
+        }
+      },
+      secondFactor: {
+        isEnrolled: (userId: number) => twoFactor.isEnrolled(userId),
+        verifyCode: (userId: number, code: string) => twoFactor.verifyCode(userId, code),
+      },
+    },
     backupStatus: {
       latestRuns: (limit: number) => getLatestBackupRuns(database, limit),
       runsSnapshot: () => getBackupRunsSnapshot(database),

@@ -33,6 +33,15 @@ export {
   type BackupStatusRouteOptions,
 } from './backup-status.js'
 export {
+  BACKUP_DOWNLOAD_PATH,
+  installBackupDownloadMintRoute,
+  installBackupDownloadRedeemRoute,
+  type BackupDownloadOptions,
+  type BackupDownloadRedeemOptions,
+  type BackupDownloadSecondFactor,
+  type BackupDownloadService,
+} from './backup-download.js'
+export {
   installClientTreeRoutes,
   type ClientHierarchyNode,
   type ClientTreeReader,
