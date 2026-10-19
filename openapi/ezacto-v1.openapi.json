@@ -686,6 +686,68 @@
         }
       }
     },
+    "/auth/two-factor/email-code": {
+      "post": {
+        "operationId": "sendTwoFactorEmailCode",
+        "summary": "Email a verification code for a pending sign-in",
+        "description": "Supersedes the earlier challenge: the response carries the new one. Limited to one a minute and five an hour per user. Only a password sign-in can ask.",
+        "tags": [
+          "authentication"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TwoFactorChallengeIssuedEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/auth/two-factor/email-code",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TwoFactorEmailCodeInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/auth/password/forgot": {
       "post": {
         "operationId": "requestPasswordReset",
@@ -24833,6 +24895,182 @@
         }
       }
     },
+    "/api/v1/two-factor/email": {
+      "post": {
+        "operationId": "enableTwoFactorEmail",
+        "summary": "Turn on the emailed second factor",
+        "description": "Needs a verified email address. A code is mailed at password sign-in; magic-link and federated sign-in never use this factor.",
+        "tags": [
+          "two-factor"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TwoFactorStatusEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/two-factor/email",
+        "x-ezacto-generate-client": true
+      },
+      "delete": {
+        "operationId": "disableTwoFactorEmail",
+        "summary": "Turn off the emailed second factor",
+        "tags": [
+          "two-factor"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TwoFactorStatusEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/two-factor/email",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/users/{id}/two-factor/email": {
+      "delete": {
+        "operationId": "disableUserTwoFactorEmail",
+        "summary": "Turn off a user's emailed second factor (administrator)",
+        "description": "Lockout recovery for a user who lost their mailbox. Administrators only; the change is recorded in the activity log.",
+        "tags": [
+          "two-factor"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TwoFactorEmailDisabledEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/users/:id/two-factor/email",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/users/{id}/emails": {
       "post": {
         "operationId": "addUserEmail",
@@ -46102,11 +46340,15 @@
         "type": "object",
         "required": [
           "enrolled",
+          "email_enabled",
           "pending_confirmation",
           "recovery_codes_remaining"
         ],
         "properties": {
           "enrolled": {
+            "type": "boolean"
+          },
+          "email_enabled": {
             "type": "boolean"
           },
           "pending_confirmation": {
@@ -46191,7 +46433,8 @@
         "required": [
           "status",
           "challenge",
-          "expires_at"
+          "expires_at",
+          "methods"
         ],
         "properties": {
           "status": {
@@ -46205,6 +46448,69 @@
           },
           "expires_at": {
             "type": "string"
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "totp",
+                "email"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "TwoFactorChallengeIssuedEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TwoFactorChallengeIssued"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TwoFactorEmailCodeInput": {
+        "type": "object",
+        "properties": {
+          "challenge": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TwoFactorEmailDisabled": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "email_enabled"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "email_enabled": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "TwoFactorEmailDisabledEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TwoFactorEmailDisabled"
           }
         },
         "additionalProperties": false

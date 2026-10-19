@@ -118,6 +118,7 @@ import {
   type EmailConfigurationRouteOptions,
   type MagicLinkRouteOptions,
   type ActivityRecorder,
+  type TwoFactorEmailCodeMailer,
   type TwoFactorService,
   type AppleProviderConfig,
   type GitHubProviderConfig,
@@ -428,6 +429,8 @@ export interface RuntimeServices {
   portalAuth?: MagicLinkRouteOptions
   /** The second factor for signed-in users. Absent only where there is no store. */
   twoFactor?: TwoFactorService
+  /** Sends the emailed second-factor code; absent without a mail queue (issue 770). */
+  twoFactorEmailCodes?: TwoFactorEmailCodeMailer
   /** Where credential events are recorded. Absent leaves them unrecorded. */
   activity?: ActivityRecorder
   backupStatus?: BackupStatusReader
@@ -661,7 +664,10 @@ export const createApp = (
             sessions: services.authenticationSessions ?? services.sessions,
             ...(services.twoFactor === undefined
               ? {}
-              : { twoFactor: services.twoFactor }),
+              : {
+                  twoFactor: services.twoFactor,
+                  twoFactorEmailCodes: services.twoFactorEmailCodes !== undefined,
+                }),
             ...(services.activity === undefined
               ? {}
               : { activity: services.activity }),
@@ -1063,6 +1069,9 @@ export const createApp = (
           ...(services.twoFactor === undefined
             ? {}
             : { twoFactor: services.twoFactor }),
+          ...(services.twoFactorEmailCodes === undefined
+            ? {}
+            : { twoFactorEmailCodes: services.twoFactorEmailCodes }),
           ...(services.deploymentAuthMailer === undefined
             ? {}
             : { deploymentMailer: services.deploymentAuthMailer }),
@@ -1076,6 +1085,9 @@ export const createApp = (
           installTwoFactorChallengeRoutes(app, {
             gate: services.twoFactor,
             sessions: services.sessions,
+            ...(services.twoFactorEmailCodes === undefined
+              ? {}
+              : { emailCodes: services.twoFactorEmailCodes }),
           })
         }
         if (services.portalAuth !== undefined) {

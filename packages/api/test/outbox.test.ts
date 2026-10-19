@@ -318,6 +318,8 @@ describe('outbox observability API', () => {
       'auth.signed_out',
       'api_token.created',
       'api_token.revoked',
+      'two_factor.email_enabled',
+      'two_factor.email_disabled',
       'account.deletion_requested',
       'timesheet_auto_approval.updated',
     ]

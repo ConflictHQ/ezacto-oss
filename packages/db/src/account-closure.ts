@@ -42,6 +42,8 @@ const removedTables = new Set([
   'two_factor_challenges',
   'user_totp_enrolments',
   'user_recovery_codes',
+  'user_email_second_factors',
+  'two_factor_email_code_sends',
   'notification_preferences',
   'user_roles',
   'user_departments',

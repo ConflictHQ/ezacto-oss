@@ -22,6 +22,7 @@ import { calendarProposalsMigration } from './migrations/0117_calendar_proposals
 import { timesheetAutoApprovalMigration } from './migrations/0118_timesheet_auto_approval.js'
 import { allocationsMigration } from './migrations/0119_allocations.js'
 import { estimateCustomerResponseMigration } from './migrations/0120_estimate_customer_response.js'
+import { emailSecondFactorMigration } from './migrations/0121_email_second_factor.js'
 import { organizationInvoiceDefaultsMigration } from './migrations/0097_organization_invoice_defaults.js'
 import { journalFormatsInvoiceExtraMigration } from './migrations/0096_journal_formats_invoice_extra.js'
 import { freeFormInvoiceCreateMigration } from './migrations/0095_free_form_invoice_create.js'
@@ -1598,6 +1599,7 @@ const migrations = [
   { id: '0118_timesheet_auto_approval', statements: timesheetAutoApprovalMigration },
   { id: '0119_allocations', statements: allocationsMigration },
   { id: '0120_estimate_customer_response', statements: estimateCustomerResponseMigration },
+  { id: '0121_email_second_factor', statements: emailSecondFactorMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

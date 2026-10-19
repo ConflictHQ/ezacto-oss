@@ -4008,6 +4008,7 @@ export type SsoDomainInput = {
 
 export type TwoFactorStatus = {
   "enrolled": boolean;
+  "email_enabled": boolean;
   "pending_confirmation": boolean;
   "recovery_codes_remaining": number;
 };
@@ -4036,6 +4037,24 @@ export type TwoFactorChallengeIssued = {
   "status": "two_factor_required";
   "challenge": string;
   "expires_at": string;
+  "methods": Array<"totp" | "email">;
+};
+
+export type TwoFactorChallengeIssuedEnvelope = {
+  "data": TwoFactorChallengeIssued;
+};
+
+export type TwoFactorEmailCodeInput = {
+  "challenge"?: string;
+};
+
+export type TwoFactorEmailDisabled = {
+  "user_id": number;
+  "email_enabled": false;
+};
+
+export type TwoFactorEmailDisabledEnvelope = {
+  "data": TwoFactorEmailDisabled;
 };
 
 export type TwoFactorChallengeInput = {
@@ -4240,6 +4259,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<TwoFactorChallengeAcceptedEnvelope>("POST", "/auth/two-factor/challenge", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async sendTwoFactorEmailCode(args: { body: TwoFactorEmailCodeInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TwoFactorChallengeIssuedEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TwoFactorChallengeIssuedEnvelope>("POST", "/auth/two-factor/email-code", {
       body: args.body,
       signal: args.signal,
       headers,
@@ -7232,6 +7261,33 @@ export class EzactoClient {
 
     return this.request<TwoFactorStatusEnvelope>("DELETE", "/api/v1/two-factor", {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async enableTwoFactorEmail(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TwoFactorStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TwoFactorStatusEnvelope>("POST", "/api/v1/two-factor/email", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async disableTwoFactorEmail(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TwoFactorStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TwoFactorStatusEnvelope>("DELETE", "/api/v1/two-factor/email", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async disableUserTwoFactorEmail(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<TwoFactorEmailDisabledEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TwoFactorEmailDisabledEnvelope>("DELETE", "/api/v1/users/:id/two-factor/email".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });

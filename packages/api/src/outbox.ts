@@ -129,6 +129,8 @@ const ADMINISTRATOR_ONLY_ACTIVITY_EVENTS: readonly string[] = [
   'auth.signed_out',
   'api_token.created',
   'api_token.revoked',
+  'two_factor.email_enabled',
+  'two_factor.email_disabled',
   'account.deletion_requested',
   'timesheet_auto_approval.updated',
 ]
