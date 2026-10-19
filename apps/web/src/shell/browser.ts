@@ -470,11 +470,35 @@ const signInMessage = (error: unknown): string => {
  */
 const isTwoFactorRequired = (
   result: unknown,
-): result is { status: 'two_factor_required'; challenge: string } =>
+): result is {
+  status: 'two_factor_required'
+  challenge: string
+  methods?: readonly string[]
+} =>
   typeof result === 'object' &&
   result !== null &&
   (result as { status?: unknown }).status === 'two_factor_required' &&
   typeof (result as { challenge?: unknown }).challenge === 'string'
+
+/** Asking for another emailed code fails differently from answering with one. */
+const emailCodeMessage = (error: unknown): { text: string; expired: boolean } => {
+  if (error instanceof EzactoApiError) {
+    const code = apiErrorCode(error)
+    if (code === 'two_factor_challenge_invalid') {
+      return { text: 'That sign-in expired. Enter your password again.', expired: true }
+    }
+    if (error.status === 429) {
+      return {
+        text: 'A code was sent a moment ago. Wait a minute before asking for another.',
+        expired: false,
+      }
+    }
+    if (code === 'two_factor_email_unavailable') {
+      return { text: 'A code cannot be emailed for this sign-in.', expired: false }
+    }
+  }
+  return { text: 'The code could not be sent right now. Try again.', expired: false }
+}
 
 /** `expired` means the challenge itself is gone, so the password step returns. */
 const twoFactorMessage = (
@@ -1429,6 +1453,8 @@ export const mountShell = async (
   const twoFactorCode = required<HTMLInputElement>('#ez-two-factor-code')
   const twoFactorSubmit = required<HTMLButtonElement>('[data-two-factor-submit]')
   const twoFactorCancel = required<HTMLButtonElement>('[data-two-factor-cancel]')
+  const twoFactorEmail = required<HTMLButtonElement>('[data-two-factor-email]')
+  const twoFactorHint = required<HTMLElement>('[data-two-factor-hint]')
   const twoFactorResult = required<HTMLElement>('[data-two-factor-result]')
   const currentIdentityPanel = required<HTMLElement>('[data-current-identity]')
   const logout = required<HTMLButtonElement>('[data-logout]')
@@ -1721,6 +1747,8 @@ export const mountShell = async (
    * how the magic-link redirect lands here. Null means no challenge is open.
    */
   let pendingChallenge: string | null = null
+  /** Issue 770: what the open challenge says can answer it. */
+  let pendingMethods: readonly string[] = []
   let verifyingSecondFactor = false
   let authGeneration = 0
   let authController = new AbortController()
@@ -1913,8 +1941,27 @@ export const mountShell = async (
    * for every browser, including the magic-link redirect that lands here with
    * no sign-in response to read at all.
    */
-  const openTwoFactorStep = (challenge: string): void => {
+  const paintTwoFactorMethods = (sent: boolean): void => {
+    const email = pendingMethods.includes('email')
+    const authenticator = pendingMethods.includes('totp')
+    // Offered only when the sign-in said it works. The magic-link landing names
+    // no methods, and the server refuses the mail there by design.
+    twoFactorEmail.hidden = !email || pendingChallenge === ''
+    twoFactorEmail.textContent = authenticator && !sent ? 'Email me a code' : 'Send a new code'
+    twoFactorHint.textContent = !email
+      ? 'Open your authenticator app, or use one of your recovery codes.'
+      : authenticator
+        ? sent
+          ? 'A code is on its way to your email address. Or use your authenticator app, or a recovery code.'
+          : 'Open your authenticator app, use a recovery code, or have a code sent to your email address.'
+        : 'We emailed a six-digit code to your address. It expires in five minutes.'
+  }
+
+  const openTwoFactorStep = (challenge: string, methods: readonly string[] = []): void => {
     pendingChallenge = challenge
+    pendingMethods = methods
+    twoFactorEmail.disabled = false
+    paintTwoFactorMethods(false)
     signInResult.textContent = ''
     twoFactorResult.textContent = ''
     twoFactorCode.value = ''
@@ -1926,6 +1973,7 @@ export const mountShell = async (
 
   const closeTwoFactorStep = (message: string): void => {
     pendingChallenge = null
+    pendingMethods = []
     verifyingSecondFactor = false
     setTwoFactorPending(false)
     twoFactorForm.reset()
@@ -2739,6 +2787,10 @@ export const mountShell = async (
     const confirmResult = required<HTMLElement>('[data-settings-2fa-confirm-result]')
     const disableForm = required<HTMLFormElement>('[data-settings-2fa-disable-form]')
     const disableResult = required<HTMLElement>('[data-settings-2fa-disable-result]')
+    const emailBlock = required<HTMLElement>('[data-settings-2fa-email]')
+    const emailResult = required<HTMLElement>('[data-settings-2fa-email-result]')
+    const emailOn = required<HTMLButtonElement>('[data-settings-2fa-email-on]')
+    const emailOff = required<HTMLButtonElement>('[data-settings-2fa-email-off]')
     section.hidden = false
     // Everyone on the public demo signs in as the same people (issue 931): a
     // second factor one visitor sets up is the next one locked out, and one
@@ -2749,7 +2801,7 @@ export const mountShell = async (
     const paint = (state: TwoFactorStatus): void => {
       writeFacts(factsList, [
         [
-          'Status',
+          'Authenticator app',
           state.enrolled
             ? 'On'
             : state.pending_confirmation
@@ -2760,7 +2812,13 @@ export const mountShell = async (
           'Recovery codes left',
           state.enrolled ? String(state.recovery_codes_remaining) : '—',
         ],
+        ...(api.enableTwoFactorEmail === undefined
+          ? []
+          : [['Emailed code', state.email_enabled ? 'On' : 'Off'] as const]),
       ])
+      emailBlock.hidden = api.enableTwoFactorEmail === undefined
+      emailOn.hidden = demo || state.email_enabled
+      emailOff.hidden = demo || !state.email_enabled
       begin.hidden = demo || state.enrolled
       begin.textContent = state.pending_confirmation
         ? 'Start again'
@@ -2867,6 +2925,38 @@ export const mountShell = async (
         }
       })()
     })
+
+    const changeEmailFactor = (
+      button: HTMLButtonElement,
+      change: ((signal?: AbortSignal) => Promise<TwoFactorStatus>) | undefined,
+      done: string,
+    ): void => {
+      if (change === undefined) return
+      button.disabled = true
+      emailResult.textContent = 'Working…'
+      void (async () => {
+        try {
+          paint(await change())
+          emailResult.textContent = done
+        } catch (error) {
+          const code = error instanceof EzactoApiError ? apiErrorCode(error) : null
+          emailResult.textContent =
+            code === 'verified_email_required'
+              ? 'Verify your email address before turning on emailed codes.'
+              : code === 'mailer_unavailable'
+                ? 'This instance cannot send email, so emailed codes are not available.'
+                : 'Emailed codes could not be changed. Try again.'
+        } finally {
+          button.disabled = false
+        }
+      })()
+    }
+    emailOn.addEventListener('click', () =>
+      changeEmailFactor(emailOn, api.enableTwoFactorEmail, 'Emailed codes are on.'),
+    )
+    emailOff.addEventListener('click', () =>
+      changeEmailFactor(emailOff, api.disableTwoFactorEmail, 'Emailed codes are off.'),
+    )
 
     void reload()
   }
@@ -6894,7 +6984,7 @@ export const mountShell = async (
         // this response, so going on to load the shell would 401 and read as a
         // failed password.
         if (isTwoFactorRequired(result)) {
-          openTwoFactorStep(result.challenge)
+          openTwoFactorStep(result.challenge, result.methods)
           return
         }
         await loadAuthenticatedShell(operation)
@@ -6915,7 +7005,7 @@ export const mountShell = async (
     if (verifyingSecondFactor || pendingChallenge === null) return
     const code = twoFactorCode.value.trim()
     if (code === '') {
-      twoFactorResult.textContent = 'Enter the code from your authenticator app.'
+      twoFactorResult.textContent = 'Enter your verification code.'
       return
     }
     const complete = api.completeTwoFactorChallenge
@@ -6950,6 +7040,41 @@ export const mountShell = async (
         verifyingSecondFactor = false
         setTwoFactorPending(false)
         twoFactorCode.value = ''
+      })
+  })
+
+  twoFactorEmail.addEventListener('click', () => {
+    const send = api.sendTwoFactorEmailCode
+    if (verifyingSecondFactor || pendingChallenge === null) return
+    if (send === undefined) {
+      twoFactorResult.textContent =
+        'This instance cannot email a code. Contact your administrator.'
+      return
+    }
+    const challenge = pendingChallenge
+    const operation = beginAuthGeneration(null)
+    twoFactorEmail.disabled = true
+    twoFactorResult.textContent = 'Sending…'
+    void send(challenge === '' ? {} : { challenge }, operation.signal)
+      .then((issued) => {
+        if (!isGenerationCurrent(operation)) return
+        // The earlier challenge died when this one was made.
+        pendingChallenge = issued.challenge
+        pendingMethods = issued.methods
+        paintTwoFactorMethods(true)
+        twoFactorCode.value = ''
+        twoFactorResult.textContent = 'Code sent. Check your email.'
+        twoFactorCode.focus()
+      })
+      .catch((error: unknown) => {
+        if (!isGenerationCurrent(operation)) return
+        const message = emailCodeMessage(error)
+        if (message.expired) closeTwoFactorStep(message.text)
+        else twoFactorResult.textContent = message.text
+      })
+      .finally(() => {
+        if (!isGenerationCurrent(operation)) return
+        twoFactorEmail.disabled = false
       })
   })
 
