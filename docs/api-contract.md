@@ -197,6 +197,18 @@ invoices. Over-allocation is an `over_allocated` flag and never a refusal. Each
 write leaves an `allocation.created`, `updated` or `deleted` outbox event in the
 same transaction, which the activity log records.
 
+Time off (issue 1007, slice 3): `/api/v1/time-off` holds days a person is away,
+entered by an administrator, executive manager or project manager (the latter for
+the people they manage); there is no request or approval step. Everyone else
+reads only their own. `GET /api/v1/capacity` subtracts it: each week carries
+`time_off_seconds` (Monday to Friday only; a whole day is a fifth of the weekly
+capacity, or `seconds_per_day` when set; never more than the capacity) and
+`available_capacity_seconds`, and `over_allocated` compares the plan with the
+latter. Time off for one person may not overlap, so a day is never taken off
+twice (409 `time_off_overlap`). It never touches `time_entries` or invoices, and
+an over-plan is still a flag, never a refusal. Each write leaves a
+`time_off.created`, `updated` or `deleted` outbox event.
+
 General-resource commercial fields are classified in `@ezacto/core`:
 client payment terms/tax/discount defaults, project billing method/bill-by/currency,
 and contact invoice-recipient routing. Finance, executive, administrator, and

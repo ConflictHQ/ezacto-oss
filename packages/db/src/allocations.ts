@@ -8,19 +8,21 @@ import {
   canProfileUseApiScope,
   capacityWeeks,
   isOverAllocated,
+  timeOffSecondsInWeek,
   TrackedResourceInputError,
   type AllocationWeekStartDay,
   type TeamViewer,
 } from '@ezacto/core'
 import type BetterSqlite3 from 'better-sqlite3'
 import { and, asc, desc, eq, gt, gte, lte, sql, type SQL } from 'drizzle-orm'
-import { allocations, organizations, projects, users } from './schema.js'
+import { allocations, organizations, projects, timeOff, users } from './schema.js'
 import { teamPersonAccessPredicate, teamPersonAccessSql, teamProjectAccessSql } from './team-access.js'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
 import type { ResourceSource, ResourceWindow } from './tracked-resource-repository.js'
 import { executeAtomicWrite, type CompiledQuery } from './tracked-state.js'
+import { DrizzleTimeOffRepository } from './time-off.js'
 
 /**
  * The allocation store and capacity read (issue 1007, slices 1 and 2): planned
@@ -83,6 +85,10 @@ export interface CapacityRequest {
 export interface CapacityWeek {
   weekStart: string
   plannedSeconds: number
+  /** Capacity removed by the person's time off in the week (issue 1007, slice 3). */
+  timeOffSeconds: number
+  /** Weekly capacity less time off; what the plan is held against. */
+  availableCapacitySeconds: number
   trackedSeconds: number
   overAllocated: boolean
 }
@@ -240,9 +246,12 @@ const allocationEvent = (
 
 export class DrizzleAllocationRepository {
   readonly #database: Database
+  /** Administrator-entered time off, which the capacity read subtracts. */
+  readonly timeOff: DrizzleTimeOffRepository
 
   constructor(database: Database) {
     this.#database = database
+    this.timeOff = new DrizzleTimeOffRepository(database)
   }
 
   #conditions(viewer: Readonly<TeamViewer>, filters: Readonly<AllocationFilters>): SQL[] {
@@ -441,7 +450,8 @@ export class DrizzleAllocationRepository {
    *
    * Weeks begin on the organization's week start day and every date is a plain
    * local day. A range counts its full weekly figure for each week it touches.
-   * Capacity is the person's current weekly capacity, not a history of it.
+   * Capacity is the person's current weekly capacity, not a history of it, less
+   * any time off in the week; a plan beyond what is left is flagged, never refused.
    * Archived people are left out, and so are plans on archived projects.
    */
   async capacity(
@@ -480,6 +490,20 @@ export class DrizzleAllocationRepository {
         )
     ).map(record)
 
+    const away = (
+      await this.#database
+        .select()
+        .from(timeOff)
+        .where(
+          and(
+            gte(timeOff.endDate, first),
+            lte(timeOff.startDate, lastDay),
+            sql`EXISTS (SELECT 1 FROM users WHERE users.id = ${timeOff.userId}
+              AND users.is_active = 1 AND ${peopleScope(viewer)})`,
+          ),
+        )
+    ).map((row) => ({ userId: row.userId, startDate: row.startDate, endDate: row.endDate, secondsPerDay: row.secondsPerDay }))
+
     const scope = peopleScopePredicate(viewer)
     const tracked = await allRows<{ userId: number; spentDate: string; seconds: number }>(
       this.#database,
@@ -510,11 +534,19 @@ export class DrizzleAllocationRepository {
                 row.userId === person.id && row.spentDate >= weekStart && row.spentDate <= weekEnd,
             )
             .reduce((total, row) => total + Number(row.seconds), 0)
+          const timeOffSeconds = timeOffSecondsInWeek(
+            away.filter((row) => row.userId === person.id),
+            weekStart,
+            person.weeklyCapacity,
+          )
+          const availableCapacitySeconds = person.weeklyCapacity - timeOffSeconds
           return {
             weekStart,
             plannedSeconds,
+            timeOffSeconds,
+            availableCapacitySeconds,
             trackedSeconds,
-            overAllocated: isOverAllocated(plannedSeconds, person.weeklyCapacity),
+            overAllocated: isOverAllocated(plannedSeconds, availableCapacitySeconds),
           }
         }),
       })),
