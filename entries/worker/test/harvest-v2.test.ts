@@ -42,7 +42,7 @@ describe('Worker /harvest/v2 composition', () => {
       await services.tokens.issue({
         userId: 1,
         name: 'Harvest client',
-        scopes: ['clients:read', 'team:read'],
+        scopes: ['clients:read', 'projects:read', 'team:read', 'time_entries:read'],
       })
     ).token
     app = createApp(services)
@@ -85,6 +85,17 @@ describe('Worker /harvest/v2 composition', () => {
       total_pages: 1,
       page: 1,
     })
+  })
+
+  it('[api] mounts time entries and project assignments on the runtime services', async () => {
+    const headers = { authorization: `Bearer ${bearer}` }
+    const entries = await app.request('/harvest/v2/time_entries', { headers }, env)
+    expect(entries.status).toBe(200)
+    expect(await entries.json()).toMatchObject({ time_entries: [], total_entries: 0, page: 1 })
+    const assignments = await app.request('/harvest/v2/users/me/project_assignments', { headers }, env)
+    expect(assignments.status).toBe(200)
+    expect(await assignments.json()).toMatchObject({ project_assignments: [], total_entries: 0 })
+    expect((await app.request('/harvest/v2/time_entries/1', { headers }, env)).status).toBe(404)
   })
 
   it('[security] refuses a request without a bearer and answers unknown paths in JSON', async () => {

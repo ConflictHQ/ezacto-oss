@@ -54,6 +54,7 @@ import {
   clients,
   expenseCategories,
   expenses,
+  invoices,
   organizations,
   projects,
   taskAssignments,
@@ -77,6 +78,7 @@ import {
   getTableColumns,
   gt,
   gte,
+  inArray,
   isNotNull,
   isNull,
   lte,
@@ -776,9 +778,20 @@ export class DrizzleTrackedResourceRepository {
     }
   }
 
-  #timeConditions(actor: TimeEntryActor, filters: Readonly<TimeEntryFilters>): SQL[] {
+  /**
+   * `everyone` widens an unnamed user to every person the actor reaches, which
+   * is the Harvest shim's reading of an unfiltered list; the native API
+   * defaults to the actor's own time and never passes it.
+   */
+  #timeConditions(
+    actor: TimeEntryActor,
+    filters: Readonly<TimeEntryFilters>,
+    everyone = false,
+  ): SQL[] {
     const conditions: SQL[] = [
-      eq(timeEntries.userId, filters.userId ?? actor.userId),
+      everyone && filters.userId === undefined
+        ? sql`1`
+        : eq(timeEntries.userId, filters.userId ?? actor.userId),
       this.#timeEntryAccess(actor),
     ]
     if (filters.clientId !== undefined) {
@@ -938,6 +951,45 @@ export class DrizzleTrackedResourceRepository {
         return Promise.all(rows.map((row) => this.#timeRecord(row, byDate?.get(row.spentDate))))
       },
     }
+  }
+
+  /** The size of what `timeEntriesOffset` pages over: every person the actor reaches. */
+  async countTimeEntries(
+    actor: TimeEntryActor,
+    filters: Readonly<TimeEntryFilters>,
+  ): Promise<number> {
+    return this.#database.$count(timeEntries, and(...this.#timeConditions(actor, filters, true)))
+  }
+
+  /** Rows in id order from `window.offset`, for the Harvest shim's page numbers. */
+  async timeEntriesOffset(
+    actor: TimeEntryActor,
+    filters: Readonly<TimeEntryFilters>,
+    window: Readonly<{ offset: number; take: number }>,
+  ): Promise<readonly TimeEntryRecord[]> {
+    const rows = await this.#database
+      .select()
+      .from(timeEntries)
+      .where(and(...this.#timeConditions(actor, filters, true)))
+      .orderBy(asc(timeEntries.id))
+      .limit(window.take)
+      .offset(window.offset)
+    const byDate = await this.#policy.lockedDates?.(rows.map(({ spentDate }) => spentDate))
+    return Promise.all(rows.map((row) => this.#timeRecord(row, byDate?.get(row.spentDate))))
+  }
+
+  /** Invoice numbers by id, for the entries that name an invoice. */
+  async invoiceNumbers(ids: readonly number[]): Promise<ReadonlyMap<number, string>> {
+    const numbers = new Map<number, string>()
+    const unique = [...new Set(ids)]
+    for (let start = 0; start < unique.length; start += 50) {
+      const rows = await this.#database
+        .select()
+        .from(invoices)
+        .where(inArray(invoices.id, unique.slice(start, start + 50)))
+      for (const row of rows) numbers.set(row.id, row.number)
+    }
+    return numbers
   }
 
   // Submission review is based on explicit teammates, not project co-membership.

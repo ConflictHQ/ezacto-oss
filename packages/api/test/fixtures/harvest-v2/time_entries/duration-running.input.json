@@ -1,0 +1,103 @@
+{
+  "entry": {
+    "id": 9001,
+    "harvestId": null,
+    "userId": 401,
+    "projectId": 301,
+    "spentDate": "2024-03-08",
+    "notes": null,
+    "billable": true,
+    "approvalStatus": "unsubmitted",
+    "sourceApprovalStatus": null,
+    "invoiceId": null,
+    "createdAt": "2024-01-05T10:00:00.123Z",
+    "updatedAt": "2024-03-09T16:45:30.987Z",
+    "state": {
+      "approvalStatus": "unsubmitted",
+      "invoiceId": null,
+      "isBilled": false,
+      "isLocked": false,
+      "lockedReasonCode": null,
+      "lockedReason": null
+    },
+    "taskId": 201,
+    "userAssignmentId": 501,
+    "taskAssignmentId": 601,
+    "seconds": 1800,
+    "secondsWithoutTimer": 0,
+    "roundedSeconds": 1800,
+    "timerStartedAt": "2024-03-09T16:15:30.456Z",
+    "startedTime": null,
+    "endedTime": null,
+    "budgeted": true,
+    "billableRateCents": 12550,
+    "costRateCents": 8000,
+    "externalRef": null,
+    "calendarEventRef": null,
+    "noteMinimumLength": 0
+  },
+  "context": {
+    "clock": "12h",
+    "user": {
+      "id": 401,
+      "firstName": "Sample",
+      "lastName": "Sample-Worker",
+      "email": "worker@example.test",
+      "profile": "member",
+      "createdAt": "2024-01-05T10:00:00.123Z",
+      "updatedAt": "2024-03-09T16:45:30.987Z"
+    },
+    "client": {
+      "id": 101,
+      "name": "Sample Widgets Ltd",
+      "address": null,
+      "currency": "USD",
+      "isActive": true,
+      "createdAt": "2024-01-05T10:00:00.123Z",
+      "updatedAt": "2024-03-09T16:45:30.987Z"
+    },
+    "project": {
+      "id": 301,
+      "clientId": 101,
+      "name": "Sample Rollout",
+      "code": "SMP-1",
+      "createdAt": "2024-01-05T10:00:00.123Z",
+      "updatedAt": "2024-03-09T16:45:30.987Z"
+    },
+    "task": {
+      "id": 201,
+      "name": "Sample Design",
+      "createdAt": "2024-01-05T10:00:00.123Z",
+      "updatedAt": "2024-03-09T16:45:30.987Z"
+    },
+    "userAssignment": {
+      "id": 501,
+      "projectId": 301,
+      "userId": 401,
+      "isActive": true,
+      "isProjectManager": false,
+      "useDefaultRates": false,
+      "hourlyRateCents": 12550,
+      "budgetSeconds": 72000,
+      "createdAt": "2024-01-05T10:00:00.123Z",
+      "updatedAt": "2024-03-09T16:45:30.987Z"
+    },
+    "taskAssignment": {
+      "id": 601,
+      "projectId": 301,
+      "taskId": 201,
+      "isActive": true,
+      "billable": true,
+      "hourlyRateCents": 15000,
+      "budgetSeconds": 36000,
+      "budgetCents": null,
+      "createdAt": "2024-01-05T10:00:00.123Z",
+      "updatedAt": "2024-03-09T16:45:30.987Z"
+    },
+    "billableRateCents": 12550,
+    "costRateCents": 8000,
+    "isBilled": false,
+    "lockedReason": null,
+    "invoice": null
+  }
+}
