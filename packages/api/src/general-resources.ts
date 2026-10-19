@@ -393,18 +393,24 @@ const hiddenGeneralField = (
   return false;
 };
 
-const serializeGeneral = (
+/** The record with every field this viewer may not read removed. */
+export const visibleGeneralRecord = (
   kind: GeneralResourceKind,
   record: Readonly<GeneralResourceRecord>,
   viewer: Readonly<UserPrincipal>,
-): Record<string, GeneralValue> => {
-  const visible = Object.fromEntries(
+): GeneralResourceRecord =>
+  Object.fromEntries(
     Object.entries(record).filter(
       ([field]) => !hiddenGeneralField(kind, field, viewer),
     ),
   ) as GeneralResourceRecord;
-  return serializeRaw(visible);
-};
+
+const serializeGeneral = (
+  kind: GeneralResourceKind,
+  record: Readonly<GeneralResourceRecord>,
+  viewer: Readonly<UserPrincipal>,
+): Record<string, GeneralValue> =>
+  serializeRaw(visibleGeneralRecord(kind, record, viewer));
 
 const objectBody = async <Bindings extends object>(
   context: Context<ApiContext<Bindings>>,
@@ -786,7 +792,7 @@ const resourceScopes: Readonly<
   "task-assignments": { read: "projects:read", write: "projects:write" },
 };
 
-const requireResourceRead = <Bindings extends object>(
+export const requireResourceRead = <Bindings extends object>(
   context: Context<ApiContext<Bindings>>,
   kind: GeneralResourceKind,
 ): UserPrincipal => {
@@ -914,7 +920,7 @@ const requireRateWrite = <Bindings extends object>(
   return principal;
 };
 
-const teamViewer = (principal: Readonly<UserPrincipal>): TeamViewer => ({
+export const teamViewer = (principal: Readonly<UserPrincipal>): TeamViewer => ({
   userId: principal.userId,
   profile: principal.profile,
   managerGrants: principal.managerGrants,

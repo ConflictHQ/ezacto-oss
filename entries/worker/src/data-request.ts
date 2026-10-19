@@ -21,6 +21,8 @@
 const SERVICE_PATH_PREFIXES: readonly string[] = [
   '/__ezacto/bootstrap',
   '/api/v1',
+  // The Harvest v2 compatibility shim, reached with an API token.
+  '/harvest/v2',
   '/auth',
   // Request-scoped tracking remains available after account credentials close.
   '/account-deletion',

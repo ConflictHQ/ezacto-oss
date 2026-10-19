@@ -70,9 +70,9 @@ export interface HarvestProject {
   name: string
   code: string | null
   is_active: boolean
-  is_billable: boolean
-  is_fixed_fee: boolean
-  bill_by: 'Project' | 'Tasks' | 'People' | 'none'
+  is_billable: boolean | null
+  is_fixed_fee: boolean | null
+  bill_by: 'Project' | 'Tasks' | 'People' | 'none' | null
   hourly_rate: number | null
   budget: number | null
   budget_by: string
@@ -98,22 +98,27 @@ const billBy: Readonly<Record<string, HarvestProject['bill_by']>> = {
   none: 'none',
 }
 
-/** A project embeds its client, as Harvest does; the caller supplies the record. */
+/**
+ * A project embeds its client, as Harvest does; the caller supplies the record.
+ * The billing method and bill-by are commercial terms the native API withholds
+ * from profiles without commercial authority, so when the record does not carry
+ * them the three fields they derive render null rather than a guess.
+ */
 export const serializeHarvestProject = (
   project: GeneralResourceRecord,
   client: GeneralResourceRecord,
 ): HarvestProject => {
-  const method = requiredText(project, 'billingMethod')
-  const by = requiredText(project, 'billBy')
-  const mapped = billBy[by]
+  const method = text(project, 'billingMethod')
+  const by = text(project, 'billBy')
+  const mapped = by === null ? null : billBy[by]
   if (mapped === undefined) throw new Error(`Harvest shim: unknown bill_by ${by}`)
   return {
     id: project.id,
     name: requiredText(project, 'name'),
     code: text(project, 'code'),
     is_active: flag(project, 'isActive'),
-    is_billable: method !== 'non_billable',
-    is_fixed_fee: method === 'fixed_fee',
+    is_billable: method === null ? null : method !== 'non_billable',
+    is_fixed_fee: method === null ? null : method === 'fixed_fee',
     bill_by: mapped,
     hourly_rate: harvestMoney(number(project, 'hourlyRateCents')),
     budget: harvestHours(number(project, 'budgetSeconds')),

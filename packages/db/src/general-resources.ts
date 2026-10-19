@@ -245,6 +245,8 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
 
 const identifier = (name: string) => sql.identifier(name)
 
+const idChunk = 40
+
 const isD1Client = (client: NativeClient): client is D1Database => 'batch' in client
 
 const nativeClient = (database: Database): NativeClient =>
@@ -542,6 +544,49 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
     const rows = await database.all<Record<string, unknown>>(
       sql`SELECT * FROM ${identifier(definition.table)} WHERE ${whereFor(kind, definition, filters, window, viewer)} ORDER BY id LIMIT ${window.take}`,
     )
+    return hydrate(database, kind, rows, viewer)
+  },
+
+  async count(kind, filters, viewer) {
+    const definition = definitions[kind]
+    const rows = await database.all<{ total: number }>(
+      sql`SELECT count(*) AS total FROM ${identifier(definition.table)} WHERE ${whereFor(kind, definition, filters, undefined, viewer)}`,
+    )
+    return Number(rows[0]?.total ?? 0)
+  },
+
+  async listOffset(kind, filters, window, viewer) {
+    if (
+      !Number.isSafeInteger(window.offset) ||
+      window.offset < 0 ||
+      !Number.isSafeInteger(window.take) ||
+      window.take < 1
+    )
+      throw new RangeError('offset window must be a non-negative offset and a positive take')
+    const definition = definitions[kind]
+    const rows = await database.all<Record<string, unknown>>(
+      sql`SELECT * FROM ${identifier(definition.table)} WHERE ${whereFor(kind, definition, filters, undefined, viewer)} ORDER BY id LIMIT ${window.take} OFFSET ${window.offset}`,
+    )
+    return hydrate(database, kind, rows, viewer)
+  },
+
+  async getMany(kind, ids, viewer) {
+    const definition = definitions[kind]
+    const unique = [...new Set(ids)]
+    const rows: Record<string, unknown>[] = []
+    // D1 binds at most 100 parameters to a statement.
+    for (let start = 0; start < unique.length; start += idChunk) {
+      const chunk = unique.slice(start, start + idChunk)
+      rows.push(
+        ...(await database.all<Record<string, unknown>>(
+          sql`SELECT * FROM ${identifier(definition.table)} WHERE id IN (${sql.join(
+            chunk.map((id) => sql`${id}`),
+            sql`, `,
+          )}) AND ${teamGeneralResourceAccessSql(kind, viewer)}`,
+        )),
+      )
+    }
+    rows.sort((left, right) => Number(left.id) - Number(right.id))
     return hydrate(database, kind, rows, viewer)
   },
 
@@ -1055,6 +1100,27 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
     return rateFromRow(rows[0]!)
   },
 
+  async currentRates(kind, userIds, onDate) {
+    const table = kind === 'billable' ? 'user_billable_rates' : 'user_cost_rates'
+    const unique = [...new Set(userIds)]
+    const amounts = new Map<number, number>()
+    for (let start = 0; start < unique.length; start += idChunk) {
+      const chunk = unique.slice(start, start + idChunk)
+      // Oldest start first, so the latest rate in force overwrites an earlier one.
+      const rows = await database.all<{ user_id: number; amount_cents: number }>(
+        sql`SELECT user_id, amount_cents FROM ${identifier(table)}
+          WHERE user_id IN (${sql.join(
+            chunk.map((id) => sql`${id}`),
+            sql`, `,
+          )})
+            AND (start_date IS NULL OR start_date <= ${onDate})
+            AND (end_date IS NULL OR end_date >= ${onDate})
+          ORDER BY user_id, coalesce(start_date, '')`,
+      )
+      for (const row of rows) amounts.set(Number(row.user_id), Number(row.amount_cents))
+    }
+    return amounts
+  },
 })
 
 const rateFromRow = (row: Record<string, unknown>): UserRateRecord => ({
