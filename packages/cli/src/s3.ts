@@ -134,7 +134,7 @@ const advice = (code: string | null, status: number): string => {
     case 'InvalidAccessKeyId':
       return 'the access key id is not known to this service; check AWS_ACCESS_KEY_ID and the endpoint'
     case 'SignatureDoesNotMatch':
-      return 'the secret access key is wrong, or the region or endpoint differs from the one the key belongs to; check AWS_SECRET_ACCESS_KEY, EZACTO_S3_REGION and EZACTO_S3_ENDPOINT'
+      return 'the secret access key is wrong, or the region or endpoint differs from the one the key belongs to; check the REGION and ENDPOINT settings, then AWS_SECRET_ACCESS_KEY'
     case 'RequestTimeTooSkewed':
       return 'this machine clock differs from the service by more than the allowed skew; correct the system clock'
     case 'AccessDenied':

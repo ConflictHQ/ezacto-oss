@@ -40,3 +40,12 @@ c39dd69f59d2baddb8a7108b7269badbb93d22e3:packages/migrate/test/cli.test.ts:harve
 # runtime; the historical occurrence is pinned because history is scanned.
 96607e35f2f4069469b000389f91341bcabd0fdc:packages/api/test/sso-domains.test.ts:generic-api-key:28
 b1a775fa97d6f916bc03946ea32c876d6198d37b:packages/api/test/sso-domains.test.ts:generic-api-key:28
+
+# An S3 error message in the backup sync client (packages/cli/src/s3.ts): a hint
+# that names environment variables to check. It names the variables, it holds no
+# value, and the scanner read the variable names as a key assignment. Not a
+# credential. Fixed forward: the message no longer lists a second variable after
+# the first; the two historical occurrences on this branch are pinned because
+# history is scanned.
+2de1aaf02e8d8b64331cb69632cf237dda061ecf:packages/cli/src/s3.ts:generic-api-key:137
+2f19ec36fea5e65b79c27617daf897de1e9d93aa:packages/cli/src/s3.ts:generic-api-key:137
