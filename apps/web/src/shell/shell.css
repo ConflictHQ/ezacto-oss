@@ -9174,6 +9174,15 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   background: var(--ez-action);
   color: var(--ez-action-fg);
 }
+/* The status line above the clock holds a line's height whether it has
+   anything to say or not. "Saving…" comes and goes with every move, and a line
+   that opened and closed moved the whole clock by its height -- under a pointer
+   still dragging, a time it never moved to. Selected by where it sits, not by
+   data-calendar-status: the controller uses that attribute as a flag and
+   removes it. */
+.calendar-week > .form-result {
+  min-height: 1lh;
+}
 .calendar-surface {
   --cal-hour: 48px;
   --cal-ruler: 56px;

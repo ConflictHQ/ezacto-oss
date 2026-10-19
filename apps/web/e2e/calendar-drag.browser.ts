@@ -93,16 +93,26 @@ test('[e2e:calendar] drag creates, moves and resizes a timed entry in a duration
   await page.keyboard.press('Enter')
   await expect(block).toContainText('10:15 AM')
   await expect(block).toContainText('11:15 AM')
+  // That is drawn the moment Enter is pressed, and saved after. The label is
+  // drawn from the entry, so it reads 10:15 only once the save has landed and
+  // the calendar is redrawn from it. An entry still saving refuses a new drag,
+  // so the edge is not grabbed before then.
+  await expect(block).toHaveAttribute('aria-label', /10:15 AM to 11:15 AM/)
 
-  // Drag the bottom edge down half an hour; the end snaps to a quarter.
+  // Drag the bottom edge down to 11:45, dropped on the 11:45 line itself: the
+  // middle of the quarter the end snaps to, as far as it can be from either
+  // neighbour, so no rounding of where the pointer lands decides the time.
   const edge = block.locator('[data-calendar-handle="end"]')
   const edgeBox = (await edge.boundingBox())!
+  const edgeX = edgeBox.x + edgeBox.width / 2
   await drag(
     page,
-    { x: edgeBox.x + edgeBox.width / 2, y: edgeBox.y + edgeBox.height / 2 },
-    { x: edgeBox.x + edgeBox.width / 2, y: edgeBox.y + edgeBox.height / 2 + HOUR / 2 + 3 },
+    { x: edgeX, y: edgeBox.y + edgeBox.height / 2 },
+    { x: edgeX, y: await yAt(column, 11 * 60 + 45) },
   )
-  await expect(block).toContainText('11:45 AM')
+  // What was saved, once it has landed: the start the keys set, the end the drag did.
+  await expect(block).toHaveAttribute('aria-label', /10:15 AM to 11:45 AM/)
+  await expect(block).toContainText('10:15 AM – 11:45 AM')
 
   // Clean up through the editor.
   await block.click()
