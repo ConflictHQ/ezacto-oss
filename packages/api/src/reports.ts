@@ -1,4 +1,5 @@
 import {
+  apiScopeProfiles,
   canViewMoneyField,
   DETAILED_TIME_PDF_ROW_LIMIT,
   detailedTimeDocument,
@@ -662,6 +663,9 @@ interface SavedReportRecord {
   presentation: { result: "summary" | "detailed"; grouped: boolean; includeZeroValues: boolean };
   pinned: boolean;
   shared: boolean;
+  sharing: { users: readonly { userId: number; name: string }[]; profiles: readonly UserPrincipal["profile"][] };
+  ownedByViewer: boolean;
+  canDelete: boolean;
 }
 
 interface ReportRunnerResultRecord {
@@ -696,8 +700,9 @@ export interface ReportReader {
   createSavedReport(input: { id: string; name: string; fields: SavedReportDefinitionRecord["fields"]; metrics: SavedReportDefinitionRecord["metrics"]; filters: SavedReportDefinitionRecord["filters"]; groupBy: SavedReportDefinitionRecord["groupBy"]; ownerUserId: number; presentation: SavedReportRecord["presentation"]; createdAt: string }): Promise<SavedReportRecord>;
   updateSavedReport(input: { reportId: string; ownerUserId: number; expectedVersion: number; changes: SavedReportChanges; presentation?: SavedReportRecord["presentation"] }): Promise<"not_found" | "version_conflict" | SavedReportRecord>;
   shareSavedReport(reportId: string, ownerUserId: number, userId: number, shared: boolean, at: string): Promise<boolean>;
+  shareSavedReportWithProfile(reportId: string, ownerUserId: number, profile: UserPrincipal["profile"], shared: boolean, at: string): Promise<boolean>;
   pinSavedReport(reportId: string, viewerUserId: number, pinned: boolean, at: string): Promise<boolean>;
-  deleteSavedReport(reportId: string, ownerUserId: number): Promise<boolean>;
+  deleteSavedReport(reportId: string, actorUserId: number): Promise<boolean>;
   runSavedReport(reportId: string, viewerUserId: number, authority: { billableMoney: boolean; costMoney: boolean }): Promise<ReportRunnerResultRecord | null>;
   previewReport(definition: SavedReportDefinitionRecord, presentation: SavedReportRecord["presentation"], authority: { billableMoney: boolean; costMoney: boolean }): Promise<ReportRunnerResultRecord>;
   executeTimeAction(input: {
@@ -1889,6 +1894,10 @@ const serializeProjectBudgetSummary = (
   };
 };
 
+// A report can only be shared with a role that can open reports at all, so the
+// list is the reports:read ceiling rather than a second copy of it.
+const savedReportProfiles = apiScopeProfiles["reports:read"];
+
 export const installReportRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   reports: ReportReader,
@@ -1910,6 +1919,12 @@ export const installReportRoutes = <Bindings extends object>(
     is_custom: report.isCustom,
     pinned: report.pinned,
     shared: report.shared,
+    shared_with: {
+      users: report.sharing.users.map((user) => ({ user_id: user.userId, name: user.name })),
+      profiles: report.sharing.profiles,
+    },
+    owned_by_viewer: report.ownedByViewer,
+    can_delete: report.canDelete,
     created_at: report.definition.createdAt,
     updated_at: report.definition.updatedAt,
   });
@@ -2093,6 +2108,22 @@ export const installReportRoutes = <Bindings extends object>(
       return context.body(null, 204);
     });
   }
+
+  api.on(["POST", "DELETE"], "/report-definitions/:reportId/role-shares/:profile", async (context) => {
+    requireApiScope(context, "reports:read");
+    const profile = context.req.param("profile");
+    if (!(savedReportProfiles as readonly string[]).includes(profile)) {
+      throw new ApiError({
+        status: 422, code: "validation_failed", message: "The request contains invalid fields.",
+        fields: [{ field: "profile", code: "invalid_report_role", message: `role must be one of ${savedReportProfiles.join(", ")}` }],
+      });
+    }
+    const ok = await reports.shareSavedReportWithProfile(
+      savedId(context.req.param("reportId")), context.get("principal").userId,
+      profile as UserPrincipal["profile"], context.req.method === "POST", new Date().toISOString());
+    if (!ok) throw notFound("saved report");
+    return context.body(null, 204);
+  });
 
   api.post("/report-definitions/:reportId/run", async (context) => {
     requireApiScope(context, "reports:read");

@@ -876,6 +876,9 @@
   border-top: 1px solid var(--ez-border);
 }
 .report-saved-card p { flex: 1; margin: 0; color: var(--ez-muted); }
+.report-saved-audience { color: var(--ez-muted); white-space: nowrap; }
+.report-share-dialog fieldset { display: grid; gap: 8px; margin: 0 0 12px; padding: 12px; border: 1px solid var(--ez-border); border-radius: var(--ez-radius); }
+.report-share-dialog ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 [data-report-builder] {
   width: min(720px, calc((100vw - 32px) / var(--ez-zoom, 1)));
   max-height: calc((100vh - 32px) / var(--ez-zoom, 1));
