@@ -55,6 +55,7 @@ const removedTables = new Set([
   'quickbooks_oauth_states',
   'calendar_proposals',
   'allocations',
+  'time_off',
 ])
 const closureTables = new Set([
   'organization_owner',

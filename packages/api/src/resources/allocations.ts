@@ -24,6 +24,7 @@ import {
   unknownFieldErrors,
 } from './support.js'
 import type { TrackedResourceClock } from './tracked-repository.js'
+import { installTimeOffRoutes, type TimeOffRepository } from './time-off.js'
 
 /**
  * Resource planning (issue 1007, slices 1 and 2): dated allocations of planned
@@ -71,6 +72,8 @@ export interface UpdateAllocationRequest {
 export interface CapacityWeekRecord {
   weekStart: string
   plannedSeconds: number
+  timeOffSeconds: number
+  availableCapacitySeconds: number
   trackedSeconds: number
   overAllocated: boolean
 }
@@ -90,6 +93,8 @@ export interface CapacityReportRecord {
 }
 
 export interface AllocationRepository {
+  /** Administrator-entered time off (issue 1007, slice 3). */
+  timeOff: TimeOffRepository
   allocations(
     viewer: Readonly<TeamViewer>,
     filters: Readonly<AllocationFilters>,
@@ -152,6 +157,8 @@ export const serializeCapacity = (report: Readonly<CapacityReportRecord>) => ({
     weeks: person.weeks.map((week) => ({
       week_start: week.weekStart,
       planned_seconds: week.plannedSeconds,
+      time_off_seconds: week.timeOffSeconds,
+      available_capacity_seconds: week.availableCapacitySeconds,
       tracked_seconds: week.trackedSeconds,
       over_allocated: week.overAllocated,
     })),
@@ -382,4 +389,6 @@ export const installAllocationRoutes = <Bindings extends object>(
       return translateAllocationError(error)
     }
   })
+
+  installTimeOffRoutes(api, { ...options, repository: options.repository.timeOff })
 }
