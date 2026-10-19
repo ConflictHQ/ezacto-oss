@@ -63,6 +63,10 @@ export const renderEstimatesPage = (view?: string): string => `
           <h3 id="estimate-lines-heading">What was quoted</h3>
           <div data-estimate-lines></div>
         </section>
+        <section class="recurring-lines" aria-labelledby="estimate-response-heading">
+          <h3 id="estimate-response-heading">Customer response</h3>
+          <p data-estimate-response>—</p>
+        </section>
         <section class="recurring-issue" data-estimate-convert-section hidden aria-labelledby="estimate-convert-heading">
           <h3 id="estimate-convert-heading">Turn this into an invoice</h3>
           <p class="hint" data-estimate-convert-hint>Raises an invoice for what this estimate quoted. Nothing is sent to the client.</p>

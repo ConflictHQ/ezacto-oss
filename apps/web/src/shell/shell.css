@@ -9637,3 +9637,54 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   font-style: normal;
   font-weight: 600;
 }
+
+/* The customer estimate page (issue 1010): a contact's own page, outside the
+   staff shell. Built from the shared table, facts and button rules. */
+.portal-estimates {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+.portal-estimates-header h1 {
+  margin: 0 0 16px;
+}
+.portal-estimates-totals {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0 0;
+  padding: 0;
+}
+.portal-estimates-totals > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.portal-estimates-totals dt {
+  color: var(--ez-muted);
+}
+.portal-estimates-totals dd {
+  margin: 0;
+}
+.portal-estimates-total {
+  padding-top: 8px;
+  border-top: 1px solid var(--ez-border);
+  font-weight: 600;
+}
+.portal-estimates-total dt {
+  color: inherit;
+}
+.portal-estimates-notes {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.portal-estimates-actions,
+.portal-estimates-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+.portal-estimates-confirm p {
+  flex: 1 1 100%;
+  margin: 0;
+}

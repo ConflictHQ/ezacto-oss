@@ -38815,6 +38815,9 @@
           "event_type",
           "delivery_status",
           "provider_message_id",
+          "contact_id",
+          "content_hash",
+          "estimate_version",
           "created_at",
           "updated_at"
         ],
@@ -38935,6 +38938,39 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contact_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "content_hash": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "estimate_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
               },
               {
                 "type": "null"

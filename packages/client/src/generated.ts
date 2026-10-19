@@ -2334,6 +2334,9 @@ export type EstimateMessage = {
   "event_type": "send" | "accept" | "decline" | "re-open" | "view" | "invoice" | null;
   "delivery_status": "queued" | "sent" | "bounced" | "complained" | "failed" | null;
   "provider_message_id": string | null;
+  "contact_id": number | null;
+  "content_hash": string | null;
+  "estimate_version": number | null;
   "created_at": string;
   "updated_at": string;
 };
