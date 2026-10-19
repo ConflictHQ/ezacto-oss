@@ -107,6 +107,34 @@ describe('activity log surface', () => {
     expect(listActivityLog.mock.calls[1]![0]).toEqual({ from: '2026-09-01' })
   })
 
+  it('[browser #852] sorts the loaded entries and says the sort covers only those while more remain', async () => {
+    mount()
+    const listActivityLog = vi.fn(async () => ({
+      data: [
+        row({ event_id: 'e-1', occurred_at: '2026-09-06T09:00:00.000Z' }),
+        row({ event_id: 'e-2', occurred_at: '2026-09-08T09:00:00.000Z' }),
+      ],
+      page: { next_cursor: 'more' },
+    }))
+    await createActivityController({ listActivityLog }).activate(new AbortController().signal)
+
+    const times = (): string[] =>
+      [...document.querySelectorAll('[data-activity-log-list] tbody tr[data-row] td[data-column="when"]')].map(
+        (cell) => cell.textContent ?? '',
+      )
+    expect(times()).toEqual(['2026-09-06T09:00:00.000Z', '2026-09-08T09:00:00.000Z'])
+    expect(status()).toContain('Sorting covers only the rows loaded so far')
+
+    // The table draws itself again on a sort, so the header is found afresh.
+    const header = (): HTMLButtonElement =>
+      document.querySelector<HTMLButtonElement>(
+        '[data-activity-log-list] thead button[data-sort-column="when"]',
+      )!
+    header().click()
+    header().click()
+    expect(times()).toEqual(['2026-09-08T09:00:00.000Z', '2026-09-06T09:00:00.000Z'])
+  })
+
   it('[browser] says a read failed rather than drawing an empty log', async () => {
     // An empty table and a failed read look identical, and one of them means
     // "nothing happened" while the other means "you cannot see what happened".

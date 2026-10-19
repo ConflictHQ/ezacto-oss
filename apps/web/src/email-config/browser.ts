@@ -184,17 +184,29 @@ export const createEmailConfigurationController = (
     senderList.replaceChildren(
       renderDataTable<SenderIdentity>({
         caption: 'Sender identities',
+        table: 'email-senders',
         rows,
         rowKey: (identity) => String(identity.id),
         columns: [
-          { key: 'email', label: 'Address', render: (identity) => identity.email },
-          { key: 'name', label: 'Display name', render: (identity) => identity.display_name },
+          { key: 'email', label: 'Address', sortValue: (identity) => identity.email, render: (identity) => identity.email },
+          {
+            key: 'name',
+            label: 'Display name',
+            sortValue: (identity) => identity.display_name,
+            render: (identity) => identity.display_name,
+          },
           {
             key: 'reply',
             label: 'Reply-to',
+            sortValue: (identity) => identity.reply_to_email,
             render: (identity) => identity.reply_to_email ?? '—',
           },
-          { key: 'provider', label: 'Provider', render: (identity) => identity.provider },
+          {
+            key: 'provider',
+            label: 'Provider',
+            sortValue: (identity) => identity.provider,
+            render: (identity) => identity.provider,
+          },
           {
             key: 'evidence',
             label: 'Provider evidence',
@@ -308,6 +320,7 @@ export const createEmailConfigurationController = (
     templateList.replaceChildren(
       renderDataTable<EmailTemplate>({
         caption: 'Email templates',
+        table: 'email-templates',
         rows,
         rowKey: (template) => template.kind,
         columns: [
@@ -315,6 +328,7 @@ export const createEmailConfigurationController = (
             key: 'kind',
             fit: true,
             label: 'Template',
+            sortValue: (template) => emailTemplateKindLabel(template.kind),
             render: (template) => emailTemplateKindLabel(template.kind),
           },
           {
@@ -327,6 +341,7 @@ export const createEmailConfigurationController = (
             key: 'subject',
             wrap: true,
             label: 'Subject',
+            sortValue: (template) => template.subject_template,
             render: (template) => template.subject_template,
           },
           {
@@ -334,6 +349,7 @@ export const createEmailConfigurationController = (
             fit: true,
             label: 'Version',
             numeric: true,
+            sortValue: (template) => template.version,
             render: (template) => String(template.version),
           },
         ],

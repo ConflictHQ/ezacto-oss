@@ -187,6 +187,38 @@ describe('Team browser controller', () => {
     )
   })
 
+  it('[browser #852] sorts people by a header inside their cohort bands', async () => {
+    writeDocument('team-list')
+    const listTeamPeople = vi.fn(async () =>
+      page([
+        summary({ id: 1, first_name: 'Avery', last_name: 'Owner', total_seconds: 3_600 }),
+        summary({ id: 2, first_name: 'Blair', last_name: 'Lead', total_seconds: 36_000 }),
+        summary({ id: 3, first_name: 'Casey', last_name: 'Temp', is_contractor: true, total_seconds: 7_200 }),
+        summary({ id: 4, first_name: 'Drew', last_name: 'Temp', is_contractor: true, total_seconds: 600 }),
+      ]),
+    )
+    await createTeamDirectoryController({ listTeamPeople }).activate(
+      identity(),
+      new AbortController().signal,
+      () => false,
+    )
+    const names = (): string[] =>
+      [...document.querySelectorAll('[data-team-list] tbody tr[data-row] td[data-column="name"] a')].map(
+        (cell) => cell.textContent ?? '',
+      )
+    expect(names()).toEqual(['Avery Owner', 'Blair Lead', 'Casey Temp', 'Drew Temp'])
+
+    // The table draws itself again on a sort, so the header is found afresh.
+    const hours = (): HTMLButtonElement =>
+      document.querySelector<HTMLButtonElement>(
+        '[data-team-list] thead button[data-sort-column="hours"]',
+      )!
+    hours().click()
+    hours().click()
+    // Largest first, and the contractors stay under their own band.
+    expect(names()).toEqual(['Blair Lead', 'Avery Owner', 'Casey Temp', 'Drew Temp'])
+  })
+
   it('asks the server for the archived people, not for everyone', async () => {
     // Active/All left the 46 archived contractors reachable only by reading
     // past the 14 people still here. "Who did we archive" had no answer.

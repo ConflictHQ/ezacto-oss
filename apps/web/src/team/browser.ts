@@ -516,26 +516,42 @@ export const createTeamDirectoryController = (
     list.replaceChildren(
       renderDataTable<TeamPersonSummary>({
         caption: 'People',
+        table: 'team',
+        // Bands keep employees before contractors; inside a band, by name.
+        defaultSort: { column: 'name', direction: 'ascending' },
         rows: visible,
         rowKey: (value) => String(value.id),
         groupBy: cohort,
         renderGroup: (value) => `${cohort(value)} (${bandCounts.get(cohort(value)) ?? 0})`,
         columns: [
-          { key: 'name', label: 'Name', render: personIdentity },
+          {
+            key: 'name',
+            label: 'Name',
+            sortValue: (value) => `${value.first_name} ${value.last_name}`,
+            render: personIdentity,
+          },
           // Each band carries its own Hours, Capacity and Billable the way the
           // old one did -- a cohort you cannot total is a label, not a section.
           {
             key: 'hours',
             label: 'Hours',
             numeric: true,
+            sortValue: (value) => value.total_seconds,
             render: (value) => teamHours(value.total_seconds),
             total: (rows) => teamHours(sumOf(rows, (value) => value.total_seconds)),
           },
-          { key: 'utilization', label: 'Utilization', numeric: true, render: personUtilization },
+          {
+            key: 'utilization',
+            label: 'Utilization',
+            numeric: true,
+            sortValue: (value) => value.utilization_ppm,
+            render: personUtilization,
+          },
           {
             key: 'capacity',
             label: 'Capacity',
             numeric: true,
+            sortValue: (value) => value.weekly_capacity,
             render: (value) => teamHours(value.weekly_capacity),
             total: (rows) => teamHours(sumOf(rows, (value) => value.weekly_capacity)),
           },
@@ -543,6 +559,7 @@ export const createTeamDirectoryController = (
             key: 'billable',
             label: 'Billable',
             numeric: true,
+            sortValue: (value) => value.billable_seconds,
             render: (value) => teamHours(value.billable_seconds),
             total: (rows) => teamHours(sumOf(rows, (value) => value.billable_seconds)),
           },
@@ -550,6 +567,7 @@ export const createTeamDirectoryController = (
             key: 'nonbillable',
             label: 'Non-billable',
             numeric: true,
+            sortValue: (value) => value.nonbillable_seconds,
             render: (value) => teamHours(value.nonbillable_seconds),
             total: (rows) => teamHours(sumOf(rows, (value) => value.nonbillable_seconds)),
           },

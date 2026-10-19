@@ -1,5 +1,6 @@
 import { EzactoApiError, type ActivityLogActor } from '@conflict-hq/ezacto-client'
 import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { loadedRowsSortNotice } from '../components/table-sort.js'
 
 export interface ActivityRow {
   readonly event_id: string
@@ -216,12 +217,24 @@ export const createActivityController = (api: ActivityApi): ActivityController =
     list.replaceChildren(
       renderDataTable<ActivityRow>({
         caption: 'Activity',
+        table: 'activity',
         rows: [...rows],
         rowKey: (row) => row.event_id,
         empty: 'Nothing matches these filters.',
         columns: [
-          { key: 'when', label: 'When', fit: true, render: (row) => row.occurred_at },
-          { key: 'event', label: 'Event', render: (row) => eventLabel(row.event_type) },
+          {
+            key: 'when',
+            label: 'When',
+            fit: true,
+            sortValue: (row) => row.occurred_at,
+            render: (row) => row.occurred_at,
+          },
+          {
+            key: 'event',
+            label: 'Event',
+            sortValue: (row) => eventLabel(row.event_type),
+            render: (row) => eventLabel(row.event_type),
+          },
           { key: 'who', label: 'Who', render: (row) => actorCell(row.actor) },
           {
             key: 'subject',
@@ -344,7 +357,9 @@ export const createActivityController = (api: ActivityApi): ActivityController =
       more.hidden = nextCursor === null
       render(shown)
       status.textContent =
-        shown.length === 0 ? '' : `${shown.length} ${shown.length === 1 ? 'entry' : 'entries'}.`
+        shown.length === 0
+          ? ''
+          : `${shown.length} ${shown.length === 1 ? 'entry' : 'entries'}.${nextCursor === null ? '' : loadedRowsSortNotice}`
     } catch (error) {
       if (signal.aborted) return
       // The log is what you read when something has gone wrong, so a failure to

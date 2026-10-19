@@ -2644,10 +2644,11 @@ export const mountShell = async (
       table.replaceChildren(
         renderDataTable<ApiToken>({
           caption: 'API tokens',
+          table: 'api-tokens',
           rows: [...live],
           rowKey: (token) => String(token.id),
           columns: [
-            { key: 'name', label: 'Name', render: (token) => token.name },
+            { key: 'name', label: 'Name', sortValue: (token) => token.name, render: (token) => token.name },
             // The hint, never the token: the value is stored hashed and shown
             // once, and a screen that could print it again would mean it was
             // recoverable.
@@ -2655,11 +2656,13 @@ export const mountShell = async (
             {
               key: 'scopes',
               label: 'Scopes',
+              sortValue: (token) => token.scopes.join(', '),
               render: (token) => token.scopes.join(', '),
             },
             {
               key: 'used',
               label: 'Last used',
+              sortValue: (token) => token.last_used_at,
               // A token nobody has ever used is the one worth revoking, and
               // "never" says that where an empty cell reads as a loading bug.
               render: (token) => token.last_used_at ?? 'Never',
@@ -2667,6 +2670,7 @@ export const mountShell = async (
             {
               key: 'expires',
               label: 'Expires',
+              sortValue: (token) => token.expires_at,
               render: (token) => token.expires_at ?? 'Never',
             },
           ],
