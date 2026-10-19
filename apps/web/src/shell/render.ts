@@ -1243,11 +1243,18 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
 </html>`
 }
 
-export const webAssets = {
+/**
+ * Annotated, not inferred: each generated bundle is a string literal type the
+ * length of the bundle, and an inferred type here carries all of them into the
+ * declaration file, which `tsc` refuses past a million characters (TS7056).
+ */
+export const webAssets: Readonly<
+  Record<'stylesheet' | 'javascript' | 'portalEstimatesJavascript', string>
+> = {
   stylesheet: shellStylesheet,
   javascript: shellJavascript,
   portalEstimatesJavascript,
-} as const
+}
 
 /** Standalone confirmation: no workspace session authorizes Apple revocation. */
 export const renderAppleDisconnect = (options: {
