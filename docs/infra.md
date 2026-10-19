@@ -41,9 +41,16 @@ App Review exception is documented in [app-review-instance.md](app-review-instan
 - Available now: hosted D1 Time Travel (30 days on the Paid plan, per-minute,
   on by default) and a stopped-container physical snapshot of `db.sqlite` plus
   attachments. Restore is a confirmed operator action, never automatic.
-- Planned, not yet implemented: the shared D18 logical bundle, nightly Worker
-  export to R2 (#37), and `ez backup` / `ez restore` (#28). The physical
-  container snapshot is not that portable bundle. See [`RESTORE.md`](../RESTORE.md).
+- Also available: `ez backup` / `ez restore` / `ez export --verify` for a
+  container bundle, the Worker's nightly CSV bundle in R2 (`backups/<date>/`,
+  recorded in `backup_runs`), the operational nightly SQL dump
+  (`.github/workflows/backup-sql.yml`, #773), and `ez backup --sync-to s3://...`
+  to copy a container bundle to a bucket you own (#38). The container and Worker
+  bundles are different formats and the Worker bundle has no restore command; the
+  container physical snapshot is neither. See [`RESTORE.md`](../RESTORE.md),
+  including bucket versioning, Object Lock and put-only credential guidance.
+- Not yet built (#38): the Worker's scheduled sync, off-site status in
+  `backup/status`, destination preflight, and encrypting before objects leave.
 
 ## Env & secrets
 
