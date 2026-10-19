@@ -4708,7 +4708,14 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       data: {
         type: "object",
-        required: ["realm_id", "generated_at", "counts", "rows"],
+        required: [
+          "realm_id",
+          "generated_at",
+          "counts",
+          "rows",
+          "payment_divergences",
+          "recovery",
+        ],
         properties: {
           realm_id: stringSchema,
           generated_at: timestampSchema,
@@ -4762,6 +4769,57 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
               additionalProperties: false,
             },
           },
+          // Payments voided or deleted in QuickBooks that a receipt here came
+          // from (slice 3). The receipts are listed, never changed.
+          payment_divergences: {
+            type: "array",
+            items: {
+              type: "object",
+              required: [
+                "quickbooks_payment_id",
+                "kind",
+                "quickbooks_updated_at",
+                "detected_at",
+                "receipts",
+              ],
+              properties: {
+                quickbooks_payment_id: stringSchema,
+                kind: { type: "string", enum: ["voided", "deleted"] },
+                quickbooks_updated_at: timestampSchema,
+                detected_at: timestampSchema,
+                receipts: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    required: ["payment_id", "invoice_id", "invoice_number", "amount_cents"],
+                    properties: {
+                      payment_id: integerSchema,
+                      invoice_id: integerSchema,
+                      invoice_number: stringSchema,
+                      amount_cents: integerSchema,
+                    },
+                    additionalProperties: false,
+                  },
+                },
+              },
+              additionalProperties: false,
+            },
+          },
+          // How the change-data-capture catch-up last went; null until its
+          // first run has placed a cursor (slice 2).
+          recovery: nullable({
+            type: "object",
+            required: ["cdc_cursor", "last_run_at", "last_outcome"],
+            properties: {
+              cdc_cursor: timestampSchema,
+              last_run_at: timestampSchema,
+              last_outcome: {
+                type: "string",
+                enum: ["caught_up", "failed", "full_reconcile_needed"],
+              },
+            },
+            additionalProperties: false,
+          }),
         },
         additionalProperties: false,
       },

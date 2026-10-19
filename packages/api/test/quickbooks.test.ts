@@ -48,6 +48,20 @@ const reconciliation: QuickBooksReconciliation = {
       detail: 'total is 1000.00 here and 900.00 in QuickBooks',
     },
   ],
+  paymentDivergences: [
+    {
+      quickBooksPaymentId: '501',
+      kind: 'voided',
+      quickBooksUpdatedAt: '2026-10-17T09:00:00.000Z',
+      detectedAt: '2026-10-17T09:00:05.000Z',
+      receipts: [{ paymentId: 4, invoiceId: 7, invoiceNumber: '1315', amountCents: 30_000 }],
+    },
+  ],
+  recovery: {
+    cdcCursor: '2026-10-18T11:00:00.000Z',
+    lastRunAt: '2026-10-18T11:00:01.000Z',
+    lastOutcome: 'caught_up',
+  },
 }
 
 const service = (overrides: Partial<QuickBooksService> = {}): QuickBooksService => ({
@@ -137,7 +151,23 @@ describe('the connect button', () => {
         '/integrations/quickbooks/reconciliation',
       )
       expect(response.status).toBe(200)
-      const body = (await response.json()) as { data: { rows: Record<string, unknown>[] } }
+      const body = (await response.json()) as {
+        data: { rows: Record<string, unknown>[]; payment_divergences: unknown; recovery: unknown }
+      }
+      expect(body.data.payment_divergences).toEqual([
+        {
+          quickbooks_payment_id: '501',
+          kind: 'voided',
+          quickbooks_updated_at: '2026-10-17T09:00:00.000Z',
+          detected_at: '2026-10-17T09:00:05.000Z',
+          receipts: [{ payment_id: 4, invoice_id: 7, invoice_number: '1315', amount_cents: 30_000 }],
+        },
+      ])
+      expect(body.data.recovery).toEqual({
+        cdc_cursor: '2026-10-18T11:00:00.000Z',
+        last_run_at: '2026-10-18T11:00:01.000Z',
+        last_outcome: 'caught_up',
+      })
       expect(body.data.rows[0]).toMatchObject({
         status: 'amount_differs',
         invoice_id: 7,

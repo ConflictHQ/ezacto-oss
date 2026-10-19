@@ -843,6 +843,23 @@ export type QuickBooksReconciliationEnvelope = {
   "quickbooks_paid_cents": number | null;
   "detail": string;
 }>;
+  "payment_divergences": Array<{
+  "quickbooks_payment_id": string;
+  "kind": "voided" | "deleted";
+  "quickbooks_updated_at": string;
+  "detected_at": string;
+  "receipts": Array<{
+  "payment_id": number;
+  "invoice_id": number;
+  "invoice_number": string;
+  "amount_cents": number;
+}>;
+}>;
+  "recovery": {
+  "cdc_cursor": string;
+  "last_run_at": string;
+  "last_outcome": "caught_up" | "failed" | "full_reconcile_needed";
+} | null;
 };
 };
 

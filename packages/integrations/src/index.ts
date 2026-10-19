@@ -164,6 +164,7 @@ export {
   type TokenRevokeInput,
 } from './quickbooks/oauth.js'
 export {
+  QUICKBOOKS_CDC_PAGE_SIZE,
   QUICKBOOKS_MAXIMUM_LISTED_INVOICES,
   QUICKBOOKS_MINOR_VERSION,
   QUICKBOOKS_QUERY_PAGE_SIZE,
@@ -172,11 +173,13 @@ export {
   QuickBooksApiError,
   QuickBooksClient,
   QuickBooksResponseError,
+  type QuickBooksCapturedPayment,
   type QuickBooksClientOptions,
   type QuickBooksCustomer,
   type QuickBooksInvoice,
   type QuickBooksInvoiceLine,
   type QuickBooksPayment,
+  type QuickBooksPaymentChanges,
   type QuickBooksRef,
 } from './quickbooks/client.js'
 export {
@@ -207,6 +210,7 @@ export {
 } from './quickbooks/webhook.js'
 export {
   inboundPayments,
+  isVoidedPayment,
   mirrorInvoice,
   mirrorPayment,
   paymentPayload,
@@ -236,12 +240,14 @@ export {
 export {
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
+  type QuickBooksCatchUp,
   type QuickBooksConfig,
   type QuickBooksConnectionStatus,
   type QuickBooksConnectionStore,
   type QuickBooksInvoiceSyncState,
   type QuickBooksMirrorOutcomeKind,
   type QuickBooksMirrorSource,
+  type QuickBooksPaymentDivergence,
   type QuickBooksPaymentRecording,
   type QuickBooksReconciliation,
   type QuickBooksReconciliationSource,
@@ -250,6 +256,8 @@ export {
   type QuickBooksService,
   type QuickBooksSourceInvoice,
   type QuickBooksSourcePayment,
+  type QuickBooksSyncCursor,
+  type QuickBooksSyncOutcome,
   type QuickBooksSyncResult,
 } from './quickbooks/runtime.js'
 export {
