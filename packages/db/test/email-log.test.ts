@@ -499,6 +499,50 @@ for (const [runtime, factory] of factories) {
       )
     })
 
+    it('[unit] counts per sender, so a bounce on one identity leaves another alone', async () => {
+      const current = await setup()
+      const send = async (from: string, template: string, id: string) => {
+        const queued = await current.store.createQueued({
+          ...message,
+          from: { email: from },
+          template,
+        })
+        await current.store.claimAttempt(queued.id, 'http-provider', id, 30)
+        await current.store.markSent(queued.id, 'http-provider', { messageId: id }, id)
+        return queued.id
+      }
+      const first = await send('Billing@example.test', 'reset', 'a-1')
+      await send('billing@example.test', 'verify', 'a-2')
+      await send('support@example.test', 'verify_email', 'b-1')
+
+      const empty = { queued: 0, bounced: 0, complained: 0, failed: 0 }
+      await expect(current.store.countByStatusPerSender()).resolves.toEqual([
+        { sender: 'billing@example.test', counts: { ...empty, sent: 2 } },
+        { sender: 'support@example.test', counts: { ...empty, sent: 1 } },
+      ])
+
+      await current.store.markBounced(first)
+      await expect(current.store.countByStatusPerSender()).resolves.toEqual([
+        { sender: 'billing@example.test', counts: { ...empty, sent: 1, bounced: 1 } },
+        { sender: 'support@example.test', counts: { ...empty, sent: 1 } },
+      ])
+      // The aggregate still adds up the identities.
+      await expect(current.store.countByStatus()).resolves.toEqual({
+        ...empty,
+        sent: 2,
+        bounced: 1,
+      })
+
+      // A refusal no provider saw stays out of the identity counts too.
+      const refused = await current.store.createQueued({
+        ...message,
+        from: { email: 'support@example.test' },
+      })
+      await current.store.markRefused(refused.id, 'demo_recipient_not_allowed')
+      const after = await current.store.countByStatusPerSender()
+      expect(after.find((entry) => entry.sender === 'support@example.test')?.counts.failed).toBe(0)
+    })
+
     describe('paged reads (issue 929)', () => {
       const send = async (
         current: Harness,

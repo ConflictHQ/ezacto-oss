@@ -30898,14 +30898,65 @@
         },
         "additionalProperties": false
       },
+      "EmailIdentityReputation": {
+        "type": "object",
+        "required": [
+          "sender",
+          "sent",
+          "bounced",
+          "complained",
+          "failed",
+          "bounce_rate_ppm",
+          "complaint_rate_ppm"
+        ],
+        "properties": {
+          "sender": {
+            "type": "string"
+          },
+          "sent": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bounced": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "complained": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bounce_rate_ppm": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "complaint_rate_ppm": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          }
+        },
+        "additionalProperties": false
+      },
       "EmailHealth": {
         "type": "object",
         "required": [
-          "reputation"
+          "reputation",
+          "identities"
         ],
         "properties": {
           "reputation": {
             "$ref": "#/components/schemas/EmailReputationSnapshot"
+          },
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EmailIdentityReputation"
+            }
           }
         },
         "additionalProperties": false

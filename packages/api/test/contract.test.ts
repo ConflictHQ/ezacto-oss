@@ -158,6 +158,7 @@ const sessions = new Proxy({}, { get: () => unavailable }) as ApiSessionService;
 const emailLog = {
   list: unavailable,
   countByStatus: unavailable,
+  countByStatusPerSender: unavailable,
   snapshot: unavailable,
   page: unavailable,
   count: unavailable,
