@@ -15,6 +15,8 @@ export interface InvoiceDefaults {
   readonly companyAddress: string | null
   readonly notes: string | null
   readonly subject: string | null
+  /** Days an estimate stays answerable from the day it is first sent; null means no default expiry (issue 1010). */
+  readonly estimateValidityDays: number | null
 }
 
 export type InvoiceDefaultsPatch = Partial<InvoiceDefaults>
@@ -24,6 +26,7 @@ interface Row {
   companyAddress: string | null
   notes: string | null
   subject: string | null
+  estimateValidityDays: number | null
 }
 
 export const readInvoiceDefaults = async (
@@ -31,7 +34,8 @@ export const readInvoiceDefaults = async (
 ): Promise<InvoiceDefaults> => {
   const rows = await database.all<Row>(
     sql`SELECT name AS companyName, address AS companyAddress,
-               invoice_default_notes AS notes, invoice_default_subject AS subject
+               invoice_default_notes AS notes, invoice_default_subject AS subject,
+               estimate_validity_days AS estimateValidityDays
         FROM organizations ORDER BY id LIMIT 1`,
   )
   const row = rows[0]
@@ -53,6 +57,9 @@ export const updateInvoiceDefaults = async (
     patch.companyAddress === undefined ? null : sql`address = ${nullable(patch.companyAddress)}`,
     patch.notes === undefined ? null : sql`invoice_default_notes = ${nullable(patch.notes)}`,
     patch.subject === undefined ? null : sql`invoice_default_subject = ${nullable(patch.subject)}`,
+    patch.estimateValidityDays === undefined
+      ? null
+      : sql`estimate_validity_days = ${patch.estimateValidityDays}`,
   ].filter((set) => set !== null)
   if (sets.length > 0) {
     await database.run(

@@ -2,7 +2,11 @@ import type BetterSqlite3 from 'better-sqlite3'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { defaultInvoiceListSort, type InvoiceListPosition, type InvoiceListSort } from '@ezacto/core'
-import { estimateContentHash } from './estimates.js'
+import {
+  effectiveEstimateExpiry,
+  estimateContentHash,
+  isEstimateExpired,
+} from './estimates.js'
 import type * as schema from './schema.js'
 import {
   deleteInvoicePayment,
@@ -285,6 +289,10 @@ export interface EstimateResource {
   discount_amount_cents: number
   created_at: string
   updated_at: string
+  /** The last day staff allow a customer to answer; null when staff set none (issue 1010). */
+  expires_on: string | null
+  /** The expiry that applies: `expires_on`, else the organization's validity days from `sent_at`. */
+  effective_expires_on: string | null
   line_items: EstimateLineResource[]
 }
 
@@ -375,7 +383,11 @@ export interface CustomerEstimate extends CustomerEstimateSummary {
   }>
   /** What a response must quote: the hash of the content shown. */
   version: string
-  /** False when the estimate was edited after it was sent, until it is sent again. */
+  /** The last day the estimate can be answered, or null when it does not expire (issue 1010). */
+  expires_on: string | null
+  /** True once the expiry has passed; an expired estimate cannot be answered. */
+  expired: boolean
+  /** False when the estimate was edited after it was sent, until it is sent again, or when it has expired. */
   answerable: boolean
   response: CustomerEstimateResponse | null
 }
@@ -386,6 +398,14 @@ export interface RespondToEstimateInput {
   contactId: number
   decision: 'accept' | 'decline'
   version: string
+  occurredAt: string
+}
+
+export interface SetEstimateExpiryInput {
+  estimateId: number
+  expectedVersion: number
+  /** The last day a customer can answer, as YYYY-MM-DD; null clears it. */
+  expiresOn: string | null
   occurredAt: string
 }
 
@@ -597,6 +617,7 @@ export type MoneyResourceOperationErrorCode =
   | 'estimate_state_conflict'
   | 'estimate_content_changed'
   | 'estimate_needs_resend'
+  | 'estimate_expired'
   | 'estimate_already_converted'
   | 'command_id_reused'
 
@@ -693,6 +714,17 @@ const assertTimestamp = (value: string, field: string): void => {
   const normalized = `${match[1]}.${(match[2] ?? '').padEnd(3, '0')}Z`
   if (!Number.isSafeInteger(epoch) || new Date(epoch).toISOString() !== normalized) {
     throw new RangeError(`${field} must be a real canonical UTC timestamp`)
+  }
+}
+
+const assertCanonicalDay = (value: string, field: string): void => {
+  const epoch = Date.parse(`${value}T00:00:00.000Z`)
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+    !Number.isSafeInteger(epoch) ||
+    new Date(epoch).toISOString().slice(0, 10) !== value
+  ) {
+    throw new RangeError(`${field} must be a real calendar day`)
   }
 }
 
@@ -890,7 +922,15 @@ const estimateSelect = `SELECT id, client_id, created_by_user_id, number,
   purchase_order, subject, notes, currency, state, version, issue_date, sent_at,
   accepted_at, declined_at, tax_rate_ppm, tax2_rate_ppm, discount_rate_ppm,
   amount_cents, tax_amount_cents, tax2_amount_cents, discount_amount_cents,
-  created_at, updated_at FROM estimates`
+  created_at, updated_at, expires_on,
+  (SELECT timezone FROM organizations ORDER BY id LIMIT 1) AS org_timezone,
+  (SELECT estimate_validity_days FROM organizations ORDER BY id LIMIT 1) AS org_validity_days
+  FROM estimates`
+
+type RawEstimate = Omit<EstimateResource, 'line_items' | 'effective_expires_on'> & {
+  org_timezone: string | null
+  org_validity_days: number | null
+}
 
 type RawEstimateLine = Omit<EstimateLineResource, 'taxed' | 'taxed2'> & {
   taxed: number | boolean
@@ -905,10 +945,16 @@ const hydrateEstimateLines = (lines: RawEstimateLine[]): EstimateLineResource[] 
   lines.map((line) => ({ ...line, taxed: Boolean(line.taxed), taxed2: Boolean(line.taxed2) }))
 
 const hydrateEstimate = (
-  row: Omit<EstimateResource, 'line_items'>,
+  { org_timezone: timeZone, org_validity_days: validityDays, ...row }: RawEstimate,
   lineItems: EstimateLineResource[],
 ): EstimateResource => ({
   ...row,
+  effective_expires_on: effectiveEstimateExpiry({
+    expiresOn: row.expires_on,
+    sentAt: row.sent_at,
+    validityDays,
+    timeZone: timeZone ?? 'UTC',
+  }),
   line_items: lineItems,
 })
 
@@ -1118,13 +1164,13 @@ const readConsistentEstimate = async (
     if (header === undefined || lines === undefined) {
       throw new Error('D1 estimate snapshot batch returned incomplete results')
     }
-    const row = (header.results[0] as Omit<EstimateResource, 'line_items'> | undefined) ?? null
+    const row = (header.results[0] as RawEstimate | undefined) ?? null
     if (row === null) return null
     return hydrateEstimate(row, hydrateEstimateLines(lines.results as unknown as RawEstimateLine[]))
   }
   return client.transaction(() => {
     const row = client.prepare(`${estimateSelect} WHERE id = ?`).get(estimateId) as
-      Omit<EstimateResource, 'line_items'> | undefined
+      RawEstimate | undefined
     if (row === undefined) return null
     const lines = client.prepare(estimateLinesSelect).all(estimateId) as RawEstimateLine[]
     return hydrateEstimate(row, hydrateEstimateLines(lines))
@@ -1771,18 +1817,33 @@ export class MoneyResourceRepository {
   }
 
   /** Null for an estimate that does not exist, belongs to another client, or is still a draft. */
-  async getCustomerEstimate(clientId: number, estimateId: number): Promise<CustomerEstimate | null> {
+  async getCustomerEstimate(
+    clientId: number,
+    estimateId: number,
+    now: string = new Date().toISOString(),
+  ): Promise<CustomerEstimate | null> {
     assertPositiveId(clientId, 'clientId')
     assertPositiveId(estimateId, 'estimateId')
     const estimate = await readConsistentEstimate(this.database, estimateId)
     if (estimate === null || estimate.client_id !== clientId || estimate.state === 'draft') {
       return null
     }
-    return this.customerView(estimate)
+    return this.customerView(estimate, now)
   }
 
-  private async customerView(estimate: EstimateResource): Promise<CustomerEstimate> {
+  private async instanceTimezone(): Promise<string> {
+    const row = await first<{ timezone: string }>(this.database, {
+      text: 'SELECT timezone FROM organizations ORDER BY id LIMIT 1',
+      params: [],
+    })
+    return row?.timezone ?? 'UTC'
+  }
+
+  private async customerView(estimate: EstimateResource, now: string): Promise<CustomerEstimate> {
     const version = await estimateContentHash(estimate)
+    const expired =
+      estimate.state === 'sent' &&
+      isEstimateExpired(estimate.effective_expires_on, await this.instanceTimezone(), now)
     const sent = await first<{ sentContentHash: string | null }>(this.database, {
       text: `SELECT sent_content_hash AS "sentContentHash" FROM estimates WHERE id = ?`,
       params: [estimate.id],
@@ -1841,7 +1902,9 @@ export class MoneyResourceRepository {
         taxed2: line.taxed2,
       })),
       version,
-      answerable: estimate.state === 'sent' && sent?.sentContentHash === version,
+      expires_on: estimate.effective_expires_on,
+      expired,
+      answerable: estimate.state === 'sent' && sent?.sentContentHash === version && !expired,
       response,
     }
   }
@@ -1877,6 +1940,7 @@ export class MoneyResourceRepository {
     if (contact === null) throw notFound()
     const name = [contact.firstName, contact.lastName].filter(Boolean).join(' ')
     const target = input.decision === 'accept' ? 'accepted' : 'declined'
+    const timeZone = await this.instanceTimezone()
 
     for (let attempt = 0; ; attempt += 1) {
       const estimate = await readConsistentEstimate(this.database, input.estimateId)
@@ -1884,7 +1948,7 @@ export class MoneyResourceRepository {
         throw notFound()
       }
       if (estimate.state !== 'sent') {
-        const view = await this.customerView(estimate)
+        const view = await this.customerView(estimate, input.occurredAt)
         if (
           estimate.state === target &&
           view.response?.decision === input.decision &&
@@ -1895,6 +1959,12 @@ export class MoneyResourceRepository {
         throw new MoneyResourceOperationError(
           'estimate_state_conflict',
           'estimate has already been answered',
+        )
+      }
+      if (isEstimateExpired(estimate.effective_expires_on, timeZone, input.occurredAt)) {
+        throw new MoneyResourceOperationError(
+          'estimate_expired',
+          'estimate expired and can no longer be answered',
         )
       }
       const hash = await estimateContentHash(estimate)
@@ -1977,7 +2047,7 @@ export class MoneyResourceRepository {
       if (written !== null) {
         const after = await readConsistentEstimate(this.database, estimate.id)
         if (after === null) throw notFound()
-        return { estimate: await this.customerView(after), replayed: false }
+        return { estimate: await this.customerView(after, input.occurredAt), replayed: false }
       }
       if (attempt > 0) {
         throw new MoneyResourceOperationError(
@@ -1986,6 +2056,55 @@ export class MoneyResourceRepository {
         )
       }
     }
+  }
+
+  /**
+   * Staff set, move or clear the last day a customer can answer (issue 1010).
+   * The expiry is not part of the content hash, so this never invalidates the
+   * version a customer was shown or an answer already given; it does bump the
+   * estimate's version like every other write. Asking for the expiry it already
+   * has changes nothing, so a retried request is safe.
+   */
+  async setEstimateExpiry(input: SetEstimateExpiryInput): Promise<EstimateResource> {
+    assertPositiveId(input.estimateId, 'estimateId')
+    if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 0) {
+      throw new RangeError('expectedVersion must be a non-negative safe integer')
+    }
+    assertTimestamp(input.occurredAt, 'occurredAt')
+    if (input.expiresOn !== null) assertCanonicalDay(input.expiresOn, 'expiresOn')
+    const current = await readConsistentEstimate(this.database, input.estimateId)
+    if (current === null) {
+      throw new MoneyResourceOperationError('estimate_not_found', 'estimate does not exist')
+    }
+    if (current.expires_on === input.expiresOn) return current
+    if (current.state !== 'draft' && current.state !== 'sent') {
+      throw new MoneyResourceOperationError(
+        'estimate_state_conflict',
+        'an answered estimate no longer expires',
+      )
+    }
+    if (current.version !== input.expectedVersion) {
+      throw new MoneyResourceOperationError(
+        'estimate_version_conflict',
+        'estimate version no longer matches',
+      )
+    }
+    const result = await run(this.database, {
+      text: `UPDATE estimates SET expires_on = ?, version = version + 1, updated_at = ?
+        WHERE id = ? AND version = ? AND state IN ('draft', 'sent')`,
+      params: [input.expiresOn, input.occurredAt, input.estimateId, input.expectedVersion],
+    })
+    if (result.changes === 0) {
+      throw new MoneyResourceOperationError(
+        'estimate_version_conflict',
+        'estimate changed while its expiry was being set',
+      )
+    }
+    const updated = await readConsistentEstimate(this.database, input.estimateId)
+    if (updated === null) {
+      throw new MoneyResourceOperationError('estimate_not_found', 'estimate does not exist')
+    }
+    return updated
   }
 
   async convertEstimate(input: ConvertEstimateInput): Promise<EstimateConversionResult> {

@@ -2306,12 +2306,19 @@ export type Estimate = {
   "discount_amount_cents": number;
   "created_at": string;
   "updated_at": string;
+  "expires_on": string | null;
+  "effective_expires_on": string | null;
   "line_items": Array<EstimateLine>;
 };
 
 export type EstimateEnvelope = {
   "data": Estimate;
   "links": Links;
+};
+
+export type EstimateExpiryInput = {
+  "expected_version": number;
+  "expires_on": string | null;
 };
 
 export type EstimatePage = {
@@ -4156,6 +4163,7 @@ export type InvoiceDefaults = {
   "company_address": string | null;
   "notes": string | null;
   "subject": string | null;
+  "estimate_validity_days": number | null;
 };
 
 export type InvoiceDefaultsEnvelope = {
@@ -4168,6 +4176,7 @@ export type InvoiceDefaultsInput = {
   "company_address"?: string | null;
   "notes"?: string | null;
   "subject"?: string | null;
+  "estimate_validity_days"?: number | null;
 };
 
 export type InvoiceDocumentPreferenceEnvelope = {
@@ -5898,6 +5907,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
     if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<EstimateMessageCommandEnvelope>("POST", "/api/v1/estimates/:id/messages".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setEstimateExpiry(args: { "id": number; body: EstimateExpiryInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<EstimateEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<EstimateEnvelope>("PATCH", "/api/v1/estimates/:id/expiry".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
       signal: args.signal,
       headers,

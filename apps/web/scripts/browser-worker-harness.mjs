@@ -73,6 +73,9 @@ const bundle = await build({
 const miniflare = new Miniflare({
   bindings: {
     API_CURSOR_SIGNING_KEY: cursorSigningKey,
+    // Mounts the customer estimate page and its routes (issue 1010); the specs
+    // answer the routes themselves, since no emailed link can be issued yet.
+    PORTAL_MAGIC_LINK_SIGNING_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQ',
     ENVIRONMENT: 'test',
     RELEASE: 'browser-cookie-e2e',
   },

@@ -271,6 +271,31 @@ describe('portal estimate review and response', () => {
     )
   })
 
+  it('refuses an expired estimate with a distinct 410, records nothing and says so on the page data', async () => {
+    const h = await harness()
+    const version = await versionOf(h, 2)
+    // The clock in this harness is t1 (2026-10-01T11:00Z, instance timezone UTC).
+    h.sqlite.prepare(`UPDATE estimates SET expires_on = '2026-09-30' WHERE id = 2`).run()
+    const shown = (await (await get(h, '/portal/estimates/2', 'alice')).json()) as {
+      data: { version: string; answerable: boolean; expired: boolean; expires_on: string }
+    }
+    expect(shown.data).toMatchObject({ expired: true, answerable: false, expires_on: '2026-09-30' })
+    // The expiry is not part of the version the customer was shown.
+    expect(shown.data.version).toBe(version)
+
+    const refused = await answer(h, 2, { decision: 'accept', version })
+    expect(refused.status).toBe(410)
+    expect(((await refused.json()) as { error: { code: string } }).error.code).toBe('estimate_expired')
+    expect(h.sqlite.prepare(`SELECT state FROM estimates WHERE id = 2`).get()).toEqual({ state: 'sent' })
+    expect(
+      h.sqlite.prepare(`SELECT count(*) AS n FROM estimate_messages WHERE contact_id IS NOT NULL`).get(),
+    ).toEqual({ n: 0 })
+
+    // Staff moving the day forward reopens it for the same version.
+    h.sqlite.prepare(`UPDATE estimates SET expires_on = '2026-10-01' WHERE id = 2`).run()
+    expect((await answer(h, 2, { decision: 'accept', version })).status).toBe(200)
+  })
+
   it('[security] never lets a contact answer another client estimate', async () => {
     const h = await harness()
     const version = await versionOf(h, 2)

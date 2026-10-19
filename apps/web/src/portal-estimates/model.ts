@@ -54,6 +54,10 @@ export interface PortalEstimate extends PortalEstimateSummary {
   readonly discount_amount_cents: number
   readonly line_items: readonly PortalEstimateLine[]
   readonly version: string
+  /** The last day the estimate can be answered, or null when it does not expire. */
+  readonly expires_on: string | null
+  /** True once that day has passed while the estimate was still unanswered. */
+  readonly expired: boolean
   readonly answerable: boolean
   readonly response: PortalEstimateResponse | null
 }
@@ -148,6 +152,14 @@ export const portalTotalRows = (estimate: PortalEstimate): readonly PortalTotalR
   return rows
 }
 
+/** The expiry as a fact row: the day is the last one the estimate can be answered on. */
+export const portalExpiryText = (estimate: PortalEstimate): string | null =>
+  estimate.expires_on === null
+    ? null
+    : estimate.expired
+      ? `${estimate.expires_on} (expired)`
+      : `${estimate.expires_on} (open until the end of that day)`
+
 /** `2026-10-18T14:03:00.000Z` as `2026-10-18 14:03 UTC`. */
 export const portalTimestamp = (value: string): string =>
   `${value.slice(0, 10)} ${value.slice(11, 16)} UTC`
@@ -170,6 +182,9 @@ export const portalStatusLine = (estimate: PortalEstimate): string => {
       : ' It has been edited since; ask the sender to send it again if the new version needs an answer.'
     return `${who} ${verb} this estimate on ${portalTimestamp(response.at)}.${stale}`
   }
+  if (estimate.expired) {
+    return `This estimate expired on ${estimate.expires_on ?? 'its expiry day'} and can no longer be answered. Ask the sender for a new one.`
+  }
   if (!estimate.answerable) {
     return 'This estimate is being revised and cannot be answered yet. You will be able to respond once it is sent again.'
   }
@@ -180,6 +195,7 @@ export type PortalFailure =
   | { readonly kind: 'signed-out' }
   | { readonly kind: 'changed' }
   | { readonly kind: 'revising' }
+  | { readonly kind: 'expired' }
   | { readonly kind: 'answered' }
   | { readonly kind: 'not-found' }
   | { readonly kind: 'unavailable' }
@@ -192,6 +208,7 @@ export const portalFailure = (status: number, code: string | null): PortalFailur
   if (status === 503) return { kind: 'unavailable' }
   if (status === 409 && code === 'estimate_content_changed') return { kind: 'changed' }
   if (status === 409 && code === 'estimate_needs_resend') return { kind: 'revising' }
+  if (status === 410 && code === 'estimate_expired') return { kind: 'expired' }
   if (status === 409) return { kind: 'answered' }
   return { kind: 'failed', message: 'Something went wrong. Nothing was recorded. Try again.' }
 }
@@ -204,6 +221,8 @@ export const portalFailureMessage = (failure: PortalFailure): string => {
       return 'This quote changed after you opened it, so your answer was not recorded. The current version is shown below; review it and answer again.'
     case 'revising':
       return 'This estimate is being revised and cannot be answered until it is sent again. Your answer was not recorded.'
+    case 'expired':
+      return 'This estimate has expired and can no longer be answered. Your answer was not recorded. Ask the sender for a new one.'
     case 'answered':
       return 'This estimate has already been answered. Your answer was not recorded.'
     case 'not-found':

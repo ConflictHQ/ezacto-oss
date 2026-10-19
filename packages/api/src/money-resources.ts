@@ -143,6 +143,13 @@ interface EstimateMessageCommandInput {
   occurredAt: string;
 }
 
+interface EstimateExpiryCommandInput {
+  estimateId: number;
+  expectedVersion: number;
+  expiresOn: string | null;
+  occurredAt: string;
+}
+
 interface EstimateConversionInput {
   estimateId: number;
   commandId: string;
@@ -527,6 +534,9 @@ interface MoneyResourceService {
     estimate: EstimateResource;
     message: EstimateMessageResource;
   }>;
+  setEstimateExpiry(
+    input: EstimateExpiryCommandInput,
+  ): Promise<EstimateResource>;
   convertEstimate(input: EstimateConversionInput): Promise<{
     invoice: InvoiceResource;
     event: EstimateMessageResource;
@@ -2103,6 +2113,36 @@ const installEstimates = <Bindings extends object>(
         },
         201,
       );
+    } catch (error) {
+      return translateMoneyError(error);
+    }
+  });
+
+  api.patch("/estimates/:id/expiry", async (context) => {
+    requireWrite(context);
+    const estimateId = resourceId(context.req.param("id"), "estimate");
+    const body = await readObjectBody(context);
+    const errors = unknownFieldErrors(
+      body,
+      new Set(["expected_version", "expires_on"]),
+    );
+    const version = expectedVersion(body, errors);
+    const expiresOn = dateValue(body, "expires_on", errors, {
+      required: true,
+      nullable: true,
+    });
+    assertFields(errors);
+    try {
+      const estimate = await options.service.setEstimateExpiry({
+        estimateId,
+        expectedVersion: version!,
+        expiresOn: expiresOn ?? null,
+        occurredAt: options.clock(),
+      });
+      return context.json({
+        data: estimate,
+        links: { self: `/api/v1/estimates/${estimateId}` },
+      });
     } catch (error) {
       return translateMoneyError(error);
     }

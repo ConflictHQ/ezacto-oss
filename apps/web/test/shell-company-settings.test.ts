@@ -215,6 +215,7 @@ describe('company settings', () => {
       company_address: null,
       notes: null,
       subject: null,
+      estimate_validity_days: null,
       ...patch,
     }))
     const api: ShellApi = {
@@ -224,6 +225,7 @@ describe('company settings', () => {
         company_address: null,
         notes: null,
         subject: null,
+        estimate_validity_days: null,
       })),
       updateInvoiceDefaults,
     }
@@ -242,6 +244,7 @@ describe('company settings', () => {
       '100 Example Ave, STE 200\nSpringfield, IL, 62701'
     document.querySelector<HTMLTextAreaElement>('[data-invoice-defaults-notes]')!.value =
       'Beneficiary:\n*CONFLICT LLC*'
+    document.querySelector<HTMLInputElement>('[data-invoice-defaults-estimate-days]')!.value = '30'
     form.requestSubmit()
     await vi.waitFor(() =>
       expect(document.querySelector('[data-invoice-defaults-result]')?.textContent).toBe('Saved.'),
@@ -253,6 +256,7 @@ describe('company settings', () => {
         company_address: '100 Example Ave, STE 200\nSpringfield, IL, 62701',
         subject: null,
         notes: 'Beneficiary:\n*CONFLICT LLC*',
+        estimate_validity_days: 30,
       },
       expect.any(AbortSignal),
     )
@@ -268,6 +272,7 @@ describe('company settings', () => {
       company_address: '1 Example Way',
       notes: null,
       subject: null,
+      estimate_validity_days: null,
     }
     const setOrganizationInvoiceDocuments = vi.fn(
       async (input: Record<string, unknown>) => ({
@@ -356,6 +361,7 @@ describe('company settings', () => {
       company_address: '1 Example Way',
       notes: 'Pay to account 000-000.',
       subject: null,
+      estimate_validity_days: null,
     }
     const setOrganizationInvoiceDocuments = vi.fn(async (input: Record<string, unknown>) => ({
       attach_pdf: false,
@@ -494,7 +500,7 @@ describe('company settings', () => {
     stubModulesEndpoint()
     renderBrowserShell({ view: 'settings-company' })
     globalThis.location.hash = '#invoices'
-    const defaults = { company_name: 'Northwind Studio', company_address: null, notes: null, subject: null }
+    const defaults = { company_name: 'Northwind Studio', company_address: null, notes: null, subject: null, estimate_validity_days: null }
     const api: ShellApi = {
       ...companyApi(),
       getInvoiceDefaults: vi.fn(async () => defaults),
@@ -527,7 +533,7 @@ describe('company settings', () => {
     stubModulesEndpoint()
     renderBrowserShell({ view: 'settings-company' })
     globalThis.location.hash = '#invoices'
-    const defaults = { company_name: 'Northwind Studio', company_address: '1 Example Way', notes: null, subject: null }
+    const defaults = { company_name: 'Northwind Studio', company_address: '1 Example Way', notes: null, subject: null, estimate_validity_days: null }
     const api: ShellApi = {
       ...companyApi(),
       getInvoiceDefaults: vi.fn(async () => defaults),
@@ -568,7 +574,7 @@ describe('company settings', () => {
     stubModulesEndpoint()
     renderBrowserShell({ view: 'settings-company' })
     globalThis.location.hash = '#invoices'
-    const defaults = { company_name: 'Northwind Studio', company_address: '1 Example Way', notes: null, subject: null }
+    const defaults = { company_name: 'Northwind Studio', company_address: '1 Example Way', notes: null, subject: null, estimate_validity_days: null }
     const setOrganizationInvoiceDocuments = vi.fn(async (input: Record<string, unknown>) => ({
       ...sendingDocuments,
       ...input,
@@ -649,7 +655,7 @@ describe('company settings', () => {
     stubModulesEndpoint()
     renderBrowserShell({ view: 'settings-company' })
     globalThis.location.hash = '#invoices'
-    const defaults = { company_name: 'Northwind Studio', company_address: null, notes: null, subject: null }
+    const defaults = { company_name: 'Northwind Studio', company_address: null, notes: null, subject: null, estimate_validity_days: null }
     const api: ShellApi = {
       ...companyApi(),
       getInvoiceDefaults: vi.fn(async () => defaults),
@@ -679,7 +685,7 @@ describe('company settings', () => {
     stubModulesEndpoint()
     renderBrowserShell({ view: 'settings-company' })
     globalThis.location.hash = '#invoices'
-    const defaults = { company_name: 'Northwind Studio', company_address: '1 Example Way', notes: null, subject: null }
+    const defaults = { company_name: 'Northwind Studio', company_address: '1 Example Way', notes: null, subject: null, estimate_validity_days: null }
     const api: ShellApi = {
       ...companyApi(),
       getInvoiceDefaults: vi.fn(async () => defaults),

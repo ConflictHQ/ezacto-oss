@@ -88,6 +88,16 @@ export interface EstimateWorkspaceApi {
     signal?: AbortSignal,
   ): Promise<{ invoice: { id: number } }>
   /**
+   * Sets, moves or clears the last day a customer can answer (issue 1010).
+   * `expected_version` is the estimate's, so an expiry set against a stale read
+   * is refused rather than silently overwriting a concurrent change.
+   */
+  setEstimateExpiry?(
+    id: number,
+    input: { readonly expected_version: number; readonly expires_on: string | null },
+    signal?: AbortSignal,
+  ): Promise<Estimate>
+  /**
    * Unfiltered, for the reason the retainer and recurring panes give: an
    * estimate outlives the archiving of the client it quoted, and a row reading
    * "Client #14" because a filter dropped the client is a worse answer than a
@@ -180,6 +190,43 @@ export const estimateConversionMessage = (outcome: EstimateConversionOutcome): s
 }
 
 export { invoiceIdentityCanWrite as estimateIdentityCanWrite }
+
+/**
+ * Whether staff can still move the expiry. An answered estimate no longer
+ * expires, and the API refuses the change, so the form is not offered.
+ */
+export const estimateExpiryEditable = (estimate: Pick<Estimate, 'state'>): boolean =>
+  estimate.state === 'draft' || estimate.state === 'sent'
+
+/**
+ * The expiry in words, with where it came from. The day is the last one a
+ * customer can answer on: the estimate stays open to the end of it, in the
+ * instance timezone.
+ */
+export const estimateExpiryText = (
+  estimate: Pick<Estimate, 'expires_on' | 'effective_expires_on' | 'state'>,
+): string => {
+  if (estimate.effective_expires_on === null) {
+    return estimate.state === 'draft'
+      ? 'No expiry set. Unless one is set before it is sent, the organization default applies.'
+      : 'No expiry. This estimate can be answered until it is answered or re-opened.'
+  }
+  const day = estimate.effective_expires_on
+  return estimate.expires_on === null
+    ? `Open until the end of ${day}, from the organization's default validity after it was sent.`
+    : `Open until the end of ${day}, as set on this estimate.`
+}
+
+export const estimateExpiryMessage = (error: unknown): string => {
+  const body = (error as { body?: { error?: { code?: unknown; message?: unknown } } } | null)?.body
+  const code = typeof body?.error?.code === 'string' ? body.error.code : null
+  if (code === 'estimate_version_conflict') {
+    return 'This estimate changed since it was loaded. Reload it and set the expiry again.'
+  }
+  if (code === 'estimate_state_conflict') return 'An answered estimate no longer expires.'
+  if (typeof body?.error?.message === 'string') return body.error.message
+  return error instanceof Error ? error.message : 'The expiry could not be saved.'
+}
 
 /**
  * An amount in its own currency, falling back to USD formatting rather than

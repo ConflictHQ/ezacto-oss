@@ -428,6 +428,9 @@ export const createModuleSettingsController = (
   const invoiceDefaultsAddress = required<HTMLTextAreaElement>('[data-invoice-defaults-address]')
   const invoiceDefaultsSubject = required<HTMLInputElement>('[data-invoice-defaults-subject]')
   const invoiceDefaultsNotes = required<HTMLTextAreaElement>('[data-invoice-defaults-notes]')
+  const invoiceDefaultsEstimateDays = required<HTMLInputElement>(
+    '[data-invoice-defaults-estimate-days]',
+  )
   const invoiceDefaultsSubmit = required<HTMLButtonElement>('[data-invoice-defaults-submit]')
   const invoiceDefaultsResult = required<HTMLElement>('[data-invoice-defaults-result]')
   // The public demo (issue 931). The company information and default values
@@ -444,6 +447,7 @@ export const createModuleSettingsController = (
     invoiceDefaultsAddress,
     invoiceDefaultsSubject,
     invoiceDefaultsNotes,
+    invoiceDefaultsEstimateDays,
   ]) {
     field.disabled = demo
   }
@@ -642,6 +646,8 @@ export const createModuleSettingsController = (
     invoiceDefaultsAddress.value = defaults.company_address ?? ''
     invoiceDefaultsSubject.value = defaults.subject ?? ''
     invoiceDefaultsNotes.value = defaults.notes ?? ''
+    invoiceDefaultsEstimateDays.value =
+      defaults.estimate_validity_days === null ? '' : String(defaults.estimate_validity_days)
   }
 
   invoiceDefaultsForm.addEventListener('submit', async (event) => {
@@ -650,6 +656,15 @@ export const createModuleSettingsController = (
     if (active === null || api.updateInvoiceDefaults === undefined) return
     if (invoiceDefaultsName.value.trim() === '') {
       invoiceDefaultsResult.textContent = 'The company name cannot be blank.'
+      return
+    }
+    const estimateDays = invoiceDefaultsEstimateDays.value.trim()
+    if (
+      estimateDays !== '' &&
+      (!/^[1-9][0-9]{0,3}$/.test(estimateDays) || Number(estimateDays) > 3650)
+    ) {
+      invoiceDefaultsResult.textContent =
+        'Estimate validity is a whole number of days from 1 to 3650, or blank.'
       return
     }
     let sendingChange: ReturnType<typeof invoiceSendingChanges>
@@ -677,6 +692,7 @@ export const createModuleSettingsController = (
             company_address: text(invoiceDefaultsAddress.value),
             subject: text(invoiceDefaultsSubject.value),
             notes: text(invoiceDefaultsNotes.value),
+            estimate_validity_days: estimateDays === '' ? null : Number(estimateDays),
           },
           active.signal,
         )

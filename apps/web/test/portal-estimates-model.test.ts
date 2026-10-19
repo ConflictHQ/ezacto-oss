@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   estimateIdFromSearch,
   portalConfirmText,
+  portalExpiryText,
   portalFailure,
   portalFailureMessage,
   portalRate,
@@ -34,6 +35,8 @@ const estimate = (overrides: Partial<PortalEstimate> = {}): PortalEstimate => ({
   discount_amount_cents: 10_000,
   line_items: [],
   version: 'a'.repeat(64),
+  expires_on: null,
+  expired: false,
   answerable: true,
   response: null,
   ...overrides,
@@ -106,6 +109,29 @@ describe('the quote as the customer reads it', () => {
     expect(
       portalStatusLine({ ...answered, response: { ...answered.response!, by: null, version: null } }),
     ).toContain('Your organization accepted')
+  })
+})
+
+describe('expiry', () => {
+  it('[unit] says when an unanswered estimate stops being answerable, and that it already has', () => {
+    expect(portalExpiryText(estimate())).toBeNull()
+    expect(portalExpiryText(estimate({ expires_on: '2026-10-20' }))).toBe(
+      '2026-10-20 (open until the end of that day)',
+    )
+    expect(portalExpiryText(estimate({ expires_on: '2026-10-20', expired: true }))).toBe(
+      '2026-10-20 (expired)',
+    )
+  })
+
+  it('[unit] keeps an expired estimate apart from one being revised', () => {
+    const expired = estimate({ expires_on: '2026-10-20', expired: true, answerable: false })
+    expect(portalStatusLine(expired)).toContain('expired on 2026-10-20')
+    expect(portalStatusLine(expired)).toContain('Ask the sender for a new one')
+    expect(portalStatusLine(expired)).not.toContain('being revised')
+    expect(portalFailure(410, 'estimate_expired').kind).toBe('expired')
+    expect(portalFailureMessage({ kind: 'expired' })).toContain('not recorded')
+    // Only the specific refusal: a bare 410 is not taken for an expiry.
+    expect(portalFailure(410, null).kind).toBe('failed')
   })
 })
 

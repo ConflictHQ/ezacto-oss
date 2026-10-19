@@ -12664,6 +12664,86 @@
         }
       }
     },
+    "/api/v1/estimates/{id}/expiry": {
+      "patch": {
+        "operationId": "setEstimateExpiry",
+        "summary": "Set or clear the last day a customer can answer an estimate",
+        "description": "The expiry is the last day the estimate can still be answered, to the end of that day in the instance timezone; null clears it and the organization's estimate validity applies. Moving it does not change the content version a customer was shown. Asking for the expiry the estimate already has changes nothing.",
+        "tags": [
+          "estimates"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/estimates/:id/expiry",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EstimateExpiryInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/estimates/{id}/convert": {
       "post": {
         "operationId": "convertEstimate",
@@ -38768,6 +38848,8 @@
           "discount_amount_cents",
           "created_at",
           "updated_at",
+          "expires_on",
+          "effective_expires_on",
           "line_items"
         ],
         "properties": {
@@ -38933,6 +39015,28 @@
             "type": "string",
             "format": "date-time"
           },
+          "expires_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "effective_expires_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "line_items": {
             "type": "array",
             "items": {
@@ -38954,6 +39058,31 @@
           },
           "links": {
             "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EstimateExpiryInput": {
+        "type": "object",
+        "required": [
+          "expected_version",
+          "expires_on"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expires_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -48461,7 +48590,8 @@
           "company_name",
           "company_address",
           "notes",
-          "subject"
+          "subject",
+          "estimate_validity_days"
         ],
         "properties": {
           "company_name": {
@@ -48491,6 +48621,18 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "estimate_validity_days": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3650
               },
               {
                 "type": "null"
@@ -48552,6 +48694,18 @@
               {
                 "type": "string",
                 "maxLength": 998
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "estimate_validity_days": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3650
               },
               {
                 "type": "null"

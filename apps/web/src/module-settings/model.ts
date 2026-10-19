@@ -134,6 +134,8 @@ export interface InvoiceDefaultsSetting {
   readonly company_address: string | null
   readonly notes: string | null
   readonly subject: string | null
+  /** Days an estimate stays answerable after it is first sent; null means no default expiry. */
+  readonly estimate_validity_days: number | null
 }
 
 /**

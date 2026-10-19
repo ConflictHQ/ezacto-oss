@@ -63,6 +63,16 @@ export const renderEstimatesPage = (view?: string): string => `
           <h3 id="estimate-lines-heading">What was quoted</h3>
           <div data-estimate-lines></div>
         </section>
+        <section class="recurring-lines" aria-labelledby="estimate-expiry-heading">
+          <h3 id="estimate-expiry-heading">Expiry</h3>
+          <p data-estimate-expiry>—</p>
+          <form class="estimate-convert-form" data-estimate-expiry-form hidden>
+            <label>Last day to answer<input name="expires_on" type="date" data-estimate-expiry-date></label>
+            <button class="primary-action" type="submit" data-estimate-write data-estimate-expiry-save>Save expiry</button>
+            <button class="invoice-load-more" type="button" data-estimate-write data-estimate-expiry-clear>Use the default</button>
+          </form>
+          <p class="form-result" data-estimate-expiry-result role="status" aria-live="polite"></p>
+        </section>
         <section class="recurring-lines" aria-labelledby="estimate-response-heading">
           <h3 id="estimate-response-heading">Customer response</h3>
           <p data-estimate-response>—</p>

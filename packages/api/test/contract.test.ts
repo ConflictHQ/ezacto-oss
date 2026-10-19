@@ -410,8 +410,8 @@ const documentedApp = () =>
         clock: () => "2026-10-18T12:00:00.000Z",
       });
       installInvoiceDefaultsRoutes(api, {
-        read: async () => ({ companyName: "Org", companyAddress: null, notes: null, subject: null }),
-        update: async () => ({ companyName: "Org", companyAddress: null, notes: null, subject: null }),
+        read: async () => ({ companyName: "Org", companyAddress: null, notes: null, subject: null, estimateValidityDays: null }),
+        update: async () => ({ companyName: "Org", companyAddress: null, notes: null, subject: null, estimateValidityDays: null }),
       });
       installInvoiceTimeClaimRoutes(api, {
         releaseInvoicedTime: async () => ({ kind: "released", released: 0 }),

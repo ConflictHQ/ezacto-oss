@@ -1980,6 +1980,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getEstimate({ id, ...withSignal(signal) })).data,
   listEstimateMessages: async (id, signal) =>
     (await client.listEstimateMessages({ id, ...withSignal(signal) })).data,
+  setEstimateExpiry: async (id, body, signal) =>
+    (await client.setEstimateExpiry({ id, body, ...withSignal(signal) })).data,
   convertEstimate: async (id, body, idempotencyKey, signal) =>
     (
       await client.convertEstimate({

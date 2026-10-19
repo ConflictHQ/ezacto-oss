@@ -394,6 +394,13 @@ const translateEstimateResponseError = (error: unknown): unknown => {
       message: 'This estimate is being revised and cannot be answered until it is sent again.',
     })
   }
+  if (code === 'estimate_expired') {
+    return new ApiError({
+      status: 410,
+      code,
+      message: 'This estimate has expired and can no longer be answered. Ask the sender for a new one.',
+    })
+  }
   if (code === 'estimate_state_conflict') {
     return new ApiError({
       status: 409,

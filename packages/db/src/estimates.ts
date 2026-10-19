@@ -1,6 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
+import { dateInTimeZone, startOfDayInTimeZone } from '@ezacto/core'
 import { percentageToRatePpm } from './invoice-payments.js'
 import type * as schema from './schema.js'
 import { estimateMessages } from './schema.js'
@@ -521,3 +522,45 @@ export const estimateContentHash = async (source: EstimateContentSource): Promis
   )
   return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
+
+const addCalendarDays = (date: string, days: number): string => {
+  const shifted = new Date(Date.parse(`${date}T00:00:00.000Z`) + days * 86_400_000)
+  return shifted.toISOString().slice(0, 10)
+}
+
+export interface EstimateExpirySource {
+  /** The last day staff allow an answer, or null when staff set none. */
+  expiresOn: string | null
+  sentAt: string | null
+  /** The organization's days of validity from the first send, or null for none. */
+  validityDays: number | null
+  timeZone: string
+}
+
+/**
+ * The last calendar day an estimate can be answered (issue 1010): the day staff
+ * set, else the day it was first sent, in the instance timezone, plus the
+ * organization's validity days. Null when neither applies, which means the
+ * estimate does not expire. The expiry is deliberately not part of
+ * `estimateContentHash`: moving it never invalidates the version a customer saw.
+ */
+export const effectiveEstimateExpiry = (source: EstimateExpirySource): string | null => {
+  if (source.expiresOn !== null) return source.expiresOn
+  if (source.validityDays === null || source.sentAt === null) return null
+  return addCalendarDays(dateInTimeZone(source.sentAt, source.timeZone), source.validityDays)
+}
+
+/**
+ * The first instant the estimate can no longer be answered: midnight at the end
+ * of the expiry day in the instance timezone. The expiry day itself is still
+ * open; the millisecond before this instant is the last one that is.
+ */
+export const estimateExpiryInstant = (expiryDay: string, timeZone: string): string =>
+  startOfDayInTimeZone(addCalendarDays(expiryDay, 1), timeZone)
+
+export const isEstimateExpired = (
+  expiryDay: string | null,
+  timeZone: string,
+  now: string,
+): boolean =>
+  expiryDay !== null && Date.parse(now) >= Date.parse(estimateExpiryInstant(expiryDay, timeZone))
