@@ -51,6 +51,8 @@ const estimate = (overrides: Partial<PortalEstimate> = {}): PortalEstimate => ({
     },
   ],
   version: versionOne,
+  expires_on: null,
+  expired: false,
   answerable: true,
   response: null,
   ...overrides,
@@ -250,6 +252,53 @@ describe('the customer estimate page', () => {
     })
     expect(q<HTMLElement>('[data-portal-actions]').hidden).toBe(true)
     expect(text('[data-portal-answer-line]')).toContain('being revised')
+  })
+
+  it('[unit] shows when the estimate expires while it can still be answered', async () => {
+    await mount(() => json(200, { data: estimate({ expires_on: '2026-10-20' }) }), {
+      search: '?estimate=7',
+    })
+    expect(text('[data-portal-facts]')).toContain('Expires')
+    expect(text('[data-portal-facts]')).toContain('2026-10-20 (open until the end of that day)')
+    expect(q<HTMLElement>('[data-portal-actions]').hidden).toBe(false)
+  })
+
+  it('[unit] offers no answer once expired and says who to ask', async () => {
+    await mount(
+      () =>
+        json(200, {
+          data: estimate({ expires_on: '2026-10-20', expired: true, answerable: false }),
+        }),
+      { search: '?estimate=7' },
+    )
+    expect(q<HTMLElement>('[data-portal-actions]').hidden).toBe(true)
+    expect(text('[data-portal-facts]')).toContain('2026-10-20 (expired)')
+    expect(text('[data-portal-answer-line]')).toContain('expired on 2026-10-20')
+    expect(text('[data-portal-answer-line]')).toContain('Ask the sender for a new one')
+  })
+
+  it('[unit] an answer refused as expired is not recorded, and the page shows the expiry', async () => {
+    let reads = 0
+    const harness = await mount(
+      (call) => {
+        if (call.method === 'POST') return refusal(410, 'estimate_expired')
+        reads += 1
+        return json(200, {
+          data:
+            reads === 1
+              ? estimate({ expires_on: '2026-10-20' })
+              : estimate({ expires_on: '2026-10-20', expired: true, answerable: false }),
+        })
+      },
+      { search: '?estimate=7' },
+    )
+    q<HTMLButtonElement>('[data-portal-accept]').click()
+    q<HTMLButtonElement>('[data-portal-confirm-yes]').click()
+    await settle()
+    expect(harness.calls.filter((call) => call.method === 'POST')).toHaveLength(1)
+    expect(text('[data-portal-status]')).toContain('has expired')
+    expect(text('[data-portal-status]')).toContain('not recorded')
+    expect(q<HTMLElement>('[data-portal-actions]').hidden).toBe(true)
   })
 
   it('[unit] clears what it drew when the session ends mid-visit', async () => {

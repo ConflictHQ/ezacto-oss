@@ -15,6 +15,7 @@ export interface InvoiceDefaultsBody {
   readonly companyAddress: string | null
   readonly notes: string | null
   readonly subject: string | null
+  readonly estimateValidityDays: number | null
 }
 
 export interface InvoiceDefaultsService {
@@ -45,10 +46,25 @@ const fields = [
 /** Every field read before any is written, so one bad field changes nothing. */
 const patchOf = (body: Record<string, unknown>): Partial<InvoiceDefaultsBody> => {
   const errors: FieldError[] = []
-  const patch: Record<string, string | null> = {}
+  const patch: Record<string, string | number | null> = {}
   for (const key of Object.keys(body)) {
-    if (!fields.some((field) => field.key === key)) {
+    if (key !== 'estimate_validity_days' && !fields.some((field) => field.key === key)) {
       errors.push({ field: key, code: 'unknown', message: `${key} is not an invoice setting.` })
+    }
+  }
+  if ('estimate_validity_days' in body) {
+    const days = body['estimate_validity_days']
+    if (days === null) {
+      patch['estimateValidityDays'] = null
+    } else if (!Number.isSafeInteger(days) || (days as number) < 1 || (days as number) > 3650) {
+      errors.push({
+        field: 'estimate_validity_days',
+        code: 'invalid',
+        message:
+          'estimate_validity_days must be a whole number of days from 1 to 3650, or null for estimates that do not expire.',
+      })
+    } else {
+      patch['estimateValidityDays'] = days as number
     }
   }
   for (const field of fields) {
@@ -74,7 +90,8 @@ const patchOf = (body: Record<string, unknown>): Partial<InvoiceDefaultsBody> =>
       {
         field: 'company_name',
         code: 'required',
-        message: 'Provide company_name, company_address, notes, subject, or any combination.',
+        message:
+          'Provide company_name, company_address, notes, subject, estimate_validity_days, or any combination.',
       },
     ])
   }
@@ -87,6 +104,7 @@ const envelope = (defaults: InvoiceDefaultsBody) => ({
     company_address: defaults.companyAddress,
     notes: defaults.notes,
     subject: defaults.subject,
+    estimate_validity_days: defaults.estimateValidityDays,
   },
 })
 

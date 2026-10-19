@@ -7,6 +7,9 @@ import {
   estimateConversionMessage,
   estimateConversionOutcome,
   estimateDueDate,
+  estimateExpiryEditable,
+  estimateExpiryMessage,
+  estimateExpiryText,
   estimateIdentityCanWrite,
   estimateMoney,
   estimateResponseSummary,
@@ -74,6 +77,11 @@ export const createEstimateWorkspaceController = (
   const convertDue = required<HTMLInputElement>('[data-estimate-convert-due]')
   const convertTerms = required<HTMLSelectElement>('[data-estimate-convert-terms]')
   const convertResult = required<HTMLElement>('[data-estimate-convert-result]')
+  const expiryForm = required<HTMLFormElement>('[data-estimate-expiry-form]')
+  const expiryDate = required<HTMLInputElement>('[data-estimate-expiry-date]')
+  const expiryClear = required<HTMLButtonElement>('[data-estimate-expiry-clear]')
+  const expirySave = required<HTMLButtonElement>('[data-estimate-expiry-save]')
+  const expiryResult = required<HTMLElement>('[data-estimate-expiry-result]')
 
   const text = (selector: string, value: string): void => {
     required<HTMLElement>(selector).textContent = value
@@ -84,6 +92,8 @@ export const createEstimateWorkspaceController = (
   let clients = new Map<number, string>()
   let writable = false
   let converting = false
+  let savingExpiry = false
+  let shown: Estimate | null = null
 
   const clientName = (estimate: Estimate): string =>
     clients.get(estimate.client_id) ?? `Client #${String(estimate.client_id)}`
@@ -181,6 +191,15 @@ export const createEstimateWorkspaceController = (
     text('[data-estimate-state]', estimateStateLabel(estimate.state))
     text('[data-estimate-issued]', estimate.issue_date ?? '—')
     text('[data-estimate-amount]', estimateMoney(estimate.amount_cents, estimate.currency))
+    shown = estimate
+    text('[data-estimate-expiry]', estimateExpiryText(estimate))
+    expiryForm.hidden = !(
+      writable &&
+      api.setEstimateExpiry !== undefined &&
+      estimateExpiryEditable(estimate)
+    )
+    expiryDate.value = estimate.expires_on ?? ''
+    expiryClear.hidden = estimate.expires_on === null
     const purchaseOrderRow = required<HTMLElement>('[data-estimate-purchase-order-row]')
     const purchaseOrder = estimate.purchase_order ?? ''
     purchaseOrderRow.hidden = purchaseOrder.trim() === ''
@@ -277,6 +296,7 @@ export const createEstimateWorkspaceController = (
     detailBody.hidden = true
     detailRetry.hidden = true
     convertResult.textContent = ''
+    expiryResult.textContent = ''
     detailStatus.textContent = 'Loading estimate…'
     if (api.getEstimate === undefined) {
       detailStatus.textContent = 'This deployment does not serve estimates.'
@@ -378,6 +398,45 @@ export const createEstimateWorkspaceController = (
         if (convertTerms.value === 'custom') return
         convertDue.value = estimateDueDate(convertIssued.value, convertTerms.value)
       }
+      const saveExpiry = (expiresOn: string | null): void => {
+        const current = shown
+        if (current === null || savingExpiry || api.setEstimateExpiry === undefined) return
+        if (expiresOn === '') {
+          expiryResult.textContent = 'Choose a day, or use the default.'
+          return
+        }
+        savingExpiry = true
+        expirySave.disabled = true
+        expiryClear.disabled = true
+        expiryResult.textContent = 'Saving…'
+        void api
+          .setEstimateExpiry(
+            current.id,
+            { expected_version: current.version, expires_on: expiresOn },
+            signal,
+          )
+          .then((updated) => {
+            renderDetail(updated)
+            expiryResult.textContent =
+              expiresOn === null ? 'Expiry cleared.' : 'Expiry saved.'
+          })
+          .catch((error: unknown) => {
+            if (signal.aborted) return
+            if (onSessionFailure(error)) return
+            expiryResult.textContent = estimateExpiryMessage(error)
+          })
+          .finally(() => {
+            savingExpiry = false
+            expirySave.disabled = false
+            expiryClear.disabled = false
+          })
+      }
+      expiryForm.addEventListener('submit', (event) => {
+        event.preventDefault()
+        saveExpiry(expiryDate.value)
+      })
+      expiryClear.addEventListener('click', () => saveExpiry(null))
+
       convertTerms.addEventListener('change', syncDue)
       convertIssued.addEventListener('change', syncDue)
 

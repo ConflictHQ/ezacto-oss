@@ -8,6 +8,7 @@ const stored = {
   companyAddress: '100 Example Ave, STE 200\nSpringfield, IL, 62701',
   notes: 'Beneficiary:\n*CONFLICT LLC*',
   subject: null,
+  estimateValidityDays: null,
 }
 
 const app = (profile = 'administrator') => {
@@ -49,8 +50,27 @@ describe('invoice company information and default values', () => {
         company_address: '100 Example Ave, STE 200\nSpringfield, IL, 62701',
         notes: 'Beneficiary:\n*CONFLICT LLC*',
         subject: null,
+        estimate_validity_days: null,
       },
     })
+  })
+
+  it('[unit] saves how long an estimate stays answerable, and clears it with null', async () => {
+    const { app: instance, service } = app()
+    expect((await post(instance, { estimate_validity_days: 30 })).status).toBe(200)
+    expect(service.update).toHaveBeenLastCalledWith({ estimateValidityDays: 30 })
+    expect((await post(instance, { estimate_validity_days: null })).status).toBe(200)
+    expect(service.update).toHaveBeenLastCalledWith({ estimateValidityDays: null })
+    const response = await post(instance, { estimate_validity_days: 14, subject: 'S' })
+    expect((await response.json()) as unknown).toMatchObject({ data: { estimate_validity_days: 14 } })
+  })
+
+  it('[unit] refuses a validity that is not a whole number of days from 1 to 3650', async () => {
+    const { app: instance, service } = app()
+    for (const days of [0, -1, 3651, 1.5, '30', true]) {
+      expect((await post(instance, { estimate_validity_days: days })).status).toBe(422)
+    }
+    expect(service.update).not.toHaveBeenCalled()
   })
 
   it('[unit] saves a partial change and clears a default with null', async () => {

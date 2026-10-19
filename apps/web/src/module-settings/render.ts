@@ -99,6 +99,10 @@ export const renderModuleSettingsPage = (view?: string): string => `
           <textarea name="notes" data-invoice-defaults-notes rows="9" maxlength="100000"></textarea>
         </label>
         <p class="hint">Printed below the line items: how to pay, bank and wire details, terms. Formatting: <code>*bold*</code> and <code>_italic_</code>.</p>
+        <label>Estimate validity, in days
+          <input name="estimate_validity_days" type="number" min="1" max="3650" step="1" inputmode="numeric" data-invoice-defaults-estimate-days aria-describedby="settings-estimate-days-hint">
+        </label>
+        <p class="hint" id="settings-estimate-days-hint">How long a customer can answer an estimate, counted from the day it is first sent. Leave blank for estimates that do not expire. An expiry set on an estimate overrides this.</p>
         <h3 data-invoice-defaults-sending hidden>Sending</h3>
         <label class="invoice-defaults-check" data-invoice-defaults-sending hidden><input type="checkbox" name="attach_pdf" data-invoice-defaults-attach-pdf>Attach the invoice PDF by default</label>
         <label class="invoice-defaults-check" data-invoice-defaults-sending hidden><input type="checkbox" name="attach_journal" data-invoice-defaults-attach-journal>Attach the hours report by default</label>

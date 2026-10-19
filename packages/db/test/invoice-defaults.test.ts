@@ -29,6 +29,7 @@ describe('invoice defaults', () => {
       companyAddress: null,
       notes: null,
       subject: null,
+      estimateValidityDays: null,
     })
     const notes = 'Beneficiary:\n*CONFLICT LLC*\n100 Example Ave STE 200\nSpringfield, IL 62701\n\n*Account details*'
     const saved = await updateInvoiceDefaults(
@@ -45,9 +46,20 @@ describe('invoice defaults', () => {
       companyAddress: '100 Example Ave, STE 200\nSpringfield, IL, 62701',
       notes,
       subject: 'Conflict <> CLIENT Invoice: MONTH YEAR',
+      estimateValidityDays: null,
     })
     // Line breaks and the *bold* markup are the author's and survive verbatim.
     expect((await readInvoiceDefaults(orm)).notes).toBe(notes)
+  })
+
+  it('[unit] keeps how many days an estimate stays answerable and refuses a number the ledger bounds', async () => {
+    const { orm, database } = await fixture()
+    expect((await updateInvoiceDefaults(orm, { estimateValidityDays: 30 }, 't1')).estimateValidityDays).toBe(30)
+    expect((await updateInvoiceDefaults(orm, { subject: 'S' }, 't2')).estimateValidityDays).toBe(30)
+    expect((await updateInvoiceDefaults(orm, { estimateValidityDays: null }, 't3')).estimateValidityDays).toBeNull()
+    await expect(updateInvoiceDefaults(orm, { estimateValidityDays: 0 }, 't4')).rejects.toThrow()
+    await expect(updateInvoiceDefaults(orm, { estimateValidityDays: 3651 }, 't5')).rejects.toThrow()
+    expect(database.prepare('SELECT estimate_validity_days AS days FROM organizations').get()).toEqual({ days: null })
   })
 
   it('[unit] stores blank as no default and leaves fields it was not given alone', async () => {

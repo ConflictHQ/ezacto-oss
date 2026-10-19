@@ -450,6 +450,17 @@ or scheduled-reminder fields. Migration `0018_estimates` adds the tables and the
 nullable `invoice.estimate_id` FK after the invoice foundation without rewriting
 existing invoice rows; cross-client links are rejected.
 
+**Estimate expiry (#1010, migration `0127_estimate_expiry`).** `estimate.expires_on` is
+the last calendar day a customer can answer, set by staff
+(`PATCH /api/v1/estimates/:id/expiry`, draft or sent only); when it is null,
+`organization.estimate_validity_days` counts that many days from the day the estimate
+was first sent (`sent_at`) in the instance timezone, and null there means no expiry.
+The estimate stays open to the end of the expiry day and closes at the next midnight in
+the instance timezone; a customer answer after that is refused with `estimate_expired`
+(HTTP 410). The expiry is not part of the content hash a customer answers, so moving it
+never invalidates the version they were shown. A response already recorded still replays
+after expiry; staff recording an answer on the customer's behalf is not blocked by it.
+
 ### 2.18 `retainer` — first-class (Harvest's biggest model gap)
 
 Harvest: no API, no ledger, funds invisible to financial reports. Market research

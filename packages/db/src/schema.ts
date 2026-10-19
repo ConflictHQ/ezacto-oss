@@ -120,6 +120,8 @@ export const organizations = sqliteTable(
     // Migration 0097: what every new invoice starts with.
     invoiceDefaultNotes: text('invoice_default_notes'),
     invoiceDefaultSubject: text('invoice_default_subject'),
+    // Migration 0127 (issue 1010): days an estimate stays answerable after it is sent.
+    estimateValidityDays: integer('estimate_validity_days'),
     // Migration 0099: addresses copied on every invoice email.
     invoiceAlwaysCc: text('invoice_always_cc', { mode: 'json' })
       .$type<Array<{ name: string; email: string }>>()
@@ -1143,6 +1145,8 @@ export const estimates = sqliteTable(
     acceptedAt: text('accepted_at'),
     declinedAt: text('declined_at'),
     sentContentHash: text('sent_content_hash'),
+    // Migration 0127 (issue 1010): the last day a customer can answer; null = none set.
+    expiresOn: text('expires_on'),
     clientKey: text('client_key')
       .notNull()
       .default(sql`lower(hex(randomblob(32)))`),

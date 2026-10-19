@@ -1095,6 +1095,20 @@ const moneyOperations: ApiContractOperation[] = [
     parameters: [path("id"), idempotency],
   },
   {
+    method: "patch",
+    path: "/api/v1/estimates/:id/expiry",
+    operationId: "setEstimateExpiry",
+    summary: "Set or clear the last day a customer can answer an estimate",
+    description:
+      "The expiry is the last day the estimate can still be answered, to the end of that day in the instance timezone; null clears it and the organization's estimate validity applies. Moving it does not change the content version a customer was shown. Asking for the expiry the estimate already has changes nothing.",
+    tag: "estimates",
+    responseStatus: 200,
+    responseSchema: "EstimateEnvelope",
+    requestSchema: "EstimateExpiryInput",
+    requestRequired: true,
+    parameters: [path("id")],
+  },
+  {
     method: "post",
     path: "/api/v1/estimates/:id/convert",
     operationId: "convertEstimate",
@@ -6795,6 +6809,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "discount_amount_cents",
       "created_at",
       "updated_at",
+      "expires_on",
+      "effective_expires_on",
       "line_items",
     ],
     properties: {
@@ -6836,11 +6852,24 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       discount_amount_cents: { type: "integer" },
       created_at: timestampSchema,
       updated_at: timestampSchema,
+      // The last day a customer can answer, as staff set it (issue 1010).
+      expires_on: nullable(dateSchema),
+      // What applies: expires_on, else the organization's validity days from sent_at.
+      effective_expires_on: nullable(dateSchema),
       line_items: { type: "array", items: reference("EstimateLine") },
     },
     additionalProperties: false,
   },
   EstimateEnvelope: envelope("Estimate"),
+  EstimateExpiryInput: {
+    type: "object",
+    required: ["expected_version", "expires_on"],
+    properties: {
+      expected_version: { type: "integer", minimum: 0 },
+      expires_on: nullable(dateSchema),
+    },
+    additionalProperties: false,
+  },
   EstimatePage: page("Estimate"),
   EstimateMessage: {
     type: "object",
@@ -10211,13 +10240,21 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   InvoiceDefaults: {
     type: "object",
-    required: ["company_name", "company_address", "notes", "subject"],
+    required: [
+      "company_name",
+      "company_address",
+      "notes",
+      "subject",
+      "estimate_validity_days",
+    ],
     properties: {
       company_name: { type: "string" },
       company_address: nullable({ type: "string" }),
       // Harvest's lightweight markup (*bold*, _italic_) is kept verbatim.
       notes: nullable({ type: "string" }),
       subject: nullable({ type: "string" }),
+      // Days an estimate stays answerable from the day it is first sent (issue 1010).
+      estimate_validity_days: nullable({ type: "integer", minimum: 1, maximum: 3650 }),
     },
     additionalProperties: false,
   },
@@ -10231,6 +10268,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       company_address: nullable({ type: "string", maxLength: 2000 }),
       notes: nullable({ type: "string", maxLength: 100000 }),
       subject: nullable({ type: "string", maxLength: 998 }),
+      estimate_validity_days: nullable({ type: "integer", minimum: 1, maximum: 3650 }),
     },
     additionalProperties: false,
   },

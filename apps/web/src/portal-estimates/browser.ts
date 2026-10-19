@@ -4,6 +4,7 @@ import {
   estimateIdFromSearch,
   portalConfirmText,
   portalDecisionLabel,
+  portalExpiryText,
   portalFailure,
   portalFailureMessage,
   portalMoney,
@@ -151,6 +152,8 @@ export const mountPortalEstimates = async (
     if (estimate.purchase_order !== null && estimate.purchase_order.trim() !== '') {
       rows.push(['Purchase order', estimate.purchase_order])
     }
+    const expiry = portalExpiryText(estimate)
+    if (expiry !== null && estimate.state === 'sent') rows.push(['Expires', expiry])
     facts.replaceChildren(
       ...rows.map(([term, value]) => {
         const group = document.createElement('div')
@@ -349,7 +352,11 @@ export const mountPortalEstimates = async (
     } catch (error) {
       const changed =
         error instanceof PortalRequestError && error.failure.kind === 'changed'
-      if (changed || (error instanceof PortalRequestError && error.failure.kind === 'revising')) {
+      if (
+        changed ||
+        (error instanceof PortalRequestError &&
+          (error.failure.kind === 'revising' || error.failure.kind === 'expired'))
+      ) {
         // The old answer is never reused: reload what is current and let the
         // contact read it and decide again.
         await loadDetail(estimate.id)

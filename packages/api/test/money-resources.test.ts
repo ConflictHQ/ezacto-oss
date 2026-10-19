@@ -3140,6 +3140,62 @@ for (const [runtime, factory] of factories) {
       ).toEqual([{ count: 0 }]);
     });
 
+    it("[api] lets staff set, repeat and clear an estimate expiry and refuses what cannot hold", async () => {
+      const test = await setup();
+      const patch = (id: number, body: Record<string, unknown>, profile?: string) =>
+        test.request(`/api/v1/estimates/${id}/expiry`, {
+          ...jsonRequest("PATCH", body),
+          headers: {
+            "content-type": "application/json",
+            ...(profile === undefined ? {} : { "x-test-profile": profile }),
+          },
+        });
+      const set = await patch(12, { expected_version: 0, expires_on: "2026-12-01" });
+      expect(set.status).toBe(200);
+      expect(await responseData<Record<string, unknown>>(set)).toMatchObject({
+        id: 12,
+        version: 1,
+        expires_on: "2026-12-01",
+        effective_expires_on: "2026-12-01",
+      });
+      expect(
+        await responseData<Record<string, unknown>>(await test.request("/api/v1/estimates/12")),
+      ).toMatchObject({ expires_on: "2026-12-01" });
+
+      // The same request again changes nothing; a different day on a stale version is refused.
+      const repeated = await patch(12, { expected_version: 0, expires_on: "2026-12-01" });
+      expect(await responseData<{ version: number }>(repeated)).toMatchObject({ version: 1 });
+      const stale = await patch(12, { expected_version: 0, expires_on: "2026-12-05" });
+      expect(stale.status).toBe(409);
+      expect(
+        await test.database.rows<{ expires_on: string }>(
+          "SELECT expires_on FROM estimates WHERE id = 12",
+        ),
+      ).toEqual([{ expires_on: "2026-12-01" }]);
+
+      for (const bad of [
+        { expected_version: 1 },
+        { expected_version: 1, expires_on: "tomorrow" },
+        { expected_version: 1, expires_on: "2026-02-30" },
+        { expected_version: 1, expires_on: "2026-12-05", content_hash: "x" },
+        { expires_on: "2026-12-05" },
+      ]) {
+        expect((await patch(12, bad)).status).toBe(422);
+      }
+      expect((await patch(10, { expected_version: 2, expires_on: "2026-12-05" })).status).toBe(409);
+      expect((await patch(999, { expected_version: 0, expires_on: "2026-12-05" })).status).toBe(404);
+      expect(
+        (await patch(12, { expected_version: 1, expires_on: "2026-12-05" }, "member")).status,
+      ).toBe(403);
+
+      const cleared = await patch(12, { expected_version: 1, expires_on: null });
+      expect(await responseData<Record<string, unknown>>(cleared)).toMatchObject({
+        version: 2,
+        expires_on: null,
+        effective_expires_on: null,
+      });
+    });
+
     it("[security] enforces profile and token scope ceilings before money access", async () => {
       const test = await setup();
       expect(
