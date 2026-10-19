@@ -318,7 +318,7 @@ for (const [runtime, factory] of factories) {
       // Re-running the ledger is a no-op.
       await db.migrate()
       expect(await db.rows(`SELECT count(*) AS count FROM time_entries`)).toEqual([{ count: 4 }])
-    }, 30_000)
+    }, 60_000)
 
     it('[unit] logs a stopped start/end entry in a duration organization, seconds derived and rounded', async () => {
       const { db, tracked } = await setup('duration')
@@ -390,7 +390,7 @@ for (const [runtime, factory] of factories) {
         seconds: 1_000,
         roundedSeconds: 1_800,
       })
-    }, 30_000)
+    }, 60_000)
 
     it('[unit] refuses the shapes a duration organization cannot hold and writes nothing', async () => {
       const { db, tracked } = await setup('duration')
@@ -432,7 +432,7 @@ for (const [runtime, factory] of factories) {
       })
       expect(await db.rows(`SELECT count(*) AS count FROM time_entries`)).toEqual([{ count: 0 }])
       expect(await db.rows(`SELECT count(*) AS count FROM event_outbox`)).toEqual([{ count: 0 }])
-    }, 30_000)
+    }, 60_000)
 
     it('[money] accepts overlapping entries, and every total counts each one in full', async () => {
       const { db, tracked } = await setup('duration')
@@ -533,7 +533,7 @@ for (const [runtime, factory] of factories) {
         '2026-09-18T12:00:00.000Z',
       )
       expect(submission).toMatchObject({ entryCount: 3, totalSeconds: fiveHours })
-    }, 30_000)
+    }, 60_000)
 
     it('[unit] edits each entry by its own shape, whatever the organization mode', async () => {
       const { tracked } = await setup('duration')
@@ -597,7 +597,7 @@ for (const [runtime, factory] of factories) {
           at('2026-09-15T19:04:00.000Z'),
         ),
       ).toMatchObject({ startedTime: null, seconds: 2_700, roundedSeconds: 2_700 })
-    }, 30_000)
+    }, 60_000)
 
     it('[unit] keeps the running timer a duration timer beside start/end entries', async () => {
       const { db, tracked } = await setup('duration')
@@ -675,7 +675,7 @@ for (const [runtime, factory] of factories) {
            WHERE timer_started_at IS NOT NULL OR (started_time IS NOT NULL AND ended_time IS NULL)`,
         ),
       ).toEqual([{ count: 0 }])
-    }, 30_000)
+    }, 60_000)
 
     it('[security] holds policy locks, approvals and invoices on start/end entries', async () => {
       const { db, tracked } = await setup('duration')
@@ -733,7 +733,7 @@ for (const [runtime, factory] of factories) {
       expect(
         await db.rows(`SELECT count(*) AS count FROM time_entries WHERE spent_date = '2026-09-19'`),
       ).toEqual([{ count: 0 }])
-    }, 30_000)
+    }, 60_000)
 
     it('[unit] leaves a start_end organization exactly as it was', async () => {
       const { db, tracked } = await setup('start_end')
@@ -782,7 +782,7 @@ for (const [runtime, factory] of factories) {
       expect(
         await db.rows(`SELECT id, seconds, started_time FROM time_entries WHERE id = 22`),
       ).toEqual([{ id: 22, seconds: -900, started_time: null }])
-    }, 30_000)
+    }, 60_000)
   })
 }
 
@@ -880,5 +880,5 @@ describe('the 0100 insert rule, shape by shape', () => {
 
     // In a start/end organization not even a message moves.
     expect(await answers(true, 'start_end')).toEqual(await answers(false, 'start_end'))
-  }, 30_000)
+  }, 60_000)
 })

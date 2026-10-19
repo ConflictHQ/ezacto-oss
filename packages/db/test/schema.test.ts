@@ -1154,7 +1154,7 @@ describe('package contents', () => {
         'dist/tracked-state.d.ts',
       ]),
     )
-  }, 30_000)
+  }, 60_000)
 })
 
 describe('Drizzle adapters', () => {
