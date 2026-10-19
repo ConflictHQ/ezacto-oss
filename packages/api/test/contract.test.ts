@@ -1,3 +1,4 @@
+import { installBackupDownloadMintRoute } from '../src/backup-download.js';
 import { installPaymentRunRoutes } from '../src/payment-runs.js';
 import { installStaffPaymentRoutes } from '../src/staff-payments.js';
 import { installMyPaymentRoutes } from '../src/my-payments.js';
@@ -501,6 +502,13 @@ const documentedApp = () =>
         },
         { cursorSigningKey: new Uint8Array(32) },
       );
+      // The Worker composes the backup download link service; the container does
+      // not. The documented operation needs a mounted route to be checked against.
+      installBackupDownloadMintRoute(api, {
+        service: new Proxy({}, { get: () => unavailable }) as never,
+        activity: new Proxy({}, { get: () => unavailable }) as never,
+        clock: () => "2026-09-01T00:00:00.000Z",
+      });
     },
   });
 
