@@ -485,6 +485,19 @@ const generalResources: GeneralResourceRouteOptions['repository'] = {
   getRate: async () => {
     throw new Error('not used')
   },
+  // The /harvest/v2 shim's reads (issue 11); the MCP server never calls them.
+  count: async () => {
+    throw new Error('not used')
+  },
+  listOffset: async () => {
+    throw new Error('not used')
+  },
+  getMany: async () => {
+    throw new Error('not used')
+  },
+  currentRates: async () => {
+    throw new Error('not used')
+  },
 }
 
 const teamRepository = new Proxy(
