@@ -5452,7 +5452,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         uniqueItems: true,
         items: { type: "string", enum: apiScopes },
       },
-      expires_at: nullable(timestampSchema),
+      expires_at: {
+        ...nullable(timestampSchema),
+        description:
+          "Omitted: the token expires one year after issue. Anyone may ask for a sooner expiry; only an administrator may ask for one more than a year away or for null (never). Others are refused with 422 and code too_long.",
+      },
     },
     additionalProperties: false,
   },

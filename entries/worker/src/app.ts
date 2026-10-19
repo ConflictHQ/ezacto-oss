@@ -7,6 +7,8 @@ import { workItemProviders, type WorkItemProviderId } from '@ezacto/core'
 import { installPaymentRunRoutes } from '@ezacto/api'
 import { installStaffPaymentRoutes } from '@ezacto/api'
 import type { StaffPaymentStore } from '@ezacto/core'
+import { installMyPaymentRoutes } from '@ezacto/api'
+import type { MyPaymentsStore } from '@ezacto/core'
 import { captureException } from "@sentry/cloudflare";
 import type { BillRuntime, QuickBooksService, WiseRuntime } from "@ezacto/integrations";
 import type {
@@ -540,6 +542,8 @@ export interface RuntimeServices {
   /** Administrator payment register, available without provider credentials. */
   paymentRuns?: PaymentRunsService
   staffPayments?: StaffPaymentStore
+  /** A person's own payment summary (issue 100). */
+  myPayments?: MyPaymentsStore
   /** Linking a person to their payout provider account (#421). */
   payoutAccounts?: PayoutAccountService
   billDelivery?: {
@@ -818,6 +822,7 @@ export const createApp = (
             if (services.staffPayments !== undefined) {
               installStaffPaymentRoutes(api, services.staffPayments)
             }
+            if (services.myPayments !== undefined) installMyPaymentRoutes(api, services.myPayments)
             if (services.backupStatus !== undefined) {
               installBackupStatusRoutes(api, services.backupStatus, {
                 cursorSigningKey: services.cursorSigningKey,
@@ -1732,6 +1737,29 @@ export const createApp = (
               { label: 'Payments', href: '/payments', current: context.req.path === '/payments' },
               { label: 'Payments report', href: '/payments/report', current: context.req.path === '/payments/report' },
             ],
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/my-payments', async (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            ...(await shellChrome(context.env, context.req.raw)),
+            activeSection: 'Settings',
+            view: 'my-payments',
+            tabs: [],
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),

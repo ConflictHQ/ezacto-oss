@@ -81,6 +81,49 @@ EZACTO_TOKEN=ezacto_... node scripts/measure-week-read.mjs \
   entries a week for most; include a heavy user). An empty dev account
   understates payloads.
 
+## Running it on a handset (for the owner)
+
+The script is plain Node (`fetch`, `performance`, no dependencies), so it needs a
+machine with Node 20 or newer and this repository checked out. A phone does not
+run it directly in the normal case. Two ways to get a handset's network under it:
+
+1. **Tether (recommended).** Turn on the phone's personal hotspot, join the
+   laptop to it, and run the command from the laptop. Every request then crosses
+   the phone's real cellular link, which is the path the apps take. Run with
+   `--profile none` so the script adds no simulated delay of its own; the link
+   is the shaping. Write the carrier, signal and time of day next to the result.
+2. **On the phone.** Android with Termux (install `nodejs`, check out the repo,
+   same command) works the same way. This has not been tried on iOS.
+
+Steps:
+
+1. Pick the instance (a dev instance, or your own account on prod; the script
+   only sends GETs).
+2. Settings, API tokens: issue a token named `week-read-measurement` with the
+   scopes "Read time" and "Read projects". Set an expiry a few days out; left
+   blank the default is one year (see `docs/api-token-lifetime.md`). Copy it
+   once; it is shown only once.
+3. Export it and run, from the repo root:
+
+   ```
+   export EZACTO_TOKEN=ezacto_...
+   node scripts/measure-week-read.mjs --base-url https://<instance> \
+     --runs 20 --profile none --json > week-read-<date>-<link>.json
+   node scripts/measure-week-read.mjs --base-url https://<instance> \
+     --runs 20 --profile none
+   ```
+
+   The second command prints the table that goes in the Results section.
+   Repeat with `--profile 3g` from wifi if no cellular link is at hand, and say
+   so in the Profile column (simulated, not a device measurement).
+4. Revoke the token in settings when done.
+5. Add one row per scenario and mode to the Results table (date, instance, link
+   used, scenario, mode, requests, bytes, p50, p95), comment the table on
+   issue 599, and apply the rule under Decision.
+
+If the script prints `answered 401` the token has expired or been revoked;
+`answered 403` means a scope is missing.
+
 ## Results
 
 | Date            | Instance | Profile | Scenario | Mode | Requests | Bytes | p50 | p95 |

@@ -261,7 +261,10 @@ for (const [runtime, factory] of factories) {
       expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
       await database.migrateAgain()
       expect(await database.rows(`PRAGMA foreign_key_check`)).toEqual([])
-    }, 40_000)
+    // The test runs the whole migration ledger over a fresh and a populated
+    // database, so it grows with every migration: 25 s of a 40 s budget on a
+    // green CI run, and it timed out once on a loaded runner (issue 745).
+    }, 90_000)
 
     it('[unit] enforces one cap and the hours-only locked-rate pair', async () => {
       database = await factory()

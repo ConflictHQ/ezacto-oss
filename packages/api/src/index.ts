@@ -509,3 +509,4 @@ export {
 } from './apple-web.js'
 
 export { createAppleWebLifecycle, assertAppleWebCustodyConfig, APPLE_WEB_CONNECTION_COOKIE, type AppleWebCustodyConfig } from './apple-web-lifecycle.js'
+export { installMyPaymentRoutes } from './my-payments.js'

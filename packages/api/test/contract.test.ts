@@ -1,5 +1,6 @@
 import { installPaymentRunRoutes } from '../src/payment-runs.js';
 import { installStaffPaymentRoutes } from '../src/staff-payments.js';
+import { installMyPaymentRoutes } from '../src/my-payments.js';
 import type { GeneralResourceRepository, TeamRepository } from "@ezacto/core";
 import { describe, expect, it } from "vitest";
 import {
@@ -417,6 +418,7 @@ const documentedApp = () =>
       installInvoiceTimeClaimRoutes(api, {
         releaseInvoicedTime: async () => ({ kind: "released", released: 0 }),
       });
+      installMyPaymentRoutes(api, { read: async () => null });
       installStaffPaymentRoutes(api, { configureProvider: async () => {}, report: async (month, as_of) => ({ month, as_of, rows: [], provider_settings: { default_provider: "wise", version: 0, events: [] } }), append: async () => {} });
       installPaymentRunRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
       installPayoutAccountRoutes(api, {

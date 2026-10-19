@@ -38,6 +38,7 @@ import {
 import type { InvoiceState } from '../invoices/model.js'
 import type { ActivityExportQuery, ActivityQuery, ActivityRow } from '../activity/browser.js'
 import type { CapacityApi } from '../capacity/model.js'
+import type { MyPaymentsApi } from '../my-payments/model.js'
 import type { LogPageResult } from '../components/paged-log.js'
 import type {
   EmailLogQuery,
@@ -137,6 +138,8 @@ export interface ShellApi
     range: { readonly from: string; readonly to: string },
     signal?: AbortSignal,
   ): ReturnType<CapacityApi['getCapacity']>
+  /** The signed-in person's own payment summary (issue 100). */
+  getMyPayments?(month: string, signal?: AbortSignal): ReturnType<MyPaymentsApi['getMyPayments']>
   /** The page size a caller may raise when it is walking, not browsing. */
   listActivityLog?(
     query: ActivityQuery,
@@ -1910,6 +1913,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     ).data,
   getCapacity: (range, signal) =>
     client.getCapacity({ query: range, ...withSignal(signal) }),
+  getMyPayments: (month, signal) =>
+    client.getMyPayments({ query: { month }, ...withSignal(signal) }),
   listActivityLog: (query, signal) =>
     client.listActivityLog({ query: { per_page: 200, ...query }, ...withSignal(signal) }),
   listRollableActivityYears: async (signal) =>
