@@ -304,6 +304,36 @@ const eventRecord = (row: OutboxEventRow): OutboxEventRecord => {
 }
 
 /**
+ * The tables the activity log lives in: the hot one, then every year that has
+ * been rolled off (`activity_log_<year>`, see activity-partitions.ts).
+ *
+ * Discovered, not counted from the calendar, because a roll is an operator
+ * action and a year can be rolled late or not at all. The name is checked
+ * against the one shape a partition has before it is put in SQL.
+ */
+const activityTables = async (database: PortableDatabase): Promise<string[]> => {
+  const rows = await database.all<{ name: string }>(
+    `SELECT name FROM sqlite_master
+     WHERE type = 'table' AND name GLOB 'activity_log_[0-9][0-9][0-9][0-9]'
+     ORDER BY name`,
+    [],
+  )
+  return ['activity_log', ...rows.map((row) => row.name).filter((name) => /^activity_log_\d{4}$/u.test(name))]
+}
+
+/**
+ * What a read selects from. One table is read as itself, so an install that has
+ * never rolled runs the query it always did. With partitions it is their
+ * UNION ALL, ordered by the same (recorded_at, event_id) key the cursor uses:
+ * that key is total across tables because an event id is in at most one of
+ * them, so a cursor needs no partition in it to resume on the right row.
+ */
+const activitySource = (tables: readonly string[]): string =>
+  tables.length === 1
+    ? tables[0]!
+    : `(${tables.map((table) => `SELECT event_id, recorded_at FROM ${table}`).join(' UNION ALL ')})`
+
+/**
  * The actor an event's payload names, with the name the read joined for it.
  * Every writer records `actor: { type, id }`, and a system actor's id is null
  * or absent, so a system event never takes a person's name. Anything else is
@@ -865,7 +895,7 @@ const createService = (
              nullif(trim(person.first_name || ' ' || person.last_name), ''),
              nullif(trim(contact.first_name || ' ' || coalesce(contact.last_name, '')), '')
            ) AS actorName
-         FROM activity_log activity
+         FROM ${activitySource(await activityTables(database))} activity
          JOIN event_outbox event ON event.id = activity.event_id
          LEFT JOIN users person
            ON json_extract(event.payload_json, '$.actor.type') = 'user'
@@ -889,8 +919,11 @@ const createService = (
     },
 
     async activitySnapshot() {
+      // The newest entry across every partition: right after a roll the hot
+      // table is empty, and a snapshot read from it alone would say the log
+      // had nothing in it while the archived year was still there to be read.
       const rows = await database.all<{ recordedAt: string | null }>(
-        'SELECT max(recorded_at) AS recordedAt FROM activity_log',
+        `SELECT max(recorded_at) AS recordedAt FROM ${activitySource(await activityTables(database))}`,
         [],
       )
       return rows[0]?.recordedAt ?? null

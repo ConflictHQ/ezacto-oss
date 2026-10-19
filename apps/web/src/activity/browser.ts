@@ -22,6 +22,9 @@ export interface ActivityQuery {
   readonly cursor?: string
 }
 
+/** The filters the export honours: the list's, without a place in the traversal. */
+export type ActivityExportQuery = Omit<ActivityQuery, 'cursor'>
+
 export interface ActivityApi {
   listActivityLog(
     query: ActivityQuery,
@@ -30,6 +33,11 @@ export interface ActivityApi {
     readonly data: readonly ActivityRow[]
     readonly page?: { readonly next_cursor: string | null }
   }>
+  /** The filtered view as a file. Absent where the build cannot export, which hides the button. */
+  exportActivityLog?(
+    query: ActivityExportQuery,
+    signal?: AbortSignal,
+  ): Promise<{ readonly blob: Blob; readonly filename: string; readonly truncated: boolean }>
   /** The people the actor picker offers. Absent where the build cannot list them. */
   listActors?(signal?: AbortSignal): Promise<readonly { readonly id: number; readonly name: string }[]>
 }
@@ -166,8 +174,10 @@ export const createActivityController = (api: ActivityApi): ActivityController =
   const entity = required('[data-activity-entity]') as unknown as HTMLInputElement
   const entityId = required<HTMLInputElement>('[data-activity-entity-id]')
   const clear = required<HTMLButtonElement>('[data-activity-clear]')
+  const exportButton = required<HTMLButtonElement>('[data-activity-export]')
   const more = required<HTMLButtonElement>('[data-activity-more]')
-  const controls = [from, to, type, actor, entity, entityId, clear, more]
+  const controls = [from, to, type, actor, entity, entityId, clear, exportButton, more]
+  exportButton.hidden = api.exportActivityLog === undefined
 
   typeSuggestions.replaceChildren(
     ...KNOWN_ACTIVITY_EVENT_TYPES.map((value) => {
@@ -291,6 +301,37 @@ export const createActivityController = (api: ActivityApi): ActivityController =
     control.addEventListener('change', () => void load())
   }
   more.addEventListener('click', () => void load(true))
+  // The file holds the filters as they stand now, not the page already drawn:
+  // the export walks the log itself, so "Load more" is not a precondition.
+  exportButton.addEventListener('click', () => {
+    const signal = active
+    const download = api.exportActivityLog
+    if (signal === null || download === undefined) return
+    status.textContent = 'Preparing the export…'
+    void download(filters(), signal)
+      .then(({ blob, filename, truncated }) => {
+        if (signal.aborted) return
+        const href = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = href
+        link.download = filename
+        link.click()
+        // On the next task: revoking at once can cancel the download.
+        setTimeout(() => URL.revokeObjectURL(href), 0)
+        status.textContent = truncated
+          ? `Downloaded ${filename}. The file holds only the newest entries; narrow the period or the filters to export the rest.`
+          : `Downloaded ${filename}.`
+      })
+      .catch((error: unknown) => {
+        if (signal.aborted) return
+        if (isModuleDisabled(error)) {
+          for (const control of controls) control.disabled = true
+          status.textContent = 'The Activity log module is switched off for this organization.'
+          return
+        }
+        status.textContent = error instanceof Error ? error.message : 'The export could not be prepared.'
+      })
+  })
   clear.addEventListener('click', () => {
     for (const control of [from, to, type, entityId]) control.value = ''
     for (const control of [actor, entity]) control.value = ''

@@ -36,7 +36,7 @@ import {
   type TeamNotificationPreference,
 } from '@conflict-hq/ezacto-client'
 import type { InvoiceState } from '../invoices/model.js'
-import type { ActivityQuery, ActivityRow } from '../activity/browser.js'
+import type { ActivityExportQuery, ActivityQuery, ActivityRow } from '../activity/browser.js'
 import type { CapacityApi } from '../capacity/model.js'
 import type { LogPageResult } from '../components/paged-log.js'
 import type {
@@ -145,6 +145,11 @@ export interface ShellApi
     readonly data: readonly ActivityRow[]
     readonly page?: { readonly next_cursor: string | null }
   }>
+  /** The filtered view as a CSV file (issue 8). Absent where the build cannot export. */
+  exportActivityLog?(
+    query: ActivityExportQuery,
+    signal?: AbortSignal,
+  ): Promise<{ readonly blob: Blob; readonly filename: string; readonly truncated: boolean }>
   /**
    * The tokens you have issued, and issuing another (issue 485).
    *
@@ -2539,6 +2544,27 @@ export const createSameOriginShellApi = (): ShellApi => ({
     const disposition = response.headers.get('content-disposition') ?? ''
     const named = /filename="([^"]+)"/u.exec(disposition)?.[1]
     return { blob: await response.blob(), filename: named ?? `hours-${String(id)}.${format}` }
+  },
+  // The activity log as a file, for the same reason: the name and whether the
+  // file was cut at its row cap are in headers the client drops.
+  exportActivityLog: async (query, signal) => {
+    const search = new URLSearchParams()
+    for (const [key, value] of Object.entries(query)) search.set(key, String(value))
+    const response = await shellFetch(
+      `/api/v1/activity-log/export${search.size === 0 ? '' : `?${search.toString()}`}`,
+      { credentials: 'same-origin', ...(signal === undefined ? {} : { signal }) },
+    )
+    if (!response.ok) {
+      const body: unknown = await response.json().catch(() => null)
+      throw new EzactoApiError(response.status, body, response.headers.get('x-request-id'))
+    }
+    const disposition = response.headers.get('content-disposition') ?? ''
+    const named = /filename="([^"]+)"/u.exec(disposition)?.[1]
+    return {
+      blob: await response.blob(),
+      filename: named ?? 'activity-log.csv',
+      truncated: response.headers.get('x-export-truncated') === 'true',
+    }
   },
   // The detailed time report as a file, for the same reason: the name the
   // server gives it -- period and client -- is in a header the client drops.
