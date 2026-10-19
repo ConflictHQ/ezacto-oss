@@ -2,6 +2,7 @@ import type { ReminderProcessOptions } from '@ezacto/db'
 import { createRuntimeAppleWeb } from '../../worker/src/apple-web.js'
 import { createContainerAppleWebCustodyStore } from '@ezacto/db'
 import { createPaymentRunsService } from '@ezacto/db'
+import { createContainerBrandAssetStore, createContainerInstanceThemeStore } from '@ezacto/db'
 import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createStaffPaymentStore } from '@ezacto/db'
 import { createMyPaymentsStore } from '@ezacto/db'
@@ -150,6 +151,8 @@ import {
   type UserPrincipal,
   invoicePaymentUrlForMail,
   deriveIdempotencySecret,
+  emailBrandFrom,
+  withEmailBrand,
 } from '@ezacto/api'
 import {
   configuredEmailSender,
@@ -455,7 +458,28 @@ export const createContainerRuntime = async (
       }
     }
     queue = new ContainerEmailQueue(emailLog, smtp)
-    const queuedMailer = createQueuedMailer(emailLog, queue)
+    // HTML mail wears the instance header (#1011): read when each message
+    // is queued, so a changed logo or colour reaches the next send.
+    const brandAssetStore = createContainerBrandAssetStore(database)
+    const instanceThemeStore = createContainerInstanceThemeStore(database)
+    const queuedMailer = createQueuedMailer(
+      emailLog,
+      withEmailBrand(queue, async () =>
+        emailBrandFrom(
+          {
+            assets: await brandAssetStore.list(),
+            palette: (await instanceThemeStore.read())?.palette ?? null,
+            organizationName:
+              (
+                database
+                  .prepare('SELECT name FROM organizations WHERE id = 1')
+                  .get() as { name: string } | undefined
+              )?.name ?? 'Ezacto',
+          },
+          config.appBaseUrl,
+        ),
+      ),
+    )
     // One service behind two ports: the password routes take it whole, the
     // add-an-address route takes only `addEmail`.
     const passwordAuth = createContainerPasswordAuthService(database)
