@@ -1317,6 +1317,125 @@ export type CalendarProposalPage = {
   "page": PageMetadata;
 };
 
+export type Allocation = {
+  "id": number;
+  "user_id": number;
+  "project_id": number;
+  "start_date": string;
+  "end_date": string;
+  "planned_seconds_per_week": number;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type AllocationInput = {
+  "user_id": number;
+  "project_id": number;
+  "start_date": string;
+  "end_date": string;
+  "planned_seconds_per_week": number;
+};
+
+export type AllocationPatch = {
+  "start_date"?: string;
+  "end_date"?: string;
+  "planned_seconds_per_week"?: number;
+};
+
+export type AllocationEnvelope = {
+  "data": Allocation;
+  "links": Links;
+};
+
+export type AllocationPage = {
+  "data": Array<Allocation>;
+  "links": PageLinks;
+  "page": PageMetadata;
+};
+
+export type CapacityWeek = {
+  "week_start": string;
+  "planned_seconds": number;
+  "tracked_seconds": number;
+  "over_allocated": boolean;
+};
+
+export type CapacityPerson = {
+  "user_id": number;
+  "first_name": string;
+  "last_name": string;
+  "weekly_capacity_seconds": number;
+  "weeks": Array<CapacityWeek>;
+};
+
+export type Capacity = {
+  "week_start_day": "saturday" | "sunday" | "monday";
+  "weeks": Array<string>;
+  "people": Array<CapacityPerson>;
+};
+
+export type CapacityEnvelope = {
+  "data": Capacity;
+  "links": Links;
+};
+
+export type WorkItemConnection = {
+  "id": number;
+  "provider": "github";
+  "status": "active" | "disconnected";
+  "owner_user_id": number;
+  "credential_configured": boolean;
+  "connected_at": string;
+  "disconnected_at": string | null;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type WorkItemConnectionInput = {
+  "provider": "github";
+};
+
+export type WorkItemConnectionEnvelope = {
+  "data": WorkItemConnection;
+};
+
+export type WorkItemConnectionListEnvelope = {
+  "data": Array<WorkItemConnection>;
+  "links": Links;
+};
+
+export type WorkItemLink = {
+  "id": number;
+  "connection_id": number;
+  "provider": "github";
+  "time_entry_id": number | null;
+  "project_id": number | null;
+  "item_id": string;
+  "url": string | null;
+  "created_by": number;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type WorkItemLinkInput = {
+  "connection_id": number;
+  "time_entry_id"?: number;
+  "project_id"?: number;
+  "item_id": string;
+  "url"?: string | null;
+};
+
+export type WorkItemLinkEnvelope = {
+  "data": WorkItemLink;
+  "links": Links;
+};
+
+export type WorkItemLinkPage = {
+  "data": Array<WorkItemLink>;
+  "links": PageLinks;
+  "page": PageMetadata;
+};
+
 export type TimeEntrySettings = {
   "time_rounding": TimeRounding;
   "time_entry_mode": "duration" | "start_end";
@@ -3946,6 +4065,7 @@ export type SsoDomainInput = {
 
 export type TwoFactorStatus = {
   "enrolled": boolean;
+  "email_enabled": boolean;
   "pending_confirmation": boolean;
   "recovery_codes_remaining": number;
 };
@@ -3974,6 +4094,24 @@ export type TwoFactorChallengeIssued = {
   "status": "two_factor_required";
   "challenge": string;
   "expires_at": string;
+  "methods": Array<"totp" | "email">;
+};
+
+export type TwoFactorChallengeIssuedEnvelope = {
+  "data": TwoFactorChallengeIssued;
+};
+
+export type TwoFactorEmailCodeInput = {
+  "challenge"?: string;
+};
+
+export type TwoFactorEmailDisabled = {
+  "user_id": number;
+  "email_enabled": false;
+};
+
+export type TwoFactorEmailDisabledEnvelope = {
+  "data": TwoFactorEmailDisabled;
 };
 
 export type TwoFactorChallengeInput = {
@@ -4178,6 +4316,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<TwoFactorChallengeAcceptedEnvelope>("POST", "/auth/two-factor/challenge", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async sendTwoFactorEmailCode(args: { body: TwoFactorEmailCodeInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TwoFactorChallengeIssuedEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TwoFactorChallengeIssuedEnvelope>("POST", "/auth/two-factor/email-code", {
       body: args.body,
       signal: args.signal,
       headers,
@@ -5127,6 +5275,130 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<CalendarProposalEnvelope>("POST", "/api/v1/calendar-proposals/:id/discard".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listAllocations(args: { query?: { "cursor"?: string; "per_page"?: number; "user_id"?: number; "project_id"?: number; "from"?: string; "to"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<AllocationPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AllocationPage>("GET", "/api/v1/allocations", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createAllocation(args: { body: AllocationInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<AllocationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AllocationEnvelope>("POST", "/api/v1/allocations", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getAllocation(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<AllocationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AllocationEnvelope>("GET", "/api/v1/allocations/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateAllocation(args: { "id": number; body: AllocationPatch; signal?: AbortSignal; headers?: HeadersInit }): Promise<AllocationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AllocationEnvelope>("PATCH", "/api/v1/allocations/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async deleteAllocation(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<AllocationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AllocationEnvelope>("DELETE", "/api/v1/allocations/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getCapacity(args: { query: { "from": string; "to": string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<CapacityEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CapacityEnvelope>("GET", "/api/v1/capacity", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listWorkItemConnections(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<WorkItemConnectionListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WorkItemConnectionListEnvelope>("GET", "/api/v1/settings/work-item-connections", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async connectWorkItemProvider(args: { body: WorkItemConnectionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<WorkItemConnectionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WorkItemConnectionEnvelope>("POST", "/api/v1/settings/work-item-connections", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async disconnectWorkItemProvider(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<WorkItemConnectionEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WorkItemConnectionEnvelope>("POST", "/api/v1/settings/work-item-connections/:id/disconnect".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listWorkItemLinks(args: { query?: { "cursor"?: string; "per_page"?: number; "connection_id"?: number; "time_entry_id"?: number; "project_id"?: number; "item_id"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<WorkItemLinkPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WorkItemLinkPage>("GET", "/api/v1/work-item-links", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createWorkItemLink(args: { body: WorkItemLinkInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<WorkItemLinkEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WorkItemLinkEnvelope>("POST", "/api/v1/work-item-links", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getWorkItemLink(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<WorkItemLinkEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<WorkItemLinkEnvelope>("GET", "/api/v1/work-item-links/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async deleteWorkItemLink(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/work-item-links/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });
@@ -7112,6 +7384,33 @@ export class EzactoClient {
 
     return this.request<TwoFactorStatusEnvelope>("DELETE", "/api/v1/two-factor", {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async enableTwoFactorEmail(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TwoFactorStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TwoFactorStatusEnvelope>("POST", "/api/v1/two-factor/email", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async disableTwoFactorEmail(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<TwoFactorStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TwoFactorStatusEnvelope>("DELETE", "/api/v1/two-factor/email", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async disableUserTwoFactorEmail(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<TwoFactorEmailDisabledEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<TwoFactorEmailDisabledEnvelope>("DELETE", "/api/v1/users/:id/two-factor/email".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });

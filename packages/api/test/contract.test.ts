@@ -50,7 +50,9 @@ import {
   installSessionRoutes,
   installSsoDomainRoutes,
   installTwoFactorRoutes,
+  installAllocationRoutes,
   installCalendarProposalRoutes,
+  installWorkItemRoutes,
   installTrackedResourceRoutes,
   installTeamRoutes,
   installTimesheetApprovalRoutes,
@@ -72,7 +74,9 @@ import {
   type MoneyResourceRouteOptions,
   type ReportReader,
   type SsoProvisioningDomainService,
+  type AllocationRepository,
   type CalendarProposalRepository,
+  type WorkItemRepository,
   type TrackedResourceRepository,
   type UserEmailService,
   type TimesheetApprovalService,
@@ -92,10 +96,18 @@ const trackedRepository = new Proxy(
   {},
   { get: () => unavailable },
 ) as TrackedResourceRepository;
+const allocationRepository = new Proxy(
+  {},
+  { get: () => unavailable },
+) as AllocationRepository;
 const calendarProposals = new Proxy(
   {},
   { get: () => unavailable },
 ) as CalendarProposalRepository;
+const workItems = new Proxy(
+  {},
+  { get: () => unavailable },
+) as WorkItemRepository;
 const timesheetApprovals = new Proxy(
   {},
   { get: () => unavailable },
@@ -281,6 +293,17 @@ const documentedApp = () =>
         },
         isExpensesModuleEnabled: async () => true,
       });
+      installAllocationRoutes(api, {
+        repository: allocationRepository,
+        cursorSigningKey: new Uint8Array(32),
+        clock: {
+          now: () => ({
+            instant: "2026-08-28T12:00:00.000Z",
+            date: "2026-08-28",
+            time: "12:00",
+          }),
+        },
+      });
       installCalendarProposalRoutes(api, {
         repository: calendarProposals,
         cursorSigningKey: new Uint8Array(32),
@@ -291,6 +314,12 @@ const documentedApp = () =>
             time: "12:00",
           }),
         },
+      });
+      installWorkItemRoutes(api, {
+        repository: workItems,
+        credentialConfigured: () => true,
+        clock: () => "2026-08-28T12:00:00.000Z",
+        cursorSigningKey: new Uint8Array(32),
       });
       installTimesheetApprovalRoutes(api, {
         service: timesheetApprovals,

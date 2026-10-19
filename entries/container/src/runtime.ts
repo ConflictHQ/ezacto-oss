@@ -35,6 +35,7 @@ import {
   createContainerReminderScheduler,
   captureActivityEvent,
   createTwoFactorService,
+  deriveTwoFactorEmailCodeKey,
   createGeneralResourceRepository,
   createInvoiceGenerationService,
   createMoneyResourceRepository,
@@ -50,7 +51,9 @@ import {
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
   createTeamRepository,
+  DrizzleAllocationRepository,
   DrizzleCalendarProposalRepository,
+  DrizzleWorkItemRepository,
   DrizzleTrackedResourceRepository,
   enrollInstanceOwnerPasswordContainer,
   listClientAncestors,
@@ -135,6 +138,7 @@ import {
   createQueuedAccountDeletionMailer,
   createQueuedAuthMailer,
   createQueuedStaffMagicLinkMailer,
+  createQueuedTwoFactorEmailCodeMailer,
   type AttachmentRouteOptions,
   type UserPrincipal,
   invoicePaymentUrlForMail,
@@ -156,7 +160,7 @@ import type {
   CostRateBackfillPort,
   InstanceThemeSurface,
 } from '@ezacto/api'
-import type { AppEnv, RuntimeServices } from '../../worker/src/app.js'
+import { workItemCredentialConfigured, type AppEnv, type RuntimeServices } from '../../worker/src/app.js'
 import {
   createBillMirrorSubscriber,
   createBillRuntime,
@@ -790,6 +794,12 @@ export const createContainerRuntime = async (
       team: createTeamRepository(drizzle),
       trackedResources,
       calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
+      allocations: new DrizzleAllocationRepository(drizzle),
+      workItems: {
+        repository: new DrizzleWorkItemRepository(drizzle),
+        credentialConfigured: (provider) =>
+          workItemCredentialConfigured(config.appEnv, provider),
+      },
       profile: {
         readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
         readIdentity: async (userId) => await readUserIdentity(drizzle, userId),
@@ -1053,7 +1063,24 @@ export const createContainerRuntime = async (
               .get(userId) as { address: string } | undefined
           )?.address ?? `user-${userId}`,
         issuer: config.appEnv.BRAND_NAME ?? 'ezacto',
+        // The emailed second factor (issue 770); see the worker runtime.
+        emailCodeKey: await deriveTwoFactorEmailCodeKey(config.cursorSigningKey),
+        emailAddress: async (userId) =>
+          (
+            database
+              .prepare(
+                `SELECT address FROM user_emails
+                   WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
+                   ORDER BY is_primary DESC, id LIMIT 1`,
+              )
+              .get(userId) as { address: string } | undefined
+          )?.address ?? null,
       }),
+      // The container always has a mailer.
+      twoFactorEmailCodes: createQueuedTwoFactorEmailCodeMailer(
+        createDeploymentSenderQueuedMailer(config.smtp.from, queuedMailer),
+        organizationName,
+      ),
       timesheetApprovals: createTimesheetApprovalRepository(drizzle),
       timesheetLockPolicy,
       cursorSigningKey: config.cursorSigningKey,
@@ -1127,6 +1154,13 @@ export const createContainerRuntime = async (
                 createContainerContactSessionStore(database, touch),
               ),
               sessionStore: createContainerContactSessionStore(database, touch),
+              estimates: {
+                list: (clientId: number) => moneyResources.listCustomerEstimates(clientId),
+                get: (clientId: number, estimateId: number) =>
+                  moneyResources.getCustomerEstimate(clientId, estimateId),
+                respond: (input) =>
+                  moneyResources.respondToEstimate({ ...input, occurredAt: new Date().toISOString() }),
+              },
             },
           }),
       attachments: {

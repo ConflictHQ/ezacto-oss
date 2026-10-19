@@ -167,8 +167,12 @@ export {
   TWO_FACTOR_CHALLENGE_COOKIE,
   type TwoFactorChallengeRouteOptions,
   type TwoFactorChallengeVerdict,
+  type TwoFactorEmailCodeDelivery,
+  type TwoFactorEmailCodeMailer,
   type TwoFactorGate,
+  type TwoFactorMethod,
 } from './two-factor-challenge.js'
+export { createQueuedTwoFactorEmailCodeMailer } from './two-factor-email-code-email.js'
 export {
   createQueuedAuthMailer,
   type AuthEmailTemplate,
@@ -276,6 +280,7 @@ export {
   type MagicLinkMailer,
   type MagicLinkRouteOptions,
   type MagicLinkService,
+  type PortalEstimateService,
   type PortalInvoiceSummary,
   type PortalSessionIssuer,
   type PortalSessionStore,
@@ -413,6 +418,16 @@ export {
   type SsoProvisioningDomainService,
 } from './sso-domains.js'
 export { installTeamRoutes, type CostRateBackfillPort, type TeamRouteOptions } from './team.js'
+export {
+  installWorkItemRoutes,
+  serializeWorkItemLink,
+  type WorkItemActor,
+  type WorkItemConnectionRecord,
+  type WorkItemLinkFilters,
+  type WorkItemLinkRecord,
+  type WorkItemRepository,
+  type WorkItemRouteOptions,
+} from './work-items.js'
 export {
   installUserEmailRoutes,
   type UserEmailRouteOptions,

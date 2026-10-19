@@ -467,6 +467,7 @@ describe('your API tokens in your own settings', () => {
 describe('two-step sign-in in your own settings', () => {
   const status = (overrides: Partial<TwoFactorStatus> = {}): TwoFactorStatus => ({
     enrolled: false,
+    email_enabled: false,
     pending_confirmation: false,
     recovery_codes_remaining: 0,
     ...overrides,

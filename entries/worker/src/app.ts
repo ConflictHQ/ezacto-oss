@@ -3,6 +3,7 @@ import { appleWebConfiguration } from './apple-web.js'
 import { aggregateAppleCleanup, type AppleCleanupPort, type AppleLifecycleStore, type AppleWebCleanupPort } from '@ezacto/core'
 import type { AccountDeletionStore, AccountClosureStore, AccountRetentionReviewStore, AccountDeletionStatusStore } from '@ezacto/core'
 import type { PaymentRunsService } from '@ezacto/core'
+import { workItemProviders, type WorkItemProviderId } from '@ezacto/core'
 import { installPaymentRunRoutes } from '@ezacto/api'
 import { installStaffPaymentRoutes } from '@ezacto/api'
 import type { StaffPaymentStore } from '@ezacto/core'
@@ -71,7 +72,9 @@ import {
   installAccountDeletionStatusRoutes,
   installSessionRoutes,
   installSsoDomainRoutes,
+  installAllocationRoutes,
   installCalendarProposalRoutes,
+  installWorkItemRoutes,
   installTrackedResourceRoutes,
   installTimesheetApprovalRoutes,
   installBackupStatusRoutes,
@@ -117,6 +120,7 @@ import {
   type EmailConfigurationRouteOptions,
   type MagicLinkRouteOptions,
   type ActivityRecorder,
+  type TwoFactorEmailCodeMailer,
   type TwoFactorService,
   type AppleProviderConfig,
   type GitHubProviderConfig,
@@ -136,7 +140,9 @@ import {
   type ReportReader,
   type SsoProvisioningDomainService,
   type UserEmailService,
+  type AllocationRepository,
   type CalendarProposalRepository,
+  type WorkItemRepository,
   type TrackedResourceRepository,
   type ProfileRepositoryPort,
   type TimesheetApprovalService,
@@ -210,6 +216,11 @@ export type AppEnv = Env & {
   BRAND_WORDMARK_LIGHT?: string
   BRAND_WORDMARK_DARK?: string
   BRAND_EMAIL_SENDER_NAME?: string
+  /**
+   * The GitHub credential for work-item links (issue 1008). A deployment secret
+   * named here and not by any request; connecting GitHub is refused without it.
+   */
+  GITHUB_WORK_ITEMS_CREDENTIAL?: string
   /**
    * Publishes sign-in credentials on the front page and lets the nightly cron
    * wipe the database. Both are refused outside a non-production environment
@@ -340,6 +351,13 @@ export interface RuntimeServices {
   trackedResources: TrackedResourceRepository
   /** Calendar events offered as time, accepted through `trackedResources` (issue 428). */
   calendarProposals: CalendarProposalRepository
+  /** Planned hours per week and the capacity view (issue 1007). */
+  allocations: AllocationRepository
+  /** Issue tracker connections and the links to their items (issue 1008). */
+  workItems: {
+    repository: WorkItemRepository
+    credentialConfigured(provider: WorkItemProviderId): boolean
+  }
   profile: ProfileRepositoryPort
   isExpensesModuleEnabled(): Promise<boolean>
   moduleSettings: ModuleSettingsService
@@ -424,6 +442,8 @@ export interface RuntimeServices {
   portalAuth?: MagicLinkRouteOptions
   /** The second factor for signed-in users. Absent only where there is no store. */
   twoFactor?: TwoFactorService
+  /** Sends the emailed second-factor code; absent without a mail queue (issue 770). */
+  twoFactorEmailCodes?: TwoFactorEmailCodeMailer
   /** Where credential events are recorded. Absent leaves them unrecorded. */
   activity?: ActivityRecorder
   backupStatus?: BackupStatusReader
@@ -657,7 +677,10 @@ export const createApp = (
             sessions: services.authenticationSessions ?? services.sessions,
             ...(services.twoFactor === undefined
               ? {}
-              : { twoFactor: services.twoFactor }),
+              : {
+                  twoFactor: services.twoFactor,
+                  twoFactorEmailCodes: services.twoFactorEmailCodes !== undefined,
+                }),
             ...(services.activity === undefined
               ? {}
               : { activity: services.activity }),
@@ -721,10 +744,22 @@ export const createApp = (
               cursorSigningKey: services.cursorSigningKey,
               isExpensesModuleEnabled: services.isExpensesModuleEnabled,
             })
+            installAllocationRoutes(api, {
+              repository: services.allocations,
+              clock: systemClock,
+              cursorSigningKey: services.cursorSigningKey,
+            })
             installCalendarProposalRoutes(api, {
               repository: services.calendarProposals,
               clock: systemClock,
               cursorSigningKey: services.cursorSigningKey,
+            })
+            installWorkItemRoutes(api, {
+              repository: services.workItems.repository,
+              credentialConfigured: services.workItems.credentialConfigured,
+              clock: () => systemClock.now().instant,
+              cursorSigningKey: services.cursorSigningKey,
+              ...(services.activity === undefined ? {} : { activity: services.activity }),
             })
             installTimesheetApprovalRoutes(api, {
               service: services.timesheetApprovals,
@@ -1054,6 +1089,9 @@ export const createApp = (
           ...(services.twoFactor === undefined
             ? {}
             : { twoFactor: services.twoFactor }),
+          ...(services.twoFactorEmailCodes === undefined
+            ? {}
+            : { twoFactorEmailCodes: services.twoFactorEmailCodes }),
           ...(services.deploymentAuthMailer === undefined
             ? {}
             : { deploymentMailer: services.deploymentAuthMailer }),
@@ -1067,6 +1105,9 @@ export const createApp = (
           installTwoFactorChallengeRoutes(app, {
             gate: services.twoFactor,
             sessions: services.sessions,
+            ...(services.twoFactorEmailCodes === undefined
+              ? {}
+              : { emailCodes: services.twoFactorEmailCodes }),
           })
         }
         if (services.portalAuth !== undefined) {
@@ -1577,6 +1618,32 @@ export const createApp = (
             ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Team',
             view: 'team-list',
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/capacity', async (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            ...(await shellChrome(context.env, context.req.raw)),
+            activeSection: 'Team',
+            view: 'capacity',
+            tabs: [
+              { label: 'People', href: '/team' },
+              { label: 'Capacity', href: '/capacity', current: true },
+            ],
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -2270,6 +2337,11 @@ export const appleProvider = (env: AppEnv): AppleProviderConfig | null => {
  * nothing. Everything demo-shaped in this codebase asks this function, so
  * there is one place to read to know what it takes.
  */
+export const workItemCredentialConfigured = (env: AppEnv, provider: WorkItemProviderId): boolean => {
+  const value = env[workItemProviders[provider].credentialSecret]
+  return typeof value === 'string' && value !== ''
+}
+
 export const demoDeployment = (env: AppEnv): boolean =>
   env.ENVIRONMENT !== 'prod' && env.DEMO_MODE === 'true'
 

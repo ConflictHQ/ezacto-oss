@@ -33,6 +33,10 @@ export const ACTIVITY_EVENT_AGGREGATES = {
   'auth.signed_out': 'user_authentication',
   'api_token.created': 'api_token',
   'api_token.revoked': 'api_token',
+  // The emailed second factor (issue 770), recorded against the user whose
+  // sign-in it changes -- not against the actor, who may be an administrator.
+  'two_factor.email_enabled': 'user_authentication',
+  'two_factor.email_disabled': 'user_authentication',
   'backup.exported': 'backup_run',
   'backup.restored': 'backup_restore',
   // A person asking for their own account to be deleted (account-deletion.ts).
@@ -42,6 +46,9 @@ export const ACTIVITY_EVENT_AGGREGATES = {
   // submission).
   'timesheet_auto_approval.updated': 'timesheet_auto_approval_policy',
   'timesheet.auto_approved': 'timesheet_auto_approval',
+  // An administrator connecting or disconnecting an issue tracker (issue 1008).
+  'work_item_connection.connected': 'work_item_connection',
+  'work_item_connection.disconnected': 'work_item_connection',
 } as const
 
 export type ActivityEventType = keyof typeof ACTIVITY_EVENT_AGGREGATES

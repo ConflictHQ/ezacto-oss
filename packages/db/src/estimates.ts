@@ -452,3 +452,72 @@ export const recordEstimateMessageDelivery = async (
   if (!updated) throw new Error('estimate send message does not exist')
   return updated
 }
+
+export interface EstimateContentSource {
+  number: string
+  purchase_order: string | null
+  subject: string | null
+  notes: string | null
+  currency: string
+  issue_date: string
+  tax_rate_ppm: number | null
+  tax2_rate_ppm: number | null
+  discount_rate_ppm: number | null
+  amount_cents: number
+  tax_amount_cents: number
+  tax2_amount_cents: number
+  discount_amount_cents: number
+  line_items: ReadonlyArray<{
+    position: number
+    kind: string
+    description: string | null
+    quantity: number
+    unit_price_cents: number
+    amount_cents: number
+    taxed: boolean
+    taxed2: boolean
+  }>
+}
+
+/**
+ * The version a customer answers: a SHA-256 over everything they are shown to
+ * agree to (header, lines, rates, amounts, currency) and nothing else. State,
+ * timestamps and the internal version counter are left out on purpose, so a
+ * status change does not look like an edit and an edit always does. Fields are
+ * positional, in a fixed order, so the hash does not depend on key order.
+ */
+export const estimateContentHash = async (source: EstimateContentSource): Promise<string> => {
+  const lines = [...source.line_items]
+    .sort((left, right) => left.position - right.position)
+    .map((line) => [
+      line.position,
+      line.kind,
+      line.description,
+      line.quantity,
+      line.unit_price_cents,
+      line.amount_cents,
+      line.taxed,
+      line.taxed2,
+    ])
+  const canonical = JSON.stringify([
+    1,
+    source.number,
+    source.purchase_order,
+    source.subject,
+    source.notes,
+    source.currency,
+    source.issue_date,
+    source.tax_rate_ppm,
+    source.tax2_rate_ppm,
+    source.discount_rate_ppm,
+    source.amount_cents,
+    source.tax_amount_cents,
+    source.tax2_amount_cents,
+    source.discount_amount_cents,
+    lines,
+  ])
+  const digest = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical)),
+  )
+  return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}

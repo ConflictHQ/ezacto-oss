@@ -20,9 +20,13 @@ export type ActivityEventType =
   | 'auth.signed_out'
   | 'api_token.created'
   | 'api_token.revoked'
+  | 'two_factor.email_enabled'
+  | 'two_factor.email_disabled'
   | 'backup.exported'
   | 'backup.restored'
   | 'timesheet_auto_approval.updated'
+  | 'work_item_connection.connected'
+  | 'work_item_connection.disconnected'
 
 export type ActivityActor =
   | { readonly type: 'user'; readonly id: number }

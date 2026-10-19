@@ -9610,3 +9610,27 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
     opacity: 0.45;
   }
 }
+
+/*
+ * The capacity view (issue 1007). A week planned beyond capacity is marked in
+ * words as well as weight, so the flag never rests on colour alone.
+ */
+.capacity-intro {
+  max-width: 70ch;
+  color: var(--ez-muted);
+}
+.capacity-cell {
+  display: grid;
+  gap: 2px;
+  min-width: 9ch;
+}
+.capacity-cell > span {
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.capacity-cell > em {
+  color: var(--ez-red);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 600;
+}

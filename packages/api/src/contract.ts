@@ -540,6 +540,165 @@ const calendarProposalOperations: ApiContractOperation[] = [
   },
 ];
 
+const allocationOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/allocations",
+    operationId: "listAllocations",
+    summary: "List planned allocations",
+    description:
+      "Planned hours per week for a person on a project over a range of dates. Administrators and executive managers read all of them; a project manager reads their own and those for the people and projects they manage; everyone else reads only their own. `from` and `to` keep the allocations that reach into that span of days. A plan is not work: it is separate from time entries and never billed.",
+    tag: "schedule",
+    responseStatus: 200,
+    responseSchema: "AllocationPage",
+    parameters: [
+      ...pageParameters,
+      query("user_id", integerSchema),
+      query("project_id", integerSchema),
+      query("from", dateSchema),
+      query("to", dateSchema),
+    ],
+  },
+  {
+    method: "post",
+    path: "/api/v1/allocations",
+    operationId: "createAllocation",
+    summary: "Plan hours for a person on a project",
+    description:
+      "Administrators, executive managers and project managers only, a project manager only for people and projects they manage. Dates are plain local days, both included; the figure counts in full for every week the range touches. An end before the start is 422 `invalid_range`, an archived or unknown person or project is 422 `inactive_user`, `inactive_project`, `unknown_user` or `unknown_project`, and a range that overlaps another for the same person and project is 409 `allocation_overlap`. Planning more than a person's capacity is allowed: the capacity view flags it.",
+    tag: "schedule",
+    responseStatus: 201,
+    responseSchema: "AllocationEnvelope",
+    requestSchema: "AllocationInput",
+    requestRequired: true,
+  },
+  ...(["get", "patch", "delete"] as const).map((method) => ({
+    method,
+    path: "/api/v1/allocations/:id",
+    operationId: `${method === "get" ? "get" : method === "patch" ? "update" : "delete"}Allocation`,
+    summary: `${method === "get" ? "Get" : method === "patch" ? "Update" : "Delete"} an allocation`,
+    tag: "schedule",
+    responseStatus: 200,
+    responseSchema: "AllocationEnvelope",
+    ...(method === "patch"
+      ? {
+          description:
+            "Dates and hours only: the person and project of a plan do not change, so to move one, delete it and make another. The same rules as creating apply, and a plan changed by someone else in the meantime is 409 `allocation_changed`.",
+          requestSchema: "AllocationPatch",
+          requestRequired: true,
+        }
+      : {}),
+    parameters: [path("id")],
+  })),
+  {
+    method: "get",
+    path: "/api/v1/capacity",
+    operationId: "getCapacity",
+    summary: "Read planned hours against capacity and tracked time, person by week",
+    description:
+      "Read-only. Weeks begin on the organization's week start day and run from the week holding `from` through the week holding `to`, at most 53. Per person and week: `planned_seconds` (the sum of the allocations touching that week, on active projects), `weekly_capacity_seconds` (the person's current weekly capacity, so part-time is honoured), `tracked_seconds` (rounded time actually logged, a separate figure and never changed by the plan) and `over_allocated` when planned exceeds capacity, which is a flag and never a refusal. Archived people are left out. Administrators and executive managers see everyone, a project manager the people they manage, everyone else only themselves.",
+    tag: "schedule",
+    responseStatus: 200,
+    responseSchema: "CapacityEnvelope",
+    parameters: [
+      { name: "from", location: "query", required: true, schema: dateSchema },
+      { name: "to", location: "query", required: true, schema: dateSchema },
+    ],
+  },
+];
+
+const workItemOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/settings/work-item-connections",
+    operationId: "listWorkItemConnections",
+    summary: "List the issue trackers this instance has connected",
+    description:
+      "Administrators in a session only. `credential_configured` says whether the deployment holds the provider's credential; the credential itself is never returned.",
+    tag: "work-items",
+    responseStatus: 200,
+    responseSchema: "WorkItemConnectionListEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/work-item-connections",
+    operationId: "connectWorkItemProvider",
+    summary: "Connect an issue tracker",
+    description:
+      "Administrators in a session only, recorded in the activity log. The credential is a deployment secret chosen by the server, never sent here: a provider with no secret configured is 409 `credential_not_configured`. Connecting a provider that was disconnected revives its row, so earlier links stay attached.",
+    tag: "work-items",
+    responseStatus: 201,
+    responseSchema: "WorkItemConnectionEnvelope",
+    requestSchema: "WorkItemConnectionInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/work-item-connections/:id/disconnect",
+    operationId: "disconnectWorkItemProvider",
+    summary: "Disconnect an issue tracker",
+    description:
+      "Administrators in a session only, recorded in the activity log. Drops the connection's credential reference and keeps the connection and every link made through it. Disconnecting one already disconnected changes nothing.",
+    tag: "work-items",
+    responseStatus: 200,
+    responseSchema: "WorkItemConnectionEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "get",
+    path: "/api/v1/work-item-links",
+    operationId: "listWorkItemLinks",
+    summary: "List links between time or projects and issue tracker items",
+    description:
+      "Administrators see every link; everyone else sees links on their own time entries only.",
+    tag: "work-items",
+    responseStatus: 200,
+    responseSchema: "WorkItemLinkPage",
+    parameters: [
+      ...pageParameters,
+      query("connection_id", integerSchema),
+      query("time_entry_id", integerSchema),
+      query("project_id", integerSchema),
+      query("item_id"),
+    ],
+  },
+  {
+    method: "post",
+    path: "/api/v1/work-item-links",
+    operationId: "createWorkItemLink",
+    summary: "Link a time entry or project to an issue tracker item",
+    description:
+      "Name exactly one of `time_entry_id` or `project_id`. A time entry links to one item per connection (409 `work_item_link_exists` otherwise). Administrators may link any entry or project; everyone else only their own entries, and an entry that is not theirs is 404. The item is recorded as given and is not yet checked with the tracker. A disconnected connection is 409 `work_item_connection_inactive`.",
+    tag: "work-items",
+    responseStatus: 201,
+    responseSchema: "WorkItemLinkEnvelope",
+    requestSchema: "WorkItemLinkInput",
+    requestRequired: true,
+  },
+  {
+    method: "get",
+    path: "/api/v1/work-item-links/:id",
+    operationId: "getWorkItemLink",
+    summary: "Get one work item link",
+    tag: "work-items",
+    responseStatus: 200,
+    responseSchema: "WorkItemLinkEnvelope",
+    parameters: [path("id")],
+  },
+  {
+    method: "delete",
+    path: "/api/v1/work-item-links/:id",
+    operationId: "deleteWorkItemLink",
+    summary: "Remove a work item link",
+    tag: "work-items",
+    responseStatus: 204,
+    parameters: [path("id")],
+  },
+];
+
 const timesheetApprovalOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -2139,6 +2298,43 @@ const twoFactorOperations: ApiContractOperation[] = [
     requestRequired: true,
     sessionOnly: true,
   },
+  // Issue 770: a code by email, alongside the authenticator rather than
+  // instead of it. Password sign-in only.
+  {
+    method: "post",
+    path: "/api/v1/two-factor/email",
+    operationId: "enableTwoFactorEmail",
+    summary: "Turn on the emailed second factor",
+    description:
+      "Needs a verified email address. A code is mailed at password sign-in; magic-link and federated sign-in never use this factor.",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorStatusEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/two-factor/email",
+    operationId: "disableTwoFactorEmail",
+    summary: "Turn off the emailed second factor",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorStatusEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/users/:id/two-factor/email",
+    operationId: "disableUserTwoFactorEmail",
+    summary: "Turn off a user's emailed second factor (administrator)",
+    description:
+      "Lockout recovery for a user who lost their mailbox. Administrators only; the change is recorded in the activity log.",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorEmailDisabledEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
 ];
 
 const userEmailOperations: ApiContractOperation[] = [
@@ -2782,6 +2978,20 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   },
   {
     method: "post",
+    path: "/auth/two-factor/email-code",
+    operationId: "sendTwoFactorEmailCode",
+    summary: "Email a verification code for a pending sign-in",
+    description:
+      "Supersedes the earlier challenge: the response carries the new one. Limited to one a minute and five an hour per user. Only a password sign-in can ask.",
+    tag: "authentication",
+    responseStatus: 200,
+    responseSchema: "TwoFactorChallengeIssuedEnvelope",
+    requestSchema: "TwoFactorEmailCodeInput",
+    requestRequired: true,
+    public: true,
+  },
+  {
+    method: "post",
     path: "/auth/password/forgot",
     operationId: "requestPasswordReset",
     summary: "Request a password-reset email",
@@ -3173,6 +3383,8 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...rateOperations(),
   ...timeEntryOperations,
   ...calendarProposalOperations,
+  ...allocationOperations,
+  ...workItemOperations,
   ...timesheetApprovalOperations,
   ...timesheetLockPolicyOperations,
   ...expenseOperations,
@@ -5296,6 +5508,188 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   CalendarProposalEnvelope: envelope("CalendarProposal"),
   CalendarProposalPage: page("CalendarProposal"),
+  Allocation: {
+    type: "object",
+    required: [
+      "id",
+      "user_id",
+      "project_id",
+      "start_date",
+      "end_date",
+      "planned_seconds_per_week",
+      "created_at",
+      "updated_at",
+    ],
+    properties: {
+      id: integerSchema,
+      user_id: integerSchema,
+      project_id: integerSchema,
+      start_date: dateSchema,
+      end_date: { ...dateSchema, description: "Included. Never before `start_date`." },
+      planned_seconds_per_week: {
+        ...integerSchema,
+        description: "Planned seconds in each week the range touches, between 1 and 604800.",
+      },
+      created_at: timestampSchema,
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  AllocationInput: {
+    type: "object",
+    required: ["user_id", "project_id", "start_date", "end_date", "planned_seconds_per_week"],
+    properties: {
+      user_id: integerSchema,
+      project_id: integerSchema,
+      start_date: dateSchema,
+      end_date: dateSchema,
+      planned_seconds_per_week: integerSchema,
+    },
+    additionalProperties: false,
+  },
+  AllocationPatch: {
+    type: "object",
+    properties: {
+      start_date: dateSchema,
+      end_date: dateSchema,
+      planned_seconds_per_week: integerSchema,
+    },
+    additionalProperties: false,
+  },
+  AllocationEnvelope: envelope("Allocation"),
+  AllocationPage: page("Allocation"),
+  CapacityWeek: {
+    type: "object",
+    required: ["week_start", "planned_seconds", "tracked_seconds", "over_allocated"],
+    properties: {
+      week_start: dateSchema,
+      planned_seconds: integerSchema,
+      tracked_seconds: {
+        ...integerSchema,
+        description: "Rounded time logged in the week; separate from the plan.",
+      },
+      over_allocated: {
+        ...booleanSchema,
+        description: "Planned exceeds capacity. A flag for the reader, never a refusal.",
+      },
+    },
+    additionalProperties: false,
+  },
+  CapacityPerson: {
+    type: "object",
+    required: ["user_id", "first_name", "last_name", "weekly_capacity_seconds", "weeks"],
+    properties: {
+      user_id: integerSchema,
+      first_name: stringSchema,
+      last_name: stringSchema,
+      weekly_capacity_seconds: integerSchema,
+      weeks: { type: "array", items: reference("CapacityWeek") },
+    },
+    additionalProperties: false,
+  },
+  Capacity: {
+    type: "object",
+    required: ["week_start_day", "weeks", "people"],
+    properties: {
+      week_start_day: { type: "string", enum: ["saturday", "sunday", "monday"] },
+      weeks: { type: "array", items: dateSchema },
+      people: { type: "array", items: reference("CapacityPerson") },
+    },
+    additionalProperties: false,
+  },
+  CapacityEnvelope: envelope("Capacity"),
+  WorkItemConnection: {
+    type: "object",
+    required: [
+      "id",
+      "provider",
+      "status",
+      "owner_user_id",
+      "credential_configured",
+      "connected_at",
+      "disconnected_at",
+      "created_at",
+      "updated_at",
+    ],
+    properties: {
+      id: integerSchema,
+      provider: { type: "string", enum: ["github"] },
+      status: { type: "string", enum: ["active", "disconnected"] },
+      owner_user_id: { ...integerSchema, description: "The administrator who connected it." },
+      credential_configured: {
+        ...booleanSchema,
+        description: "Whether the deployment holds the provider's credential. The credential is never returned.",
+      },
+      connected_at: timestampSchema,
+      disconnected_at: nullable(timestampSchema),
+      created_at: timestampSchema,
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  WorkItemConnectionInput: {
+    type: "object",
+    required: ["provider"],
+    properties: { provider: { type: "string", enum: ["github"] } },
+    additionalProperties: false,
+  },
+  WorkItemConnectionEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("WorkItemConnection") },
+    additionalProperties: false,
+  },
+  WorkItemConnectionListEnvelope: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: { type: "array", items: reference("WorkItemConnection") },
+      links: reference("Links"),
+    },
+    additionalProperties: false,
+  },
+  WorkItemLink: {
+    type: "object",
+    required: [
+      "id",
+      "connection_id",
+      "provider",
+      "time_entry_id",
+      "project_id",
+      "item_id",
+      "url",
+      "created_by",
+      "created_at",
+      "updated_at",
+    ],
+    properties: {
+      id: integerSchema,
+      connection_id: integerSchema,
+      provider: { type: "string", enum: ["github"] },
+      time_entry_id: nullable(integerSchema),
+      project_id: nullable(integerSchema),
+      item_id: { ...stringSchema, description: "The provider's own identity for the item." },
+      url: nullable(stringSchema),
+      created_by: integerSchema,
+      created_at: timestampSchema,
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  WorkItemLinkInput: {
+    type: "object",
+    required: ["connection_id", "item_id"],
+    properties: {
+      connection_id: integerSchema,
+      time_entry_id: integerSchema,
+      project_id: integerSchema,
+      item_id: stringSchema,
+      url: nullable(stringSchema),
+    },
+    additionalProperties: false,
+  },
+  WorkItemLinkEnvelope: envelope("WorkItemLink"),
+  WorkItemLinkPage: page("WorkItemLink"),
   TimeEntrySettings: {
     type: "object",
     required: ["time_entry_mode", "time_format", "clock", "week_start_day", "time_rounding"],
@@ -9792,9 +10186,16 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   TwoFactorStatus: {
     type: "object",
-    required: ["enrolled", "pending_confirmation", "recovery_codes_remaining"],
+    required: [
+      "enrolled",
+      "email_enabled",
+      "pending_confirmation",
+      "recovery_codes_remaining",
+    ],
     properties: {
       enrolled: booleanSchema,
+      // Issue 770: a code by email. Independent of the authenticator.
+      email_enabled: booleanSchema,
       pending_confirmation: booleanSchema,
       // Counts down as codes are spent, so zero is a real answer.
       recovery_codes_remaining: { type: "integer", minimum: 0 },
@@ -9842,13 +10243,41 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   // a confirmed second factor. No session accompanies it.
   TwoFactorChallengeIssued: {
     type: "object",
-    required: ["status", "challenge", "expires_at"],
+    required: ["status", "challenge", "expires_at", "methods"],
     properties: {
       status: { type: "string", enum: ["two_factor_required"] },
       // Also set as an HttpOnly cookie. Named here for clients that keep none.
       challenge: stringSchema,
       expires_at: stringSchema,
+      // What can answer it: an authenticator or recovery code, or a mailed one.
+      methods: { type: "array", items: { type: "string", enum: ["totp", "email"] } },
     },
+    additionalProperties: false,
+  },
+  TwoFactorChallengeIssuedEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("TwoFactorChallengeIssued") },
+    additionalProperties: false,
+  },
+  TwoFactorEmailCodeInput: {
+    type: "object",
+    properties: {
+      // Omitted by anything that kept the cookie the sign-in set.
+      challenge: stringSchema,
+    },
+    additionalProperties: false,
+  },
+  TwoFactorEmailDisabled: {
+    type: "object",
+    required: ["user_id", "email_enabled"],
+    properties: { user_id: integerSchema, email_enabled: { type: "boolean", enum: [false] } },
+    additionalProperties: false,
+  },
+  TwoFactorEmailDisabledEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("TwoFactorEmailDisabled") },
     additionalProperties: false,
   },
   TwoFactorChallengeInput: {

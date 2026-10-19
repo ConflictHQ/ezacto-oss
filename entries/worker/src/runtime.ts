@@ -46,7 +46,9 @@ import {
   createD1SessionStore,
   lastSeenIntervalFromSeconds,
   createD1SsoProvisioningDomainStore,
+  DrizzleAllocationRepository,
   DrizzleCalendarProposalRepository,
+  DrizzleWorkItemRepository,
   DrizzleTrackedResourceRepository,
   countBackupRuns,
   getBackupRunsSnapshot,
@@ -64,6 +66,7 @@ import {
   createD1ReminderScheduler,
   captureActivityEvent,
   createTwoFactorService,
+  deriveTwoFactorEmailCodeKey,
   createBillLinkStore,
   createBillMirrorSource,
   createPayoutAccountStore,
@@ -163,6 +166,7 @@ import {
   cloudflareAccessConfig,
   DEMO_API_TOKEN_MAX_LIFETIME_MS,
   demoDeployment,
+  workItemCredentialConfigured,
   demoMailDomains,
   type WorkerEnv,
 } from "./app.js";
@@ -181,6 +185,7 @@ import {
   createWorkerNotificationMailer,
   createWorkerOrganizationMailer,
   createWorkerStaffMagicLinkMailer,
+  createWorkerTwoFactorEmailCodeMailer,
 } from "./email-queue.js";
 import { demoRefusal } from "./demo-lockdown.js";
 
@@ -742,6 +747,15 @@ export const createRuntimeServices = async (
           mailFrom,
           organizationName,
         );
+  const twoFactorEmailCodeMailer =
+    !emailQueueReady || mailFrom === undefined
+      ? undefined
+      : createWorkerTwoFactorEmailCodeMailer(
+          emailQueue!,
+          emailLog,
+          mailFrom,
+          organizationName,
+        );
   const accountDeletionMailer =
     !emailQueueReady || mailFrom === undefined
       ? undefined
@@ -1146,6 +1160,11 @@ export const createRuntimeServices = async (
     },
     trackedResources,
     calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
+    allocations: new DrizzleAllocationRepository(drizzle),
+    workItems: {
+      repository: new DrizzleWorkItemRepository(drizzle),
+      credentialConfigured: (provider) => workItemCredentialConfigured(env, provider),
+    },
     profile: {
       readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
       readIdentity: async (userId) => await readUserIdentity(drizzle, userId),
@@ -1247,7 +1266,25 @@ export const createRuntimeServices = async (
             .first<{ address: string }>()
         )?.address ?? `user-${userId}`,
       issuer: env.BRAND_NAME === undefined || env.BRAND_NAME === "" ? "ezacto" : env.BRAND_NAME,
+      // The emailed second factor (issue 770). Its hash key is derived from the
+      // cursor signing key every deployment already has, so there is no new
+      // secret to provision, and it goes to the person's own verified address.
+      emailCodeKey: await deriveTwoFactorEmailCodeKey(cursorSigningKey),
+      emailAddress: async (userId) =>
+        (
+          await database
+            .prepare(
+              `SELECT address FROM user_emails
+                 WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
+                 ORDER BY is_primary DESC, id LIMIT 1`,
+            )
+            .bind(userId)
+            .first<{ address: string }>()
+        )?.address ?? null,
     }),
+    ...(twoFactorEmailCodeMailer === undefined
+      ? {}
+      : { twoFactorEmailCodes: twoFactorEmailCodeMailer }),
     ...(portalMagicLinkSigningKey === undefined
       ? {}
       : {
@@ -1267,6 +1304,13 @@ export const createRuntimeServices = async (
               createD1ContactSessionStore(database, { touchIntervalMs }),
             ),
             sessionStore: createD1ContactSessionStore(database, { touchIntervalMs }),
+            estimates: {
+              list: (clientId: number) => moneyResources.listCustomerEstimates(clientId),
+              get: (clientId: number, estimateId: number) =>
+                moneyResources.getCustomerEstimate(clientId, estimateId),
+              respond: (input) =>
+                moneyResources.respondToEstimate({ ...input, occurredAt: new Date().toISOString() }),
+            },
           },
         }),
     ...(emailProvider instanceof SesMailer

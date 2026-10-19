@@ -686,6 +686,68 @@
         }
       }
     },
+    "/auth/two-factor/email-code": {
+      "post": {
+        "operationId": "sendTwoFactorEmailCode",
+        "summary": "Email a verification code for a pending sign-in",
+        "description": "Supersedes the earlier challenge: the response carries the new one. Limited to one a minute and five an hour per user. Only a password sign-in can ask.",
+        "tags": [
+          "authentication"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TwoFactorChallengeIssuedEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/auth/two-factor/email-code",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TwoFactorEmailCodeInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/auth/password/forgot": {
       "post": {
         "operationId": "requestPasswordReset",
@@ -8770,6 +8832,978 @@
           }
         },
         "x-ezacto-runtime-path": "/api/v1/calendar-proposals/:id/discard",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/allocations": {
+      "get": {
+        "operationId": "listAllocations",
+        "summary": "List planned allocations",
+        "description": "Planned hours per week for a person on a project over a range of dates. Administrators and executive managers read all of them; a project manager reads their own and those for the people and projects they manage; everyone else reads only their own. `from` and `to` keep the allocations that reach into that span of days. A plan is not work: it is separate from time entries and never billed.",
+        "tags": [
+          "schedule"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllocationPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/allocations",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "createAllocation",
+        "summary": "Plan hours for a person on a project",
+        "description": "Administrators, executive managers and project managers only, a project manager only for people and projects they manage. Dates are plain local days, both included; the figure counts in full for every week the range touches. An end before the start is 422 `invalid_range`, an archived or unknown person or project is 422 `inactive_user`, `inactive_project`, `unknown_user` or `unknown_project`, and a range that overlaps another for the same person and project is 409 `allocation_overlap`. Planning more than a person's capacity is allowed: the capacity view flags it.",
+        "tags": [
+          "schedule"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllocationEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/allocations",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AllocationInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/allocations/{id}": {
+      "get": {
+        "operationId": "getAllocation",
+        "summary": "Get an allocation",
+        "tags": [
+          "schedule"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllocationEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/allocations/:id",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "updateAllocation",
+        "summary": "Update an allocation",
+        "description": "Dates and hours only: the person and project of a plan do not change, so to move one, delete it and make another. The same rules as creating apply, and a plan changed by someone else in the meantime is 409 `allocation_changed`.",
+        "tags": [
+          "schedule"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllocationEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/allocations/:id",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AllocationPatch"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteAllocation",
+        "summary": "Delete an allocation",
+        "tags": [
+          "schedule"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllocationEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/allocations/:id",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/capacity": {
+      "get": {
+        "operationId": "getCapacity",
+        "summary": "Read planned hours against capacity and tracked time, person by week",
+        "description": "Read-only. Weeks begin on the organization's week start day and run from the week holding `from` through the week holding `to`, at most 53. Per person and week: `planned_seconds` (the sum of the allocations touching that week, on active projects), `weekly_capacity_seconds` (the person's current weekly capacity, so part-time is honoured), `tracked_seconds` (rounded time actually logged, a separate figure and never changed by the plan) and `over_allocated` when planned exceeds capacity, which is a flag and never a refusal. Archived people are left out. Administrators and executive managers see everyone, a project manager the people they manage, everyone else only themselves.",
+        "tags": [
+          "schedule"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapacityEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/capacity",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/settings/work-item-connections": {
+      "get": {
+        "operationId": "listWorkItemConnections",
+        "summary": "List the issue trackers this instance has connected",
+        "description": "Administrators in a session only. `credential_configured` says whether the deployment holds the provider's credential; the credential itself is never returned.",
+        "tags": [
+          "work-items"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkItemConnectionListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/settings/work-item-connections",
+        "x-ezacto-generate-client": true
+      },
+      "post": {
+        "operationId": "connectWorkItemProvider",
+        "summary": "Connect an issue tracker",
+        "description": "Administrators in a session only, recorded in the activity log. The credential is a deployment secret chosen by the server, never sent here: a provider with no secret configured is 409 `credential_not_configured`. Connecting a provider that was disconnected revives its row, so earlier links stay attached.",
+        "tags": [
+          "work-items"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkItemConnectionEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/settings/work-item-connections",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkItemConnectionInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/work-item-connections/{id}/disconnect": {
+      "post": {
+        "operationId": "disconnectWorkItemProvider",
+        "summary": "Disconnect an issue tracker",
+        "description": "Administrators in a session only, recorded in the activity log. Drops the connection's credential reference and keeps the connection and every link made through it. Disconnecting one already disconnected changes nothing.",
+        "tags": [
+          "work-items"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkItemConnectionEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/settings/work-item-connections/:id/disconnect",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/work-item-links": {
+      "get": {
+        "operationId": "listWorkItemLinks",
+        "summary": "List links between time or projects and issue tracker items",
+        "description": "Administrators see every link; everyone else sees links on their own time entries only.",
+        "tags": [
+          "work-items"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkItemLinkPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/work-item-links",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "connection_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "time_entry_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "createWorkItemLink",
+        "summary": "Link a time entry or project to an issue tracker item",
+        "description": "Name exactly one of `time_entry_id` or `project_id`. A time entry links to one item per connection (409 `work_item_link_exists` otherwise). Administrators may link any entry or project; everyone else only their own entries, and an entry that is not theirs is 404. The item is recorded as given and is not yet checked with the tracker. A disconnected connection is 409 `work_item_connection_inactive`.",
+        "tags": [
+          "work-items"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkItemLinkEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/work-item-links",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkItemLinkInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/work-item-links/{id}": {
+      "get": {
+        "operationId": "getWorkItemLink",
+        "summary": "Get one work item link",
+        "tags": [
+          "work-items"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkItemLinkEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/work-item-links/:id",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteWorkItemLink",
+        "summary": "Remove a work item link",
+        "tags": [
+          "work-items"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/work-item-links/:id",
         "x-ezacto-generate-client": true,
         "parameters": [
           {
@@ -24358,6 +25392,182 @@
         }
       }
     },
+    "/api/v1/two-factor/email": {
+      "post": {
+        "operationId": "enableTwoFactorEmail",
+        "summary": "Turn on the emailed second factor",
+        "description": "Needs a verified email address. A code is mailed at password sign-in; magic-link and federated sign-in never use this factor.",
+        "tags": [
+          "two-factor"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TwoFactorStatusEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/two-factor/email",
+        "x-ezacto-generate-client": true
+      },
+      "delete": {
+        "operationId": "disableTwoFactorEmail",
+        "summary": "Turn off the emailed second factor",
+        "tags": [
+          "two-factor"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TwoFactorStatusEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/two-factor/email",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/users/{id}/two-factor/email": {
+      "delete": {
+        "operationId": "disableUserTwoFactorEmail",
+        "summary": "Turn off a user's emailed second factor (administrator)",
+        "description": "Lockout recovery for a user who lost their mailbox. Administrators only; the change is recorded in the activity log.",
+        "tags": [
+          "two-factor"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TwoFactorEmailDisabledEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/users/:id/two-factor/email",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/users/{id}/emails": {
       "post": {
         "operationId": "addUserEmail",
@@ -31826,6 +33036,522 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/CalendarProposal"
+            }
+          },
+          "links": {
+            "$ref": "#/components/schemas/PageLinks"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMetadata"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Allocation": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "project_id",
+          "start_date",
+          "end_date",
+          "planned_seconds_per_week",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "end_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Included. Never before `start_date`."
+          },
+          "planned_seconds_per_week": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Planned seconds in each week the range touches, between 1 and 604800."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AllocationInput": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "project_id",
+          "start_date",
+          "end_date",
+          "planned_seconds_per_week"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "end_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "planned_seconds_per_week": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "AllocationPatch": {
+        "type": "object",
+        "properties": {
+          "start_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "end_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "planned_seconds_per_week": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "AllocationEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Allocation"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AllocationPage": {
+        "type": "object",
+        "required": [
+          "data",
+          "links",
+          "page"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Allocation"
+            }
+          },
+          "links": {
+            "$ref": "#/components/schemas/PageLinks"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageMetadata"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CapacityWeek": {
+        "type": "object",
+        "required": [
+          "week_start",
+          "planned_seconds",
+          "tracked_seconds",
+          "over_allocated"
+        ],
+        "properties": {
+          "week_start": {
+            "type": "string",
+            "format": "date"
+          },
+          "planned_seconds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tracked_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Rounded time logged in the week; separate from the plan."
+          },
+          "over_allocated": {
+            "type": "boolean",
+            "description": "Planned exceeds capacity. A flag for the reader, never a refusal."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CapacityPerson": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "first_name",
+          "last_name",
+          "weekly_capacity_seconds",
+          "weeks"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "weekly_capacity_seconds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "weeks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CapacityWeek"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "Capacity": {
+        "type": "object",
+        "required": [
+          "week_start_day",
+          "weeks",
+          "people"
+        ],
+        "properties": {
+          "week_start_day": {
+            "type": "string",
+            "enum": [
+              "saturday",
+              "sunday",
+              "monday"
+            ]
+          },
+          "weeks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          "people": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CapacityPerson"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "CapacityEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Capacity"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkItemConnection": {
+        "type": "object",
+        "required": [
+          "id",
+          "provider",
+          "status",
+          "owner_user_id",
+          "credential_configured",
+          "connected_at",
+          "disconnected_at",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "github"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "disconnected"
+            ]
+          },
+          "owner_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The administrator who connected it."
+          },
+          "credential_configured": {
+            "type": "boolean",
+            "description": "Whether the deployment holds the provider's credential. The credential is never returned."
+          },
+          "connected_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "disconnected_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkItemConnectionInput": {
+        "type": "object",
+        "required": [
+          "provider"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "github"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkItemConnectionEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkItemConnection"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkItemConnectionListEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkItemConnection"
+            }
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkItemLink": {
+        "type": "object",
+        "required": [
+          "id",
+          "connection_id",
+          "provider",
+          "time_entry_id",
+          "project_id",
+          "item_id",
+          "url",
+          "created_by",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "connection_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "github"
+            ]
+          },
+          "time_entry_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "item_id": {
+            "type": "string",
+            "description": "The provider's own identity for the item."
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_by": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkItemLinkInput": {
+        "type": "object",
+        "required": [
+          "connection_id",
+          "item_id"
+        ],
+        "properties": {
+          "connection_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "time_entry_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "item_id": {
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkItemLinkEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "links"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkItemLink"
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkItemLinkPage": {
+        "type": "object",
+        "required": [
+          "data",
+          "links",
+          "page"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkItemLink"
             }
           },
           "links": {
@@ -45377,11 +47103,15 @@
         "type": "object",
         "required": [
           "enrolled",
+          "email_enabled",
           "pending_confirmation",
           "recovery_codes_remaining"
         ],
         "properties": {
           "enrolled": {
+            "type": "boolean"
+          },
+          "email_enabled": {
             "type": "boolean"
           },
           "pending_confirmation": {
@@ -45466,7 +47196,8 @@
         "required": [
           "status",
           "challenge",
-          "expires_at"
+          "expires_at",
+          "methods"
         ],
         "properties": {
           "status": {
@@ -45480,6 +47211,69 @@
           },
           "expires_at": {
             "type": "string"
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "totp",
+                "email"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "TwoFactorChallengeIssuedEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TwoFactorChallengeIssued"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TwoFactorEmailCodeInput": {
+        "type": "object",
+        "properties": {
+          "challenge": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TwoFactorEmailDisabled": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "email_enabled"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "email_enabled": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "TwoFactorEmailDisabledEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TwoFactorEmailDisabled"
           }
         },
         "additionalProperties": false

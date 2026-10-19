@@ -418,6 +418,8 @@ export {
 } from './demo-reset.js'
 export { migrateD1, migrationIds } from './migrate.js'
 export { DrizzleCalendarProposalRepository } from './calendar-proposals.js'
+export { DrizzleAllocationRepository } from './allocations.js'
+export { DrizzleWorkItemRepository } from './work-items.js'
 export {
   DrizzleTrackedResourceRepository,
   type PolicySubject,
@@ -432,7 +434,7 @@ export { createD1MagicLinkStore } from './magic-link-state.js'
 export { createD1ContactSessionStore } from './contact-sessions.js'
 export { createMagicLinkService } from './magic-link-service.js'
 export { createD1TwoFactorStore } from './two-factor.js'
-export { createTwoFactorService } from './two-factor-service.js'
+export { createTwoFactorService, deriveTwoFactorEmailCodeKey } from './two-factor-service.js'
 export {
   createRecurringInvoiceEngine,
   type RecurringGenerationPrincipal,
