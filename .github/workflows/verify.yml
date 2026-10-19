@@ -61,6 +61,8 @@ jobs:
       - run: npm run build
       - name: install and exercise the packed public CLI outside the workspace
         run: npm run test:package -w @conflict-hq/ezacto-cli
+      - name: install and exercise the packed migrate CLI outside the workspace
+        run: npm run test:package -w @conflict-hq/ezacto-migrate
       - name: publish versioned OpenAPI artifact
         uses: actions/upload-artifact@v4
         with:
@@ -96,7 +98,7 @@ jobs:
           - { name: api 1, workspaces: -w @ezacto/api, shard: 1/3 }
           - { name: api 2, workspaces: -w @ezacto/api, shard: 2/3 }
           - { name: api 3, workspaces: -w @ezacto/api, shard: 3/3 }
-          - { name: migrate, workspaces: -w ezacto-migrate }
+          - { name: migrate, workspaces: -w @conflict-hq/ezacto-migrate }
           - { name: worker, workspaces: -w ezacto-worker }
           # Six files that npm run verify has always covered and this matrix
           # never did, so the merge gate was weaker than the deploy gate.
