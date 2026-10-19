@@ -237,6 +237,30 @@ for (const runtime of ['SQLite', 'D1'])
         { user_id: 3, title: 'Jo’s 1:1' },
       ])
     })
+    it('erases the closed person’s planned allocations (issue 1007) and nobody else’s', async () => {
+      const { closure, rows, exec } = await setup()
+      // A plan for someone who has left is moot and is not time worked.
+      for (const query of [
+        `INSERT INTO clients(id,name,currency,created_at,updated_at) VALUES(1,'QA Client','USD','${at}','${at}')`,
+        `INSERT INTO projects(id,client_id,name,created_at,updated_at) VALUES(1,1,'QA Project','${at}','${at}')`,
+        `INSERT INTO allocations(user_id,project_id,start_date,end_date,planned_seconds_per_week,created_at,updated_at) VALUES
+        (2,1,'2026-10-05','2026-10-25',57600,'${at}','${at}'),
+        (3,1,'2026-10-05','2026-10-25',57600,'${at}','${at}')`,
+      ])
+        await exec(query)
+      const preview = await closure.preview(1, 'close-pat')
+      expect(JSON.stringify(preview)).not.toContain('allocations')
+      await closure.close({
+        actorUserId: 1,
+        id: 'close-pat',
+        reviewToken: preview.review_token,
+        expectedVersion: 1,
+        expectedPolicyVersion: 1,
+        now: later,
+        acknowledged: true as const,
+      })
+      expect(await rows('SELECT user_id FROM allocations ORDER BY id')).toEqual([{ user_id: 3 }])
+    })
     it('removes every local secret and refuses already-issued session, API, email and app-handoff credentials', async () => {
       const { closure, db, rows, exec, sessions, magic, codes } = await setup()
       const session = await sessions.issue(2)

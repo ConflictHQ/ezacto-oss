@@ -73,6 +73,7 @@ import { createPeriodControl, isCalendarDay } from '../components/period.js'
 import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
 import { createActivityController } from '../activity/browser.js'
+import { createCapacityController } from '../capacity/browser.js'
 import { focusSortHeader, setSortPreferenceOwner } from '../components/table-sort.js'
 import { createDeliveriesController } from '../deliveries/browser.js'
 import { createCalendarController, type CalendarPlacement } from '../calendar/browser.js'
@@ -1570,6 +1571,12 @@ export const mountShell = async (
       return people
         .map((person) => ({ id: person.id, name: personLabel(person.id, people) }))
         .sort((left, right) => left.name.localeCompare(right.name, 'en-US'))
+    },
+  })
+  const capacity = createCapacityController({
+    getCapacity: async (range, signal) => {
+      if (api.getCapacity === undefined) throw new Error('Capacity is not available.')
+      return api.getCapacity(range, signal)
     },
   })
   // Same shape as the activity controller above: an install whose api does not
@@ -4564,6 +4571,8 @@ export const mountShell = async (
         }),
         loadWeek(authenticated),
       ])
+    } else if (document.querySelector('[data-capacity-page]:not([hidden])') !== null) {
+      await Promise.all([capacity.activate(authenticated.signal), loadWeek(authenticated)])
     } else if (document.querySelector('[data-deliveries-page]:not([hidden])') !== null) {
       await Promise.all([deliveries.activate(authenticated.signal), loadWeek(authenticated)])
     } else if (document.documentElement.dataset.appView === 'staff-payments') {

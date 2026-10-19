@@ -185,6 +185,18 @@ The event names the administrator as `actor` and the owner as
 `time_entry.user_id`, and carries before and after snapshots without rates. The
 activity log records it like any other event.
 
+Resource planning (issue 1007): `/api/v1/allocations` holds planned seconds per
+week for a person on a project over a range of dates, and `GET /api/v1/capacity`
+is the read-only person-by-week view of plan against capacity and tracked time.
+Both use the existing `schedule:read` and `schedule:write` scopes. Administrators,
+executive managers and project managers write, a project manager only for the
+people and projects they manage (the team access rules); a person who is none of
+those reads only their own plan, and the capacity view shows them only
+themselves. A plan is not work: it never touches `time_entries`, rates or
+invoices. Over-allocation is an `over_allocated` flag and never a refusal. Each
+write leaves an `allocation.created`, `updated` or `deleted` outbox event in the
+same transaction, which the activity log records.
+
 General-resource commercial fields are classified in `@ezacto/core`:
 client payment terms/tax/discount defaults, project billing method/bill-by/currency,
 and contact invoice-recipient routing. Finance, executive, administrator, and

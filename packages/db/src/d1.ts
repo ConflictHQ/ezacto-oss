@@ -418,6 +418,7 @@ export {
 } from './demo-reset.js'
 export { migrateD1, migrationIds } from './migrate.js'
 export { DrizzleCalendarProposalRepository } from './calendar-proposals.js'
+export { DrizzleAllocationRepository } from './allocations.js'
 export {
   DrizzleTrackedResourceRepository,
   type PolicySubject,

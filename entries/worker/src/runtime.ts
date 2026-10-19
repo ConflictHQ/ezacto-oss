@@ -46,6 +46,7 @@ import {
   createD1SessionStore,
   lastSeenIntervalFromSeconds,
   createD1SsoProvisioningDomainStore,
+  DrizzleAllocationRepository,
   DrizzleCalendarProposalRepository,
   DrizzleTrackedResourceRepository,
   countBackupRuns,
@@ -1146,6 +1147,7 @@ export const createRuntimeServices = async (
     },
     trackedResources,
     calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
+    allocations: new DrizzleAllocationRepository(drizzle),
     profile: {
       readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
       readIdentity: async (userId) => await readUserIdentity(drizzle, userId),
