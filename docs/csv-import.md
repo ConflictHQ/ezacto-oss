@@ -1,7 +1,7 @@
 # CSV time import
 
 `ezacto-migrate import-csv` reads a vendor-neutral CSV of time entries into an
-ezacto database. It is the first slice of issue 1012 (import tools). It is not
+ezacto database. It is part of issue 1012 (import tools). It is not
 a Harvest path (see [migrating-from-harvest.md](migrating-from-harvest.md)) and
 not a claim that any particular vendor's export is understood: a vendor adapter
 only has to turn that vendor's columns into this contract.
@@ -14,6 +14,7 @@ locks, approvals and note rules apply exactly as to an entry typed by hand.
 ```
 ezacto-migrate import-csv --database instance.db --file time.csv --dry-run
 ezacto-migrate import-csv --database instance.db --file time.csv --mapping mapping.json
+ezacto-migrate import-csv --database instance.db --file toggl.csv --format toggl --dry-run
 ```
 
 Always dry-run first. `--dry-run` opens the database without migrating it,
@@ -49,6 +50,36 @@ risk. Malformed quoting, non-UTF-8 bytes, NUL bytes, an oversize file or too man
 rows stop the file with a file error and read nothing.
 
 Columns outside the contract produce a warning and are ignored.
+
+## Toggl Track
+
+`--format toggl` reads a Toggl Track **detailed time entries** CSV export and maps it
+onto the contract above; everything else on this page (mapping, dry run, source
+identity, re-running) applies unchanged. It reads a file you exported: it never
+calls Toggl and takes no credentials. `--source-id` defaults to `toggl`.
+
+| Toggl column | Becomes |
+| --- | --- |
+| `Start date` | `date` (the entry's spent date, also when it runs past midnight) |
+| `Email` | `person_email` |
+| `Client`, `Project`, `Task` | `client`, `project`, `task` |
+| `Description` | `notes` |
+| `Billable` (`Yes`/`No`) | `billable` |
+| `Start time`, `End time`, `Duration` | `start_time`/`end_time` when the entry starts and ends on one date, on whole minutes, and the duration agrees; otherwise `hours`, exact to the second |
+
+The export must have all of those columns (the summary and weekly reports do not),
+or the file is refused with `toggl_missing_column`. Other columns (`User`, `Tags`,
+the `Amount` columns) are ignored and named in a warning: **no amount or rate is
+read.** Times are the exporting account's wall clock, not converted.
+
+Limits that follow from the contract, reported per line rather than patched over:
+a Toggl entry with no client, project or task is rejected (`missing_value`), since
+the contract requires all three; a description that starts with `=`, `+`, `-` or
+`@` is rejected as a formula-injection risk; a person not in this instance is
+`person_unmapped` until the mapping names them (keyed by their Toggl email); an
+organization that records start and end times rejects the entries that went in as
+hours (`hours_not_accepted`). A running timer (no valid duration) is rejected as
+`invalid_duration`. Clockify is a later slice.
 
 ## The mapping
 
@@ -116,6 +147,6 @@ rejected.
 
 ## Not covered yet
 
-A vendor adapter (Toggl or Clockify), the upload wizard, running on D1 or the
+A Clockify adapter, the upload wizard, running on D1 or the
 Worker, and a mapping preview UI are later slices of the same issue. This slice
 is CLI and container (SQLite) only.
