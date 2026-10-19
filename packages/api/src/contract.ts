@@ -2428,6 +2428,12 @@ const reportOperations: ApiContractOperation[] = [
     requestSchema: "SavedReportInput", requestRequired: true,
   },
   {
+    method: "post", path: "/api/v1/report-views",
+    operationId: "createReportView", summary: "Save the report on screen: a report kind and its address, private to the author",
+    tag: "reports", responseStatus: 201, responseSchema: "SavedReportEnvelope",
+    requestSchema: "SavedReportViewInput", requestRequired: true,
+  },
+  {
     method: "post", path: "/api/v1/report-definitions/preview",
     operationId: "previewReportDefinition", summary: "Run an unsaved report definition",
     tag: "reports", responseStatus: 200, responseSchema: "ReportRunnerEnvelope",
@@ -8785,13 +8791,30 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       metrics: { type: "array", items: { type: "string" } },
       filters: { type: "array", items: { type: "object", additionalProperties: true } },
       group_by: nullable({ type: "object", additionalProperties: true }),
+      // Only for a saved view: the report's new address.
+      view: { $ref: "#/components/schemas/SavedReportAddress" },
       presentation: { $ref: "#/components/schemas/ReportDefinitionPresentation" },
     },
     additionalProperties: false,
   },
+  SavedReportAddress: {
+    type: "object",
+    required: ["report", "query"],
+    properties: {
+      report: { type: "string", description: "The Reports kind, such as time or invoiced." },
+      query: { type: "string", description: "The report's query string: filters, grouping, sort and range." },
+    },
+    additionalProperties: false,
+  },
+  SavedReportViewInput: {
+    type: "object",
+    required: ["name", "view"],
+    properties: { name: stringSchema, view: { $ref: "#/components/schemas/SavedReportAddress" } },
+    additionalProperties: false,
+  },
   SavedReport: {
     type: "object",
-    required: ["id", "name", "version", "fields", "metrics", "filters", "group_by", "presentation", "owner", "is_custom", "pinned", "shared", "shared_with", "owned_by_viewer", "can_delete", "created_at", "updated_at"],
+    required: ["id", "name", "version", "fields", "metrics", "filters", "group_by", "presentation", "owner", "is_custom", "view", "pinned", "shared", "shared_with", "owned_by_viewer", "can_delete", "created_at", "updated_at"],
     properties: {
       id: stringSchema, name: stringSchema, version: integerSchema,
       fields: { type: "array", items: { type: "object", additionalProperties: true } },
@@ -8801,6 +8824,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       presentation: { $ref: "#/components/schemas/ReportDefinitionPresentation" },
       owner: { type: "object", additionalProperties: true },
       is_custom: booleanSchema, pinned: booleanSchema, shared: booleanSchema,
+      // The report's address when this is a saved view of a report; null for a builder definition.
+      view: nullable({ $ref: "#/components/schemas/SavedReportAddress" }),
       // Who the owner shared it with. Empty for everyone but the owner.
       shared_with: {
         type: "object", required: ["users", "profiles"],

@@ -26,6 +26,17 @@ export interface SavedReportSharing {
   readonly profiles: readonly SavedReportProfile[]
 }
 
+/**
+ * A saved report that is a report's address rather than a builder definition:
+ * the Reports kind and its query string (filters, grouping, sort, range).
+ * Opening one navigates to the address, so the kind's own API runs it under the
+ * viewer's current permissions.
+ */
+export interface SavedReportAddress {
+  readonly report: string
+  readonly query: string
+}
+
 export interface SavedReportPresentation {
   readonly result: 'summary' | 'detailed'
   readonly grouped: boolean
@@ -37,6 +48,8 @@ export interface SavedReportRecord {
   readonly ownerUserId: number
   readonly ownerName: string
   readonly isCustom: boolean
+  /** Set for a saved view of a report; null for a builder definition. */
+  readonly view: SavedReportAddress | null
   readonly presentation: SavedReportPresentation
   readonly pinned: boolean
   /** Shared with the viewer by name or by their role; never true for the owner. */
@@ -78,6 +91,32 @@ const presentation = (value: unknown): SavedReportPresentation => {
   }
 }
 
+const kindPattern = /^[a-z][a-z0-9-]{0,39}$/u
+
+/**
+ * The address as stored: the kind apart from its query, and a query that never
+ * carries the pointer back to the saved report it was opened from.
+ */
+export const savedReportAddress = (value: unknown): SavedReportAddress => {
+  if (value === null || typeof value !== 'object') throw new TypeError('view must be an object')
+  const record = value as Record<string, unknown>
+  if (typeof record.report !== 'string' || !kindPattern.test(record.report)) {
+    throw new RangeError('view report must be a report kind')
+  }
+  if (typeof record.query !== 'string' || record.query.length > 2000) {
+    throw new RangeError('view query must be a string of at most 2000 characters')
+  }
+  const params = new URLSearchParams(record.query.replace(/^\?/u, ''))
+  params.delete('report')
+  params.delete('saved')
+  return { report: record.report, query: params.toString() }
+}
+
+const addressOf = (definitionJson: string): SavedReportAddress | null => {
+  const stored = (JSON.parse(definitionJson) as { view?: unknown }).view
+  return stored === undefined ? null : savedReportAddress(stored)
+}
+
 const mapped = (row: Row, viewerUserId: number): SavedReportRecord => {
   const ownedByViewer = row.ownerUserId === viewerUserId
   return {
@@ -85,6 +124,7 @@ const mapped = (row: Row, viewerUserId: number): SavedReportRecord => {
   ownerUserId: row.ownerUserId,
   ownerName: row.ownerName,
   isCustom: row.isCustom === 1,
+  view: addressOf(row.definitionJson),
   presentation: presentation(JSON.parse(row.presentationJson)),
   pinned: row.pinned === 1,
   shared: row.shared === 1,
@@ -136,15 +176,18 @@ export const createSavedReportStore = (database: Database) => ({
     definition: ReportDefinition
     ownerUserId: number
     isCustom?: boolean
+    view?: SavedReportAddress
     presentation: SavedReportPresentation
   }>): Promise<SavedReportRecord> => {
     const definition = serializeReportDefinition(input.definition)
+    const address = input.view === undefined ? undefined : savedReportAddress(input.view)
     const view = presentation(input.presentation)
     await database.run(sql`
       INSERT INTO saved_reports
         (id, owner_user_id, definition_json, version, is_custom, presentation_json, created_at, updated_at)
-      VALUES (${definition.id}, ${input.ownerUserId}, ${JSON.stringify(definition)},
-        ${definition.version}, ${input.isCustom === false ? 0 : 1}, ${JSON.stringify(view)},
+      VALUES (${definition.id}, ${input.ownerUserId},
+        ${JSON.stringify(address === undefined ? definition : { ...definition, view: address })},
+        ${definition.version}, ${input.isCustom === false || address !== undefined ? 0 : 1}, ${JSON.stringify(view)},
         ${definition.createdAt}, ${definition.updatedAt})`)
     const created = await database.all<Row>(sql`${select(input.ownerUserId)} WHERE report.id = ${definition.id}`)
     return mapped(created[0]!, input.ownerUserId)
@@ -179,6 +222,7 @@ export const createSavedReportStore = (database: Database) => ({
     ownerUserId: number
     expectedVersion: number
     changes: UpdateReportDefinitionInput
+    view?: SavedReportAddress
     presentation?: SavedReportPresentation
   }>): Promise<'not_found' | 'version_conflict' | SavedReportRecord> => {
     const owned = await database.all<Row>(sql`${select(input.ownerUserId)}
@@ -186,12 +230,28 @@ export const createSavedReportStore = (database: Database) => ({
     const current = owned[0]
     if (current === undefined) return 'not_found'
     if (current.version !== input.expectedVersion) return 'version_conflict'
-    const next = updateReportDefinition(deserializeReportDefinition(JSON.parse(current.definitionJson)), input.changes)
+    const existing = deserializeReportDefinition(JSON.parse(current.definitionJson))
+    const currentView = addressOf(current.definitionJson)
+    const { name, updatedAt, ...content } = input.changes
+    if (currentView === null && input.view !== undefined) {
+      throw new TypeError('only a saved view has an address to change')
+    }
+    if (currentView !== null && Object.values(content).some((part) => part !== undefined)) {
+      throw new TypeError('a saved view keeps its report in its address, not in fields or metrics')
+    }
+    // A view's name and address are all there is to change, and saving it again
+    // at the same address is still a save: the version moves so a second
+    // editor's stale copy is refused.
+    const next = currentView === null
+      ? updateReportDefinition(existing, input.changes)
+      : { ...existing, name: name ?? existing.name, version: existing.version + 1, updatedAt }
+    const nextView = input.view === undefined ? currentView : savedReportAddress(input.view)
     const nextPresentation = input.presentation === undefined
       ? presentation(JSON.parse(current.presentationJson))
       : presentation(input.presentation)
     const changed = await database.all<{ id: string }>(sql`
-      UPDATE saved_reports SET definition_json = ${JSON.stringify(serializeReportDefinition(next))},
+      UPDATE saved_reports SET definition_json = ${JSON.stringify(
+        nextView === null ? serializeReportDefinition(next) : { ...serializeReportDefinition(next), view: nextView })},
         version = ${next.version}, presentation_json = ${JSON.stringify(nextPresentation)},
         updated_at = ${next.updatedAt}
       WHERE id = ${input.reportId} AND owner_user_id = ${input.ownerUserId}

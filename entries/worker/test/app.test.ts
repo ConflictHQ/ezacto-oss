@@ -28,6 +28,14 @@ describe('worker entry', () => {
     })
   })
 
+  it('[unit] serves the Saved tab of Reports as the Reports page with its own tab current (#933)', async () => {
+    const saved = await (await app.request('/reports/saved', {}, env)).text()
+    expect(saved).toContain('data-saved-screen')
+    expect(saved).toMatch(/<a href="\/reports\/saved"[^>]*aria-current="page"[^>]*>Saved<\/a>/u)
+    const time = await (await app.request('/reports?report=time', {}, env)).text()
+    expect(time).toMatch(/<a href="\/reports\/saved"(?![^>]*aria-current)[^>]*>Saved<\/a>/u)
+  })
+
   it('[unit] brands every HTML route from the deployment, with no route left behind', async () => {
     // Three routes — /team, /team/:id and /settings/modules — shipped without
     // brandFromEnv, so a branded deployment served them as "ezacto". The
@@ -57,6 +65,7 @@ describe('worker entry', () => {
       '/invoices/recurring/1/edit',
       '/invoices/retainers',
       '/reports',
+      '/reports/saved',
       '/settings/user',
       '/settings/company',
       '/settings/templates',
@@ -563,7 +572,7 @@ describe('worker entry', () => {
     },
   )
 
-  it.each(['/', '/dashboard', '/clients', '/clients/42', '/projects', '/projects/42', '/tasks', '/expenses', '/expenses/42', '/expense-categories', '/invoices', '/invoices/42', '/invoices/42/edit', '/invoices/new', '/invoices/recurring/new', '/invoices/recurring/42/edit', '/approvals', '/reports'])(
+  it.each(['/', '/dashboard', '/clients', '/clients/42', '/projects', '/projects/42', '/tasks', '/expenses', '/expenses/42', '/expense-categories', '/invoices', '/invoices/42', '/invoices/42/edit', '/invoices/new', '/invoices/recurring/new', '/invoices/recurring/42/edit', '/approvals', '/reports', '/reports/saved'])(
     '[security] renders %s as an inert shell under an overlay when a session cookie is present',
     async (path) => {
       const res = await app.request(

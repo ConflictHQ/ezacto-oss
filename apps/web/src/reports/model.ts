@@ -25,6 +25,7 @@ import type {
   SavedReport,
   SavedReportInput,
   SavedReportUpdate,
+  SavedReportViewInput,
   TimeReport,
   UninvoicedReport,
   Whoami,
@@ -258,6 +259,8 @@ export interface ReportWorkspaceApi {
   getReportDefinitionRegistry?(signal?: AbortSignal): Promise<ReportDefinitionRegistry>
   listSavedReports?(filter: { view?: 'all' | 'yours' | 'shared'; q?: string; custom_only?: boolean }, signal?: AbortSignal): Promise<readonly SavedReport[]>
   createSavedReport?(input: SavedReportInput, signal?: AbortSignal): Promise<SavedReport>
+  createReportView?(input: SavedReportViewInput, signal?: AbortSignal): Promise<SavedReport>
+  getSavedReport?(reportId: string, signal?: AbortSignal): Promise<SavedReport>
   previewReportDefinition?(input: SavedReportInput, signal?: AbortSignal): Promise<ReportRunnerResult>
   runSavedReport?(reportId: string, signal?: AbortSignal): Promise<ReportRunnerResult>
   pinSavedReport?(reportId: string, signal?: AbortSignal): Promise<void>

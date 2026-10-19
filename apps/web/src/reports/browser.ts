@@ -34,6 +34,14 @@ import { renderFilterBar, type FilterValue } from '../components/filter-bar.js'
 import { sortReportTable, type ReportSortColumn } from '../components/report-table-sort.js'
 import { sortToken, type SortValue, type TableSort } from '../components/table-sort.js'
 import { createPeriodControl } from '../components/period.js'
+import { reportKindLabel } from './render.js'
+import {
+  renderQuickLinks,
+  renderSavedViewsTable,
+  savedReportHref,
+  sharingSummary,
+  type SavedScreenActions,
+} from './saved-screen.js'
 import { invoiceIdentityCanWrite, invoicePagePath } from '../invoices/model.js'
 import { moneyText } from '../money-display.js'
 import { personLabel } from '../projects/model.js'
@@ -233,13 +241,6 @@ const textElement = <Tag extends keyof HTMLElementTagNameMap>(
   const result = element(tag, className)
   result.textContent = text
   return result
-}
-
-/** Who can open a saved report, from the viewer's side of it. */
-const sharingSummary = (report: SavedReport): string => {
-  if (!report.owned_by_viewer) return report.shared ? 'Shared with you' : 'Visible to you as an administrator'
-  const count = report.shared_with.users.length + report.shared_with.profiles.length
-  return count === 0 ? 'Private' : `Shared with ${count}`
 }
 
 const linkElement = (href: string, text: string): HTMLAnchorElement => {
@@ -2900,6 +2901,11 @@ export const createReportsController = (
     kindTabs.set(tabKind, anchor)
   }
   const kindStrip = [...kindTabs.values()][0]?.parentElement ?? null
+  // The Saved tab is not a kind: it is its own address, kept in the strip for
+  // the profiles that can save a report at all.
+  const savedTab = [...document.querySelectorAll<HTMLAnchorElement>('.tabstrip a')].find(
+    (anchor) => new URL(anchor.getAttribute('href') ?? '', globalThis.location.origin).pathname === '/reports/saved',
+  ) ?? null
   // The Activity log is a module: once the API says it is off, its kind leaves
   // the strip the way a kind a profile cannot read does.
   let activityLogOff = false
@@ -2979,6 +2985,24 @@ export const createReportsController = (
   const deleteDialog = required<HTMLDialogElement>('[data-saved-delete-dialog]')
   const deleteTitle = required<HTMLElement>('[data-saved-delete-title]')
   const deleteConfirm = required<HTMLButtonElement>('[data-saved-delete-confirm]')
+  const saveOpen = required<HTMLButtonElement>('[data-saved-save-open]')
+  const quickLinks = required<HTMLElement>('[data-saved-quick-links]')
+  const openBanner = required<HTMLElement>('[data-saved-open]')
+  const openBannerName = required<HTMLElement>('[data-saved-open-name]')
+  const openBannerSave = required<HTMLButtonElement>('[data-saved-open-save]')
+  const openBannerResult = required<HTMLElement>('[data-saved-open-result]')
+  const savedScreen = required<HTMLElement>('[data-saved-screen]')
+  const savedScreenSearch = required<HTMLInputElement>('[data-saved-screen-search]')
+  const savedScreenStatus = required<HTMLElement>('[data-saved-screen-status]')
+  const savedScreenTable = required<HTMLElement>('[data-saved-screen-table]')
+  const nameDialog = required<HTMLDialogElement>('[data-saved-name-dialog]')
+  const nameForm = required<HTMLFormElement>('[data-saved-name-form]')
+  const nameEyebrow = required<HTMLElement>('[data-saved-name-eyebrow]')
+  const nameTitle = required<HTMLElement>('[data-saved-name-title]')
+  const nameHint = required<HTMLElement>('[data-saved-name-hint]')
+  const nameInput = required<HTMLInputElement>('[data-saved-name-input]')
+  const nameResult = required<HTMLElement>('[data-saved-name-result]')
+  const nameSubmit = required<HTMLButtonElement>('[data-saved-name-submit]')
   const builderOpen = required<HTMLButtonElement>('[data-report-builder-open]')
   const builder = required<HTMLDialogElement>('[data-report-builder]')
   const builderClose = required<HTMLButtonElement>('[data-report-builder-close]')
@@ -3089,6 +3113,13 @@ export const createReportsController = (
   let builderRegistry: ReportDefinitionRegistry | null = null
   let editingSaved: SavedReport | null = null
   let deleting: SavedReport | null = null
+  // The Saved tab is showing in place of a report (#933).
+  let savedScreenActive = false
+  let screenView: 'all' | 'yours' | 'shared' = 'all'
+  // The saved report this page was opened from, so it can be saved back to.
+  let openSaved: SavedReport | null = null
+  // What the name dialog is for: saving the report on screen, or renaming one.
+  let naming: { readonly rename: SavedReport | null } | null = null
   let directoryPeople: readonly GeneralResource[] | null = null
 
   const currentSession = (): ActiveSession | null =>
@@ -3294,6 +3325,7 @@ export const createReportsController = (
   }
 
   const loadSavedReports = async (): Promise<void> => {
+    if (savedScreenActive) return loadSavedScreen()
     const active = currentSession()
     if (active === null || api.listSavedReports === undefined) return
     savedStatus.textContent = 'Loading saved reports…'
@@ -3309,6 +3341,10 @@ export const createReportsController = (
         const open = textElement('button', report.name)
         open.type = 'button'
         open.addEventListener('click', () => {
+          // A saved view is a report's address: it opens there, and runs through
+          // that report's own API rather than as a definition.
+          const address = savedReportHref(report)
+          if (address !== null) { globalThis.location.assign(address); return }
           if (api.runSavedReport === undefined) return
           savedStatus.textContent = `Running ${report.name}…`
           void api.runSavedReport(report.id, active.signal).then((result) => {
@@ -3323,17 +3359,10 @@ export const createReportsController = (
         )
         const pin = textElement('button', report.pinned ? 'Unpin' : 'Pin')
         pin.type = 'button'
-        pin.addEventListener('click', () => {
-          const action = report.pinned ? api.unpinSavedReport : api.pinSavedReport
-          if (action === undefined) return
-          void action(report.id, active.signal).then(loadSavedReports)
-        })
+        pin.addEventListener('click', () => { togglePin(report) })
         const duplicate = textElement('button', 'Duplicate')
         duplicate.type = 'button'
-        duplicate.addEventListener('click', () => {
-          if (api.duplicateSavedReport === undefined) return
-          void api.duplicateSavedReport(report.id, active.signal).then(loadSavedReports)
-        })
+        duplicate.addEventListener('click', () => { duplicateReport(report) })
         const owned = report.owned_by_viewer
         const edit = textElement('button', 'Edit')
         edit.type = 'button'
@@ -3359,12 +3388,7 @@ export const createReportsController = (
         const remove = textElement('button', 'Delete')
         remove.type = 'button'
         remove.hidden = !report.can_delete
-        remove.addEventListener('click', () => {
-          if (api.deleteSavedReport === undefined) return
-          deleting = report
-          deleteTitle.textContent = `Delete ${report.name}?`
-          deleteDialog.showModal()
-        })
+        remove.addEventListener('click', () => { requestDelete(report) })
         const audience = textElement('span', sharingSummary(report), 'report-saved-audience')
         card.append(open, metadata, audience, pin, duplicate, edit, share, remove)
         return card
@@ -3373,6 +3397,121 @@ export const createReportsController = (
     } catch (error) {
       savedStatus.textContent = messageFor(error)
     }
+  }
+
+  /** Both lists say what happened; only the one on screen is read. */
+  const announceSaved = (message: string): void => {
+    savedStatus.textContent = message
+    savedScreenStatus.textContent = message
+  }
+
+  const togglePin = (report: SavedReport): void => {
+    const active = currentSession()
+    const action = report.pinned ? api.unpinSavedReport : api.pinSavedReport
+    if (active === null || action === undefined) return
+    void action(report.id, active.signal)
+      .then(() => { void loadQuickLinks(); return loadSavedReports() })
+      .catch((error: unknown) => { announceSaved(messageFor(error)) })
+  }
+
+  const duplicateReport = (report: SavedReport): void => {
+    const active = currentSession()
+    if (active === null || api.duplicateSavedReport === undefined) return
+    void api.duplicateSavedReport(report.id, active.signal)
+      .then(() => loadSavedReports())
+      .catch((error: unknown) => { announceSaved(messageFor(error)) })
+  }
+
+  const requestDelete = (report: SavedReport): void => {
+    if (api.deleteSavedReport === undefined) return
+    deleting = report
+    deleteTitle.textContent = `Delete ${report.name}?`
+    deleteDialog.showModal()
+  }
+
+  /** The viewer's pinned views, above whichever report is open. */
+  const loadQuickLinks = async (): Promise<void> => {
+    const active = currentSession()
+    if (savedScreenActive || active === null || api.listSavedReports === undefined || !canReadFinancialReports(active.identity.profile)) return
+    try {
+      const reports = await api.listSavedReports({ view: 'all' }, active.signal)
+      if (currentSession() === active) renderQuickLinks(quickLinks, reports)
+    } catch {
+      // A convenience: the report itself says what failed.
+    }
+  }
+
+  const screenActions: SavedScreenActions = {
+    open: (report) => {
+      const address = savedReportHref(report)
+      if (address !== null) globalThis.location.assign(address)
+    },
+    rename: (report) => { openNameDialog(report) },
+    pin: togglePin,
+    share: (report) => { void openShare(report) },
+    duplicate: duplicateReport,
+    remove: requestDelete,
+  }
+
+  /** The Saved tab: saved views, whichever of them the viewer can see. */
+  const loadSavedScreen = async (): Promise<void> => {
+    const active = currentSession()
+    if (active === null || api.listSavedReports === undefined) return
+    savedScreenStatus.textContent = 'Loading saved reports…'
+    try {
+      const query = savedScreenSearch.value.trim()
+      const listed = await api.listSavedReports({ view: screenView, ...(query === '' ? {} : { q: query }) }, active.signal)
+      if (currentSession() !== active) return
+      // Builder definitions open in the Saved reports library, not here.
+      const views = listed.filter((report) => report.view !== null)
+      savedScreenTable.replaceChildren(renderSavedViewsTable(views, screenActions))
+      savedScreenStatus.textContent = views.length === 0
+        ? 'No saved reports match.'
+        : `${views.length} saved ${views.length === 1 ? 'report' : 'reports'}.`
+    } catch (error) {
+      if (currentSession() === active) savedScreenStatus.textContent = messageFor(error)
+    }
+  }
+
+  const showOpenSaved = (): void => {
+    openBanner.hidden = openSaved === null
+    openBannerResult.textContent = ''
+    if (openSaved === null) return
+    openBannerName.textContent = `Saved report: ${openSaved.name}`
+    openBannerSave.hidden = !openSaved.owned_by_viewer
+  }
+
+  /** The report on screen as an address, the way the page would push it. */
+  const currentReportAddress = (): { report: string; query: string } => {
+    const next = withSort(reportFiltersUrl(
+      filtersFromForm(),
+      detailedOptions,
+      timeOptions,
+      invoicedOptions,
+      profitabilityOptions,
+      expenseOptions,
+    ))
+    const url = new URL(
+      kind === 'contractor-cost' && contractorOnly ? `${next}&contractor_only=true` : next,
+      'https://ezacto.invalid',
+    )
+    const report = url.searchParams.get('report') ?? kind
+    url.searchParams.delete('report')
+    return { report, query: url.searchParams.toString() }
+  }
+
+  const openNameDialog = (rename: SavedReport | null): void => {
+    naming = { rename }
+    nameEyebrow.textContent = rename === null ? 'Save report' : 'Rename report'
+    nameTitle.textContent = rename === null ? 'Name this report' : `Rename ${rename.name}`
+    nameHint.hidden = rename !== null
+    nameSubmit.textContent = rename === null ? 'Save' : 'Rename'
+    nameInput.value = rename === null ? reportKindLabel(kind) : rename.name
+    nameResult.textContent = ''
+    nameSubmit.disabled = false
+    nameDialog.showModal()
+    nameInput.focus()
+    nameInput.select()
   }
 
   const setPending = (value: boolean): void => {
@@ -4126,7 +4265,7 @@ export const createReportsController = (
 
   const applyLocation = (): void => {
     const active = currentSession()
-    if (active === null) return
+    if (active === null || savedScreenActive) return
     const location = new URL(globalThis.location.href)
     const filters = reportFiltersFromUrl(
       location,
@@ -4157,6 +4296,8 @@ export const createReportsController = (
       // A modified click still belongs to the browser: it opens the tab's own
       // address, which syncKindHrefs keeps pointed at the visible range.
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      // From the Saved tab a kind is a page to go to, not a report to swap in.
+      if (savedScreenActive) return
       event.preventDefault()
       // A run in flight disabled the dropdown this replaced. A link cannot be
       // disabled, so it declines the click instead.
@@ -4232,10 +4373,14 @@ export const createReportsController = (
     if (active === null || target === null || api.deleteSavedReport === undefined) return
     deleting = null
     deleteDialog.close()
-    savedStatus.textContent = `Deleting ${target.name}…`
+    announceSaved(`Deleting ${target.name}…`)
     void api.deleteSavedReport(target.id, active.signal)
-      .then(() => loadSavedReports().then(() => { savedStatus.textContent = `${target.name} deleted.` }))
-      .catch((error: unknown) => { savedStatus.textContent = messageFor(error) })
+      .then(() => {
+        if (openSaved?.id === target.id) { openSaved = null; showOpenSaved() }
+        void loadQuickLinks()
+        return loadSavedReports().then(() => { announceSaved(`${target.name} deleted.`) })
+      })
+      .catch((error: unknown) => { announceSaved(messageFor(error)) })
   })
   for (const choice of document.querySelectorAll<HTMLButtonElement>('[data-saved-view]')) {
     choice.addEventListener('click', () => {
@@ -4250,6 +4395,73 @@ export const createReportsController = (
   }
   savedSearch.addEventListener('input', () => { void loadSavedReports() })
   savedCustomOnly.addEventListener('change', () => { void loadSavedReports() })
+  for (const choice of document.querySelectorAll<HTMLButtonElement>('[data-saved-screen-view]')) {
+    choice.addEventListener('click', () => {
+      const view = choice.dataset.savedScreenView
+      if (view !== 'all' && view !== 'yours' && view !== 'shared') return
+      screenView = view
+      for (const button of document.querySelectorAll<HTMLButtonElement>('[data-saved-screen-view]')) {
+        button.setAttribute('aria-pressed', String(button === choice))
+      }
+      void loadSavedScreen()
+    })
+  }
+  savedScreenSearch.addEventListener('input', () => { void loadSavedScreen() })
+  saveOpen.addEventListener('click', () => { openNameDialog(null) })
+  for (const cancel of nameDialog.querySelectorAll<HTMLButtonElement>('[data-saved-name-cancel]')) {
+    cancel.addEventListener('click', () => { naming = null; nameDialog.close() })
+  }
+  nameForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    const target = naming
+    const name = nameInput.value.trim()
+    if (active === null || target === null) return
+    if (name === '') { nameResult.textContent = 'Give the report a name.'; return }
+    const request = target.rename === null
+      ? api.createReportView?.({ name, view: currentReportAddress() }, active.signal)
+      : api.updateSavedReport?.(target.rename.id, { version: target.rename.version, name }, active.signal)
+    if (request === undefined) return
+    nameSubmit.disabled = true
+    nameResult.textContent = 'Saving…'
+    void request.then((report) => {
+      if (target.rename === null) {
+        // The page is now that saved report, and a reload keeps it so.
+        openSaved = report
+        const address = new URL(globalThis.location.href)
+        address.searchParams.set('saved', report.id)
+        globalThis.history.replaceState(null, '', `${address.pathname}${address.search}`)
+        showOpenSaved()
+        openBannerResult.textContent = 'Saved. It is private to you until you share it.'
+      } else if (openSaved?.id === report.id) {
+        openSaved = report
+        showOpenSaved()
+      }
+      naming = null
+      nameDialog.close()
+      void loadQuickLinks()
+      if (savedScreenActive) void loadSavedScreen()
+    }).catch((error: unknown) => {
+      nameResult.textContent = messageFor(error)
+      nameSubmit.disabled = false
+    })
+  })
+  openBannerSave.addEventListener('click', () => {
+    const active = currentSession()
+    const target = openSaved
+    if (active === null || target === null || api.updateSavedReport === undefined) return
+    openBannerSave.disabled = true
+    openBannerResult.textContent = 'Saving…'
+    void api.updateSavedReport(target.id, { version: target.version, view: currentReportAddress() }, active.signal)
+      .then((report) => {
+        openSaved = report
+        showOpenSaved()
+        openBannerResult.textContent = 'Changes saved.'
+        void loadQuickLinks()
+      })
+      .catch((error: unknown) => { openBannerResult.textContent = messageFor(error) })
+      .finally(() => { openBannerSave.disabled = false })
+  })
 
   const openBuilder = async (source?: Readonly<SavedReport>): Promise<void> => {
     const active = currentSession()
@@ -4411,6 +4623,14 @@ export const createReportsController = (
       results.removeAttribute('aria-busy')
       retry.hidden = true
       status.textContent = 'Loading report filters…'
+      openSaved = null
+      showOpenSaved()
+      renderQuickLinks(quickLinks, [])
+      savedScreenActive = globalThis.location.pathname === '/reports/saved'
+      savedScreen.hidden = !savedScreenActive
+      form.hidden = savedScreenActive
+      status.hidden = savedScreenActive
+      results.hidden = savedScreenActive
       globalThis.addEventListener('popstate', applyLocation, { signal })
       signal.addEventListener(
         'abort',
@@ -4434,6 +4654,18 @@ export const createReportsController = (
           run.disabled = true
           period.setDisabled(true)
           status.textContent = 'Sign in to view reports.'
+          // Nothing drawn for the last person stays for the next.
+          openSaved = null
+          naming = null
+          deleting = null
+          showOpenSaved()
+          renderQuickLinks(quickLinks, [])
+          savedScreenTable.replaceChildren()
+          savedScreenStatus.textContent = ''
+          saveOpen.hidden = true
+          nameDialog.close()
+          shareDialog.close()
+          deleteDialog.close()
         },
         { once: true },
       )
@@ -4467,6 +4699,7 @@ export const createReportsController = (
               canReadKind(tabKind, identity) && !(activityLogOff && tabKind === 'activity-log'),
           )
           .map(([, anchor]) => anchor),
+        ...(savedTab !== null && canReadFinancialReports(identity.profile) ? [savedTab] : []),
       )
       void api
         .getActivityLogEnabled?.(signal)
@@ -4474,6 +4707,34 @@ export const createReportsController = (
           if (!enabled) hideActivityLogKind()
         })
         .catch(() => {})
+      if (savedScreenActive) {
+        for (const anchor of kindTabs.values()) anchor.removeAttribute('aria-current')
+        savedTab?.setAttribute('aria-current', 'page')
+        saveOpen.hidden = true
+        if (!canReadFinancialReports(identity.profile)) {
+          savedScreenStatus.textContent = 'Your profile cannot open saved reports.'
+          return
+        }
+        await loadSavedScreen()
+        return
+      }
+      saveOpen.hidden = !canReadFinancialReports(identity.profile) || api.createReportView === undefined
+      if (canReadFinancialReports(identity.profile)) {
+        void loadQuickLinks()
+        const openId = initialLocation.searchParams.get('saved')
+        if (openId !== null && api.getSavedReport !== undefined) {
+          void api.getSavedReport(openId, signal).then((report) => {
+            if (session?.signal !== signal) return
+            openSaved = report
+            showOpenSaved()
+          }).catch(() => {
+            if (session?.signal !== signal) return
+            openBannerName.textContent = 'This saved report is no longer available to you.'
+            openBannerSave.hidden = true
+            openBanner.hidden = false
+          })
+        }
+      }
       if (api.listReportClients === undefined || api.listReportProjects === undefined) {
         status.textContent = 'Report filters are unavailable in this build.'
         run.disabled = true

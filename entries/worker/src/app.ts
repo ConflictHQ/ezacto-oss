@@ -1707,7 +1707,7 @@ export const createApp = (
         ),
       )
 
-      app.get('/reports', async (context) =>
+      for (const reportsPath of ['/reports', '/reports/saved']) app.get(reportsPath, async (context) =>
         context.html(
           renderAppShell({
             environment: context.env.ENVIRONMENT,
@@ -1715,7 +1715,7 @@ export const createApp = (
             ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Reports',
             view: 'reports',
-            tabs: reportKindTabs(context.req.query('report') ?? null),
+            tabs: reportKindTabs(context.req.path === '/reports/saved' ? 'saved' : (context.req.query('report') ?? null)),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),

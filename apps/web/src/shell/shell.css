@@ -877,6 +877,14 @@
 }
 .report-saved-card p { flex: 1; margin: 0; color: var(--ez-muted); }
 .report-saved-audience { color: var(--ez-muted); white-space: nowrap; }
+.report-quick-links,
+.report-saved-open,
+.report-saved-screen { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-block: 12px; }
+.report-saved-screen { display: grid; align-items: stretch; }
+.report-quick-links[hidden],
+.report-saved-open[hidden],
+.report-saved-screen[hidden] { display: none; }
+.report-saved-open { margin: 0; }
 .report-share-dialog fieldset { display: grid; gap: 8px; margin: 0 0 12px; padding: 12px; border: 1px solid var(--ez-border); border-radius: var(--ez-radius); }
 .report-share-dialog ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 [data-report-builder] {

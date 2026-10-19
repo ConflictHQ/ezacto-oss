@@ -14,7 +14,7 @@ import { monthEndManifest, type MonthEndManifest } from './month-end-manifest.js
 import { createReportDefinition, listMetrics, listReportFields, type MetricDefinition, type ReportDefinition, type ReportFieldDefinition, type UpdateReportDefinitionInput } from './report-definitions.js'
 import { runReportDefinition, type ReportRunnerResult } from './report-runner.js'
 import { executeReportTimeAction, type ReportTimeActionInput, type ReportTimeActionResult } from './report-time-actions.js'
-import { createSavedReportStore, type SavedReportProfile, type SavedReportPresentation, type SavedReportRecord, type SavedReportView } from './saved-reports.js'
+import { createSavedReportStore, type SavedReportAddress, type SavedReportProfile, type SavedReportPresentation, type SavedReportRecord, type SavedReportView } from './saved-reports.js'
 // The same anchoring the engine issues by, so a short month answers once (#709).
 import { anchoredDate } from './recurring-invoice-engine.js'
 
@@ -804,7 +804,8 @@ export interface ReportRepository {
   listSavedReports(input: { viewerUserId: number; view?: SavedReportView; query?: string; customOnly?: boolean }): Promise<readonly SavedReportRecord[]>
   readSavedReport(reportId: string, viewerUserId: number): Promise<SavedReportRecord | null>
   createSavedReport(input: { id: string; name: string; fields: ReportDefinition['fields']; metrics: ReportDefinition['metrics']; filters: ReportDefinition['filters']; groupBy: ReportDefinition['groupBy']; ownerUserId: number; presentation: SavedReportPresentation; createdAt: string }): Promise<SavedReportRecord>
-  updateSavedReport(input: { reportId: string; ownerUserId: number; expectedVersion: number; changes: UpdateReportDefinitionInput; presentation?: SavedReportPresentation }): Promise<'not_found' | 'version_conflict' | SavedReportRecord>
+  createReportView(input: { id: string; name: string; view: SavedReportAddress; ownerUserId: number; createdAt: string }): Promise<SavedReportRecord>
+  updateSavedReport(input: { reportId: string; ownerUserId: number; expectedVersion: number; changes: UpdateReportDefinitionInput; view?: SavedReportAddress; presentation?: SavedReportPresentation }): Promise<'not_found' | 'version_conflict' | SavedReportRecord>
   shareSavedReport(reportId: string, ownerUserId: number, userId: number, shared: boolean, at: string): Promise<boolean>
   shareSavedReportWithProfile(reportId: string, ownerUserId: number, profile: SavedReportProfile, shared: boolean, at: string): Promise<boolean>
   pinSavedReport(reportId: string, viewerUserId: number, pinned: boolean, at: string): Promise<boolean>
@@ -3958,6 +3959,23 @@ export const createReportRepository = (database: Database): ReportRepository => 
       ownerUserId: input.ownerUserId,
       presentation: input.presentation,
     }),
+    // A view is the address of a report, not a definition: the stored fields and
+    // metrics only satisfy the definition's own validation and are never run.
+    createReportView: (input) => saved.create({
+      definition: createReportDefinition({
+        id: input.id,
+        name: input.name,
+        fields: [{ id: 'client_name', label: 'Client', visible: true }],
+        metrics: ['hours'],
+        filters: [],
+        groupBy: null,
+        createdAt: input.createdAt,
+      }),
+      ownerUserId: input.ownerUserId,
+      isCustom: false,
+      view: input.view,
+      presentation: { result: 'summary', grouped: false, includeZeroValues: false },
+    }),
     updateSavedReport: (input) => saved.update(input),
     shareSavedReport: (reportId, ownerUserId, userId, shared, at) => saved.setShared(reportId, ownerUserId, userId, shared, at),
     shareSavedReportWithProfile: (reportId, ownerUserId, profile, shared, at) => saved.setSharedWithProfile(reportId, ownerUserId, profile, shared, at),
@@ -3965,6 +3983,7 @@ export const createReportRepository = (database: Database): ReportRepository => 
     deleteSavedReport: (reportId, actorUserId) => saved.delete(reportId, actorUserId),
     runSavedReport: async (reportId, viewerUserId, authority) => {
       const report = await saved.read(reportId, viewerUserId)
+      if (report !== null && report.view !== null) throw new RangeError('a saved view opens at its address; it is not run as a definition')
       return report === null ? null : runReportDefinition(database, report.definition, report.presentation, authority)
     },
     previewReport: (definition, presentation, authority) => runReportDefinition(database, definition, presentation, authority),
