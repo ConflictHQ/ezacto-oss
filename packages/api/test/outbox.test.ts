@@ -151,6 +151,13 @@ describe('outbox observability API', () => {
     expect(monitor.listActivity).not.toHaveBeenCalled()
   })
 
+  it('[api] a page of 200 asks the repository for 201, its page plus one to look ahead', async () => {
+    const listActivity = vi.fn(async () => [])
+    const { app, monitor } = harness('administrator', { listActivity })
+    expect((await app.request('/api/v1/activity-log?per_page=200')).status).toBe(200)
+    expect(monitor.listActivity).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 201 }))
+  })
+
   it('[api] pages with a signed cursor on (recorded_at, event_id) and holds the snapshot', async () => {
     const older: ActivityLogResource = {
       ...activity,
