@@ -47,6 +47,11 @@ export const UNDOCUMENTED_ROUTES: readonly string[] = [
   'get /portal/invoices/:token',
   'post /portal/invoices/:token/viewed',
   'get /portal/invoices/:token/document',
+  // The single-use download of a backup, behind the link an administrator
+  // minted (issue 39). Raw bytes for `curl`, not a generated-client call, and
+  // the token is the authorisation. The Worker mounts it; see
+  // `WORKER_ONLY_ROUTES`.
+  'get /backup-download/:token',
   // Staff magic-link sign-in, the user-facing sibling of the portal set above
   // and gated on the same key. The verify leg is a browser/app redirect with no
   // client call; request and exchange are called by the native app over raw
@@ -114,6 +119,10 @@ export const WISE_ROUTES: readonly string[] = [
 export const WORKER_ONLY_ROUTES: readonly string[] = [
   'get /api/v1/backup/status',
   'get /api/v1/backup/runs',
+  // The signed download of a nightly bundle (issue 39): the bundle lives in
+  // the Worker's R2 bucket, so the mint and the redemption go together.
+  'post /api/v1/backup/download-links',
+  'get /backup-download/:token',
 ]
 
 /** Mounted by the container and not by the Worker. */
@@ -171,7 +180,8 @@ export const mountedApiRoutes = (
           (route.path.startsWith('/api/v1') ||
             route.path.startsWith('/auth') ||
             route.path.startsWith('/account-deletion') ||
-            route.path.startsWith('/portal')),
+            route.path.startsWith('/portal') ||
+            route.path.startsWith('/backup-download')),
       )
       .map((route) => `${route.method.toLowerCase()} ${route.path}`),
   )

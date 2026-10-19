@@ -85,6 +85,8 @@ import {
   installTrackedResourceRoutes,
   installTimesheetApprovalRoutes,
   installBackupStatusRoutes,
+  installBackupDownloadMintRoute,
+  installBackupDownloadRedeemRoute,
   installBillRoutes,
   installPayoutAccountRoutes,
   installInvoiceDocumentPreferenceRoutes,
@@ -146,6 +148,7 @@ import {
   type StaffUserDirectory,
   type PasswordAuthService,
   type BackupStatusReader,
+  type BackupDownloadService,
   type ReportReader,
   type SsoProvisioningDomainService,
   type UserEmailService,
@@ -471,6 +474,12 @@ export interface RuntimeServices {
   /** Where credential events are recorded. Absent leaves them unrecorded. */
   activity?: ActivityRecorder
   backupStatus?: BackupStatusReader
+  /**
+   * The signed download of a backup run (issue 39). Composed only where the
+   * bundle exists to be read, and mounted only with the activity log: a copy of
+   * the database that leaves without a record is the case the log is for.
+   */
+  backupDownloads?: BackupDownloadService
   /**
    * The QuickBooks connection. Absent where the deployment has no Intuit keys,
    * the same way the attachment routes are absent without object storage:
@@ -866,6 +875,13 @@ export const createApp = (
                 cursorSigningKey: services.cursorSigningKey,
               })
             }
+            if (services.backupDownloads !== undefined && services.activity !== undefined) {
+              installBackupDownloadMintRoute(api, {
+                service: services.backupDownloads,
+                activity: services.activity,
+                clock: () => systemClock.now().instant,
+              })
+            }
             if (services.quickBooks !== undefined) {
               installQuickBooksRoutes(api, services.quickBooks)
             }
@@ -1072,6 +1088,17 @@ export const createApp = (
       // The page a client reaches from the link in an emailed invoice (issue
       // 936). No session, so the link's token is the whole of the authorisation
       // and these sit outside the API surface, beside the webhooks.
+      // The download of a backup behind a link an administrator minted (issue
+      // 39). No session either: the token is the whole of the authorisation.
+      if (services?.backupDownloads !== undefined && services.activity !== undefined) {
+        installBackupDownloadRedeemRoute(app, {
+          service: services.backupDownloads,
+          activity: services.activity,
+          clock: () => systemClock.now().instant,
+          clientKey: (request) =>
+            request.headers.get('cf-connecting-ip') ?? 'unknown-client',
+        })
+      }
       if (services?.invoiceView !== undefined) {
         installInvoiceViewRoutes(app, {
           service: services.invoiceView,

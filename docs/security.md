@@ -173,6 +173,37 @@ If both the authenticator and the recovery codes are lost, an administrator has
 to remove the enrolment directly in the database — there is no self-service
 reset, because a reset a stranger can trigger is not a second factor.
 
+## The backup download link
+
+An administrator can turn a completed backup run into one ZIP and download it
+from another machine with `curl` (issue 39). The ZIP is the whole database as
+CSV, so it carries credential hashes and authenticator seeds, and the link to it
+is handled as a credential.
+
+- **Minting.** `POST /api/v1/backup/download-links`: an administrator's own
+  session only (an API token gets `403 session_required`, any other profile
+  `403`). Where that administrator has an authenticator enrolled the body must
+  carry a current authenticator or recovery code, spent from the same attempt
+  budget as sign-in and disable. An emailed-code-only factor does not gate the
+  mint yet. Five mints a minute per administrator, counted before the code is
+  read.
+- **The link.** `GET /backup-download/<token>`, no session. 256 random bits,
+  shown once in the mint response, stored only as a SHA-256, compared in constant
+  time. It expires after ten minutes and works once: the statement that spends
+  it is the one that decides who gets the file, so of any number of concurrent
+  requests exactly one is served.
+- **One refusal.** Wrong shape, never minted, expired, already spent, run gone,
+  or a bundle whose manifest no longer matches what D1 recorded: the same plain
+  `404 Not found`. Thirty requests a minute per caller address, counted before
+  the token is looked at (`429` over it). A table object that fails its manifest
+  checksum aborts the stream before any of its bytes are sent.
+- **Recorded.** `backup.exported` is written at the mint (actor: the
+  administrator) and when the download starts (actor: system, naming who minted
+  the link), each with the link id and the run. Never the token.
+- **Private.** `no-store`, `no-referrer`, `noindex`, no cookie, and nothing but
+  the token in the URL. `backup_download_links` and `backup_download_limits` are
+  named in the bundle's `restore_skips`.
+
 ## The hosted invoice page
 
 `GET /portal/invoices/<token>` is the one invoice surface a client reaches with

@@ -112,7 +112,14 @@ describe('backup module', () => {
         { async put(key, body) { objects.set(key, body) } },
         'backups/2026-09-01/',
       )
-      for (const table of ['sessions', 'auth_tokens', 'oidc_transactions', '_ezacto_migrations']) {
+      for (const table of [
+        'sessions',
+        'auth_tokens',
+        'oidc_transactions',
+        '_ezacto_migrations',
+        'backup_download_links',
+        'backup_download_limits',
+      ]) {
         expect(covered, table).toContain(table)
         expect(objects.has(`backups/2026-09-01/tables/${table}.csv`), table).toBe(true)
         expect(manifest.restore_skips, table).toContain(table)

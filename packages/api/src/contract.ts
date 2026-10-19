@@ -1545,6 +1545,26 @@ const backupOperations: ApiContractOperation[] = [
       query("trigger", { type: "string", enum: ["nightly", "manual"] }),
     ],
   },
+  {
+    method: "post",
+    path: "/api/v1/backup/download-links",
+    operationId: "createBackupDownloadLink",
+    summary: "Create a single-use, ten-minute link that downloads a backup as one ZIP",
+    description:
+      "Administrator session only; an API token is refused. The backup carries " +
+      "credential hashes and authenticator seeds, so the link is a secret: " +
+      "it works once, expires in ten minutes, and the token in url is shown only " +
+      "in this response. Where the administrator has an authenticator enrolled, " +
+      "code must be a current authenticator or recovery code. run_id defaults to " +
+      "the latest completed run. Following the link answers 404 to anything that " +
+      "is not a live link, whatever the reason.",
+    tag: "backup",
+    responseStatus: 201,
+    responseSchema: "BackupDownloadLinkEnvelope",
+    requestSchema: "BackupDownloadLinkInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
 ];
 
 /**
@@ -4392,6 +4412,29 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   BackupRunPage: countedPage("BackupRun"),
+  BackupDownloadLinkInput: {
+    type: "object",
+    properties: { run_id: integerSchema, code: { type: "string", minLength: 1, maxLength: 64 } },
+    additionalProperties: false,
+  },
+  BackupDownloadLinkEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["id", "run_id", "url", "expires_at"],
+        properties: {
+          id: integerSchema,
+          run_id: integerSchema,
+          url: stringSchema,
+          expires_at: timestampSchema,
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
   BackupStatusEnvelope: {
     type: "object",
     required: ["data", "links"],

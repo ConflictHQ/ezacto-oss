@@ -394,6 +394,15 @@ export {
   type InstanceOwnerPasswordResult,
 } from './instance-bootstrap.js'
 export {
+  allowBackupDownloadRequest,
+  backupDownloadLinkExpiry,
+  consumeBackupDownloadLink,
+  latestCompletedBackupRunId,
+  mintBackupDownloadLink,
+  type ConsumedBackupDownloadLink,
+  type MintedBackupDownloadLink,
+} from './backup-download-links.js'
+export {
   BackupArchiveError,
   getBackupRun,
   openBackupArchive,

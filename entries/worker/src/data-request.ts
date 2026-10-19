@@ -31,6 +31,9 @@ const SERVICE_PATH_PREFIXES: readonly string[] = [
   // No session, by definition: a payment processor calling us. The signature is
   // the authorisation.
   '/webhooks',
+  // A backup downloaded by the link an administrator minted (issue 39). No
+  // session: the single-use token is the authorisation.
+  '/backup-download',
 ]
 
 export const isServicePath = (path: string): boolean =>

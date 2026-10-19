@@ -22518,6 +22518,72 @@
         ]
       }
     },
+    "/api/v1/backup/download-links": {
+      "post": {
+        "operationId": "createBackupDownloadLink",
+        "summary": "Create a single-use, ten-minute link that downloads a backup as one ZIP",
+        "description": "Administrator session only; an API token is refused. The backup carries credential hashes and authenticator seeds, so the link is a secret: it works once, expires in ten minutes, and the token in url is shown only in this response. Where the administrator has an authenticator enrolled, code must be a current authenticator or recovery code. run_id defaults to the latest completed run. Following the link answers 404 to anything that is not a live link, whatever the reason.",
+        "tags": [
+          "backup"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupDownloadLinkEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/backup/download-links",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupDownloadLinkInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/integrations/quickbooks": {
       "get": {
         "operationId": "getQuickBooksConnection",
@@ -31590,6 +31656,57 @@
           },
           "page": {
             "$ref": "#/components/schemas/CountedPageMetadata"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BackupDownloadLinkInput": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "additionalProperties": false
+      },
+      "BackupDownloadLinkEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "id",
+              "run_id",
+              "url",
+              "expires_at"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "run_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "url": {
+                "type": "string"
+              },
+              "expires_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": false
