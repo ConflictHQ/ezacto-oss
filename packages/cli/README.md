@@ -79,3 +79,18 @@ at login. If a required scope is missing, it names that scope and the stored
 profile. API failures retain their code, message, HTTP status and request ID in
 `--json` output and readable error text. Permissions are still enforced by the
 server; local config cannot grant access.
+
+## Editing draft invoices
+
+```sh
+ez invoice edit 1400 --subject "October retainer" --notes-file notes.txt \
+  --issue-date 2026-10-05 --terms net_30
+ez invoice edit 1400 --line 2 --quantity 3 --rate 150.50 --description "Review"
+ez invoice unlink-time --entries 101,102
+```
+
+`edit` takes the invoice number and refuses any invoice that is not a draft
+before it sends a write. Each write carries a fresh `Idempotency-Key` and the
+current `expected_version`. It needs `invoices:write`; `unlink-time` (mark
+entries uninvoiced) needs `reports:read`, `time_entries:write` and
+`invoices:write`, and prints which entries changed and which were ineligible.
