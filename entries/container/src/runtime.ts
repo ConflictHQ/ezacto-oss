@@ -121,6 +121,8 @@ import {
   readNotificationSettings,
   readTimesheetAutoApproval,
   runTimesheetAutoApproval,
+  createScheduledActionStore,
+  sweepExpiredRuns,
   updateTimesheetAutoApproval,
   updateNotificationSettings,
   setBillDelivery,
@@ -791,6 +793,11 @@ export const createContainerRuntime = async (
       } catch (error) {
         console.error('[container] automatic approval sweep failed', error)
       }
+      // Proposed month-end runs past their deadline (issue 63); reports its
+      // own failure and never stops the drain.
+      await sweepExpiredRuns(createScheduledActionStore(drizzle), now, (error) => {
+        console.error('[container] scheduled run expiry failed', error)
+      })
     }
     outboxScheduler = new ContainerOutboxScheduler(outbox, {
       // Reminders that have come due go out on the same tick the outbox

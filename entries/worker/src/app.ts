@@ -542,6 +542,14 @@ export interface RuntimeServices {
       readonly failed: readonly { readonly submissionId: number; readonly message: string }[]
     }>
   }
+  /**
+   * Settles proposed month-end runs whose deadline has passed (issue 63).
+   * Called from the minute cron in the Worker and the outbox tick in the
+   * container; it reports its own failure and never throws.
+   */
+  scheduledActionExpiry?: {
+    expireDue(now: string, report: (error: unknown) => void): Promise<readonly number[]>
+  }
   invoiceDefaults?: InvoiceDefaultsService
   /**
    * The hosted invoice page and its receipts (issue 936). Both entries compose

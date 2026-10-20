@@ -138,6 +138,8 @@ import {
   updateNotificationSettings,
   readTimesheetAutoApproval,
   runTimesheetAutoApproval,
+  createScheduledActionStore,
+  sweepExpiredRuns,
   updateTimesheetAutoApproval,
   setBillDelivery,
   createD1IdempotencyStore,
@@ -1192,6 +1194,10 @@ export const createRuntimeServices = async (
     }),
     timesheetAutoApprovalSweep: {
       processDue: (now: string) => runTimesheetAutoApproval(drizzle, now),
+    },
+    scheduledActionExpiry: {
+      expireDue: (now: string, report: (error: unknown) => void) =>
+        sweepExpiredRuns(createScheduledActionStore(drizzle), now, report),
     },
     profileNotifications: {
       read: (userId: number) => readUserNotifications(drizzle, userId),

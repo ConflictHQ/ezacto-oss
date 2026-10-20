@@ -35,6 +35,7 @@ import { clientRateCardsMigration } from './migrations/0130_client_rate_cards.js
 import { backupDownloadLinksMigration } from './migrations/0131_backup_download_links.js'
 import { emailFeedbackEventsMigration } from './migrations/0132_email_feedback_events.js'
 import { quickBooksRecoveryMigration } from './migrations/0133_quickbooks_recovery.js'
+import { runItemQuantityMigration } from './migrations/0134_run_item_quantity.js'
 import { organizationInvoiceDefaultsMigration } from './migrations/0097_organization_invoice_defaults.js'
 import { journalFormatsInvoiceExtraMigration } from './migrations/0096_journal_formats_invoice_extra.js'
 import { freeFormInvoiceCreateMigration } from './migrations/0095_free_form_invoice_create.js'
@@ -1624,6 +1625,7 @@ const migrations = [
   { id: '0131_backup_download_links', statements: backupDownloadLinksMigration },
   { id: '0132_email_feedback_events', statements: emailFeedbackEventsMigration },
   { id: '0133_quickbooks_recovery', statements: quickBooksRecoveryMigration },
+  { id: '0134_run_item_quantity', statements: runItemQuantityMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

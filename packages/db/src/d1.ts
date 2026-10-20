@@ -251,6 +251,7 @@ export {
   type NotificationSettings,
   type SubmissionReminderSchedule,
 } from './notification-settings.js'
+export { createScheduledActionStore, sweepExpiredRuns } from './scheduled-actions.js'
 export { prepareTimeReminders, type TimeReminderInput } from './time-reminders.js'
 export {
   readTimesheetAutoApproval,

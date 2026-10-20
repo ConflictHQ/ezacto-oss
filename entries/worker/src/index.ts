@@ -234,6 +234,14 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
         Sentry.captureException(error)
       }
     }
+    if (controller.cron === '* * * * *' && services.scheduledActionExpiry !== undefined) {
+      // Proposed month-end runs past their deadline (issue 63). The sweep
+      // reports its own failure, so it never stops the drain below.
+      await services.scheduledActionExpiry.expireDue(new Date().toISOString(), (error) => {
+        console.error('[worker] scheduled run expiry failed', error)
+        Sentry.captureException(error)
+      })
+    }
     // Not on the demo (#931): its database is thrown away at this hour, and an
     // export would copy whatever visitors typed into it into the bucket, which
     // nothing ever empties.
