@@ -36,6 +36,17 @@ jobs:
       - uses: ./.github/actions/node-workspace
       - run: npm run typecheck
 
+  # Needs no install: it reads the git index only.
+  tracked-symlinks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: no tracked symlink points outside the repo or into node_modules
+        run: |
+          node --test scripts/check-tracked-symlinks.test.mjs
+          node scripts/check-tracked-symlinks.mjs
+
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 15
