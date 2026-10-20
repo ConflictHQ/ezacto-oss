@@ -90,6 +90,7 @@ const harness = async (
   overrides: {
     paymentUrl?: () => Promise<string | null>
     documentContext?: () => Promise<InvoiceDocumentContext>
+    accentColor?: () => Promise<string | null>
   } = {},
 ) => {
   const database = new BetterSqlite3(':memory:')
@@ -115,6 +116,7 @@ const harness = async (
   const port = createInvoiceDocumentPort({
     database: orm as never,
     objects,
+    ...(overrides.accentColor === undefined ? {} : { accentColor: overrides.accentColor }),
     now: () => at,
     source: {
       documentContext: overrides.documentContext ?? (async () => context),
@@ -233,6 +235,27 @@ describe('preparing the document an invoice carries', () => {
     const stored = objects.written.get('invoice-documents/1/100.pdf')!
     const text = Array.from(stored, (b) => String.fromCharCode(b)).join('')
     expect(text).toContain('(https://buy.stripe.com/test_abc) Tj')
+  })
+})
+
+describe('the instance accent on the document (issue 1011)', () => {
+  const stream = async (accentColor?: () => Promise<string | null>): Promise<string> => {
+    const { orm, port, objects } = await harness(accentColor === undefined ? {} : { accentColor })
+    await documentGoes(orm)
+    await port.prepare({ invoiceId: 1, invoiceMessageId: 100 })
+    return Array.from(objects.written.get('invoice-documents/1/100.pdf')!, (b) => String.fromCharCode(b)).join('')
+  }
+
+  it('[unit] prints the palette accent as rules', async () => {
+    expect(await stream(async () => '#FF8000')).toContain(' RG')
+  })
+
+  it('[unit] a palette that cannot be read still sends the greyscale invoice', async () => {
+    const failed = await stream(async () => {
+      throw new Error('palette store down')
+    })
+    expect(failed).toContain('%PDF-')
+    expect(failed).not.toContain(' RG')
   })
 })
 
