@@ -1012,6 +1012,8 @@ export const createRuntimeServices = async (
       : createInvoiceDocumentPort({
           database: drizzle,
           objects: createR2AttachmentObjectStore(env.ATTACHMENTS),
+          accentColor: async () =>
+            (await workerInstanceThemeSurface.read(env as AppEnv))?.palette?.['action'] ?? null,
           now: () => new Date().toISOString(),
           source: {
             documentContext: (invoiceId: number) =>

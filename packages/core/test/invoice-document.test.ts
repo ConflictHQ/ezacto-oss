@@ -575,3 +575,34 @@ describe("invoice document by end-client", () => {
     expect(layoutInvoiceDocument(invoice({ lines: attributed }))).toEqual(layoutInvoiceDocument(invoice({ lines: plain })));
   });
 });
+
+describe("the instance accent (issue 1011)", () => {
+  type LineOperation = Extract<PdfOperation, { kind: "line" }>;
+  const coloured = (input: InvoiceDocumentInput): LineOperation[] =>
+    layoutInvoiceDocument(input).pages.flatMap((page) =>
+      page.operations.filter((op): op is LineOperation => op.kind === "line" && op.rgb !== undefined),
+    );
+
+  it("[unit] draws the accent as rules, in the channels of the hex", () => {
+    const rules = coloured(invoice({ accentColor: "#FF8000" }));
+    expect(rules.length).toBe(2);
+    for (const rule of rules) {
+      expect(rule.rgb![0]).toBeCloseTo(1, 5);
+      expect(rule.rgb![1]).toBeCloseTo(128 / 255, 5);
+      expect(rule.rgb![2]).toBeCloseTo(0, 5);
+    }
+    expect(text(renderInvoiceDocument(invoice({ accentColor: "#FF8000" })))).toContain(" RG");
+  });
+
+  it("[unit] never colours text", () => {
+    expect(texts(invoice({ accentColor: "#FF8000" }))).toEqual(texts(invoice()));
+  });
+
+  it("[unit] no accent, or one that is not a six-digit hex, is the greyscale page byte for byte", () => {
+    const plain = renderInvoiceDocument(invoice());
+    for (const accentColor of [null, "red", "#FFF", "#GG0000", "url(x)"]) {
+      expect(renderInvoiceDocument(invoice({ accentColor }))).toEqual(plain);
+    }
+    expect(text(plain)).not.toContain(" RG");
+  });
+});
