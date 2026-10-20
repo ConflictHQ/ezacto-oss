@@ -86,6 +86,19 @@ for (const runtime of runtimes) {
       ])
     })
 
+    it('rejects an unknown module inside the repository', async () => {
+      db = await databaseFactory[runtime]()
+      await seedOrganization(db)
+      const repo = createModuleSettingsRepository(db.orm)
+      for (const bad of ["x') || (SELECT 1) --", 'constructor', '__proto__']) {
+        await expect(repo.get(bad as ModuleName)).rejects.toThrow('Unknown module')
+        await expect(
+          repo.setEnabled(bad as ModuleName, true, '2024-06-01T12:00:00.000Z'),
+        ).rejects.toThrow('Unknown module')
+      }
+      expect(await repo.get('approval')).toBe(false)
+    })
+
     it('gets a single module state', async () => {
       db = await databaseFactory[runtime]()
       await seedOrganization(db)

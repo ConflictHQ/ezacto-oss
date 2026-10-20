@@ -3,9 +3,11 @@
 // changes a monthly total, and no hour split is ever inferred.
 import type {
   AllocatePayment,
+  PaymentAllocation,
   PaymentAllocationPerson,
   PaymentAllocationPreview,
   PaymentAllocationReport,
+  ReversePaymentAllocation,
   StaffPaymentReport,
   UnallocatedPayment,
 } from '@ezacto/core'
@@ -16,6 +18,7 @@ export interface PaymentAllocationsApi {
   getPaymentAllocationReport?(month: string, signal?: AbortSignal): Promise<PaymentAllocationReport>
   previewPaymentAllocation?(command: AllocatePayment, signal?: AbortSignal): Promise<PaymentAllocationPreview>
   allocatePayment?(command: AllocatePayment, signal?: AbortSignal): Promise<void>
+  reversePaymentAllocation?(command: ReversePaymentAllocation, signal?: AbortSignal): Promise<void>
 }
 // appendChild, never append, and `field` accepts any Node: the api, worker and
 // container typechecks compile this file too (via shell/model.ts), under
@@ -119,6 +122,50 @@ export const createAllocationsController = (
       if (!active.aborted && own === generation) refresh.disabled = false
     }
   }
+  // Reversal keeps the allocation row and records an audit event beside it.
+  const reversal = (a: PaymentAllocation, active: AbortSignal, own: number): HTMLElement => {
+    const wrap = node('div')
+    if (a.state === 'reversed' || !api.reversePaymentAllocation) return wrap
+    const open = node('button', 'Reverse')
+    open.type = 'button'
+    open.setAttribute('aria-label', `Reverse allocation ${a.id}`)
+    open.addEventListener('click', () => {
+      open.hidden = true
+      const reason = node('textarea'),
+        confirm = node('button', 'Confirm reversal'),
+        message = node('p')
+      reason.required = true
+      reason.maxLength = 2000
+      reason.setAttribute('aria-label', `Reversal reason for ${a.id}`)
+      confirm.type = 'button'
+      message.setAttribute('role', 'status')
+      message.setAttribute('aria-live', 'polite')
+      confirm.addEventListener('click', () => {
+        const text = reason.value.trim()
+        if (!text) {
+          message.textContent = 'Explain the reversal.'
+          return
+        }
+        confirm.disabled = true
+        void api
+          .reversePaymentAllocation!({ id: crypto.randomUUID(), allocation_id: a.id, reason: text }, active)
+          .then(async () => {
+            if (active.aborted || own !== generation) return
+            await load(selectedUser)
+            if (!active.aborted) status.textContent = 'Allocation reversed. The record is kept; no money has moved.'
+          })
+          .catch((error: unknown) => {
+            if (!active.aborted && own === generation) {
+              message.textContent = errorText(error)
+              confirm.disabled = false
+            }
+          })
+      })
+      for (const part of [reason, confirm, message]) wrap.appendChild(part)
+    })
+    wrap.appendChild(open)
+    return wrap
+  }
   const paintPerson = (
     person: PaymentAllocationPerson,
     month: string,
@@ -180,6 +227,7 @@ export const createAllocationsController = (
       'Amount',
       'State',
       'Reason',
+      'Reverse',
     ])
     for (const a of person.allocations) {
       const row = node('tr')
@@ -198,6 +246,7 @@ export const createAllocationsController = (
       cell(row, money(a.amount_cents, a.currency))
       cell(row, a.state)
       cell(row, a.reason)
+      cell(row, reversal(a, active, own))
       allocBody.appendChild(row)
     }
     if (person.allocations.length) detail.appendChild(allocTable)

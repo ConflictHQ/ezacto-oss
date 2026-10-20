@@ -17146,6 +17146,71 @@
         }
       }
     },
+    "/api/v1/staff-payments/reconciliation": {
+      "get": {
+        "operationId": "getPaymentReconciliation",
+        "summary": "Propose contractor earnings for a work month with missing-rate and changed-source exceptions",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentReconciliationEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-payments/reconciliation",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/staff-payments/provider-settings": {
       "post": {
         "operationId": "configureStaffPaymentProvider",
@@ -28634,6 +28699,107 @@
                           },
                           "selected_seconds": {
                             "type": "integer"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "PaymentReconciliationEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "month",
+              "currency",
+              "completed",
+              "people"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "month": {
+                "type": "string"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "completed": {
+                "type": "boolean"
+              },
+              "people": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "user_id",
+                    "name",
+                    "proposed_cents",
+                    "confirmed_cents",
+                    "status",
+                    "exceptions"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "user_id": {
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "proposed_cents": {
+                      "type": "integer"
+                    },
+                    "confirmed_cents": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "new",
+                        "converged",
+                        "differs",
+                        "attention"
+                      ]
+                    },
+                    "exceptions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "code",
+                          "entry_ids"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "code": {
+                            "type": "string",
+                            "enum": [
+                              "missing_rate",
+                              "changed_source"
+                            ]
+                          },
+                          "entry_ids": {
+                            "type": "array",
+                            "items": {
+                              "type": "integer"
+                            }
                           }
                         }
                       }

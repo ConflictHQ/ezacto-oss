@@ -1610,6 +1610,7 @@ export const mountShell = async (
       if (api.getCapacity === undefined) throw new Error('Capacity is not available.')
       return api.getCapacity(range, signal)
     },
+    ...(api.planning === undefined ? {} : { planning: api.planning }),
   })
   const myPayments = createMyPaymentsController({
     getMyPayments: async (month, signal) => {
@@ -4680,7 +4681,12 @@ export const mountShell = async (
     } else if (document.querySelector('[data-my-payments-page]:not([hidden])') !== null) {
       await myPayments.activate(authenticated.signal)
     } else if (document.querySelector('[data-capacity-page]:not([hidden])') !== null) {
-      await Promise.all([capacity.activate(authenticated.signal), loadWeek(authenticated)])
+      await Promise.all([
+        capacity.activate(authenticated.signal, {
+          administrator: identity.profile === 'administrator',
+        }),
+        loadWeek(authenticated),
+      ])
     } else if (document.querySelector('[data-deliveries-page]:not([hidden])') !== null) {
       await Promise.all([deliveries.activate(authenticated.signal), loadWeek(authenticated)])
     } else if (document.documentElement.dataset.appView === 'staff-payments') {

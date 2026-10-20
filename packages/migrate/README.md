@@ -39,7 +39,7 @@ covers what does not come across, the order that matters, running ezacto
 alongside Harvest, and cutting over:
 [Migrating off Harvest](https://github.com/ConflictHQ/ezacto-oss/blob/main/docs/migrating-from-harvest.md).
 
-Also in the box: `import-csv` (a vendor-neutral time CSV, or a Toggl export), `sync`,
+Also in the box: `import-csv` (a vendor-neutral time CSV, a Toggl export, or a Clockify export), `sync`,
 `carry-invoices`, `finish-retainers`, `finish-recurring-invoices` and
 `preflight-migrations`. `ezacto-migrate` with no command lists them all.
 

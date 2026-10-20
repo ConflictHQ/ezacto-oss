@@ -670,6 +670,22 @@ export const createApp = (
     )
   }
   /**
+   * What the standalone portal pages take of the instance brand (issue 1011):
+   * the light-ground mark, the favicon and whether a palette is linked.
+   */
+  const portalChrome = async (env: AppEnv) => {
+    const [brand, themed] = await Promise.all([
+      shellBrand(env),
+      instanceTheme === undefined ? Promise.resolve(null) : instanceTheme.read(env),
+    ])
+    const resolved = resolveDeploymentBrand(brand)
+    return {
+      ...(resolved.wordmarkLight === undefined ? {} : { wordmarkLight: resolved.wordmarkLight }),
+      ...(resolved.favicon === undefined ? {} : { favicon: resolved.favicon }),
+      instanceTheme: themed !== null,
+    }
+  }
+  /**
    * Everything a shell render needs from storage, read once and in parallel.
    *
    * Two lookups, and the page path is the one place in this app that must not
@@ -1129,7 +1145,8 @@ export const createApp = (
           clock: () => systemClock.now().instant,
           clientKey: (request) =>
             request.headers.get('cf-connecting-ip') ?? 'unknown-client',
-          render: renderPortalInvoicePage,
+          render: async (page, token, env) =>
+            renderPortalInvoicePage(page, token, await portalChrome(env)),
           pageHeaders: {
             'content-security-policy': shellContentSecurityPolicy,
             'permissions-policy': 'camera=(), microphone=(), geolocation=()',
@@ -1244,6 +1261,7 @@ export const createApp = (
             context.html(
               renderPortalEstimatesPage({
                 brand: resolveDeploymentBrand(await shellBrand(context.env)).name,
+                chrome: await portalChrome(context.env),
               }),
               200,
               {

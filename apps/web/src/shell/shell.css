@@ -9746,3 +9746,16 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   margin: 0;
   font-weight: 600;
 }
+
+/* Administrator entry on the capacity screen (issue 1007). */
+.capacity-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+.capacity-form label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}

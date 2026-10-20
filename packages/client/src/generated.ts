@@ -51,6 +51,25 @@ export type PaymentActualsEnvelope = {
 };
 };
 
+export type PaymentReconciliationEnvelope = {
+  "data": {
+  "month": string;
+  "currency": string;
+  "completed": boolean;
+  "people": Array<{
+  "user_id": number;
+  "name": string;
+  "proposed_cents": number;
+  "confirmed_cents": number | null;
+  "status": "new" | "converged" | "differs" | "attention";
+  "exceptions": Array<{
+  "code": "missing_rate" | "changed_source";
+  "entry_ids": Array<number>;
+}>;
+}>;
+};
+};
+
 export type ConfirmPaymentActuals = {
   "id": string;
   "user_id": number;
@@ -6646,6 +6665,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<PaymentActualsEnvelope>("GET", "/api/v1/staff-payments/actuals", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getPaymentReconciliation(args: { query?: { "month"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<PaymentReconciliationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PaymentReconciliationEnvelope>("GET", "/api/v1/staff-payments/reconciliation", {
       query: args.query,
       signal: args.signal,
       headers,

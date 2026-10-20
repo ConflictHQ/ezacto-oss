@@ -1,5 +1,6 @@
 import { createReportRepository } from './reports.js'
 import { createPaymentActualsStore } from './payment-actuals.js'
+import { createPaymentReconciliationStore } from './payment-reconciliation.js'
 import { createPaymentAllocationStore } from './payment-allocations.js'
 import { createStaffPaymentProviderStore } from './staff-payment-providers.js'
 import { sql } from 'drizzle-orm'
@@ -134,6 +135,7 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
   return {
     ...createPaymentActualsStore(database, { report }),
     ...createPaymentAllocationStore(database),
+    ...createPaymentReconciliationStore(database),
     report,
     configureProvider: providers.append,
     append: async (command, actorId, requestId, now) => {

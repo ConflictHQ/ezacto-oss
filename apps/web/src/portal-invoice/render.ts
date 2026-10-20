@@ -1,4 +1,5 @@
 import { invoiceDocumentMoney } from '@ezacto/core'
+import { portalBrandHead, portalPaletteAttribute, portalWordmark, type PortalBrandChrome } from '../portal-brand.js'
 import { defaultTheme } from '../theme.js'
 
 /**
@@ -46,7 +47,11 @@ const escapeHtml = (value: string): string =>
 const statusLabel = (page: PortalInvoicePage): string =>
   page.state === 'paid' ? 'Paid' : page.state === 'closed' ? 'Closed' : 'Open'
 
-export const renderPortalInvoicePage = (page: PortalInvoicePage, token: string): string => {
+export const renderPortalInvoicePage = (
+  page: PortalInvoicePage,
+  token: string,
+  chrome?: PortalBrandChrome,
+): string => {
   const money = (cents: number) => escapeHtml(invoiceDocumentMoney(cents, page.currency))
   // Only a web address the provider handed us; anything else is not a link.
   const payable =
@@ -55,7 +60,7 @@ export const renderPortalInvoicePage = (page: PortalInvoicePage, token: string):
     page.paymentUrl !== null &&
     /^https:\/\//u.test(page.paymentUrl)
   return `<!doctype html>
-<html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="light">
+<html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="light"${portalPaletteAttribute(chrome)}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -63,11 +68,12 @@ export const renderPortalInvoicePage = (page: PortalInvoicePage, token: string):
   <meta name="referrer" content="no-referrer">
   <title>Invoice ${escapeHtml(page.number)} — ${escapeHtml(page.companyName)}</title>
   <link rel="stylesheet" href="/assets/ezacto.css">
-  <script type="module" src="/assets/portal-invoice.js"></script>
+${portalBrandHead(chrome)}  <script type="module" src="/assets/portal-invoice.js"></script>
 </head>
 <body>
   <main class="portal-invoice" data-portal-invoice>
     <header>
+      ${portalWordmark(chrome, page.companyName)}
       <p class="eyebrow">${escapeHtml(page.companyName)}</p>
       <h1 id="portal-invoice-heading">Invoice ${escapeHtml(page.number)}</h1>
       ${page.subject === null ? '' : `<p>${escapeHtml(page.subject)}</p>`}

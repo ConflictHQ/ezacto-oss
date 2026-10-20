@@ -8,9 +8,10 @@ import {
   type CapacityData,
   type CapacityPersonData,
 } from './model.js'
+import { createPlanningEntry } from './planning-browser.js'
 
 export interface CapacityController {
-  activate(signal: AbortSignal): Promise<void>
+  activate(signal: AbortSignal, options?: { readonly administrator?: boolean }): Promise<void>
 }
 
 const required = <ElementType extends Element>(selector: string): ElementType => {
@@ -62,6 +63,12 @@ export const createCapacityController = (api: CapacityApi): CapacityController =
   const next = required<HTMLButtonElement>('[data-capacity-next]')
   const current = required<HTMLButtonElement>('[data-capacity-current]')
 
+  const planningHost = page.querySelector<HTMLElement>('[data-capacity-planning]')
+  const planning =
+    api.planning === undefined || planningHost === null
+      ? null
+      : createPlanningEntry(planningHost, api.planning, () => void load())
+
   let active: AbortSignal | null = null
   let windows = 0
 
@@ -98,10 +105,19 @@ export const createCapacityController = (api: CapacityApi): CapacityController =
     status.textContent = 'Loading capacity…'
     retry.hidden = true
     try {
-      const response = await api.getCapacity(capacityRange(localToday(), windows), signal)
+      const range = capacityRange(localToday(), windows)
+      const response = await api.getCapacity(range, signal)
       if (signal.aborted) return
       render(response.data)
       status.textContent = ''
+      await planning?.refresh(
+        response.data.people.map((person) => ({
+          id: person.user_id,
+          name: `${person.first_name} ${person.last_name}`,
+        })),
+        range,
+        signal,
+      )
     } catch (error) {
       if (signal.aborted) return
       grid.replaceChildren()
@@ -120,8 +136,11 @@ export const createCapacityController = (api: CapacityApi): CapacityController =
   retry.addEventListener('click', () => void load())
 
   return {
-    async activate(signal) {
+    async activate(signal, options = {}) {
       active = signal
+      // Entry is for an administrator only; anyone else gets no control at all.
+      if (options.administrator === true) planning?.mount()
+      else planning?.unmount()
       if (page.hidden) return
       await load()
     },

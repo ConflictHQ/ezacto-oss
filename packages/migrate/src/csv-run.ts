@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { applyCsvImport, dryRunCsvImport, type CsvImportReport } from './csv-import.js'
+import { clockifyAdapter } from './csv-clockify.js'
 import { togglAdapter } from './csv-toggl.js'
 import { parseMapping, type CsvMapping } from './csv-mapping.js'
 
@@ -9,7 +10,7 @@ export interface RunCsvImportOptions {
   mappingPath?: string
   sourceId: string
   /** The vendor whose export the file is; omitted for the generic contract. */
-  format?: 'toggl'
+  format?: 'toggl' | 'clockify'
   dryRun: boolean
   skipRejected: boolean
   signal?: AbortSignal
@@ -81,6 +82,7 @@ export const runCsvImport = async (
       sourceId: options.sourceId,
       ...(mapping !== undefined ? { mapping } : {}),
       ...(options.format === 'toggl' ? { adapter: togglAdapter } : {}),
+      ...(options.format === 'clockify' ? { adapter: clockifyAdapter } : {}),
     }
     if (options.dryRun) {
       const report = await dryRunCsvImport(sqlite, bytes, input)

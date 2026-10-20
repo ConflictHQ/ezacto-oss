@@ -53,7 +53,7 @@ Options:
   --file <path>        import-csv: the CSV file
   --mapping <path>     import-csv: JSON mapping of people, clients, projects and tasks
   --source-id <id>     import-csv: a stable name for the system the file came from (default: csv)
-  --format <name>      import-csv: read a vendor's export instead of the contract (toggl)
+  --format <name>      import-csv: read a vendor's export instead of the contract (toggl, clockify)
   --skip-rejected      import-csv: apply the rows that can be applied; the rest stay listed
   --force              Re-stamp a snapshot dir that holds a different account
   --upgrade            preflight-migrations: an ordinary deploy. Permits pending
@@ -215,8 +215,8 @@ const main = async (): Promise<number> => {
   if (command === 'import-csv') {
     if (!values.database) throw new Error('--database is required for import-csv')
     if (!values.file) throw new Error('--file is required for import-csv')
-    if (values.format !== undefined && values.format !== 'toggl') {
-      throw new Error(`--format must be toggl, not ${values.format}`)
+    if (values.format !== undefined && values.format !== 'toggl' && values.format !== 'clockify') {
+      throw new Error(`--format must be toggl or clockify, not ${values.format}`)
     }
     // Aborting stops further rows; it never rolls back what was written.
     const controller = new AbortController()
@@ -227,6 +227,7 @@ const main = async (): Promise<number> => {
       mappingPath: values.mapping,
       sourceId: values['source-id'] ?? values.format ?? 'csv',
       ...(values.format === 'toggl' ? { format: 'toggl' as const } : {}),
+      ...(values.format === 'clockify' ? { format: 'clockify' as const } : {}),
       dryRun: values['dry-run'] === true,
       skipRejected: values['skip-rejected'] === true,
       signal: controller.signal,
