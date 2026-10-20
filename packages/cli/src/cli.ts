@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { realpathSync } from 'node:fs'
+import { readFileSync, realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { EzactoApiError, EzactoClient, type Whoami } from '@conflict-hq/ezacto-client'
@@ -22,6 +22,7 @@ import {
 import {
   confidentialityFilteredFetch,
   exportExpenses,
+  editInvoice,
   exportTimeEntries,
   generateInvoice,
   listInvoices,
@@ -31,6 +32,7 @@ import {
   runReport,
   sendInvoice,
   uninvoiced,
+  unlinkTime,
   validReportDefinitions,
   requiredReportScope,
   type MoneyCommandResult,
@@ -58,7 +60,7 @@ Commands:
   timer        Start, stop, or inspect the one running timer
   week         Show the Monday–Sunday time grid
   uninvoiced   Show uninvoiced amounts (requires reports:read)
-  invoice      Generate, send, or list invoices
+  invoice      Generate, send, list, or edit invoices; unlink-time frees entries from an invoice
   report       List or run reports; report list shows each required scope
   export       Export time entries or expenses as CSV (or --verify a backup bundle)
   backup       Create a full backup bundle from a local database (--sync-to copies it to S3)
@@ -98,6 +100,15 @@ Options:
   --columns <a,b,c>         Export columns, in order (default: every exportable one)
   --time-summary <type>     Time summary type for invoice generate
   --expense-summary <type>  Expense summary type for invoice generate
+  --subject <text>          Invoice edit: new subject
+  --notes-file <path>       Invoice edit: replace the notes with the contents of a file
+  --issue-date <yyyy-mm-dd> Invoice edit: new issue date
+  --terms <terms>           Invoice edit: upon_receipt, net_15, net_30, net_45, net_60, or custom
+  --line <n>                Invoice edit: line to change, counted from 1 in invoice order
+  --quantity <n>            Invoice edit: new quantity for --line
+  --rate <dollars>          Invoice edit: new unit price for --line, such as 150 or 150.50
+  --description <text>      Invoice edit: new description for --line
+  --entries <id,id,...>     Invoice unlink-time: time entry IDs to mark uninvoiced
   --database <path>         SQLite database path (or set EZACTO_DATA_DIR)
   --output <path>           Output directory for ez backup (default: current directory)
   --attachments <path>      Attachment directory for backup/restore
@@ -402,6 +413,15 @@ export const runCli = async (
       columns: { type: 'string' },
       'time-summary': { type: 'string' },
       'expense-summary': { type: 'string' },
+      subject: { type: 'string' },
+      'notes-file': { type: 'string' },
+      'issue-date': { type: 'string' },
+      terms: { type: 'string' },
+      line: { type: 'string' },
+      quantity: { type: 'string' },
+      rate: { type: 'string' },
+      description: { type: 'string' },
+      entries: { type: 'string' },
       database: { type: 'string' },
       output: { type: 'string' },
       attachments: { type: 'string' },
@@ -578,6 +598,73 @@ export const runCli = async (
       throw new Error('time options are not valid with ez invoice')
     }
     const action = commandArguments[0]
+    const editOptions =
+      values.subject !== undefined || values['notes-file'] !== undefined ||
+      values['issue-date'] !== undefined || values.terms !== undefined ||
+      values.line !== undefined || values.quantity !== undefined ||
+      values.rate !== undefined || values.description !== undefined
+    if (editOptions && action !== 'edit') {
+      throw new Error('--subject, --notes-file, --issue-date, --terms, --line, --quantity, --rate, and --description are valid only with ez invoice edit')
+    }
+    if (values.entries !== undefined && action !== 'unlink-time') {
+      throw new Error('--entries is valid only with ez invoice unlink-time')
+    }
+
+    if (action === 'edit') {
+      if (commandArguments.length !== 2) {
+        throw new Error('usage: ez invoice edit <number> [--subject s] [--notes-file path] [--issue-date d] [--terms t] [--line n --quantity q --rate r --description d]')
+      }
+      let line: number | undefined
+      if (values.line !== undefined) {
+        line = Number(values.line)
+        if (!/^[1-9]\d*$/.test(values.line) || !Number.isSafeInteger(line)) {
+          throw new Error(`invalid --line: ${values.line}; use 1 for the first line`)
+        }
+      }
+      const notes = values['notes-file'] === undefined
+        ? undefined
+        : readFileSync(values['notes-file'], 'utf8')
+      const selected = await selectedClient(configPath, values.org)
+      requireStoredScope(selected.organization, 'invoices:write')
+      return printMoneyResult(
+        await editInvoice(selected.client, {
+          number: commandArguments[1]!,
+          ...(values.subject === undefined ? {} : { subject: values.subject }),
+          ...(notes === undefined ? {} : { notes }),
+          ...(values['issue-date'] === undefined ? {} : { issueDate: values['issue-date'] }),
+          ...(values.terms === undefined ? {} : { terms: values.terms }),
+          ...(line === undefined ? {} : { line }),
+          ...(values.quantity === undefined ? {} : { quantity: values.quantity }),
+          ...(values.rate === undefined ? {} : { rate: values.rate }),
+          ...(values.description === undefined ? {} : { description: values.description }),
+        }),
+        values.json,
+        values.csv,
+        runtime,
+      )
+    }
+
+    if (action === 'unlink-time') {
+      if (commandArguments.length !== 1) throw new Error('usage: ez invoice unlink-time --entries <id,id,...>')
+      if (values.entries === undefined) throw new Error('ez invoice unlink-time requires --entries')
+      const entryIds = values.entries.split(',').map((part) => {
+        const id = Number(part.trim())
+        if (!/^\d+$/.test(part.trim()) || !Number.isSafeInteger(id) || id < 1) {
+          throw new Error(`invalid time entry id: ${part}`)
+        }
+        return id
+      })
+      const selected = await selectedClient(configPath, values.org)
+      for (const scope of ['reports:read', 'time_entries:write', 'invoices:write']) {
+        requireStoredScope(selected.organization, scope)
+      }
+      return printMoneyResult(
+        await unlinkTime(selected.client, { entryIds: [...new Set(entryIds)] }),
+        values.json,
+        values.csv,
+        runtime,
+      )
+    }
 
     if (action === 'generate') {
       if (commandArguments.length !== 1) throw new Error('ez invoice generate accepts no additional positional arguments')
@@ -623,7 +710,7 @@ export const runCli = async (
         throw new Error('ez invoice list accepts no additional positional arguments')
       }
       if (action === undefined && commandArguments.length !== 0) {
-        throw new Error('usage: ez invoice <generate|send|list>')
+        throw new Error('usage: ez invoice <generate|send|list|edit|unlink-time>')
       }
       const selected = await selectedClient(configPath, values.org)
       return printMoneyResult(
@@ -634,7 +721,7 @@ export const runCli = async (
       )
     }
 
-    throw new Error('usage: ez invoice <generate|send|list>')
+    throw new Error('usage: ez invoice <generate|send|list|edit|unlink-time>')
   }
 
   if (command === 'report') {
@@ -1007,10 +1094,22 @@ const errorDetails = (error: unknown): CliErrorDetails => {
     const detail = body !== null && typeof body === 'object' ? body : {}
     const code: unknown = Reflect.get(detail, 'code')
     const message: unknown = Reflect.get(detail, 'message')
+    const fields: unknown = Reflect.get(detail, 'fields')
+    const fieldMessages = Array.isArray(fields)
+      ? fields.flatMap((field: unknown) => {
+          const text: unknown = field !== null && typeof field === 'object'
+            ? Reflect.get(field, 'message') : undefined
+          return typeof text === 'string' && text.trim() !== '' ? [text.trim()] : []
+        })
+      : []
     return {
       message: error.status === 401
         ? 'authentication failed: the API token is invalid or revoked'
-        : typeof message === 'string' && message.trim() !== '' ? message : 'ezacto API request failed',
+        : code === 'invoice_version_conflict'
+          ? 'the invoice changed since it was read; run the command again'
+          : fieldMessages.length > 0
+            ? fieldMessages.join(' ')
+            : typeof message === 'string' && message.trim() !== '' ? message : 'ezacto API request failed',
       ...(typeof code === 'string' ? { code } : {}),
       status: error.status,
       ...(typeof error.requestId === 'string' ? { request_id: error.requestId } : {}),
@@ -1053,4 +1152,4 @@ if (isMain) {
     })
 }
 
-export { USAGE }
+export { USAGE, errorMessage }
