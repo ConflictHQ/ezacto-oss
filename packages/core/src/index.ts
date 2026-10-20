@@ -47,6 +47,7 @@ export * from './staff-payments.js'
 export * from './my-payments.js'
 
 export * from './payment-runs.js'
+export * from './scheduled-runs.js'
 
 export * from './payment-actuals.js'
 export * from './payment-reconciliation.js'

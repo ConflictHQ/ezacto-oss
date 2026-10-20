@@ -2,7 +2,7 @@ import type { ReminderProcessOptions } from '@ezacto/db/d1'
 import { createRuntimeAppleWeb } from './apple-web.js'
 import { createD1AppleWebCustodyStore } from '@ezacto/db/d1'
 import { captureException } from '@sentry/cloudflare'
-import { createPaymentRunsService } from '@ezacto/db/d1'
+import { createPaymentRunsService, createScheduledRunsService } from '@ezacto/db/d1'
 import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createStaffPaymentStore } from '@ezacto/db/d1'
 import { createMyPaymentsStore } from '@ezacto/db/d1'
@@ -138,6 +138,8 @@ import {
   updateNotificationSettings,
   readTimesheetAutoApproval,
   runTimesheetAutoApproval,
+  createScheduledActionStore,
+  sweepExpiredRuns,
   updateTimesheetAutoApproval,
   setBillDelivery,
   createD1IdempotencyStore,
@@ -1012,6 +1014,8 @@ export const createRuntimeServices = async (
       : createInvoiceDocumentPort({
           database: drizzle,
           objects: createR2AttachmentObjectStore(env.ATTACHMENTS),
+          accentColor: async () =>
+            (await workerInstanceThemeSurface.read(env as AppEnv))?.palette?.['action'] ?? null,
           now: () => new Date().toISOString(),
           source: {
             documentContext: (invoiceId: number) =>
@@ -1192,6 +1196,10 @@ export const createRuntimeServices = async (
     }),
     timesheetAutoApprovalSweep: {
       processDue: (now: string) => runTimesheetAutoApproval(drizzle, now),
+    },
+    scheduledActionExpiry: {
+      expireDue: (now: string, report: (error: unknown) => void) =>
+        sweepExpiredRuns(createScheduledActionStore(drizzle), now, report),
     },
     profileNotifications: {
       read: (userId: number) => readUserNotifications(drizzle, userId),
@@ -1419,6 +1427,7 @@ export const createRuntimeServices = async (
           }),
         }),
     paymentRuns,
+    scheduledRuns: createScheduledRunsService(drizzle),
     staffPayments: createStaffPaymentStore(drizzle),
     myPayments: createMyPaymentsStore(drizzle),
     payoutAccounts: (() => {

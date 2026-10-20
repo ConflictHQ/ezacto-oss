@@ -167,7 +167,13 @@ explicitly. Hour splits are never inferred.
   payment, or a failed or cancelled run item releases the allocation; nothing is
   deleted. Allocations snapshot the review, and the report flags entries whose
   source time no longer matches (`source_changed`) or that are over-allocated
-  after a later review, for explicit reversal and re-allocation.
+  after a later review, for explicit reversal and re-allocation. On the
+  Allocations tab a flagged entry offers "Review change": reviewed against
+  current hours and rate, then one action that reverses the entry's
+  allocations, confirms the person's earnings again from the current hours
+  (selection never rises above what was reviewed) and allocates again. Each step
+  carries an identifier derived from one adjustment identifier, so a retry
+  after a failed step repeats nothing.
 - **API**: `GET /api/v1/staff-payments/allocations?month=` reconciles earned,
   paid, reserved and remaining by person, project and entry, and lists
   unallocated payments; `POST .../allocations/preview`, `POST .../allocations`

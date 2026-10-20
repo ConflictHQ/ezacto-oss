@@ -4,6 +4,7 @@ import { Hono } from 'hono'
 import { describe, expect, it, vi } from 'vitest'
 import type { MyPayments } from '@ezacto/core'
 import { errorResponse } from '../src/errors.js'
+import { createApiApp } from '../src/index.js'
 import { installMyPaymentRoutes } from '../src/my-payments.js'
 import { installStaffPaymentRoutes } from '../src/staff-payments.js'
 import type { ApiContext } from '../src/context.js'
@@ -79,10 +80,12 @@ describe('GET /me/payments', () => {
   })
 
   it('refuses a caller who is not a payee', async () => {
-    const { api } = fixture({ payee: false })
-    const response = await api.request('/me/payments?month=2026-08')
-    expect(response.status).toBe(403)
-    expect(await code(response)).toBe('not_a_payee')
+    for (const profile of ['member', 'project_manager', 'accounting', 'executive_manager', 'administrator']) {
+      const { api } = fixture({ profile, payee: false })
+      const response = await api.request('/me/payments?month=2026-08')
+      expect(response.status).toBe(403)
+      expect(await code(response)).toBe('not_a_payee')
+    }
   })
 
   it('refuses API tokens, even for a payee with own_money on', async () => {
@@ -108,5 +111,38 @@ describe('GET /me/payments', () => {
       expect((await api.request('/staff-payments?month=2026-08')).status).toBe(403)
       expect(staff.report).not.toHaveBeenCalled()
     }
+  })
+})
+
+describe('GET /api/v1/me/payments through the real authentication layer', () => {
+  it('refuses an unauthenticated caller with 401 and never reads the store', async () => {
+    const store = { read: vi.fn(async (_user: number, month: string) => summary(month)) }
+    const app = createApiApp({ installApi: (api) => installMyPaymentRoutes(api, store) })
+    const response = await app.request('/api/v1/me/payments?month=2026-08')
+    expect(response.status).toBe(401)
+    expect(store.read).not.toHaveBeenCalled()
+  })
+
+  it('follows the own_money setting live: off is refused, on serves, off again is refused', async () => {
+    const store = { read: vi.fn(async (_user: number, month: string) => summary(month)) }
+    let visible = false
+    const app = createApiApp({
+      authentication: {
+        sessions: {
+          resolve: async () => ({ type: 'user', userId: 7, profile: 'member', authentication: { kind: 'session', sessionId: 's' } }),
+        },
+        ownMoneyVisible: async () => visible,
+      } as never,
+      installApi: (api) => installMyPaymentRoutes(api, store),
+    })
+    const call = () => app.request('/api/v1/me/payments?month=2026-08', { headers: { cookie: 'session=s' } })
+    const off = await call()
+    expect([off.status, await code(off)]).toEqual([403, 'own_money_disabled'])
+    visible = true
+    expect((await call()).status).toBe(200)
+    visible = false
+    const again = await call()
+    expect([again.status, await code(again)]).toEqual([403, 'own_money_disabled'])
+    expect(store.read).toHaveBeenCalledTimes(1)
   })
 })

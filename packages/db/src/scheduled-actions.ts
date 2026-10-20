@@ -34,6 +34,9 @@ export interface RunItemInput {
   amountCents?: number | null
   currency?: string | null
   target?: string | null
+  /** Time the item covers, in seconds as invoiced; null where it is not about time. */
+  quantitySeconds?: number | null
+  clientName?: string | null
 }
 
 export interface RunItemRecord extends RunItemInput {
@@ -41,6 +44,8 @@ export interface RunItemRecord extends RunItemInput {
   amountCents: number | null
   currency: string | null
   target: string | null
+  quantitySeconds: number | null
+  clientName: string | null
   state: RunItemState
   attemptCount: number
   failureReason: string | null
@@ -110,6 +115,8 @@ interface ItemRow {
   amount_cents: number | null
   currency: string | null
   target: string | null
+  quantity_seconds: number | null
+  client_name: string | null
   state: RunItemState
   attempt_count: number
   failure_reason: string | null
@@ -124,6 +131,8 @@ const item = (row: ItemRow): RunItemRecord => ({
   amountCents: row.amount_cents,
   currency: row.currency,
   target: row.target,
+  quantitySeconds: row.quantity_seconds,
+  clientName: row.client_name,
   state: row.state,
   attemptCount: row.attempt_count,
   failureReason: row.failure_reason,
@@ -131,7 +140,7 @@ const item = (row: ItemRow): RunItemRecord => ({
 })
 
 const itemColumns = `id, subject_type, subject_id, description, amount_cents,
-  currency, target, state, attempt_count, failure_reason, completed_at`
+  currency, target, quantity_seconds, client_name, state, attempt_count, failure_reason, completed_at`
 
 export interface ScheduledActionStore {
   /**
@@ -216,10 +225,11 @@ export const createScheduledActionStore = (database: Database): ScheduledActionS
     for (const item of input.items) {
       await database.all(sql`
         INSERT INTO run_items
-          (run_id, subject_type, subject_id, description, amount_cents, currency, target, created_at)
+          (run_id, subject_type, subject_id, description, amount_cents, currency, target,
+           quantity_seconds, client_name, created_at)
         VALUES (${row.id}, ${item.subjectType}, ${item.subjectId}, ${item.description},
           ${item.amountCents ?? null}, ${item.currency ?? null}, ${item.target ?? null},
-          ${input.proposedAt})
+          ${item.quantitySeconds ?? null}, ${item.clientName ?? null}, ${input.proposedAt})
         RETURNING id`)
     }
     return { outcome: 'proposed', run: run(row) }
@@ -332,3 +342,24 @@ export const createScheduledActionStore = (database: Database): ScheduledActionS
     return rows.length > 0
   },
 })
+
+/**
+ * The cron and tick side of expiry (#63).
+ *
+ * Isolated on purpose: a sweep that throws is reported through `report` and
+ * returns nothing, so the rest of the tick -- the outbox drain above all --
+ * still runs. The confirm-time deadline check holds either way, so a failed
+ * sweep delays the record that a run lapsed and never lets one be confirmed.
+ */
+export const sweepExpiredRuns = async (
+  store: Pick<ScheduledActionStore, 'expire'>,
+  now: string,
+  report: (error: unknown) => void,
+): Promise<readonly number[]> => {
+  try {
+    return await store.expire(now)
+  } catch (error) {
+    report(error)
+    return []
+  }
+}

@@ -49,7 +49,12 @@ const surfaces: readonly Surface[] = [
     sources: ["packages/db/src/money-resources.ts", "entries/worker/src/invoice-documents.ts"],
     reads: /wordmark_light[\s\S]*logoFor|logoFor[\s\S]*wordmark_light/,
   },
-  { id: "invoice-pdf-colours", status: "gap", sources: ["packages/core/src/invoice-document.ts"], absent: /palette|instance-theme|InstanceTheme/i },
+  {
+    id: "invoice-pdf-colours",
+    status: "delivered",
+    sources: ["packages/core/src/invoice-document.ts", "entries/worker/src/invoice-documents.ts"],
+    reads: /normalizePaletteColor[\s\S]*accentColor|accentColor[\s\S]*normalizePaletteColor/,
+  },
   {
     id: "report-pdf-name",
     status: "delivered",

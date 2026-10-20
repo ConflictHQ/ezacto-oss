@@ -253,6 +253,9 @@ export type PaymentAllocationEntry = {
   "spent_date": string;
   "selected_seconds": number;
   "rate_cents": number | null;
+  "reviewed_rounded_seconds": number;
+  "current_rounded_seconds": number | null;
+  "current_rate_cents": number | null;
   "earned_cents": number;
   "applied_cents": number;
   "reserved_cents": number;
@@ -431,6 +434,37 @@ export type PaymentRunReport = {
 
 export type PaymentRunReportEnvelope = {
   "data": PaymentRunReport;
+};
+
+export type ScheduledRunItem = {
+  "id": number;
+  "subject_type": string;
+  "subject_id": number;
+  "description": string;
+  "amount_cents": number | null;
+  "currency": string | null;
+  "target": string | null;
+  "state": "pending" | "running" | "done" | "failed";
+  "attempt_count": number;
+  "failure_reason": string | null;
+  "completed_at": string | null;
+};
+
+export type ScheduledRun = {
+  "id": number;
+  "job_id": number;
+  "occurrence_key": string;
+  "state": "proposed" | "confirmed" | "cancelled" | "expired" | "completed";
+  "proposed_at": string;
+  "expires_at": string;
+  "confirmed_by": number | null;
+  "confirmed_at": string | null;
+  "settled_reason": string | null;
+  "items": Array<ScheduledRunItem>;
+};
+
+export type ScheduledRunEnvelope = {
+  "data": ScheduledRun;
 };
 
 export type InvoiceReminderPolicy = {
@@ -6814,6 +6848,33 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<PaymentRunEnvelope>("POST", "/api/v1/payment-runs/:id/items/:itemId/reconcile".replace(":id", encodeURIComponent(String(args["id"]))).replace(":itemId", encodeURIComponent(String(args["itemId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getScheduledRun(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<ScheduledRunEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ScheduledRunEnvelope>("GET", "/api/v1/scheduled-runs/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async confirmScheduledRun(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<ScheduledRunEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ScheduledRunEnvelope>("POST", "/api/v1/scheduled-runs/:id/confirm".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async cancelScheduledRun(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<ScheduledRunEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ScheduledRunEnvelope>("POST", "/api/v1/scheduled-runs/:id/cancel".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });

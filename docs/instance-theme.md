@@ -191,7 +191,7 @@ instance brand.
 | `palette-stylesheet` | `GET /assets/instance-theme.css`, served without a session | `packages/api/src/instance-theme.ts` | delivered |
 | `portal-brand-api` | `GET /api/v1/brand`: name, marks and palette for a portal | `packages/api/src/brand-assets.ts` | delivered |
 | `invoice-pdf-logo` | Invoice PDF draws the `wordmark_light` mark, else the company name | `packages/db/src/money-resources.ts`, `entries/worker/src/invoice-documents.ts` | delivered |
-| `invoice-pdf-colours` | Invoice PDF is greyscale apart from the fixed watermark; no palette token reaches it | `packages/core/src/invoice-document.ts` | gap |
+| `invoice-pdf-colours` | Invoice PDF draws the palette `action` accent as rules only (table header rule, sender rule), never as text; greyscale without one | `packages/core/src/invoice-document.ts`, `entries/worker/src/invoice-documents.ts` | delivered |
 | `report-pdf-name` | Detailed-time report header carries the nearest-ancestor report brand name | `packages/db/src/month-end-pack.ts`, `packages/core/src/report-document.ts` | delivered |
 | `report-pdf-logo-colours` | Report brands store a logo URL and two colours; the report PDF draws only the name | `packages/core/src/report-document.ts` | gap |
 | `email-body` | The HTML part of outgoing mail opens with a header: the `wordmark_light` mark by its public `/brand/...` URL (alt text is the company name) and a rule in the palette's `action` colour. Nothing is set, nothing is added | `packages/core/src/email-brand.ts`, `packages/api/src/email-brand.ts` | delivered |

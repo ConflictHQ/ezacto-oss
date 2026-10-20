@@ -174,9 +174,12 @@ describe('the signed backup download on the Worker', () => {
     expect(received).not.toContain('tampered')
   })
 
-  it('[api] refuses to mint without a completed run, and for any other profile', async () => {
+  it('[api] refuses to mint without a completed run', async () => {
     const none = await setup({ export: false })
     expect((await none.mint()).status).toBe(404)
+  })
+
+  it('[api] refuses to mint for any other profile', async () => {
     const some = await setup()
     expect((await some.mint({}, 'accounting')).status).toBe(403)
     expect((await some.mint({}, 'member')).status).toBe(403)

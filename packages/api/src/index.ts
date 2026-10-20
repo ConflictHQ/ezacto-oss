@@ -507,6 +507,7 @@ export {
 export { installStaffPaymentRoutes } from './staff-payments.js'
 
 export { installPaymentRunRoutes } from './payment-runs.js'
+export { installScheduledRunRoutes } from './scheduled-runs.js'
 
 export * from './account-retention.js'
 

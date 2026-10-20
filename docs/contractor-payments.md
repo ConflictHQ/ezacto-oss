@@ -137,18 +137,21 @@ inside the shell, so it falls under the existing `shell-*` brand-surface rows.
 
 ## Denial matrix
 
-| Caller | `own_money` | Result |
-| --- | --- | --- |
-| Unauthenticated | any | 401 |
-| Contractor, session | on | 200, own figures only |
-| Contractor, session | off | 403 `own_money_disabled` |
-| Member holding an obligation, session | on | 200, own figures only |
-| Member, not a payee | on | 403 `not_a_payee` |
-| Project manager, accounting, executive manager, administrator who is a payee | on | 200, own figures only |
-| Same four profiles, not payees | on | 403 `not_a_payee` |
-| Any API token | any | 403 `session_required` |
-| Any caller passing another person's id | on | 200 with the caller's own figures; the id is ignored |
-| Anyone but an administrator session on `/api/v1/staff-payments*` | any | 403, unchanged |
+Every row maps to a passing test. `API` is `packages/api/test/my-payments.test.ts`; `DB` is `packages/db/test/my-payments.test.ts` (its two
+cases, container SQLite and Worker D1, run the same scenario).
+
+| Caller | `own_money` | Result | Test |
+| --- | --- | --- | --- |
+| Unauthenticated | any | 401 | API: `refuses an unauthenticated caller with 401 and never reads the store` |
+| Contractor, session | on | 200, own figures only | API: `serves every profile its own figures and asks the store only about the caller`; DB: `reconciles to the ledger and never discloses another person` (flagged contractor, other person's figures absent) |
+| Contractor, session | off | 403 `own_money_disabled` | API: `is off until own_money is on, before it reveals whether the caller is a payee`; `follows the own_money setting live` (off, on, off again through the real authentication layer) |
+| Member holding an obligation, session | on | 200, own figures only | API: `serves every profile ...`; DB: `reconciles to the ledger ...` (unflagged holder of an obligation is a payee) |
+| Member, not a payee | on | 403 `not_a_payee` | API: `refuses a caller who is not a payee`; DB: `reconciles to the ledger ...` (no obligation, unknown user: null) |
+| Project manager, accounting, executive manager, administrator who is a payee | on | 200, own figures only | API: `serves every profile ...` |
+| Same four profiles, not payees | on | 403 `not_a_payee` | API: `refuses a caller who is not a payee` (loops all five profiles) |
+| Any API token | any | 403 `session_required` | API: `refuses API tokens, even for a payee with own_money on` |
+| Any caller passing another person's id | on | 200 with the caller's own figures; the id is ignored | API: `ignores any attempt to name another person` (query parameters ignored; person-in-path is 404) |
+| Anyone but an administrator session on `/api/v1/staff-payments*` | any | 403, unchanged | API: `leaves the administrator register closed to everyone but an administrator session` |
 
 ## Data
 

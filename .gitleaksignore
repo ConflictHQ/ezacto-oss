@@ -57,3 +57,13 @@ b1a775fa97d6f916bc03946ea32c876d6198d37b:packages/api/test/sso-domains.test.ts:g
 # occurrences on this branch are pinned because history is scanned.
 ebbbacf79c2f758f0a81b0ae6def0aa0c9117fde:scripts/restore-drill.test.mjs:generic-api-key:14
 86e1d59be5018028e41709a7691bb9ce33b22542:scripts/restore-drill.test.mjs:generic-api-key:14
+
+# A container test fixture: the placeholder Stripe API key handed to the test
+# runtime config had the sk_test_ shape, which trips the stripe-access-token rule.
+# Not a credential; it never leaves the in-process test runtime. Fixed forward so
+# the current fixture is assembled at runtime and no longer matches; the three
+# historical attributions (the authoring commit and two merges that re-attribute
+# it by history traversal) are pinned here because the full history is scanned.
+3fc63f9f6fe982ef3ec4ed7c52de4818c88b0b72:entries/container/test/stripe-acceptance.test.ts:stripe-access-token:37
+7af73e2111359966e94650cd8e502b2cdcd1f07f:entries/container/test/stripe-acceptance.test.ts:stripe-access-token:37
+22b64f4c58800d7ceefdb96ebc9828d087548bec:entries/container/test/stripe-acceptance.test.ts:stripe-access-token:37

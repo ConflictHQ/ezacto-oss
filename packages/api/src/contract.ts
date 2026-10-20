@@ -1,4 +1,5 @@
 import { ACCOUNT_PRIVACY_FRAMEWORKS } from '@ezacto/core';
+import { scheduledRunOperations, scheduledRunSchemas } from './scheduled-run-contract.js'
 import { paymentRunOperations, paymentRunSchemas } from './payment-run-contract.js'
 import { staffPaymentOperations, staffPaymentSchemas } from './staff-payment-contract.js';
 import { commercialTermFields, DETAILED_TIME_PDF_ROW_LIMIT, maximumBulkApprovalSelections, timeRoundingIncrements, timeRoundingModes } from "@ezacto/core";
@@ -3628,6 +3629,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...attachmentContractOperations,
   ...staffPaymentOperations,
   ...paymentRunOperations,
+  ...scheduledRunOperations,
   ...reportOperations,
   ...moduleSettingsOperations,
   ...signInMethodOperations,
@@ -3894,6 +3896,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...attachmentContractSchemas,
   ...staffPaymentSchemas,
   ...paymentRunSchemas,
+  ...scheduledRunSchemas,
   InvoiceReminderPolicy: {
     type: "object",
     required: ["first_after_days", "every_days"],

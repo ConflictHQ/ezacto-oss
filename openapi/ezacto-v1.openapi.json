@@ -18052,6 +18052,202 @@
         ]
       }
     },
+    "/api/v1/scheduled-runs/{id}": {
+      "get": {
+        "operationId": "getScheduledRun",
+        "summary": "Read a proposed run and the concrete items it would act on",
+        "tags": [
+          "scheduled-runs"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduledRunEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/scheduled-runs/:id",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/scheduled-runs/{id}/confirm": {
+      "post": {
+        "operationId": "confirmScheduledRun",
+        "summary": "Confirm a proposed run; a second confirmation changes nothing",
+        "description": "Refused with 409 once the run has lapsed, which also settles it as expired, or if it was cancelled.",
+        "tags": [
+          "scheduled-runs"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduledRunEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/scheduled-runs/:id/confirm",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/scheduled-runs/{id}/cancel": {
+      "post": {
+        "operationId": "cancelScheduledRun",
+        "summary": "Cancel a proposed run that has not been confirmed",
+        "tags": [
+          "scheduled-runs"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduledRunEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/scheduled-runs/:id/cancel",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/report-definitions/registry": {
       "get": {
         "operationId": "getReportDefinitionRegistry",
@@ -29820,6 +30016,9 @@
           "spent_date",
           "selected_seconds",
           "rate_cents",
+          "reviewed_rounded_seconds",
+          "current_rounded_seconds",
+          "current_rate_cents",
           "earned_cents",
           "applied_cents",
           "reserved_cents",
@@ -29842,6 +30041,29 @@
             "type": "integer"
           },
           "rate_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reviewed_rounded_seconds": {
+            "type": "integer"
+          },
+          "current_rounded_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_rate_cents": {
             "anyOf": [
               {
                 "type": "integer"
@@ -30649,6 +30871,190 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/PaymentRunReport"
+          }
+        }
+      },
+      "ScheduledRunItem": {
+        "type": "object",
+        "required": [
+          "id",
+          "subject_type",
+          "subject_id",
+          "description",
+          "amount_cents",
+          "currency",
+          "target",
+          "state",
+          "attempt_count",
+          "failure_reason",
+          "completed_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "subject_type": {
+            "type": "string"
+          },
+          "subject_id": {
+            "type": "integer"
+          },
+          "description": {
+            "type": "string"
+          },
+          "amount_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "done",
+              "failed"
+            ]
+          },
+          "attempt_count": {
+            "type": "integer"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ScheduledRun": {
+        "type": "object",
+        "required": [
+          "id",
+          "job_id",
+          "occurrence_key",
+          "state",
+          "proposed_at",
+          "expires_at",
+          "confirmed_by",
+          "confirmed_at",
+          "settled_reason",
+          "items"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "job_id": {
+            "type": "integer"
+          },
+          "occurrence_key": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "proposed",
+              "confirmed",
+              "cancelled",
+              "expired",
+              "completed"
+            ]
+          },
+          "proposed_at": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "confirmed_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "settled_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScheduledRunItem"
+            }
+          }
+        }
+      },
+      "ScheduledRunEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ScheduledRun"
           }
         }
       },

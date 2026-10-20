@@ -147,6 +147,8 @@ export const createInvoiceDocumentPort = (options: {
   readonly database: Parameters<typeof resolveAttachPolicy>[0];
   readonly source: DocumentSource;
   readonly objects: ObjectStore;
+  /** The instance palette's accent, printed as rules on the invoice (issue 1011). */
+  readonly accentColor?: () => Promise<string | null>;
   readonly now: () => string;
 }): InvoiceDocumentPort => {
   const { database, objects } = options;
@@ -248,6 +250,8 @@ export const createInvoiceDocumentPort = (options: {
       companyName: context.organizationName,
       companyAddress: context.organizationAddress,
       logo: await logoFor(context, objects),
+      // A failed palette read is an uncoloured invoice, never an unsent one.
+      accentColor: await options.accentColor?.().catch(() => null),
       clientName: context.clientName,
       clientAddress: context.clientAddress,
       issueDate: context.issueDate,

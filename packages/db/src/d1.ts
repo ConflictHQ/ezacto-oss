@@ -251,6 +251,7 @@ export {
   type NotificationSettings,
   type SubmissionReminderSchedule,
 } from './notification-settings.js'
+export { createScheduledActionStore, sweepExpiredRuns } from './scheduled-actions.js'
 export { prepareTimeReminders, type TimeReminderInput } from './time-reminders.js'
 export {
   readTimesheetAutoApproval,
@@ -504,6 +505,8 @@ export {
 export { createStaffPaymentStore } from './staff-payments.js'
 
 export { createPaymentRunsService } from './payment-runs.js'
+
+export { createScheduledRunsService } from './scheduled-runs.js'
 
 export { createAccountRetentionRepository } from './account-retention.js'
 
