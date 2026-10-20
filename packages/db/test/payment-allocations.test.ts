@@ -280,7 +280,13 @@ describe.each(['sqlite', 'd1'] as const)('payment allocations on %s', (runtime) 
     await allocate({ id: 'a1', payment_id: 'p1', seconds: 3600 })
     await f.exec(`UPDATE time_entries SET rounded_seconds=1800,cost_rate_cents=9000 WHERE id=10`)
     const report = await person(f)
-    expect(report.projects[0]!.entries.find((e) => e.entry_id === 10)).toMatchObject({ source_changed: true, applied_cents: 5000 })
+    expect(report.projects[0]!.entries.find((e) => e.entry_id === 10)).toMatchObject({
+      source_changed: true,
+      applied_cents: 5000,
+      reviewed_rounded_seconds: 7200,
+      current_rounded_seconds: 1800,
+      current_rate_cents: 9000,
+    })
     expect(await f.rows(`SELECT rate_cents,json_extract(snapshot_json,'$.rounded_seconds') AS rounded FROM staff_payment_allocations`)).toEqual([{ rate_cents: 5000, rounded: 7200 }])
     await expect(
       f.exec(`INSERT INTO staff_payment_period_moves(id,user_id,from_month,to_month,through_version,actor_id,recorded_at,request_id,note) VALUES('m1',2,'2026-08','2026-07',${version},1,'${now}','r','fix')`),

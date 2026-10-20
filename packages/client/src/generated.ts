@@ -253,6 +253,9 @@ export type PaymentAllocationEntry = {
   "spent_date": string;
   "selected_seconds": number;
   "rate_cents": number | null;
+  "reviewed_rounded_seconds": number;
+  "current_rounded_seconds": number | null;
+  "current_rate_cents": number | null;
   "earned_cents": number;
   "applied_cents": number;
   "reserved_cents": number;

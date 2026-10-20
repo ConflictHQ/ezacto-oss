@@ -3,7 +3,10 @@
 // changes a monthly total, and no hour split is ever inferred.
 import type {
   AllocatePayment,
+  ConfirmPaymentActuals,
+  PaymentActuals,
   PaymentAllocation,
+  PaymentAllocationEntry,
   PaymentAllocationPerson,
   PaymentAllocationPreview,
   PaymentAllocationReport,
@@ -19,6 +22,8 @@ export interface PaymentAllocationsApi {
   previewPaymentAllocation?(command: AllocatePayment, signal?: AbortSignal): Promise<PaymentAllocationPreview>
   allocatePayment?(command: AllocatePayment, signal?: AbortSignal): Promise<void>
   reversePaymentAllocation?(command: ReversePaymentAllocation, signal?: AbortSignal): Promise<void>
+  getPaymentActuals?(month: string, signal?: AbortSignal): Promise<PaymentActuals>
+  confirmPaymentActuals?(command: ConfirmPaymentActuals, signal?: AbortSignal): Promise<void>
 }
 // appendChild, never append, and `field` accepts any Node: the api, worker and
 // container typechecks compile this file too (via shell/model.ts), under
@@ -166,6 +171,137 @@ export const createAllocationsController = (
     wrap.appendChild(open)
     return wrap
   }
+  // Source time changed after review: show the reviewed and current hours, then
+  // reverse the entry's allocations, re-confirm this person's earnings from the
+  // current hours and allocate again. Every step carries an identifier derived from
+  // one adjustment identifier, so a retry replays what already succeeded and
+  // nothing is recorded twice. Reversed rows stay in the history.
+  const adjustment = (
+    person: PaymentAllocationPerson,
+    month: string,
+    entry: PaymentAllocationEntry,
+    host: HTMLElement,
+    active: AbortSignal,
+    own: number,
+  ): void => {
+    const live = person.allocations.filter(
+      (a) => a.entry_id === entry.entry_id && (a.state === 'applied' || a.state === 'reserved'),
+    )
+    const currency = person.currency
+    const [grid, body] = table(`Source time change for entry ${entry.entry_id}`, ['', 'Reviewed', 'Now'])
+    const line = (name: string, reviewed: string | HTMLElement, now: string | HTMLElement) => {
+      const row = node('tr')
+      cell(row, name)
+      cell(row, reviewed)
+      cell(row, now)
+      body.appendChild(row)
+    }
+    line(
+      'Hours worked',
+      hours(entry.reviewed_rounded_seconds),
+      entry.current_rounded_seconds === null ? 'Entry removed' : hours(entry.current_rounded_seconds),
+    )
+    line(
+      'Rate',
+      entry.rate_cents === null ? 'Missing rate' : money(entry.rate_cents, currency),
+      entry.current_rate_cents === null ? 'Missing rate' : money(entry.current_rate_cents, currency),
+    )
+    line('Hours selected for pay', hours(entry.selected_seconds), '')
+    line('Allocated', money(entry.applied_cents + entry.reserved_cents, currency), '')
+    const reason = node('textarea'),
+      go = node('button', 'Reverse and re-allocate'),
+      message = node('p')
+    reason.required = true
+    reason.maxLength = 2000
+    reason.setAttribute('aria-label', `Adjustment reason for entry ${entry.entry_id}`)
+    go.type = 'button'
+    message.setAttribute('role', 'status')
+    message.setAttribute('aria-live', 'polite')
+    const id = crypto.randomUUID()
+    let confirmCommand: ConfirmPaymentActuals | null = null,
+      allocateCommands: AllocatePayment[] = [],
+      reasonText = ''
+    const plan = async (): Promise<void> => {
+      if (confirmCommand) return
+      const version = ledger?.rows.find((r) => r.user_id === person.user_id)?.version
+      if (version === undefined) throw new Error('Reload the payments before adjusting.')
+      const actuals = await api.getPaymentActuals!(month, active)
+      const entries = actuals.people.find((p) => p.user_id === person.user_id)?.entries
+      const current = entries?.find((e) => e.entry_id === entry.entry_id)
+      if (!entries || !current) throw new Error('This time entry is no longer in the month. Reverse its allocations instead.')
+      let left = current.selected_seconds
+      const commands: AllocatePayment[] = []
+      for (const a of live) {
+        const seconds = a.seconds === null ? null : Math.min(a.seconds, left)
+        if (seconds === 0) continue
+        if (seconds !== null) left -= seconds
+        commands.push({
+          id: `${id}-alloc-${commands.length}`,
+          payment_kind: a.payment_kind,
+          payment_id: a.payment_id,
+          user_id: person.user_id,
+          month,
+          scope: a.scope,
+          project_id: a.project_id,
+          entry_id: a.entry_id,
+          seconds,
+          amount_cents: seconds === null ? a.amount_cents : null,
+          reason: reasonText,
+        })
+      }
+      allocateCommands = commands
+      confirmCommand = {
+        id: `${id}-review`,
+        user_id: person.user_id,
+        month,
+        expected_version: version,
+        currency: actuals.currency,
+        entries,
+        note: reasonText,
+      }
+    }
+    go.addEventListener('click', () => {
+      reasonText ||= reason.value.trim()
+      if (!reasonText) {
+        message.textContent = 'Explain the adjustment.'
+        return
+      }
+      go.disabled = true
+      reason.disabled = true
+      message.textContent = 'Adjusting…'
+      void (async () => {
+        for (const a of live)
+          await api.reversePaymentAllocation!({ id: `${id}-rev-${a.id}`, allocation_id: a.id, reason: reasonText }, active)
+        await plan()
+        await api.confirmPaymentActuals!(confirmCommand!, active)
+        for (const command of allocateCommands) await api.allocatePayment!(command, active)
+      })()
+        .then(async () => {
+          if (active.aborted || own !== generation) return
+          await load(selectedUser)
+          if (!active.aborted)
+            status.textContent =
+              'Allocations adjusted to the current hours. Reversed rows are kept in the history; no money has been sent.'
+        })
+        .catch((error: unknown) => {
+          if (active.aborted || own !== generation) return
+          message.textContent = `${errorText(error)} Retry to continue; steps already recorded are not repeated.`
+          go.disabled = false
+        })
+    })
+    host.replaceChildren(grid)
+    if (live.length === 0) {
+      host.appendChild(node('p', 'Nothing is allocated to this entry, so there is nothing to adjust.'))
+      return
+    }
+    host.appendChild(
+      node(
+        'p',
+        'This reverses the allocations on this entry, confirms this person’s earnings again from the current hours and allocates the same payments again. Hours cannot rise above what was selected for pay.',
+      ),
+    )
+    for (const part of [reason, go, message]) host.appendChild(part)
+  }
   const paintPerson = (
     person: PaymentAllocationPerson,
     month: string,
@@ -190,6 +326,9 @@ export const createAllocationsController = (
     ])
       summary.appendChild(typeof part === 'string' ? document.createTextNode(part) : part)
     detail.appendChild(summary)
+    const adjustHost = node('section')
+    adjustHost.dataset.allocationAdjust = ''
+    detail.appendChild(adjustHost)
 
     const [paymentsTable, paymentsBody] = table('Payments not fully allocated', [
       'Payment',
@@ -284,12 +423,28 @@ export const createAllocationsController = (
         cell(line, money(entry.reserved_cents, currency))
         cell(line, money(entry.remaining_cents, currency))
         cell(line, hours(entry.remaining_seconds))
-        cell(
-          line,
-          [entry.source_changed ? 'Source time changed: reverse and re-review' : '', entry.over_allocated ? 'Over-allocated' : '']
-            .filter(Boolean)
-            .join(' · '),
+        const flags = node('div')
+        flags.appendChild(
+          document.createTextNode(
+            [entry.source_changed ? 'Source time changed: reverse and re-review' : '', entry.over_allocated ? 'Over-allocated' : '']
+              .filter(Boolean)
+              .join(' · '),
+          ),
         )
+        if (
+          entry.source_changed &&
+          api.reversePaymentAllocation &&
+          api.getPaymentActuals &&
+          api.confirmPaymentActuals &&
+          api.allocatePayment
+        ) {
+          const review = node('button', 'Review change')
+          review.type = 'button'
+          review.setAttribute('aria-label', `Review source change for entry ${entry.entry_id}`)
+          review.addEventListener('click', () => adjustment(person, month, entry, adjustHost, active, own))
+          flags.appendChild(review)
+        }
+        cell(line, flags)
         entryBody.appendChild(line)
       }
     }
