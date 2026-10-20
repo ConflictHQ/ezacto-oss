@@ -247,6 +247,33 @@ describe.each(['sqlite', 'd1'] as const)('payment allocations on %s', (runtime) 
     expect((await person(f)).allocations.map((a) => a.state)).toEqual(['released', 'released'])
   })
 
+  it('restores the allocation when a settled run item is refunded and reversed, without deleting rows', async () => {
+    const { f, pay, allocate } = await ready(runtime)
+    await pay('p1', 1000)
+    await pay('p2', 12000)
+    const balance = (await f.rows(`SELECT version FROM staff_payment_balances WHERE user_id=2 AND month='2026-08'`))[0]!.version
+    const item = { id: 'item1', user_id: 2, month: '2026-08', expected_version: balance, name: 'Contractor Two', amount_cents: 4000, currency: 'USD', destination: { id: 1 }, quote: { source_cents: 4050 } }
+    await f.exec(`INSERT INTO payment_runs(id,command_json,name,source_currency,scheduled_at,timezone,state,actor_id,created_at,request_id)
+      VALUES('run-1','${JSON.stringify({ items: [item] })}','Run','USD','${now}','UTC','draft',1,'${now}','r')`)
+    await f.exec(`UPDATE payment_runs SET state='approved',approved_by=1,approved_at='${now}',
+      approval_json='${JSON.stringify({ limits: [{ item_id: 'item1', max_source_cents: 4050 }] })}' WHERE id='run-1'`)
+    await allocate({ id: 'r1', payment_kind: 'run_item', payment_id: 'item1', seconds: 3600, amount_cents: 4000, scope: 'entry', entry_id: 10 })
+    await f.exec(`UPDATE payment_run_items SET state='paid',transfer_id='t1',updated_at='${now}' WHERE id='item1'`)
+    const entry = async () => (await person(f)).projects[0]!.entries.find((e) => e.entry_id === 10)!
+    expect((await person(f)).allocations[0]).toMatchObject({ state: 'applied' })
+    expect(await entry()).toMatchObject({ applied_cents: 4000 })
+    // The provider refunds the transfer: the run item fails and the allocation is released.
+    await f.exec(`UPDATE payment_run_items SET state='failed',updated_at='${now}' WHERE id='item1'`)
+    expect((await person(f)).allocations[0]).toMatchObject({ state: 'released' })
+    await f.store.reverseAllocation!({ id: 'rev1', allocation_id: 'r1', reason: 'Transfer refunded' }, 1, 'rev', now)
+    expect((await person(f)).allocations[0]).toMatchObject({ id: 'r1', state: 'reversed', amount_cents: 4000 })
+    expect(await entry()).toMatchObject({ applied_cents: 0, reserved_cents: 0, remaining_cents: 10000, remaining_seconds: 7200 })
+    expect(await f.rows('SELECT count(*) AS n FROM staff_payment_allocations')).toEqual([{ n: 1 }])
+    expect(await f.rows('SELECT allocation_id,reason FROM staff_payment_allocation_reversals')).toEqual([{ allocation_id: 'r1', reason: 'Transfer refunded' }])
+    await allocate({ id: 'again', payment_id: 'p2', seconds: 7200 })
+    expect(await entry()).toMatchObject({ applied_cents: 10000, remaining_seconds: 0 })
+  })
+
   it('flags edited source hours for review, keeps the snapshot and blocks a work-month move while allocated', async () => {
     const { f, pay, allocate } = await ready(runtime)
     await pay('p1', 12000)

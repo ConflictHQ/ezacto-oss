@@ -5,6 +5,7 @@ import {
   type AllocatePayment,
   type PaymentAllocationPreview,
   type PaymentAllocationReport,
+  type ReversePaymentAllocation,
   type StaffPaymentReport,
 } from '@ezacto/core'
 import { renderStaffPayments } from '../src/staff-payments/render.js'
@@ -182,6 +183,36 @@ describe('payment allocation review', () => {
     document.querySelector<HTMLFormElement>('[data-allocation-form]')!.dispatchEvent(new SubmitEvent('submit', { cancelable: true }))
     await vi.waitFor(() => expect(text()).toContain('exceeds the unallocated part'))
     expect([...document.querySelectorAll('button')].find((b) => b.textContent === 'Confirm allocation')!.hidden).toBe(true)
+  })
+
+  it('reverses an allocation only with a reason, keeps the row and reloads the report', async () => {
+    const recorded = {
+      id: 'a1', user_id: 2, payment_kind: 'event' as const, payment_id: 'pay-1', month: '2026-09', scope: 'month' as const,
+      project_id: null, project_name: null, entry_id: null, seconds: null, rate_cents: null, amount_cents: 10000,
+      currency: 'USD', state: 'applied' as const, reason: 'Reconciled', actor_id: 1, recorded_at: '2026-10-01T00:00:00.000Z',
+    }
+    const done = { ...recorded, id: 'a0', state: 'reversed' as const }
+    const withRows: PaymentAllocationReport = {
+      ...report,
+      people: [{ ...report.people[0]!, allocations: [recorded, done] }],
+    }
+    const api = {
+      getPaymentAllocationReport: vi.fn(async () => withRows),
+      reversePaymentAllocation: vi.fn<(command: ReversePaymentAllocation) => Promise<void>>(async () => {}),
+    }
+    await mount(api)
+    expect(document.querySelector('[aria-label="Reverse allocation a0"]')).toBeNull()
+    document.querySelector<HTMLButtonElement>('[aria-label="Reverse allocation a1"]')!.click()
+    const confirm = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Confirm reversal')!
+    confirm.click()
+    expect(api.reversePaymentAllocation).not.toHaveBeenCalled()
+    expect(text()).toContain('Explain the reversal.')
+    set('[aria-label="Reversal reason for a1"]', '  Wrong entry  ')
+    confirm.click()
+    await vi.waitFor(() => expect(api.reversePaymentAllocation).toHaveBeenCalledTimes(1))
+    expect(api.reversePaymentAllocation.mock.calls[0]![0]).toMatchObject({ allocation_id: 'a1', reason: 'Wrong entry' })
+    await vi.waitFor(() => expect(document.querySelector('[data-allocations-status]')!.textContent).toContain('Allocation reversed'))
+    expect(api.getPaymentAllocationReport).toHaveBeenCalledTimes(2)
   })
 
   it('clears drawn allocations on reset', async () => {
