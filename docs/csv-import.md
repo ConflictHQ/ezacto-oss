@@ -79,7 +79,31 @@ the contract requires all three; a description that starts with `=`, `+`, `-` or
 `person_unmapped` until the mapping names them (keyed by their Toggl email); an
 organization that records start and end times rejects the entries that went in as
 hours (`hours_not_accepted`). A running timer (no valid duration) is rejected as
-`invalid_duration`. Clockify is a later slice.
+`invalid_duration`.
+
+## Clockify
+
+`--format clockify` reads a Clockify **detailed** time report CSV export onto the
+same contract, with the same rules as Toggl above (mapping, dry run, source
+identity, re-running). It never calls Clockify and takes no credentials.
+`--source-id` defaults to `clockify`.
+
+| Clockify column | Becomes |
+| --- | --- |
+| `Start Date` | `date` (YYYY-MM-DD or MM/DD/YYYY) |
+| `Email` | `person_email` |
+| `Client`, `Project`, `Task` | `client`, `project`, `task` |
+| `Description` | `notes` |
+| `Billable` (`Yes`/`No`) | `billable` |
+| `Start Time`, `End Time`, `Duration (h)` | `start_time`/`end_time` when the entry starts and ends on one date, on whole minutes, and the duration agrees; otherwise `hours`, exact to the second |
+
+A file missing any of those columns is refused with `clockify_missing_column`.
+Other columns (`User`, `Group`, `Tags`, `Duration (decimal)`, the `Billable Rate`
+and `Billable Amount` columns) are ignored and named in a warning: **no rate or
+amount is read.** Times may be 24-hour or 12-hour with AM/PM and are the exporting
+account's wall clock, not converted. A file whose dates are DD/MM/YYYY is refused
+with `clockify_date_format`; export again with the date format set to MM/DD/YYYY
+or YYYY-MM-DD.
 
 ## The mapping
 
