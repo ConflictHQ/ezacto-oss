@@ -2,9 +2,10 @@ import type { ReminderProcessOptions, ReminderProcessSummary } from '@ezacto/db/
 import { appleWebConfiguration } from './apple-web.js'
 import { aggregateAppleCleanup, type AppleCleanupPort, type AppleLifecycleStore, type AppleWebCleanupPort } from '@ezacto/core'
 import type { AccountDeletionStore, AccountClosureStore, AccountRetentionReviewStore, AccountDeletionStatusStore } from '@ezacto/core'
-import type { PaymentRunsService } from '@ezacto/core'
+import type { PaymentRunsService, ScheduledRunsService } from '@ezacto/core'
 import { workItemProviders, type WorkItemProviderId } from '@ezacto/core'
 import { installPaymentRunRoutes } from '@ezacto/api'
+import { installScheduledRunRoutes } from '@ezacto/api'
 import { installStaffPaymentRoutes } from '@ezacto/api'
 import type { StaffPaymentStore } from '@ezacto/core'
 import { installMyPaymentRoutes } from '@ezacto/api'
@@ -592,6 +593,7 @@ export interface RuntimeServices {
    */
   /** Administrator payment register, available without provider credentials. */
   paymentRuns?: PaymentRunsService
+  scheduledRuns?: ScheduledRunsService
   staffPayments?: StaffPaymentStore
   /** A person's own payment summary (issue 100). */
   myPayments?: MyPaymentsStore
@@ -895,6 +897,7 @@ export const createApp = (
             installAttachmentRoutes(api, services.attachments)
             installReportRoutes(api, services.reports)
             if (services.paymentRuns !== undefined) installPaymentRunRoutes(api, services.paymentRuns)
+            if (services.scheduledRuns !== undefined) installScheduledRunRoutes(api, services.scheduledRuns)
             if (services.staffPayments !== undefined) {
               installStaffPaymentRoutes(api, services.staffPayments)
             }

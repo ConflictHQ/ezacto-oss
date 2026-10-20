@@ -1,5 +1,6 @@
 import { installBackupDownloadMintRoute } from '../src/backup-download.js';
 import { installPaymentRunRoutes } from '../src/payment-runs.js';
+import { installScheduledRunRoutes } from '../src/scheduled-runs.js';
 import { installStaffPaymentRoutes } from '../src/staff-payments.js';
 import { installMyPaymentRoutes } from '../src/my-payments.js';
 import type { GeneralResourceRepository, TeamRepository } from "@ezacto/core";
@@ -428,6 +429,7 @@ const documentedApp = () =>
       installMyPaymentRoutes(api, { read: async () => null });
       installStaffPaymentRoutes(api, { configureProvider: async () => {}, report: async (month, as_of) => ({ month, as_of, rows: [], provider_settings: { default_provider: "wise", version: 0, events: [] } }), append: async () => {} });
       installPaymentRunRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
+      installScheduledRunRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
       installPayoutAccountRoutes(api, {
         listForUser: async () => [],
         link: async () => ({ outcome: "unknown_user" }),

@@ -113,6 +113,8 @@ export { createStaffPaymentStore } from './staff-payments.js'
 
 export { createPaymentRunsService } from './payment-runs.js'
 
+export { createScheduledRunsService } from './scheduled-runs.js'
+
 export * from './account-retention.js'
 
 export * from './account-deletion-requests.js'

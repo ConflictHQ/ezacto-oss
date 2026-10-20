@@ -1,7 +1,7 @@
 import type { ReminderProcessOptions } from '@ezacto/db'
 import { createRuntimeAppleWeb } from '../../worker/src/apple-web.js'
 import { createContainerAppleWebCustodyStore } from '@ezacto/db'
-import { createPaymentRunsService } from '@ezacto/db'
+import { createPaymentRunsService, createScheduledRunsService } from '@ezacto/db'
 import { createContainerBrandAssetStore, createContainerInstanceThemeStore } from '@ezacto/db'
 import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createStaffPaymentStore } from '@ezacto/db'
@@ -897,6 +897,7 @@ export const createContainerRuntime = async (
       ...(wise === null ? {} : { wise: wise.service }),
       ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
       paymentRuns,
+      scheduledRuns: createScheduledRunsService(drizzle),
       staffPayments: createStaffPaymentStore(drizzle),
       myPayments: createMyPaymentsStore(drizzle),
       payoutAccounts: (() => {
