@@ -2262,6 +2262,19 @@ const invoiceDocumentPreferenceOperations: ApiContractOperation[] = [
       query("detail", { type: "string", enum: ["detailed", "summary"] }),
     ],
   },
+  // Billed hours against the entries the invoice claims (issue 924): per
+  // project and whole invoice, within a rounding tolerance. Read with the
+  // invoice's own authority, like the report it checks.
+  {
+    method: "get",
+    path: "/api/v1/invoices/:id/hours-reconciliation",
+    operationId: "getInvoiceHoursReconciliation",
+    summary: "Compare the hours an invoice bills with the time entries it claims",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "InvoiceHoursReconciliationEnvelope",
+    parameters: [path("id")],
+  },
 ];
 
 const payoutAccountOperations: ApiContractOperation[] = [
@@ -3643,6 +3656,10 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...clientRateCardOperations,
 ];
 
+const reconciliationStatusSchema: JsonSchema = {
+  type: "string",
+  enum: ["matched", "billed_below_linked", "billed_above_linked"],
+};
 const nullable = (schema: JsonSchema): JsonSchema => ({
   anyOf: [schema, { type: "null" }],
 });
@@ -10613,6 +10630,73 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           attach_journal: { oneOf: [{ type: "string", enum: ["detailed", "summary"] }, { type: "boolean" }] },
           // The PDF alone until somebody chooses otherwise.
           journal_formats: reference("JournalFormats"),
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  InvoiceHoursReconciliationEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: [
+          "invoice_id",
+          "linked_seconds",
+          "billed_seconds",
+          "difference_seconds",
+          "status",
+          "tolerance_seconds",
+          "projects",
+          "not_compared",
+        ],
+        properties: {
+          invoice_id: integerSchema,
+          linked_seconds: signedIntegerSchema,
+          billed_seconds: signedIntegerSchema,
+          difference_seconds: signedIntegerSchema,
+          status: reconciliationStatusSchema,
+          tolerance_seconds: { type: "integer", minimum: 0 },
+          projects: {
+            type: "array",
+            items: {
+              type: "object",
+              required: [
+                "project_id",
+                "project_name",
+                "linked_seconds",
+                "billed_seconds",
+                "difference_seconds",
+                "status",
+              ],
+              properties: {
+                project_id: integerSchema,
+                project_name: nullable({ type: "string" }),
+                linked_seconds: signedIntegerSchema,
+                billed_seconds: signedIntegerSchema,
+                difference_seconds: signedIntegerSchema,
+                status: reconciliationStatusSchema,
+              },
+              additionalProperties: false,
+            },
+          },
+          // Lines with no project, left out of every figure above.
+          not_compared: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["line_id", "position", "description", "quantity"],
+              properties: {
+                line_id: integerSchema,
+                position: { type: "integer", minimum: 0 },
+                description: nullable({ type: "string" }),
+                quantity: { type: "number" },
+              },
+              additionalProperties: false,
+            },
+          },
         },
         additionalProperties: false,
       },

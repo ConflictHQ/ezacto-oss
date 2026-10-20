@@ -17,6 +17,7 @@ import type {
   InvoiceSendingPort,
   InvoiceSendingService,
   InvoiceHoursReportService,
+  InvoiceHoursReconciliationService,
   ThankYouPreferenceService,
   ReminderSettingsService,
   NotificationSettingsService,
@@ -92,6 +93,7 @@ import {
   installInvoiceDocumentPreferenceRoutes,
   installInvoiceSendingRoutes,
   installInvoiceHoursReportRoutes,
+  installInvoiceHoursReconciliationRoutes,
   installThankYouPreferenceRoutes,
   installReminderSettingsRoutes,
   installNotificationSettingsRoutes,
@@ -520,6 +522,8 @@ export interface RuntimeServices {
   invoiceDocuments?: InvoiceDocumentPort
   /** The work journal as a file on demand (issue 647); both entries compose it. */
   invoiceHoursReport?: InvoiceHoursReportService
+  /** Billed hours against the entries an invoice claims (issue 924). */
+  invoiceHoursReconciliation?: InvoiceHoursReconciliationService
   thankYouPreference?: ThankYouPreferenceService
   /** The organisation's default payment reminder policy (issue 801). */
   reminderSettings?: ReminderSettingsService
@@ -930,6 +934,12 @@ export const createApp = (
             }
             if (services.invoiceHoursReport !== undefined) {
               installInvoiceHoursReportRoutes(api, services.invoiceHoursReport)
+            }
+            if (services.invoiceHoursReconciliation !== undefined) {
+              installInvoiceHoursReconciliationRoutes(
+                api,
+                services.invoiceHoursReconciliation,
+              )
             }
             if (services.recurringRepair !== undefined) {
               installRecurringRepairRoutes(api, services.recurringRepair, () =>

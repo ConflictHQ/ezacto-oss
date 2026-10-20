@@ -353,6 +353,7 @@ export {
   type AttachDecision,
   type AttachedDocument,
 } from './invoice-documents.js'
+export { readInvoiceHoursReconciliation } from './invoice-hours-reconciliation.js'
 export {
   clientInvoiceExtraKinds,
   readClientInvoiceExtras,

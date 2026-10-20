@@ -126,6 +126,10 @@ export {
   type InvoiceHoursReportService,
 } from './invoice-hours-report.js'
 export {
+  installInvoiceHoursReconciliationRoutes,
+  type InvoiceHoursReconciliationService,
+} from './invoice-hours-reconciliation.js'
+export {
   installInvoiceTimeClaimRoutes,
   type InvoiceTimeClaimService,
   type ReleaseTimeOutcome,

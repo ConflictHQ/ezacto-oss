@@ -25070,6 +25070,75 @@
         ]
       }
     },
+    "/api/v1/invoices/{id}/hours-reconciliation": {
+      "get": {
+        "operationId": "getInvoiceHoursReconciliation",
+        "summary": "Compare the hours an invoice bills with the time entries it claims",
+        "tags": [
+          "money"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceHoursReconciliationEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoices/:id/hours-reconciliation",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/settings/invoice-defaults": {
       "get": {
         "operationId": "getInvoiceDefaults",
@@ -50035,6 +50104,140 @@
               },
               "journal_formats": {
                 "$ref": "#/components/schemas/JournalFormats"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceHoursReconciliationEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "invoice_id",
+              "linked_seconds",
+              "billed_seconds",
+              "difference_seconds",
+              "status",
+              "tolerance_seconds",
+              "projects",
+              "not_compared"
+            ],
+            "properties": {
+              "invoice_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "linked_seconds": {
+                "type": "integer"
+              },
+              "billed_seconds": {
+                "type": "integer"
+              },
+              "difference_seconds": {
+                "type": "integer"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "matched",
+                  "billed_below_linked",
+                  "billed_above_linked"
+                ]
+              },
+              "tolerance_seconds": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "projects": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "project_id",
+                    "project_name",
+                    "linked_seconds",
+                    "billed_seconds",
+                    "difference_seconds",
+                    "status"
+                  ],
+                  "properties": {
+                    "project_id": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "project_name": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "linked_seconds": {
+                      "type": "integer"
+                    },
+                    "billed_seconds": {
+                      "type": "integer"
+                    },
+                    "difference_seconds": {
+                      "type": "integer"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "matched",
+                        "billed_below_linked",
+                        "billed_above_linked"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "not_compared": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "line_id",
+                    "position",
+                    "description",
+                    "quantity"
+                  ],
+                  "properties": {
+                    "line_id": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "position": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "description": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "quantity": {
+                      "type": "number"
+                    }
+                  },
+                  "additionalProperties": false
+                }
               }
             },
             "additionalProperties": false

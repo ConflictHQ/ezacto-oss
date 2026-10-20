@@ -4313,6 +4313,31 @@ export type OrganizationInvoiceDocumentsEnvelope = {
 };
 };
 
+export type InvoiceHoursReconciliationEnvelope = {
+  "data": {
+  "invoice_id": number;
+  "linked_seconds": number;
+  "billed_seconds": number;
+  "difference_seconds": number;
+  "status": "matched" | "billed_below_linked" | "billed_above_linked";
+  "tolerance_seconds": number;
+  "projects": Array<{
+  "project_id": number;
+  "project_name": string | null;
+  "linked_seconds": number;
+  "billed_seconds": number;
+  "difference_seconds": number;
+  "status": "matched" | "billed_below_linked" | "billed_above_linked";
+}>;
+  "not_compared": Array<{
+  "line_id": number;
+  "position": number;
+  "description": string | null;
+  "quantity": number;
+}>;
+};
+};
+
 export type ReleasedTimeEnvelope = {
   "data": {
   "invoice_id": number;
@@ -7665,6 +7690,15 @@ export class EzactoClient {
       query: args.query,
       signal: args.signal,
       binary: true,
+      headers,
+    });
+  }
+
+  async getInvoiceHoursReconciliation(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceHoursReconciliationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoiceHoursReconciliationEnvelope>("GET", "/api/v1/invoices/:id/hours-reconciliation".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
       headers,
     });
   }
