@@ -27,12 +27,12 @@ export interface InvoiceViewRouteService<Page> {
   download(token: string, now: string): Promise<{ filename: string; bytes: Uint8Array } | null>
 }
 
-export interface InvoiceViewRouteOptions<Page> {
+export interface InvoiceViewRouteOptions<Page, Bindings = unknown> {
   readonly service: InvoiceViewRouteService<Page>
   readonly clock: () => string
   /** Who is asking, for the allowance; never stored as given. */
   readonly clientKey: (request: Request) => string
-  readonly render: (page: Page, token: string) => string
+  readonly render: (page: Page, token: string, bindings: Bindings) => string | Promise<string>
   /** Headers the HTML page is served with (its content security policy among them). */
   readonly pageHeaders: Readonly<Record<string, string>>
 }
@@ -67,7 +67,7 @@ const headerFilename = (filename: string): string =>
 
 export const installInvoiceViewRoutes = <Bindings extends object, Page>(
   api: Hono<ApiContext<Bindings>>,
-  options: InvoiceViewRouteOptions<Page>,
+  options: InvoiceViewRouteOptions<Page, Bindings>,
 ): void => {
   /** The token, once the caller is within its allowance. */
   const admitted = async (
@@ -86,7 +86,7 @@ export const installInvoiceViewRoutes = <Bindings extends object, Page>(
     if (admission instanceof Response) return admission
     const page = await options.service.open(admission.token, now)
     if (page === null) return notFound()
-    return new Response(options.render(page, admission.token), {
+    return new Response(await options.render(page, admission.token, context.env), {
       status: 200,
       headers: {
         ...privateHeaders,

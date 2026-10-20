@@ -34,6 +34,7 @@ interface Surface {
 const SHELL = "apps/web/src/shell/render.ts";
 const PORTAL_ESTIMATE_REVIEW = "apps/web/src/portal-estimates/render.ts";
 const PORTAL_INVOICE = "apps/web/src/portal-invoice/render.ts";
+const PORTAL_BRAND = "apps/web/src/portal-brand.ts";
 
 const surfaces: readonly Surface[] = [
   { id: "shell-colours", status: "delivered", sources: [SHELL], anchor: "export const renderAppShell", reads: /INSTANCE_THEME_STYLESHEET_PATH/ },
@@ -83,15 +84,15 @@ const surfaces: readonly Surface[] = [
   },
   {
     id: "portal-estimate-review",
-    status: "gap",
-    sources: [PORTAL_ESTIMATE_REVIEW],
-    absent: /INSTANCE_THEME_STYLESHEET_PATH|wordmark|favicon|instance-theme/i,
+    status: "delivered",
+    sources: [PORTAL_ESTIMATE_REVIEW, PORTAL_BRAND],
+    reads: /INSTANCE_THEME_STYLESHEET_PATH[\s\S]*wordmarkLight|wordmarkLight[\s\S]*INSTANCE_THEME_STYLESHEET_PATH/,
   },
   {
     id: "portal-invoice",
-    status: "gap",
-    sources: [PORTAL_INVOICE],
-    absent: /INSTANCE_THEME_STYLESHEET_PATH|wordmark|favicon|instance-theme/i,
+    status: "delivered",
+    sources: [PORTAL_INVOICE, PORTAL_BRAND],
+    reads: /INSTANCE_THEME_STYLESHEET_PATH[\s\S]*wordmarkLight|wordmarkLight[\s\S]*INSTANCE_THEME_STYLESHEET_PATH/,
   },
   { id: "stripe-checkout", status: "external", sources: [] },
   { id: "native-apps", status: "none", sources: [] },

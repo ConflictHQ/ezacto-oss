@@ -1,3 +1,4 @@
+import { portalBrandHead, portalPaletteAttribute, portalWordmark, type PortalBrandChrome } from '../portal-brand.js'
 import { defaultTheme } from '../theme.js'
 
 /**
@@ -22,8 +23,11 @@ const escapeHtml = (value: string): string =>
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!,
   )
 
-export const renderPortalEstimatesPage = (options: { brand: string }): string => `<!doctype html>
-<html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="light">
+export const renderPortalEstimatesPage = (options: {
+  brand: string
+  chrome?: PortalBrandChrome
+}): string => `<!doctype html>
+<html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="light"${portalPaletteAttribute(options.chrome)}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -31,11 +35,12 @@ export const renderPortalEstimatesPage = (options: { brand: string }): string =>
   <meta name="referrer" content="no-referrer">
   <title>Your estimates — ${escapeHtml(options.brand)}</title>
   <link rel="stylesheet" href="/assets/ezacto.css">
-  <script type="module" src="/assets/portal-estimates.js"></script>
+${portalBrandHead(options.chrome)}  <script type="module" src="/assets/portal-estimates.js"></script>
 </head>
 <body>
   <main class="portal-estimates" data-portal-estimates>
     <header class="portal-estimates-header">
+      ${portalWordmark(options.chrome, options.brand)}
       <p class="eyebrow">${escapeHtml(options.brand)}</p>
       <h1 id="portal-estimates-heading" tabindex="-1" data-portal-heading>Your estimates</h1>
     </header>
