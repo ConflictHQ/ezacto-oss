@@ -2,7 +2,7 @@ import type { ReminderProcessOptions } from '@ezacto/db/d1'
 import { createRuntimeAppleWeb } from './apple-web.js'
 import { createD1AppleWebCustodyStore } from '@ezacto/db/d1'
 import { captureException } from '@sentry/cloudflare'
-import { createPaymentRunsService } from '@ezacto/db/d1'
+import { createPaymentRunsService, createScheduledRunsService } from '@ezacto/db/d1'
 import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createStaffPaymentStore } from '@ezacto/db/d1'
 import { createMyPaymentsStore } from '@ezacto/db/d1'
@@ -1425,6 +1425,7 @@ export const createRuntimeServices = async (
           }),
         }),
     paymentRuns,
+    scheduledRuns: createScheduledRunsService(drizzle),
     staffPayments: createStaffPaymentStore(drizzle),
     myPayments: createMyPaymentsStore(drizzle),
     payoutAccounts: (() => {
