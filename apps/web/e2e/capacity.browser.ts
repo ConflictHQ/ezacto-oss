@@ -16,7 +16,8 @@ if (
  * Resource planning, slice 2 (issue 1007): the capacity view is a read-only
  * person-by-week grid under the shell. Nothing is planned on a fresh instance,
  * so every row reads zero planned against that person's capacity and nothing is
- * flagged, and the page offers nothing that edits a plan.
+ * flagged, and the grid offers nothing that edits a plan. An administrator also
+ * gets the entry forms beneath it.
  */
 test('[e2e:capacity] shows the signed-in person against their weekly capacity, read-only', async ({
   page,
@@ -42,8 +43,11 @@ test('[e2e:capacity] shows the signed-in person against their weekly capacity, r
   await expect(grid).not.toContainText('Over-allocated')
   await expect(page.locator('[data-capacity-status]')).toHaveText('')
 
-  // Read-only: nothing on the page edits a plan.
-  await expect(workspace.locator('input, textarea, select, form, dialog')).toHaveCount(0)
+  // The grid itself is read-only: nothing in it edits a plan. Entry lives in
+  // the administrator forms below it, and the fixture signs in as the owner.
+  await expect(grid.locator('input, textarea, select, form, dialog')).toHaveCount(0)
+  await expect(page.locator('[data-planning-allocation-form]')).toBeVisible()
+  await expect(page.locator('[data-planning-timeoff-form]')).toBeVisible()
 
   await page.getByRole('button', { name: 'Later weeks' }).click()
   await expect(rows.first()).toBeVisible()
