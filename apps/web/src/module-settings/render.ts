@@ -187,6 +187,17 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p class="form-result" data-settings-backup-status role="status" aria-live="polite">Loading backup status…</p>
       <p class="form-result settings-backup-alarm" data-settings-backup-alarm role="status" aria-live="polite" hidden></p>
       <dl class="settings-facts" data-settings-backup-facts hidden></dl>
+      <div class="settings-form" data-settings-backup-download hidden>
+        <p class="hint">The download is a complete copy of the database. It contains password hashes and authenticator seeds, so treat the file and the link like a credential. The link works once and stops working after ten minutes.</p>
+        <label data-backup-download-code-row hidden>Verification code
+          <input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="64" data-backup-download-code>
+        </label>
+        <button class="primary-action" type="button" data-backup-download-mint>Download latest backup</button>
+        <p class="form-result" data-backup-download-result role="status" aria-live="polite"></p>
+        <label data-backup-download-link-row hidden>Download link
+          <input type="text" readonly data-backup-download-link>
+        </label>
+      </div>
       <div class="activity-log-toolbar" data-settings-backup-controls hidden>
         <label for="ez-backup-status-filter">Result
           <select id="ez-backup-status-filter" data-log-filter="status">
