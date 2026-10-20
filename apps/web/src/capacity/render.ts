@@ -2,8 +2,8 @@ import { iconMarkup } from '../components/icons.js'
 
 /**
  * The capacity screen (issue 1007, slice 2): planned hours against capacity and
- * tracked time, person by week. Read-only by design; there is no control here
- * that changes a plan.
+ * tracked time, person by week. The page itself carries no control; the
+ * controller gives an administrator the entry section below.
  */
 export const renderCapacityPage = (view?: string): string => `
   <main class="app-content capacity-workspace page--grid" data-capacity-page${view === 'capacity' ? '' : ' hidden'}>
@@ -20,5 +20,43 @@ export const renderCapacityPage = (view?: string): string => `
     <p class="form-result capacity-status" data-capacity-status role="status" aria-live="polite">Loading capacity…</p>
     <div class="capacity-grid" data-capacity-grid></div>
     <button type="button" data-capacity-retry hidden>Retry loading capacity</button>
+    <div data-capacity-planning hidden></div>
   </main>
+`
+
+/** The administrator's entry forms and the rows they change (issue 1007). */
+export const renderPlanningSection = (): string => `
+  <section class="capacity-planning" aria-label="Plan entry">
+    <h2>Allocations</h2>
+    <form class="capacity-form" data-planning-allocation-form novalidate>
+      <input type="hidden" name="id">
+      <label>Person <select name="user_id" required></select></label>
+      <label>Project <select name="project_id" required></select></label>
+      <label>From <input type="date" name="start_date" required></label>
+      <label>To <input type="date" name="end_date" required></label>
+      <label>Hours per week <input type="text" inputmode="decimal" name="hours" required></label>
+      <button type="submit" data-planning-allocation-save>Add allocation</button>
+      <button type="button" data-planning-allocation-cancel hidden>Cancel edit</button>
+    </form>
+    <p class="form-result" data-planning-allocation-status role="status" aria-live="polite"></p>
+    <div data-planning-allocations></div>
+    <h2>Time off</h2>
+    <form class="capacity-form" data-planning-timeoff-form novalidate>
+      <input type="hidden" name="id">
+      <label>Person <select name="user_id" required></select></label>
+      <label>Kind <select name="kind" required>
+        <option value="vacation">Vacation</option>
+        <option value="sick">Sick</option>
+        <option value="holiday">Holiday</option>
+        <option value="other">Other</option>
+      </select></label>
+      <label>From <input type="date" name="start_date" required></label>
+      <label>To <input type="date" name="end_date" required></label>
+      <label>Hours per day (blank for whole days) <input type="text" inputmode="decimal" name="hours"></label>
+      <button type="submit" data-planning-timeoff-save>Add time off</button>
+      <button type="button" data-planning-timeoff-cancel hidden>Cancel edit</button>
+    </form>
+    <p class="form-result" data-planning-timeoff-status role="status" aria-live="polite"></p>
+    <div data-planning-timeoff></div>
+  </section>
 `
