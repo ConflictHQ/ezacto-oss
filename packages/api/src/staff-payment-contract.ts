@@ -62,6 +62,30 @@ export const staffPaymentSchemas = {
       },
     }),
   }),
+  PaymentReconciliationEnvelope: object({
+    data: object({
+      month: string,
+      currency: string,
+      completed: bool,
+      people: {
+        type: 'array',
+        items: object({
+          user_id: integer,
+          name: string,
+          proposed_cents: integer,
+          confirmed_cents: nullable(integer),
+          status: { type: 'string', enum: ['new', 'converged', 'differs', 'attention'] },
+          exceptions: {
+            type: 'array',
+            items: object({
+              code: { type: 'string', enum: ['missing_rate', 'changed_source'] },
+              entry_ids: { type: 'array', items: integer },
+            }),
+          },
+        }),
+      },
+    }),
+  }),
   ConfirmPaymentActuals: object({
     id: string,
     user_id: integer,
@@ -263,6 +287,17 @@ export const staffPaymentOperations: readonly ApiContractOperation[] = [
     tag: 'staff-payments',
     responseStatus: 200,
     responseSchema: 'PaymentActualsEnvelope',
+    sessionOnly: true,
+    parameters: [{ name: 'month', location: 'query', schema: string }],
+  },
+  {
+    method: 'get',
+    path: '/api/v1/staff-payments/reconciliation',
+    operationId: 'getPaymentReconciliation',
+    summary: 'Propose contractor earnings for a work month with missing-rate and changed-source exceptions',
+    tag: 'staff-payments',
+    responseStatus: 200,
+    responseSchema: 'PaymentReconciliationEnvelope',
     sessionOnly: true,
     parameters: [{ name: 'month', location: 'query', schema: string }],
   },

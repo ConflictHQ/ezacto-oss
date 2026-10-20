@@ -81,6 +81,25 @@ export const installStaffPaymentRoutes = <Bindings extends object>(
       return actualsError(error)
     }
   })
+  api.get('/staff-payments/reconciliation', async (context) => {
+    const month = context.req.query('month') ?? previousPaymentMonth(new Date().toISOString())
+    if (!validPaymentMonth(month)) invalid('month', 'Choose a valid work month.')
+    if (!store.reconciliation)
+      throw new ApiError({
+        status: 503,
+        code: 'unavailable',
+        message: 'Reconciliation is unavailable.',
+      })
+    try {
+      return context.json(
+        { data: await store.reconciliation(month, new Date().toISOString()) },
+        200,
+        { 'cache-control': 'no-store' },
+      )
+    } catch (error) {
+      return actualsError(error)
+    }
+  })
   api.post('/staff-payments/actuals', async (context) => {
     const body = await readObjectBody(context)
     if (
