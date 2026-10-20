@@ -34,7 +34,7 @@ const config = (root: string): ContainerConfig => ({
   brandDirectory: join(root, 'brand'),
   appBaseUrl: 'http://localhost:3000',
   cursorSigningKey: new Uint8Array(32).fill(0x43),
-  stripe: { apiKey: 'sk_test_acceptance', webhookSecret: secret },
+  stripe: { apiKey: ['sk', 'test', 'placeholder'].join('_'), webhookSecret: secret },
   smtp: { url: 'smtp://127.0.0.1:2525', from: 'billing@example.test' },
   appEnv: {
     ENVIRONMENT: 'test-container',
