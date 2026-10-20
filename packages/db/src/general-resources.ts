@@ -604,7 +604,7 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
   async create(kind, input, now, viewer) {
     const definition = definitions[kind]
     for (const field of Object.keys(input)) {
-      if (definition.columns[field] === undefined)
+      if (!Object.hasOwn(definition.columns, field))
         throw new GeneralResourceError(
           'invalid_input',
           `${field} is not accepted by the repository.`,
@@ -819,7 +819,7 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
     const definition = definitions[kind]
     if (kind === 'users') await assertResourceAccess(database, kind, id, viewer)
     for (const field of Object.keys(input)) {
-      if (definition.columns[field] === undefined)
+      if (!Object.hasOwn(definition.columns, field))
         throw new GeneralResourceError(
           'invalid_input',
           `${field} is not accepted by the repository.`,

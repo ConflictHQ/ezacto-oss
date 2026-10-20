@@ -229,3 +229,19 @@ volume's sole reference, and refuses a non-empty or already-attached target.
 It is a complete recovery mechanism for this one-container layout, but it is not
 the portable D18 logical export promised by issue #28: it has no per-table CSV
 files and is not a Worker-to-container escape bundle.
+
+## Operational notes
+
+- **Backups share attachment storage.** Attachments live on the same volume as
+  `db.sqlite`, so a backup written to that volume is lost with the data it
+  protects. Write bundles to a different disk and sync them off-host (see
+  [RESTORE.md](../RESTORE.md)).
+- **Plain HTTP cannot sign in.** Session cookies are set `Secure`, so a browser
+  will not send them over `http://`. Terminate HTTPS at the reverse proxy and
+  browse the HTTPS address, not `http://127.0.0.1:3000`.
+- **Admin email templates are privileged.** Whoever can edit email templates
+  controls the text of messages sent from your domain, including sign-in and
+  password-reset mail. Grant that to administrators you trust with that power.
+- **Account linking trusts configured providers' verified email.** A sign-in
+  provider that reports an email as verified is linked to the existing account
+  with that email. Configure only providers whose email verification you trust.

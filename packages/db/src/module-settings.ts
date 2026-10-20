@@ -24,6 +24,11 @@ interface RawModulesRow {
   activity_log: number
 }
 
+const assertKnownModule = (module: string): void => {
+  if (!(knownModules as readonly string[]).includes(module))
+    throw new Error(`Unknown module: ${module}`)
+}
+
 const nativeClient = (database: ModuleSettingsDatabase): NativeClient =>
   (database as ModuleSettingsDatabase & { $client: NativeClient }).$client
 
@@ -67,6 +72,7 @@ export class ModuleSettingsRepository {
   }
 
   async get(module: ModuleName): Promise<boolean> {
+    assertKnownModule(module)
     const row = await first<{ enabled: number }>(
       this.#client,
       `SELECT COALESCE(json_extract(modules, '$.${module}'), ${module === 'activity_log' ? 1 : 0}) AS enabled
@@ -80,6 +86,7 @@ export class ModuleSettingsRepository {
     enabled: boolean,
     updatedAt: string,
   ): Promise<readonly ModuleState[]> {
+    assertKnownModule(module)
     const sqlValue = enabled ? 'json(\'true\')' : 'json(\'false\')'
     const updateSql = `UPDATE organizations
       SET modules = json_set(modules, '$.${module}', ${sqlValue}),
