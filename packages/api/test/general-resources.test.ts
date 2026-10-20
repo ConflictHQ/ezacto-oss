@@ -342,6 +342,18 @@ for (const [runtime, createHarness] of factories) {
     }, 20_000);
     afterEach(async () => harness.close());
 
+    it('[issue 740] refuses inherited property names as fields with 422', async () => {
+      for (const field of ['constructor', 'toString', '__proto__']) {
+        const body = `{"name":"Kestrel","${field}":"x"}`;
+        const refused = await harness.request('/clients', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body,
+        });
+        expect(refused.status, field).toBe(422);
+      }
+    });
+
     it('[money #522] refuses a currency that is not a currency code', async () => {
       // The generator matches billable time with
       // `upper(coalesce(project.billing_currency, client.currency))` against

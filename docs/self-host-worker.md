@@ -216,3 +216,18 @@ bundle to R2 (`backups/<date>/`): rows only, no schema, no attachment bytes, and
 no command reads that format back yet. Read [RESTORE.md](../RESTORE.md) before an
 incident, including how the Worker and container bundles differ and what is not
 yet synced off-platform.
+
+## Operational notes
+
+- **Backups share the attachments bucket.** The nightly CSV bundle
+  (`backups/<date>/`) is written to the same R2 bucket as attachments. Anyone
+  or anything with write access to that bucket can alter or delete both, and a
+  bucket lifecycle rule or deletion removes backups and attachments together.
+- **Plain HTTP cannot sign in.** Session cookies are set `Secure`, so a browser
+  will not send them over `http://`. Serve the Worker over HTTPS only.
+- **Admin email templates are privileged.** Whoever can edit email templates
+  controls the text of messages sent from your domain, including sign-in and
+  password-reset mail. Grant that to administrators you trust with that power.
+- **Account linking trusts configured providers' verified email.** A sign-in
+  provider that reports an email as verified is linked to the existing account
+  with that email. Configure only providers whose email verification you trust.

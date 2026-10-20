@@ -567,7 +567,9 @@ const parseMutation = async <Bindings extends object>(
   const errors: FieldError[] = [];
   const output: Record<string, GeneralValue> = {};
   for (const field of Object.keys(body)) {
-    const spec = definition.fields[field];
+    const spec = Object.hasOwn(definition.fields, field)
+      ? definition.fields[field]
+      : undefined;
     if (spec === undefined) {
       errors.push({
         field,
