@@ -1,4 +1,5 @@
 import type { PaymentActuals, ConfirmPaymentActuals } from './payment-actuals.js'
+import type { PaymentReconciliation } from './payment-reconciliation.js'
 import type {
   AllocatePayment,
   PaymentAllocationPreview,
@@ -89,6 +90,7 @@ export interface StaffPaymentReport {
 }
 export interface StaffPaymentStore {
   actuals?(month: string, today: string): Promise<PaymentActuals>
+  reconciliation?(month: string, today: string): Promise<PaymentReconciliation>
   confirmActuals?(command: ConfirmPaymentActuals, actorId: number, requestId: string, now: string): Promise<void>
   previewAllocation?(command: AllocatePayment): Promise<PaymentAllocationPreview>
   allocatePayment?(command: AllocatePayment, actorId: number, requestId: string, now: string): Promise<void>

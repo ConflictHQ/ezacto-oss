@@ -49,6 +49,7 @@ export * from './my-payments.js'
 export * from './payment-runs.js'
 
 export * from './payment-actuals.js'
+export * from './payment-reconciliation.js'
 
 export * from './account-retention.js'
 
