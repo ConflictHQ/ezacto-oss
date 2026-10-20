@@ -391,6 +391,7 @@ export const createModuleSettingsController = (
   const backupAlarm = required<HTMLElement>('[data-settings-backup-alarm]')
   const backupFacts = required<HTMLElement>('[data-settings-backup-facts]')
   const backupRuns = required<HTMLElement>('[data-settings-backup-runs]')
+  const backupDownload = required<HTMLElement>('[data-settings-backup-download]')
   const backupControls = required<HTMLElement>('[data-settings-backup-controls]')
   const backupRunsStatus = required<HTMLElement>('[data-settings-backup-runs-status]')
   const brandStatus = required<HTMLElement>('[data-settings-brand-status]')
@@ -1923,6 +1924,67 @@ export const createModuleSettingsController = (
     return backupLog
   }
 
+  /**
+   * Mints the single-use download link (issue 39). The server decides whether
+   * a code is needed; the field appears when it says so, rather than the page
+   * guessing who has an authenticator enrolled.
+   */
+  const backupDownloadMint = required<HTMLButtonElement>('[data-backup-download-mint]')
+  const backupDownloadCode = required<HTMLInputElement>('[data-backup-download-code]')
+  const backupDownloadCodeRow = required<HTMLElement>('[data-backup-download-code-row]')
+  const backupDownloadResult = required<HTMLElement>('[data-backup-download-result]')
+  const backupDownloadLink = required<HTMLInputElement>('[data-backup-download-link]')
+  const backupDownloadLinkRow = required<HTMLElement>('[data-backup-download-link-row]')
+  const backupDownloadErrorCode = (error: unknown): string | null => {
+    if (!(error instanceof EzactoApiError) || typeof error.body !== 'object' || error.body === null) {
+      return null
+    }
+    const detail: unknown = Reflect.get(error.body, 'error')
+    if (typeof detail !== 'object' || detail === null) return null
+    const code: unknown = Reflect.get(detail, 'code')
+    return typeof code === 'string' ? code : null
+  }
+  const backupDownloadFailure = (error: unknown): string => {
+    const code = backupDownloadErrorCode(error)
+    if (code === 'two_factor_code_required') {
+      backupDownloadCodeRow.hidden = false
+      backupDownloadCode.focus()
+      return 'Enter a current verification code to create the link.'
+    }
+    if (code === 'invalid_two_factor_code') return 'That code is incorrect. Try again.'
+    if (code === 'two_factor_locked') return 'Too many incorrect codes. Wait a few minutes and try again.'
+    if (error instanceof EzactoApiError && error.status === 429) {
+      return 'Too many links requested. Try again in a minute.'
+    }
+    if (error instanceof EzactoApiError && error.status === 404) {
+      return 'There is no completed backup to download.'
+    }
+    if (error instanceof EzactoApiError && error.status === 403) {
+      return 'Only administrators can create a download link.'
+    }
+    return 'The link could not be created. Try again.'
+  }
+  const mintBackupDownload = async (): Promise<void> => {
+    if (api.createBackupDownloadLink === undefined) return
+    backupDownloadMint.disabled = true
+    backupDownloadLinkRow.hidden = true
+    backupDownloadLink.value = ''
+    backupDownloadResult.textContent = 'Creating the link…'
+    const code = backupDownloadCode.value.trim()
+    try {
+      const link = await api.createBackupDownloadLink(code === '' ? {} : { code })
+      backupDownloadCode.value = ''
+      backupDownloadLink.value = new URL(link.url, globalThis.location.origin).href
+      backupDownloadLinkRow.hidden = false
+      backupDownloadResult.textContent = `Link created. It works once and expires at ${new Date(link.expires_at).toLocaleString()}. It will not be shown again.`
+    } catch (error) {
+      backupDownloadResult.textContent = backupDownloadFailure(error)
+    } finally {
+      backupDownloadMint.disabled = false
+    }
+  }
+  backupDownloadMint.addEventListener('click', () => void mintBackupDownload())
+
   const loadBackups = async (identity: Whoami, active: ActiveSession): Promise<void> => {
     if (identity.profile !== 'administrator') {
       backupStatus.textContent = 'Backups are visible to administrators only.'
@@ -1971,6 +2033,15 @@ export const createModuleSettingsController = (
             'No backup has ever completed, so there is nothing to restore from.'
         }
         backupStatus.textContent = ''
+        if (api.createBackupDownloadLink !== undefined) {
+          backupDownload.hidden = false
+          const none = status.last_completed === null
+          backupDownloadMint.disabled = none
+          if (none) {
+            backupDownloadResult.textContent =
+              'There is no completed backup yet, so there is nothing to download.'
+          }
+        }
         if (api.listBackupRuns === undefined) {
           backupRuns.replaceChildren(backupRunTable(status.recent_runs))
           backupRuns.hidden = false

@@ -1,6 +1,7 @@
 import {
   EzactoApiError,
   type BackupRun,
+  type BackupDownloadLinkEnvelope,
   type BackupStatusEnvelope,
   type EmailHealth,
   type InvoiceRecipient,
@@ -30,6 +31,8 @@ import { assertInvoiceAddressCount, parseInvoiceAddressLines } from '../invoice-
  */
 /** The envelope's payload, named so the port does not spell the shape twice. */
 export type BackupStatus = BackupStatusEnvelope['data']
+/** A freshly minted download link; the url is a bearer secret and is shown once. */
+export type BackupDownloadLink = BackupDownloadLinkEnvelope['data']
 
 export type { BackupRun }
 
@@ -315,6 +318,11 @@ export interface CompanySettingsApi {
    * backups are the operator's filesystem, where `RESTORE.md` is the contract.
    */
   getBackupStatus?(signal?: AbortSignal): Promise<BackupStatus>
+  /** Mints a single-use download link for the latest completed run (issue 39). */
+  createBackupDownloadLink?(
+    input: { readonly code?: string },
+    signal?: AbortSignal,
+  ): Promise<BackupDownloadLink>
   /** The organization's timezone, which is how the backup history says when a run started. */
   getTimesheetLockPolicy?(signal?: AbortSignal): Promise<{ readonly timezone: string }>
   /** The whole history behind the status, a page at a time (issue 929). */
