@@ -43,6 +43,7 @@ import {
   createTimesheetLockPolicyRepository,
   createTeamRepository,
   createD1EmailLogStore,
+  createD1EmailFeedbackLedger,
   createD1EmailConfigurationStore,
   createD1PasswordAuthService,
   createD1SessionStore,
@@ -52,6 +53,13 @@ import {
   DrizzleCalendarProposalRepository,
   DrizzleWorkItemRepository,
   DrizzleTrackedResourceRepository,
+  allowBackupDownloadRequest,
+  consumeBackupDownloadLink,
+  getBackupRun,
+  latestCompletedBackupRunId,
+  mintBackupDownloadLink,
+  openBackupArchive,
+  r2BackupSource,
   countBackupRuns,
   getBackupRunsSnapshot,
   getLatestBackupRuns,
@@ -135,7 +143,7 @@ import {
   createIdempotentD1,
 } from "@ezacto/db/d1";
 import { createPortalSessionService, type BandClaimBackfillPort, type CostRateBackfillPort } from "@ezacto/api";
-import { deriveIdempotencySecret } from "@ezacto/api";
+import { deriveIdempotencySecret, emailBrandFrom, withEmailBrand } from "@ezacto/api";
 import {
   createApiSessionService,
   createCloudflareAccessSessionResolver,
@@ -159,6 +167,7 @@ import type {
 import {
   MailgunMailer,
   SenderIdentityUnavailableError,
+  createMailgunFeedbackService,
   SesMailer,
   configuredEmailSender,
   createRecipientAllowlistQueue,
@@ -169,7 +178,9 @@ import {
   EMAIL_LOG_KIND_TEMPLATES,
 } from "@ezacto/mailer";
 import { createInvoiceDocumentPort } from './invoice-documents.js';
-import type { RuntimeServices } from "./app.js";
+import type { AppEnv, RuntimeServices } from "./app.js";
+import { workerBrandAssetSurface } from "./brand-assets.js";
+import { workerInstanceThemeSurface } from "./instance-theme.js";
 import {
   cloudflareAccessConfig,
   DEMO_API_TOKEN_MAX_LIFETIME_MS,
@@ -615,6 +626,7 @@ type ProviderCredentials = Pick<
   | "BILL_REPLY_TO_USER_ID"
   | "STRIPE_API_KEY"
   | "STRIPE_WEBHOOK_SECRET"
+  | "MAILGUN_WEBHOOK_SIGNING_KEY"
   | "DEEL_TOKEN"
   | "DEEL_SYNC_START_DATE"
 >;
@@ -730,13 +742,28 @@ export const createRuntimeServices = async (
   const emailQueue: EmailQueue | undefined =
     env.EMAIL_QUEUE === undefined
       ? undefined
-      : mailDomains === null
-        ? createCloudflareEmailQueue(env.EMAIL_QUEUE)
-        : createRecipientAllowlistQueue(
-            createCloudflareEmailQueue(env.EMAIL_QUEUE),
-            emailLog,
-            mailDomains,
-          );
+      : withEmailBrand(
+          mailDomains === null
+            ? createCloudflareEmailQueue(env.EMAIL_QUEUE)
+            : createRecipientAllowlistQueue(
+                createCloudflareEmailQueue(env.EMAIL_QUEUE),
+                emailLog,
+                mailDomains,
+              ),
+          // HTML mail wears the instance header (#1011): read when each
+          // message is queued, so a changed logo or colour reaches the next send.
+          async () =>
+            env.APP_BASE_URL === undefined
+              ? null
+              : emailBrandFrom(
+                  {
+                    assets: await workerBrandAssetSurface.list(env as AppEnv),
+                    palette: (await workerInstanceThemeSurface.read(env as AppEnv))?.palette ?? null,
+                    organizationName: await organizationName(),
+                  },
+                  env.APP_BASE_URL,
+                ),
+        );
   const mailFrom = resolveMailFrom(env);
   const deploymentAuthMailer =
     !emailQueueReady || mailFrom === undefined
@@ -1103,6 +1130,37 @@ export const createRuntimeServices = async (
       createBillMirrorSubscriber(bill),
     ],
   });
+  const twoFactor = createTwoFactorService({
+    store: createD1TwoFactorStore(database),
+    accountName: async (userId) =>
+      (
+        await database
+          .prepare(
+            `SELECT address FROM user_emails
+               WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
+               ORDER BY is_primary DESC, id LIMIT 1`,
+          )
+          .bind(userId)
+          .first<{ address: string }>()
+      )?.address ?? `user-${userId}`,
+    issuer: env.BRAND_NAME === undefined || env.BRAND_NAME === "" ? "ezacto" : env.BRAND_NAME,
+    // The emailed second factor (issue 770). Its hash key is derived from the
+    // cursor signing key every deployment already has, so there is no new
+    // secret to provision, and it goes to the person's own verified address.
+    emailCodeKey: await deriveTwoFactorEmailCodeKey(cursorSigningKey),
+    emailAddress: async (userId) =>
+      (
+        await database
+          .prepare(
+            `SELECT address FROM user_emails
+               WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
+               ORDER BY is_primary DESC, id LIMIT 1`,
+          )
+          .bind(userId)
+          .first<{ address: string }>()
+      )?.address ?? null,
+  })
+
   return {
     bootstrap: (input) => bootstrapInstanceD1(database, input),
     enrollOwnerPassword: (input) =>
@@ -1265,36 +1323,7 @@ export const createRuntimeServices = async (
     // Unlike portal auth, the second factor is opt-in on nothing: it holds no
     // deployment secret to get wrong, and a factor no one can turn on is not a
     // safe default -- it is the feature missing.
-    twoFactor: createTwoFactorService({
-      store: createD1TwoFactorStore(database),
-      accountName: async (userId) =>
-        (
-          await database
-            .prepare(
-              `SELECT address FROM user_emails
-                 WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
-                 ORDER BY is_primary DESC, id LIMIT 1`,
-            )
-            .bind(userId)
-            .first<{ address: string }>()
-        )?.address ?? `user-${userId}`,
-      issuer: env.BRAND_NAME === undefined || env.BRAND_NAME === "" ? "ezacto" : env.BRAND_NAME,
-      // The emailed second factor (issue 770). Its hash key is derived from the
-      // cursor signing key every deployment already has, so there is no new
-      // secret to provision, and it goes to the person's own verified address.
-      emailCodeKey: await deriveTwoFactorEmailCodeKey(cursorSigningKey),
-      emailAddress: async (userId) =>
-        (
-          await database
-            .prepare(
-              `SELECT address FROM user_emails
-                 WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
-                 ORDER BY is_primary DESC, id LIMIT 1`,
-            )
-            .bind(userId)
-            .first<{ address: string }>()
-        )?.address ?? null,
-    }),
+    twoFactor,
     ...(twoFactorEmailCodeMailer === undefined
       ? {}
       : { twoFactorEmailCodes: twoFactorEmailCodeMailer }),
@@ -1337,6 +1366,31 @@ export const createRuntimeServices = async (
           }
         : {}),
     outbox,
+    // The signed download of a nightly bundle (issue 39). Mounted wherever
+    // backup status is, like it; a deployment with no bucket still answers, and
+    // every download is the same plain refusal because there is no bundle.
+    backupDownloads: {
+      origin: invoiceViewLinkOrigin(env.APP_BASE_URL),
+      allow: (scope: 'mint' | 'redeem', key: string, now: string) =>
+        allowBackupDownloadRequest(drizzle, scope, key, now),
+      latestCompletedRunId: () => latestCompletedBackupRunId(drizzle),
+      mint: (input: { backupRunId: number; userId: number; now: string }) =>
+        mintBackupDownloadLink(drizzle, input),
+      redeem: (token: string, now: string) => consumeBackupDownloadLink(drizzle, token, now),
+      openArchive: async (backupRunId: number) => {
+        if (env.ATTACHMENTS === undefined) throw new Error('no bucket holds the backups')
+        const run = await getBackupRun(database, backupRunId)
+        if (run === null) throw new Error('backup run not found')
+        return {
+          stream: await openBackupArchive(run, r2BackupSource(env.ATTACHMENTS)),
+          filename: `ezacto-backup-${run.started_at.slice(0, 10)}.zip`,
+        }
+      },
+      secondFactor: {
+        isEnrolled: (userId: number) => twoFactor.isEnrolled(userId),
+        verifyCode: (userId: number, code: string) => twoFactor.verifyCode(userId, code),
+      },
+    },
     backupStatus: {
       latestRuns: (limit: number) => getLatestBackupRuns(database, limit),
       runsSnapshot: () => getBackupRunsSnapshot(database),
@@ -1350,6 +1404,19 @@ export const createRuntimeServices = async (
     ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
     ...(wise === null ? {} : { wise: wise.service }),
     ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
+    // Mailgun's event webhook is composed only where the signing key is set.
+    // Without it the route is not mounted and answers 404, so an unsigned post
+    // is never read.
+    ...(credentials.MAILGUN_WEBHOOK_SIGNING_KEY === undefined ||
+    credentials.MAILGUN_WEBHOOK_SIGNING_KEY === ""
+      ? {}
+      : {
+          mailgunFeedback: createMailgunFeedbackService({
+            signingKey: credentials.MAILGUN_WEBHOOK_SIGNING_KEY,
+            log: emailLog,
+            ledger: createD1EmailFeedbackLedger(database),
+          }),
+        }),
     paymentRuns,
     staffPayments: createStaffPaymentStore(drizzle),
     myPayments: createMyPaymentsStore(drizzle),

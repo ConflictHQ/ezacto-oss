@@ -33,6 +33,15 @@ export {
   type BackupStatusRouteOptions,
 } from './backup-status.js'
 export {
+  BACKUP_DOWNLOAD_PATH,
+  installBackupDownloadMintRoute,
+  installBackupDownloadRedeemRoute,
+  type BackupDownloadOptions,
+  type BackupDownloadRedeemOptions,
+  type BackupDownloadSecondFactor,
+  type BackupDownloadService,
+} from './backup-download.js'
+export {
   installClientTreeRoutes,
   type ClientHierarchyNode,
   type ClientTreeReader,
@@ -77,6 +86,11 @@ export {
   type StoredBrandAsset,
 } from './brand-assets.js'
 export {
+  emailBrandFrom,
+  withEmailBrand,
+  type EmailBrandSource,
+} from './email-brand.js'
+export {
   installInstanceThemeRoutes,
   installInstanceThemeStylesheetRoute,
   instanceThemeCssVariable,
@@ -84,6 +98,7 @@ export {
   type InstanceThemeRecord,
   type InstanceThemeSurface,
 } from './instance-theme.js'
+export { installMailgunWebhookRoute } from './mailgun-webhook.js'
 export {
   installStripeRoutes,
   installStripeWebhookRoute,

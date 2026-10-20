@@ -682,6 +682,20 @@ export type BackupRunPage = {
   "page": CountedPageMetadata;
 };
 
+export type BackupDownloadLinkInput = {
+  "run_id"?: number;
+  "code"?: string;
+};
+
+export type BackupDownloadLinkEnvelope = {
+  "data": {
+  "id": number;
+  "run_id": number;
+  "url": string;
+  "expires_at": string;
+};
+};
+
 export type BackupStatusEnvelope = {
   "data": {
   "last_completed": BackupRun | null;
@@ -829,6 +843,23 @@ export type QuickBooksReconciliationEnvelope = {
   "quickbooks_paid_cents": number | null;
   "detail": string;
 }>;
+  "payment_divergences": Array<{
+  "quickbooks_payment_id": string;
+  "kind": "voided" | "deleted";
+  "quickbooks_updated_at": string;
+  "detected_at": string;
+  "receipts": Array<{
+  "payment_id": number;
+  "invoice_id": number;
+  "invoice_number": string;
+  "amount_cents": number;
+}>;
+}>;
+  "recovery": {
+  "cdc_cursor": string;
+  "last_run_at": string;
+  "last_outcome": "caught_up" | "failed" | "full_reconcile_needed";
+} | null;
 };
 };
 
@@ -7269,6 +7300,16 @@ export class EzactoClient {
 
     return this.request<BackupRunPage>("GET", "/api/v1/backup/runs", {
       query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createBackupDownloadLink(args: { body: BackupDownloadLinkInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<BackupDownloadLinkEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BackupDownloadLinkEnvelope>("POST", "/api/v1/backup/download-links", {
+      body: args.body,
       signal: args.signal,
       headers,
     });

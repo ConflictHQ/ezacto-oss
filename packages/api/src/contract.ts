@@ -1545,6 +1545,26 @@ const backupOperations: ApiContractOperation[] = [
       query("trigger", { type: "string", enum: ["nightly", "manual"] }),
     ],
   },
+  {
+    method: "post",
+    path: "/api/v1/backup/download-links",
+    operationId: "createBackupDownloadLink",
+    summary: "Create a single-use, ten-minute link that downloads a backup as one ZIP",
+    description:
+      "Administrator session only; an API token is refused. The backup carries " +
+      "credential hashes and authenticator seeds, so the link is a secret: " +
+      "it works once, expires in ten minutes, and the token in url is shown only " +
+      "in this response. Where the administrator has an authenticator enrolled, " +
+      "code must be a current authenticator or recovery code. run_id defaults to " +
+      "the latest completed run. Following the link answers 404 to anything that " +
+      "is not a live link, whatever the reason.",
+    tag: "backup",
+    responseStatus: 201,
+    responseSchema: "BackupDownloadLinkEnvelope",
+    requestSchema: "BackupDownloadLinkInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
 ];
 
 /**
@@ -4405,6 +4425,29 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   BackupRunPage: countedPage("BackupRun"),
+  BackupDownloadLinkInput: {
+    type: "object",
+    properties: { run_id: integerSchema, code: { type: "string", minLength: 1, maxLength: 64 } },
+    additionalProperties: false,
+  },
+  BackupDownloadLinkEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["id", "run_id", "url", "expires_at"],
+        properties: {
+          id: integerSchema,
+          run_id: integerSchema,
+          url: stringSchema,
+          expires_at: timestampSchema,
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
   BackupStatusEnvelope: {
     type: "object",
     required: ["data", "links"],
@@ -4665,7 +4708,14 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       data: {
         type: "object",
-        required: ["realm_id", "generated_at", "counts", "rows"],
+        required: [
+          "realm_id",
+          "generated_at",
+          "counts",
+          "rows",
+          "payment_divergences",
+          "recovery",
+        ],
         properties: {
           realm_id: stringSchema,
           generated_at: timestampSchema,
@@ -4719,6 +4769,57 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
               additionalProperties: false,
             },
           },
+          // Payments voided or deleted in QuickBooks that a receipt here came
+          // from (slice 3). The receipts are listed, never changed.
+          payment_divergences: {
+            type: "array",
+            items: {
+              type: "object",
+              required: [
+                "quickbooks_payment_id",
+                "kind",
+                "quickbooks_updated_at",
+                "detected_at",
+                "receipts",
+              ],
+              properties: {
+                quickbooks_payment_id: stringSchema,
+                kind: { type: "string", enum: ["voided", "deleted"] },
+                quickbooks_updated_at: timestampSchema,
+                detected_at: timestampSchema,
+                receipts: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    required: ["payment_id", "invoice_id", "invoice_number", "amount_cents"],
+                    properties: {
+                      payment_id: integerSchema,
+                      invoice_id: integerSchema,
+                      invoice_number: stringSchema,
+                      amount_cents: integerSchema,
+                    },
+                    additionalProperties: false,
+                  },
+                },
+              },
+              additionalProperties: false,
+            },
+          },
+          // How the change-data-capture catch-up last went; null until its
+          // first run has placed a cursor (slice 2).
+          recovery: nullable({
+            type: "object",
+            required: ["cdc_cursor", "last_run_at", "last_outcome"],
+            properties: {
+              cdc_cursor: timestampSchema,
+              last_run_at: timestampSchema,
+              last_outcome: {
+                type: "string",
+                enum: ["caught_up", "failed", "full_reconcile_needed"],
+              },
+            },
+            additionalProperties: false,
+          }),
         },
         additionalProperties: false,
       },

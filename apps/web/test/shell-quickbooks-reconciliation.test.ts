@@ -39,6 +39,8 @@ describe('QuickBooks reconciliation', () => {
   const report: QuickBooksReconciliationView = {
     generated_at: '2026-10-18T12:00:00.000Z',
     counts: { matched: 4, amount_differs: 1 },
+    payment_divergences: [],
+    recovery: null,
     rows: [
       {
         status: 'matched',
@@ -92,6 +94,36 @@ describe('QuickBooks reconciliation', () => {
     expect(table.textContent).toContain('450.00')
     expect(table.textContent).not.toContain('1001')
     // Nothing on a row corrects anything.
+    expect(table.querySelector('button')).toBeNull()
+  })
+
+  it('[browser #1013] lists a payment voided in QuickBooks and the state of catch-up', async () => {
+    await open({
+      getQuickBooksConnection: vi.fn(async () => connected),
+      getQuickBooksReconciliation: vi.fn(async () => ({
+        ...report,
+        rows: [report.rows[0]!],
+        counts: { matched: 4 },
+        payment_divergences: [
+          {
+            quickbooks_payment_id: '501',
+            kind: 'voided' as const,
+            receipts: [{ invoice_number: '1003', amount_cents: 30_000 }],
+          },
+        ],
+        recovery: { last_outcome: 'full_reconcile_needed' as const },
+      })),
+    })
+    const panel = document.querySelector<HTMLElement>('[data-quickbooks-reconcile-panel]')!
+    await vi.waitFor(() => expect(panel.hidden).toBe(false))
+    document.querySelector<HTMLButtonElement>('[data-quickbooks-reconcile]')!.click()
+    const result = document.querySelector<HTMLElement>('[data-quickbooks-reconcile-result]')!
+    await vi.waitFor(() => expect(result.textContent).toContain('1 to look at, 4 matched.'))
+    expect(result.textContent).toContain('older than 30 days')
+    const table = document.querySelector<HTMLElement>('[data-quickbooks-reconcile-table]')!
+    expect(table.textContent).toContain('1003')
+    expect(table.textContent).toContain('payment voided in QuickBooks')
+    expect(table.textContent).toContain('300.00')
     expect(table.querySelector('button')).toBeNull()
   })
 

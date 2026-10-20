@@ -89,6 +89,7 @@ export {
   type InvoiceBandClaim,
   type InvoiceGenerationService,
 } from './invoice-generation.js'
+export { createD1EmailFeedbackLedger } from './email-feedback-events.js'
 export {
   createD1EmailLogStore,
   type EmailLogStoreOptions,
@@ -393,6 +394,15 @@ export {
   type InstanceOwnerPasswordInput,
   type InstanceOwnerPasswordResult,
 } from './instance-bootstrap.js'
+export {
+  allowBackupDownloadRequest,
+  backupDownloadLinkExpiry,
+  consumeBackupDownloadLink,
+  latestCompletedBackupRunId,
+  mintBackupDownloadLink,
+  type ConsumedBackupDownloadLink,
+  type MintedBackupDownloadLink,
+} from './backup-download-links.js'
 export {
   BackupArchiveError,
   getBackupRun,

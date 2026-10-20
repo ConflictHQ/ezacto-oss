@@ -63,6 +63,14 @@ export interface QuickBooksReconciliationView {
     ezacto_amount_cents: number | null
     quickbooks_amount_cents: number | null
   }[]
+  /** Payments voided or deleted in QuickBooks that a receipt here came from. */
+  payment_divergences: readonly {
+    quickbooks_payment_id: string
+    kind: 'voided' | 'deleted'
+    receipts: readonly { invoice_number: string; amount_cents: number }[]
+  }[]
+  /** How the missed-webhook catch-up last went; null before its first run. */
+  recovery: { last_outcome: 'caught_up' | 'failed' | 'full_reconcile_needed' } | null
 }
 
 /** The palette as `/api/v1/settings/theme` reports it; null is the built-in theme. */

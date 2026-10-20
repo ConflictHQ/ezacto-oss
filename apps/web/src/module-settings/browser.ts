@@ -2133,25 +2133,55 @@ export const createModuleSettingsController = (
       .getQuickBooksReconciliation(active.signal)
       .then((report) => {
         active.present(() => {
-          const differing = report.rows.filter((row) => row.status !== 'matched')
-          const matched = report.counts['matched'] ?? 0
-          quickBooksReconcileResult.textContent =
-            differing.length === 0
-              ? `Everything agrees (${String(matched)} invoices matched).`
-              : `${String(differing.length)} to look at, ${String(matched)} matched.`
           const money = (cents: number | null): string =>
             cents === null ? '—' : (cents / 100).toFixed(2)
+          // A payment QuickBooks no longer counts sits beside the invoice
+          // differences: same table, same rule that nothing here corrects it.
+          const differing = [
+            ...report.rows
+              .filter((row) => row.status !== 'matched')
+              .map((row) => ({
+                key: `${row.status}:${row.number}`,
+                number: row.number,
+                difference: row.status.replaceAll('_', ' '),
+                ezacto: row.ezacto_amount_cents,
+                quickbooks: row.quickbooks_amount_cents,
+                detail: row.detail,
+              })),
+            ...report.payment_divergences.map((divergence) => {
+              const total = divergence.receipts.reduce((sum, receipt) => sum + receipt.amount_cents, 0)
+              return {
+                key: `payment:${divergence.quickbooks_payment_id}`,
+                number: divergence.receipts.map((receipt) => receipt.invoice_number).join(', '),
+                difference: `payment ${divergence.kind} in QuickBooks`,
+                ezacto: total,
+                quickbooks: null,
+                detail: `Receipts here still count ${money(total)} from QuickBooks payment ${divergence.quickbooks_payment_id}; review them.`,
+              }
+            }),
+          ]
+          const matched = report.counts['matched'] ?? 0
+          const catchUp =
+            report.recovery?.last_outcome === 'failed'
+              ? ' The last catch-up for missed QuickBooks events failed.'
+              : report.recovery?.last_outcome === 'full_reconcile_needed'
+                ? ' Missed QuickBooks events older than 30 days cannot be recovered; this comparison is the check.'
+                : ''
+          quickBooksReconcileResult.textContent =
+            (differing.length === 0
+              ? `Everything agrees (${String(matched)} invoices matched).`
+              : `${String(differing.length)} to look at, ${String(matched)} matched.`) + catchUp
           quickBooksReconcileTable.replaceChildren(
             renderDataTable({
               caption: 'Differences between ezacto and QuickBooks',
               rows: differing,
-              rowKey: (row) => `${row.status}:${row.number}`,
+              rowKey: (row) => row.key,
               empty: 'No differences.',
               columns: [
                 { key: 'number', label: 'Invoice', fit: true, render: (row) => row.number || '—' },
-                { key: 'status', label: 'Difference', fit: true, render: (row) => row.status.replaceAll('_', ' ') },
-                { key: 'ezacto', label: 'ezacto', numeric: true, render: (row) => money(row.ezacto_amount_cents) },
-                { key: 'quickbooks', label: 'QuickBooks', numeric: true, render: (row) => money(row.quickbooks_amount_cents) },
+                { key: 'status', label: 'Difference', fit: true, render: (row) => row.difference },
+                { key: 'ezacto', label: 'ezacto', numeric: true, render: (row) => money(row.ezacto) },
+                { key: 'quickbooks', label: 'QuickBooks', numeric: true, render: (row) => money(row.quickbooks) },
                 { key: 'detail', label: 'Detail', wrap: true, render: (row) => row.detail },
               ],
             }),

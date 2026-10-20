@@ -194,7 +194,8 @@ instance brand.
 | `invoice-pdf-colours` | Invoice PDF is greyscale apart from the fixed watermark; no palette token reaches it | `packages/core/src/invoice-document.ts` | gap |
 | `report-pdf-name` | Detailed-time report header carries the nearest-ancestor report brand name | `packages/db/src/month-end-pack.ts`, `packages/core/src/report-document.ts` | delivered |
 | `report-pdf-logo-colours` | Report brands store a logo URL and two colours; the report PDF draws only the name | `packages/core/src/report-document.ts` | gap |
-| `email-body` | Invoice, estimate and reminder bodies use fixed inline colours and no mark | `packages/core/src/invoice-email.ts`, `packages/core/src/email-templates.ts` | gap |
+| `email-body` | The HTML part of outgoing mail opens with a header: the `wordmark_light` mark by its public `/brand/...` URL (alt text is the company name) and a rule in the palette's `action` colour. Nothing is set, nothing is added | `packages/core/src/email-brand.ts`, `packages/api/src/email-brand.ts` | delivered |
+| `email-text-body` | The plain-text part of every message, and the invoice email, which is plain text only, carry no mark or colour | `packages/core/src/invoice-email.ts`, `packages/core/src/email-templates.ts` | gap |
 | `email-sender` | The mailer takes the provider From value and nothing from the brand; `emailSenderName` is read only by the demo | `packages/mailer/src/index.ts` | gap |
 | `apple-disconnect` | The standalone Apple disconnect page links neither the instance stylesheet nor a mark, and names the product in its title and copy | `apps/web/src/shell/render.ts` | gap |
 | `portal-estimate-review` | The standalone page a client's contact reads and answers an estimate on (`GET /portal/estimate-review`) links neither the instance stylesheet nor a mark, and carries only the deployment name, in its title and above its heading | `apps/web/src/portal-estimates/render.ts` | gap |

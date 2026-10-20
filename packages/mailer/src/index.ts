@@ -20,6 +20,17 @@ export {
   type MailgunOptions,
 } from './mailgun.js'
 export {
+  MAILGUN_SIGNATURE_WINDOW_SECONDS,
+  createMailgunFeedbackService,
+  type EmailFeedbackClaim,
+  type EmailFeedbackClaimInput,
+  type EmailFeedbackLedger,
+  type EmailFeedbackOutcome,
+  type MailgunFeedbackOptions,
+  type MailgunFeedbackResult,
+  type MailgunFeedbackService,
+} from './mailgun-feedback.js'
+export {
   SesMailer,
   type SesAccountHealth,
   type SesIdentityHealth,

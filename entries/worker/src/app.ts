@@ -85,6 +85,8 @@ import {
   installTrackedResourceRoutes,
   installTimesheetApprovalRoutes,
   installBackupStatusRoutes,
+  installBackupDownloadMintRoute,
+  installBackupDownloadRedeemRoute,
   installBillRoutes,
   installPayoutAccountRoutes,
   installInvoiceDocumentPreferenceRoutes,
@@ -101,6 +103,7 @@ import {
   installInvoiceTimeClaimRoutes,
   installStripeRoutes,
   installStripeWebhookRoute,
+  installMailgunWebhookRoute,
   installQuickBooksRoutes,
   installQuickBooksWebhookRoute,
   installWiseRoutes,
@@ -146,6 +149,7 @@ import {
   type StaffUserDirectory,
   type PasswordAuthService,
   type BackupStatusReader,
+  type BackupDownloadService,
   type ReportReader,
   type SsoProvisioningDomainService,
   type UserEmailService,
@@ -191,6 +195,7 @@ import {
 import type {
   EmailLogPager,
   EmailLogStore,
+  MailgunFeedbackService,
   QueuedEmailJob,
   SenderBoundQueuedMailer,
 } from '@ezacto/mailer'
@@ -356,6 +361,11 @@ export type WorkerEnv = AppEnv & {
   MAILGUN_API_KEY?: string
   MAILGUN_DOMAIN?: string
   MAILGUN_REGION?: 'us' | 'eu'
+  /**
+   * Mailgun's HTTP webhook signing key (not the API key). Without it the
+   * /webhooks/mailgun route is not mounted, so no unsigned post is accepted.
+   */
+  MAILGUN_WEBHOOK_SIGNING_KEY?: string
   MAIL_FROM?: string
 }
 
@@ -472,6 +482,12 @@ export interface RuntimeServices {
   activity?: ActivityRecorder
   backupStatus?: BackupStatusReader
   /**
+   * The signed download of a backup run (issue 39). Composed only where the
+   * bundle exists to be read, and mounted only with the activity log: a copy of
+   * the database that leaves without a record is the case the log is for.
+   */
+  backupDownloads?: BackupDownloadService
+  /**
    * The QuickBooks connection. Absent where the deployment has no Intuit keys,
    * the same way the attachment routes are absent without object storage:
    * mounting a connect button that cannot connect is worse than not offering
@@ -492,6 +508,8 @@ export interface RuntimeServices {
    */
   wiseWebhook?: NonNullable<WiseRuntime["webhook"]>
   stripe?: StripeService
+  /** Mailgun's bounce, complaint and delivery events; see the route. */
+  mailgunFeedback?: MailgunFeedbackService
   invoiceTimeClaims?: InvoiceTimeClaimService
   invoiceDocumentPreference?: InvoiceDocumentPreferenceService
   /** The client's sending profile, the organization's copies, the dialog's defaults. */
@@ -866,6 +884,13 @@ export const createApp = (
                 cursorSigningKey: services.cursorSigningKey,
               })
             }
+            if (services.backupDownloads !== undefined && services.activity !== undefined) {
+              installBackupDownloadMintRoute(api, {
+                service: services.backupDownloads,
+                activity: services.activity,
+                clock: () => systemClock.now().instant,
+              })
+            }
             if (services.quickBooks !== undefined) {
               installQuickBooksRoutes(api, services.quickBooks)
             }
@@ -1056,6 +1081,11 @@ export const createApp = (
       if (services?.stripe !== undefined) {
         installStripeWebhookRoute(app, services.stripe)
       }
+      // Mailgun has no session with us either, and the signature is the
+      // authorisation. Mounted only where the signing key is configured.
+      if (services?.mailgunFeedback !== undefined) {
+        installMailgunWebhookRoute(app, services.mailgunFeedback)
+      }
       // Intuit has no session with us either, and the signature is the
       // authorisation. It lived under /api/v1 until #739, where the
       // authentication middleware refused every delivery before the verifier
@@ -1072,6 +1102,17 @@ export const createApp = (
       // The page a client reaches from the link in an emailed invoice (issue
       // 936). No session, so the link's token is the whole of the authorisation
       // and these sit outside the API surface, beside the webhooks.
+      // The download of a backup behind a link an administrator minted (issue
+      // 39). No session either: the token is the whole of the authorisation.
+      if (services?.backupDownloads !== undefined && services.activity !== undefined) {
+        installBackupDownloadRedeemRoute(app, {
+          service: services.backupDownloads,
+          activity: services.activity,
+          clock: () => systemClock.now().instant,
+          clientKey: (request) =>
+            request.headers.get('cf-connecting-ip') ?? 'unknown-client',
+        })
+      }
       if (services?.invoiceView !== undefined) {
         installInvoiceViewRoutes(app, {
           service: services.invoiceView,

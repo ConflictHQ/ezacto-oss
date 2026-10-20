@@ -58,6 +58,11 @@ QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN=
 # LIVE BOOKS.
 QUICKBOOKS_ENVIRONMENT=sandbox
 
+# --- Mailgun bounce and complaint feedback (issue 42) ---
+# The HTTP webhook signing key from Mailgun's Webhooks page (not the API key).
+# Without it /webhooks/mailgun is NOT MOUNTED and no unsigned post is read.
+MAILGUN_WEBHOOK_SIGNING_KEY=
+
 # --- Payouts: paying contractors from the organisation's Wise account (#543) ---
 # The organisation's own API token. NOT an OAuth pair: it authenticates as the
 # business that sends the money, and a contractor supplies a destination rather

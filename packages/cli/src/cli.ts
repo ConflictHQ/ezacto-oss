@@ -44,6 +44,8 @@ import {
   type TimeCommandResult,
 } from './time.js'
 import { createBackup, restoreBackup, verifyBackup } from './backup.js'
+import { createS3Client, parseS3Destination, s3ConfigFromEnvironment } from './s3.js'
+import { syncBundle } from './sync.js'
 
 const USAGE = `ez <command> [options]
 
@@ -59,7 +61,7 @@ Commands:
   invoice      Generate, send, or list invoices
   report       List or run reports; report list shows each required scope
   export       Export time entries or expenses as CSV (or --verify a backup bundle)
-  backup       Create a full backup bundle from a local database
+  backup       Create a full backup bundle from a local database (--sync-to copies it to S3)
   restore      Restore a backup bundle into a fresh database
 
 Options:
@@ -99,6 +101,10 @@ Options:
   --database <path>         SQLite database path (or set EZACTO_DATA_DIR)
   --output <path>           Output directory for ez backup (default: current directory)
   --attachments <path>      Attachment directory for backup/restore
+  --sync-to <s3://bucket/prefix>  Copy the bundle to an S3-compatible bucket after ez backup
+                            (credentials: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY; optional
+                            AWS_SESSION_TOKEN, EZACTO_S3_ENDPOINT, EZACTO_S3_REGION, EZACTO_S3_ADDRESSING)
+  --bundle <path>           With --sync-to, sync an existing bundle instead of creating one (resumes)
   --verify                  Verify checksums for ez export --verify
   --json                    Emit machine-readable JSON
   --help                    Show this help
@@ -399,6 +405,8 @@ export const runCli = async (
       database: { type: 'string' },
       output: { type: 'string' },
       attachments: { type: 'string' },
+      'sync-to': { type: 'string' },
+      bundle: { type: 'string' },
       verify: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
@@ -840,9 +848,46 @@ export const runCli = async (
     return undefined
   }
 
+  if ((values['sync-to'] !== undefined || values.bundle !== undefined) && command !== 'backup') {
+    throw new Error('--sync-to and --bundle are valid only with ez backup')
+  }
+
   if (command === 'backup') {
     if (commandArguments.length !== 0) throw new Error('ez backup accepts no positional arguments')
     if (values.verify) throw new Error('--verify is valid only with ez export')
+    if (values.bundle !== undefined && values['sync-to'] === undefined) {
+      throw new Error('--bundle needs --sync-to: it names an existing bundle to copy off-platform')
+    }
+    const syncTo = async (bundleDirectory: string) => {
+      const { bucket, prefix } = parseS3Destination(values['sync-to']!)
+      runtime.stderr(
+        'warning: the bundle is sent as is, not encrypted; it carries password hashes and authenticator seeds, so use a private bucket with server-side encryption',
+      )
+      const synced = await syncBundle(bundleDirectory, {
+        client: createS3Client(s3ConfigFromEnvironment(runtime.environment)),
+        bucket,
+        prefix,
+      })
+      const destination = `s3://${bucket}/${[prefix, synced.bundleName].filter((part) => part !== '').join('/')}`
+      return {
+        json: {
+          destination,
+          objects: synced.objects.length,
+          uploaded: synced.uploaded,
+          already_present: synced.skipped,
+          bytes_uploaded: synced.uploadedBytes,
+        },
+        lines: [
+          `synced to ${destination}`,
+          `objects: ${synced.objects.length}, uploaded: ${synced.uploaded}, already present: ${synced.skipped}, bytes uploaded: ${synced.uploadedBytes}`,
+        ],
+      }
+    }
+    if (values.bundle !== undefined) {
+      const synced = await syncTo(values.bundle)
+      runtime.stdout(values.json ? json({ bundle: values.bundle, sync: synced.json }) : synced.lines.join('\n'))
+      return 0
+    }
     const databasePath = resolveDatabase()
     const attachmentDirectory = resolveAttachments()
     const outputDirectory = values.output ?? process.cwd()
@@ -851,6 +896,9 @@ export const runCli = async (
       attachmentDirectory,
       outputDirectory,
     })
+    // Sync before reporting success: a backup that was asked to leave the
+    // machine and did not is a failed command, and the thrown error says why.
+    const synced = values['sync-to'] === undefined ? undefined : await syncTo(result.bundleDirectory)
     const tableCount = result.manifest.tables.length
     const totalRows = result.manifest.tables.reduce((sum, table) => sum + table.row_count, 0)
     const attachmentCount = result.manifest.attachments.length
@@ -863,11 +911,13 @@ export const runCli = async (
             rows: totalRows,
             attachments: attachmentCount,
             database_sha256: result.manifest.database_sha256,
+            ...(synced === undefined ? {} : { sync: synced.json }),
           })
         : [
             `backup created: ${result.bundleDirectory}`,
             `tables: ${tableCount}, rows: ${totalRows}, attachments: ${attachmentCount}`,
             `database sha256: ${result.manifest.database_sha256}`,
+            ...(synced === undefined ? [] : synced.lines),
           ].join('\n'),
     )
     return 0

@@ -283,6 +283,18 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
         },
       })()
     }
+    if (controller.cron === '0 * * * *' && services.quickBooks !== undefined) {
+      // Payments QuickBooks changed that no webhook told us of (issue 1013).
+      // Hourly, resuming from a stored cursor, so a missed delivery is found
+      // within the hour. Cheap when nothing changed, and a failed run is
+      // recorded against the cursor, reported, and never stops the drain.
+      try {
+        await services.quickBooks.catchUp()
+      } catch (error) {
+        console.error('[worker] QuickBooks catch-up failed', error)
+        Sentry.captureException(error)
+      }
+    }
     if (controller.cron === '0 3 * * *' && services.deelSync?.status().configured === true) {
       // Deel time sync and its reconciliation (issue 103). Daily: it submits
       // whole approved days that have ended. Does nothing, and is not reached,
