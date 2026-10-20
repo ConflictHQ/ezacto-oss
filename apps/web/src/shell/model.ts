@@ -37,7 +37,7 @@ import {
 } from '@conflict-hq/ezacto-client'
 import type { InvoiceState } from '../invoices/model.js'
 import type { ActivityExportQuery, ActivityQuery, ActivityRow } from '../activity/browser.js'
-import type { CapacityApi } from '../capacity/model.js'
+import type { CapacityApi, PlanningApi } from '../capacity/model.js'
 import type { MyPaymentsApi } from '../my-payments/model.js'
 import type { LogPageResult } from '../components/paged-log.js'
 import type {
@@ -138,6 +138,8 @@ export interface ShellApi
     range: { readonly from: string; readonly to: string },
     signal?: AbortSignal,
   ): ReturnType<CapacityApi['getCapacity']>
+  /** Allocation and time off entry on the capacity screen, for an administrator (issue 1007). */
+  planning?: PlanningApi
   /** The signed-in person's own payment summary (issue 100). */
   getMyPayments?(month: string, signal?: AbortSignal): ReturnType<MyPaymentsApi['getMyPayments']>
   /** The page size a caller may raise when it is walking, not browsing. */
@@ -1142,6 +1144,21 @@ export const startTimer = async (
     : api.createTimeEntry(input, signal)
 }
 
+const collectPlanned = async <Row>(
+  load: (cursor?: string) => Promise<CursorPage<Row>>,
+  signal?: AbortSignal,
+): Promise<Row[]> => {
+  const rows: Row[] = []
+  let cursor: string | undefined
+  do {
+    signal?.throwIfAborted()
+    const page = await load(cursor)
+    rows.push(...page.data)
+    cursor = page.page.next_cursor ?? undefined
+  } while (cursor !== undefined)
+  return rows
+}
+
 const withSignal = (signal?: AbortSignal): { signal?: AbortSignal } =>
   signal === undefined ? {} : { signal }
 
@@ -1921,6 +1938,53 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     ).data,
   getCapacity: (range, signal) =>
     client.getCapacity({ query: range, ...withSignal(signal) }),
+  planning: {
+    listProjects: async (signal) =>
+      (
+        await collect(
+          (cursor) =>
+            client.listProjects({
+              query: {
+                per_page: 200,
+                is_active: true,
+                ...(cursor === undefined ? {} : { cursor }),
+              },
+              ...withSignal(signal),
+            }),
+          signal,
+        )
+      ).map((project) => ({
+        id: project.id,
+        name: typeof project.name === 'string' ? project.name : `Project ${project.id}`,
+      })),
+    listAllocations: (range, signal) =>
+      collectPlanned(
+        (cursor) =>
+          client.listAllocations({
+            query: { ...range, per_page: 200, ...(cursor === undefined ? {} : { cursor }) },
+            ...withSignal(signal),
+          }),
+        signal,
+      ),
+    createAllocation: (input, signal) =>
+      client.createAllocation({ body: input, ...withSignal(signal) }),
+    updateAllocation: (id, patch, signal) =>
+      client.updateAllocation({ id, body: patch, ...withSignal(signal) }),
+    deleteAllocation: (id, signal) => client.deleteAllocation({ id, ...withSignal(signal) }),
+    listTimeOff: (range, signal) =>
+      collectPlanned(
+        (cursor) =>
+          client.listTimeOff({
+            query: { ...range, per_page: 200, ...(cursor === undefined ? {} : { cursor }) },
+            ...withSignal(signal),
+          }),
+        signal,
+      ),
+    createTimeOff: (input, signal) => client.createTimeOff({ body: input, ...withSignal(signal) }),
+    updateTimeOff: (id, patch, signal) =>
+      client.updateTimeOff({ id, body: patch, ...withSignal(signal) }),
+    deleteTimeOff: (id, signal) => client.deleteTimeOff({ id, ...withSignal(signal) }),
+  },
   getMyPayments: (month, signal) =>
     client.getMyPayments({ query: { month }, ...withSignal(signal) }),
   listActivityLog: (query, signal) =>

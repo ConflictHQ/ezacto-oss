@@ -35,7 +35,74 @@ export interface CapacityApi {
     range: { readonly from: string; readonly to: string },
     signal?: AbortSignal,
   ): Promise<{ readonly data: CapacityData }>
+  /** Present only where administrator entry is offered. */
+  readonly planning?: PlanningApi
 }
+
+/**
+ * Administrator entry (issue 1007): the rows behind the grid and the calls that
+ * change them. Only an administrator is given this; the server still decides
+ * who may write.
+ */
+export interface AllocationRow {
+  readonly id: number
+  readonly user_id: number
+  readonly project_id: number
+  readonly start_date: string
+  readonly end_date: string
+  readonly planned_seconds_per_week: number
+}
+
+export const timeOffKinds = ['vacation', 'sick', 'holiday', 'other'] as const
+export type TimeOffKindName = (typeof timeOffKinds)[number]
+
+export interface TimeOffRow {
+  readonly id: number
+  readonly user_id: number
+  readonly start_date: string
+  readonly end_date: string
+  readonly kind: TimeOffKindName
+  readonly seconds_per_day: number | null
+}
+
+export interface PlanningRange {
+  readonly from: string
+  readonly to: string
+}
+
+export interface PlanningApi {
+  listProjects(
+    signal?: AbortSignal,
+  ): Promise<readonly { readonly id: number; readonly name: string }[]>
+  listAllocations(range: PlanningRange, signal?: AbortSignal): Promise<readonly AllocationRow[]>
+  createAllocation(input: Omit<AllocationRow, 'id'>, signal?: AbortSignal): Promise<unknown>
+  updateAllocation(
+    id: number,
+    patch: Partial<Omit<AllocationRow, 'id' | 'user_id' | 'project_id'>>,
+    signal?: AbortSignal,
+  ): Promise<unknown>
+  deleteAllocation(id: number, signal?: AbortSignal): Promise<unknown>
+  listTimeOff(range: PlanningRange, signal?: AbortSignal): Promise<readonly TimeOffRow[]>
+  createTimeOff(input: Omit<TimeOffRow, 'id'>, signal?: AbortSignal): Promise<unknown>
+  updateTimeOff(
+    id: number,
+    patch: Partial<Omit<TimeOffRow, 'id' | 'user_id'>>,
+    signal?: AbortSignal,
+  ): Promise<unknown>
+  deleteTimeOff(id: number, signal?: AbortSignal): Promise<unknown>
+}
+
+/** Hours as typed (`7.5`) to whole seconds; null when it is not a positive number. */
+export const hoursToSeconds = (text: string): number | null => {
+  const trimmed = text.trim()
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) return null
+  const seconds = Math.round(Number(trimmed) * 3_600)
+  return seconds >= 1 ? seconds : null
+}
+
+/** Seconds as the figure an hours field holds: `7.5`, `32`. */
+export const secondsToHoursField = (seconds: number): string =>
+  String(Math.round((seconds / 3_600) * 100) / 100)
 
 /** Eight weeks at a time: a quarter of planning fits a screen without scrolling sideways. */
 export const capacityWindowDays = 56
