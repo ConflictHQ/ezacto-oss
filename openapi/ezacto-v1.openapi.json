@@ -30016,6 +30016,9 @@
           "spent_date",
           "selected_seconds",
           "rate_cents",
+          "reviewed_rounded_seconds",
+          "current_rounded_seconds",
+          "current_rate_cents",
           "earned_cents",
           "applied_cents",
           "reserved_cents",
@@ -30038,6 +30041,29 @@
             "type": "integer"
           },
           "rate_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reviewed_rounded_seconds": {
+            "type": "integer"
+          },
+          "current_rounded_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_rate_cents": {
             "anyOf": [
               {
                 "type": "integer"

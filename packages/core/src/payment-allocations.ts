@@ -69,6 +69,10 @@ export interface PaymentAllocationEntry {
   spent_date: string
   selected_seconds: number
   rate_cents: number | null
+  /** The hours of the confirmed review and of the entry now, for judging a source change. Null: the entry is gone. */
+  reviewed_rounded_seconds: number
+  current_rounded_seconds: number | null
+  current_rate_cents: number | null
   earned_cents: number
   applied_cents: number
   reserved_cents: number
