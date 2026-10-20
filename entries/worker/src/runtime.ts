@@ -106,6 +106,7 @@ import {
   setInvoiceJournalPolicy,
   setOrganizationJournalPolicy,
   readInvoiceHoursReport,
+  readInvoiceHoursReconciliation,
   readJournalFormatsPreference,
   readOrganizationJournalFormats,
   setInvoiceJournalFormats,
@@ -1540,6 +1541,11 @@ export const createRuntimeServices = async (
     // reads, so the file an operator checks is the file a client is sent.
     invoiceHoursReport: {
       readHoursReport: (invoiceId: number) => readInvoiceHoursReport(drizzle, invoiceId),
+    },
+    // Billed hours against the entries the invoice claims (issue 924).
+    invoiceHoursReconciliation: {
+      readHoursReconciliation: (invoiceId: number) =>
+        readInvoiceHoursReconciliation(drizzle, invoiceId),
     },
     // Suppressing the thank-you for one invoice, which is the half that has to
     // be reachable before the payment lands: some invoices settle a dispute.

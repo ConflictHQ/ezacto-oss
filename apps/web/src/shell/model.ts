@@ -1401,6 +1401,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getEmailHealth(withSignal(signal))).data,
   getBackupStatus: async (signal) =>
     (await client.getBackupStatus(withSignal(signal))).data,
+  createBackupDownloadLink: async (input, signal) =>
+    (await client.createBackupDownloadLink({ body: input, ...withSignal(signal) })).data,
   listBackupRuns: (query, signal) => client.listBackupRuns({ query, ...withSignal(signal) }),
   // Issue 593 shipped the Accounting settings section reading these four and
   // nothing supplying them, so the screen reported "not configured" on every

@@ -15,6 +15,7 @@ import {
   installPayoutAccountRoutes,
   installInvoiceDocumentPreferenceRoutes,
   installInvoiceHoursReportRoutes,
+  installInvoiceHoursReconciliationRoutes,
   installThankYouPreferenceRoutes,
   installReminderSettingsRoutes,
   installNotificationSettingsRoutes,
@@ -378,6 +379,7 @@ const documentedApp = () =>
         setOrganizationJournalFormats: async () => undefined,
       } as never);
       installInvoiceHoursReportRoutes(api, { readHoursReport: async () => null });
+      installInvoiceHoursReconciliationRoutes(api, { readHoursReconciliation: async () => null });
       installInvoiceSendingRoutes(api, {
         service: {
           emailDefaults: async () => null,

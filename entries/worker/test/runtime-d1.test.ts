@@ -842,6 +842,19 @@ describe("Worker D1 runtime composition", () => {
     const empty = await download("/api/v1/invoices/9041/hours-report?format=pdf");
     expect(empty.status).toBe(409);
     expect(await empty.json()).toMatchObject({ error: { code: "no_billed_time" } });
+
+    // Issue 924: the reconciliation reads the same entries at the same rounded
+    // seconds, so its linked figure is the report's 1.50 h.
+    const reconciliation = await download("/api/v1/invoices/9040/hours-reconciliation");
+    expect(reconciliation.status).toBe(200);
+    expect(await reconciliation.json()).toMatchObject({
+      data: { invoice_id: 9040, linked_seconds: 5400 },
+    });
+    const none = await download("/api/v1/invoices/9041/hours-reconciliation");
+    expect(none.status).toBe(200);
+    expect(await none.json()).toMatchObject({ data: { linked_seconds: 0, projects: [] } });
+    expect((await download("/api/v1/invoices/999999/hours-reconciliation")).status).toBe(404);
+    expect((await download("/api/v1/invoices/9040/hours-reconciliation", bearer)).status).toBe(403);
   });
 
   it("[api] uploads and downloads an owner-scoped attachment through real D1 and R2 bindings", async () => {
