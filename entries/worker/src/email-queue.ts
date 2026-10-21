@@ -20,6 +20,8 @@ import {
   createQueuedAccountDeletionMailer,
   createQueuedAuthMailer,
   createQueuedStaffMagicLinkMailer,
+  createQueuedPortalMagicLinkMailer,
+  type MagicLinkMailer,
   createQueuedTwoFactorEmailCodeMailer,
   type AccountDeletionMailer,
   type AuthMailer,
@@ -137,6 +139,20 @@ export const createWorkerStaffMagicLinkMailer = (
   createQueuedStaffMagicLinkMailer(
     createDeploymentSenderQueuedMailer(from, createQueuedMailer(log, queue)),
     organizationName,
+  )
+
+/** Contact sign-in uses the same deployment sender, durable queue and demo restrictions. */
+export const createWorkerPortalMagicLinkMailer = (
+  queue: EmailQueue,
+  log: EmailLogStore,
+  from: string,
+  organizationName: () => Promise<string>,
+  appBaseUrl: string,
+): MagicLinkMailer =>
+  createQueuedPortalMagicLinkMailer(
+    createDeploymentSenderQueuedMailer(from, createQueuedMailer(log, queue)),
+    organizationName,
+    appBaseUrl,
   )
 
 /** The emailed second-factor code, on the same queue and deployment sender (issue 770). */

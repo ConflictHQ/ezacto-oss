@@ -210,6 +210,7 @@ import {
   createWorkerNotificationMailer,
   createWorkerOrganizationMailer,
   createWorkerStaffMagicLinkMailer,
+  createWorkerPortalMagicLinkMailer,
   createWorkerTwoFactorEmailCodeMailer,
 } from "./email-queue.js";
 import { demoRefusal } from "./demo-lockdown.js";
@@ -790,6 +791,10 @@ export const createRuntimeServices = async (
           mailFrom,
           organizationName,
         );
+  const portalMagicLinkMailer =
+    !emailQueueReady || mailFrom === undefined ? undefined : createWorkerPortalMagicLinkMailer(
+      emailQueue!, emailLog, mailFrom, organizationName, env.APP_BASE_URL!,
+    );
   const twoFactorEmailCodeMailer =
     !emailQueueReady || mailFrom === undefined
       ? undefined
@@ -1342,6 +1347,7 @@ export const createRuntimeServices = async (
       ? {}
       : {
           portalAuth: {
+            ...(portalMagicLinkMailer === undefined ? {} : {mailer:portalMagicLinkMailer}),
             service: createMagicLinkService({
               database: {
                 all: async (query: { sql: string; params: readonly unknown[] }) =>

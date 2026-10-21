@@ -78,7 +78,7 @@ const settle = async (): Promise<void> => {
 const events: string[] = []
 
 const mount = async (
-  routes: (call: Call) => Response,
+  routes: (call: Call) => Response | Promise<Response>,
   options: { search?: string; hash?: string } = {},
 ) => {
   // The body only: the head's stylesheet and script are the server's to load.
@@ -139,7 +139,9 @@ describe('the customer estimate page', () => {
     expect(harness.replaceState).toHaveBeenCalledWith(null, '', '/portal/estimate-review')
     // Out of the address bar before the first request goes anywhere.
     expect(events[0]).toBe('replaceState')
-    expect(order).toEqual(['/portal/verify?token=abc.def', '/portal/estimates'])
+    expect(order).toEqual(['/portal/verify', '/portal/estimates'])
+    expect(harness.calls[0]).toMatchObject({method:'POST',body:{token:'abc.def'}})
+    expect(harness.calls.every(call=>!call.path.includes('abc.def'))).toBe(true)
     expect(text('[data-portal-list]')).toContain('EST-7')
     expect(text('[data-portal-status]')).toBe('1 to review.')
   })
@@ -323,4 +325,45 @@ describe('the customer estimate page', () => {
     expect(page).toContain('<html lang="en"')
     expect(page).toContain('aria-live="polite"')
   })
+})
+
+
+it('[unit #1010] offers a new contact sign-in link and submits an address once without a URL credential', async () => {
+  let deliver!: (response: Response) => void
+  const harness = await mount((call) =>
+    call.path === '/portal/magic-link'
+      ? new Promise<Response>((resolve) => {
+          deliver = resolve
+        })
+      : refusal(401, 'authentication_required'),
+  )
+  expect(q<HTMLElement>('[data-portal-sign-in]').hidden).toBe(false)
+  const email = q<HTMLInputElement>('[data-portal-email]')
+  email.value = 'contact@example.com'
+  const form = q<HTMLFormElement>('[data-portal-sign-in-form]')
+  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+  expect(harness.calls.filter((call) => call.path === '/portal/magic-link')).toEqual([
+    { path: '/portal/magic-link', method: 'POST', body: { email: 'contact@example.com' } },
+  ])
+  expect(q<HTMLButtonElement>('[data-portal-request-link]').disabled).toBe(true)
+  deliver(json(202, { data: { status: 'magic_link_sent' } }))
+  await settle()
+  expect(text('[data-portal-status]')).toContain('If this address belongs to a client contact')
+  expect(email.value).toBe('')
+  expect(q<HTMLButtonElement>('[data-portal-request-link]').disabled).toBe(false)
+  expect(harness.calls.every((call) => !call.path.includes('@'))).toBe(true)
+})
+
+it('[unit #1010] keeps sign-in retry available when delivery cannot be requested', async () => {
+  await mount((call) =>
+    refusal(call.path === '/portal/magic-link' ? 503 : 401, 'mailer_unavailable'),
+  )
+  q<HTMLInputElement>('[data-portal-email]').value = 'contact@example.com'
+  q<HTMLFormElement>('[data-portal-sign-in-form]').dispatchEvent(
+    new Event('submit', { bubbles: true, cancelable: true }),
+  )
+  await settle()
+  expect(text('[data-portal-status]')).toContain('could not be requested')
+  expect(q<HTMLButtonElement>('[data-portal-request-link]').disabled).toBe(false)
 })
