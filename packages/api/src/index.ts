@@ -505,6 +505,7 @@ export {
 } from './payment-url.js'
 
 export { installStaffPaymentRoutes } from './staff-payments.js'
+export { installDeelSyncRoutes, type DeelSyncApiDependencies } from './deel-sync.js'
 
 export { installPaymentRunRoutes } from './payment-runs.js'
 export { installScheduledRunRoutes } from './scheduled-runs.js'

@@ -3,6 +3,7 @@ import { createDeelSyncRuntime } from '@ezacto/integrations'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase } from '../src/adapters.js'
 import {
+  createDeelSyncSettingsStore,
   createDeelSyncStore,
   DEEL_SYNC_STALE_RUN_MS,
   type DeelSyncStore,
@@ -270,6 +271,7 @@ describe('Deel sync runtime over the real store', () => {
     const runtime = createDeelSyncRuntime({
       config: { token: 'fixture-token', startDate: '2026-09-01' },
       source: store,
+      settings: createDeelSyncSettingsStore(createContainerDatabase(database)),
       fetch: async (request) => {
         if (request.method === 'GET') return Response.json(people)
         posts.push(JSON.parse(await request.text()))
@@ -305,6 +307,7 @@ describe('Deel sync runtime over the real store', () => {
     const runtime = createDeelSyncRuntime({
       config: { token: 'fixture-token', startDate: '2026-09-01' },
       source: store,
+      settings: createDeelSyncSettingsStore(createContainerDatabase(database)),
       fetch: async (request) =>
         request.method === 'GET' ? Response.json(people) : Response.json({ data: { id: 'tms_1' } }),
       now: () => new Date(at),
@@ -326,6 +329,7 @@ describe('Deel sync runtime over the real store', () => {
     const runtime = createDeelSyncRuntime({
       config: { startDate: '2026-09-01' },
       source: store,
+      settings: createDeelSyncSettingsStore(createContainerDatabase(database)),
       fetch: async () => {
         requests += 1
         return new Response('{}', { status: 500 })
@@ -337,5 +341,46 @@ describe('Deel sync runtime over the real store', () => {
     expect(requests).toBe(0)
     expect(await store.recentRuns(5)).toEqual([])
     expect(database.prepare(`SELECT count(*) AS n FROM deel_transfer_log`).get()).toEqual({ n: 0 })
+  })
+})
+
+describe('Deel sync settings (#1102)', () => {
+  it('[unit] a new organization is manual at 03:00 and claims no automatic day', async () => {
+    const { database } = await fixture()
+    const settings = createDeelSyncSettingsStore(createContainerDatabase(database))
+
+    expect(await settings.get()).toMatchObject({ mode: 'manual', runTime: '03:00', updatedByUserId: null })
+    expect(await settings.claimAutomaticDay('2026-10-19')).toBe(false)
+  })
+
+  it('[unit] saving automatic mode lets exactly one run claim each day', async () => {
+    const { database } = await fixture()
+    const settings = createDeelSyncSettingsStore(createContainerDatabase(database))
+    await settings.save({ mode: 'automatic', runTime: '21:15', userId: 1 }, '2026-10-19T20:00:00.000Z')
+
+    expect(await settings.get()).toMatchObject({
+      mode: 'automatic',
+      runTime: '21:15',
+      updatedByUserId: 1,
+    })
+    expect(await settings.claimAutomaticDay('2026-10-19')).toBe(true)
+    expect(await settings.claimAutomaticDay('2026-10-19')).toBe(false)
+    expect(await settings.claimAutomaticDay('2026-10-20')).toBe(true)
+  })
+
+  it('[unit] switching back to manual stops the day from being claimed', async () => {
+    const { database } = await fixture()
+    const settings = createDeelSyncSettingsStore(createContainerDatabase(database))
+    await settings.save({ mode: 'automatic', runTime: '03:00', userId: 1 }, '2026-10-19T02:00:00.000Z')
+    await settings.save({ mode: 'manual', runTime: '03:00', userId: 1 }, '2026-10-19T02:30:00.000Z')
+
+    expect(await settings.claimAutomaticDay('2026-10-19')).toBe(false)
+  })
+
+  it('[unit] the organization timezone is read from the organization row', async () => {
+    const { database } = await fixture()
+    const settings = createDeelSyncSettingsStore(createContainerDatabase(database))
+
+    expect(await settings.organizationTimezone()).toBe('UTC')
   })
 })

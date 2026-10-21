@@ -82,6 +82,7 @@ import {
   createBillMirrorSource,
   createPayoutAccountStore,
   createWiseDeliveryStore,
+  createDeelSyncSettingsStore,
   createDeelSyncStore,
   createStripeLinkStore,
   readAttachPreference,
@@ -1587,12 +1588,17 @@ export const createRuntimeServices = async (
     // Always composed; it reports itself unconfigured, and does nothing, until
     // the deployment carries both a token and a start date. Never on the demo,
     // whose `credentials` are empty.
+    deelSyncAdmin: {
+      settings: createDeelSyncSettingsStore(drizzle),
+      recentRuns: createDeelSyncStore(drizzle).recentRuns,
+    },
     deelSync: createDeelSyncRuntime({
       config: {
         token: credentials.DEEL_TOKEN,
         startDate: credentials.DEEL_SYNC_START_DATE,
       },
       source: createDeelSyncStore(drizzle),
+      settings: createDeelSyncSettingsStore(drizzle),
       fetch: (request: Request) => fetch(request),
       now: () => new Date(),
     }),

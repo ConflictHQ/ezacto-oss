@@ -99,6 +99,25 @@ export const renderStaffPayments = (view?: string): string =>
         </form>
         <h3>Provider settings history</h3><div data-payment-provider-history></div>
       </details>
+      <details data-deel-sync hidden class="staff-payment-opening">
+        <summary>Deel time sync</summary>
+        <p data-deel-sync-status>Loading</p>
+        <form data-deel-sync-settings>
+          <label>Mode<select name="mode"><option value="manual">Manual: I send timesheets myself</option><option value="automatic">Automatic: send once a day at the time below</option></select></label>
+          <label>Automatic run time (organization timezone)<input name="run_time" type="time" required></label>
+          <button type="submit">Save Deel sync settings</button>
+        </form>
+        <form data-deel-sync-preview>
+          <label>First day<input name="from" type="date" required></label>
+          <label>Last day<input name="to" type="date" required></label>
+          <button type="submit">Preview timesheets for Deel</button>
+        </form>
+        <div data-deel-sync-preview-result></div>
+        <label><input type="checkbox" data-deel-sync-reviewed disabled> I have reviewed this preview and want these timesheets sent to Deel</label>
+        <button type="button" data-deel-sync-send disabled>Send to Deel</button>
+        <p class="hint" data-deel-sync-message role="status"></p>
+        <h3>Recent Deel sync runs</h3><div data-deel-sync-runs></div>
+      </details>
       <details class="staff-payment-opening">
         <summary>Record historical settlement through this month</summary>
         <p>Choose the people whose earlier periods are confirmed settled. Amounts and payment dates remain unspecified until exact historical records are entered. Existing amount and payment records keep their own balances.</p>

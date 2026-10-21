@@ -217,3 +217,67 @@ export const createDeelSyncStore = (database: Database): DeelSyncStore => ({
     }))
   },
 })
+
+export type DeelSyncMode = 'manual' | 'automatic'
+
+export interface DeelSyncSettings {
+  mode: DeelSyncMode
+  /** `HH:MM`, in the organization's timezone. */
+  runTime: string
+  updatedAt: string
+  updatedByUserId: number | null
+}
+
+/**
+ * The organization's sync mode and automatic run time (#1102). One row, written
+ * by administrators from the staff payments screen and read by the hourly cron.
+ */
+export const createDeelSyncSettingsStore = (database: Database) => ({
+  get: async (): Promise<DeelSyncSettings> => {
+    const rows = await database.all<{
+      mode: DeelSyncMode
+      run_time: string
+      updated_at: string
+      updated_by_user_id: number | null
+    }>(sql`SELECT mode, run_time, updated_at, updated_by_user_id FROM deel_sync_settings WHERE id = 1`)
+    const row = rows[0]
+    if (row === undefined) throw new Error('deel_sync_settings has no row; migration 0135 did not run')
+    return {
+      mode: row.mode,
+      runTime: row.run_time,
+      updatedAt: row.updated_at,
+      updatedByUserId: row.updated_by_user_id,
+    }
+  },
+
+  save: async (
+    input: { mode: DeelSyncMode; runTime: string; userId: number },
+    now: string,
+  ): Promise<void> => {
+    await database.all(sql`
+      UPDATE deel_sync_settings
+      SET mode = ${input.mode}, run_time = ${input.runTime},
+        updated_at = ${now}, updated_by_user_id = ${input.userId}
+      WHERE id = 1
+      RETURNING id`)
+  },
+
+  /**
+   * Claims today for the automatic run. Returns false when today was already
+   * claimed or the mode is no longer automatic, so two hourly invocations
+   * cannot both start the day's run.
+   */
+  claimAutomaticDay: async (date: string): Promise<boolean> => {
+    const claimed = await database.all<{ id: number }>(sql`
+      UPDATE deel_sync_settings SET last_automatic_date = ${date}
+      WHERE id = 1 AND mode = 'automatic'
+        AND (last_automatic_date IS NULL OR last_automatic_date <> ${date})
+      RETURNING id`)
+    return claimed.length === 1
+  },
+
+  organizationTimezone: async (): Promise<string> => {
+    const rows = await database.all<{ timezone: string }>(sql`SELECT timezone FROM organizations LIMIT 1`)
+    return rows[0]?.timezone ?? 'UTC'
+  },
+})

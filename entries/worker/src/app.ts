@@ -6,7 +6,7 @@ import type { PaymentRunsService, ScheduledRunsService } from '@ezacto/core'
 import { workItemProviders, type WorkItemProviderId } from '@ezacto/core'
 import { installPaymentRunRoutes } from '@ezacto/api'
 import { installScheduledRunRoutes } from '@ezacto/api'
-import { installStaffPaymentRoutes } from '@ezacto/api'
+import { installDeelSyncRoutes, installStaffPaymentRoutes, type DeelSyncApiDependencies } from '@ezacto/api'
 import type { StaffPaymentStore } from '@ezacto/core'
 import { installMyPaymentRoutes } from '@ezacto/api'
 import type { MyPaymentsStore } from '@ezacto/core'
@@ -594,6 +594,8 @@ export interface RuntimeServices {
   bill?: BillRuntime
   /** Deel time sync, run from the daily cron. Absent on the demo. */
   deelSync?: DeelSyncRuntime
+  /** Administrator control of the Deel sync (#1102): the mode, the schedule and the run history. */
+  deelSyncAdmin?: Pick<DeelSyncApiDependencies, 'settings' | 'recentRuns'>
   /**
    * The per-client opt-in. Separate from the runtime because turning it on is a
    * database write with no BILL call in it -- the runtime is the thing that
@@ -908,6 +910,14 @@ export const createApp = (
             if (services.scheduledRuns !== undefined) installScheduledRunRoutes(api, services.scheduledRuns)
             if (services.staffPayments !== undefined) {
               installStaffPaymentRoutes(api, services.staffPayments)
+            }
+            if (services.deelSync !== undefined && services.deelSyncAdmin !== undefined) {
+              installDeelSyncRoutes(api, {
+                runtime: services.deelSync,
+                settings: services.deelSyncAdmin.settings,
+                recentRuns: services.deelSyncAdmin.recentRuns,
+                clock: () => new Date().toISOString(),
+              })
             }
             if (services.myPayments !== undefined) installMyPaymentRoutes(api, services.myPayments)
             if (services.backupStatus !== undefined) {

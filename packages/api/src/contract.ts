@@ -2,6 +2,7 @@ import { ACCOUNT_PRIVACY_FRAMEWORKS } from '@ezacto/core';
 import { scheduledRunOperations, scheduledRunSchemas } from './scheduled-run-contract.js'
 import { paymentRunOperations, paymentRunSchemas } from './payment-run-contract.js'
 import { staffPaymentOperations, staffPaymentSchemas } from './staff-payment-contract.js';
+import { deelSyncOperations, deelSyncSchemas } from './deel-sync-contract.js';
 import { commercialTermFields, DETAILED_TIME_PDF_ROW_LIMIT, maximumBulkApprovalSelections, timeRoundingIncrements, timeRoundingModes } from "@ezacto/core";
 import {
   attachmentContractOperations,
@@ -3628,6 +3629,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...moneyOperations,
   ...attachmentContractOperations,
   ...staffPaymentOperations,
+  ...deelSyncOperations,
   ...paymentRunOperations,
   ...scheduledRunOperations,
   ...reportOperations,
@@ -3895,6 +3897,7 @@ const timeReportTotalsRequired: readonly string[] = [
 export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...attachmentContractSchemas,
   ...staffPaymentSchemas,
+  ...deelSyncSchemas,
   ...paymentRunSchemas,
   ...scheduledRunSchemas,
   InvoiceReminderPolicy: {

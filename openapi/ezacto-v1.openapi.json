@@ -17701,6 +17701,279 @@
         ]
       }
     },
+    "/api/v1/deel-sync": {
+      "get": {
+        "operationId": "getDeelSync",
+        "summary": "Deel time sync mode, schedule and recent runs",
+        "description": "The sync is manual unless an administrator sets it to automatic. Automatic runs once a day at run_time in the organization timezone, through the hourly cron. Nothing is sent to Deel unless configured is true.",
+        "tags": [
+          "deel-sync"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeelSyncStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/deel-sync",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/deel-sync/settings": {
+      "patch": {
+        "operationId": "updateDeelSyncSettings",
+        "summary": "Set the Deel sync mode and automatic run time",
+        "tags": [
+          "deel-sync"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/deel-sync/settings",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeelSyncSettingsCommand"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/deel-sync/preview": {
+      "post": {
+        "operationId": "previewDeelSync",
+        "summary": "Preview the timesheets a Deel sync would create, without sending any",
+        "tags": [
+          "deel-sync"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeelSyncPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeelSyncPreview"
+                }
+              }
+            }
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeelSyncPreview"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/deel-sync/preview",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeelSyncWindow"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/deel-sync/runs": {
+      "post": {
+        "operationId": "runDeelSync",
+        "summary": "Send the timesheets from a preview to Deel",
+        "description": "Sends only when the plan still holds exactly the entry_ids from the preview. If the plan has changed, nothing is sent and the response is 409 deel_sync_stale; preview again.",
+        "tags": [
+          "deel-sync"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeelSyncRunResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeelSyncRunResult"
+                }
+              }
+            }
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeelSyncRunResult"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/deel-sync/runs",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeelSyncRunCommand"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/payment-runs/report": {
       "get": {
         "operationId": "getPaymentRunReport",
@@ -30416,6 +30689,292 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/MyPayments"
+          }
+        }
+      },
+      "DeelSyncSettingsCommand": {
+        "type": "object",
+        "required": [
+          "mode",
+          "run_time"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "automatic"
+            ]
+          },
+          "run_time": {
+            "type": "string",
+            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$"
+          }
+        }
+      },
+      "DeelSyncWindow": {
+        "type": "object",
+        "required": [
+          "from",
+          "to"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        }
+      },
+      "DeelSyncRun": {
+        "type": "object",
+        "required": [
+          "id",
+          "started_at",
+          "finished_at",
+          "outcome",
+          "timesheets_submitted",
+          "entries_transferred",
+          "detail"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "running",
+              "completed",
+              "failed"
+            ]
+          },
+          "timesheets_submitted": {
+            "type": "integer"
+          },
+          "entries_transferred": {
+            "type": "integer"
+          },
+          "detail": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "DeelSyncStatus": {
+        "type": "object",
+        "required": [
+          "configured",
+          "reason",
+          "mode",
+          "run_time",
+          "updated_at",
+          "updated_by_user_id",
+          "runs"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "automatic"
+            ]
+          },
+          "run_time": {
+            "type": "string",
+            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "updated_by_user_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeelSyncRun"
+            }
+          }
+        }
+      },
+      "DeelSyncPreview": {
+        "type": "object",
+        "required": [
+          "status",
+          "window",
+          "entry_ids",
+          "timesheets",
+          "already_transferred",
+          "conflicts",
+          "unsyncable",
+          "unmatched"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready"
+            ]
+          },
+          "window": {
+            "type": "object",
+            "required": [
+              "from",
+              "to"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              }
+            }
+          },
+          "entry_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "timesheets": {
+            "type": "integer"
+          },
+          "already_transferred": {
+            "type": "integer"
+          },
+          "conflicts": {
+            "type": "array",
+            "items": {}
+          },
+          "unsyncable": {
+            "type": "array",
+            "items": {}
+          },
+          "unmatched": {
+            "type": "array",
+            "items": {}
+          }
+        }
+      },
+      "DeelSyncRunCommand": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "entry_ids"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "entry_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "DeelSyncRunResult": {
+        "type": "object",
+        "required": [
+          "status",
+          "run_id",
+          "timesheets_submitted",
+          "entries_transferred",
+          "failed",
+          "reconciliation",
+          "error"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "failed"
+            ]
+          },
+          "run_id": {
+            "type": "integer"
+          },
+          "timesheets_submitted": {
+            "type": "integer"
+          },
+          "entries_transferred": {
+            "type": "integer"
+          },
+          "failed": {
+            "type": "array",
+            "items": {}
+          },
+          "reconciliation": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },

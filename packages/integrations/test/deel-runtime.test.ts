@@ -97,11 +97,18 @@ const runtimeFor = (
   createDeelSyncRuntime({
     config,
     source: h.source,
+    settings: manualSettings,
     fetch: h.fetch,
     now: () => new Date(now),
   })
 
 const configured = { token: 'fixture-token', startDate: '2026-09-01' }
+
+const manualSettings = {
+  get: async () => ({ mode: 'manual' as const, runTime: '03:00' }),
+  claimAutomaticDay: async () => true,
+  organizationTimezone: async () => 'UTC',
+}
 
 describe('Deel sync runtime: fails closed', () => {
   it.each([
@@ -224,9 +231,7 @@ describe('Deel sync runtime: one timesheet per person-day, once', () => {
 
     expect(result).toMatchObject({ status: 'completed', entriesTransferred: 0 })
     const detail = h.runs[0]?.summary?.detail as { unsyncable: { reason: string }[] }
-    expect(detail.unsyncable).toEqual([
-      { entryId: 1, userId: 99, reason: 'no_contract_match' },
-    ])
+    expect(detail.unsyncable).toEqual([{ entryId: 1, userId: 99, reason: 'no_contract_match' }])
     expect(h.requests.filter((request) => request.method === 'POST')).toEqual([])
   })
 
@@ -243,6 +248,7 @@ describe('Deel sync runtime: one timesheet per person-day, once', () => {
     const runtime = createDeelSyncRuntime({
       config: configured,
       source: h.source,
+      settings: manualSettings,
       fetch: async () => new Response('{}', { status: 503 }),
       now: () => new Date('2026-10-19T03:00:00.000Z'),
     })
@@ -309,5 +315,173 @@ describe('transfer log reconciliation', () => {
       ],
     })
     expect(report.edited).toHaveLength(1)
+  })
+})
+
+const settingsFor = (mode: 'manual' | 'automatic', runTime = '03:00', timezone = 'UTC') => {
+  const claimed: string[] = []
+  return {
+    claimed,
+    source: {
+      get: async () => ({ mode, runTime }),
+      claimAutomaticDay: async (date: string) => {
+        if (mode !== 'automatic' || claimed.includes(date)) return false
+        claimed.push(date)
+        return true
+      },
+      organizationTimezone: async () => timezone,
+    },
+  }
+}
+
+const withSchedule = (
+  h: Harness,
+  settings: ReturnType<typeof settingsFor>['source'],
+  now: string,
+) =>
+  createDeelSyncRuntime({
+    config: configured,
+    source: h.source,
+    settings,
+    fetch: h.fetch,
+    now: () => new Date(now),
+  })
+
+const seedAna = (h: Harness) =>
+  h.entries.push(
+    { id: 1, userId: ana, spentDate: '2026-09-02', roundedSeconds: 3_600 },
+    { id: 2, userId: ana, spentDate: '2026-09-02', roundedSeconds: 1_800 },
+    { id: 3, userId: ana, spentDate: '2026-09-03', roundedSeconds: 7_200 },
+  )
+
+const postsOf = (h: Harness) => h.requests.filter((request) => request.method === 'POST')
+
+describe('Deel sync: manual by default, automatic at a set time (#1102)', () => {
+  it('[unit] manual mode never runs from the schedule', async () => {
+    const h = harness()
+    seedAna(h)
+    const { source } = settingsFor('manual')
+
+    expect(await withSchedule(h, source, '2026-10-19T03:00:00.000Z').runAutomaticIfDue()).toEqual({
+      status: 'not_due',
+      reason: 'the sync is manual',
+    })
+    expect(h.requests).toEqual([])
+    expect(h.runs).toEqual([])
+  })
+
+  it('[unit] automatic mode waits for the configured time, then runs once that day', async () => {
+    const h = harness()
+    seedAna(h)
+    const schedule = settingsFor('automatic', '03:00')
+
+    expect(
+      await withSchedule(h, schedule.source, '2026-10-19T02:00:00.000Z').runAutomaticIfDue(),
+    ).toMatchObject({
+      status: 'not_due',
+    })
+    expect(postsOf(h)).toEqual([])
+
+    expect(
+      await withSchedule(h, schedule.source, '2026-10-19T03:00:00.000Z').runAutomaticIfDue(),
+    ).toMatchObject({
+      status: 'completed',
+      timesheetsSubmitted: 2,
+    })
+    expect(
+      await withSchedule(h, schedule.source, '2026-10-19T04:00:00.000Z').runAutomaticIfDue(),
+    ).toEqual({
+      status: 'not_due',
+      reason: 'already ran today',
+    })
+    expect(postsOf(h)).toHaveLength(2)
+    expect(schedule.claimed).toEqual(['2026-10-19'])
+  })
+
+  it('[unit] the configured time is read in the organization timezone', async () => {
+    // 03:30 UTC is 21:30 on the previous day in Costa Rica (UTC-6).
+    const now = '2026-10-19T03:30:00.000Z'
+    const h = harness()
+    seedAna(h)
+
+    const later = settingsFor('automatic', '22:00', 'America/Costa_Rica')
+    expect(await withSchedule(h, later.source, now).runAutomaticIfDue()).toMatchObject({
+      status: 'not_due',
+    })
+    expect(later.claimed).toEqual([])
+
+    const due = settingsFor('automatic', '21:00', 'America/Costa_Rica')
+    expect(await withSchedule(h, due.source, now).runAutomaticIfDue()).toMatchObject({
+      status: 'completed',
+    })
+    expect(due.claimed).toEqual(['2026-10-18'])
+  })
+
+  it('[unit] a preview reads the plan and submits nothing', async () => {
+    const h = harness()
+    seedAna(h)
+    const runtime = runtimeFor(h, configured)
+
+    expect(await runtime.preview({ from: '2026-09-02', to: '2026-09-03' })).toMatchObject({
+      status: 'ready',
+      entryIds: [1, 2, 3],
+      timesheets: 2,
+    })
+    expect(postsOf(h)).toEqual([])
+    expect(h.log.size).toBe(0)
+    expect(h.runs).toEqual([])
+  })
+
+  it('[unit] a confirmed run submits exactly the entries the preview showed', async () => {
+    const h = harness()
+    seedAna(h)
+    const runtime = runtimeFor(h, configured)
+    const preview = await runtime.preview({ from: '2026-09-02', to: '2026-09-03' })
+    if (preview.status !== 'ready') throw new Error('expected a ready preview')
+
+    const result = await runtime.run({
+      window: preview.window,
+      expectedEntryIds: preview.entryIds,
+      trigger: 'manual',
+      userId: 7,
+    })
+    expect(result).toMatchObject({ status: 'completed', entriesTransferred: 3 })
+    expect(h.runs[0]?.summary?.detail).toMatchObject({ trigger: 'manual', userId: 7 })
+  })
+
+  it('[unit] a run whose plan changed since the preview submits nothing', async () => {
+    const h = harness()
+    seedAna(h)
+    const runtime = runtimeFor(h, configured)
+    const preview = await runtime.preview({ from: '2026-09-02', to: '2026-09-03' })
+    if (preview.status !== 'ready') throw new Error('expected a ready preview')
+    h.entries.push({ id: 4, userId: ana, spentDate: '2026-09-02', roundedSeconds: 900 })
+
+    const result = await runtime.run({
+      window: preview.window,
+      expectedEntryIds: preview.entryIds,
+      trigger: 'manual',
+    })
+    expect(result).toMatchObject({ status: 'stale' })
+    expect(postsOf(h)).toEqual([])
+    expect(h.log.size).toBe(0)
+    expect(h.runs[0]?.outcome).toBe('failed')
+  })
+
+  it('[unit] a window before the start date, past today, or reversed is refused', async () => {
+    const h = harness()
+    seedAna(h)
+    const runtime = runtimeFor(h, configured)
+
+    expect(await runtime.preview({ from: '2026-08-31', to: '2026-09-02' })).toMatchObject({
+      status: 'invalid',
+    })
+    expect(await runtime.preview({ from: '2026-09-02', to: '2026-10-19' })).toMatchObject({
+      status: 'invalid',
+    })
+    expect(await runtime.preview({ from: '2026-09-03', to: '2026-09-02' })).toMatchObject({
+      status: 'invalid',
+    })
+    expect(h.requests).toEqual([])
   })
 })
