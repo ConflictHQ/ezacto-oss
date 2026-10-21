@@ -239,6 +239,7 @@ export const renderInvoiceEditPage = (view?: string): string => `
       <section class="editor-section" aria-labelledby="invoice-edit-lines-heading">
         <h2 id="invoice-edit-lines-heading">Line items</h2>
         <p class="hint">Amounts are worked out in exact cents, and the total, balance and payment state are reconciled when you save. A linked project has to be one of this client's.</p>
+        <p class="form-result" data-invoice-edit-hours-warning role="status" aria-live="polite" hidden></p>
         <div class="line-editor invoice-line-editor-table">
           <div class="line-editor-head" aria-hidden="true"><span>#</span><span>Item type</span><span>Description</span><span>Quantity</span><span data-invoice-edit-rate-heading>Unit price</span><span class="line-editor-numeric">Amount</span><span></span></div>
           <div class="line-editor-rows" data-invoice-edit-line-list></div>
@@ -290,6 +291,7 @@ export const renderInvoiceEditPage = (view?: string): string => `
           <label class="line-editor-project">Linked project<select data-invoice-edit-line-field="projectId"></select></label>
           <label class="editor-check"><input type="checkbox" data-invoice-edit-line-field="taxed">Tax 1</label>
           <label class="editor-check"><input type="checkbox" data-invoice-edit-line-field="taxed2">Tax 2</label>
+          <p class="hint invoice-hours-line" data-invoice-edit-linked-hours hidden></p>
         </div>
         <p class="line-editor-removed" data-invoice-edit-line-removed hidden><span>This line is removed when you save.</span><button type="button" class="editor-secondary" data-invoice-edit-line-restore>Keep this line</button></p>
       </fieldset>

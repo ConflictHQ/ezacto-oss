@@ -53646,7 +53646,15 @@
               "status",
               "tolerance_seconds",
               "projects",
-              "not_compared"
+              "not_compared",
+              "total_tolerance_seconds",
+              "comparison_complete",
+              "has_mismatch",
+              "invoice_version",
+              "invoice_state",
+              "not_compared_entry_ids",
+              "lines",
+              "entries"
             ],
             "properties": {
               "invoice_id": {
@@ -53667,12 +53675,186 @@
                 "enum": [
                   "matched",
                   "billed_below_linked",
-                  "billed_above_linked"
+                  "billed_above_linked",
+                  "not_comparable"
                 ]
               },
               "tolerance_seconds": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "total_tolerance_seconds": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "comparison_complete": {
+                "type": "boolean"
+              },
+              "has_mismatch": {
+                "type": "boolean"
+              },
+              "invoice_version": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "invoice_state": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "not_compared_entry_ids": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "lines": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "line_id",
+                    "project_id",
+                    "entry_ids",
+                    "linked_seconds",
+                    "billed_seconds",
+                    "difference_seconds",
+                    "status"
+                  ],
+                  "properties": {
+                    "line_id": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "project_id": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "entry_ids": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "linked_seconds": {
+                      "type": "integer"
+                    },
+                    "billed_seconds": {
+                      "type": "integer"
+                    },
+                    "difference_seconds": {
+                      "type": "integer"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "matched",
+                        "billed_below_linked",
+                        "billed_above_linked",
+                        "not_comparable"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "entries": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "entry_id",
+                    "user_id",
+                    "user_name",
+                    "spent_date",
+                    "project_id",
+                    "project_name",
+                    "seconds"
+                  ],
+                  "properties": {
+                    "entry_id": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "user_id": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "user_name": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "spent_date": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "project_id": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "project_name": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "seconds": {
+                      "type": "integer"
+                    }
+                  },
+                  "additionalProperties": false
+                }
               },
               "projects": {
                 "type": "array",
@@ -53681,6 +53863,7 @@
                   "required": [
                     "project_id",
                     "project_name",
+                    "tolerance_seconds",
                     "linked_seconds",
                     "billed_seconds",
                     "difference_seconds",
@@ -53701,6 +53884,10 @@
                         }
                       ]
                     },
+                    "tolerance_seconds": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
                     "linked_seconds": {
                       "type": "integer"
                     },
@@ -53715,7 +53902,8 @@
                       "enum": [
                         "matched",
                         "billed_below_linked",
-                        "billed_above_linked"
+                        "billed_above_linked",
+                        "not_comparable"
                       ]
                     }
                   },

@@ -4,6 +4,7 @@ import type {
   Attachment,
   GeneralResource,
   Invoice,
+  InvoiceHoursReconciliationEnvelope,
   InvoiceEditInput,
   InvoiceEmailDeliveryInput,
   InvoiceGenerationInput,
@@ -365,6 +366,8 @@ export const invoiceAttachmentChanges = (
  * the same commands under the same keys -- and the two reads are for the
  * read-only client and the projects a line can be linked to.
  */
+export type InvoiceHoursReview = InvoiceHoursReconciliationEnvelope['data']
+
 export interface InvoiceEditorApi
   extends Pick<
     InvoicePaymentApi,
@@ -375,6 +378,7 @@ export interface InvoiceEditorApi
     | 'updateInvoiceLine'
     | 'deleteInvoiceLine'
   > {
+  getInvoiceHoursReconciliation?(id: number, signal?: AbortSignal): Promise<InvoiceHoursReview>
   /** The client the invoice is for, by name. A name is a nicety; the page edits without one. */
   getDirectoryClient?(id: number, signal?: AbortSignal): Promise<GeneralResource>
   /**

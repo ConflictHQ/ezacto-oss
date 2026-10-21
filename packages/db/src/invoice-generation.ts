@@ -176,6 +176,8 @@ interface SelectedProject {
 }
 
 interface GeneratedLine {
+  /** Immutable origin of a generated hour quantity; absent for fees/expenses. */
+  timeEntryIds?: readonly number[]
   id: number
   position: number
   kind: string
@@ -757,6 +759,7 @@ const lineManifest = (lines: readonly GeneratedLine[]): string =>
       unit_price_cents: line.unitPriceCents,
       amount_cents: line.amountCents,
       project_id: line.projectId,
+      time_entry_ids: line.timeEntryIds,
     })),
   })
 
@@ -1045,6 +1048,7 @@ const timeLines = (
     }
     return {
       kind: 'Service',
+      timeEntryIds: group.entries.map(entry => entry.id),
       description: group.description,
       quantity,
       unitPriceCents,

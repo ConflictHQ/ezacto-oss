@@ -4764,15 +4764,40 @@ export type InvoiceHoursReconciliationEnvelope = {
   "linked_seconds": number;
   "billed_seconds": number;
   "difference_seconds": number;
-  "status": "matched" | "billed_below_linked" | "billed_above_linked";
+  "status": "matched" | "billed_below_linked" | "billed_above_linked" | "not_comparable";
   "tolerance_seconds": number;
-  "projects": Array<{
-  "project_id": number;
-  "project_name": string | null;
+  "total_tolerance_seconds": number;
+  "comparison_complete": boolean;
+  "has_mismatch": boolean;
+  "invoice_version": number | null;
+  "invoice_state": string | null;
+  "not_compared_entry_ids": Array<number>;
+  "lines": Array<{
+  "line_id": number;
+  "project_id": number | null;
+  "entry_ids": Array<number>;
   "linked_seconds": number;
   "billed_seconds": number;
   "difference_seconds": number;
-  "status": "matched" | "billed_below_linked" | "billed_above_linked";
+  "status": "matched" | "billed_below_linked" | "billed_above_linked" | "not_comparable";
+}>;
+  "entries": Array<{
+  "entry_id": number | null;
+  "user_id": number | null;
+  "user_name": string | null;
+  "spent_date": string | null;
+  "project_id": number;
+  "project_name": string | null;
+  "seconds": number;
+}>;
+  "projects": Array<{
+  "project_id": number;
+  "project_name": string | null;
+  "tolerance_seconds": number;
+  "linked_seconds": number;
+  "billed_seconds": number;
+  "difference_seconds": number;
+  "status": "matched" | "billed_below_linked" | "billed_above_linked" | "not_comparable";
 }>;
   "not_compared": Array<{
   "line_id": number;

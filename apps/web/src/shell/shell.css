@@ -9759,3 +9759,5 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   gap: 4px;
   font-size: 13px;
 }
+
+.invoice-hours-line { grid-column: 1 / -1; margin: 0; }
