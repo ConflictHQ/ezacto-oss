@@ -6,11 +6,13 @@ import {
   filteredPaymentReport,
   paymentRunCsv,
   paymentReportTotals,
+  paymentAllocationRows,
 } from "../src/staff-payments/runs-model.js";
 import {
   summarizeStaffPayments,
   type PaymentRun,
   type PaymentRunReport,
+  type PaymentAllocationReport,
   type StaffPaymentReport,
 } from "@ezacto/core";
 const row = {
@@ -330,4 +332,60 @@ it("hides empty report rows and exports by default, with an explicit opt-in", ()
   expect(paymentRunCsv(data, filters)).not.toContain("Empty Person");
   expect(filteredPaymentReport(data, { ...filters, show_empty: true }).rows).toHaveLength(3);
   expect(paymentRunCsv(data, { ...filters, show_empty: true })).toContain("Empty Person");
+});
+
+const allocationReport = (month: string): PaymentAllocationReport => ({ month, people: [{
+  user_id: 2, name: "Person Two", currency: "USD", earned_cents: 10000,
+  paid_cents: 5000, reserved_cents: 2000, allocated_applied_cents: 3000,
+  allocated_reserved_cents: 1000, remaining_cents: 3000,
+  unallocated_payments: [{ payment_kind: "event", payment_id: "old-payment", amount_cents: 2000, allocated_cents: 0, unallocated_cents: 2000, state: "applied" }],
+  allocations: [], projects: [{ project_id: 7, project_name: '=Atlas,"North"', earned_cents: 10000,
+    applied_cents: 3000, reserved_cents: 1000, remaining_cents: 6000, entries: [{
+      entry_id: 31, spent_date: `${month}-04`, selected_seconds: 7200, rate_cents: 5000,
+      reviewed_rounded_seconds: 7200, current_rounded_seconds: 3600, current_rate_cents: 5000,
+      earned_cents: 10000, applied_cents: 1000, reserved_cents: 500,
+      applied_seconds: 720, reserved_seconds: 360, remaining_cents: 8500, remaining_seconds: 6120,
+      source_changed: true, over_allocated: false,
+    }] }],
+}] });
+
+it("exports explicit project and entry allocations without assigning monthly or project money to entries", () => {
+  const allocations = allocationReport("2026-09");
+  const filters = { person: "Two", currency: "USD", status: "all" };
+  const balances = filteredPaymentReport(report, filters).rows;
+  const rows = paymentAllocationRows([allocations], balances);
+  expect(rows).toMatchObject([
+    { level: "Project", earned: 10000, paid: 3000, reserved: 1000, remaining: 6000, entry_id: null },
+    { level: "Entry", earned: 10000, paid: 1000, reserved: 500, remaining: 8500, entry_id: 31, flags: "Source time changed" },
+  ]);
+  const csv = paymentRunCsv(report, filters, [allocations]);
+  expect(csv).toContain('"Allocation Project","Person Two","2026-09","USD","10000","3000","1000","6000"');
+  expect(csv).toContain('"Allocation Entry","Person Two","2026-09","USD","10000","1000","500","8500"');
+  expect(csv).toContain(`"'=Atlas,""North"""`);
+  expect(csv).toContain('"31","7200","6120","Source time changed"');
+  const csvRows = csv.trim().split("\r\n").map((line) => line.match(/"(?:[^"]|"")*"/gu));
+  expect(csvRows.every((cells) => cells?.length === csvRows[0]?.length)).toBe(true);
+  for (const hidden of [ { ...filters, person: "Nobody" }, { ...filters, currency: "EUR" }, { ...filters, status: "paid" } ])
+    expect(paymentRunCsv(report, hidden, [allocations])).not.toContain("Allocation Entry");
+  expect(paymentRunCsv(report, filters, [allocationReport("2026-08")])).not.toContain("Allocation Entry");
+});
+
+it("loads allocation reconciliation for every reported month and clears it on navigation", async () => {
+  history.replaceState({}, "", "/payments/report");
+  const data = { ...report, from: "2026-08", ledgers: [{ ...ledger, month: "2026-08", rows: [{ ...row, month: "2026-08" }] }, ledger] };
+  const getPaymentAllocationReport = vi.fn(async (month: string) => allocationReport(month));
+  const controller = createPaymentRunsController({ getPaymentRunReport: async () => data, getPaymentAllocationReport }, async () => {});
+  const active = new AbortController();
+  await controller.activate(active.signal);
+  expect(getPaymentAllocationReport.mock.calls.map(([month]) => month)).toEqual(["2026-08", "2026-09"]);
+  const host = document.querySelector<HTMLElement>("[data-run-report-allocations]")!;
+  expect(host.textContent).toContain("entry 31");
+  expect(host.textContent).toContain("Source time changed");
+  expect(host.textContent).toContain("Monthly payments stay unassigned");
+  const person = document.querySelector<HTMLInputElement>('[data-run-report-form] [name="person"]')!;
+  person.value = "Nobody";
+  person.dispatchEvent(new Event("input"));
+  expect(host.textContent).not.toContain("entry 31");
+  active.abort();
+  expect(host.textContent).toBe("");
 });
