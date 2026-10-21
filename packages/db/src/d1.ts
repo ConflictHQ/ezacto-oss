@@ -526,3 +526,5 @@ export * from './deel-time-sync.js'
 export { createClientRateCardRepository } from './client-rate-cards.js'
 
 export * from './contractor-review.js'
+
+export { releaseInvoiceLineTime } from './invoice-time-release.js'

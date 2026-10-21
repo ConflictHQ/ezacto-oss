@@ -1,4 +1,4 @@
-import { reconcileInvoiceHours, type InvoiceHoursReconciliation } from '@ezacto/core'
+import { InvoiceTimeReleaseError, reconcileInvoiceHours, type InvoiceLineTimeReleaseResult, type InvoiceHoursReconciliation } from '@ezacto/core'
 import { Hono } from 'hono'
 import { describe, expect, it, vi } from 'vitest'
 import { errorResponse } from '../src/errors.js'
@@ -25,11 +25,13 @@ type Authentication =
 const app = (
   options: {
     read?: (invoiceId: number) => Promise<InvoiceHoursReconciliation | null>
+    writable?: boolean
     profile?: string
     authentication?: Authentication
   } = {},
 ) => {
   const readHoursReconciliation = vi.fn(options.read ?? (async () => result()))
+  const releaseLineTime=vi.fn(async (_command:unknown,_actor:number,_now:string):Promise<InvoiceLineTimeReleaseResult>=>{void _command;void _actor;void _now;return {commandId:'release',invoiceId:77,lineId:5,expectedVersion:1,hoursVersion:'a'.repeat(64),releasedEntryIds:[10],releasedSeconds:1800,recordedAt:'2026-09-12T12:00:00.000Z',replayed:false}})
   const instance = new Hono<{ Bindings: object; Variables: Record<string, unknown> }>()
   instance.use('*', async (context, next) => {
     context.set('requestId', 'test-request')
@@ -41,8 +43,8 @@ const app = (
     await next()
   })
   instance.onError((error, context) => errorResponse(error, context as never))
-  installInvoiceHoursReconciliationRoutes(instance as never, { readHoursReconciliation })
-  return { request: (path: string) => instance.request(path), readHoursReconciliation }
+  installInvoiceHoursReconciliationRoutes(instance as never, { readHoursReconciliation,...(options.writable?{releaseLineTime}:{}) },()=> '2026-09-12T12:00:00.000Z')
+  return { request: (path: string, init?: RequestInit) => instance.request(path,init), readHoursReconciliation, releaseLineTime }
 }
 
 describe('reading the hours reconciliation', () => {
@@ -61,8 +63,8 @@ describe('reading the hours reconciliation', () => {
         status: 'billed_below_linked',
         tolerance_seconds: 36,
         total_tolerance_seconds: 36, comparison_complete: true, has_mismatch: true,
-        invoice_version: null, invoice_state: null, not_compared_entry_ids: [], lines: [],
-        entries: [{ entry_id: null, user_id: null, user_name: null, spent_date: null, project_id: 1, project_name: 'Phase 1', seconds: 7200 }],
+        hours_version: null, invoice_version: null, invoice_state: null, not_compared_entry_ids: [], lines: [],
+        entries: [{ entry_id: null, user_id: null, user_name: null, spent_date: null, project_id: 1, project_name: 'Phase 1', seconds: 7200, eligible_for_release: false }],
         projects: [
           {
             project_id: 1,
@@ -129,4 +131,26 @@ describe('who may read it', () => {
     expect(await response.json()).toMatchObject({ error: { code: 'insufficient_scope' } })
     expect(refused.readHoursReconciliation).not.toHaveBeenCalled()
   })
+})
+
+const releaseBody={command_id:'release',line_id:5,expected_version:1,hours_version:'a'.repeat(64),entry_ids:[10],confirmed:true}
+const releaseRequest=(body:unknown=releaseBody):RequestInit=>({method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
+it.each(['member','project_manager','people_admin'])('denies release to %s before the store is called',async profile=>{
+ const api=app({profile,writable:true});expect((await api.request('/invoices/77/hours-reconciliation/release',releaseRequest())).status).toBe(403);expect(api.releaseLineTime).not.toHaveBeenCalled()
+})
+it('requires all existing Detailed-time accounting scopes on a token and explicit confirmation',async()=>{
+ const denied=app({writable:true,authentication:{kind:'token',tokenId:1,scopes:['reports:read','invoices:write']}})
+ expect((await denied.request('/invoices/77/hours-reconciliation/release',releaseRequest())).status).toBe(403)
+ expect(denied.releaseLineTime).not.toHaveBeenCalled()
+ const api=app({writable:true,authentication:{kind:'token',tokenId:1,scopes:['reports:read','time_entries:write','invoices:write']}})
+ expect((await api.request('/invoices/77/hours-reconciliation/release',releaseRequest({...releaseBody,confirmed:false}))).status).toBe(422)
+ expect((await api.request('/invoices/77/hours-reconciliation/release',releaseRequest({...releaseBody,actor_id:2}))).status).toBe(422)
+ const response=await api.request('/invoices/77/hours-reconciliation/release',releaseRequest())
+ expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toBe('no-store')
+ expect(api.releaseLineTime).toHaveBeenCalledWith({commandId:'release',invoiceId:77,lineId:5,expectedVersion:1,hoursVersion:'a'.repeat(64),entryIds:[10]},1,'2026-09-12T12:00:00.000Z')
+})
+it('surfaces a stale draft/selection as an uncached conflict',async()=>{
+ const api=app({writable:true});api.releaseLineTime.mockRejectedValueOnce(new InvoiceTimeReleaseError('conflict','Draft changed'))
+ const response=await api.request('/invoices/77/hours-reconciliation/release',releaseRequest())
+ expect(response.status).toBe(409);expect(response.headers.get('cache-control')).toBe('no-store')
 })

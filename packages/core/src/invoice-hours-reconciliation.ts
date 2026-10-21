@@ -18,6 +18,7 @@
  */
 
 export interface ReconciliationEntry {
+  readonly running?: number
   readonly id?: number
   readonly userId?: number
   readonly userName?: string
@@ -77,6 +78,7 @@ export interface InvoiceHoursReconciliation extends ReconciliationFigures {
   /** A known line can differ even when opposite differences cancel in totals. */
   readonly hasMismatch: boolean
   readonly notComparedEntryIds: readonly number[]
+  readonly hoursVersion?: string
   readonly invoiceVersion?: number
   readonly invoiceState?: string
   readonly toleranceSeconds: number

@@ -1,7 +1,9 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Miniflare } from 'miniflare'
-import { executeInvoiceEdit } from '../src/invoice-state.js'
+import { releaseInvoiceLineTime } from '../src/invoice-time-release.js'
+import { readInvoiceHoursSnapshot } from '../src/invoice-hours-reconciliation.js'
+import { executeInvoiceLifecycleCommand, executeInvoiceEdit } from '../src/invoice-state.js'
 import { sql } from 'drizzle-orm'
 import { createInvoiceGenerationService } from '../src/invoice-generation.js'
 import { createD1Database, createContainerDatabase } from '../src/adapters.js'
@@ -255,3 +257,64 @@ for (const runtime of ['sqlite', 'd1'] as const)
       ).toMatchObject({ linkedSeconds: 7200 })
     }, 60000)
   })
+
+const releaseFixture = async (runtime:'sqlite'|'d1') => {
+ const database=await fixture(runtime)
+ await execute(`UPDATE organizations SET modules='{"invoices":true}'`)
+ await entry(1,1,3600,3600,null);await entry(2,1,1800,1800,null);await entry(3,1,1800,1800,null)
+ await entry(4,1,1800,1800,2)
+ await execute('UPDATE time_entries SET billable_rate_cents=15000 WHERE invoice_id IS NULL')
+ const invoice=await createInvoiceGenerationService(database,{clock:()=>at}).generate({commandId:'release-generation',principal:{userId:1,profile:'administrator'},request:{clientId:1,from:'2026-09-01',to:'2026-09-30',projectIds:[1],timeSummaryType:'people',expenseSummaryType:null}})
+ const line=invoice.line_items[0]!
+ await executeInvoiceEdit(database,{invoiceId:invoice.id,commandId:'release-cap',actor:{type:'user',id:1},authorize:async()=>true,expectedVersion:invoice.version,occurredAt:at,eventIds:['release-cap-event'],edit:{type:'line_update',lineId:line.id,expectedLineUpdatedAt:line.updated_at,position:line.position,kind:line.kind,projectId:line.project_id,quantity:1.5,unitPriceCents:15000,amountCents:22500,taxed:false,taxed2:false}})
+ const review=(await readInvoiceHoursReconciliation(database,invoice.id))!
+ const command={commandId:'release-924',invoiceId:invoice.id,lineId:line.id,expectedVersion:review.invoiceVersion!,hoursVersion:review.hoursVersion!,entryIds:[2]}
+ return {database,command,invoiceId:invoice.id,review}
+}
+for(const runtime of ['sqlite','d1'] as const)describe(`guided invoice time release (${runtime})`,()=>{
+ it('matches whole entries, records the release once across retries and refuses a stale or cross-invoice selection',async()=>{
+  const f=await releaseFixture(runtime)
+  await expect(releaseInvoiceLineTime(f.database,{...f.command,entryIds:[1]},1,at)).rejects.toThrow(/selected whole entries/u)
+  await expect(releaseInvoiceLineTime(f.database,{...f.command,entryIds:[4]},1,at)).rejects.toThrow(/linked to this line/u)
+  const results=await Promise.all([releaseInvoiceLineTime(f.database,f.command,1,at),releaseInvoiceLineTime(f.database,f.command,1,at)])
+  expect(results.map(result=>result.replayed).sort()).toEqual([false,true])
+  expect(results[0]).toMatchObject({releasedEntryIds:[2],releasedSeconds:1800,recordedAt:at})
+  const after=(await readInvoiceHoursReconciliation(f.database,f.invoiceId))!
+  expect(after).toMatchObject({linkedSeconds:5400,billedSeconds:5400,hasMismatch:false,invoiceVersion:f.review.invoiceVersion})
+  expect(after.hoursVersion).not.toBe(f.command.hoursVersion)
+  await expect(releaseInvoiceLineTime(f.database,{...f.command,commandId:'second'},1,at)).rejects.toThrow(/changed/u)
+  await expect(releaseInvoiceLineTime(f.database,f.command,2,at)).rejects.toThrow(/changed/u)
+  expect(await f.database.all<{n:number}>(sql`SELECT count(*) AS n FROM report_time_commands`)).toEqual([{n:1}])
+  expect(await f.database.all<{actor:number;action:string}>(sql`SELECT actor_user_id AS actor,action FROM report_time_commands`)).toEqual([{actor:1,action:'mark_uninvoiced'}])
+ },60000)
+ it('rejects a source race inside the atomic command and rolls back its receipt if the update fails',async()=>{
+  const f=await releaseFixture(runtime)
+  const instrumented=Object.create(f.database) as typeof f.database
+  let reads=0
+  instrumented.all=(async (query:Parameters<typeof f.database.all>[0])=>{
+   const rows=await f.database.all(query)
+   if(++reads===2)await execute(`UPDATE time_entries SET updated_at='2026-09-12T13:00:00.000Z' WHERE id=3`)
+   return rows
+  }) as typeof f.database.all
+  await expect(releaseInvoiceLineTime(instrumented,f.command,1,at)).rejects.toThrow(/changed/u)
+  expect(await f.database.all<{n:number}>(sql`SELECT count(*) AS n FROM report_time_commands`)).toEqual([{n:0}])
+  expect((await readInvoiceHoursSnapshot(f.database,f.invoiceId))!.entries.map(entry=>entry.id)).toEqual([1,2,3])
+  const fresh=(await readInvoiceHoursReconciliation(f.database,f.invoiceId))!
+  const command={...f.command,hoursVersion:fresh.hoursVersion!}
+  await execute("CREATE TRIGGER forced_release_failure BEFORE UPDATE OF invoice_id ON time_entries WHEN NEW.invoice_id IS NULL BEGIN SELECT RAISE(ABORT,'forced release failure');END")
+  await expect(releaseInvoiceLineTime(f.database,command,1,at)).rejects.toThrow(/changed/u)
+  expect(await f.database.all<{n:number}>(sql`SELECT count(*) AS n FROM report_time_commands`)).toEqual([{n:0}])
+  await execute('DROP TRIGGER forced_release_failure')
+  await expect(releaseInvoiceLineTime(f.database,command,1,at)).resolves.toMatchObject({releasedEntryIds:[2]})
+ },60000)
+ it('refuses even a fresh selection once the invoice is sent or closed',async()=>{
+  const f=await releaseFixture(runtime)
+  const sent=await executeInvoiceLifecycleCommand(f.database,{invoiceId:f.invoiceId,commandId:'sent-release',command:'send',actor:{type:'user',id:1},authorize:async()=>true,expectedVersion:f.command.expectedVersion,occurredAt:at,eventId:'sent-release-event',messageId:99})
+  const opened=(await readInvoiceHoursReconciliation(f.database,f.invoiceId))!
+  await expect(releaseInvoiceLineTime(f.database,{...f.command,expectedVersion:opened.invoiceVersion!,hoursVersion:opened.hoursVersion!},1,at)).rejects.toThrow(/changed/u)
+  await executeInvoiceLifecycleCommand(f.database,{invoiceId:f.invoiceId,commandId:'closed-release',command:'cancel',actor:{type:'user',id:1},authorize:async()=>true,expectedVersion:sent.invoice.version,occurredAt:at,eventId:'closed-release-event',messageId:100})
+  const closed=(await readInvoiceHoursReconciliation(f.database,f.invoiceId))!
+  await expect(releaseInvoiceLineTime(f.database,{...f.command,expectedVersion:closed.invoiceVersion!,hoursVersion:closed.hoursVersion!},1,at)).rejects.toThrow(/changed/u)
+  expect(await f.database.all<{n:number}>(sql`SELECT count(*) AS n FROM report_time_commands`)).toEqual([{n:0}])
+ },60000)
+})
