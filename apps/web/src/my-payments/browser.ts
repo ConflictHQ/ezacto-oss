@@ -39,6 +39,7 @@ export const createMyPaymentsController = (api: MyPaymentsApi): MyPaymentsContro
   const invoices = required<HTMLElement>('[data-my-staff-invoices]')
 
   let active: AbortSignal | null = null
+  let generation = 0
 
   // Drawn pay figures do not outlive the session that was allowed to see them.
   const clear = (): void => {
@@ -130,7 +131,10 @@ export const createMyPaymentsController = (api: MyPaymentsApi): MyPaymentsContro
 
   const load = async (): Promise<void> => {
     const signal = active
-    if (signal === null) return
+    if (signal === null || signal.aborted) return
+    const request = ++generation
+    const current = (): boolean => !signal.aborted && active === signal && generation === request
+    clear()
     if (!validPaymentMonth(month.value)) {
       status.textContent = 'Choose a valid month.'
       return
@@ -140,19 +144,19 @@ export const createMyPaymentsController = (api: MyPaymentsApi): MyPaymentsContro
     status.textContent = 'Loading your payments…'
     try {
       const response = await api.getMyPayments(requestedMonth, signal)
-      if (signal.aborted || active !== signal || month.value !== requestedMonth) return
+      if (!current() || month.value !== requestedMonth) return
       render(response.data)
       status.textContent = ''
       if (api.getMyStaffInvoices) {
         try {
           const response = await api.getMyStaffInvoices(requestedMonth, signal)
-          if (!signal.aborted && active === signal && month.value === requestedMonth) invoices.replaceChildren(renderStaffInvoiceDocuments(response.data))
+          if (current() && month.value === requestedMonth) invoices.replaceChildren(renderStaffInvoiceDocuments(response.data))
         } catch {
-          if (!signal.aborted && active === signal && month.value === requestedMonth) invoices.textContent = 'Contractor invoice documents could not be loaded. Refresh to try again.'
+          if (current() && month.value === requestedMonth) invoices.textContent = 'Contractor invoice documents could not be loaded. Refresh to try again.'
         }
       }
     } catch (error) {
-      if (signal.aborted) return
+      if (!current() || month.value !== requestedMonth) return
       clear()
       status.textContent =
         myPaymentsRefusal(errorCode(error)) ??
