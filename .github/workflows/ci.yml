@@ -1,10 +1,6 @@
 name: ci
-# The merge gate. The gates themselves live in verify.yml so that this and the
-# deploy run the identical definition.
-#
-# No push trigger: on main the deploy runs the same verify.yml before it ships,
-# so a second copy here would only buy a duplicate 21-job run of work already
-# being done in the run that matters.
+# The merge gate. Successful verification attests the exact tested merge tree.
+# Deployment reuses that receipt instead of repeating the suite on main.
 on:
   pull_request:
 permissions:
@@ -24,3 +20,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: test "${{ needs.verify.result }}" = "success"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Verify the deployment source gate
+        run: node --test scripts/verified-source.test.mjs
+      - name: Attest the source tree that passed verification
+        env:
+          VERIFIED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          VERIFIED_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          VERIFIED_SOURCE_FILE: ${{ runner.temp }}/verified-source.json
+        run: node scripts/verified-source.mjs attest
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-source
+          path: ${{ runner.temp }}/verified-source.json
+          if-no-files-found: error
+          retention-days: 90
