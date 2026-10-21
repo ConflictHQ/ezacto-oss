@@ -17,6 +17,7 @@
 import {
   RECOVERY_CODE_DECOY,
   type TwoFactorStore,
+  type BeginEnrolmentInput,
 } from './two-factor.js'
 import {
   generateRecoveryCodes,
@@ -499,15 +500,17 @@ export const createTwoFactorService = ({
     async beginEnrolment(userId: number): Promise<TwoFactorEnrolmentOffer> {
       const secret = generateTotpSecret()
       const recoveryCodes = generateRecoveryCodes()
-      const codes = await Promise.all(
-        // Non-null by construction: these codes come from
-        // `generateRecoveryCodes`, and `hashRecoveryCode` throws on any code
-        // whose shape would have made the selector null.
-        recoveryCodes.map(async (value) => ({
+      const codes: BeginEnrolmentInput['codes'][number][] = []
+      // One enrolment must not fill the shared KDF queue with its own batch:
+      // later codes can time out while earlier hashes are still running.
+      // Keep the existing KDF admission limits and save only a complete set.
+      for (const value of recoveryCodes) {
+        codes.push({
+          // Generated codes always have a selector; hashing validates shape.
           selector: recoveryCodeSelector(value) as string,
           hash: await hashRecoveryCode(value),
-        })),
-      )
+        })
+      }
       await store.beginEnrolment({ userId, secret, codes }, now().toISOString())
       return {
         secret,
