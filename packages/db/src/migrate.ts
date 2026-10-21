@@ -1,3 +1,4 @@
+import { atomicRunManifestsMigration } from './migrations/0141_atomic_run_manifests.js'
 import { emailSuppressionsMigration } from './migrations/0140_email_suppressions.js'
 import { timesheetAutomaticReceiptsMigration } from './migrations/0139_timesheet_automatic_receipts.js'
 import { contractorAcceptanceMigration } from './migrations/0138_contractor_acceptance.js'
@@ -1638,6 +1639,7 @@ const migrations = [
   { id: '0138_contractor_acceptance', statements: contractorAcceptanceMigration },
   { id: '0139_timesheet_automatic_receipts', statements: timesheetAutomaticReceiptsMigration },
   { id: '0140_email_suppressions', statements: emailSuppressionsMigration },
+  { id: '0141_atomic_run_manifests', statements: atomicRunManifestsMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

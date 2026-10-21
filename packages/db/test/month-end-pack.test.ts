@@ -1,3 +1,4 @@
+import * as core from '@ezacto/core'
 import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createContainerDatabase } from '../src/adapters.js'
@@ -70,6 +71,24 @@ describe('month-end pack as one action (#58)', () => {
       sends.add(input.idempotencyKey)
     })
     const service = createMonthEndPackService(createContainerDatabase(sqlite), { attach, queue })
+    const failedRender = vi.spyOn(core, 'renderDetailedReportDocument').mockImplementationOnce(() => {
+      throw new Error('Report renderer unavailable')
+    })
+    try {
+      await expect(
+        service.propose({
+          jobId: 1,
+          occurrenceKey: '2026-08',
+          clientIds: [1],
+          proposedAt: t(9),
+          expiresAt: t(21),
+        }),
+      ).rejects.toThrow('Report renderer unavailable')
+      expect(sqlite.prepare('SELECT count(*) AS count FROM proposed_runs').get()).toEqual({ count: 0 })
+      expect(sqlite.prepare('SELECT count(*) AS count FROM run_items').get()).toEqual({ count: 0 })
+    } finally {
+      failedRender.mockRestore()
+    }
     const proposal = await service.propose({
       jobId: 1,
       occurrenceKey: '2026-08',

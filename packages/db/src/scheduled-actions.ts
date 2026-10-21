@@ -66,6 +66,7 @@ export interface ProposedRunRecord {
 
 /** Why a proposal or confirmation was refused, where the reason is a fact. */
 export type RunRefusal =
+  | 'job_unavailable'
   | 'already_proposed'
   | 'empty_manifest'
   | 'not_proposed'
@@ -206,32 +207,25 @@ export const createScheduledActionStore = (database: Database): ScheduledActionS
     // a run an operator cannot read is not worth showing them.
     if (input.items.length === 0) return { outcome: 'empty_manifest' }
 
-    const existing = await database.all<{ id: number }>(sql`
-      SELECT id FROM proposed_runs
-      WHERE job_id = ${input.jobId} AND occurrence_key = ${input.occurrenceKey}`)
-    // A scheduler that fired twice for the same month finds the run already
-    // there rather than proposing the pack a second time.
-    if (existing.length > 0) return { outcome: 'already_proposed' }
-
+    // The trigger inserts every item as part of this statement. A constraint
+    // failure on the last item rolls back the run and all preceding items.
+    // The unique occurrence is also the arbiter for overlapping scheduler ticks.
     const inserted = await database.all<RunRow>(sql`
       INSERT INTO proposed_runs
-        (job_id, occurrence_key, state, proposed_at, expires_at, created_at, updated_at)
-      VALUES (${input.jobId}, ${input.occurrenceKey}, 'proposed',
-        ${input.proposedAt}, ${input.expiresAt}, ${input.proposedAt}, ${input.proposedAt})
+        (job_id, occurrence_key, state, proposed_at, expires_at, created_at, updated_at, proposal_manifest_json)
+      SELECT job.id, ${input.occurrenceKey}, 'proposed', ${input.proposedAt}, ${input.expiresAt},
+        ${input.proposedAt}, ${input.proposedAt}, ${JSON.stringify(input.items)}
+      FROM scheduled_jobs job
+      WHERE job.id=${input.jobId} AND job.is_active=1
+      ON CONFLICT(job_id,occurrence_key) DO NOTHING
       RETURNING ${sql.raw(columns)}`)
     const row = inserted[0]
-    if (row === undefined) return { outcome: 'already_proposed' }
-
-    for (const item of input.items) {
-      await database.all(sql`
-        INSERT INTO run_items
-          (run_id, subject_type, subject_id, description, amount_cents, currency, target,
-           quantity_seconds, client_name, created_at)
-        VALUES (${row.id}, ${item.subjectType}, ${item.subjectId}, ${item.description},
-          ${item.amountCents ?? null}, ${item.currency ?? null}, ${item.target ?? null},
-          ${item.quantitySeconds ?? null}, ${item.clientName ?? null}, ${input.proposedAt})
-        RETURNING id`)
+    if (row === undefined) {
+      const existing = await database.all<{ id: number }>(sql`
+        SELECT id FROM proposed_runs WHERE job_id=${input.jobId} AND occurrence_key=${input.occurrenceKey}`)
+      return {outcome:existing.length>0?'already_proposed':'job_unavailable'}
     }
+
     return { outcome: 'proposed', run: run(row) }
   },
 

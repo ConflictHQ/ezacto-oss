@@ -119,15 +119,13 @@ export const createMonthEndPackService = (
 ) => {
   const store = createScheduledActionStore(database)
 
-  const render = async (runId: number, invoiceId: number): Promise<{
+  const render = async (occurrenceKey: string, invoiceId: number): Promise<{
     invoice: InvoiceRow
     name: string
     bytes: Uint8Array
     warnings: readonly ReportNoteWarning[]
   }> => {
-    const run = await store.read(runId)
-    if (run === null) throw new Error('month-end run is missing')
-    const range = rangeFromOccurrence(run.occurrenceKey)
+    const range = rangeFromOccurrence(occurrenceKey)
     const invoiceRecord = await invoice(database, invoiceId)
     const rows = await details(database, invoiceRecord.clientId, range.from, range.to)
     const visibleDefault = rows[0]?.visibleDefault !== 0
@@ -144,7 +142,7 @@ export const createMonthEndPackService = (
     const organization = await database.all<{ name: string }>(sql`SELECT name FROM organizations WHERE id = 1`)
     const brandName = brand?.name ?? organization[0]?.name ?? invoiceRecord.clientName
     const totalSeconds = rows.reduce((total, row) => total + row.roundedSeconds, 0)
-    const name = `work-detail-${run.occurrenceKey}-invoice-${invoiceRecord.number}.pdf`
+    const name = `work-detail-${occurrenceKey}-invoice-${invoiceRecord.number}.pdf`
     const bytes = renderDetailedReportDocument({
       title: 'Detailed time',
       period: `${range.from} through ${range.to}`,
@@ -184,6 +182,22 @@ export const createMonthEndPackService = (
         periodEnd: range.to,
         scope: input.clientIds === undefined ? {} : { clientIds: input.clientIds },
       })
+      const existing = await database.all<{ id: number }>(sql`
+              SELECT id FROM proposed_runs WHERE job_id=${input.jobId} AND occurrence_key=${input.occurrenceKey}`)
+      if (existing.length > 0) return { outcome: { outcome: 'already_proposed' }, manifest, previews: [] }
+      // Rendering is a prerequisite, not a side effect of a stored proposal.
+      // A failing report must leave nothing for an operator to confirm.
+      const previews = await Promise.all(
+        manifest.items.map(async (item) => {
+          const rendered = await render(input.occurrenceKey, item.subjectId)
+          const brand = await resolveReportBrand(database, rendered.invoice.clientId)
+          return {
+            invoiceId: item.subjectId,
+            brandName: brand?.name ?? rendered.invoice.clientName,
+            warnings: rendered.warnings,
+          }
+        }),
+      )
       const outcome = await store.propose({
         jobId: input.jobId,
         occurrenceKey: input.occurrenceKey,
@@ -191,20 +205,7 @@ export const createMonthEndPackService = (
         proposedAt: input.proposedAt,
         expiresAt: input.expiresAt,
       })
-      const runId = outcome.outcome === 'proposed' ? outcome.run.id : 0
-      const previews = runId === 0
-        ? []
-        : await Promise.all(manifest.items.map(async (item, index) => {
-            void index
-            const rendered = await render(runId, item.subjectId)
-            const brand = await resolveReportBrand(database, rendered.invoice.clientId)
-            return {
-              invoiceId: item.subjectId,
-              brandName: brand?.name ?? rendered.invoice.clientName,
-              warnings: rendered.warnings,
-            }
-          }))
-      return { outcome, manifest, previews }
+      return { outcome, manifest, previews: outcome.outcome === 'proposed' ? previews : [] }
     },
 
     confirmAndExecute: async (
@@ -228,7 +229,7 @@ export const createMonthEndPackService = (
         now,
         handler: async (item) => {
           if (item.subjectType !== 'invoice') throw new Error('month-end item is not an invoice')
-          const rendered = await render(runId, item.subjectId)
+          const rendered = await render(current.occurrenceKey, item.subjectId)
           const key = `month-end:${String(runId)}:${String(item.id)}`
           await delivery.attach({
             invoiceId: item.subjectId,
