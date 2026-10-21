@@ -329,3 +329,178 @@ test('[e2e:advances] reviews a deposit, waits for settlement and applies credit 
   expect(approved).toBe(1);
   expect(applications).toBe(1);
 });
+
+test("[e2e:payments #891] reports received invoices and credit without a second payment", async ({
+  page,
+}) => {
+  const month = "2026-09";
+  const balance = { ...row, month, paid_cents: 4000, balance_cents: 6000, available_cents: 6000 };
+  const invoice = {
+    id: 91,
+    user_id: 2,
+    month,
+    currency: "EUR",
+    reference: "CONTRACTOR-891",
+    matched_cents: 0,
+    flags: ["currency_mismatch"],
+    line_flags: [[]],
+    versions: [
+      {
+        command_id: "received",
+        version: 0,
+        month,
+        currency: "EUR",
+        kind: "received",
+        lines: [
+          {
+            description: "Reviewed work",
+            project_id: 7,
+            entry_id: 31,
+            seconds: 3600,
+            rate_cents: 8000,
+          },
+        ],
+        amount_cents: 8000,
+        review_id: null,
+        document_id: null,
+        reason: "Received original",
+        actor_id: 1,
+        recorded_at: "2026-10-01T00:00:00Z",
+        paid_cents_at_recording: 4000,
+        has_payment_history: true,
+      },
+    ],
+  };
+  const credit = {
+    advance_item_id: "DEPOSIT-891",
+    user_id: 2,
+    name: row.name,
+    currency: "USD",
+    month,
+    advance_project_id: null,
+    advance_reason: "Before work",
+    state: "paid",
+    amount_cents: 10000,
+    settled_cents: 10000,
+    settled_at: "2026-09-02T00:00:00Z",
+    applied_cents: 4000,
+    returned_cents: 1000,
+    reserved_cents: 0,
+    available_cents: 5000,
+    opening_cents: 0,
+    period_settled_cents: 10000,
+    period_applied_cents: 4000,
+    period_returned_cents: 1000,
+    closing_cents: 5000,
+    applications: [
+      {
+        id: "APPLY-891",
+        advance_item_id: "DEPOSIT-891",
+        user_id: 2,
+        currency: "USD",
+        month,
+        amount_cents: 4000,
+        scope: "entry",
+        project_id: 7,
+        entry_id: 31,
+        reason: "Reviewed application",
+        actor_id: 1,
+        recorded_at: "2026-09-10T00:00:00Z",
+        reversed_at: null,
+        reversal_reason: null,
+      },
+    ],
+    returns: [
+      {
+        id: "RETURN-891",
+        advance_item_id: "DEPOSIT-891",
+        amount_cents: 1000,
+        reference: "REFUND-891",
+        reason: "Unused funds",
+        actor_id: 1,
+        recorded_at: "2026-09-20T00:00:00Z",
+      },
+    ],
+  };
+  let financialWrites = 0;
+  page.on("request", (request) => {
+    if (
+      request.method() !== "GET" &&
+      /\/api\/v1\/(payment-runs|staff-payments|staff-invoices)/u.test(request.url())
+    )
+      financialWrites++;
+  });
+  await page.route("**/api/v1/payment-runs/report?*", (route) =>
+    route.fulfill({
+      json: {
+        data: {
+          from: month,
+          to: month,
+          ledgers: [{ ...ledger, month, rows: [balance] }],
+          runs: [],
+        },
+      },
+    }),
+  );
+  await page.route("**/api/v1/staff-payments/allocations?*", (route) =>
+    route.fulfill({ json: { data: { month, people: [] } } }),
+  );
+  await page.route("**/api/v1/staff-invoices?*", (route) =>
+    route.fulfill({
+      json: {
+        data: {
+          month,
+          people: [
+            {
+              user_id: 2,
+              name: row.name,
+              currency: "USD",
+              earned_cents: 10000,
+              paid_cents: 4000,
+              invoiced_cents: 0,
+              matched_invoice_cents: 0,
+              uninvoiced_cents: 10000,
+              invoices: [invoice],
+            },
+          ],
+        },
+      },
+    }),
+  );
+  await page.route("**/api/v1/payment-runs/advances?*", (route) =>
+    route.fulfill({ json: { data: { from: "2026-09-01", to: "2026-09-30", advances: [credit] } } }),
+  );
+  await page.goto("/payments/report");
+  await page.locator("[data-sign-in-form]").getByLabel("Email").fill(email);
+  await page.getByLabel("Password", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  const host = page.locator("[data-run-report-financials]");
+  await expect(host.getByRole("table", { name: "Contractor invoices", exact: true })).toContainText(
+    "CONTRACTOR-891",
+  );
+  await expect(
+    host.getByRole("table", { name: "Contractor invoice lines", exact: true }),
+  ).toContainText("31");
+  await expect(
+    host.getByRole("table", { name: "Advance credit statement", exact: true }),
+  ).toContainText("DEPOSIT-891");
+  await expect(
+    host.getByRole("table", { name: "Credit applied to earnings", exact: true }),
+  ).toContainText("APPLY-891");
+  await expect(
+    host.getByRole("table", { name: "Returned advance credit", exact: true }),
+  ).toContainText("REFUND-891");
+  await expect(page.locator("[data-run-report-totals]")).toContainText("40.00");
+  const currency = page.locator("[data-run-report-form]").getByLabel("Currency", { exact: true });
+  await currency.fill("EUR");
+  await expect(host.getByRole("table", { name: "Contractor invoices", exact: true })).toContainText(
+    "CONTRACTOR-891",
+  );
+  await expect(
+    host.getByRole("table", { name: "Advance credit statement", exact: true }),
+  ).not.toContainText("DEPOSIT-891");
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export filtered CSV", exact: true }).click();
+  expect((await download).suggestedFilename()).toContain("payments");
+  expect(financialWrites).toBe(0);
+});
