@@ -326,7 +326,14 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
     // The rebuild empties the demo's sender with everything else, and nobody
     // using the demo may make another (#931).
     if (maintenance.ran === 'rebuild') await seedDemoSender(services, env)
-    await services.outbox.drain()
+    const drained = await services.outbox.drain()
+    // A database failure while claiming stops the tick rather than throwing
+    // (#1104). Nothing was lost: the events are still queued for the next
+    // minute. Reported once per tick here, not once per row.
+    if (drained.interrupted !== undefined) {
+      console.error('[worker] outbox drain interrupted', drained.interrupted)
+      Sentry.captureException(drained.interrupted)
+    }
   },
 }
 
