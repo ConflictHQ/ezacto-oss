@@ -81,6 +81,7 @@ export const DEMO_UPLOAD_ROUTES: readonly string[] = [
   'post /api/v1/estimates/:estimateId/attachments',
   'post /api/v1/expenses/:expenseId/attachments',
   'post /api/v1/projects/:projectId/attachments',
+  'post /api/v1/staff-invoices/:invoiceId/documents',
   'post /api/v1/settings/brand-assets/:slot',
 ]
 

@@ -1,6 +1,7 @@
 import { installBackupDownloadMintRoute } from '../src/backup-download.js';
 import { installPaymentRunRoutes } from '../src/payment-runs.js';
 import { installScheduledRunRoutes } from '../src/scheduled-runs.js';
+import { installStaffInvoiceRoutes } from '../src/staff-invoices.js';
 import { installStaffPaymentRoutes } from '../src/staff-payments.js';
 import { installDeelSyncRoutes } from '../src/deel-sync.js';
 import { installMyPaymentRoutes } from '../src/my-payments.js';
@@ -430,6 +431,7 @@ const documentedApp = () =>
       installMyPaymentRoutes(api, { read: async () => null });
       installDeelSyncRoutes(api, { runtime: { status: () => ({ configured: false, reason: 'contract fixture' }), preview: unavailable, run: unavailable }, settings: { get: unavailable, save: unavailable }, recentRuns: async () => [], clock: () => '2026-10-09T00:00:00.000Z' });
       installStaffPaymentRoutes(api, { configureProvider: async () => {}, report: async (month, as_of) => ({ month, as_of, rows: [], provider_settings: { default_provider: "wise", version: 0, events: [] } }), append: async () => {} });
+      installStaffInvoiceRoutes(api, new Proxy({}, { get: () => unavailable }) as never, new Proxy({}, { get: () => unavailable }) as never);
       installPaymentRunRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
       installScheduledRunRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
       installPayoutAccountRoutes(api, {
