@@ -125,6 +125,7 @@ export const invoiceStatesFor = (
 export type InvoiceHoursReportFormat = 'pdf' | 'csv' | 'xlsx'
 
 export interface InvoicePaymentApi {
+  getInvoiceHoursReconciliation?(id: number, signal?: AbortSignal): Promise<InvoiceHoursReview>
   getInvoice(id: number, signal?: AbortSignal): Promise<Invoice>
   /**
    * The one invoice with exactly this number, or null: how a page addressed by

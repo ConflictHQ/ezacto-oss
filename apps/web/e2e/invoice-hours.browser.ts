@@ -285,4 +285,17 @@ test('[e2e:invoice-hours #924] warns, saves a quantity and explicitly releases m
   expect(releaseRequests).toBe(2)
   expect(actualReleases).toBe(1)
   expect(writes).toBe(3)
+  review.linked_seconds = 7200
+  review.has_mismatch = true
+  // The saved mismatch must also be visible where an operator sends it.
+  await page.route('**/api/v1/invoices/7/messages*', route => route.fulfill({json:{data:[],page:{next_cursor:null}}}))
+  await page.route('**/api/v1/invoices/7/payments*', route => route.fulfill({json:{data:[],page:{next_cursor:null}}}))
+  await page.goto('/invoices/INV-924')
+  await expect(page.locator('[data-invoice-send]')).toBeVisible()
+  await page.locator('[data-invoice-send]').click()
+  const sendWarning = page.locator('[data-invoice-composer-hours-warning]')
+  await expect(sendWarning).toBeVisible()
+  await expect(sendWarning).toContainText('linked 2.00 h · billed 1.50 h')
+  await expect(page.locator('[data-invoice-composer-submit]')).toBeEnabled()
+  expect(writes).toBe(3)
 })
