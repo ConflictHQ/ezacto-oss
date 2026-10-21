@@ -4,6 +4,7 @@ import type {
   PaymentRunCommand,
   PaymentRunApproval,
   PaymentRunReport,
+  PaymentAllocationReport,
   StaffPaymentReport,
 } from "@ezacto/core";
 import { moneyText } from "../money-display.js";
@@ -14,10 +15,12 @@ import {
   canPayNow,
   filteredPaymentReport,
   paymentReportTotals,
+  paymentAllocationRows,
   paymentRunCsv,
   paymentStateLabel,
 } from "./runs-model.js";
 export interface PaymentRunsApi {
+  getPaymentAllocationReport?(month: string, signal?: AbortSignal): Promise<PaymentAllocationReport>;
   getPaymentRunReport?(
     from: string,
     to: string,
@@ -118,6 +121,7 @@ export const createPaymentRunsController = (
     snapshot: StaffPaymentReport | null = null,
     draft: PaymentRun | null = null,
     data: PaymentRunReport | null = null,
+    allocationReports: PaymentAllocationReport[] = [],
     busy = false,
     generation = 0;
   let pendingCommand: PaymentRunCommand | null = null;
@@ -247,6 +251,30 @@ export const createPaymentRunsController = (
   const paintReport = () => {
     if (!data) return;
     const { rows, items, receipts } = filteredPaymentReport(data, filters());
+    const allocationHost = el(reportSection, "[data-run-report-allocations]");
+    allocationHost.replaceChildren();
+    if (api.getPaymentAllocationReport) {
+      allocationHost.appendChild(node("h3", "Earnings allocated by project and entry"));
+      allocationHost.appendChild(node("p", "Paid and reserved here include only explicitly allocated payments. Monthly payments stay unassigned until reconciled in Allocations. Project rows include their entries: do not add the two levels. A project allocation is not split across entries."));
+      allocationHost.appendChild(renderDataTable({
+        caption: "Allocation reconciliation",
+        table: "payment-allocation-report",
+        rows: paymentAllocationRows(allocationReports, rows),
+        rowKey: (r) => `${r.user_id}/${r.month}/${r.project_id}/${r.entry_id ?? 'project'}`,
+        empty: "No reviewed project or entry earnings match these filters.",
+        columns: [
+          { key: "name", sortValue: (r) => r.name, label: "Person", render: (r) => r.name },
+          { key: "month", sortValue: (r) => r.month, label: "Work month", render: (r) => r.month },
+          { key: "level", sortValue: (r) => r.level, label: "Level", render: (r) => r.level },
+          { key: "project", sortValue: (r) => `${r.project} ${r.entry_id ?? ""}`, label: "Project / entry", render: (r) => r.entry_id === null ? r.project : `${r.project} · entry ${r.entry_id}` },
+          { key: "earned", numeric: true, sortValue: (r) => r.earned, label: "Earned", render: (r) => money(r.earned, r.currency) },
+          { key: "paid", numeric: true, sortValue: (r) => r.paid, label: "Allocated paid", render: (r) => money(r.paid, r.currency) },
+          { key: "reserved", numeric: true, sortValue: (r) => r.reserved, label: "Allocated reserved", render: (r) => money(r.reserved, r.currency) },
+          { key: "remaining", numeric: true, sortValue: (r) => r.remaining, label: "Remaining to allocate", render: (r) => money(r.remaining, r.currency) },
+          { key: "flags", sortValue: (r) => r.flags, label: "Review flags", render: (r) => r.flags },
+        ],
+      }));
+    }
     const totals = el(reportSection, "[data-run-report-totals]");
     totals.replaceChildren();
     for (const [currency, t] of paymentReportTotals(rows)) {
@@ -410,7 +438,16 @@ export const createPaymentRunsController = (
     if (!from || !to) return;
     const result = await api.getPaymentRunReport(from, to, signal);
     if (signal.aborted || own !== generation) return;
+    const allocations: PaymentAllocationReport[] = [];
+    if (reportMode && api.getPaymentAllocationReport) {
+      // One read per month (not per person); sequential reads bound API pressure.
+      for (const ledger of result.ledgers) {
+        allocations.push(await api.getPaymentAllocationReport(ledger.month, signal));
+        if (signal.aborted || own !== generation) return;
+      }
+    }
     data = result;
+    allocationReports = allocations;
     if (reportMode) paintReport();
     else paintHistory();
   };
@@ -596,7 +633,7 @@ export const createPaymentRunsController = (
     () => {
       if (!data) return;
       const url = URL.createObjectURL(
-        new Blob([paymentRunCsv(data, filters())], {
+        new Blob([paymentRunCsv(data, filters(), allocationReports)], {
           type: "text/csv;charset=utf-8",
         }),
       );
@@ -669,12 +706,14 @@ export const createPaymentRunsController = (
           snapshot = null;
           draft = null;
           data = null;
+          allocationReports = [];
           pendingCommand = null;
           section.hidden = true;
           reportSection.hidden = true;
           el(section, "[data-run-history]").replaceChildren();
           el(section, "[data-run-review-items]").replaceChildren();
           for (const selector of [
+            "allocations",
             "totals",
             "balances",
             "transfers",
