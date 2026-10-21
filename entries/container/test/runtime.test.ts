@@ -1,3 +1,4 @@
+import { createContainerEmailFeedbackLedger } from '@ezacto/db'
 import { createContainerDatabase } from '@ezacto/db'
 import { createTimesheetApprovalRepository } from '../../../packages/db/src/timesheet-approvals.js'
 import { seedAutomaticApprovalFixture } from '../../../packages/db/test/support/automatic-approval-fixture.js'
@@ -815,6 +816,74 @@ it('[security #1010] composes real contact mail, consumes its token once and kee
     expect(
       captured.filter((message) => message.template === 'portal_magic_link_signin:v1'),
     ).toHaveLength(1)
+  } finally {
+    await runtime.close()
+  }
+})
+
+it('[reliability #42] the running SMTP queue refuses suppressed recipients and resumes only fresh jobs after review', async () => {
+  const root = await temporary()
+  const captured: EmailMessage[] = []
+  const runtime = await createContainerRuntime(config(root), { emailProvider: provider(captured) })
+  try {
+    const now = new Date().toISOString()
+    runtime.database
+      .prepare(
+        `INSERT INTO users(id,first_name,last_name,profile,manager_grants,created_at,updated_at)
+VALUES(1,'Admin','Reviewer','administrator','[]',?,?)`,
+      )
+      .run(now, now)
+    const log = runtime.services.emailLog
+    const suppressions = runtime.services.emailSuppressions!
+    const old = await log.createQueued({
+      from: { email: 'billing@example.test' },
+      to: [{ email: 'suppressed@example.test' }],
+      template: 'verify_email',
+      subject: 'Earlier message',
+      text: 'Earlier body',
+    })
+    await log.claimAttempt(old.id, 'smtp', 'old-send', 60)
+    await log.markSent(old.id, 'smtp', { messageId: 'smtp-earlier' }, 'old-send')
+    const ledger = createContainerEmailFeedbackLedger(runtime.database)
+    await ledger.claim({
+      eventId: 'container-bounce',
+      signatureToken: 'container-fixture-token',
+      eventType: 'failed',
+      severity: 'permanent',
+      recipient: 'suppressed@example.test',
+      providerMessageId: 'smtp-earlier',
+      deliveryId: old.id,
+      now,
+    })
+    await ledger.finish('container-bounce', now, 'bounced', null)
+    const enqueue = () =>
+      runtime.services.deploymentAuthMailer!.enqueue({
+        kind: 'verify_email',
+        to: 'suppressed@example.test',
+        token: `ezacto_verify_${'a'.repeat(16)}_${'b'.repeat(43)}`,
+        expiresAt: new Date(Date.now() + 60000).toISOString(),
+      })
+    await enqueue()
+    await vi.waitFor(async () =>
+      expect(await log.list({ status: 'failed' })).toEqual([
+        expect.objectContaining({ failureReason: 'recipient_suppressed:BOUNCE' }),
+      ]),
+    )
+    expect(captured).toHaveLength(0)
+    await suppressions.lift(
+      {
+        eventId: await suppressions.snapshot(),
+        actorId: 1,
+        note: 'Recipient verified address',
+        confirmation: '',
+      },
+      new Date().toISOString(),
+    )
+    await enqueue()
+    await vi.waitFor(() => expect(captured).toHaveLength(1))
+    await vi.waitFor(async () => expect(await log.list({ status: 'sent' })).toHaveLength(2))
+    // Lifting does not silently retry the refused job.
+    expect(await log.list({ status: 'failed' })).toHaveLength(1)
   } finally {
     await runtime.close()
   }

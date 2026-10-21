@@ -1000,6 +1000,41 @@ export type EmailIdentityReputation = {
   "complaint_rate_ppm": number;
 };
 
+export type EmailSuppression = {
+  "id": number;
+  "address": string;
+  "reason": "bounce" | "complaint";
+  "first_seen_at": string;
+  "last_seen_at": string;
+  "event_count": number;
+};
+
+export type EmailSuppressionsPage = {
+  "data": Array<EmailSuppression>;
+  "links": PageLinks;
+  "page": PageMetadata;
+};
+
+export type EmailSuppressionLiftInput = {
+  "note": string;
+  "confirmation"?: string;
+};
+
+export type EmailSuppressionLift = {
+  "id": number;
+  "address": string;
+  "through_event_id": number;
+  "actor_user_id": number;
+  "note": string;
+  "complaint_acknowledged": boolean;
+  "lifted_at": string;
+};
+
+export type EmailSuppressionLiftEnvelope = {
+  "data": EmailSuppressionLift;
+  "links": Links;
+};
+
 export type EmailHealth = {
   "reputation": EmailReputationSnapshot;
   "identities": Array<EmailIdentityReputation>;
@@ -5242,6 +5277,26 @@ export class EzactoClient {
 
     return this.request<EmailLogPage>("GET", "/api/v1/email-log", {
       query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listEmailSuppressions(args: { query?: { "cursor"?: string; "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<EmailSuppressionsPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<EmailSuppressionsPage>("GET", "/api/v1/email-suppressions", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async liftEmailSuppression(args: { "id": number; body?: EmailSuppressionLiftInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<EmailSuppressionLiftEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<EmailSuppressionLiftEnvelope>("POST", "/api/v1/email-suppressions/:id/lift".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });

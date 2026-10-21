@@ -1,3 +1,4 @@
+import { createContainerEmailSuppressionStore } from '@ezacto/db'
 import type { ReminderProcessOptions } from '@ezacto/db'
 import { createRuntimeAppleWeb } from '../../worker/src/apple-web.js'
 import { createContainerAppleWebCustodyStore } from '@ezacto/db'
@@ -462,7 +463,8 @@ export const createContainerRuntime = async (
         )
       }
     }
-    queue = new ContainerEmailQueue(emailLog, smtp)
+    const emailSuppressions = createContainerEmailSuppressionStore(database)
+    queue = new ContainerEmailQueue(emailLog, smtp, emailSuppressions.lookup)
     // HTML mail wears the instance header (#1011): read when each message
     // is queued, so a changed logo or colour reaches the next send.
     const brandAssetStore = createContainerBrandAssetStore(database)
@@ -1162,6 +1164,7 @@ export const createContainerRuntime = async (
       userEmails: passwordAuth,
       sessions,
       emailLog,
+      emailSuppressions,
       emailConfiguration,
       senderIdentityVerifier: createSmtpSenderIdentityVerifier(config.smtp.from),
       outbox,

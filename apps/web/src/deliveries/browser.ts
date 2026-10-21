@@ -144,6 +144,8 @@ export const failureText = (code: string | null, reason: string | null): string 
   // The demo's own refusal (issue 931). "provider_rejected" would blame a
   // provider nobody asked, and the sentence names no domain on purpose.
   if (reason === DEMO_RECIPIENT_NOT_ALLOWED) return DEMO_MAIL_REFUSAL
+  if (reason === 'recipient_suppressed:BOUNCE') return 'Not sent: a recipient previously bounced. An administrator can review the suppression in Email settings.'
+  if (reason === 'recipient_suppressed:COMPLAINT') return 'Not sent: a recipient reported a complaint. An administrator must review the suppression before future delivery.'
   if (code === null && reason === null) return ''
   if (code === null) return reason ?? ''
   return reason === null ? code : `${code}: ${reason}`

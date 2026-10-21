@@ -1,6 +1,7 @@
 import type BetterSqlite3 from 'better-sqlite3'
 import type {
   EmailFeedbackClaim,
+  EmailFeedbackClaimInput,
   EmailFeedbackLedger,
   EmailFeedbackOutcome,
 } from '@ezacto/mailer'
@@ -42,12 +43,23 @@ const createLedger = (database: PortableDatabase): EmailFeedbackLedger => ({
     if (inserted !== null) return 'fresh'
     // Not inserted: the event id is taken (a retry), or only the token is (a
     // signature carried by some other event).
-    const existing = await database.first<{ signatureToken: string; processedAt: string | null }>(
-      `SELECT signature_token AS signatureToken, processed_at AS processedAt
+    const existing = await database.first<
+      Omit<EmailFeedbackClaimInput, 'now'> & { processedAt: string | null }
+    >(
+      `SELECT event_id AS eventId, signature_token AS signatureToken, processed_at AS processedAt,
+         event_type AS eventType,severity,recipient,provider_message_id AS providerMessageId,delivery_id AS deliveryId
        FROM email_feedback_events WHERE event_id = ?`,
       [input.eventId],
     )
-    if (existing === null || existing.signatureToken !== input.signatureToken) {
+    if (
+      existing === null ||
+      existing.signatureToken !== input.signatureToken ||
+      existing.eventType !== input.eventType ||
+      existing.severity !== input.severity ||
+      (existing.recipient?.toLowerCase() ?? null) !== (input.recipient?.toLowerCase() ?? null) ||
+      existing.providerMessageId !== input.providerMessageId ||
+      existing.deliveryId !== input.deliveryId
+    ) {
       return 'token_reused'
     }
     return existing.processedAt === null ? 'resume' : 'duplicate'

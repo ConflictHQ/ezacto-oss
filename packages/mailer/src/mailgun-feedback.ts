@@ -154,7 +154,7 @@ export const createMailgunFeedbackService = (
       const eventType = text(data?.['event'], 64)
       if (data === null || eventId === null || eventType === null) return { kind: 'malformed' }
       const severity = text(data['severity'], 32)
-      const recipient = text(data['recipient'], 320)
+      const recipient = text(data['recipient'], 320)?.toLowerCase() ?? null
       const headers = asObject(asObject(data['message'])?.['headers'])
       const rawMessageId = text(headers?.['message-id'], 512)
       const providerMessageId = rawMessageId === null ? null : bareMessageId(rawMessageId)

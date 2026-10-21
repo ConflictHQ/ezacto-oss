@@ -1435,6 +1435,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getTimesheetAutoApproval(withSignal(signal))).data,
   updateTimesheetAutoApproval: async (patch, signal) =>
     (await client.setTimesheetAutoApproval({ body: patch, ...withSignal(signal) })).data,
+  listEmailSuppressions: (cursor, signal) => client.listEmailSuppressions({query:{per_page:50,...(cursor===undefined?{}:{cursor})},...withSignal(signal)}),
+  liftEmailSuppression: async (id, input, signal) => (await client.liftEmailSuppression({id,body:input,...withSignal(signal)})).data,
   getEmailHealth: async (signal) =>
     (await client.getEmailHealth(withSignal(signal))).data,
   getBackupStatus: async (signal) =>

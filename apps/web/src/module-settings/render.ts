@@ -1,3 +1,4 @@
+import { renderEmailSuppressionReview } from './email-suppressions-render.js'
 import { renderTimeRoundingSection } from './time-rounding-render.js'
 import { renderRetentionSection } from './retention.js'
 import { iconMarkup } from '../components/icons.js'
@@ -70,11 +71,13 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p class="form-result" data-auto-approval-result role="status" aria-live="polite"></p>
     </section>
     <section class="settings-section" data-settings-section="email" aria-labelledby="settings-email-title">
-      <header><h2 id="settings-email-title">Email delivery</h2>
+      <header><div class="settings-section-heading"><h2 id="settings-email-title">Email delivery</h2><button type="button" class="settings-refresh" data-settings-refresh="email">Refresh email delivery</button></div>
       <p>Who this instance sends as, and how that mail has been landing. Transport credentials stay in the deployment; what is shown here is the state they produce.</p></header>
       <p class="form-result" data-settings-email-status role="status" aria-live="polite">Loading email delivery…</p>
       <div class="settings-table" data-settings-sender-identities hidden></div>
       <dl class="settings-facts" data-settings-email-reputation hidden></dl>
+      <div class="settings-table" data-settings-email-identities-health hidden></div>
+      ${renderEmailSuppressionReview()}
     </section>
     <section class="settings-section" data-settings-section="invoices" aria-labelledby="settings-invoices-title">
       <header><h2 id="settings-invoices-title">Invoices</h2>

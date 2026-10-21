@@ -1,3 +1,5 @@
+import type { EmailSuppressionReason } from './suppressions.js'
+export * from './suppressions.js'
 import {
   senderIdentityEligibilityFailure,
   senderIdentityUnavailableMessage,
@@ -804,6 +806,8 @@ export const processQueuedEmail = async (
     createAttemptId?: () => string
     /** Fetches attachment bytes at send time. The entry supplies the store. */
     resolveAttachment?: EmailAttachmentResolver
+    /** Local policy applies to every recipient and transport before a provider call. */
+    getRecipientSuppression?: (recipients: readonly string[]) => Promise<EmailSuppressionReason | null>
   } = {},
 ): Promise<EmailQueueDisposition> => {
   if (
@@ -824,8 +828,12 @@ export const processQueuedEmail = async (
   if (job.message.attachments !== undefined) {
     throw new TypeError('a queued email job must carry attachments by reference, not by value')
   }
+  const suppressed =
+    (await options.getRecipientSuppression?.(
+      [...message.to, ...(message.cc ?? [])].map((recipient) => recipient.email),
+    )) ?? null
   const references = job.attachments ?? []
-  if (references.length > 0) {
+  if (references.length > 0 && suppressed === null) {
     if (options.resolveAttachment === undefined) {
       throw new TypeError('a queued email job names attachments and no resolver was supplied')
     }
@@ -897,6 +905,8 @@ export const processQueuedEmail = async (
 
   let delivered: EmailProviderReceipt
   try {
+    if (suppressed !== null)
+      throw new EmailProviderTerminalError(`recipient_suppressed:${suppressed.toUpperCase()}`)
     delivered = await providerCall(
       provider,
       message,

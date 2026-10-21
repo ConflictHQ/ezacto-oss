@@ -166,6 +166,10 @@ export function createAccountClosureRepository(database: Database): AccountClosu
     entries.push(
       `json_object('location','email_log.recipients','count',(SELECT count(*) FROM email_log WHERE EXISTS (SELECT 1 FROM json_each(to_json) recipient JOIN user_emails address ON lower(address.address)=lower(json_extract(recipient.value,'$.email')) WHERE address.user_id=(SELECT id FROM subject))),'category','audit_and_security')`,
     )
+    for (const table of ['email_suppression_events', 'email_suppression_lifts'])
+      entries.push(
+      `json_object('location','${table}.address','count',(SELECT count(*) FROM ${table} suppression WHERE EXISTS (SELECT 1 FROM user_emails address WHERE address.user_id=(SELECT id FROM subject) AND lower(address.address)=suppression.address)),'category','audit_and_security')`,
+    )
     // D1 has tighter compound-SELECT and function-argument limits than SQLite.
     // Each bounded array contains objects, so trimming its outer brackets is exact.
     const groups: string[] = []

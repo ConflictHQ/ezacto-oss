@@ -548,3 +548,5 @@ export { installStaffInvoiceRoutes } from './staff-invoices.js'
 export { installContractorReviewRoutes } from './contractor-review.js'
 
 export { createQueuedPortalMagicLinkMailer } from './portal-magic-link-email.js'
+
+export * from './email-suppressions.js'

@@ -116,6 +116,42 @@ for (const runtime of ['SQLite', 'D1'])
         tracking: createAccountDeletionStatusRepository(db),
       }
     }
+    it('[privacy #42] inventories suppressed recipient addresses and retains reviewed delivery evidence on closure', async () => {
+      const { closure, exec, rows } = await setup()
+      await exec(`INSERT INTO email_log(id,from_json,to_json,template,subject,status,created_at,updated_at)
+    VALUES(1,'{"email":"billing@example.test"}','[{"email":"pat@example.test"}]','verify_email','Fixture','queued','${at}','${at}')`)
+      await exec(`INSERT INTO email_feedback_events(event_id,signature_token,event_type,severity,recipient,provider_message_id,delivery_id,received_at)
+    VALUES('privacy-feedback','privacy-token','failed','permanent','pat@example.test','privacy-message',1,'${at}')`)
+      await exec(
+        `UPDATE email_feedback_events SET processed_at='${at}',outcome='bounced' WHERE event_id='privacy-feedback'`,
+      )
+      await exec(`INSERT INTO email_suppression_lifts(address,through_event_id,actor_user_id,note,complaint_acknowledged,lifted_at)
+    VALUES('pat@example.test',1,1,'Recipient verified address',0,'${at}')`)
+      const preview = await closure.preview(1, 'close-pat')
+      expect(preview.inventory).toEqual(
+        expect.arrayContaining([
+          { location: 'email_suppression_events.address', count: 1, category: 'audit_and_security' },
+          { location: 'email_suppression_lifts.address', count: 1, category: 'audit_and_security' },
+        ]),
+      )
+      await closure.close({
+        actorUserId: 1,
+        id: 'close-pat',
+        reviewToken: preview.review_token,
+        expectedVersion: 1,
+        expectedPolicyVersion: 1,
+        now: later,
+        acknowledged: true,
+      })
+      expect(await rows('SELECT address FROM user_emails WHERE user_id=2')).toEqual([])
+      expect(await rows('SELECT address FROM email_suppression_events')).toEqual([
+        { address: 'pat@example.test' },
+      ])
+      expect(await rows('SELECT note FROM email_suppression_lifts')).toEqual([
+        { note: 'Recipient verified address' },
+      ])
+    })
+
     it('erases optional profile and linked identities while preserving honest residual status and denying SSO replay', async () => {
       const { closure, rows, exec, identity, requests } = await setup()
       const preview = await closure.preview(1, 'close-pat')

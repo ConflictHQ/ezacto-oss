@@ -4,6 +4,9 @@ import {
   type BackupDownloadLinkEnvelope,
   type BackupStatusEnvelope,
   type EmailHealth,
+  type EmailSuppressionsPage,
+  type EmailSuppressionLiftInput,
+  type EmailSuppressionLift,
   type InvoiceRecipient,
   type OrganizationInvoiceDocumentsEnvelope,
   type OrganizationInvoiceDocumentsInput,
@@ -312,6 +315,8 @@ export interface CompanySettingsApi {
     signal?: AbortSignal,
   ): Promise<TimesheetAutoApprovalState>
   getEmailHealth(signal?: AbortSignal): Promise<EmailHealth>
+  listEmailSuppressions?(cursor?: string, signal?: AbortSignal): Promise<EmailSuppressionsPage>
+  liftEmailSuppression?(id: number, input: EmailSuppressionLiftInput, signal?: AbortSignal): Promise<EmailSuppressionLift>
   /**
    * Backup runs. Optional because only a deployment that composes a reader
    * serves them -- the Worker exports itself to R2 nightly, and the container's
@@ -669,3 +674,14 @@ export const themeSlotGroups: readonly ThemeSlotCopy['group'][] = [
   'Status',
   'Surfaces',
 ]
+
+/** Local review signals over recorded history, not provider sending limits. */
+export const emailReputationWarning = (
+  rates: Pick<EmailHealth['reputation'], 'bounce_rate_ppm' | 'complaint_rate_ppm'>,
+): string => {
+  if (rates.bounce_rate_ppm >= 20_000 || rates.complaint_rate_ppm >= 1_000)
+    return 'Review sender reputation: bounce rate at least 2% or complaint rate at least 0.1%.'
+  if (rates.bounce_rate_ppm >= 10_000 || rates.complaint_rate_ppm >= 500)
+    return 'Watch sender reputation: bounce rate at least 1% or complaint rate at least 0.05%.'
+  return ''
+}

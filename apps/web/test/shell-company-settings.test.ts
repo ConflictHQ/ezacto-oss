@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { EzactoClient } from '@conflict-hq/ezacto-client'
 import type { LogPageResult } from '../src/components/paged-log.js'
 import { createShellApi } from '../src/shell/model.js'
-import type { NotificationSettingsState } from '../src/module-settings/model.js'
+import type { CompanySettingsApi, NotificationSettingsState } from '../src/module-settings/model.js'
 import {
   EzactoApiError,
   authenticationError,
@@ -979,6 +979,56 @@ describe('company settings', () => {
     // and an operator who reads it as 7,200 bounces panics for nothing.
     expect(reputation.textContent).toContain('0.72%')
     expect(reputation.textContent).toContain('0.24%')
+  })
+
+  it('[browser #42] shows rates per sender and refreshing a bounce changes only that sender', async () => {
+    stubModulesEndpoint()
+    openCompanySettings('email')
+    let bounced = 0
+    const getEmailHealth = vi.fn<CompanySettingsApi['getEmailHealth']>(async () => ({
+      reputation: {
+        sent: 200,
+        bounced,
+        complained: 0,
+        failed: 0,
+        bounce_rate_ppm: bounced * 5000,
+        complaint_rate_ppm: 0,
+      },
+      identities: [
+        {
+          sender: 'a@example.test',
+          sent: 100,
+          bounced,
+          complained: 0,
+          failed: 0,
+          bounce_rate_ppm: bounced * 10000,
+          complaint_rate_ppm: 0,
+        },
+        {
+          sender: 'b@example.test',
+          sent: 100,
+          bounced: 0,
+          complained: 0,
+          failed: 0,
+          bounce_rate_ppm: 0,
+          complaint_rate_ppm: 0,
+        },
+      ],
+    }))
+    const api = { ...companyApi([senderIdentity()], []), getEmailHealth }
+    await mountShell(api)
+    const row = (address: string) =>
+      document.querySelector<HTMLElement>(
+        `[data-settings-email-identities-health] tr[data-row-key="${address}"]`,
+      )!
+    await vi.waitFor(() => expect(row('a@example.test')).not.toBeNull())
+    const untouched = row('b@example.test').textContent
+    bounced = 2
+    document.querySelector<HTMLButtonElement>('[data-settings-refresh="email"]')!.click()
+    await vi.waitFor(() => expect(row('a@example.test').textContent).toContain('2 (2.00%)'))
+    expect(row('a@example.test').textContent).toContain('Bounce recorded')
+    expect(row('a@example.test').textContent).toContain('Review sender reputation')
+    expect(row('b@example.test').textContent).toBe(untouched)
   })
 
   it('[browser #104] offers one Connect button, and sends the operator to Intuit', async () => {

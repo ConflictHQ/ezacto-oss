@@ -1,3 +1,4 @@
+import { createD1EmailSuppressionStore } from '@ezacto/db/d1'
 import type { ReminderProcessOptions } from '@ezacto/db/d1'
 import { createRuntimeAppleWeb } from './apple-web.js'
 import { createD1AppleWebCustodyStore } from '@ezacto/db/d1'
@@ -1335,6 +1336,7 @@ export const createRuntimeServices = async (
     sessions,
     authenticationSessions,
     emailLog,
+    emailSuppressions: createD1EmailSuppressionStore(database),
     emailConfiguration,
     // Unlike portal auth, the second factor is opt-in on nothing: it holds no
     // deployment secret to get wrong, and a factor no one can turn on is not a

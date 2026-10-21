@@ -3,6 +3,7 @@ import {
   InProcessEmailQueue,
   processQueuedEmail,
   type EmailLogStore,
+  type EmailSuppressionReason,
   type EmailQueue,
   type HttpEmailProvider,
   type InProcessEmailScheduler,
@@ -22,7 +23,11 @@ export class ContainerEmailQueue implements EmailQueue {
   private readonly shutdown = new AbortController()
   private accepting = true
 
-  constructor(log: EmailLogStore, provider: HttpEmailProvider) {
+  constructor(
+    log: EmailLogStore,
+    provider: HttpEmailProvider,
+    getRecipientSuppression?: (recipients: readonly string[]) => Promise<EmailSuppressionReason | null>,
+  ) {
     const scheduler: InProcessEmailScheduler = (task, delaySeconds) => {
       const scheduled: Scheduled = {
         timer: setTimeout(() => {
@@ -44,7 +49,10 @@ export class ContainerEmailQueue implements EmailQueue {
     }
     this.queue = new InProcessEmailQueue(
       (job, attempt) =>
-        processQueuedEmail(job, attempt, log, shutdownAwareProvider),
+        processQueuedEmail(
+          job, attempt, log, shutdownAwareProvider,
+          getRecipientSuppression === undefined ? {} : { getRecipientSuppression },
+        ),
       scheduler,
     )
   }

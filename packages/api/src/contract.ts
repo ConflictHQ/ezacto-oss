@@ -3250,6 +3250,17 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     ],
   },
   {
+    method: "get", path: "/api/v1/email-suppressions", operationId: "listEmailSuppressions",
+    summary: "List suppressed recipients with immutable provider evidence", tag: "email",
+    responseStatus: 200, responseSchema: "EmailSuppressionsPage", sessionOnly: true, parameters: [...pageParameters],
+  },
+  {
+    method: "post", path: "/api/v1/email-suppressions/:id/lift", operationId: "liftEmailSuppression",
+    summary: "Allow future delivery after reviewing the current suppression evidence", tag: "email",
+    responseStatus: 200, responseSchema: "EmailSuppressionLiftEnvelope", requestSchema: "EmailSuppressionLiftInput",
+    sessionOnly: true, parameters: [path("id")],
+  },
+  {
     method: "get",
     path: "/api/v1/email-health",
     operationId: "getEmailHealth",
@@ -4200,6 +4211,18 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  EmailSuppression: {
+    type: "object", required: ["id","address","reason","first_seen_at","last_seen_at","event_count"],
+    properties: {id: integerSchema,address: {type:"string",format:"email"},reason:{type:"string",enum:["bounce","complaint"]},first_seen_at:timestampSchema,last_seen_at:timestampSchema,event_count:{type:"integer",minimum:1}}, additionalProperties:false,
+  },
+  EmailSuppressionsPage: page("EmailSuppression"),
+  EmailSuppressionLiftInput: {
+    type:"object",required:["note"],properties:{note:{type:"string",minLength:1,maxLength:1000},confirmation:{type:"string",maxLength:254}},additionalProperties:false,
+  },
+  EmailSuppressionLift: {
+    type:"object",required:["id","address","through_event_id","actor_user_id","note","complaint_acknowledged","lifted_at"],properties:{id:integerSchema,address:{type:"string",format:"email"},through_event_id:integerSchema,actor_user_id:integerSchema,note:{type:"string"},complaint_acknowledged:{type:"boolean"},lifted_at:timestampSchema},additionalProperties:false,
+  },
+  EmailSuppressionLiftEnvelope: envelope("EmailSuppressionLift"),
   EmailHealth: {
     type: "object",
     required: ["reputation", "identities"],
