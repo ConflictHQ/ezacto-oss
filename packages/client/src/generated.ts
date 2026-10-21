@@ -337,6 +337,66 @@ export type MyPaymentsEnvelope = {
   "data": MyPayments;
 };
 
+export type DeelSyncSettingsCommand = {
+  "mode": "manual" | "automatic";
+  "run_time": string;
+};
+
+export type DeelSyncWindow = {
+  "from": string;
+  "to": string;
+};
+
+export type DeelSyncRun = {
+  "id": number;
+  "started_at": string;
+  "finished_at": string | null;
+  "outcome": "running" | "completed" | "failed";
+  "timesheets_submitted": number;
+  "entries_transferred": number;
+  "detail": unknown | null;
+};
+
+export type DeelSyncStatus = {
+  "configured": boolean;
+  "reason": string | null;
+  "mode": "manual" | "automatic";
+  "run_time": string;
+  "updated_at": string;
+  "updated_by_user_id": number | null;
+  "runs": Array<DeelSyncRun>;
+};
+
+export type DeelSyncPreview = {
+  "status": "ready";
+  "window": {
+  "from": string;
+  "to": string;
+};
+  "entry_ids": Array<number>;
+  "timesheets": number;
+  "already_transferred": number;
+  "conflicts": Array<unknown>;
+  "unsyncable": Array<unknown>;
+  "unmatched": Array<unknown>;
+};
+
+export type DeelSyncRunCommand = {
+  "from": string;
+  "to": string;
+  "entry_ids": Array<number>;
+};
+
+export type DeelSyncRunResult = {
+  "status": "completed" | "failed";
+  "run_id": number;
+  "timesheets_submitted": number;
+  "entries_transferred": number;
+  "failed": Array<unknown>;
+  "reconciliation": unknown | null;
+  "error": string | null;
+};
+
 export type PaymentSelection = {
   "user_id": number;
   "month": string;
@@ -6800,6 +6860,45 @@ export class EzactoClient {
 
     return this.request<MyPaymentsEnvelope>("GET", "/api/v1/me/payments", {
       query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getDeelSync(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<DeelSyncStatus> {
+    const headers = new Headers(args.headers);
+
+    return this.request<DeelSyncStatus>("GET", "/api/v1/deel-sync", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateDeelSyncSettings(args: { body: DeelSyncSettingsCommand; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("PATCH", "/api/v1/deel-sync/settings", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async previewDeelSync(args: { body: DeelSyncWindow; signal?: AbortSignal; headers?: HeadersInit }): Promise<DeelSyncPreview> {
+    const headers = new Headers(args.headers);
+
+    return this.request<DeelSyncPreview>("POST", "/api/v1/deel-sync/preview", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async runDeelSync(args: { body: DeelSyncRunCommand; signal?: AbortSignal; headers?: HeadersInit }): Promise<DeelSyncRunResult> {
+    const headers = new Headers(args.headers);
+
+    return this.request<DeelSyncRunResult>("POST", "/api/v1/deel-sync/runs", {
+      body: args.body,
       signal: args.signal,
       headers,
     });

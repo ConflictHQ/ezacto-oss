@@ -123,6 +123,12 @@ export const WORKER_ONLY_ROUTES: readonly string[] = [
   // the Worker's R2 bucket, so the mint and the redemption go together.
   'post /api/v1/backup/download-links',
   'get /backup-download/:token',
+  // The Deel time sync (#1102). Only the Worker composes the sync runtime and
+  // its hourly schedule; the container has neither, so it does not answer these.
+  'get /api/v1/deel-sync',
+  'patch /api/v1/deel-sync/settings',
+  'post /api/v1/deel-sync/preview',
+  'post /api/v1/deel-sync/runs',
 ]
 
 /** Mounted by the container and not by the Worker. */

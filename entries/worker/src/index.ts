@@ -303,13 +303,14 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
         Sentry.captureException(error)
       }
     }
-    if (controller.cron === '0 3 * * *' && services.deelSync?.status().configured === true) {
-      // Deel time sync and its reconciliation (issue 103). Daily: it submits
-      // whole approved days that have ended. Does nothing, and is not reached,
-      // without a token and a start date. A failed run is recorded in
-      // `deel_sync_runs`, reported, and never stops the drain below.
+    if (controller.cron === '0 * * * *' && services.deelSync?.status().configured === true) {
+      // Deel time sync (issue 103, #1102). Runs only when the organization has
+      // set the sync to automatic, once a day at its configured time; manual is
+      // the default and this does nothing. Hourly, so a configured time is met
+      // within the hour. A failed run is recorded in `deel_sync_runs`, reported,
+      // and never stops the drain below.
       try {
-        const run = await services.deelSync.run()
+        const run = await services.deelSync.runAutomaticIfDue()
         if (run.status === 'failed') {
           console.error('[worker] Deel time sync failed', run.error, run.failed)
           Sentry.captureException(new Error(run.error ?? 'Deel time sync had failed submissions'))

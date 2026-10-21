@@ -164,6 +164,9 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // The migration creates this singleton once. Authorization triggers update
   // it in place, so deleting it would disable all subsequent revision changes.
   'idempotency_authorization',
+  // The migration creates this singleton with the manual default. Keeping it
+  // means a demo wipe does not switch an instance's Deel sync mode or time (#1102).
+  'deel_sync_settings',
 ])
 
 /**

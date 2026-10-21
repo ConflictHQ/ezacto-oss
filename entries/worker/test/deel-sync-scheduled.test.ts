@@ -13,6 +13,10 @@ afterEach(async () => {
 const dailyCron =
   'https://worker.test/cdn-cgi/handler/scheduled?time=1788350400000&cron=0+3+*+*+*'
 
+/** The hourly cron, which the automatic schedule is checked on (#1102). */
+const hourlyCron =
+  'https://worker.test/cdn-cgi/handler/scheduled?time=1788350400000&cron=0+*+*+*+*'
+
 const createTestWorker = async (extraBindings: Record<string, string>) => {
   const bundled = await build({
     entryPoints: [new URL('../src/index.ts', import.meta.url).pathname],
@@ -61,6 +65,25 @@ describe('Deel time sync schedule', () => {
     const response = await miniflare.dispatchFetch(dailyCron)
 
     expect(response.status).toBe(200)
+    const runs = await database.prepare('SELECT count(*) AS n FROM deel_sync_runs').first<{ n: number }>()
+    const log = await database.prepare('SELECT count(*) AS n FROM deel_transfer_log').first<{ n: number }>()
+    expect(runs?.n).toBe(0)
+    expect(log?.n).toBe(0)
+  })
+
+  it('[integration] a configured sync stays silent on the schedule while it is manual', async () => {
+    // Manual is the default (#1102): the hourly cron reads the setting and
+    // returns before any call to Deel, so this runs without the network.
+    const miniflare = await createTestWorker({
+      DEEL_TOKEN: 'fixture-token',
+      DEEL_SYNC_START_DATE: '2026-09-01',
+    })
+    const database = await miniflare.getD1Database('DB')
+
+    for (const url of [dailyCron, hourlyCron]) {
+      expect((await miniflare.dispatchFetch(url)).status).toBe(200)
+    }
+
     const runs = await database.prepare('SELECT count(*) AS n FROM deel_sync_runs').first<{ n: number }>()
     const log = await database.prepare('SELECT count(*) AS n FROM deel_transfer_log').first<{ n: number }>()
     expect(runs?.n).toBe(0)

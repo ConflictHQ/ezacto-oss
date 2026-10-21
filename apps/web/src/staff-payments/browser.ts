@@ -1,6 +1,7 @@
 import { createActualsController, type PaymentActualsApi } from './actuals-browser.js'
 import { createAllocationsController, type PaymentAllocationsApi } from './allocations-browser.js'
 import { createPaymentTabs } from './tabs.js'
+import { createDeelSyncController, type DeelSyncApi } from './deel-sync-browser.js'
 import { canPayNow } from './runs-model.js'
 import { createPaymentRunsController, type PaymentRunsApi } from './runs-browser.js'
 import { EzactoApiError } from '@conflict-hq/ezacto-client'
@@ -24,7 +25,11 @@ import {
   staffPaymentStatus,
 } from './model.js'
 
-export interface StaffPaymentsApi extends PaymentRunsApi, PaymentActualsApi, PaymentAllocationsApi {
+export interface StaffPaymentsApi
+  extends PaymentRunsApi,
+    PaymentActualsApi,
+    PaymentAllocationsApi,
+    DeelSyncApi {
   configureStaffPaymentProvider?(
     command: StaffPaymentProviderCommand,
     signal?: AbortSignal,
@@ -800,6 +805,8 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   element<HTMLElement>(page, '[data-payment-audit-export]').addEventListener('click', () =>
     download(true),
   )
+  const deelSync = createDeelSyncController(page, api)
+
   return {
     activate: async (identity: { profile: string }, active: AbortSignal): Promise<void> => {
       signal = active
@@ -862,6 +869,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       actuals.activate(active)
       allocations.activate(active)
       await runs.activate(active)
+      await deelSync.activate(active)
       tabs.activate(reportMode, api.previewPaymentRun !== undefined)
       if (!reportMode) await load()
     },
