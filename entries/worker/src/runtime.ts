@@ -4,7 +4,7 @@ import { createD1AppleWebCustodyStore } from '@ezacto/db/d1'
 import { captureException } from '@sentry/cloudflare'
 import { createPaymentRunsService, createScheduledRunsService } from '@ezacto/db/d1'
 import { createWisePaymentProvider } from '@ezacto/integrations'
-import { createStaffPaymentStore } from '@ezacto/db/d1'
+import { createContractorReviewStore, createStaffPaymentStore } from '@ezacto/db/d1'
 import { createMyPaymentsStore } from '@ezacto/db/d1'
 import {
   bootstrapInstanceD1,
@@ -1430,6 +1430,7 @@ export const createRuntimeServices = async (
     paymentRuns,
     scheduledRuns: createScheduledRunsService(drizzle),
     staffPayments: createStaffPaymentStore(drizzle),
+    contractorReview: createContractorReviewStore(drizzle),
     myPayments: createMyPaymentsStore(drizzle),
     payoutAccounts: (() => {
       const store = createPayoutAccountStore(drizzle)

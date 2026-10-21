@@ -4,7 +4,7 @@ import { createContainerAppleWebCustodyStore } from '@ezacto/db'
 import { createPaymentRunsService, createScheduledRunsService } from '@ezacto/db'
 import { createContainerBrandAssetStore, createContainerInstanceThemeStore } from '@ezacto/db'
 import { createWisePaymentProvider } from '@ezacto/integrations'
-import { createStaffPaymentStore } from '@ezacto/db'
+import { createContractorReviewStore, createStaffPaymentStore } from '@ezacto/db'
 import { createMyPaymentsStore } from '@ezacto/db'
 import { sql } from 'drizzle-orm'
 import { chmod, lstat, mkdir, realpath, stat } from 'node:fs/promises'
@@ -906,6 +906,7 @@ export const createContainerRuntime = async (
       paymentRuns,
       scheduledRuns: createScheduledRunsService(drizzle),
       staffPayments: createStaffPaymentStore(drizzle),
+      contractorReview: createContractorReviewStore(drizzle),
       myPayments: createMyPaymentsStore(drizzle),
       payoutAccounts: (() => {
         const store = createPayoutAccountStore(drizzle)

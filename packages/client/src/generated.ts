@@ -685,6 +685,113 @@ export type StaffInvoiceDocumentEnvelope = {
   "data": StaffInvoiceDocumentInfo;
 };
 
+export type ContractorEarningsReview = {
+  "id": string;
+  "user_id": number;
+  "currency": string;
+  "amount_cents": number;
+  "expected_version": number;
+  "actor_id": number;
+  "note": string;
+  "recorded_at": string;
+};
+
+export type ContractorReviewEntry = {
+  "entry_id": number;
+  "project_id": number;
+  "project_name": string;
+  "spent_date": string;
+  "rounded_seconds": number;
+  "cost_rate_cents": number | null;
+  "selected_seconds": number;
+};
+
+export type ContractorReviewEarnings = {
+  "user_id": number;
+  "name": string;
+  "proposed_cents": number;
+  "confirmed_cents": number | null;
+  "status": "new" | "converged" | "differs" | "attention";
+  "exceptions": Array<{
+  "code": "missing_rate" | "changed_source";
+  "entry_ids": Array<number>;
+}>;
+};
+
+export type ContractorAllocationProposal = {
+  "payment_kind": "event" | "run_item";
+  "payment_id": string;
+  "amount_cents": number;
+  "scope": "month";
+};
+
+export type ContractorCreditProposal = {
+  "advance_item_id": string;
+  "amount_cents": number;
+  "scope": "month";
+};
+
+export type ContractorReviewItem = {
+  "id": string;
+  "run_id": string;
+  "run_name": string;
+  "purpose": "earnings" | "advance";
+  "amount_cents": number;
+  "state": "draft" | "queued" | "creating" | "funding" | "processing" | "paid" | "failed" | "attention" | "cancelled";
+  "phase": "draft" | "queued" | "processing" | "settled" | "failed" | "attention" | "cancelled";
+  "failure": string | null;
+  "attempts": number;
+};
+
+export type ContractorCurrencyReview = {
+  "currency": string;
+  "recorded_earnings_cents": number | null;
+  "proposed_earnings_cents": number | null;
+  "paid_cents": number;
+  "reserved_cents": number;
+  "available_to_pay_cents": number | null;
+  "available_credit_cents": number;
+  "proposed_credit_cents": number;
+  "remaining_after_credit_cents": number | null;
+  "invoices": Array<StaffInvoice>;
+  "advances": Array<AdvanceCredit>;
+  "allocations": Array<PaymentAllocation>;
+  "allocation_proposals": Array<ContractorAllocationProposal>;
+  "credit_proposals": Array<ContractorCreditProposal>;
+  "items": Array<ContractorReviewItem>;
+  "proposal_blocked": boolean;
+  "flags": Array<string>;
+};
+
+export type ContractorReviewPerson = {
+  "user_id": number;
+  "name": string;
+  "active": boolean;
+  "ledger_version": number | null;
+  "settled_through": string | null;
+  "ledger_events": Array<StaffPaymentEvent>;
+  "phase": "review" | "queued" | "processing" | "settled" | "failed" | "attention";
+  "latest_review": ContractorEarningsReview | null;
+  "earnings": ContractorReviewEarnings | null;
+  "entries": Array<ContractorReviewEntry>;
+  "currencies": Array<ContractorCurrencyReview>;
+};
+
+export type ContractorReview = {
+  "month": string;
+  "completed": boolean;
+  "credit_period": {
+  "from": string;
+  "to": string;
+};
+  "version": string;
+  "people": Array<ContractorReviewPerson>;
+};
+
+export type ContractorReviewEnvelope = {
+  "data": ContractorReview;
+};
+
 export type ScheduledRunItem = {
   "id": number;
   "subject_type": string;
@@ -7229,6 +7336,16 @@ export class EzactoClient {
     return this.request<ArrayBuffer>("GET", "/api/v1/staff-invoices/:invoiceId/documents/:documentId/content".replace(":invoiceId", encodeURIComponent(String(args["invoiceId"]))).replace(":documentId", encodeURIComponent(String(args["documentId"]))), {
       signal: args.signal,
       binary: true,
+      headers,
+    });
+  }
+
+  async getContractorReview(args: { query?: { "month"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ContractorReviewEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ContractorReviewEnvelope>("GET", "/api/v1/staff-payments/contractor-review", {
+      query: args.query,
+      signal: args.signal,
       headers,
     });
   }
