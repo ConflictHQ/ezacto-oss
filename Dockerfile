@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1.7
+# Node is pinned to 22.23.4 or later: earlier 22.x carries the October 2026 security fixes (Brotli RCE, TLS hostname bypasses).
 FROM node:22.23.4-bookworm-slim AS build
 
 RUN apt-get update \
