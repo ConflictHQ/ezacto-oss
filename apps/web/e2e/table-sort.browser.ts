@@ -6,6 +6,21 @@ test("[e2e:table-sort #852] keyboard sorting preserves client hierarchy and reme
   const fixtureEmail = process.env.EZACTO_BROWSER_FIXTURE_EMAIL!;
   const fixturePassword = process.env.EZACTO_BROWSER_FIXTURE_PASSWORD!;
   await page.setViewportSize({ width: 1440, height: 1000 });
+  let finishClientNames!: () => void;
+  const clientNamesReady = new Promise<void>((resolve) => {
+    finishClientNames = resolve;
+  });
+  for (const path of ["**/api/v1/clients", "**/api/v1/clients?*"])
+    await page.route(path, async (route) => {
+      await clientNamesReady;
+      await route.fulfill({
+        json: {
+          data: [{ id: 1, name: "Fixture client", is_active: true }],
+          page: { next_cursor: null },
+        },
+      });
+    });
+
   const estimates = ["EST-10", "EST-9", "EST-1315"].map((number, index) => ({
     id: index + 1,
     client_id: 1,
@@ -55,6 +70,12 @@ test("[e2e:table-sort #852] keyboard sorting preserves client hierarchy and reme
   await page.keyboard.press("Enter");
   await expect(numbers).toHaveText(["EST-1315", "EST-10", "EST-9"]);
   await expect(number()).toBeFocused();
+  finishClientNames();
+  await expect(
+    page.locator('[data-estimate-list] tbody [data-column="client"]'),
+  ).toHaveText(["Fixture client", "Fixture client", "Fixture client"]);
+  await expect(number()).toBeFocused();
+
   await page.keyboard.press("Space");
   await expect(numbers).toHaveText(["EST-9", "EST-10", "EST-1315"]);
   await expect(
