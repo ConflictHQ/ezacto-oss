@@ -1,4 +1,4 @@
-import type { ClientRateCardApi } from './rate-card-browser.js'
+import type { ClientRateCardApi } from './rate-card-model.js'
 import type {
   ClientHierarchyNode,
   ClientInvoiceSendingInput,

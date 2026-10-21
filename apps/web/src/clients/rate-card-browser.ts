@@ -3,7 +3,6 @@ import {
   EzactoApiError,
   type ClientRateCard,
   type ClientRateCardVersionInput,
-  type EffectiveClientRateCard,
   type GeneralResource,
   type Whoami,
 } from '@conflict-hq/ezacto-client'
@@ -14,25 +13,8 @@ import { markMoney } from '../money-display.js'
 import { parseTeamMoneyCents } from '../team/model.js'
 import { clientMoney, clientProfileCanWrite } from './model.js'
 
-export interface ClientRateCardApi {
-  getClientRateCard?(id: number, signal?: AbortSignal): Promise<ClientRateCard>
-  createClientRateCard?(id: number, name: string, signal?: AbortSignal): Promise<ClientRateCard>
-  createClientRateCardVersion?(
-    id: number,
-    input: ClientRateCardVersionInput,
-    signal?: AbortSignal,
-  ): Promise<ClientRateCard>
-  getClientEffectiveRateCard?(
-    id: number,
-    taskId: number,
-    date: string,
-    signal?: AbortSignal,
-  ): Promise<EffectiveClientRateCard>
-  listRateCardTasks?(
-    cursor?: string,
-    signal?: AbortSignal,
-  ): Promise<{ data: readonly GeneralResource[]; page: { next_cursor: string | null } }>
-}
+import type { ClientRateCardApi } from './rate-card-model.js'
+export type { ClientRateCardApi } from './rate-card-model.js'
 
 export interface RateCardContext {
   identity: Whoami
