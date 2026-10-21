@@ -542,3 +542,5 @@ export {
   type ClientRateCardRepository,
   type ClientRateCardRouteOptions,
 } from './client-rate-cards.js'
+
+export { installStaffInvoiceRoutes } from './staff-invoices.js'

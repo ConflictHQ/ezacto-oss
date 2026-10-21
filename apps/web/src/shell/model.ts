@@ -142,6 +142,7 @@ export interface ShellApi
   planning?: PlanningApi
   /** The signed-in person's own payment summary (issue 100). */
   getMyPayments?(month: string, signal?: AbortSignal): ReturnType<MyPaymentsApi['getMyPayments']>
+  getMyStaffInvoices?: MyPaymentsApi['getMyStaffInvoices']
   /** The page size a caller may raise when it is walking, not browsing. */
   listActivityLog?(
     query: ActivityQuery,
@@ -1192,6 +1193,13 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     client.configureStaffPaymentProvider({ body, ...withSignal(signal) }),
   getPaymentActuals: async (month, signal) => (await client.getPaymentActuals({ query: { month }, ...withSignal(signal) })).data,
   confirmPaymentActuals: (body, signal) => client.confirmPaymentActuals({ body, ...withSignal(signal) }),
+  getStaffInvoiceReport: async (month, signal) => (await client.getStaffInvoiceReport({ query: { month }, ...withSignal(signal) })).data,
+  saveStaffInvoice: async (command, signal) => (await client.saveStaffInvoice({ body: command, ...withSignal(signal) })).data,
+  uploadStaffInvoiceDocument: async (invoiceId, month, id, file, signal) => {
+    const body = new FormData(); body.set('file', file);
+    return (await client.uploadStaffInvoiceDocument({ invoiceId, 'Idempotency-Key': id, query: { month }, body, ...withSignal(signal) })).data;
+  },
+  getMyStaffInvoices: (month, signal) => client.getMyStaffInvoices({ query: { month }, ...withSignal(signal) }),
   getAdvanceCreditReport: async (from, to, signal) => (await client.getAdvanceCreditReport({ query: { from, to }, ...withSignal(signal) })).data,
   applyAdvanceCredit: async (command, signal) => { await client.applyAdvanceCredit({ body: command, ...withSignal(signal) }) },
   reverseAdvanceCredit: async (command, signal) => { await client.reverseAdvanceCredit({ body: command, ...withSignal(signal) }) },

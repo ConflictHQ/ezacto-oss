@@ -142,3 +142,5 @@ export * from './deel-time-sync.js'
 export * from './client-rate-cards.js'
 
 export * from './contractor-advances.js'
+
+export * from './staff-invoices.js'

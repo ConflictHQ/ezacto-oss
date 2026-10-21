@@ -1,3 +1,4 @@
+import { createStaffInvoicesStore } from './staff-invoices.js'
 import { createAdvanceCreditsStore } from './contractor-advances.js'
 import { sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -317,6 +318,7 @@ export const createPaymentRunsService = (
   }
   return {
     advances: createAdvanceCreditsStore(database),
+    invoices: createStaffInvoicesStore(database),
     preview: async (command, actorId, requestId, now) => {
       if (provider === null) invalid('Wise is not configured for this instance.')
       if (

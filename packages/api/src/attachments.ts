@@ -721,3 +721,7 @@ export const installAttachmentRoutes = <Bindings extends object>(
     return context.body(null, 204);
   });
 };
+
+// Payable documents share the same bounded multipart parsing and content identity
+// as every other attachment; their ownership/version policy lives in staff-invoices.
+export { multipartFile as readAttachmentFile, hash as attachmentContentHash }

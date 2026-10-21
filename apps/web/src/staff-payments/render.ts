@@ -21,6 +21,7 @@ export const renderStaffPayments = (view?: string): string =>
             ['actuals', 'Review actuals'],
             ['allocations', 'Allocations'],
             ['advances', 'Advances'],
+            ['invoices', 'Contractor invoices'],
             ['send', 'Send or schedule'],
             ['history', 'History'],
             ['settings', 'Settings'],
@@ -97,6 +98,13 @@ export const renderStaffPayments = (view?: string): string =>
         </form>
         <p data-advance-status role="status" aria-live="polite"></p>
         <div data-advance-content></div>
+      </section>
+      <section id="payment-panel-invoices" role="tabpanel" aria-labelledby="payment-tab-invoices" data-payment-panel="invoices" data-staff-invoices hidden>
+        <h2>Contractor payable invoices</h2>
+        <p>Draft from reviewed earnings or record an invoice received from a contractor. Documents never add to the amount owed a second time. Corrections keep their history and existing payments.</p>
+        <button type="button" data-staff-invoice-load>Load contractor invoices for work month</button>
+        <p data-staff-invoice-status role="status" aria-live="polite"></p>
+        <div data-staff-invoice-content></div>
       </section>
       ${renderPaymentRuns()}
       <section id="payment-panel-settings" role="tabpanel" aria-labelledby="payment-tab-settings" data-payment-panel="settings" hidden>

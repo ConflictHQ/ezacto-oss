@@ -17,6 +17,7 @@ export const renderMyPaymentsPage = (view?: string): string => `
       <dl class="my-payments-summary" data-my-payments-summary></dl>
       <div data-my-payments-receipts></div>
       <div data-my-payments-upcoming></div>
+      <div data-my-staff-invoices></div>
     </div>
   </main>
 `
