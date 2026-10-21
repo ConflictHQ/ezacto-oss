@@ -1,3 +1,4 @@
+import { prepareScheduledRunNotifications } from '@ezacto/db'
 import { createContainerEmailSuppressionStore } from '@ezacto/db'
 import type { ReminderProcessOptions } from '@ezacto/db'
 import { createRuntimeAppleWeb } from '../../worker/src/apple-web.js'
@@ -514,6 +515,14 @@ export const createContainerRuntime = async (
       },
       notificationMailer,
     )
+    const scheduledRunNotices = createTimeReminderService(
+      {
+        prepare: (now: string) => prepareScheduledRunNotifications(drizzle, {
+          now, from: notificationMailer.from, appUrl: config.appBaseUrl,
+        }),
+      },
+      notificationMailer,
+    )
     const reminders = createContainerReminderScheduler(database)
     // The same connection the Worker composes. A self-hoster's QuickBooks is
     // the same QuickBooks, and the only thing this needs that the Worker has is
@@ -804,6 +813,11 @@ export const createContainerRuntime = async (
       } catch (error) {
         console.error('[container] scheduled job proposal sweep failed', error)
       }
+      try {
+        await scheduledRunNotices.processDue(now)
+      } catch (error) {
+        console.error('[container] scheduled manifest notice failed', error)
+      }
       // Proposed month-end runs past their deadline (issue 63); reports its
       // own failure and never stops the drain.
       await sweepExpiredRuns(createScheduledActionStore(drizzle), now, (error) => {
@@ -915,6 +929,7 @@ export const createContainerRuntime = async (
       ...(wise === null ? {} : { wise: wise.service }),
       ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
       paymentRuns,
+      scheduledRunNotices,
       scheduledJobs: createScheduledJobsService(drizzle),
       scheduledJobProposals: { processDue: (now: string) => proposeDueScheduledJobs(drizzle, now) },
       scheduledRuns: createScheduledRunsService(drizzle),

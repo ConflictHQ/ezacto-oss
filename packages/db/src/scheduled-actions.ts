@@ -163,7 +163,7 @@ export interface ScheduledActionStore {
   /** The rows a person is agreeing to. */
   manifest(runId: number): Promise<readonly RunItemRecord[]>
   confirm(runId: number, userId: number, now: string): Promise<ConfirmOutcome>
-  cancel(runId: number, now: string, reason: string): Promise<boolean>
+  cancel(runId: number, now: string, reason: string, userId?: number): Promise<boolean>
   /**
    * Settles everything whose deadline has passed. Returns what it settled, so
    * a caller can say what lapsed rather than only that something did.
@@ -264,18 +264,20 @@ export const createScheduledActionStore = (database: Database): ScheduledActionS
       SET state = 'confirmed', confirmed_by_user_id = ${userId}, confirmed_at = ${now},
           updated_at = ${now}
       WHERE id = ${runId} AND state = 'proposed' AND expires_at > ${now}
+        AND EXISTS(SELECT 1 FROM users WHERE id=${userId} AND is_active=1 AND profile='administrator')
       RETURNING ${sql.raw(columns)}`)
     return updated[0] === undefined
       ? { outcome: 'not_proposed' }
       : { outcome: 'confirmed', run: run(updated[0]) }
   },
 
-  cancel: async (runId, now, reason) => {
+  cancel: async (runId, now, reason, userId) => {
     const rows = await database.all<{ id: number }>(sql`
       UPDATE proposed_runs
       SET state = 'cancelled', settled_at = ${now}, settled_reason = ${reason},
           updated_at = ${now}
-      WHERE id = ${runId} AND state = 'proposed'
+      WHERE id = ${runId} AND state = 'proposed' AND expires_at > ${now}
+        AND (${userId ?? null} IS NULL OR EXISTS(SELECT 1 FROM users WHERE id=${userId ?? null} AND is_active=1 AND profile='administrator'))
       RETURNING id`)
     return rows.length > 0
   },

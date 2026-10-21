@@ -606,6 +606,7 @@ export interface RuntimeServices {
    */
   /** Administrator payment register, available without provider credentials. */
   paymentRuns?: PaymentRunsService
+  scheduledRunNotices?: { processDue(now: string): Promise<{ queued: number }> }
   scheduledJobs?: ScheduledJobsService
   scheduledJobProposals?: {
     processDue(now: string): Promise<{ failed: readonly { jobId: number; message: string }[] }>
@@ -1926,6 +1927,29 @@ export const createApp = (
             ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Settings',
             view: 'my-payments',
+            tabs: [],
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      app.get('/scheduled-runs/:id', async (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            ...(await shellChrome(context.env, context.req.raw)),
+            activeSection: 'Settings',
+            view: 'scheduled-run',
             tabs: [],
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),

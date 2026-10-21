@@ -245,6 +245,14 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
         Sentry.captureException(error)
       }
     }
+    if (controller.cron === '* * * * *' && services.scheduledRunNotices !== undefined) {
+      try {
+        await services.scheduledRunNotices.processDue(new Date().toISOString())
+      } catch (error) {
+        console.error('[worker] scheduled manifest notice failed', error)
+        Sentry.captureException(error)
+      }
+    }
     if (controller.cron === '* * * * *' && services.scheduledActionExpiry !== undefined) {
       // Proposed month-end runs past their deadline (issue 63). The sweep
       // reports its own failure, so it never stops the drain below.

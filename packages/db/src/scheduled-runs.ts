@@ -71,11 +71,15 @@ export const createScheduledRunsService = (database: ActionDatabase): ScheduledR
       return refused(id, 'not_proposed')
     },
     cancel: async (id, userId, now) => {
-      if (await store.cancel(id, now, `cancelled by user ${userId}`))
+      if (await store.cancel(id, now, `cancelled by user ${userId}`, userId))
         return { outcome: 'ok', run: (await read(id))! }
       const run = await read(id)
       if (run === null) return { outcome: 'not_found' }
       if (run.state === 'cancelled') return { outcome: 'ok', run }
+      if (run.state === 'proposed' && run.expires_at <= now) {
+        await store.expire(now)
+        return refused(id, 'expired')
+      }
       return refused(id, 'not_proposed')
     },
   }

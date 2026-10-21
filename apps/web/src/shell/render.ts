@@ -1,3 +1,4 @@
+import { renderScheduledRunPage } from '../scheduled-runs/render.js'
 import { renderStaffPayments } from '../staff-payments/render.js'
 import { PASSWORD_MIN_CODE_POINTS, PASSWORD_MAX_CODE_POINTS } from '@ezacto/core'
 import { appleSignInIcon, googleSignInIcon, portalEstimatesJavascript, portalInvoiceJavascript, shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
@@ -129,6 +130,7 @@ export interface AppShellOptions {
     | 'team-person'
     | 'capacity'
     | 'my-payments'
+    | 'scheduled-run'
     | 'not-found'
   /**
    * The level-2 strip under the header. Time supplies its own Week/Day pair
@@ -1115,6 +1117,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   ${renderTeamPages(view)}
   ${renderCapacityPage(view)}
   ${renderMyPaymentsPage(view)}
+  ${renderScheduledRunPage(view)}
   ${renderProjectDirectoryPages(view)}
   ${renderTaskAdminPage(view)}
   ${renderDashboardPage(view)}
