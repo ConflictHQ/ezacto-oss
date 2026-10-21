@@ -1,5 +1,11 @@
-import type { EmailSuppressionReason } from './suppressions.js'
-export * from './suppressions.js'
+import type { EmailSuppressionReason } from '@ezacto/core'
+export { EmailSuppressionError } from '@ezacto/core'
+export type {
+  EmailSuppressionReason,
+  EmailSuppressionRecord,
+  EmailSuppressionLift,
+  EmailSuppressionStore,
+} from '@ezacto/core'
 import {
   senderIdentityEligibilityFailure,
   senderIdentityUnavailableMessage,
