@@ -616,6 +616,7 @@ const fixtureControl = async (request, response) => {
       rateCardFixture = null
     }
   } else if (action === 'email-feedback-seed') {
+    await run(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`)
     const log = createD1EmailLogStore(database)
     const identifier = randomUUID()
     const to = 'feedback-recipient@example.test', cc = 'feedback-copy@example.test'
