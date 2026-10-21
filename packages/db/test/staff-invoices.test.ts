@@ -346,6 +346,11 @@ describe.each(['sqlite', 'd1'] as const)('contractor payable invoices on %s', (r
     })
     expect(await f.store.document(invoice.id, 'document', 2)).toMatchObject({ name: 'invoice.pdf' })
     expect(await f.store.document(invoice.id, 'document', 3)).toBeNull()
+    const privateHash='b'.repeat(64)
+    await f.store.recordDocument({...document,id:'private-document',content_hash:privateHash,file_key:`sha256/bb/${privateHash}`,name:'private.pdf'},1,'stage',now)
+    await f.save({id:'void-document',invoice_id:invoice.id,expected_version:2,kind:'void',from_review:false,lines:invoice.versions[0]!.lines,document_id:'private-document',reason:'Void superseded received document'})
+    expect((await f.store.report('2026-09',2)).people[0]!.invoices[0]!.versions.at(-1)!.document_id).toBeNull()
+    expect(await f.store.document(invoice.id,'private-document',2)).toBeNull()
     const other = await f.save({ id: 'other', reference: 'C-002' })
     await expect(
       f.save({

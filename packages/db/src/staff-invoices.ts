@@ -120,7 +120,13 @@ export const createStaffInvoicesStore = (database: Database): StaffInvoicesStore
           .filter((r) => r.user_id === balance.user_id)
           .map((root) => ({
             ...root,
-            versions: versions.filter((v) => v.invoice_id === root.id).map(versionOf),
+            versions: versions.filter((v) => v.invoice_id === root.id).map(v => {
+              const version = versionOf(v)
+              // A void can reference a staged file for staff. Own-person history
+              // must not suggest that an unpublished document is downloadable.
+              if (ownUserId !== undefined && version.document_id !== null && !versions.some(p => p.invoice_id === root.id && p.kind === 'received' && p.document_id === version.document_id)) version.document_id = null
+              return version
+            }),
             matched_cents: 0,
             flags: [],
             line_flags: [],
