@@ -161,6 +161,8 @@ export interface StripeCheckoutCompletion {
   eventType: string
   /** Stripe's own id for the payment, and our idempotency key. */
   paymentIntentId: string
+  /** The Checkout session’s Payment Link, used when invoice metadata is absent. */
+  paymentLinkId: string | null
   amountCents: number
   currency: string
   /** Our invoice id, carried through `metadata` on the payment link. */
@@ -173,9 +175,9 @@ const object = (value: unknown): Record<string, unknown> =>
     : {}
 
 /**
- * The one event this integration acts on, read out of a verified body.
+ * The paid Checkout events this integration acts on, read out of a verified body.
  *
- * `checkout.session.completed` rather than `payment_intent.succeeded`, because
+ * Completed and asynchronous-success sessions rather than payment-intent events, because
  * the session is what carries the metadata we set on the payment link -- and
  * without that there is nothing tying Stripe's money to our invoice.
  *
@@ -183,9 +185,7 @@ const object = (value: unknown): Record<string, unknown> =>
  * subscribed to, and an integration that threw on an event it did not want
  * would turn somebody else's dashboard change into a failed delivery.
  */
-export const readCheckoutCompletion = (
-  payload: string,
-): StripeCheckoutCompletion | null => {
+export const readCheckoutCompletion = (payload: string): StripeCheckoutCompletion | null => {
   let body: Record<string, unknown>
   try {
     body = object(JSON.parse(payload))
@@ -193,7 +193,11 @@ export const readCheckoutCompletion = (
     throw new StripeWebhookError('the Stripe webhook body is not JSON')
   }
   const eventType = typeof body['type'] === 'string' ? body['type'] : ''
-  if (eventType !== 'checkout.session.completed') return null
+  if (
+    eventType !== 'checkout.session.completed' &&
+    eventType !== 'checkout.session.async_payment_succeeded'
+  )
+    return null
 
   const session = object(object(body['data'])['object'])
   // Only a session that was actually paid. `complete` with an unpaid status is
@@ -220,6 +224,10 @@ export const readCheckoutCompletion = (
     eventId: typeof body['id'] === 'string' ? body['id'] : '',
     eventType,
     paymentIntentId: paymentIntent,
+    paymentLinkId:
+      typeof session['payment_link'] === 'string' && session['payment_link'].trim() !== ''
+        ? session['payment_link']
+        : null,
     amountCents: amount,
     currency: currency.toUpperCase(),
     invoiceId: Number.isSafeInteger(invoiceId) && invoiceId > 0 ? invoiceId : null,

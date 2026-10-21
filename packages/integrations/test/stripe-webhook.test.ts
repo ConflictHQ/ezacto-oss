@@ -216,6 +216,7 @@ describe('reading a completed checkout', () => {
       eventId: 'evt_1',
       eventType: 'checkout.session.completed',
       paymentIntentId: 'pi_example',
+      paymentLinkId: null,
       amountCents: 2500,
       currency: 'USD',
       invoiceId: 1315,
