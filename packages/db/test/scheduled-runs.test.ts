@@ -39,6 +39,8 @@ const fixture = async () => {
         amountCents: 936_850,
         currency: 'USD',
         target: 'ap@kestrel.example.test',
+        quantitySeconds:5400,
+        clientName:'Kestrel Environmental',
       },
     ],
     proposedAt: t(9),
@@ -61,7 +63,7 @@ describe('reading a proposed run', () => {
       state: 'proposed',
       confirmed_by: null,
       expires_at: t(21),
-      items: [{ subject_id: 1315, amount_cents: 936_850, currency: 'USD', state: 'pending' }],
+      items: [{ subject_id: 1315, amount_cents: 936_850, currency: 'USD', quantity_seconds:5400, client_name:'Kestrel Environmental', state: 'pending' }],
     })
     expect(await service.read(id + 100)).toBeNull()
   })

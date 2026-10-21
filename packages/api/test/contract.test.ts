@@ -1,3 +1,4 @@
+import { installScheduledJobRoutes } from '../src/scheduled-jobs.js';
 import { installContractorReviewRoutes } from '../src/contractor-review.js';
 import { installBackupDownloadMintRoute } from '../src/backup-download.js';
 import { installPaymentRunRoutes } from '../src/payment-runs.js';
@@ -439,6 +440,7 @@ const documentedApp = () =>
       installContractorReviewRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
       installStaffInvoiceRoutes(api, new Proxy({}, { get: () => unavailable }) as never, new Proxy({}, { get: () => unavailable }) as never);
       installPaymentRunRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
+      installScheduledJobRoutes(api, new Proxy({}, { get: () => unavailable }) as never, {cursorSigningKey:new Uint8Array(32)});
       installScheduledRunRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
       installPayoutAccountRoutes(api, {
         listForUser: async () => [],

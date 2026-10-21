@@ -56,3 +56,67 @@ The archive takes everything recorded up to the moment of the roll, so entries f
 Check the deployment/environment first, then its configuration status, provider permissions, exact callback or webhook URL, and finally the request ID and provider logs. A `401` from eZacto may mean the operator session expired; a provider `401` means something different. Never paste tokens or complete webhook payloads into public issues.
 
 Vendor setup instructions were checked on 2026-10-09. The named source files in each guide are the implementation reference; verify your release before following steps for a newer version.
+
+## Monthly job definitions and proposed manifests
+
+Administrators can configure month-end pack jobs through the session-only API.
+The cadence uses the organization's time zone. A monthly expression is
+`M H D * *`: minute 0–59, hour 0–23, day 1–31. A day absent from a month is
+skipped. The minute cron (Worker) or maintenance tick (container) catches up the
+current monthly occurrence once its scheduled clock has passed; it does not
+create a backlog for older missed months.
+
+From a signed-in administrator's browser console, create a job with the actual
+client IDs it should cover:
+
+```js
+const response = await fetch('/api/v1/scheduled-jobs', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({
+    name: 'Monthly client work detail',
+    action: 'month_end_pack',
+    scope: { client_ids: [1] },
+    cadence: '0 9 1 * *',
+    confirmation: 'required',
+    confirm_within_minutes: 1440,
+  }),
+})
+const { data: job } = await response.json()
+```
+
+An empty `client_ids` list covers all clients. A job proposes the preceding
+calendar month's eligible invoices with their concrete client, amount/currency,
+recipient and claimed rounded hours (null when the invoice claims no time).
+Reports must render before a proposal is stored. The proposal and all its items
+are committed together, so a failed item leaves no partial manifest. Overlapping
+ticks cannot materialize the same job/month twice. Nothing becomes confirmed or
+executes merely because a tick ran or a deadline passed.
+
+List jobs at `GET /api/v1/scheduled-jobs` (cursor-paginated), or read one at
+`GET /api/v1/scheduled-jobs/:id`. `last_error` explains an empty, malformed or
+unrenderable occurrence; `last_checked_at` and `last_run_id` show its latest
+inspection and proposal. One failed job does not stop other jobs from proposing.
+Read a materialized manifest at `GET /api/v1/scheduled-runs/:id`; this also
+provides its state, deadline and confirmation attribution.
+
+Update or pause against the version just reviewed:
+
+```js
+await fetch(`/api/v1/scheduled-jobs/${job.id}`, {
+  method: 'PATCH',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ expected_version: job.version, is_active: false }),
+})
+```
+
+A stale version returns 409; refresh before choosing a new change. Pausing stops
+new proposals. Existing manifests retain their concrete items and original
+confirmation deadline when a job is edited. A paused or changed job cannot
+commit a proposal from a stale configuration already being rendered. Job
+configuration requires an active administrator session; API tokens cannot create,
+change or read these definitions. Month-end jobs always require confirmation.
+
+This release supplies definition, proposal and expiry handling. Background
+notification and execution of confirmed packs remain separate work; creating a
+job does not send client email or initiate a payment.

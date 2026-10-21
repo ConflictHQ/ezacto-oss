@@ -3,7 +3,7 @@ import type { ReminderProcessOptions } from '@ezacto/db/d1'
 import { createRuntimeAppleWeb } from './apple-web.js'
 import { createD1AppleWebCustodyStore } from '@ezacto/db/d1'
 import { captureException } from '@sentry/cloudflare'
-import { createPaymentRunsService, createScheduledRunsService } from '@ezacto/db/d1'
+import { createPaymentRunsService, createScheduledRunsService, createScheduledJobsService, proposeDueScheduledJobs } from '@ezacto/db/d1'
 import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createContractorReviewStore, createStaffPaymentStore } from '@ezacto/db/d1'
 import { createMyPaymentsStore } from '@ezacto/db/d1'
@@ -1437,6 +1437,8 @@ export const createRuntimeServices = async (
           }),
         }),
     paymentRuns,
+    scheduledJobs: createScheduledJobsService(drizzle),
+    scheduledJobProposals: { processDue: (now: string) => proposeDueScheduledJobs(drizzle, now) },
     scheduledRuns: createScheduledRunsService(drizzle),
     staffPayments: createStaffPaymentStore(drizzle),
     contractorReview: createContractorReviewStore(drizzle),

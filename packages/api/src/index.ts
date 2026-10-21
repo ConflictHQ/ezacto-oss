@@ -1,3 +1,4 @@
+export { installScheduledJobRoutes } from './scheduled-jobs.js'
 export { createApiApp } from './app.js'
 export { createApiIdempotencyAuthorization } from './idempotency-auth.js'
 export {

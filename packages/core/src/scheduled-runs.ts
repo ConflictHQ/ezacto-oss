@@ -21,6 +21,8 @@ export interface ScheduledRunItem {
   amount_cents: number | null;
   currency: string | null;
   target: string | null;
+  quantity_seconds: number | null;
+  client_name: string | null;
   state: "pending" | "running" | "done" | "failed";
   attempt_count: number;
   failure_reason: string | null;

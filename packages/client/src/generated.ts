@@ -836,6 +836,8 @@ export type ScheduledRunItem = {
   "amount_cents": number | null;
   "currency": string | null;
   "target": string | null;
+  "quantity_seconds": number | null;
+  "client_name": string | null;
   "state": "pending" | "running" | "done" | "failed";
   "attempt_count": number;
   "failure_reason": string | null;
@@ -857,6 +859,59 @@ export type ScheduledRun = {
 
 export type ScheduledRunEnvelope = {
   "data": ScheduledRun;
+};
+
+export type ScheduledJobCreate = {
+  "action"?: "month_end_pack";
+  "name": string;
+  "scope"?: {
+  "client_ids"?: Array<number>;
+};
+  "cadence"?: string;
+  "confirmation"?: "required";
+  "confirm_within_minutes"?: number;
+  "is_active"?: boolean;
+};
+
+export type ScheduledJobPatch = {
+  "action"?: "month_end_pack";
+  "name"?: string;
+  "scope"?: {
+  "client_ids"?: Array<number>;
+};
+  "cadence"?: string;
+  "confirmation"?: "required";
+  "confirm_within_minutes"?: number;
+  "is_active"?: boolean;
+  "expected_version": number;
+};
+
+export type ScheduledJob = {
+  "action": "month_end_pack";
+  "name": string;
+  "scope": unknown;
+  "cadence": string;
+  "confirmation": "required" | "none";
+  "confirm_within_minutes": number;
+  "is_active": boolean;
+  "id": number;
+  "version": number;
+  "created_by": number;
+  "created_at": string;
+  "updated_at": string;
+  "last_checked_at": string | null;
+  "last_error": string | null;
+  "last_run_id": number | null;
+};
+
+export type ScheduledJobEnvelope = {
+  "data": ScheduledJob;
+};
+
+export type ScheduledJobsPage = {
+  "data": Array<ScheduledJob>;
+  "links": PageLinks;
+  "page": PageMetadata;
 };
 
 export type InvoiceReminderPolicy = {
@@ -7542,6 +7597,45 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<ScheduledRunEnvelope>("POST", "/api/v1/scheduled-runs/:id/cancel".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listScheduledJobs(args: { query?: { "cursor"?: string; "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ScheduledJobsPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ScheduledJobsPage>("GET", "/api/v1/scheduled-jobs", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getScheduledJob(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<ScheduledJobEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ScheduledJobEnvelope>("GET", "/api/v1/scheduled-jobs/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createScheduledJob(args: { body: ScheduledJobCreate; signal?: AbortSignal; headers?: HeadersInit }): Promise<ScheduledJobEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ScheduledJobEnvelope>("POST", "/api/v1/scheduled-jobs", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateScheduledJob(args: { "id": number; body: ScheduledJobPatch; signal?: AbortSignal; headers?: HeadersInit }): Promise<ScheduledJobEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ScheduledJobEnvelope>("PATCH", "/api/v1/scheduled-jobs/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });
