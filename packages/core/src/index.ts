@@ -72,3 +72,5 @@ export * from './my-payments.js'
 export * from './rate-cards.js'
 
 export * from './contractor-advances.js'
+
+export * from './staff-invoices.js'

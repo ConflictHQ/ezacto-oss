@@ -1,10 +1,11 @@
-import type { MyPayments, MyPaymentsStatus } from '@ezacto/core'
+import type { MyPayments, MyPaymentsStatus, StaffInvoiceReport } from '@ezacto/core'
 
 /**
  * The own-payments screen's pure parts (issue 100, docs/contractor-payments.md).
  * Nothing here names a person: the server answers only for the signed-in user.
  */
 export interface MyPaymentsApi {
+  getMyStaffInvoices?(month: string, signal?: AbortSignal): Promise<{readonly data: StaffInvoiceReport}>
   getMyPayments(month: string, signal?: AbortSignal): Promise<{ readonly data: MyPayments }>
 }
 

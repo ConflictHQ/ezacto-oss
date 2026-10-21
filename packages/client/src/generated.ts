@@ -595,6 +595,96 @@ export type AdvanceCreditReportEnvelope = {
   "data": AdvanceCreditReport;
 };
 
+export type StaffInvoiceLine = {
+  "description": string;
+  "project_id": number | null;
+  "entry_id": number | null;
+  "seconds": number;
+  "rate_cents": number;
+};
+
+export type SaveStaffInvoice = {
+  "id": string;
+  "invoice_id": number | null;
+  "expected_version": number;
+  "user_id": number;
+  "month": string;
+  "currency": string;
+  "reference": string;
+  "kind": "draft" | "received" | "void";
+  "from_review": boolean;
+  "lines": Array<StaffInvoiceLine>;
+  "document_id": string | null;
+  "reason": string;
+  "acknowledge_paid_history": boolean;
+};
+
+export type StaffInvoiceVersion = {
+  "command_id": string;
+  "version": number;
+  "month": string;
+  "currency": string;
+  "kind": "draft" | "received" | "void";
+  "lines": Array<StaffInvoiceLine>;
+  "amount_cents": number;
+  "review_id": string | null;
+  "document_id": string | null;
+  "reason": string;
+  "actor_id": number;
+  "recorded_at": string;
+  "paid_cents_at_recording": number;
+  "has_payment_history": boolean;
+};
+
+export type StaffInvoice = {
+  "id": number;
+  "user_id": number;
+  "month": string;
+  "currency": string;
+  "reference": string;
+  "versions": Array<StaffInvoiceVersion>;
+  "matched_cents": number;
+  "flags": Array<string>;
+  "line_flags": Array<Array<string>>;
+};
+
+export type StaffInvoicePerson = {
+  "user_id": number;
+  "name": string;
+  "currency": string | null;
+  "earned_cents": number | null;
+  "paid_cents": number;
+  "invoiced_cents": number;
+  "matched_invoice_cents": number;
+  "uninvoiced_cents": number | null;
+  "invoices": Array<StaffInvoice>;
+};
+
+export type StaffInvoiceReport = {
+  "month": string;
+  "people": Array<StaffInvoicePerson>;
+};
+
+export type StaffInvoiceReportEnvelope = {
+  "data": StaffInvoiceReport;
+};
+
+export type StaffInvoiceEnvelope = {
+  "data": StaffInvoice;
+};
+
+export type StaffInvoiceDocumentInfo = {
+  "id": string;
+  "invoice_id": number;
+  "name": string;
+  "byte_size": number;
+  "content_type": string;
+};
+
+export type StaffInvoiceDocumentEnvelope = {
+  "data": StaffInvoiceDocumentInfo;
+};
+
 export type ScheduledRunItem = {
   "id": number;
   "subject_type": string;
@@ -7087,6 +7177,58 @@ export class EzactoClient {
     return this.request<void>("POST", "/api/v1/payment-runs/advances/returns", {
       body: args.body,
       signal: args.signal,
+      headers,
+    });
+  }
+
+  async getStaffInvoiceReport(args: { query?: { "month"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<StaffInvoiceReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<StaffInvoiceReportEnvelope>("GET", "/api/v1/staff-invoices", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getMyStaffInvoices(args: { query?: { "month"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<StaffInvoiceReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<StaffInvoiceReportEnvelope>("GET", "/api/v1/me/staff-invoices", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async saveStaffInvoice(args: { body: SaveStaffInvoice; signal?: AbortSignal; headers?: HeadersInit }): Promise<StaffInvoiceEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<StaffInvoiceEnvelope>("POST", "/api/v1/staff-invoices", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async uploadStaffInvoiceDocument(args: { "invoiceId": number; "Idempotency-Key": string; body: FormData; query: { "month": string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<StaffInvoiceDocumentEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<StaffInvoiceDocumentEnvelope>("POST", "/api/v1/staff-invoices/:invoiceId/documents".replace(":invoiceId", encodeURIComponent(String(args["invoiceId"]))), {
+      query: args.query,
+      body: args.body,
+      multipart: true,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getStaffInvoiceDocumentContent(args: { "invoiceId": number; "documentId": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<ArrayBuffer> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ArrayBuffer>("GET", "/api/v1/staff-invoices/:invoiceId/documents/:documentId/content".replace(":invoiceId", encodeURIComponent(String(args["invoiceId"]))).replace(":documentId", encodeURIComponent(String(args["documentId"]))), {
+      signal: args.signal,
+      binary: true,
       headers,
     });
   }

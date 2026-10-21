@@ -1,3 +1,4 @@
+import type { StaffInvoicesStore } from './staff-invoices.js'
 import type { AdvanceCreditsStore } from './contractor-advances.js'
 import type { StaffPaymentReport } from "./staff-payments.js";
 
@@ -127,6 +128,7 @@ export interface PaymentRunReport {
 }
 export interface PaymentRunsService {
   advances?: AdvanceCreditsStore;
+  invoices?: StaffInvoicesStore;
   preview(
     command: PaymentRunCommand,
     actorId: number,

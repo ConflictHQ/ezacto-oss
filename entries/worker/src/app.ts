@@ -4,7 +4,7 @@ import { aggregateAppleCleanup, type AppleCleanupPort, type AppleLifecycleStore,
 import type { AccountDeletionStore, AccountClosureStore, AccountRetentionReviewStore, AccountDeletionStatusStore } from '@ezacto/core'
 import type { PaymentRunsService, ScheduledRunsService } from '@ezacto/core'
 import { workItemProviders, type WorkItemProviderId } from '@ezacto/core'
-import { installPaymentRunRoutes } from '@ezacto/api'
+import { installStaffInvoiceRoutes, installPaymentRunRoutes } from '@ezacto/api'
 import { installScheduledRunRoutes } from '@ezacto/api'
 import { installDeelSyncRoutes, installStaffPaymentRoutes, type DeelSyncApiDependencies } from '@ezacto/api'
 import type { StaffPaymentStore } from '@ezacto/core'
@@ -906,7 +906,10 @@ export const createApp = (
             })
             installAttachmentRoutes(api, services.attachments)
             installReportRoutes(api, services.reports)
-            if (services.paymentRuns !== undefined) installPaymentRunRoutes(api, services.paymentRuns)
+            if (services.paymentRuns !== undefined) {
+              installPaymentRunRoutes(api, services.paymentRuns)
+              if (services.paymentRuns.invoices) installStaffInvoiceRoutes(api, services.paymentRuns.invoices, services.attachments?.objects)
+            }
             if (services.scheduledRuns !== undefined) installScheduledRunRoutes(api, services.scheduledRuns)
             if (services.staffPayments !== undefined) {
               installStaffPaymentRoutes(api, services.staffPayments)
