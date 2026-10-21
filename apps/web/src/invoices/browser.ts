@@ -632,6 +632,7 @@ export const createInvoicePaymentController = (
   const composerConfirmLabel = required<HTMLElement>('[data-invoice-composer-confirm-label]')
   const composerConfirm = required<HTMLInputElement>('[data-invoice-composer-confirm]')
   const composerResult = required<HTMLElement>('[data-invoice-composer-result]')
+  const composerHoursWarning = required<HTMLElement>('[data-invoice-composer-hours-warning]')
   const composerSubmit = required<HTMLButtonElement>('[data-invoice-composer-submit]')
   const composerAttachments = required<HTMLFieldSetElement>('[data-invoice-composer-attachments]')
   const composerAttachPdf = required<HTMLInputElement>('[data-invoice-composer-attach-pdf]')
@@ -729,6 +730,8 @@ export const createInvoicePaymentController = (
   // choice stands; the server's answer only moves a box nobody has touched.
   let deliveryChosen = false
   let previewPending = false
+  let hoursWarningGeneration = 0
+  let hoursWarningPending = false
 
   const current = (): ActiveSession | null =>
     active !== null &&
@@ -736,6 +739,43 @@ export const createInvoicePaymentController = (
     !active.signal.aborted
       ? active
       : null
+
+  // Read again on opening and preview: linked entries may change independently
+  // of invoice quantities. Failure stays visible rather than implying a match.
+  const loadHoursWarning = async (session: ActiveSession, shown: Readonly<Invoice>): Promise<void> => {
+    const generation = ++hoursWarningGeneration
+    composerHoursWarning.hidden = api.getInvoiceHoursReconciliation === undefined
+    composerHoursWarning.textContent = ''
+    if (!api.getInvoiceHoursReconciliation) return
+    hoursWarningPending = true
+    composerHoursWarning.textContent = 'Comparing linked time with billed hours…'
+    syncComposer()
+    try {
+      const review = await api.getInvoiceHoursReconciliation(shown.id, session.signal)
+      if (current() !== session || generation !== hoursWarningGeneration) return
+      if (review.invoice_version !== null && review.invoice_version !== shown.version) {
+        composerHoursWarning.textContent = 'The invoice changed. Reload it before comparing its hours report.'
+      } else if (review.has_mismatch) {
+        const linked = (review.linked_seconds / 3600).toFixed(2)
+        const billed = (review.billed_seconds / 3600).toFixed(2)
+        composerHoursWarning.textContent = `Hours report warning: linked ${linked} h · billed ${billed} h on comparable lines. At least one line differs. Review or release linked time in the invoice editor before sending.${review.comparison_complete ? '' : ' Some lines or entries cannot be compared.'}`
+      } else if (!review.comparison_complete && (review.entries.length || review.not_compared.length)) {
+        composerHoursWarning.textContent = 'The hours report comparison is incomplete. Some lines or linked entries cannot be compared with billed hours; review them before sending.'
+      } else {
+        composerHoursWarning.hidden = true
+        composerHoursWarning.textContent = ''
+      }
+    } catch (error) {
+      if (current() !== session || generation !== hoursWarningGeneration) return
+      if (session.onSessionFailure(error)) { clearPrivatePresentation(); active = null; return }
+      composerHoursWarning.textContent = 'Linked hours could not be compared. Review the hours report before sending, or reopen this dialog to retry.'
+    } finally {
+      if (current() === session && generation === hoursWarningGeneration) {
+        hoursWarningPending = false
+        syncComposer()
+      }
+    }
+  }
 
   const commandId = (kind: 'record' | 'update' | 'delete'): string =>
     `web.invoice.payment.${kind}:${globalThis.crypto.randomUUID()}`
@@ -826,6 +866,7 @@ export const createInvoicePaymentController = (
       previewPending || mutationPending || refreshRequired || api.sendInvoiceEmailPreview === undefined
     composerPreviewSend.hidden = api.sendInvoiceEmailPreview === undefined
     if (!delivering) composerPreviewPanel.hidden = true
+    composerSubmit.disabled = mutationPending || refreshRequired || hoursWarningPending
     syncAttachments()
   }
 
@@ -1100,19 +1141,22 @@ export const createInvoicePaymentController = (
     previewPending = true
     composerPreviewResult.textContent = sendToMe ? 'Sending a preview to you…' : 'Composing the preview…'
     syncComposer()
-    const request = sendToMe
-      ? api.sendInvoiceEmailPreview!(selected.id, input, session.signal).then((sent) => {
-          if (current() !== session) return
-          const to = sent.to.map(({ email }) => email).join(', ')
-          composerPreviewResult.textContent = mailRestricted
-            ? `A preview for ${to}, stamped PREVIEW, was recorded. ${DEMO_MAIL_NOTE} Nothing was sent to the client.`
-            : `A preview went to ${to} only, stamped PREVIEW. Nothing was sent to the client.`
-        })
-      : api.previewInvoiceEmail!(selected.id, input, session.signal).then((preview) => {
-          if (current() !== session) return
-          renderPreview(preview)
-          composerPreviewResult.textContent = ''
-        })
+    const request = loadHoursWarning(session, selected).then(() => {
+      if (current() !== session) return
+      return sendToMe
+        ? api.sendInvoiceEmailPreview!(selected.id, input, session.signal).then((sent) => {
+            if (current() !== session) return
+            const to = sent.to.map(({ email }) => email).join(', ')
+            composerPreviewResult.textContent = mailRestricted
+              ? `A preview for ${to}, stamped PREVIEW, was recorded. ${DEMO_MAIL_NOTE} Nothing was sent to the client.`
+              : `A preview went to ${to} only, stamped PREVIEW. Nothing was sent to the client.`
+          })
+        : api.previewInvoiceEmail!(selected.id, input, session.signal).then((preview) => {
+            if (current() !== session) return
+            renderPreview(preview)
+            composerPreviewResult.textContent = ''
+          })
+    })
     void request
       .catch((error: unknown) => {
         if (current() !== session) return
@@ -1453,6 +1497,10 @@ export const createInvoicePaymentController = (
     emailDefaultsLoading = false
     emailDefaultsGeneration += 1
     previewPending = false
+    hoursWarningGeneration += 1
+    hoursWarningPending = false
+    composerHoursWarning.hidden = true
+    composerHoursWarning.textContent = ''
     composerPreviewPanel.hidden = true
     composerPreviewResult.textContent = ''
     closeDialogs()
@@ -1869,6 +1917,7 @@ export const createInvoicePaymentController = (
     // submit, all off the attempt, so no entry point sets them independently.
     syncControls()
     composerDialog.showModal()
+    void loadHoursWarning(session, invoice)
     // Read afresh on every opening: the invoice's choices are its own state,
     // and an earlier send may have changed them.
     if (attachmentsOffered()) void loadDocumentPreference(session, invoice.id)
@@ -2085,6 +2134,7 @@ export const createInvoicePaymentController = (
       session === null ||
       selectedInvoice === null ||
       transitionInvoice === undefined ||
+      hoursWarningPending ||
       mutationPending ||
       refreshRequired ||
       !invoiceIdentityCanWrite(session.identity) ||

@@ -101,6 +101,7 @@ export const renderInvoiceComposerDialog = (): string => `
       <header><div><p class="eyebrow">Invoice message</p><h2 id="invoice-composer-title" data-invoice-composer-title>Send invoice</h2></div><button type="button" data-dialog-close aria-label="Close invoice message composer">×</button></header>
       <p class="hint">Recording the sent status and delivering the email are two different things, so this dialog does both in one order. The message below is always recorded on the invoice; ticking <strong>Also deliver by email</strong> queues the email after it.</p>
       <p class="hint" data-invoice-composer-owed hidden>The sent status is already recorded for this invoice and only the email is left, so nothing here can record a second sent message. Submit to retry that email, or untick <strong>Also deliver by email</strong> to finish without it.</p>
+      <p class="form-result" data-invoice-composer-hours-warning role="status" aria-live="polite" hidden></p>
       <div class="invoice-composer-layout">
         <section class="invoice-composer-fields">
           <label for="ez-invoice-recipients">To

@@ -1817,6 +1817,43 @@ describe('the Send dialog attachments', () => {
     )
   }
 
+  const mismatchReview = (): Awaited<ReturnType<NonNullable<InvoicePaymentApi['getInvoiceHoursReconciliation']>>> => ({
+    invoice_id: 7, invoice_version: 1, invoice_state: 'draft', hours_version: 'a'.repeat(64),
+    linked_seconds: 7200, billed_seconds: 7200, difference_seconds: 0, status: 'matched',
+    tolerance_seconds: 36, total_tolerance_seconds: 72, comparison_complete: true, has_mismatch: true,
+    not_compared_entry_ids: [], projects: [], not_compared: [], entries: [],
+    lines: [
+      {line_id: 1, project_id: 1, entry_ids: [1], linked_seconds: 5400, billed_seconds: 3600, difference_seconds: 1800, status: 'billed_below_linked'},
+      {line_id: 2, project_id: 1, entry_ids: [2], linked_seconds: 1800, billed_seconds: 3600, difference_seconds: -1800, status: 'billed_above_linked'},
+    ],
+  })
+
+  it('[browser #924] warns before sending even when opposite line differences cancel out', async () => {
+    let resolve!: (review: ReturnType<typeof mismatchReview>) => void
+    const review = new Promise<ReturnType<typeof mismatchReview>>(done => { resolve = done })
+    const getInvoiceHoursReconciliation = vi.fn(() => review)
+    const { api, calls } = sending({ getInvoiceHoursReconciliation })
+    await openComposer(api)
+    expect(box('[data-invoice-composer-submit]').disabled).toBe(true)
+    deliverTo('ap@example.com')
+    submit('[data-invoice-composer-form]')
+    expect(calls).toEqual([])
+    resolve(mismatchReview())
+    await vi.waitFor(() => expect(box('[data-invoice-composer-submit]').disabled).toBe(false))
+    const warning = document.querySelector<HTMLElement>('[data-invoice-composer-hours-warning]')!
+    expect(warning.hidden).toBe(false)
+    expect(warning.textContent).toContain('linked 2.00 h · billed 2.00 h')
+    expect(warning.textContent).toContain('At least one line differs')
+    expect(getInvoiceHoursReconciliation).toHaveBeenCalledWith(7, expect.any(AbortSignal))
+  })
+
+  it('[browser #924] leaves an explicit warning when hours cannot be compared', async () => {
+    const { api } = sending({ getInvoiceHoursReconciliation: vi.fn(async () => { throw new Error('offline') }) })
+    await openComposer(api)
+    await vi.waitFor(() => expect(document.querySelector('[data-invoice-composer-hours-warning]')?.textContent).toContain('could not be compared'))
+    expect(box('[data-invoice-composer-submit]').disabled).toBe(false)
+  })
+
   it('[e2e:invoice-email] opens on the client\'s To and Cc, the copies and the template\'s words', async () => {
     const { api } = sending({ getInvoiceEmailDefaults: vi.fn(async () => defaults()) })
     await openWithDefaults(api)
@@ -1955,6 +1992,7 @@ describe('the Send dialog attachments', () => {
   })
 
   it('[e2e:invoice-email] previews the email the send would make, and sends a stamped copy to me only', async () => {
+    const getInvoiceHoursReconciliation = vi.fn(async () => mismatchReview())
     const previewInvoiceEmail = vi.fn(async () => ({
       email: {
         invoice_id: 7,
@@ -1988,6 +2026,7 @@ describe('the Send dialog attachments', () => {
     const { api, calls } = sending({
       getInvoiceEmailDefaults: vi.fn(async () => defaults()),
       previewInvoiceEmail,
+      getInvoiceHoursReconciliation,
       sendInvoiceEmailPreview,
     })
     await openWithDefaults(api)
@@ -2025,6 +2064,8 @@ describe('the Send dialog attachments', () => {
     expect(document.querySelector('[data-invoice-preview-attachments]')?.textContent).toBe(
       'INVOICE_SEND_EXAMPLE_STUDIO_LLC.pdf (154 kB) — with purchase-order.pdf at the back',
     )
+    expect(getInvoiceHoursReconciliation).toHaveBeenCalledTimes(2)
+    expect(document.querySelector('[data-invoice-composer-hours-warning]')?.textContent).toContain('Hours report warning')
     const download = document.querySelector<HTMLAnchorElement>('[data-invoice-preview-document]')!
     expect(download.hidden).toBe(false)
     expect(download.getAttribute('href')).toBe(
