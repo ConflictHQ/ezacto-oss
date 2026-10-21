@@ -10,6 +10,11 @@
       "development": "./src/index.ts",
       "default": "./dist/index.js"
     },
+    "./suppressions": {
+      "types": "./src/suppressions.ts",
+      "development": "./src/suppressions.ts",
+      "default": "./dist/suppressions.js"
+    },
     "./smtp": {
       "types": "./src/smtp.ts",
       "development": "./src/smtp.ts",
