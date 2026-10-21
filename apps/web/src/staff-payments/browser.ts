@@ -1,3 +1,4 @@
+import { createContractorReviewController, type ContractorReviewApi } from './reconciliation-browser.js'
 import { createStaffInvoicesController, type StaffInvoicesApi } from './invoices-browser.js'
 import { createAdvanceCreditsController, type AdvanceCreditsApi } from './advances-browser.js'
 import { createActualsController, type PaymentActualsApi } from './actuals-browser.js'
@@ -28,7 +29,8 @@ import {
 } from './model.js'
 
 export interface StaffPaymentsApi
-  extends PaymentRunsApi,
+  extends ContractorReviewApi,
+    PaymentRunsApi,
     PaymentActualsApi,
     PaymentAllocationsApi,
     DeelSyncApi,
@@ -569,6 +571,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     if (active === null || active.aborted || api.getStaffPaymentReport === undefined) return
     const ownGeneration = ++generation
     report = null
+    reconciliation.reset()
     providerSettings.hidden = true
     person.hidden = true
     list.replaceChildren()
@@ -590,6 +593,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       allocations.ledger(response, active)
       advances.ledger(response)
       staffInvoices.ledger(response)
+      reconciliation.ledger(response, active)
       status.textContent = ''
     } catch (error) {
       if (!active.aborted && generation === ownGeneration) status.textContent = failure(error)
@@ -814,6 +818,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   const deelSync = createDeelSyncController(page, api)
   const advances = createAdvanceCreditsController(page, api, failure)
   const staffInvoices = createStaffInvoicesController(page, api, failure)
+  const reconciliation = createContractorReviewController(page, api, failure, (tab) => tabs.select(tab, true))
 
   return {
     activate: async (identity: { profile: string }, active: AbortSignal): Promise<void> => {
@@ -878,6 +883,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       allocations.activate(active)
       advances.activate(active)
       staffInvoices.activate(active)
+      reconciliation.activate(active)
       await runs.activate(active)
       await deelSync.activate(active)
       tabs.activate(reportMode, api.previewPaymentRun !== undefined)

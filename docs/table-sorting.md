@@ -29,6 +29,7 @@ failure affects persistence only; sorting still works.
 | Clients | Natural client name among siblings and roots; a child never leaves its parent, and corrupt-cycle handling stays bounded | `clients/browser.ts`, `clients/model.ts` |
 | Projects and client-detail projects/contacts | Natural project/contact name; project client bands retain their order | `projects/browser.ts`, `clients/browser.ts` |
 | People | Natural name within the existing cohort bands | `team/browser.ts` |
+| Contractor reconciliation | Natural person name; independent currency rows, exact amounts and unknown values last | `staff-payments/reconciliation-browser.ts` |
 | Capacity | Natural person name; weekly headings sort rows by planned seconds, never move chronological week columns | `capacity/browser.ts` |
 | Planning allocations/time off | Start/end dates, earliest first; forms live outside the sorted rows, so unfinished input survives | `capacity/planning-browser.ts` |
 | Activity | Newest first; loaded rows only while another page remains | `activity/browser.ts` |
