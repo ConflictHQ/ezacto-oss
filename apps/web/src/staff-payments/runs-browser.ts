@@ -1,5 +1,8 @@
-import { previousPaymentMonth } from "@ezacto/core";
+import { paymentFinancialSections, type PaymentFinancialSources } from './report-financials.js';
+import { previousPaymentMonth, paymentMonthEnd } from "@ezacto/core";
 import type {
+  StaffInvoiceReport,
+  AdvanceCreditReport,
   PaymentRun,
   PaymentRunCommand,
   PaymentRunApproval,
@@ -20,6 +23,8 @@ import {
   paymentStateLabel,
 } from "./runs-model.js";
 export interface PaymentRunsApi {
+  getStaffInvoiceReport?(month: string, signal?: AbortSignal): Promise<StaffInvoiceReport>;
+  getAdvanceCreditReport?(from: string, to: string, signal?: AbortSignal): Promise<AdvanceCreditReport>;
   getPaymentAllocationReport?(month: string, signal?: AbortSignal): Promise<PaymentAllocationReport>;
   getPaymentRunReport?(
     from: string,
@@ -124,6 +129,7 @@ export const createPaymentRunsController = (
     draft: PaymentRun | null = null,
     data: PaymentRunReport | null = null,
     allocationReports: PaymentAllocationReport[] = [],
+    financialSources: PaymentFinancialSources = {invoices: [], advances: null},
     busy = false,
     generation = 0;
   let pendingCommand: PaymentRunCommand | null = null;
@@ -260,6 +266,52 @@ export const createPaymentRunsController = (
   const paintReport = () => {
     if (!data) return;
     const { rows, items, receipts } = filteredPaymentReport(data, filters());
+    const financialHost = el(reportSection, "[data-run-report-financials]");
+    financialHost.replaceChildren();
+    if (api.getStaffInvoiceReport || api.getAdvanceCreditReport)
+      financialHost.appendChild(node("p", "The status filter follows the earnings ledger for invoices and applications, and the transfer status for credit deposits and returns. Invoice and credit evidence stays visible even when its currency differs from the earnings ledger."));
+    const eligible = filteredPaymentReport(data, { ...filters(), currency: "", show_empty: true }).rows;
+    for (const section of paymentFinancialSections(financialSources, filters(), eligible)) {
+      if (
+        (section.id.startsWith("invoice") && !api.getStaffInvoiceReport) ||
+        (section.id.startsWith("credit") && !api.getAdvanceCreditReport)
+      )
+        continue;
+      financialHost.appendChild(node("h3", section.title));
+      financialHost.appendChild(node("p", section.note));
+      financialHost.appendChild(
+        renderDataTable<Record<string, string | number | null>>({
+          caption: section.title,
+          table: `payment-report-${section.id}`,
+          defaultSort: { column: "Person", direction: "ascending" },
+          rows: section.rows,
+          rowKey: (row) =>
+            JSON.stringify([
+              row["User ID"],
+              row["Work month"],
+              row["Invoice ID"],
+              row["Invoice line"],
+              row["Advance item ID"],
+              row["Application ID"],
+              row["Return ID"],
+            ]),
+          empty: "No records match these filters.",
+          columns: section.columns.map((key) => ({
+            key,
+            label: key.endsWith(" cents") ? key.slice(0, -6) : key,
+            numeric: key.endsWith(" cents"),
+            sortValue: (row) =>
+              key.endsWith(" cents")
+                ? moneySort(row[key] as number | null, row.Currency as string)
+                : (row[key] ?? null),
+            render: (row) =>
+              key.endsWith(" cents")
+                ? money(row[key] as number | null, row.Currency as string)
+                : String(row[key] ?? ""),
+          })),
+        }),
+      );
+    }
     const allocationHost = el(reportSection, "[data-run-report-allocations]");
     allocationHost.replaceChildren();
     if (api.getPaymentAllocationReport) {
@@ -474,7 +526,19 @@ export const createPaymentRunsController = (
         if (signal.aborted || own !== generation) return;
       }
     }
+    const financials: PaymentFinancialSources = {invoices: [], advances: null};
+    if (reportMode && api.getStaffInvoiceReport) {
+      for (const ledger of result.ledgers) {
+        financials.invoices.push(await api.getStaffInvoiceReport(ledger.month, signal));
+        if (signal.aborted || own !== generation) return;
+      }
+    }
+    if (reportMode && api.getAdvanceCreditReport) {
+      financials.advances = await api.getAdvanceCreditReport(`${from}-01`, paymentMonthEnd(to), signal);
+      if (signal.aborted || own !== generation) return;
+    }
     data = result;
+    financialSources = financials;
     allocationReports = allocations;
     if (reportMode) paintReport();
     else paintHistory();
@@ -661,7 +725,7 @@ export const createPaymentRunsController = (
     () => {
       if (!data) return;
       const url = URL.createObjectURL(
-        new Blob([paymentRunCsv(data, filters(), allocationReports)], {
+        new Blob([paymentRunCsv(data, filters(), allocationReports, financialSources)], {
           type: "text/csv;charset=utf-8",
         }),
       );
@@ -735,12 +799,14 @@ export const createPaymentRunsController = (
           draft = null;
           data = null;
           allocationReports = [];
+          financialSources = {invoices: [], advances: null};
           pendingCommand = null;
           section.hidden = true;
           reportSection.hidden = true;
           el(section, "[data-run-history]").replaceChildren();
           el(section, "[data-run-review-items]").replaceChildren();
           for (const selector of [
+            "financials",
             "allocations",
             "totals",
             "balances",
