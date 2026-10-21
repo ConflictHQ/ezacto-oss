@@ -45,6 +45,15 @@ ${portalBrandHead(options.chrome)}  <script type="module" src="/assets/portal-es
       <h1 id="portal-estimates-heading" tabindex="-1" data-portal-heading>Your estimates</h1>
     </header>
     <p class="form-result" data-portal-status role="status" aria-live="polite">Loading…</p>
+    <section data-portal-sign-in hidden aria-labelledby="portal-sign-in-heading">
+      <h2 id="portal-sign-in-heading">Sign in to review your estimates</h2>
+      <form data-portal-sign-in-form>
+        <label for="portal-contact-email">Email address</label>
+        <input id="portal-contact-email" data-portal-email type="email" autocomplete="email" maxlength="320" required>
+        <button type="submit" data-portal-request-link>Send me a sign-in link</button>
+      </form>
+      <p>Use the email address your organization has on file. The link expires and can be used once.</p>
+    </section>
     <section data-portal-list-view hidden aria-labelledby="portal-estimates-heading">
       <div data-portal-list></div>
     </section>

@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer'
 import http from 'node:http'
 import { resolve } from 'node:path'
 import { URL } from 'node:url'
-import { createD1PasswordAuthService, createD1Database, createAccountDeletionRequestRepository } from '@ezacto/db/d1'
+import { createD1PasswordAuthService, createD1Database, createAccountDeletionRequestRepository, createMoneyResourceRepository } from '@ezacto/db/d1'
 import { build } from 'esbuild'
 import { Miniflare, NoOpLog } from 'miniflare'
 
@@ -56,7 +56,7 @@ const localDateAt = (instant, timeZone) => {
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
 const bundle = await build({
-  entryPoints: [resolve(repositoryRoot, 'entries/worker/src/index.ts')],
+  entryPoints: [resolve(repositoryRoot, 'apps/web/scripts/portal-mail-fixture-entry.mjs')],
   bundle: true,
   conditions: ['development'],
   format: 'esm',
@@ -73,8 +73,7 @@ const bundle = await build({
 const miniflare = new Miniflare({
   bindings: {
     API_CURSOR_SIGNING_KEY: cursorSigningKey,
-    // Mounts the customer estimate page and its routes (issue 1010); the specs
-    // answer the routes themselves, since no emailed link can be issued yet.
+    // Contact sign-in is opt-in, including the real queued-mail browser fixture.
     PORTAL_MAGIC_LINK_SIGNING_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQ',
     ENVIRONMENT: 'test',
     RELEASE: 'browser-cookie-e2e',
@@ -565,7 +564,24 @@ const fixtureControl = async (request, response) => {
     response.end()
     return
   }
-  if (action === 'seed') {
+  if (action === 'portal-estimate-seed') {
+    const instant = new Date().toISOString()
+    await database.batch([
+      database.prepare("INSERT INTO clients(id,name,currency,created_at,updated_at) VALUES(120001,'Estimate Contact Fixture','USD',?,?)").bind(instant,instant),
+      database.prepare("INSERT INTO contacts(id,client_id,first_name,last_name,email,created_at,updated_at) VALUES(120001,120001,'Jordan','Reviewer','estimate-contact@example.test',?,?)").bind(instant,instant),
+      database.prepare("INSERT INTO estimates(id,client_id,number,currency,issue_date,amount_cents,created_at,updated_at) VALUES(120001,120001,'EST-MAILED-1010','USD','2026-10-01',10000,?,?)").bind(instant,instant),
+      database.prepare("INSERT INTO estimate_line_items(estimate_id,position,kind,description,quantity,unit_price_cents,amount_cents,created_at,updated_at) VALUES(120001,0,'Service','Reviewable scope',1,10000,10000,?,?)").bind(instant,instant),
+    ])
+    const repo = createMoneyResourceRepository(createD1Database(database))
+    const estimate = await repo.getEstimate(120001)
+    await repo.executeEstimateMessage({estimateId:120001,commandId:'browser-contact-estimate-send',actorUserId:1,messageId:120001,expectedVersion:estimate.version,eventType:'send',sentBy:'Browser Owner',sentByEmail:fixtureEmail,sentFrom:null,sentFromEmail:null,recipients:[{name:'Jordan Reviewer',email:'estimate-contact@example.test'}],subject:'Review estimate',body:'Please review.',sendMeACopy:false,occurredAt:instant})
+  } else if (action === 'portal-estimate-result') {
+    const rows = (await database.prepare("SELECT contact_id,content_hash,estimate_version,event_type FROM estimate_messages WHERE estimate_id=120001 AND contact_id IS NOT NULL").all()).results
+    response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
+    response.end(JSON.stringify({rows}));return
+  } else if (action === 'portal-estimate-cleanup') {
+    await database.prepare('UPDATE clients SET is_active=0 WHERE id=120001').run()
+  } else if (action === 'seed') {
     await database.batch([
       database.prepare(
         `UPDATE organizations
@@ -1399,7 +1415,8 @@ await run(
 )
 
 const proxyFetch = async (request, response) => {
-  const url = new URL(request.url ?? '/', `http://${listenHost}:${listenPort}`)
+  const proxyHost = request.headers.host === `localhost:${listenPort}` ? `localhost:${listenPort}` : `${listenHost}:${listenPort}`
+  const url = new URL(request.url ?? '/', `http://${proxyHost}`)
   // Test-only delivery handoff: mint a real one-time token without an external
   // mail provider. The production Worker bundle never contains this endpoint.
   if (url.pathname === '/__ezacto_browser_fixture__/password-reset') {

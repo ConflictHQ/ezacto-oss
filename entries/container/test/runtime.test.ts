@@ -768,3 +768,54 @@ it('[integration #1009] container maintenance approves once and queues the durab
     await runtime.close()
   }
 })
+
+it('[security #1010] composes real contact mail, consumes its token once and keeps staff auth separate', async () => {
+  const root = await temporary()
+  const captured: EmailMessage[] = []
+  const runtime = await createContainerRuntime(
+    { ...config(root), portalMagicLinkSigningKey: new Uint8Array(32).fill(0x21) },
+    { emailProvider: provider(captured) },
+  )
+  try {
+    const stamp = new Date().toISOString()
+    runtime.database
+      .prepare(
+        "INSERT INTO clients(id,name,currency,created_at,updated_at) VALUES(1,'Contact Client','USD',?,?)",
+      )
+      .run(stamp, stamp)
+    runtime.database
+      .prepare(
+        "INSERT INTO contacts(id,client_id,first_name,last_name,email,created_at,updated_at) VALUES(1,1,'Contact','Tester','contact@example.test',?,?)",
+      )
+      .run(stamp, stamp)
+    const app = createApp(runtime.services, runtime.brandAssets, runtime.instanceTheme)
+    const request = (path: string, init?: RequestInit) =>
+      app.request(`http://localhost:3000${path}`, init)
+    expect(
+      (await request('/portal/magic-link', body({ email: 'contact@example.test' }))).status,
+    ).toBe(202)
+    await vi.waitFor(() =>
+      expect(captured.some((message) => message.template === 'portal_magic_link_signin:v1')).toBe(
+        true,
+      ),
+    )
+    const mail = captured.find((message) => message.template === 'portal_magic_link_signin:v1')!
+    expect(mail).toBeDefined()
+    const link = new URL(mail.text!.split('\n').find((line) => line.startsWith('http'))!)
+    expect(link.pathname).toBe('/portal/estimate-review')
+    expect(link.search).toBe('')
+    const token = new URLSearchParams(link.hash.slice(1)).get('token')!
+    const exchange = await request('/portal/verify', body({ token }))
+    expect(exchange.status).toBe(200)
+    const cookie = exchange.headers.get('set-cookie')!.split(';', 1)[0]!
+    const estimates = await request('/portal/estimates', { headers: { cookie } })
+    expect(estimates.status).toBe(200)
+    expect((await request('/portal/verify', body({ token }))).status).toBe(401)
+    expect((await request('/api/v1/clients', { headers: { cookie } })).status).toBe(401)
+    expect(
+      captured.filter((message) => message.template === 'portal_magic_link_signin:v1'),
+    ).toHaveLength(1)
+  } finally {
+    await runtime.close()
+  }
+})

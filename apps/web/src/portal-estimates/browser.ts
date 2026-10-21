@@ -81,6 +81,11 @@ export const mountPortalEstimates = async (
   const confirmYes = required<HTMLButtonElement>('[data-portal-confirm-yes]')
   const confirmNo = required<HTMLButtonElement>('[data-portal-confirm-no]')
   const back = required<HTMLAnchorElement>('[data-portal-back]')
+  const signIn = required<HTMLElement>('[data-portal-sign-in]')
+  const signInForm = required<HTMLFormElement>('[data-portal-sign-in-form]')
+  const email = required<HTMLInputElement>('[data-portal-email]')
+  const requestLink = required<HTMLButtonElement>('[data-portal-request-link]')
+  let linkPending = false
 
   let open: PortalEstimate | null = null
   let pending: PortalDecision | null = null
@@ -135,7 +140,7 @@ export const mountPortalEstimates = async (
       error instanceof PortalRequestError
         ? error.failure
         : ({ kind: 'failed', message: 'Something went wrong. Nothing was recorded.' } as const)
-    if (failure.kind === 'signed-out') clear()
+    if (failure.kind === 'signed-out') { clear(); signIn.hidden = false }
     status.textContent = portalFailureMessage(failure)
   }
 
@@ -232,6 +237,7 @@ export const mountPortalEstimates = async (
   }
 
   const showDetail = (estimate: PortalEstimate): void => {
+    signIn.hidden = true
     open = estimate
     closeConfirm()
     listView.hidden = true
@@ -248,6 +254,7 @@ export const mountPortalEstimates = async (
   }
 
   const showList = (summaries: readonly PortalEstimateSummary[]): void => {
+    signIn.hidden = true
     open = null
     closeConfirm()
     detailView.hidden = true
@@ -401,6 +408,32 @@ export const mountPortalEstimates = async (
     void route()
   })
 
+  signInForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    if (linkPending || !signInForm.reportValidity()) return
+    linkPending = true
+    email.disabled = requestLink.disabled = true
+    status.textContent = 'Requesting your sign-in link…'
+    void request('/portal/magic-link', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: email.value.trim() }),
+    })
+      .then(() => {
+        email.value = ''
+        status.textContent =
+          'If this address belongs to a client contact, a sign-in link has been queued. Check your inbox.'
+      })
+      .catch(() => {
+        status.textContent =
+          'A sign-in link could not be requested. Try again later or contact the organization.'
+      })
+      .finally(() => {
+        linkPending = false
+        email.disabled = requestLink.disabled = false
+      })
+  })
+
   const token = tokenFromFragment(environment.location.hash)
   if (token !== null) {
     // Out of the address bar before anything else, so it is in no history entry,
@@ -412,7 +445,7 @@ export const mountPortalEstimates = async (
     )
     status.textContent = 'Signing you in…'
     try {
-      await request(`/portal/verify?token=${encodeURIComponent(token)}`)
+      await request('/portal/verify', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token})})
     } catch (error) {
       fail(error)
       return

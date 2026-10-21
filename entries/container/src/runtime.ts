@@ -150,6 +150,7 @@ import {
   createQueuedAccountDeletionMailer,
   createQueuedAuthMailer,
   createQueuedStaffMagicLinkMailer,
+  createQueuedPortalMagicLinkMailer,
   createQueuedTwoFactorEmailCodeMailer,
   type AttachmentRouteOptions,
   type UserPrincipal,
@@ -1210,6 +1211,9 @@ export const createContainerRuntime = async (
         ? {}
         : {
             portalAuth: {
+              mailer: createQueuedPortalMagicLinkMailer(
+                createDeploymentSenderQueuedMailer(config.smtp.from,queuedMailer),organizationName,config.appBaseUrl,
+              ),
               service: createMagicLinkService({
                 database: {
                   all: async (query: { sql: string; params: readonly unknown[] }) =>

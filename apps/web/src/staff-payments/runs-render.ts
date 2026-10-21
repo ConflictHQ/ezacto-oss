@@ -45,5 +45,5 @@ export const renderPaymentRuns = (): string => `
     <button type="submit">Update report</button><button type="button" data-run-report-export>Export filtered CSV</button>
   </form>
   <p data-run-report-status role="status" aria-live="polite"></p>
-  <div data-run-report-allocations></div><div data-run-report-totals></div><div data-run-report-balances></div><div data-run-report-transfers></div><div data-run-report-receipts></div>
+  <div data-run-report-allocations></div><div data-run-report-totals></div><div data-run-report-balances></div><div data-run-report-financials></div><div data-run-report-transfers></div><div data-run-report-receipts></div>
 </section>`;

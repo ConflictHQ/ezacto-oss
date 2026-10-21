@@ -482,6 +482,40 @@ the instance timezone; a customer answer after that is refused with `estimate_ex
 never invalidates the version they were shown. A response already recorded still replays
 after expiry; staff recording an answer on the customer's behalf is not blocked by it.
 
+**Customer estimate review (#1010).** `/portal/estimate-review` reuses this
+instance's contact/client session model (`0033_contact_portal`) and customer
+estimate response store (`0120_estimate_customer_response`). This is the in-app
+contact surface, independent of the separately deployed `ezacto-portal-pvt`
+worker and its authentication. The existing owner-approved contact-session
+choice is preserved; no per-estimate bearer authority or staff-session access
+is introduced.
+
+Set `PORTAL_MAGIC_LINK_SIGNING_KEY` separately from the staff
+`MAGIC_LINK_SIGNING_KEY` to mount this surface. The Worker also needs its normal
+mail provider, queue, deployment sender and `APP_BASE_URL`; the container uses
+its configured SMTP sender and in-process queue. No portal key means the routes
+stay off. With a key but no Worker mail configuration, requesting a link returns
+`mailer_unavailable` (503). Links use the configured HTTPS instance origin
+(`http://localhost` is allowed for local installs).
+
+A contact requests a link with `POST /portal/magic-link` (`email` in JSON). Known,
+unknown and recently mailed addresses receive the same 202 acknowledgement.
+Existing lookup rules refuse ambiguous addresses and archived clients. The
+queued sign-in email carries a single-use, 15-minute token in the page's URL
+fragment. The page removes it before its first request, then exchanges it in a
+same-origin JSON `POST /portal/verify`; no email or token is put in a request
+URL. Legacy direct `GET /portal/verify` callers remain compatible. The contact
+session cookie is HttpOnly, Secure and SameSite=Lax. This page loads no analytics,
+uses no-referrer/no-store, and offers a fresh-link form after sign-out or expiry.
+
+The contact can read and answer only their client's sent quotes. The existing
+version hash, stale/edit/expiry checks, first-response race guard and immutable
+actor/time/version receipt still govern accept/decline. A repeated answer replays
+its receipt; staff see the outcome in the estimate detail. Answering does not
+charge a payment method or create an invoice; conversion remains its existing
+explicit staff command. Optional reusable quote content is tracked separately
+in #1121; invoice email templates do not provide quote-content templates.
+
 ### 2.18 `retainer` — first-class (Harvest's biggest model gap)
 
 Harvest: no API, no ledger, funds invisible to financial reports. Market research

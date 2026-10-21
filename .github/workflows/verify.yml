@@ -106,9 +106,14 @@ jobs:
           - { name: db 10, workspaces: -w @ezacto/db, shard: 10/12 }
           - { name: db 11, workspaces: -w @ezacto/db, shard: 11/12 }
           - { name: db 12, workspaces: -w @ezacto/db, shard: 12/12 }
-          - { name: api 1, workspaces: -w @ezacto/api, shard: 1/3 }
-          - { name: api 2, workspaces: -w @ezacto/api, shard: 2/3 }
-          - { name: api 3, workspaces: -w @ezacto/api, shard: 3/3 }
+          # reports.test.ts did not finish before the 20-minute limit while
+          # sharing two CPUs with general-resources (399s) in run 39658039722.
+          # Keep the complete suite; give reports its own worker and partition
+          # every other API file across the existing three shards.
+          - { name: api 1, workspaces: -w @ezacto/api, shard: 1/3, exclude: test/reports.test.ts }
+          - { name: api 2, workspaces: -w @ezacto/api, shard: 2/3, exclude: test/reports.test.ts }
+          - { name: api 3, workspaces: -w @ezacto/api, shard: 3/3, exclude: test/reports.test.ts }
+          - { name: api reports, workspaces: -w @ezacto/api, filter: test/reports.test.ts, max_workers: 1, timeout_minutes: 30 }
           - { name: migrate, workspaces: -w @conflict-hq/ezacto-migrate }
           # One worker, not two. The worker suite's two-factor and backup-download
           # tests derive passwords through the isolate's KDF limiter, and two
@@ -138,6 +143,8 @@ jobs:
         env:
           WORKSPACES: ${{ matrix.workspaces }}
           SHARD: ${{ matrix.shard }}
+          TEST_FILTER: ${{ matrix.filter }}
+          TEST_EXCLUDE: ${{ matrix.exclude }}
           MAX_WORKERS: ${{ matrix.max_workers || 2 }}
           # apps/web's browser suite mounts the whole shell about eighty times
           # and retains roughly 28 MB per test -- measured and linear, so it
@@ -159,11 +166,11 @@ jobs:
           # Two vCPUs on ubuntu-latest, so two workers. This belongs to the
           # runner, not to a package.json: the same suite on a developer
           # machine should use the cores it has.
-          if [ -n "$SHARD" ]; then
-            npm test $WORKSPACES -- --shard="$SHARD" --maxWorkers="$MAX_WORKERS" 2>&1 | tee "$RUNNER_TEMP/test.log"
-          else
-            npm test $WORKSPACES -- --maxWorkers="$MAX_WORKERS" 2>&1 | tee "$RUNNER_TEMP/test.log"
-          fi
+          test_args=(--maxWorkers="$MAX_WORKERS")
+          if [ -n "$SHARD" ]; then test_args+=(--shard="$SHARD"); fi
+          if [ -n "$TEST_FILTER" ]; then test_args+=("$TEST_FILTER"); fi
+          if [ -n "$TEST_EXCLUDE" ]; then test_args+=(--exclude "$TEST_EXCLUDE"); fi
+          npm test $WORKSPACES -- "${test_args[@]}" 2>&1 | tee "$RUNNER_TEMP/test.log"
       - name: classify the failure against the ledger
         if: failure()
         run: node scripts/ci-failure-ledger.mjs --classify "$RUNNER_TEMP/test.log" --job "test (${{ matrix.name }})"

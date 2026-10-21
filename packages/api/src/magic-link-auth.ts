@@ -1,4 +1,4 @@
-import type { Hono } from 'hono'
+import type { Hono, Context } from 'hono'
 import type { ApiContext } from './context.js'
 import {
   requireSameOriginForUnsafeSessionRequest,
@@ -198,8 +198,9 @@ export const installMagicLinkRoutes = <Bindings extends object>(
     )
   })
 
-  app.get('/portal/verify', async (context) => {
-    const token = context.req.query('token')
+  const verify = async (context: Context<ApiContext<Bindings>>, token: string | undefined) => {
+    context.header('cache-control', 'no-store')
+    context.header('referrer-policy', 'no-referrer')
     if (token === undefined || token === '') {
       throw new ApiError({
         status: 400,
@@ -217,10 +218,7 @@ export const installMagicLinkRoutes = <Bindings extends object>(
       })
     }
 
-    const session = await options.sessions.issue(
-      result.contactId,
-      result.clientId,
-    )
+    const session = await options.sessions.issue(result.contactId, result.clientId)
     context.header('set-cookie', session.setCookie, { append: true })
 
     return context.json(
@@ -234,6 +232,27 @@ export const installMagicLinkRoutes = <Bindings extends object>(
       200,
       { 'cache-control': 'no-store' },
     )
+  }
+  // Legacy direct callers may still verify by GET. Emailed links and the web
+  // page use the POST exchange so credentials do not enter request URLs.
+  app.get('/portal/verify', (context) => verify(context, context.req.query('token')))
+  app.post('/portal/verify', async (context) => {
+    context.header('cache-control', 'no-store')
+    requireSameOriginForUnsafeSessionRequest(context.req.raw)
+    const body = await readJsonBody<unknown>(context, { maxBytes: 8192 })
+    if (
+      typeof body !== 'object' ||
+      body === null ||
+      Array.isArray(body) ||
+      Object.keys(body).length !== 1 ||
+      !('token' in body) ||
+      typeof body.token !== 'string' ||
+      !body.token.trim()
+    )
+      throw validationError([
+        { field: 'token', code: 'invalid', message: 'Provide one sign-in token.' },
+      ])
+    return verify(context, body.token)
   })
 
   app.get('/portal/statements', async (context) => {

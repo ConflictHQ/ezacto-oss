@@ -1,3 +1,4 @@
+import { paymentFinancialSections, type PaymentFinancialSources } from './report-financials.js';
 import { hasPaymentActivity } from './model.js';
 import type {
   PaymentRunReport,
@@ -144,13 +145,14 @@ export const paymentReportTotals = (rows: StaffPaymentRow[]) => {
 };
 const cell = (value: unknown): string => {
   let text = value === null || value === undefined ? "" : String(value);
-  if (/^[\s]*[=+\-@]/u.test(text)) text = `'${text}`;
+  if (typeof value === "string" && /^[\s]*[=+\-@]/u.test(text)) text = `'${text}`;
   return `"${text.replaceAll('"', '""')}"`;
 };
 export const paymentRunCsv = (
   report: PaymentRunReport,
   filters: PaymentReportFilters,
   allocations: PaymentAllocationReport[] = [],
+  financials?: PaymentFinancialSources,
 ): string => {
   const { rows, items, receipts } = filteredPaymentReport(report, filters);
   const lines: unknown[][] = [
@@ -245,6 +247,15 @@ export const paymentRunCsv = (
       "allocated_earnings", r.user_id, r.project_id, r.project, r.entry_id,
       r.selected_seconds, r.remaining_seconds, r.flags,
     ]);
+  if (financials) {
+    const eligible = filteredPaymentReport(report, {...filters, currency: '', show_empty: true}).rows;
+    const sections = paymentFinancialSections(financials, filters, eligible);
+    const header = lines[0]!;
+    for (const key of sections.flatMap(section => section.columns)) if (!header.includes(key)) header.push(key);
+    for (const section of sections) for (const record of section.rows)
+      lines.push(header.map(key => key === 'Record' ? section.title : record[String(key)] ?? ''));
+    for (const record of lines.slice(1)) while (record.length < header.length) record.push('');
+  }
   return (
     "\uFEFF" + lines.map((row) => row.map(cell).join(",")).join("\r\n") + "\r\n"
   );

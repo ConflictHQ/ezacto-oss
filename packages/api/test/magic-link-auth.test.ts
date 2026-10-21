@@ -365,3 +365,49 @@ describe('portal session cookie', () => {
     expect(() => portalSessionCookie('not-a-portal-token', '2026-09-08T00:00:00.000Z')).toThrow()
   })
 })
+
+
+describe('portal credential exchange without URL credentials', () => {
+  const exchange = (
+    app: ReturnType<typeof createHarness>,
+    body: unknown,
+    origin = 'http://localhost',
+  ) =>
+    app.request('/portal/verify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin },
+      body: JSON.stringify(body),
+    })
+  it('[security #1010] exchanges a body token for a contact session and rejects cross-origin sign-in', async () => {
+    const verifyAndConsume = vi.fn(async () => ({
+      contactId: 1,
+      clientId: 10,
+      contactEmail: 'alice@acme.test',
+    }))
+    const app = createHarness({ verifyAndConsume })
+    const cross = await exchange(app, { token: 'valid-magic-token' }, 'https://foreign.test')
+    expect(cross.status).toBe(403)
+    expect(verifyAndConsume).not.toHaveBeenCalled()
+    const response = await exchange(app, { token: 'valid-magic-token' })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(response.headers.get('set-cookie')).toContain('__Host-ezacto_portal=')
+    expect(verifyAndConsume).toHaveBeenCalledExactlyOnceWith('valid-magic-token')
+    expect(JSON.stringify(await response.json())).not.toContain('valid-magic-token')
+  })
+  it('[api #1010] rejects missing, extra and invalid body credentials before consumption', async () => {
+    const verifyAndConsume = vi.fn(async () => null)
+    const app = createHarness({ verifyAndConsume })
+    for (const body of [
+      {},
+      { token: '' },
+      { token: 123 },
+      { token: 'valid', return_url: 'https://foreign.test' },
+      [],
+    ])
+      expect((await exchange(app, body)).status).toBe(422)
+    expect(verifyAndConsume).not.toHaveBeenCalled()
+    expect((await exchange(app, { token: 'expired' })).status).toBe(401)
+  })
+})
