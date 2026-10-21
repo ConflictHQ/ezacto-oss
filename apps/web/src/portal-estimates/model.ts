@@ -216,7 +216,7 @@ export const portalFailure = (status: number, code: string | null): PortalFailur
 export const portalFailureMessage = (failure: PortalFailure): string => {
   switch (failure.kind) {
     case 'signed-out':
-      return 'This link has expired or was already used. Ask the sender for a new link.'
+      return 'This link has expired or was already used. Request a new sign-in link below.'
     case 'changed':
       return 'This quote changed after you opened it, so your answer was not recorded. The current version is shown below; review it and answer again.'
     case 'revising':

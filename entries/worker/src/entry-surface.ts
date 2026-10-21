@@ -35,6 +35,7 @@ export const UNDOCUMENTED_ROUTES: readonly string[] = [
   'get /auth/github/callback',
   'post /portal/magic-link',
   'get /portal/verify',
+  'post /portal/verify',
   'get /portal/statements',
   'get /portal/estimates',
   'get /portal/estimates/:id',
@@ -148,13 +149,13 @@ export const CONTAINER_ONLY_ROUTES: readonly string[] = []
  * Nothing in either repo calls these. They are kept rather than deleted because
  * central portal auth here is still a direction worth having open.
  *
- * Setting the key mounts them; it does not make them work. No runtime composes
- * a `MagicLinkDelivery` mailer, so the request leg answers 503 until one is
- * written -- `staff-magic-link-email.ts` is the model.
+ * Setting the key mounts them. Contact sign-in mail uses the deployment sender
+ * and queue; a Worker without mail configured answers 503 for link requests.
  */
 export const PORTAL_ROUTES: readonly string[] = [
   'post /portal/magic-link',
   'get /portal/verify',
+  'post /portal/verify',
   'get /portal/statements',
   'get /portal/estimates',
   'get /portal/estimates/:id',

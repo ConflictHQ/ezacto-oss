@@ -165,7 +165,7 @@ export const EMAIL_LOG_KIND_TEMPLATES: Readonly<Record<EmailLogKind, readonly st
   invoice_preview: ['invoice_preview'],
   reminder: ['reminder'],
   thank_you: ['thank_you'],
-  sign_in: ['staff_magic_link_signin', 'two_factor_email_code'],
+  sign_in: ['staff_magic_link_signin', 'portal_magic_link_signin', 'two_factor_email_code'],
   account: ['auth_email_verification', 'auth_password_reset', 'account_deletion_request'],
 }
 
