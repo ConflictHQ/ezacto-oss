@@ -1,6 +1,7 @@
 // Browser-only entry. Production Worker composition, a real D1-backed sign-in
 // and a captured queue; no consumer or external delivery is run by this fixture.
 import production from '../../../entries/worker/src/index.ts'
+import { createRuntimeServices } from '../../../entries/worker/src/runtime.ts'
 const captured = []
 const queue = {
   send: async (job) => {
@@ -9,8 +10,24 @@ const queue = {
 }
 export default {
   ...production,
-  fetch(request, env, context) {
+  async fetch(request, env, context) {
     const url = new globalThis.URL(request.url)
+    if (url.pathname === '/__ezacto_browser_fixture__/drain-outbox') {
+      if (
+        request.method !== 'POST' ||
+        request.headers.get('x-ezacto-browser-fixture-control') !== 'start-end-round-trip'
+      )
+        return new globalThis.Response(null, { status: 403 })
+      // Exercise the real subscriber delivery the production cron performs.
+      const services = await createRuntimeServices(env)
+      for (let batch = 0; batch < 100; batch += 1) {
+        const result = await services.outbox.drain(100)
+        if (result.interrupted !== undefined)
+          return globalThis.Response.json(result, { status: 503 })
+        if (result.examined < 100) return globalThis.Response.json(result)
+      }
+      return new globalThis.Response('Fixture outbox did not drain', { status: 503 })
+    }
     if (url.pathname === '/__ezacto_browser_fixture__/portal-mail') {
       if (request.headers.get('x-ezacto-browser-fixture-control') !== 'start-end-round-trip')
         return new globalThis.Response(null, { status: 403 })
