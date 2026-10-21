@@ -252,6 +252,8 @@ export const createExpenseCategoryDirectoryController = (
     list.replaceChildren(
       renderDataTable<ExpenseCategory>({
         caption: 'Expense categories',
+        table: 'expense-categories',
+        defaultSort: { column: 'name', direction: 'ascending' },
         rows: categories,
         rowKey: (category) => String(category.id),
         empty: 'No expense categories yet.',

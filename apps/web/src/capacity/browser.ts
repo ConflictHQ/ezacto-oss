@@ -80,6 +80,8 @@ export const createCapacityController = (api: CapacityApi): CapacityController =
     grid.replaceChildren(
       renderDataTable<CapacityPersonData>({
         caption: 'Capacity by person and week',
+        table: 'capacity',
+        defaultSort: { column: 'person', direction: 'ascending' },
         rows: [...report.people],
         rowKey: (person) => String(person.user_id),
         empty: 'No one to show for these weeks.',
@@ -87,11 +89,14 @@ export const createCapacityController = (api: CapacityApi): CapacityController =
           {
             key: 'person',
             label: 'Person',
+            sortValue: (person) => `${person.first_name} ${person.last_name}`,
             render: (person) => `${person.first_name} ${person.last_name}`,
           },
           ...report.weeks.map((weekStart) => ({
             key: `week-${weekStart}`,
             label: weekHeading(weekStart),
+            sortDescription: `Sort people by planned hours for ${weekHeading(weekStart)}`,
+            sortValue: (person: CapacityPersonData) => person.weeks.find(week => week.week_start === weekStart)?.planned_seconds ?? null,
             render: (person: CapacityPersonData) => cell(person, weekStart),
           })),
         ],

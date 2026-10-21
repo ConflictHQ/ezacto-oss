@@ -248,6 +248,8 @@ export const createTaskAdminController = (
     list.replaceChildren(
       renderDataTable<Readonly<GeneralResource>>({
         caption: 'Tasks',
+        table: 'tasks',
+        defaultSort: { column: 'name', direction: 'ascending' },
         rows: visible,
         rowKey: (task) => String(task.id),
         columns,

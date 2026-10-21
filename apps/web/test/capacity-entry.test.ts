@@ -242,3 +242,31 @@ describe("capacity entry (issue 1007)", () => {
     );
   });
 });
+
+it('[browser #852] sorts planning dates and hours without altering an unfinished form', async () => {
+  const planning = planningApi()
+  planning.listAllocations = vi.fn(async () => [
+    { ...allocation, id: 8, planned_seconds_per_week: hours(9), start_date: '2026-10-12' },
+    allocation,
+  ])
+  planning.listTimeOff = vi.fn(async () => [
+    away,
+    { ...away, id: 10, seconds_per_day: hours(7.5), start_date: '2026-10-20' },
+  ])
+  await open(true, planning)
+  const unfinished = input('[data-planning-allocation-form]', 'hours')
+  unfinished.value = '3.75'
+  const ids = (table: string) => [...document.querySelectorAll(`${table} tbody tr[data-row-key]`)].map(row => row.getAttribute('data-row-key'))
+  const sort = (table: string, column: string) => document.querySelector<HTMLButtonElement>(`${table} button[data-sort-column="${column}"]`)!.click()
+  sort('[data-planning-allocations]', 'hours')
+  expect(ids('[data-planning-allocations]')).toEqual(['8', '7'])
+  sort('[data-planning-allocations]', 'dates')
+  expect(ids('[data-planning-allocations]')).toEqual(['7', '8'])
+  sort('[data-planning-timeoff]', 'hours')
+  expect(ids('[data-planning-timeoff]')).toEqual(['10', '9'])
+  sort('[data-planning-timeoff]', 'hours')
+  expect(ids('[data-planning-timeoff]')).toEqual(['10', '9'])
+  expect(unfinished.value).toBe('3.75')
+  expect(planning.createAllocation).not.toHaveBeenCalled()
+  expect(planning.updateAllocation).not.toHaveBeenCalled()
+})

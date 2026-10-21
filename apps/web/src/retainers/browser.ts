@@ -473,6 +473,8 @@ export const createRetainerWorkspaceController = (
     list.replaceChildren(
       renderDataTable<Retainer>({
         caption: 'Retainers',
+        table: 'retainers',
+        defaultSort: { column: 'project', direction: 'ascending' },
         rows,
         rowKey: (retainer) => String(retainer.id),
         groupBy: (retainer) => retainerClientLabel(retainer, clients),

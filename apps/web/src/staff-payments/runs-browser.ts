@@ -8,7 +8,7 @@ import type {
   StaffPaymentReport,
 } from "@ezacto/core";
 import { moneyText } from "../money-display.js";
-import { renderDataTable } from "../components/data-table.js";
+import { renderDataTable, type DataSortValue } from "../components/data-table.js";
 import { isDemoDeployment } from "../demo.js";
 import { staffPaymentAmount, staffPaymentMoney } from "./model.js";
 import {
@@ -44,6 +44,8 @@ export interface PaymentRunsApi {
 }
 const money = (...args: Parameters<typeof staffPaymentMoney>) =>
   moneyText(staffPaymentMoney(...args));
+const moneySort = (amount: number | null, currency: string | null): DataSortValue =>
+  amount === null || currency === null ? null : [currency, amount];
 const node = (tag: string, value: string): HTMLElement => {
   const e = document.createElement(tag);
   e.textContent = value;
@@ -168,6 +170,8 @@ export const createPaymentRunsController = (
       block.appendChild(
         renderDataTable({
           caption: run.name,
+          table: `payment-run-items:${run.id}`,
+          defaultSort: { column: "name", direction: "ascending" },
           rows: run.items,
           rowKey: (i) => i.id,
           empty: "No payments.",
@@ -175,26 +179,31 @@ export const createPaymentRunsController = (
             {
               key: "name",
               label: "Person",
+              sortValue: (i) => i.name,
               render: (i) => `${i.name} · ${i.month}${i.purpose === "advance" ? " · Advance deposit" : ""}`,
             },
             {
               key: "amount",
               label: "Recipient receives",
+              sortValue: (i) => moneySort(i.amount_cents, i.currency),
               render: (i) => money(i.amount_cents, i.currency),
             },
             {
               key: "state",
               label: "Status",
+              sortValue: (i) => paymentStateLabel(i.state),
               render: (i) => paymentStateLabel(i.state),
             },
             {
               key: "reference",
               label: "Wise transfer",
+              sortValue: (i) => i.transfer_id,
               render: (i) => i.transfer_id ?? "Not created",
             },
             {
               key: "failure",
               label: "Details",
+              sortValue: (i) => i.failure || null,
               render: (i) => i.failure ?? "",
             },
             {
@@ -259,6 +268,7 @@ export const createPaymentRunsController = (
       allocationHost.appendChild(renderDataTable({
         caption: "Allocation reconciliation",
         table: "payment-allocation-report",
+        defaultSort: { column: 'name', direction: 'ascending' },
         rows: paymentAllocationRows(allocationReports, rows),
         rowKey: (r) => `${r.user_id}/${r.month}/${r.project_id}/${r.entry_id ?? 'project'}`,
         empty: "No reviewed project or entry earnings match these filters.",
@@ -267,10 +277,10 @@ export const createPaymentRunsController = (
           { key: "month", sortValue: (r) => r.month, label: "Work month", render: (r) => r.month },
           { key: "level", sortValue: (r) => r.level, label: "Level", render: (r) => r.level },
           { key: "project", sortValue: (r) => `${r.project} ${r.entry_id ?? ""}`, label: "Project / entry", render: (r) => r.entry_id === null ? r.project : `${r.project} · entry ${r.entry_id}` },
-          { key: "earned", numeric: true, sortValue: (r) => r.earned, label: "Earned", render: (r) => money(r.earned, r.currency) },
-          { key: "paid", numeric: true, sortValue: (r) => r.paid, label: "Allocated paid", render: (r) => money(r.paid, r.currency) },
-          { key: "reserved", numeric: true, sortValue: (r) => r.reserved, label: "Allocated reserved", render: (r) => money(r.reserved, r.currency) },
-          { key: "remaining", numeric: true, sortValue: (r) => r.remaining, label: "Remaining to allocate", render: (r) => money(r.remaining, r.currency) },
+          { key: "earned", numeric: true, sortValue: (r) => moneySort(r.earned, r.currency), label: "Earned", render: (r) => money(r.earned, r.currency) },
+          { key: "paid", numeric: true, sortValue: (r) => moneySort(r.paid, r.currency), label: "Allocated paid", render: (r) => money(r.paid, r.currency) },
+          { key: "reserved", numeric: true, sortValue: (r) => moneySort(r.reserved, r.currency), label: "Allocated reserved", render: (r) => money(r.reserved, r.currency) },
+          { key: "remaining", numeric: true, sortValue: (r) => moneySort(r.remaining, r.currency), label: "Remaining to allocate", render: (r) => money(r.remaining, r.currency) },
           { key: "flags", sortValue: (r) => r.flags, label: "Review flags", render: (r) => r.flags },
         ],
       }));
@@ -304,6 +314,8 @@ export const createPaymentRunsController = (
     el(reportSection, "[data-run-report-balances]").replaceChildren(
       renderDataTable({
         caption: "Balances by person and work month",
+        table: "payment-report-balances",
+        defaultSort: { column: 'name', direction: 'ascending' },
         rows,
         rowKey: (r) => `${r.user_id}/${r.month}`,
         empty: "No matching balances.",
@@ -323,6 +335,7 @@ export const createPaymentRunsController = (
           {
             key: "owed",
             label: "Owed",
+            sortValue: (r) => moneySort(r.amount_cents, r.currency),
             render: (r) => {
               const value = money(r.amount_cents, r.currency);
               if (r.amount_basis === "contractor_cost")
@@ -335,52 +348,61 @@ export const createPaymentRunsController = (
           {
             key: "paid",
             label: "Recorded paid",
+            sortValue: (r) => moneySort(r.status === "settled" ? null : r.paid_cents, r.currency),
             render: (r) =>
               money(r.status === "settled" ? null : r.paid_cents, r.currency),
           },
           {
             key: "reserved",
             label: "Reserved",
+            sortValue: (r) => moneySort(r.reserved_cents ?? 0, r.currency),
             render: (r) => money(r.reserved_cents ?? 0, r.currency),
           },
           {
             key: "available",
             label: "Available to pay",
+            sortValue: (r) => moneySort(r.available_cents ?? r.balance_cents, r.currency),
             render: (r) =>
               money(r.available_cents ?? r.balance_cents, r.currency),
           },
-          { key: "status", label: "Status", render: (r) => r.status },
+          { key: "status", label: "Status", sortValue: (r) => r.status, render: (r) => r.status },
         ],
       }),
     );
     el(reportSection, "[data-run-report-transfers]").replaceChildren(
       renderDataTable({
         caption: "Transfer progress",
+        table: "payment-report-transfers",
+        defaultSort: { column: 'schedule', direction: 'ascending' },
         rows: items,
         rowKey: (i) => i.id,
         empty: "No matching transfers.",
         columns: [
-          { key: "run", label: "Run", render: (i) => i.run_name },
-          { key: "name", label: "Person", render: (i) => `${i.name}${i.purpose === "advance" ? " · Advance deposit" : ""}` },
-          { key: "month", label: "Work month", render: (i) => i.month },
+          { key: "run", label: "Run", sortValue: (i) => i.run_name, render: (i) => i.run_name },
+          { key: "name", label: "Person", sortValue: (i) => i.name, render: (i) => `${i.name}${i.purpose === "advance" ? " · Advance deposit" : ""}` },
+          { key: "month", label: "Work month", sortValue: (i) => i.month, render: (i) => i.month },
           {
             key: "amount",
             label: "Recipient amount",
+            sortValue: (i) => moneySort(i.amount_cents, i.currency),
             render: (i) => money(i.amount_cents, i.currency),
           },
           {
             key: "schedule",
             label: "Scheduled start",
+            sortValue: (i) => Date.parse(i.scheduled_at),
             render: (i) => new Date(i.scheduled_at).toLocaleString(),
           },
           {
             key: "state",
             label: "Status",
+            sortValue: (i) => paymentStateLabel(i.state),
             render: (i) => paymentStateLabel(i.state),
           },
           {
             key: "cost",
             label: "Source cost (quote)",
+            sortValue: (i) => moneySort((i.execution_quote ?? i.quote).source_cents, i.quote.source_currency),
             render: (i) =>
               money(
                 (i.execution_quote ?? i.quote).source_cents,
@@ -390,6 +412,7 @@ export const createPaymentRunsController = (
           {
             key: "fee",
             label: "Fee (quote)",
+            sortValue: (i) => moneySort((i.execution_quote ?? i.quote).fee_cents, i.quote.source_currency),
             render: (i) =>
               money(
                 (i.execution_quote ?? i.quote).fee_cents,
@@ -399,33 +422,38 @@ export const createPaymentRunsController = (
           {
             key: "ref",
             label: "Wise transfer",
+            sortValue: (i) => i.transfer_id,
             render: (i) => i.transfer_id ?? "",
           },
-          { key: "failure", label: "Details", render: (i) => i.failure ?? "" },
+          { key: "failure", label: "Details", sortValue: (i) => i.failure || null, render: (i) => i.failure ?? "" },
         ],
       }),
     );
     el(reportSection, "[data-run-report-receipts]").replaceChildren(
       renderDataTable({
         caption: "Recorded payments (excluding voided receipts)",
+        table: "payment-report-receipts",
+        defaultSort: { column: 'date', direction: 'descending' },
         rows: receipts,
         rowKey: (r) => r.id,
         empty: "No matching recorded payments.",
         columns: [
-          { key: "name", label: "Person", render: (r) => r.name },
-          { key: "month", label: "Work month", render: (r) => r.month },
+          { key: "name", label: "Person", sortValue: (r) => r.name, render: (r) => r.name },
+          { key: "month", label: "Work month", sortValue: (r) => r.month, render: (r) => r.month },
           {
             key: "date",
             label: "Payment / confirmation date",
+            sortValue: (r) => r.paid_on,
             render: (r) => r.paid_on ?? "",
           },
           {
             key: "amount",
             label: "Amount",
+            sortValue: (r) => moneySort(r.amount_cents, r.currency),
             render: (r) => money(r.amount_cents, r.currency),
           },
-          { key: "provider", label: "Provider", render: (r) => r.source },
-          { key: "reference", label: "Reference", render: (r) => r.reference },
+          { key: "provider", label: "Provider", sortValue: (r) => r.source, render: (r) => r.source },
+          { key: "reference", label: "Reference", sortValue: (r) => r.reference || null, render: (r) => r.reference },
         ],
       }),
     );

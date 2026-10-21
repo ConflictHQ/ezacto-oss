@@ -136,6 +136,7 @@ export const createAdvanceCreditsController = (
     host.appendChild(
       renderDataTable({
         table: "advance-credit-statement",
+        defaultSort: { column: 'name', direction: 'ascending' },
         caption: "Contractor advance credit",
         rows: report.advances,
         rowKey: (r) => r.advance_item_id,
@@ -153,7 +154,7 @@ export const createAdvanceCreditsController = (
             sortValue: (r) => r.month,
             render: (r) => r.month,
           },
-          { key: "state", label: "State", render: (r) => r.state },
+          { key: "state", label: "State", sortValue: (r) => r.state, render: (r) => r.state },
           ...(
             [
               "opening_cents",

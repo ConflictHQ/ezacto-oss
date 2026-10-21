@@ -1,4 +1,5 @@
 /** @vitest-environment happy-dom */
+import { setSortPreferenceOwner } from "../src/components/table-sort.js";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { renderStaffPayments } from "../src/staff-payments/render.js";
 import { createPaymentRunsController } from "../src/staff-payments/runs-browser.js";
@@ -389,3 +390,50 @@ it("loads allocation reconciliation for every reported month and clears it on na
   active.abort();
   expect(host.textContent).toBe("");
 });
+
+
+it('[browser #852] sorts read-only payment reports by currency, exact cents and receipt date without changing totals or paying', async () => {
+  const values = [
+    { user_id: 2, currency: 'USD', amount_cents: 900, paid_on: '2026-10-12' },
+    { user_id: 3, currency: 'USD', amount_cents: 10000, paid_on: '2026-10-02' },
+    { user_id: 4, currency: 'EUR', amount_cents: 99999, paid_on: '2026-10-09' },
+  ]
+  const rows = values.map(value => ({ ...row, ...value, name: `Person ${value.user_id}`, events: [{
+    ...value, id: `receipt-${value.user_id}`, month: row.month, expected_version: 0,
+    kind: 'payment' as const, due_on: null, reference: 'Fixture', note: '', payment_id: null,
+    source: 'wise' as const, version: 1, actor_id: 1, actor_name: 'Admin',
+    recorded_at: '2026-10-20T00:00:00.000Z', request_id: 'fixture',
+  }] }))
+  const data: PaymentRunReport = { ...report,
+    ledgers: [{ ...ledger, rows: [...rows, { ...row, user_id: 5, name: 'Unspecified amount', amount_cents: null }] }],
+    runs: [{ ...run, items: values.map(value => ({ ...run.items[0]!, ...value, id: `item-${value.user_id}`, name: `Person ${value.user_id}` })) }],
+  }
+  const api = { getPaymentRunReport: async () => data, approvePaymentRun: vi.fn(), previewPaymentRun: vi.fn() }
+  const mount = async () => {
+    document.body.innerHTML = renderStaffPayments('staff-payments')
+    history.replaceState({}, '', '/payments/report')
+    await createPaymentRunsController(api, async () => {}).activate(new AbortController().signal)
+  }
+  const keys = (table: string) => [...document.querySelectorAll(`${table} tbody tr[data-row-key]`)].map(tr => tr.getAttribute('data-row-key'))
+  const click = (table: string, column: string) => document.querySelector<HTMLButtonElement>(`${table} button[data-sort-column="${column}"]`)!.click()
+  setSortPreferenceOwner(1)
+  try {
+    await mount()
+    const totals = document.querySelector('[data-run-report-totals]')!.textContent
+    click('[data-run-report-balances]', 'owed')
+    expect(keys('[data-run-report-balances]')).toEqual(['4/2026-09', '2/2026-09', '3/2026-09', '5/2026-09'])
+    click('[data-run-report-balances]', 'owed')
+    expect(keys('[data-run-report-balances]')).toEqual(['3/2026-09', '2/2026-09', '4/2026-09', '5/2026-09'])
+    click('[data-run-report-transfers]', 'amount')
+    expect(keys('[data-run-report-transfers]')).toEqual(['item-4', 'item-2', 'item-3'])
+    click('[data-run-report-receipts]', 'date')
+    expect(keys('[data-run-report-receipts]')).toEqual(['receipt-3', 'receipt-4', 'receipt-2'])
+    expect(document.querySelector('[data-run-report-totals]')!.textContent).toBe(totals)
+    await mount()
+    expect(keys('[data-run-report-balances]')).toEqual(['3/2026-09', '2/2026-09', '4/2026-09', '5/2026-09'])
+    expect(keys('[data-run-report-transfers]')).toEqual(['item-4', 'item-2', 'item-3'])
+    expect(keys('[data-run-report-receipts]')).toEqual(['receipt-3', 'receipt-4', 'receipt-2'])
+    expect(api.approvePaymentRun).not.toHaveBeenCalled()
+    expect(api.previewPaymentRun).not.toHaveBeenCalled()
+  } finally { setSortPreferenceOwner(null); localStorage.clear() }
+})

@@ -918,6 +918,7 @@ export const createModuleSettingsController = (
     renderDataTable<SenderIdentity>({
       caption: 'Sender identities',
       table: 'settings-senders',
+      defaultSort: { column: 'default', direction: 'ascending' },
       rows: identities,
       rowKey: (identity) => String(identity.id),
       empty: 'No sender identity is configured, so nothing this instance sends has a from address.',
@@ -944,6 +945,7 @@ export const createModuleSettingsController = (
         {
           key: 'default',
           label: 'Default',
+          sortValue: (identity) => identity.is_default ? 0 : 1,
           render: (identity) => (identity.is_default ? 'Default' : ''),
         },
       ],
@@ -971,6 +973,7 @@ export const createModuleSettingsController = (
       renderDataTable<SsoDomain>({
         caption: 'SSO provisioning domains',
         table: 'settings-sso-domains',
+        defaultSort: { column: 'domain', direction: 'ascending' },
         rows: ssoState,
         rowKey: (domain) => String(domain.id),
         empty:
@@ -1543,6 +1546,7 @@ export const createModuleSettingsController = (
     renderDataTable<BackupRun>({
       caption: 'Recent backup runs',
       table: 'settings-backup-runs',
+      defaultSort: { column: 'started', direction: 'descending' },
       rows: runs,
       rowKey: (run) => String(run.id),
       empty: 'No backup has run yet.',
@@ -2245,15 +2249,17 @@ export const createModuleSettingsController = (
           quickBooksReconcileTable.replaceChildren(
             renderDataTable({
               caption: 'Differences between ezacto and QuickBooks',
+              table: 'quickbooks-comparison',
+              defaultSort: { column: 'number', direction: 'ascending' },
               rows: differing,
               rowKey: (row) => row.key,
               empty: 'No differences.',
               columns: [
-                { key: 'number', label: 'Invoice', fit: true, render: (row) => row.number || '—' },
-                { key: 'status', label: 'Difference', fit: true, render: (row) => row.difference },
-                { key: 'ezacto', label: 'ezacto', numeric: true, render: (row) => money(row.ezacto) },
-                { key: 'quickbooks', label: 'QuickBooks', numeric: true, render: (row) => money(row.quickbooks) },
-                { key: 'detail', label: 'Detail', wrap: true, render: (row) => row.detail },
+                { key: 'number', label: 'Invoice', sortValue: (row) => row.number || null, fit: true, render: (row) => row.number || '—' },
+                { key: 'status', label: 'Difference', sortValue: (row) => row.difference, fit: true, render: (row) => row.difference },
+                { key: 'ezacto', label: 'ezacto', sortValue: (row) => row.ezacto, numeric: true, render: (row) => money(row.ezacto) },
+                { key: 'quickbooks', label: 'QuickBooks', sortValue: (row) => row.quickbooks, numeric: true, render: (row) => money(row.quickbooks) },
+                { key: 'detail', label: 'Detail', sortValue: (row) => row.detail || null, wrap: true, render: (row) => row.detail },
               ],
             }),
           )

@@ -177,6 +177,7 @@ export const createStaffInvoicesController = (
     host.appendChild(
       renderDataTable({
         table: "staff-invoice-reconciliation",
+        defaultSort: { column: 'name', direction: 'ascending' },
         caption: "Earned, invoiced and paid by contractor and currency",
         rows: report.people,
         rowKey: (p) => `${p.user_id}/${p.currency}`,
