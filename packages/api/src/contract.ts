@@ -3668,7 +3668,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
 
 const reconciliationStatusSchema: JsonSchema = {
   type: "string",
-  enum: ["matched", "billed_below_linked", "billed_above_linked"],
+  enum: ["matched", "billed_below_linked", "billed_above_linked", "not_comparable"],
 };
 const nullable = (schema: JsonSchema): JsonSchema => ({
   anyOf: [schema, { type: "null" }],
@@ -10666,6 +10666,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           "tolerance_seconds",
           "projects",
           "not_compared",
+          "total_tolerance_seconds","comparison_complete","has_mismatch","invoice_version","invoice_state","not_compared_entry_ids","lines","entries",
         ],
         properties: {
           invoice_id: integerSchema,
@@ -10674,6 +10675,12 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           difference_seconds: signedIntegerSchema,
           status: reconciliationStatusSchema,
           tolerance_seconds: { type: "integer", minimum: 0 },
+          total_tolerance_seconds:{type:'integer',minimum:0},
+          comparison_complete:{type:'boolean'},has_mismatch:{type:'boolean'},
+          invoice_version:nullable({type:'integer',minimum:0}),invoice_state:nullable({type:'string'}),
+          not_compared_entry_ids:{type:'array',items:integerSchema},
+          lines:{type:'array',items:{type:'object',required:['line_id','project_id','entry_ids','linked_seconds','billed_seconds','difference_seconds','status'],properties:{line_id:integerSchema,project_id:nullable(integerSchema),entry_ids:{type:'array',items:integerSchema},linked_seconds:signedIntegerSchema,billed_seconds:signedIntegerSchema,difference_seconds:signedIntegerSchema,status:reconciliationStatusSchema},additionalProperties:false}},
+          entries:{type:'array',items:{type:'object',required:['entry_id','user_id','user_name','spent_date','project_id','project_name','seconds'],properties:{entry_id:nullable(integerSchema),user_id:nullable(integerSchema),user_name:nullable({type:'string'}),spent_date:nullable({type:'string'}),project_id:integerSchema,project_name:nullable({type:'string'}),seconds:signedIntegerSchema},additionalProperties:false}},
           projects: {
             type: "array",
             items: {
@@ -10681,6 +10688,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
               required: [
                 "project_id",
                 "project_name",
+                "tolerance_seconds",
                 "linked_seconds",
                 "billed_seconds",
                 "difference_seconds",
@@ -10689,6 +10697,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
               properties: {
                 project_id: integerSchema,
                 project_name: nullable({ type: "string" }),
+                tolerance_seconds:{type:"integer",minimum:0},
                 linked_seconds: signedIntegerSchema,
                 billed_seconds: signedIntegerSchema,
                 difference_seconds: signedIntegerSchema,
@@ -10697,7 +10706,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
               additionalProperties: false,
             },
           },
-          // Lines with no project, left out of every figure above.
+          // Fees, expenses and lines whose time provenance cannot be established.
           not_compared: {
             type: "array",
             items: {

@@ -6,6 +6,7 @@ import {
   type Invoice,
   type InvoiceEditInput,
   type InvoiceLine,
+  type InvoiceHoursReconciliationEnvelope,
   type InvoiceLineInput,
   type InvoiceLineUpdateInput,
   type VersionedRowDeleteInput,
@@ -356,8 +357,125 @@ const result = (): HTMLElement => control<HTMLElement>('[data-invoice-edit-resul
 const notice = (): unknown =>
   JSON.parse(globalThis.sessionStorage.getItem('ezacto.page-notice') ?? 'null')
 
+const hoursReview = (): InvoiceHoursReconciliationEnvelope['data'] => ({
+  invoice_id: 7,
+  invoice_version: 1,
+  invoice_state: 'draft',
+  linked_seconds: 7200,
+  billed_seconds: 7200,
+  difference_seconds: 0,
+  status: 'matched',
+  tolerance_seconds: 36,
+  total_tolerance_seconds: 36,
+  comparison_complete: true,
+  has_mismatch: false,
+  not_compared_entry_ids: [],
+  projects: [
+    {
+      project_id: 1,
+      project_name: 'Platform',
+      linked_seconds: 7200,
+      billed_seconds: 7200,
+      difference_seconds: 0,
+      status: 'matched',
+      tolerance_seconds: 36,
+    },
+  ],
+  not_compared: [],
+  lines: [
+    {
+      line_id: 21,
+      project_id: 1,
+      entry_ids: [1],
+      linked_seconds: 7200,
+      billed_seconds: 7200,
+      difference_seconds: 0,
+      status: 'matched',
+    },
+  ],
+  entries: [
+    {
+      entry_id: 1,
+      user_id: 1,
+      user_name: 'Person',
+      spent_date: '2026-08-01',
+      project_id: 1,
+      project_name: 'Platform',
+      seconds: 7200,
+    },
+  ],
+})
+
 describe('invoice edit page', () => {
   afterEach(() => vi.unstubAllGlobals())
+  it('shows linked vs billed hours immediately when a generated quantity is trimmed and clears them at session end', async () => {
+    const { api } = server(invoice()),
+      abort = new AbortController()
+    const read = vi.fn(async () => hoursReview())
+    await open(
+      { ...api, getInvoiceHoursReconciliation: read },
+      { signal: abort.signal },
+    )
+    const warning = control('[data-invoice-edit-hours-warning]')
+    expect(warning.hidden).toBe(true)
+    type(field<HTMLInputElement>(0, 'quantity'), '1.5')
+    expect(warning.hidden).toBe(false)
+    expect(warning.textContent).toContain(
+      'Linked: 2.00 h · compared lines bill: 1.50 h',
+    )
+    expect(
+      rows()[0]!.querySelector('[data-invoice-edit-linked-hours]')!.textContent,
+    ).toContain('Linked: 2.00 h · billed: 1.50 h')
+    type(field<HTMLInputElement>(0, 'quantity'), '2')
+    expect(warning.hidden).toBe(true)
+    abort.abort()
+    expect(warning.textContent).toBe('')
+  })
+  it('distinguishes unavailable provenance from matching hours and does not treat fee quantities as hours', async () => {
+    const { api } = server(invoice())
+    const review = {
+      ...hoursReview(),
+      comparison_complete: false,
+      status: 'not_comparable' as const,
+      lines: [],
+      not_compared_entry_ids: [1],
+    }
+    await open({
+      ...api,
+      getInvoiceHoursReconciliation: vi.fn(async () => review),
+    })
+    type(field<HTMLInputElement>(0, 'quantity'), '12')
+    expect(control('[data-invoice-edit-hours-warning]').textContent).toContain(
+      'cannot be compared with a billed hours quantity',
+    )
+    expect(
+      control('[data-invoice-edit-hours-warning]').textContent,
+    ).not.toContain('bill: 12')
+  })
+  it('does not show a mismatch for an invoice with no linked time and explains a failed read', async () => {
+    const { api } = server(invoice())
+    await open({
+      ...api,
+      getInvoiceHoursReconciliation: vi.fn(async () => ({
+        ...hoursReview(),
+        entries: [],
+        linked_seconds: 0,
+      })),
+    })
+    type(field<HTMLInputElement>(0, 'quantity'), '1')
+    expect(control('[data-invoice-edit-hours-warning]').hidden).toBe(true)
+    await open({
+      ...api,
+      getInvoiceHoursReconciliation: vi.fn(async () => {
+        throw new Error('offline')
+      }),
+    })
+    expect(control('[data-invoice-edit-hours-warning]').textContent).toContain(
+      'could not be compared',
+    )
+  })
+
+
 
   it('[browser] opens on the document and every line, with the client and its projects', async () => {
     const { api } = server(invoice())

@@ -60,10 +60,14 @@ describe('reading the hours reconciliation', () => {
         difference_seconds: -3600,
         status: 'billed_below_linked',
         tolerance_seconds: 36,
+        total_tolerance_seconds: 36, comparison_complete: true, has_mismatch: true,
+        invoice_version: null, invoice_state: null, not_compared_entry_ids: [], lines: [],
+        entries: [{ entry_id: null, user_id: null, user_name: null, spent_date: null, project_id: 1, project_name: 'Phase 1', seconds: 7200 }],
         projects: [
           {
             project_id: 1,
             project_name: 'Phase 1',
+            tolerance_seconds: 36,
             linked_seconds: 7200,
             billed_seconds: 3600,
             difference_seconds: -3600,

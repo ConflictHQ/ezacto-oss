@@ -130,3 +130,92 @@ describe("reconciling billed hours with linked entries (issue 924)", () => {
     });
   });
 });
+
+it('compares exact person lines even when their opposite differences cancel at project level', () => {
+  const result = reconcileInvoiceHours({
+    entries: [
+      { ...entry(1, 7200), id: 1 },
+      { ...entry(1, 3600), id: 2 },
+    ],
+    lines: [
+      { ...line(1, 1, 1.5), timeEntryIds: [1], comparable: true },
+      { ...line(2, 1, 1.5), timeEntryIds: [2], comparable: true },
+    ],
+  })
+  expect(result.status).toBe('matched')
+  expect(result.hasMismatch).toBe(true)
+  expect(result.lines.map((line) => line.differenceSeconds)).toEqual([
+    -1800, 1800,
+  ])
+})
+it('excludes fees/expenses and identifies unknown linked time without pretending their quantities are hours', () => {
+  const result = reconcileInvoiceHours({
+    entries: [
+      { ...entry(1, 3600), id: 1 },
+      { ...entry(1, 7200), id: 2 },
+    ],
+    lines: [
+      { ...line(1, 1, 1), timeEntryIds: [1], comparable: true },
+      { ...line(2, 1, 12), comparable: false },
+    ],
+  })
+  expect(result).toMatchObject({
+    linkedSeconds: 10800,
+    billedSeconds: 3600,
+    comparisonComplete: false,
+    hasMismatch: false,
+    status: 'not_comparable',
+    notComparedEntryIds: [2],
+  })
+})
+it('accumulates the per-line rounding allowance without hiding an actual line mismatch', () => {
+  const result = reconcileInvoiceHours({
+    entries: [
+      { ...entry(1, 3635), id: 1 },
+      { ...entry(1, 3635), id: 2 },
+    ],
+    lines: [
+      { ...line(1, 1, 1), timeEntryIds: [1] },
+      { ...line(2, 1, 1), timeEntryIds: [2] },
+    ],
+  })
+  expect(result).toMatchObject({
+    status: 'matched',
+    hasMismatch: false,
+    totalToleranceSeconds: 72,
+    differenceSeconds: -70,
+  })
+})
+it('refuses ambiguous provenance and inexact aggregate seconds', () => {
+  const ambiguous = reconcileInvoiceHours({
+    entries: [{ ...entry(1, 3600), id: 1 }],
+    lines: [
+      { ...line(1, 1, 1), timeEntryIds: [1] },
+      { ...line(2, 1, 1), timeEntryIds: [1] },
+    ],
+  })
+  expect(ambiguous).toMatchObject({
+    comparisonComplete: false,
+    hasMismatch: false,
+    notComparedEntryIds: [1],
+  })
+  expect(() =>
+    reconcileInvoiceHours({
+      entries: [entry(1, Number.MAX_SAFE_INTEGER), entry(1, 1)],
+      lines: [],
+    }),
+  ).toThrow(RangeError)
+})
+
+it('keeps orphaned linked hours explicit when every generated line has been removed', () => {
+  const result = reconcileInvoiceHours({
+    exact: true,
+    entries: [{ ...entry(1, 3600), id: 1 }],
+    lines: [],
+  })
+  expect(result).toMatchObject({
+    comparisonComplete: false,
+    status: 'not_comparable',
+    notComparedEntryIds: [1],
+  })
+})
