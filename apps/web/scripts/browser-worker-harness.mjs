@@ -1,3 +1,5 @@
+import { createHmac, randomUUID } from 'node:crypto'
+import { createD1EmailLogStore } from '@ezacto/db/d1'
 import { Buffer } from 'node:buffer'
 import http from 'node:http'
 import { resolve } from 'node:path'
@@ -16,6 +18,8 @@ if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
 const cursorSigningKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 const fixtureControlPath = '/__ezacto_browser_fixture__/start-end'
 const fixtureControlHeader = 'start-end-round-trip'
+// Local-only signing material for the real webhook/browser acceptance.
+const feedbackWebhookKey = 'fixture-mailgun-webhook-key-for-tests'
 const fixtureEmail = process.env.EZACTO_BROWSER_FIXTURE_EMAIL
 const fixtureInstant = process.env.EZACTO_BROWSER_FIXTURE_INSTANT
 const fixtureTimeZone = process.env.EZACTO_BROWSER_FIXTURE_TIME_ZONE
@@ -73,6 +77,7 @@ const bundle = await build({
 const miniflare = new Miniflare({
   bindings: {
     API_CURSOR_SIGNING_KEY: cursorSigningKey,
+    MAILGUN_WEBHOOK_SIGNING_KEY: feedbackWebhookKey,
     // Contact sign-in is opt-in, including the real queued-mail browser fixture.
     PORTAL_MAGIC_LINK_SIGNING_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQ',
     ENVIRONMENT: 'test',
@@ -610,6 +615,23 @@ const fixtureControl = async (request, response) => {
       }
       rateCardFixture = null
     }
+  } else if (action === 'email-feedback-seed') {
+    await run(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`)
+    const log = createD1EmailLogStore(database)
+    const identifier = randomUUID()
+    const to = 'feedback-recipient@example.test', cc = 'feedback-copy@example.test'
+    const stamp = String(Math.floor(Date.now()/1000))
+    const events = []
+    for (const [index,sender] of ['feedback-a@example.test','feedback-b@example.test'].entries()) {
+      const mail = await log.createQueued({from:{email:sender},to:[{email:to}],cc:[{email:cc}],template:'feedback_fixture',subject:'Feedback fixture',text:'Local acceptance only.'})
+      const messageId = `browser-feedback-${identifier}-${index}`
+      await log.claimAttempt(mail.id,'mailgun',messageId,60)
+      await log.markSent(mail.id,'mailgun',{messageId},messageId)
+      const token = `feedback-${identifier}-${index}`
+      events.push(JSON.stringify({signature:{timestamp:stamp,token,signature:createHmac('sha256',feedbackWebhookKey).update(stamp+token).digest('hex')},'event-data':{id:token,event:index===0?'failed':'complained',severity:'permanent',recipient:index===0?to:cc,message:{headers:{'message-id':messageId}}}}))
+    }
+    response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
+    response.end(JSON.stringify({events,to,cc}));return
   } else if (action === 'portal-estimate-seed') {
     const instant = new Date().toISOString()
     await database.batch([

@@ -11,7 +11,7 @@ This integration lets an organization's clients pay its eZacto invoices through 
    https://app.example.com/webhooks/stripe
    ```
 
-3. Subscribe to `checkout.session.completed` using the **snapshot** payload format expected by this implementation. Set that endpoint's signing secret as `STRIPE_WEBHOOK_SECRET`. A Stripe CLI listener has a different signing secret from a dashboard endpoint; use the one that generated the deliveries you are testing.
+3. Subscribe to `checkout.session.completed` and `checkout.session.async_payment_succeeded` using the **snapshot** payload format expected by this implementation. Set that endpoint's signing secret as `STRIPE_WEBHOOK_SECRET`. A Stripe CLI listener has a different signing secret from a dashboard endpoint; use the one that generated the deliveries you are testing.
 4. Deploy both secrets using [the integration deployment guide](integrations.md). Use test credentials and a test database together; do not mix test invoice IDs with a live account.
 
 Stripe documents [Payment Links](https://docs.stripe.com/payment-links/create) and [webhook destinations/signatures](https://docs.stripe.com/webhooks). The eZacto adapter, rather than generic Stripe feature availability, determines which payment events your release handles.
@@ -20,7 +20,11 @@ Stripe documents [Payment Links](https://docs.stripe.com/payment-links/create) a
 
 Create a disposable invoice in the test instance, enable its Stripe card-payment option (`stripe_checkout`), and open its generated payment link. Complete payment using Stripe's test tools. Verify the event is delivered to this instance, signature verification succeeds, and the invoice gets exactly one receipt for the expected amount. Redelivery of that same event must not create another receipt.
 
-The current handler records a completed Checkout session only when `payment_status` is `paid`. It does not consume `checkout.session.async_payment_succeeded`; do not claim delayed payment methods are reconciled automatically by this adapter. A browser success page alone is not payment evidence. Refund/dispute reconciliation also needs a separately supported path; do not assume every Stripe event is implemented.
+The handler records `checkout.session.completed` and `checkout.session.async_payment_succeeded` only when `payment_status` is `paid`. An unpaid completion or `checkout.session.async_payment_failed` is acknowledged without recording money. Delayed payment methods need the asynchronous-success event enabled on your endpoint; see [Stripe’s fulfillment guide](https://docs.stripe.com/checkout/fulfillment). A browser success page alone is not payment evidence.
+
+Invoice metadata (including the legacy `ezacto_invoice_id` key) selects the invoice; when metadata is absent, the session’s `payment_link` can identify a link already stored by this instance. The payment intent is the idempotency key: redelivering an event or sending a different event for that same intent must not add another receipt. A different currency is refused rather than converted.
+
+A payment above the current balance is not applied. The runtime emits a structured `[payments] provider payment not recorded` warning with the provider transaction, invoice, amount and balance for manual reconciliation. Check the provider record before taking action; acknowledgement is not evidence that this money was applied to an invoice. Refund/dispute reconciliation remains a separate, unsupported path; these events do not delete payments or reopen invoices automatically.
 
 For live activation, deliberately select the receiving account's live key and live endpoint secret, deploy, and verify account/mode without charging a real customer as a diagnostic. Real invoice sending and payment collection are separate operator actions.
 

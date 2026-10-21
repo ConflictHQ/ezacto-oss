@@ -75,9 +75,7 @@ const trimmed = (value: string | undefined): string | null => {
   return text === undefined || text === '' ? null : text
 }
 
-export const createStripeRuntime = (
-  options: Readonly<StripeRuntimeOptions>,
-): StripeRuntime => {
+export const createStripeRuntime = (options: Readonly<StripeRuntimeOptions>): StripeRuntime => {
   const apiKey = trimmed(options.config.apiKey)
   const webhookSecret = trimmed(options.config.webhookSecret)
   const { source } = options
@@ -156,7 +154,10 @@ export const createStripeRuntime = (
         return { kind: 'ignored', reason: 'not a paid checkout session' }
       }
       const invoiceId =
-        completion.invoiceId ?? (await source.invoiceForLink(completion.paymentIntentId))
+        completion.invoiceId ??
+        (completion.paymentLinkId === null
+          ? null
+          : await source.invoiceForLink(completion.paymentLinkId))
       if (invoiceId === null) {
         // Stripe takes money for things other than our invoices. Guessing which
         // one this settled would credit somebody else's.

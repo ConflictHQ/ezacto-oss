@@ -4,7 +4,13 @@ import { expect, test } from '@playwright/test'
 // ledger reconciliation are exercised separately against SQLite and D1.
 test('[e2e:my-payments #100] reads own figures, changes month, and clears them when access is disabled', async ({
   page,
+  request,
 }) => {
+  const prepared = await request.post('/__ezacto_browser_fixture__/start-end', {
+    data: { action: 'sign-in-rate-reset' },
+    headers: { 'x-ezacto-browser-fixture-control': 'start-end-round-trip' },
+  })
+  expect(prepared.status()).toBe(204)
   let enabled = true
   await page.route('**/api/v1/me/payments?*', (route) => {
     if (!enabled)
@@ -59,7 +65,11 @@ test('[e2e:my-payments #100] reads own figures, changes month, and clears them w
   await page
     .getByLabel('Password', { exact: true })
     .fill(process.env.EZACTO_BROWSER_FIXTURE_PASSWORD!)
+  const signedIn = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === '/auth/sign-in' && response.request().method() === 'POST',
+  )
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  expect((await signedIn).status()).toBe(200)
   await expect(page.getByRole('heading', { name: 'My payments', exact: true })).toBeVisible()
   const month = page.locator('[data-my-payments-month]')
   await month.fill('2026-08')

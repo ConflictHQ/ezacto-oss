@@ -1,3 +1,4 @@
+import { createEmailSuppressionController } from './email-suppressions-browser.js'
 import { createDeletionRequestsController } from './deletion-requests.js'
 import { createRetentionController } from './retention.js'
 import { createTimeRoundingController } from './time-rounding.js'
@@ -31,6 +32,7 @@ import {
   noteSettingsPatch,
   reminderPolicyFromForm,
   ratePercentage,
+  emailReputationWarning,
   senderVerificationLabel,
   ssoDomainStatus,
   ssoLastCheckedLabel,
@@ -383,6 +385,8 @@ export const createModuleSettingsController = (
   const emailStatus = required<HTMLElement>('[data-settings-email-status]')
   const emailSenders = required<HTMLElement>('[data-settings-sender-identities]')
   const emailReputation = required<HTMLElement>('[data-settings-email-reputation]')
+  const emailIdentityHealth = required<HTMLElement>('[data-settings-email-identities-health]')
+  const suppressionReview = createEmailSuppressionController(api)
   const wiseSection = required<HTMLElement>('[data-settings-wise]')
   const wiseStatus = required<HTMLElement>('[data-settings-wise-status]')
   const wiseFacts = required<HTMLElement>('[data-settings-wise-facts]')
@@ -1271,6 +1275,9 @@ export const createModuleSettingsController = (
     ssoBusy = false
     emailSenders.replaceChildren()
     emailSenders.hidden = true
+    suppressionReview.clear()
+    emailIdentityHealth.replaceChildren()
+    emailIdentityHealth.hidden = true
     emailReputation.replaceChildren()
     emailReputation.hidden = true
     timeFacts.replaceChildren()
@@ -1493,9 +1500,65 @@ export const createModuleSettingsController = (
         api.listSenderIdentities(active.signal),
         api.getEmailHealth(active.signal),
       ])
-      active.present(() => {
+      const presented = active.present(() => {
         emailSenders.replaceChildren(senderTable(identities))
         emailSenders.hidden = false
+        emailIdentityHealth.replaceChildren(
+          renderDataTable({
+            caption: 'Recorded sender health',
+            table: 'email-identity-health',
+            rows: health.identities ?? [],
+            rowKey: (row) => row.sender,
+            empty: 'No sender delivery history is recorded.',
+            columns: [
+              {
+                key: 'sender',
+                label: 'Sender',
+                sortValue: (row) => row.sender,
+                render: (row) => row.sender,
+              },
+              {
+                key: 'accepted',
+                label: 'Accepted messages',
+                numeric: true,
+                render: (row) => String(row.sent),
+              },
+              {
+                key: 'bounced',
+                label: 'Bounced',
+                render: (row) => `${row.bounced} (${ratePercentage(row.bounce_rate_ppm)})`,
+              },
+              {
+                key: 'complained',
+                label: 'Complained',
+                render: (row) => `${row.complained} (${ratePercentage(row.complaint_rate_ppm)})`,
+              },
+              {
+                key: 'failed',
+                label: 'Failed to send',
+                numeric: true,
+                render: (row) => String(row.failed),
+              },
+              {
+                key: 'feedback',
+                label: 'Feedback',
+                render: (row) =>
+                  [
+                    row.complained > 0
+                      ? 'Complaint recorded'
+                      : row.bounced > 0
+                        ? 'Bounce recorded'
+                        : 'No negative feedback recorded',
+                    emailReputationWarning(row),
+                  ]
+                    .filter(Boolean)
+                    .join('. '),
+              },
+            ],
+          }),
+        )
+
+        emailIdentityHealth.hidden = false
         facts(emailReputation, [
           // reputation.sent is counts.sent + bounced + complained — the total
           // accepted, and the denominator both rates are taken over. Labelling it
@@ -1511,6 +1574,7 @@ export const createModuleSettingsController = (
         ])
         emailStatus.textContent = ''
       })
+      if (presented) await suppressionReview.activate({identity,signal:active.signal,failed:(error,paint)=>{active.presentFailure(error,paint)}})
     } catch (error) {
       active.presentFailure(error, () => {
         sectionFailed(

@@ -191,6 +191,7 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
       // The demo's second net (#931): whoever enqueued a job, it reaches only
       // the domains the demo may email. Absent everywhere else.
       demoMailDomains(env) ?? undefined,
+      services.emailSuppressions?.lookup,
     )
   },
   async scheduled(controller, env) {

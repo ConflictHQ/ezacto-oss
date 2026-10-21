@@ -3312,7 +3312,7 @@ for (const corrected of ['1', '2.5', '2:30']) {
   })
 }
 
-test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, policy-locks, and unlocks a real D1 timesheet', async ({
+test('[e2e:approve-lock] [e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, policy-locks, and unlocks a real D1 timesheet', async ({
   context,
   page,
 }) => {
@@ -3433,7 +3433,10 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
       response.request().method() === 'POST',
   )
   await resubmittedCard.getByRole('button', { name: 'Approve' }).click()
-  expect((await approved).ok()).toBe(true)
+  const approvalResponse = await approved
+  expect(approvalResponse.ok()).toBe(true)
+  const approvedAt = (await approvalResponse.json()).data.reviewed_at as string
+  expect(approvedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/u)
   await expect(page.locator('[data-approval-queue]')).toContainText(
     'No timesheets are waiting for review.',
   )
@@ -3701,6 +3704,33 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
   expect(editedEntry).toMatchObject({
     data: { seconds: 4500, approval_status: 'unsubmitted', is_locked: false },
   })
+
+  const drained = await context.request.post('/__ezacto_browser_fixture__/drain-outbox', {
+    headers: { 'x-ezacto-browser-fixture-control': 'start-end-round-trip' },
+  })
+  expect(drained.status()).toBe(200)
+  // The audit acceptance is a visible browser result of these real commands,
+  // including the actor and the timestamp returned by approval, not fixture rows.
+  await page.goto('/settings/activity')
+  const activity = page.locator('[data-activity-log-list]')
+  for (const event of ['submitted', 'rejected', 'approved', 'withdrawn', 'locked', 'unlocked']) {
+    const row = activity.locator('tbody tr[data-row]').filter({
+      has: page.getByRole('cell', { name: `Timesheet ${event}`, exact: true }),
+    })
+    await expect(row.first()).toBeVisible()
+    await expect(row.first()).toContainText('Browser Owner')
+  }
+  const approvedRow = activity.locator('tbody tr[data-row]').filter({
+    has: page.getByRole('cell', { name: 'Timesheet approved', exact: true }),
+  })
+  await expect(approvedRow.first().locator('td').first()).toHaveText(approvedAt)
+  await page.locator('[data-activity-entity]').selectOption('timesheet_submission')
+  await expect(activity).not.toContainText('Timesheet unlocked')
+  await expect(approvedRow).toHaveCount(1)
+  await expect(approvedRow.getByRole('link', { name: /timesheet_submission #/u })).toHaveAttribute(
+    'href',
+    '/approvals',
+  )
 })
 
 test('[e2e:timesheet-approval] submits and approves an expense-only week', async ({

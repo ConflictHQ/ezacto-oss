@@ -58,3 +58,36 @@ Where organization sender approval/attestation applies, changing the deployment'
 For a transport change, review queued mail, prepare and verify the new sender, then switch the complete configuration through CI. Preserve message/audit history and account for retries before sending manual replacements. Removing a transport will affect login recovery and queued messages; it is an operational change, not just a UI preference.
 
 Implementation reference: `scripts/render-deploy-secrets.mjs`, `entries/worker/src/runtime.ts`, `entries/container/src/config.ts`, `packages/mailer/`.
+
+## Recipient suppression and review
+
+Email settings shows per-sender accepted, bounced, complained and failed counts.
+Refresh reloads both sender health and the local suppressed-recipient list.
+The UI flags recorded bounce rates at 2% or complaint rates at 0.1%, with
+an earlier watch signal at half those values. These local review thresholds
+use all recorded history and do not predict a provider’s sending limits.
+Verified permanent failures and complaints for an actual To/Cc recipient create
+immutable local suppression evidence, including feedback processed before this
+upgrade. Duplicate webhook delivery does not create new evidence.
+
+Both Worker and container queues check local suppression before sending. A
+suppressed To or Cc address refuses the whole queued message, with a
+`recipient_suppressed:BOUNCE` or `recipient_suppressed:COMPLAINT` reason in the
+email log. No attachment bytes or provider call are needed for that refusal.
+An unavailable suppression database leaves the job retryable. A send already
+in flight cannot be recalled.
+
+An administrator signed in to the web app can choose **Allow future email**,
+record a reason, and confirm the address for a complaint. Review acknowledges
+only the evidence displayed: later feedback suppresses the address again.
+The immutable `email_suppression_lifts` receipt records the administrator,
+reason, reviewed evidence and time. API tokens cannot perform these actions.
+The API list is cursor-paginated at `/api/v1/email-suppressions`; a lift is
+`POST /api/v1/email-suppressions/:id/lift`.
+
+A local lift does not remove a provider's own suppression or send anything.
+Check recipient consent and the provider's own list before sending a fresh
+message. Refused jobs remain refused; they are not automatically requeued.
+Mailgun feedback ingress is configured on the Worker. The container SMTP
+runtime does not expose a Mailgun webhook route; it honors local suppression
+evidence already in its database, including after an instance migration.

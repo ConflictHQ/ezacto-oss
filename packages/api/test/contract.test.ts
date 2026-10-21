@@ -39,6 +39,7 @@ import {
   type ClientRateCardRepository,
   installEmailConfigurationRoutes,
   installEmailHealthRoutes,
+  installEmailSuppressionRoutes,
   installEmailLogRoutes,
   installGeneralResourceRoutes,
   installModuleSettingsRoutes,
@@ -278,6 +279,9 @@ const documentedApp = () =>
       });
       installEmailLogRoutes(api, emailLog, logRouteOptions);
       installEmailHealthRoutes(api, emailLog);
+      installEmailSuppressionRoutes(api, {
+        snapshot: unavailable, list: unavailable, lookup: unavailable, lift: unavailable,
+      }, { cursorSigningKey: new Uint8Array(32) });
       installEmailConfigurationRoutes(api, {
         service: emailConfiguration,
         clock: () => "2026-08-28T12:00:00.000Z",

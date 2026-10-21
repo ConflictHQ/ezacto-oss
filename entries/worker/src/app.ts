@@ -50,6 +50,7 @@ import {
   installClientRateCardRoutes,
   type ClientRateCardRepository,
   installEmailHealthRoutes,
+  installEmailSuppressionRoutes,
   installEmailLogRoutes,
   installEmailConfigurationRoutes,
   installGeneralResourceRoutes,
@@ -198,6 +199,7 @@ import {
 import type {
   EmailLogPager,
   EmailLogStore,
+  EmailSuppressionStore,
   MailgunFeedbackService,
   QueuedEmailJob,
   SenderBoundQueuedMailer,
@@ -512,6 +514,7 @@ export interface RuntimeServices {
   wiseWebhook?: NonNullable<WiseRuntime["webhook"]>
   stripe?: StripeService
   /** Mailgun's bounce, complaint and delivery events; see the route. */
+  emailSuppressions?: EmailSuppressionStore
   mailgunFeedback?: MailgunFeedbackService
   invoiceTimeClaims?: InvoiceTimeClaimService
   invoiceDocumentPreference?: InvoiceDocumentPreferenceService
@@ -804,6 +807,7 @@ export const createApp = (
                 : { viewReceipts: services.invoiceViewReceipts }),
             })
             installEmailHealthRoutes(api, services.emailLog)
+            if (services.emailSuppressions) installEmailSuppressionRoutes(api, services.emailSuppressions, {cursorSigningKey: services.cursorSigningKey})
             installEmailConfigurationRoutes(api, {
               service: services.emailConfiguration,
               ...(services.senderIdentityVerifier === undefined

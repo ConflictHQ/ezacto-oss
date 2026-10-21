@@ -1,3 +1,4 @@
+import type { EmailSuppressionReason } from '@ezacto/mailer'
 import type {
   EmailLogStore,
   EmailQueue,
@@ -56,6 +57,7 @@ export const consumeCloudflareEmailBatch = async (
    * through a path the producer never saw. Absent everywhere but the demo.
    */
   allowedDomains?: readonly string[],
+  getRecipientSuppression?: (recipients: readonly string[]) => Promise<EmailSuppressionReason | null>,
 ): Promise<void> => {
   const allowed =
     allowedDomains === undefined
@@ -83,7 +85,10 @@ export const consumeCloudflareEmailBatch = async (
         message.attempts,
         log,
         provider,
-        resolveAttachment === undefined ? {} : { resolveAttachment },
+        {
+          ...(resolveAttachment === undefined ? {} : { resolveAttachment }),
+          ...(getRecipientSuppression === undefined ? {} : { getRecipientSuppression }),
+        },
       )
       if (disposition.action === 'retry') {
         message.retry({ delaySeconds: disposition.delaySeconds })
