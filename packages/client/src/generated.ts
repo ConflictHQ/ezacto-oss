@@ -775,6 +775,8 @@ export type ContractorReviewPerson = {
   "earnings": ContractorReviewEarnings | null;
   "entries": Array<ContractorReviewEntry>;
   "currencies": Array<ContractorCurrencyReview>;
+  "source_revision"?: string;
+  "review_version"?: string;
 };
 
 export type ContractorReview = {
@@ -786,6 +788,40 @@ export type ContractorReview = {
 };
   "version": string;
   "people": Array<ContractorReviewPerson>;
+};
+
+export type AcceptContractorReview = {
+  "id": string;
+  "user_id": number;
+  "month": string;
+  "currency": string;
+  "review_version": string;
+  "source_revision": string;
+  "apply_allocations": boolean;
+  "apply_credits": boolean;
+  "reason": string;
+};
+
+export type ContractorAcceptance = {
+  "id": string;
+  "user_id": number;
+  "month": string;
+  "currency": string;
+  "review_version": string;
+  "reason": string;
+  "actor_id": number;
+  "recorded_at": string;
+  "allocation_ids": Array<string>;
+  "credit_application_ids": Array<string>;
+  "state": "completed";
+};
+
+export type ContractorAcceptanceEnvelope = {
+  "data": ContractorAcceptance;
+};
+
+export type ContractorAcceptancesEnvelope = {
+  "data": Array<ContractorAcceptance>;
 };
 
 export type ContractorReviewEnvelope = {
@@ -7370,6 +7406,26 @@ export class EzactoClient {
 
     return this.request<ContractorReviewEnvelope>("GET", "/api/v1/staff-payments/contractor-review", {
       query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getContractorAcceptances(args: { query?: { "month"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ContractorAcceptancesEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ContractorAcceptancesEnvelope>("GET", "/api/v1/staff-payments/contractor-review/acceptances", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async acceptContractorReview(args: { body?: AcceptContractorReview; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ContractorAcceptanceEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ContractorAcceptanceEnvelope>("POST", "/api/v1/staff-payments/contractor-review/acceptances", {
+      body: args.body,
       signal: args.signal,
       headers,
     });

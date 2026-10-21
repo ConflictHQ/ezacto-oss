@@ -18995,6 +18995,134 @@
         ]
       }
     },
+    "/api/v1/staff-payments/contractor-review/acceptances": {
+      "get": {
+        "operationId": "getContractorAcceptances",
+        "summary": "Read immutable contractor reconciliation confirmations",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractorAcceptancesEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-payments/contractor-review/acceptances",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "acceptContractorReview",
+        "summary": "Explicitly confirm monthly receipt allocations and settled advance credit without authorizing a transfer",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractorAcceptanceEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-payments/contractor-review/acceptances",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptContractorReview"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/scheduled-runs/{id}": {
       "get": {
         "operationId": "getScheduledRun",
@@ -33481,6 +33609,12 @@
             "items": {
               "$ref": "#/components/schemas/ContractorCurrencyReview"
             }
+          },
+          "source_revision": {
+            "type": "string"
+          },
+          "review_version": {
+            "type": "string"
           }
         },
         "required": [
@@ -33540,6 +33674,138 @@
           "credit_period",
           "version",
           "people"
+        ],
+        "additionalProperties": false
+      },
+      "AcceptContractorReview": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer"
+          },
+          "month": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "review_version": {
+            "type": "string"
+          },
+          "source_revision": {
+            "type": "string"
+          },
+          "apply_allocations": {
+            "type": "boolean"
+          },
+          "apply_credits": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "month",
+          "currency",
+          "review_version",
+          "source_revision",
+          "apply_allocations",
+          "apply_credits",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "ContractorAcceptance": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer"
+          },
+          "month": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "review_version": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "actor_id": {
+            "type": "integer"
+          },
+          "recorded_at": {
+            "type": "string"
+          },
+          "allocation_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "credit_application_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "completed"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "month",
+          "currency",
+          "review_version",
+          "reason",
+          "actor_id",
+          "recorded_at",
+          "allocation_ids",
+          "credit_application_ids",
+          "state"
+        ],
+        "additionalProperties": false
+      },
+      "ContractorAcceptanceEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ContractorAcceptance"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "ContractorAcceptancesEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContractorAcceptance"
+            }
+          }
+        },
+        "required": [
+          "data"
         ],
         "additionalProperties": false
       },

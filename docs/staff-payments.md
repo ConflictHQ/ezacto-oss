@@ -333,10 +333,48 @@ person/currency. The sortable summary separates recorded earnings, hours-based
 earnings, paid/reserved amounts, current payable and the projected balance after
 proposed credits. Expand a person for review reasons, captured hours, invoice
 versions/documents, receipts, recorded allocations, advance intent and payment
-attempts. Related-section buttons lead to the existing explicit confirmation
-flows; this screen performs reads only. Refreshes/month changes clear prior
-figures before loading, stale responses are discarded and session end clears
+attempts. Confirm the selected monthly receipt allocations and settled credit
+applications here with a reason, or use the related-section buttons for actuals and invoice
+changes. Payment progress links to **History**, whose existing **Check status**
+only reconciles an already prepared provider operation; it never resets it to a
+new transfer. Cancellation is limited to unsent items. The existing processor
+still handles at most ten due items and three durable stages per tick. Refreshes
+and month changes clear prior figures before loading, stale responses are discarded and session end clears
 the evidence.
+
+### Explicit acceptance and recovery
+
+`POST /api/v1/staff-payments/contractor-review/acceptances` accepts the displayed
+person/currency, its `review_version` and `source_revision`, selected allocation
+and/or credit changes, an identifier and a reason. Only an administrator session
+can confirm. The server derives exact monthly commands from the fresh review;
+callers cannot supply amounts, provider commands or another actor. Changed hours,
+missing rates, unsettled months and blocked proposals require review first.
+
+Migration 0138 tracks source revisions for shared configuration, each contractor
+and each work month. A consistent read retries at most three times if sources
+move while it loads. Unrelated contractors' hours do not invalidate a person's
+confirmation. The insertion rechecks the person's revision inside the database,
+then existing allocation/advance triggers execute all selected changes in the
+same SQLite statement on both runtimes. If any check fails, every change and the
+acceptance roll back. No partial application needs a second executor.
+
+`GET .../contractor-review/acceptances?month=…` returns completed immutable
+confirmations, with actor/reason/time and links to their allocation/application
+identities. After a lost response, retrying the same identifier and exact intent
+returns the original confirmation, even after later refunds. Changing the
+identifier/intent cannot spend an old review twice. The screen retains the
+original intent for a manual retry; reload obtains current balances and history.
+Confirming these links never creates an invoice, replaces an earnings override,
+creates/funds a transfer or approves a payment run.
+
+The synthetic SQLite/D1 lifecycle in `packages/db/test/contractor-review.test.ts`
+covers an advance before hours, reviewed earnings, a received invoice, partial
+receipt, accepted credit, final receipt, settlement and confirmed provider refund,
+with payment-report totals before/after the refund. It also covers concurrent
+same/different-identifier retries, stale-read-to-write rejection, missing rates,
+independent contractors and full rollback after a later step fails. Chromium
+covers the explicit confirmation and same-identifier retry after a lost response.
 
 ### Scheduled-action seam
 
@@ -349,7 +387,5 @@ preview/approval, with `processDue` on the existing Worker cron/container timer.
 This slice adds no job type, scheduler, transfer executor or automatic application
 of credit. A later scheduler integration must retain that single execution seam.
 
-Remaining #902 delivery: durable review/acceptance and idempotent application of
-accepted multi-step plans, the recovery controls and full advance → hours →
-invoice → partial/final payment/refund fixture. The combined review is the read
-foundation, not completion of that orchestration issue.
+The scheduled-action integration itself remains owned by #61/#62/#63. This
+contractor flow reuses the current payout execution and recovery seam.
