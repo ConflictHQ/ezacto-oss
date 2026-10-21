@@ -205,7 +205,8 @@ instance brand.
 
 Not found anywhere: a product name an administrator sets (the deployment name
 comes from the `BRAND_NAME` variable, not from Settings), a footer line or
-signature text, and any use of the palette in a document.
+signature text, and report-PDF logo/colour rendering. Invoice PDFs already use
+the validated instance accent for rules, as the audit table records.
 
 ### Deliberately never branded
 
@@ -225,3 +226,71 @@ propose changing them:
 Product renaming, hiding the product name, and any pricing or entitlement for
 white-label are undecided and recorded as such in #1011. Nothing in this
 repository gates branding.
+
+
+### Remaining scope and next customer-visible slice (#1011)
+
+Customer document branding means an organization's name, marks and colours on
+its app, documents, portal and messages. Full product white-labeling additionally
+means changing the product name, attribution, application icons, sender identity
+or domains. The delivered palette, mark uploads, HTML-mail header and invoice-PDF
+accent cover the former in part; they do not authorize the latter. The surface
+table above remains the source of truth for each delivered surface and gap.
+
+The email header proposed as the first gap in the original issue is now delivered:
+`packages/core/src/email-brand.ts` and `packages/api/src/email-brand.ts` read the
+stored light wordmark and accent, escape alternative text, validate colour and
+HTTP(S) URLs, preserve the sender/text body, and leave unbranded output unchanged.
+Their corresponding `email-brand.test.ts` suites cover these properties. Plain-text
+invoice mail deliberately has no image or colour; adding HTML there is a separate
+message-format change, not a missing call to the header.
+
+**Next buildable slice: the detailed report PDF's accent rule.**
+`packages/db/src/report-brands.ts` already resolves the nearest client's report
+brand, including `accentColor`; `packages/db/src/month-end-pack.ts` currently
+passes only its name to `packages/core/src/report-document.ts`. Pass that resolved
+accent into an optional report-document input and use it for decorative rules,
+following `packages/core/src/invoice-document.ts`. Reuse
+`normalizePaletteColor` from `packages/core/src/instance-theme.ts`; keep text in
+the existing readable ink. This is a report-brand colour, not an instance theme
+override, and must retain the current nearest-ancestor resolution and authority.
+No migration or new administrator permission is needed for that colour slice.
+
+Acceptance for that implementation:
+
+- Core: valid hex changes only decorative rule operations. Absent, invalid or
+  injection-shaped values preserve unbranded output; CSV data, totals, notes,
+  text colours and pagination remain unchanged. Cover multi-page headers and
+  render the resulting PDF for visual review at ordinary and pale accents.
+- SQLite and D1: the same client/ancestor brand resolves for live and month-end
+  exports; a nearer brand wins, missing brands retain the current fallback, and
+  another client's brand cannot be selected by an unauthorized caller.
+- API/runtime: keep existing report permissions and administrator-only
+  instance-brand writes. No new writable branding route or remote image fetch
+  is added.
+- Update the `report-pdf-logo-colours` audit row and
+  `packages/core/test/brand-surfaces.test.ts` in the implementation. If only colour
+  lands, split that row so the remaining logo gap is still explicit.
+
+Report-PDF logos remain a later slice. A stored `logoUrl` alone is not an approved
+server-side fetch policy: choose an owned upload/asset seam or a reviewed bounded
+transport before fetching it. Reuse the existing validated image decoder and
+object-storage approach in `entries/worker/src/invoice-documents.ts` and
+`packages/core/src/pdf-image.ts`; preserve a text fallback when an image is absent
+or unreadable. Signature/footer text is optional future scope and would need
+administrator-only writes, length limits and escaping at each output.
+
+Ownership and unresolved decisions:
+
+- Native colours/icons stay with
+  [ezacto-mobile#25](https://github.com/ConflictHQ/ezacto-mobile/issues/25).
+- Client portal/node branding and its domain integration stay with
+  [#106](https://github.com/ConflictHQ/ezacto-pvt/issues/106) and the portal owner;
+  `GET /api/v1/brand` remains its existing integration seam.
+- Hosted provisioning/custom domains stay with
+  [ezacto-platform#19](https://github.com/ConflictHQ/ezacto-platform/issues/19)
+  and the hosted owner. They are not an extra domain setting in this product.
+- Product renaming, hiding attribution, custom product icons and any
+  pricing/entitlement remain undecided. This plan creates no paid tier or gate.
+  Required sender identity, existing licence/notice text and store listing
+  identity remain as stated above.
