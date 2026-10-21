@@ -94,6 +94,9 @@ export interface ContractorCurrencyReview {
   flags: string[];
 }
 export interface ContractorReviewPerson {
+  /** Database snapshot token for explicit acceptance; absent in pure models. */
+  source_revision?: string;
+  review_version?: string;
   user_id: number;
   name: string;
   active: boolean;
@@ -115,8 +118,39 @@ export interface ContractorReview {
   credit_period: { from: string; to: string };
   people: ContractorReviewPerson[];
 }
+export interface AcceptContractorReview {
+  id: string;
+  user_id: number;
+  month: string;
+  currency: string;
+  review_version: string;
+  source_revision: string;
+  apply_allocations: boolean;
+  apply_credits: boolean;
+  reason: string;
+}
+export interface ContractorAcceptance {
+  id: string;
+  user_id: number;
+  month: string;
+  currency: string;
+  review_version: string;
+  reason: string;
+  actor_id: number;
+  recorded_at: string;
+  allocation_ids: string[];
+  credit_application_ids: string[];
+  state: 'completed';
+}
+export const contractorPersonVersion = (person: ContractorReviewPerson): string => {
+  const { source_revision, review_version, ...content } = person;
+  void source_revision; void review_version;
+  return bytesToHex(sha256(new TextEncoder().encode(JSON.stringify(canonical(content)))));
+};
 export interface ContractorReviewStore {
   review(month: string, now: string): Promise<ContractorReview>;
+  accept?(command: AcceptContractorReview, actorId: number, requestId: string, now: string): Promise<ContractorAcceptance>;
+  acceptances?(month: string): Promise<ContractorAcceptance[]>;
 }
 const textOrder = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const safeCents = (value: number): number => {

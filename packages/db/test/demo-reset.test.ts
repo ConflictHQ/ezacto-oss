@@ -83,6 +83,7 @@ describe('demo reset', () => {
     const { client, driver } = harness()
     migrateContainer(client)
     client.exec('UPDATE idempotency_authorization SET revision = 1000 WHERE id = 1')
+    client.exec('UPDATE contractor_source_clock SET revision = 2000 WHERE id=1')
     const revision = () => client
       .prepare('SELECT revision FROM idempotency_authorization WHERE id = 1')
       .get() as { revision: number } | undefined
@@ -91,6 +92,8 @@ describe('demo reset', () => {
 
     const rebuilt = revision()
     expect(rebuilt?.revision).toBeGreaterThan(1000)
+    const source = client.prepare('SELECT revision FROM contractor_source_clock WHERE id=1').get() as {revision:number}
+    expect(source.revision).toBeGreaterThan(2000)
     const revoked = client.prepare(`UPDATE users SET is_active = 0 WHERE id = (
       SELECT id FROM users WHERE is_active = 1 AND profile = 'member' ORDER BY id LIMIT 1
     )`).run()

@@ -76,7 +76,7 @@ export const renderStaffPayments = (view?: string): string =>
       </section>
       <section id="payment-panel-reconcile" role="tabpanel" aria-labelledby="payment-tab-reconcile" data-payment-panel="reconcile" data-contractor-review hidden>
         <h2>Reconcile contractor payments</h2>
-        <p>Review hours, invoices, receipts and advance credit together. Proposed allocations and credits have not been recorded. Confirm changes in the related section, then reload this review before preparing a payment.</p>
+        <p>Review hours, invoices, receipts and advance credit together. Proposed allocations and credits have not been recorded. Confirm the selected monthly allocations and credit here. Review earnings or invoice changes in their sections before preparing a payment.</p>
         <button type="button" data-contractor-review-load disabled>Load reconciliation for work month</button>
         <p role="status" aria-live="polite" data-contractor-review-status></p>
         <div data-contractor-review-content></div>
