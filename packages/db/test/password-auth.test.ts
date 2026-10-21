@@ -1,6 +1,6 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
   EmailAddressUnavailableError,
   FirstRunSignupUnavailableError,
@@ -10,6 +10,14 @@ import {
   createD1PasswordAuthService,
   type PasswordAuthService,
 } from '../src/password-auth.js'
+import { hashPassword } from '@ezacto/core'
+import type * as Core from '@ezacto/core'
+
+vi.mock('@ezacto/core', async (original) => {
+  const actual = await original<typeof Core>()
+  return { ...actual, hashPassword: vi.fn(actual.hashPassword) }
+})
+
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import {
   SessionCredentialChangedError,
@@ -100,6 +108,7 @@ for (const [runtime, factory] of factories) {
     afterAll(async () => harness.close())
 
     it('[e2e:first-run] signs up, verifies, signs in, and resets exactly once', async () => {
+      vi.mocked(hashPassword).mockClear()
       const verification = await harness.service.signup({
         organizationName: 'Halcyon Studio',
         firstName: 'Avery',
@@ -108,6 +117,7 @@ for (const [runtime, factory] of factories) {
         password,
         clientKey: '198.51.100.10',
       })
+      expect(hashPassword).toHaveBeenCalledTimes(1)
       expect(verification).toMatchObject({
         kind: 'verify_email',
         to: 'owner@example.test',
@@ -136,6 +146,13 @@ for (const [runtime, factory] of factories) {
       await expect(
         harness.service.verifyEmail(verification.token, '198.51.100.10'),
       ).rejects.toBeInstanceOf(InvalidAuthTokenError)
+
+      vi.mocked(hashPassword).mockClear()
+      await expect(harness.service.signup({
+        organizationName: 'Another organization', firstName: 'Other', lastName: 'Owner',
+        email: 'other@example.test', password, clientKey: '192.0.2.112',
+      })).rejects.toBeInstanceOf(FirstRunSignupUnavailableError)
+      expect(hashPassword).not.toHaveBeenCalled()
 
       const verifiedSignIn = await harness.service.signIn({
         email: 'OWNER@example.test',
@@ -170,10 +187,17 @@ for (const [runtime, factory] of factories) {
       })
       expect(reset?.token).toMatch(/^ezacto_reset_[A-Za-z0-9_-]{16}_[A-Za-z0-9_-]{43}$/)
 
+      vi.mocked(hashPassword).mockClear()
+      await expect(harness.service.resetPassword(
+        `ezacto_reset_${'X'.repeat(16)}_${'A'.repeat(43)}`, replacementPassword, '192.0.2.113',
+      )).rejects.toBeInstanceOf(InvalidAuthTokenError)
+      expect(hashPassword).not.toHaveBeenCalled()
+
       harness.setNow('2026-08-28T20:30:00.000Z')
       await expect(
         harness.service.resetPassword(reset!.token, replacementPassword, '198.51.100.10'),
       ).resolves.toEqual({ userId: 1, profile: 'administrator', managerGrants: [] })
+      expect(hashPassword).toHaveBeenCalledTimes(1)
       await expect(
         harness.sessions.issue(
           1,
@@ -187,9 +211,11 @@ for (const [runtime, factory] of factories) {
           revocationReason: 'password_reset',
         }),
       )
+      vi.mocked(hashPassword).mockClear()
       await expect(
         harness.service.resetPassword(reset!.token, replacementPassword, '198.51.100.10'),
       ).rejects.toBeInstanceOf(InvalidAuthTokenError)
+      expect(hashPassword).not.toHaveBeenCalled()
 
       await expect(
         harness.service.signIn({
@@ -212,6 +238,7 @@ for (const [runtime, factory] of factories) {
       )
       expect(expiredReset?.expiresAt).toBe('2026-08-28T21:30:00.000Z')
       harness.setNow('2026-08-28T21:30:00.000Z')
+      vi.mocked(hashPassword).mockClear()
       await expect(
         harness.service.resetPassword(
           expiredReset!.token,
@@ -219,6 +246,8 @@ for (const [runtime, factory] of factories) {
           '198.51.100.10',
         ),
       ).rejects.toBeInstanceOf(InvalidAuthTokenError)
+
+      expect(hashPassword).not.toHaveBeenCalled()
 
       const stored = await harness.rows<{
         credential_version: number
@@ -379,6 +408,31 @@ for (const [runtime, factory] of factories) {
         ).toEqual([{ name: 'Settled Org' }])
         await verified.close()
       })
+    })
+
+    it('[security #1124] keeps reset single-use when two callers pass the cheap check', async () => {
+      const concurrent = await factory()
+      try {
+        const verification = await concurrent.service.signup({
+          organizationName: 'Concurrent', firstName: 'Reset', lastName: 'Owner',
+          email: 'concurrent@example.test', password, clientKey: '192.0.2.114',
+        })
+        await concurrent.service.verifyEmail(verification.token, '192.0.2.114')
+        const reset = await concurrent.service.requestPasswordReset('concurrent@example.test', '192.0.2.114')
+        const results = await Promise.allSettled([
+          concurrent.service.resetPassword(reset!.token, replacementPassword, '192.0.2.115'),
+          concurrent.service.resetPassword(reset!.token, replacementPassword, '192.0.2.116'),
+        ])
+        expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+        expect(results.filter((result) => result.status === 'rejected')).toEqual([
+          expect.objectContaining({ reason: expect.any(InvalidAuthTokenError) }),
+        ])
+        expect(await concurrent.rows('SELECT credential_version FROM user_passwords')).toEqual([
+          { credential_version: 2 },
+        ])
+      } finally {
+        await concurrent.close()
+      }
     })
 
     it('[unit] rate-limits attempt buckets and resets at the exact window boundary', async () => {

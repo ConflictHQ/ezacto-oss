@@ -442,6 +442,17 @@ const createPasswordAuthService = (
     const organizationName = printableText(input.organizationName, 'organizationName', 200)
     const firstName = printableText(input.firstName, 'firstName', 100)
     const lastName = printableText(input.lastName, 'lastName', 100)
+    // Save Argon2id capacity for a claim that could succeed. Re-read the claim
+    // after hashing below; the existing atomic guards remain authoritative.
+    const unavailable = await database.first<{ present: number }>(
+      `SELECT 1 AS present WHERE
+        EXISTS (SELECT 1 FROM auth_first_run WHERE completed_at IS NOT NULL)
+        OR EXISTS (SELECT 1 FROM user_emails WHERE verified_at IS NOT NULL)
+        OR (NOT EXISTS (SELECT 1 FROM auth_first_run) AND (
+          EXISTS (SELECT 1 FROM organizations) OR EXISTS (SELECT 1 FROM users)
+          OR EXISTS (SELECT 1 FROM user_emails) OR EXISTS (SELECT 1 FROM user_passwords)))`,
+    )
+    if (unavailable !== null) throw new FirstRunSignupUnavailableError()
     const password = await hashPassword(input.password)
     const material = await issueToken('verify_email')
     const claimNonce = randomBase64Url(12)
@@ -880,6 +891,19 @@ const createPasswordAuthService = (
     assertCanonicalTimestamp(timestamp)
     await rateLimit(database, 'reset_password', presentedClientKey, token, timestamp)
     const prepared = await prepareToken(token, 'password_reset')
+    // This read saves KDF work for unusable links; the update below repeats
+    // every predicate atomically, so concurrent redemption remains single-use.
+    const usable = await database.first<{ present: number }>(
+      `SELECT 1 AS present FROM auth_tokens token
+        JOIN user_emails email ON email.id = token.user_email_id
+        JOIN users user ON user.id = email.user_id
+        WHERE token.selector = ? AND token.secret_hash = ? AND token.kind = 'password_reset'
+          AND token.used_at IS NULL AND julianday(token.expires_at) > julianday(?)
+          AND email.verified_at IS NOT NULL AND email.invalidated_at IS NULL
+          AND user.is_active = 1`,
+      [prepared.selector, prepared.secretHash, timestamp],
+    )
+    if (usable === null) throw new InvalidAuthTokenError()
     const password = await hashPassword(newPassword)
     const nonce = randomBase64Url(12)
     const rows = await database.atomic([
