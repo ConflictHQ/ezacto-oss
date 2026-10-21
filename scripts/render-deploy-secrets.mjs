@@ -243,6 +243,10 @@ export const deploySecretPayload = (environment) => {
     // Error reporting. Absent means Sentry is off; still rendered explicitly so
     // `secret bulk` does not drop it and a removed DSN actually clears.
     SENTRY_DSN: optionalCredential(environment.SENTRY_DSN),
+    // Deel time sync (#1102). Rendered for the same reason: a token or start
+    // date set by hand on the Worker is deleted by the next deploy otherwise.
+    DEEL_TOKEN: optionalCredential(environment.DEEL_TOKEN),
+    DEEL_SYNC_START_DATE: optionalCredential(environment.DEEL_SYNC_START_DATE),
   }
 }
 
