@@ -18,10 +18,12 @@ import type * as Core from '@ezacto/core'
 // real one is wrapped rather than replaced -- every other test still runs the
 // genuine argon2 comparison.
 const verifications: StoredArgon2idPassword[] = []
+let recoveryHasher: typeof hashRecoveryCode | undefined
 vi.mock('@ezacto/core', async (importOriginal) => {
   const core = await importOriginal<typeof Core>()
   return {
     ...core,
+    hashRecoveryCode: (code: string) => recoveryHasher ? recoveryHasher(code) : core.hashRecoveryCode(code),
     verifyRecoveryCode: async (code: string, stored: StoredArgon2idPassword) => {
       verifications.push(stored)
       return core.verifyRecoveryCode(code, stored)
@@ -31,6 +33,7 @@ vi.mock('@ezacto/core', async (importOriginal) => {
 
 beforeEach(() => {
   verifications.length = 0
+  recoveryHasher = undefined
 })
 
 const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'
@@ -152,6 +155,24 @@ describe('two-factor verification', () => {
 
     expect(await service.verifyCode(1, code)).toBe('not_enrolled')
     expect(backing.recorder.spentSteps).toEqual([])
+  })
+
+  it('[security #745] submits one recovery hash at a time and saves only the complete set', async () => {
+    const pending: Array<(hash: StoredArgon2idPassword) => void> = []
+    recoveryHasher = () => new Promise((resolve) => { pending.push(resolve) })
+    const backing = store({}, null)
+    const service = createTwoFactorService({ store: backing, ...label, now: () => at })
+    const offered = service.beginEnrolment(1)
+    // A slow derivation must not leave the other nine in the KDF timeout queue.
+    await vi.waitFor(() => expect(pending).toHaveLength(1))
+    for (let index = 0; index < 10; index++) {
+      expect(backing.recorder.enrolled).toHaveLength(0)
+      pending[index]!(RECOVERY_CODE_DECOY)
+      if (index < 9) await vi.waitFor(() => expect(pending).toHaveLength(index + 2))
+    }
+    const offer = await offered
+    expect(offer.recoveryCodes).toHaveLength(10)
+    expect(backing.recorder.enrolled[0]!.codes).toHaveLength(10)
   })
 
   it('[security] hands the store selectors and hashes, never the codes themselves', async () => {
