@@ -4766,6 +4766,7 @@ export type InvoiceHoursReconciliationEnvelope = {
   "difference_seconds": number;
   "status": "matched" | "billed_below_linked" | "billed_above_linked" | "not_comparable";
   "tolerance_seconds": number;
+  "hours_version": string | null;
   "total_tolerance_seconds": number;
   "comparison_complete": boolean;
   "has_mismatch": boolean;
@@ -4789,6 +4790,7 @@ export type InvoiceHoursReconciliationEnvelope = {
   "project_id": number;
   "project_name": string | null;
   "seconds": number;
+  "eligible_for_release": boolean;
 }>;
   "projects": Array<{
   "project_id": number;
@@ -4805,6 +4807,29 @@ export type InvoiceHoursReconciliationEnvelope = {
   "description": string | null;
   "quantity": number;
 }>;
+};
+};
+
+export type InvoiceLineTimeReleaseInput = {
+  "command_id": string;
+  "line_id": number;
+  "expected_version": number;
+  "hours_version": string;
+  "entry_ids": Array<number>;
+  "confirmed": true;
+};
+
+export type InvoiceLineTimeReleaseEnvelope = {
+  "data": {
+  "command_id": string;
+  "invoice_id": number;
+  "line_id": number;
+  "expected_version": number;
+  "hours_version": string;
+  "released_entry_ids": Array<number>;
+  "released_seconds": number;
+  "recorded_at": string;
+  "replayed": boolean;
 };
 };
 
@@ -8366,6 +8391,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<InvoiceHoursReconciliationEnvelope>("GET", "/api/v1/invoices/:id/hours-reconciliation".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async releaseInvoiceLineTime(args: { "id": number; body?: InvoiceLineTimeReleaseInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceLineTimeReleaseEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoiceLineTimeReleaseEnvelope>("POST", "/api/v1/invoices/:id/hours-reconciliation/release".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });

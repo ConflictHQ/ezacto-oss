@@ -2260,6 +2260,7 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  releaseInvoiceLineTime: async (id, body, signal) => (await client.releaseInvoiceLineTime({ id, body, ...withSignal(signal) })).data,
   getInvoiceHoursReconciliation: async (id, signal) => (await client.getInvoiceHoursReconciliation({ id, ...withSignal(signal) })).data,
   getInvoice: async (id, signal) =>
     (await client.getInvoice({ id, ...withSignal(signal) })).data,

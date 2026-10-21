@@ -26471,6 +26471,85 @@
         ]
       }
     },
+    "/api/v1/invoices/{id}/hours-reconciliation/release": {
+      "post": {
+        "operationId": "releaseInvoiceLineTime",
+        "summary": "Explicitly release selected whole entries from a saved draft line to match its billed hours",
+        "tags": [
+          "money"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceLineTimeReleaseEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoices/:id/hours-reconciliation/release",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceLineTimeReleaseInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/settings/invoice-defaults": {
       "get": {
         "operationId": "getInvoiceDefaults",
@@ -53647,6 +53726,7 @@
               "tolerance_seconds",
               "projects",
               "not_compared",
+              "hours_version",
               "total_tolerance_seconds",
               "comparison_complete",
               "has_mismatch",
@@ -53682,6 +53762,16 @@
               "tolerance_seconds": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "hours_version": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "total_tolerance_seconds": {
                 "type": "integer",
@@ -53790,7 +53880,8 @@
                     "spent_date",
                     "project_id",
                     "project_name",
-                    "seconds"
+                    "seconds",
+                    "eligible_for_release"
                   ],
                   "properties": {
                     "entry_id": {
@@ -53851,6 +53942,9 @@
                     },
                     "seconds": {
                       "type": "integer"
+                    },
+                    "eligible_for_release": {
+                      "type": "boolean"
                     }
                   },
                   "additionalProperties": false
@@ -53945,6 +54039,111 @@
                   },
                   "additionalProperties": false
                 }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceLineTimeReleaseInput": {
+        "type": "object",
+        "required": [
+          "command_id",
+          "line_id",
+          "expected_version",
+          "hours_version",
+          "entry_ids",
+          "confirmed"
+        ],
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          },
+          "line_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "hours_version": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "entry_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1000,
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "confirmed": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceLineTimeReleaseEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "command_id",
+              "invoice_id",
+              "line_id",
+              "expected_version",
+              "hours_version",
+              "released_entry_ids",
+              "released_seconds",
+              "recorded_at",
+              "replayed"
+            ],
+            "properties": {
+              "command_id": {
+                "type": "string"
+              },
+              "invoice_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "line_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expected_version": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "hours_version": {
+                "type": "string"
+              },
+              "released_entry_ids": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "released_seconds": {
+                "type": "integer"
+              },
+              "recorded_at": {
+                "type": "string"
+              },
+              "replayed": {
+                "type": "boolean"
               }
             },
             "additionalProperties": false

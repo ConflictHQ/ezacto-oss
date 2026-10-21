@@ -108,6 +108,7 @@ import {
   setOrganizationJournalPolicy,
   readInvoiceHoursReport,
   readInvoiceHoursReconciliation,
+  releaseInvoiceLineTime,
   readJournalFormatsPreference,
   readOrganizationJournalFormats,
   setInvoiceJournalFormats,
@@ -1555,6 +1556,7 @@ export const createRuntimeServices = async (
     },
     // Billed hours against the entries the invoice claims (issue 924).
     invoiceHoursReconciliation: {
+      releaseLineTime: (command, actorUserId, now) => releaseInvoiceLineTime(drizzle, command, actorUserId, now),
       readHoursReconciliation: (invoiceId: number) =>
         readInvoiceHoursReconciliation(drizzle, invoiceId),
     },

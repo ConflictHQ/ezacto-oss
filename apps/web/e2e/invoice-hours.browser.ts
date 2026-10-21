@@ -1,14 +1,9 @@
 import { expect, test } from '@playwright/test'
 const at = '2026-08-31T12:00:00.000Z'
-test('[e2e:invoice-hours #924] warns as billed hours change without treating a fee quantity as hours', async ({
+test('[e2e:invoice-hours #924] warns, saves a quantity and explicitly releases matching time with a safe retry', async ({
   page,
 }) => {
-  const item = (
-    id: number,
-    position: number,
-    quantity: number,
-    price: number,
-  ) => ({
+  const item = (id: number, position: number, quantity: number, price: number) => ({
     id,
     invoice_id: 7,
     position,
@@ -68,6 +63,7 @@ test('[e2e:invoice-hours #924] warns as billed hours change without treating a f
   const review = {
     invoice_id: 7,
     invoice_version: 0,
+    hours_version: 'a'.repeat(64),
     invoice_state: 'draft',
     linked_seconds: 7200,
     billed_seconds: 7200,
@@ -79,14 +75,12 @@ test('[e2e:invoice-hours #924] warns as billed hours change without treating a f
     has_mismatch: false,
     not_compared_entry_ids: [],
     projects: [],
-    not_compared: [
-      { line_id: 22, position: 1, description: 'Fixed fee', quantity: 12 },
-    ],
+    not_compared: [{ line_id: 22, position: 1, description: 'Fixed fee', quantity: 12 }],
     lines: [
       {
         line_id: 21,
         project_id: 1,
-        entry_ids: [1],
+        entry_ids: [1, 2, 3],
         linked_seconds: 7200,
         billed_seconds: 7200,
         difference_seconds: 0,
@@ -96,29 +90,108 @@ test('[e2e:invoice-hours #924] warns as billed hours change without treating a f
     entries: [
       {
         entry_id: 1,
-        user_id: 1,
-        user_name: 'Fixture person',
+        user_id: 2,
+        user_name: 'Person A',
         spent_date: '2026-08-01',
         project_id: 1,
         project_name: 'Fixture project',
-        seconds: 7200,
+        seconds: 3600,
+        eligible_for_release: true,
+      },
+      {
+        entry_id: 2,
+        user_id: 2,
+        user_name: 'Person A',
+        spent_date: '2026-08-02',
+        project_id: 1,
+        project_name: 'Fixture project',
+        seconds: 1800,
+        eligible_for_release: true,
+      },
+      {
+        entry_id: 3,
+        user_id: 3,
+        user_name: 'Person B',
+        spent_date: '2026-08-03',
+        project_id: 1,
+        project_name: 'Fixture project',
+        seconds: 1800,
+        eligible_for_release: true,
       },
     ],
   }
-  let writes = 0
+  let writes = 0,
+    releaseRequests = 0,
+    actualReleases = 0
+  let accepted: Record<string, unknown> | undefined
   page.on('request', (request) => {
-    if (
-      request.method() !== 'GET' &&
-      /\/api\/v1\/invoices/u.test(request.url())
-    )
-      writes++
+    if (request.method() !== 'GET' && /\/api\/v1\/invoices/u.test(request.url())) writes++
+  })
+  await page.route('**/api/v1/invoices/7/line-items/21', (route) => {
+    const body = route.request().postDataJSON()
+    expect(body.expected_version).toBe(0)
+    expect(body.quantity).toBe(1.5)
+    invoice.line_items[0]!.quantity = 1.5
+    invoice.line_items[0]!.amount_cents = 2250
+    invoice.version = 1
+    invoice.amount_cents = invoice.due_amount_cents = 14250
+    review.invoice_version = 1
+    review.hours_version = 'b'.repeat(64)
+    review.billed_seconds = 5400
+    review.difference_seconds = -1800
+    review.status = 'billed_below_linked'
+    review.has_mismatch = true
+    review.lines[0]!.billed_seconds = 5400
+    review.lines[0]!.difference_seconds = -1800
+    review.lines[0]!.status = 'billed_below_linked'
+    return route.fulfill({ json: { data: { invoice, event_ids: ['edit'] } } })
+  })
+  await page.route('**/api/v1/invoices/7/hours-reconciliation/release', (route) => {
+    releaseRequests++
+    const body = route.request().postDataJSON()
+    if (!accepted) {
+      accepted = body
+      actualReleases++
+      expect(body).toMatchObject({
+        line_id: 21,
+        expected_version: 1,
+        hours_version: 'b'.repeat(64),
+        entry_ids: [2],
+        confirmed: true,
+      })
+      review.entries = review.entries.filter((entry) => entry.entry_id !== 2)
+      review.linked_seconds = 5400
+      review.difference_seconds = 0
+      review.status = 'matched'
+      review.has_mismatch = false
+      review.hours_version = 'c'.repeat(64)
+      review.lines[0]!.entry_ids = [1, 3]
+      review.lines[0]!.linked_seconds = 5400
+      review.lines[0]!.difference_seconds = 0
+      review.lines[0]!.status = 'matched'
+      return route.abort('failed')
+    }
+    expect(body).toEqual(accepted)
+    return route.fulfill({
+      json: {
+        data: {
+          command_id: body.command_id,
+          invoice_id: 7,
+          line_id: 21,
+          expected_version: 1,
+          hours_version: 'b'.repeat(64),
+          released_entry_ids: [2],
+          released_seconds: 1800,
+          recorded_at: at,
+          replayed: true,
+        },
+      },
+    })
   })
   await page.route('**/api/v1/invoices?*', (route) =>
     route.fulfill({ json: { data: [invoice], page: { next_cursor: null } } }),
   )
-  await page.route('**/api/v1/invoices/7', (route) =>
-    route.fulfill({ json: { data: invoice } }),
-  )
+  await page.route('**/api/v1/invoices/7', (route) => route.fulfill({ json: { data: invoice } }))
   await page.route('**/api/v1/invoices/7/hours-reconciliation', (route) =>
     route.fulfill({ json: { data: review } }),
   )
@@ -163,9 +236,7 @@ test('[e2e:invoice-hours #924] warns as billed hours change without treating a f
   await expect(row.locator('[data-invoice-edit-linked-hours]')).toHaveText(
     /Linked: 2.00 h · billed: 1.50 h/u,
   )
-  await expect(warning).toContainText(
-    'Review linked time before previewing or sending',
-  )
+  await expect(warning).toContainText('Review linked time before previewing or sending')
   await page
     .locator('[data-invoice-edit-line]')
     .nth(1)
@@ -179,4 +250,39 @@ test('[e2e:invoice-hours #924] warns as billed hours change without treating a f
   await row.getByRole('button', { name: 'Keep this line', exact: true }).click()
   await expect(warning).toBeHidden()
   expect(writes).toBe(0)
+  await page
+    .locator('[data-invoice-edit-line]')
+    .nth(1)
+    .locator('[data-invoice-edit-line-field="quantity"]')
+    .fill('12')
+  await row.locator('[data-invoice-edit-line-field="quantity"]').fill('1.5')
+  await row
+    .getByRole('button', { name: 'Save changes and review linked time', exact: true })
+    .click()
+  await expect(page.locator('[data-invoice-edit-result]')).toContainText(
+    'Invoice saved. Choose linked time',
+  )
+  expect(page.url()).toContain('/invoices/INV-924/edit')
+  const release = row.locator('[data-invoice-time-release]')
+  await release.getByLabel('Person for time release').selectOption('2')
+  const boxes = release.getByRole('checkbox')
+  await expect(boxes).toHaveCount(2)
+  await boxes.nth(0).check()
+  await expect(
+    release.getByRole('button', { name: 'Confirm release of selected time', exact: true }),
+  ).toBeDisabled()
+  await boxes.nth(0).uncheck()
+  await boxes.nth(1).check()
+  await release
+    .getByRole('button', { name: 'Confirm release of selected time', exact: true })
+    .click()
+  const retry = release.getByRole('button', { name: 'Retry same release', exact: true })
+  await expect(retry).toBeEnabled()
+  await expect(release.getByLabel('Person for time release')).toBeDisabled()
+  await retry.click()
+  await expect(row.locator('[data-invoice-time-release]')).toHaveCount(0)
+  await expect(warning).toBeHidden()
+  expect(releaseRequests).toBe(2)
+  expect(actualReleases).toBe(1)
+  expect(writes).toBe(3)
 })

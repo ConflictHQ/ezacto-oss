@@ -1,3 +1,4 @@
+import { createInvoiceTimeRelease } from './time-release.js'
 import type { GeneralResource, Invoice, Whoami } from '@conflict-hq/ezacto-client'
 import { markMoney } from '../money-display.js'
 import { leavePageNotice } from '../page-notice.js'
@@ -215,10 +216,26 @@ export const createInvoiceEditorController = (
     select.value = selected
   }
 
+  const release = createInvoiceTimeRelease(api, {
+    context: () => {
+      const session = current()
+      return session ? { signal: session.signal, pending } : null
+    },
+    busy: (value) => { pending = value; syncPending() },
+    reload: async () => {
+      const session = current()
+      if (session) await load(session)
+    },
+    saveForReview: () => save(true),
+    error: invoiceApiMessage,
+  })
   const syncPending = (): void => {
+    for (const fieldset of form.querySelectorAll<HTMLFieldSetElement>('[data-invoice-time-release]'))
+      fieldset.disabled = pending
     for (const control of form.querySelectorAll<
       HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement
     >('input, select, textarea, button')) {
+      if (control.closest('[data-invoice-time-release]')) continue
       const removedRow = control.closest('[data-removed]') !== null
       const keepsWorking = control.matches('[data-invoice-edit-line-restore]')
       control.disabled = pending || (removedRow && !keepsWorking)
@@ -262,6 +279,7 @@ export const createInvoiceEditorController = (
         hoursReview.invoice_version !== null &&
         hoursReview.invoice_version !== invoice.version)
     ) {
+      for (const row of rows()) release.sync(row, null, undefined, false, null)
       if (hoursFailed || hoursReview) {
         hoursWarning.hidden = false
         hoursWarning.textContent =
@@ -269,10 +287,25 @@ export const createInvoiceEditorController = (
       }
       return
     }
-    if (hoursReview.entries.length === 0) return
+    if (hoursReview.entries.length === 0) {
+      for (const row of rows()) release.sync(row, null, undefined, false, null)
+      return
+    }
     const byLine = new Map(
       hoursReview.lines.map((line) => [line.line_id, line]),
     )
+    let dirty: boolean
+    try { dirty = invoice !== null && invoiceEditPlan(invoice, readDraft()).length > 0 }
+    catch { dirty = true }
+    for (const row of rows()) {
+      let billed: number | null
+      try {
+        billed = Math.round(invoiceLineValues(
+          lineControl(row, 'quantity').value, lineControl(row, 'rate').value,
+        ).quantity * 3600)
+      } catch { billed = null }
+      release.sync(row, hoursReview, byLine.get(Number(row.dataset.lineId)), dirty, billed)
+    }
     let mismatches = 0,
       removedLinked = false,
       billedSeconds = 0,
@@ -677,7 +710,7 @@ export const createInvoiceEditorController = (
     }
   }
 
-  const save = async (): Promise<void> => {
+  const save = async (stayForHours = false): Promise<void> => {
     const session = current()
     const start = invoice
     if (
@@ -693,6 +726,12 @@ export const createInvoiceEditorController = (
     ) {
       return
     }
+    const complete = async () => {
+      if (stayForHours) {
+        await load(session)
+        say('Invoice saved. Choose linked time to release explicitly.', null)
+      } else finish(start)
+    }
     let steps: readonly InvoiceEditStep[]
     try {
       steps = invoiceEditPlan(start, readDraft())
@@ -702,7 +741,7 @@ export const createInvoiceEditorController = (
       return
     }
     if (steps.length === 0) {
-      if (committed) finish(start)
+      if (committed || stayForHours) await complete()
       else say('Nothing changed.', null)
       return
     }
@@ -735,7 +774,7 @@ export const createInvoiceEditorController = (
         }
         steps = invoiceEditPlan(after, readDraft())
       }
-      finish(start)
+      await complete()
     } catch (error) {
       if (current() !== session) return
       if (session.onSessionFailure(error)) return
