@@ -43,7 +43,8 @@ export interface StaffPaymentCommand {
   payment_id: string | null
   source: StaffPaymentProvider | 'historical'
 }
-export interface StaffPaymentEvent extends StaffPaymentCommand {
+export interface StaffPaymentEvent extends Omit<StaffPaymentCommand, 'source'> {
+  source: StaffPaymentCommand['source'] | 'advance_credit'
   version: number
   actor_id: number
   actor_name: string
@@ -61,6 +62,7 @@ export interface StaffPaymentPerson {
   provider_version?: number
 }
 export interface StaffPaymentRow extends StaffPaymentPerson {
+  is_contractor?: boolean
   deel_ready: boolean
   payout_provider: StaffPaymentProvider
   provider_override: StaffPaymentProvider | null

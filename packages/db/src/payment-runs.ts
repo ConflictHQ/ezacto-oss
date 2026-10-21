@@ -1,3 +1,4 @@
+import { createAdvanceCreditsStore } from './contractor-advances.js'
 import { sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
@@ -315,6 +316,7 @@ export const createPaymentRunsService = (
     }
   }
   return {
+    advances: createAdvanceCreditsStore(database),
     preview: async (command, actorId, requestId, now) => {
       if (provider === null) invalid('Wise is not configured for this instance.')
       if (
@@ -361,30 +363,38 @@ export const createPaymentRunsService = (
         const row = (await ledger.report(selection.month, now.slice(0, 10))).rows.find(
           (x) => x.user_id === selection.user_id,
         )
-        if (
-          !row ||
-          !row.active ||
-          row.payout_provider !== 'wise' ||
-          row.status === 'settled' ||
-          row.currency === null ||
-          row.balance_cents === null ||
-          selection.amount_cents > row.balance_cents ||
-          row.version !== selection.expected_version
-        )
+        const advance = selection.purpose === 'advance'
+        if (selection.purpose !== undefined && !['earnings','advance'].includes(selection.purpose))
+          invalid('Choose payment of earnings or an advance deposit.')
+        if (!row || !row.active || row.payout_provider !== 'wise')
+          conflict('Choose an active person with Wise as their payment provider.')
+        let currency = row!.currency
+        if (advance) {
+          if (typeof selection.currency !== 'string' || !/^[A-Z]{3}$/u.test(selection.currency) ||
+            typeof selection.advance_reason !== 'string' || !selection.advance_reason.trim() || selection.advance_reason.length > 2000)
+            invalid('An advance requires a currency and a reason.')
+          const contractor = (await database.all<{ id: number }>(sql`SELECT id FROM users WHERE id=${selection.user_id} AND is_contractor=1 AND is_active=1`))[0]
+          if (!contractor) invalid('Advances are available only for active contractors.')
+          if (selection.advance_project_id != null && (!Number.isSafeInteger(selection.advance_project_id) || selection.advance_project_id <= 0 ||
+            (await database.all(sql`SELECT id FROM projects WHERE id=${selection.advance_project_id}`)).length === 0))
+            invalid('Choose an existing intended project or leave it blank.')
+          currency = selection.currency!
+        } else if (row!.status === 'settled' || row!.currency === null || row!.balance_cents === null ||
+          selection.amount_cents > row!.balance_cents! || row!.version !== selection.expected_version)
           conflict('The selected balance changed or is not ready for Wise. Refresh the ledger.')
         const destination = await currentDestination(selection.user_id)
         if (!destination) invalid('Set a verified Wise destination for every selected person.')
         const quote = await provider!.quote(
           destination!,
           command.source_currency,
-          row!.currency!,
+          currency!,
           selection.amount_cents,
         )
         items.push({
           ...selection,
           id: crypto.randomUUID(),
           name: row!.name,
-          currency: row!.currency,
+          currency,
           destination,
           quote,
         })

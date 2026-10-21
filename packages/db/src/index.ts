@@ -140,3 +140,5 @@ export { createMyPaymentsStore } from './my-payments.js'
 
 export * from './deel-time-sync.js'
 export * from './client-rate-cards.js'
+
+export * from './contractor-advances.js'

@@ -69,13 +69,14 @@ export const createMyPaymentsController = (api: MyPaymentsApi): MyPaymentsContro
     )
     receipts.replaceChildren(
       renderDataTable<MyPayments['payments'][number]>({
-        caption: 'Payments recorded for this month',
+        caption: 'Payments and applied credit recorded for this month',
         table: 'my-payments-recorded',
         rows: [...data.payments],
         rowKey: (payment) => `${payment.paid_on}-${payment.currency}-${payment.amount_cents}`,
         empty: 'No payments recorded for this month.',
         columns: [
-          { key: 'paid_on', label: 'Paid on', sortValue: (payment) => payment.paid_on, render: (payment) => payment.paid_on },
+          { key: 'kind', label: 'Kind', render: (payment) => payment.kind === 'credit_application' ? 'Advance credit applied (no new transfer)' : 'Payment' },
+          { key: 'paid_on', label: 'Paid / applied on', sortValue: (payment) => payment.paid_on, render: (payment) => payment.paid_on },
           {
             key: 'amount',
             label: 'Amount',
@@ -94,6 +95,9 @@ export const createMyPaymentsController = (api: MyPaymentsApi): MyPaymentsContro
         rowKey: (payment) => `${payment.scheduled_on}-${payment.currency}-${payment.amount_cents}-${payment.status}`,
         empty: 'No payments are scheduled.',
         columns: [
+          {
+            key: 'kind', label: 'Kind', render: (payment) => payment.kind === 'advance' ? 'Advance deposit' : 'Payment',
+          },
           {
             key: 'scheduled_on',
             label: 'Scheduled for',

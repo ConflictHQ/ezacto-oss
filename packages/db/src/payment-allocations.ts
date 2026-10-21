@@ -74,7 +74,7 @@ export const createPaymentAllocationStore = (
           AND NOT EXISTS(SELECT 1 FROM staff_payment_events v WHERE v.kind='void' AND json_extract(v.command_json,'$.payment_id')=e.id)
         ORDER BY e.version`),
       database.all<{ id: string; amount_cents: number; currency: string; state: string }>(sql`
-        SELECT id,amount_cents,currency,state FROM payment_run_items WHERE user_id=${user} AND month=${month}
+        SELECT id,amount_cents,currency,state FROM payment_run_items WHERE purpose='earnings' AND user_id=${user} AND month=${month}
           AND state IN ('queued','creating','funding','processing','attention','paid') ORDER BY updated_at,id`),
     ])
     return [
@@ -243,7 +243,7 @@ export const createPaymentAllocationStore = (
           FROM staff_payment_balances b JOIN users u ON u.id=b.user_id WHERE b.month=${month} ORDER BY u.first_name,u.id`),
         ledger(sql`month=${month}`),
         database.all<{ user_id: number; cents: number }>(sql`
-          SELECT user_id,COALESCE(SUM(amount_cents),0) AS cents FROM payment_run_items WHERE month=${month}
+          SELECT user_id,COALESCE(SUM(amount_cents),0) AS cents FROM payment_run_items WHERE purpose='earnings' AND month=${month}
             AND state IN ('queued','creating','funding','processing','attention') GROUP BY user_id`),
       ])
       const reservedBy = new Map(reserved.map((r) => [r.user_id, r.cents]))

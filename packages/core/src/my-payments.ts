@@ -11,11 +11,13 @@ import {
  */
 export type MyPaymentsStatus = 'pending_review' | 'in_progress' | 'pending' | 'partial' | 'paid' | 'settled'
 export interface MyPaymentReceipt {
+  kind?: 'credit_application'
   amount_cents: number
   currency: string
   paid_on: string
 }
 export interface MyUpcomingPayment {
+  kind?: 'advance'
   amount_cents: number
   currency: string
   scheduled_on: string
@@ -60,7 +62,7 @@ export const summarizeMyPayments = (
   const payments = events
     .filter((e) => e.month === month && e.kind === 'payment' && !voided.has(e.id))
     .sort((a, b) => a.version - b.version)
-    .map((e) => ({ amount_cents: e.amount_cents!, currency: e.currency!, paid_on: e.paid_on! }))
+    .map((e) => ({ amount_cents: e.amount_cents!, currency: e.currency!, paid_on: e.paid_on!, ...(e.source === 'advance_credit' ? { kind: 'credit_application' as const } : {}) }))
   const recorded = row.amount_cents !== null && row.currency !== null
   return {
     month,
@@ -71,6 +73,7 @@ export const summarizeMyPayments = (
     balance_cents: row.balance_cents,
     payments,
     upcoming: upcoming.map((u) => ({
+      ...(u.kind === 'advance' ? { kind: 'advance' as const } : {}),
       amount_cents: u.amount_cents,
       currency: u.currency,
       scheduled_on: u.scheduled_on,

@@ -1,3 +1,4 @@
+import { advanceCreditOperations, advanceCreditSchemas } from './advance-credit-contract.js'
 import { ACCOUNT_PRIVACY_FRAMEWORKS } from '@ezacto/core';
 import { scheduledRunOperations, scheduledRunSchemas } from './scheduled-run-contract.js'
 import { paymentRunOperations, paymentRunSchemas } from './payment-run-contract.js'
@@ -3631,6 +3632,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...staffPaymentOperations,
   ...deelSyncOperations,
   ...paymentRunOperations,
+  ...advanceCreditOperations,
   ...scheduledRunOperations,
   ...reportOperations,
   ...moduleSettingsOperations,
@@ -3899,6 +3901,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...staffPaymentSchemas,
   ...deelSyncSchemas,
   ...paymentRunSchemas,
+  ...advanceCreditSchemas,
   ...scheduledRunSchemas,
   InvoiceReminderPolicy: {
     type: "object",
