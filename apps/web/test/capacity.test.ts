@@ -117,3 +117,19 @@ describe('capacity screen (issue 1007)', () => {
     expect(getCapacity).not.toHaveBeenCalled()
   })
 })
+
+
+it('[browser #852] sorts people by planned seconds without moving week columns', async () => {
+  document.body.innerHTML = renderCapacityPage('capacity')
+  const first = report.people[0]!
+  const people = [first, { ...first, user_id: 2, first_name: 'Amy', weeks: first.weeks.map(week => ({ ...week, planned_seconds: hours(9) })) }]
+  await createCapacityController({ getCapacity: async () => ({ data: { ...report, people } }) }).activate(new AbortController().signal)
+  const ids = () => [...document.querySelectorAll('[data-capacity-grid] tbody tr[data-row-key]')].map(row => row.getAttribute('data-row-key'))
+  const heading = () => document.querySelector<HTMLButtonElement>('[data-capacity-grid] button[data-sort-column="week-2026-10-05"]')!
+  expect(ids()).toEqual(['2', '1'])
+  heading().click()
+  expect(ids()).toEqual(['2', '1'])
+  heading().click()
+  expect(ids()).toEqual(['1', '2'])
+  expect([...document.querySelectorAll('[data-capacity-grid] thead th')].map(th => th.getAttribute('data-column'))).toEqual(['person', 'week-2026-10-05', 'week-2026-10-12'])
+})

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("[e2e:table-sort #852] keyboard sorting survives reload and navigation with natural estimate numbers", async ({
+test("[e2e:table-sort #852] keyboard sorting preserves client hierarchy and remembers natural estimate numbers", async ({
   page,
 }) => {
   const fixtureEmail = process.env.EZACTO_BROWSER_FIXTURE_EMAIL!;
@@ -68,4 +68,46 @@ test("[e2e:table-sort #852] keyboard sorting survives reload and navigation with
   ).toBeVisible();
   await page.goto("/invoices/estimates");
   await expect(numbers).toHaveText(["EST-1315", "EST-10", "EST-9"]);
+
+  const clients = [
+    { id: 10, name: "Root 10", parent_client_id: null },
+    { id: 20, name: "Root 9", parent_client_id: null },
+    { id: 11, name: "Unit 10", parent_client_id: 10 },
+    { id: 12, name: "Unit 9", parent_client_id: 10 },
+  ].map((client) => ({ ...client, is_active: true, bill_to_client_id: null }));
+  for (const path of ["**/api/v1/clients", "**/api/v1/clients?*"])
+    await page.route(path, (route) =>
+      route.fulfill({ json: { data: clients, page: { next_cursor: null } } }),
+    );
+  await page.goto("/clients");
+  const clientNames = page.locator(
+    '[data-client-tree] tbody [data-column="client"] a',
+  );
+  const clientHeader = () =>
+    page.locator('[data-client-tree] button[data-sort-column="client"]');
+  await expect(clientNames).toHaveText([
+    "Root 9",
+    "Root 10",
+    "Unit 9",
+    "Unit 10",
+  ]);
+  await clientHeader().focus();
+  await page.keyboard.press("Enter");
+  await expect(clientNames).toHaveText([
+    "Root 10",
+    "Unit 10",
+    "Unit 9",
+    "Root 9",
+  ]);
+  await expect(clientHeader()).toBeFocused();
+  await expect(
+    page.locator('[data-client-tree] [data-row-key="11"] .client-tree-name'),
+  ).toHaveCSS("padding-inline-start", "16px");
+  await page.reload();
+  await expect(clientNames).toHaveText([
+    "Root 10",
+    "Unit 10",
+    "Unit 9",
+    "Root 9",
+  ]);
 });

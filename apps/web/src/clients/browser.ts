@@ -1,3 +1,4 @@
+import { focusSortHeader, rememberedSort, resolveSort, sortRows, type TableSort } from '../components/table-sort.js'
 import { renderDataTable } from '../components/data-table.js'
 import { markMoney } from '../money-display.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
@@ -275,6 +276,7 @@ export const createClientDirectoryController = (
   detailPageElement.hidden = !detailPage
 
   let session: ActiveSession | null = null
+  let clientSort: TableSort | null = null
   let clients: readonly GeneralResource[] = []
   let contacts: readonly GeneralResource[] = []
   let projects: readonly GeneralResource[] = []
@@ -410,16 +412,34 @@ export const createClientDirectoryController = (
       listStatus.textContent = empty.textContent
       return
     }
-    const rows = clientHierarchy(visible)
+    const sort = resolveSort([clientSort, rememberedSort('clients')],
+      column => ['client', 'parent', 'bill-to'].includes(column),
+      { column: 'client', direction: 'ascending' })!
+    const relation = (client: GeneralResource, field: string): string | null => {
+      const id = clientNumber(client, field)
+      return id === null ? null : relationLabel(id, clients)
+    }
+    const ordered = sortRows(visible, client => sort.column === 'client'
+      ? clientDisplayName(client)
+      : relation(client, sort.column === 'parent' ? 'parent_client_id' : 'bill_to_client_id'), sort.direction)
+    const positions = new Map(ordered.map((client, index) => [client.id, index]))
+    // Only siblings trade places. A child always remains under its parent.
+    const rows = clientHierarchy(visible, (a, b) => positions.get(a.id)! - positions.get(b.id)!)
     tree.replaceChildren(
       renderDataTable<{ client: GeneralResource; depth: number }>({
         caption: 'Clients',
+        table: 'clients',
+        sort,
+        serverSort: true,
+        onSort: next => { clientSort = next; renderTree(); focusSortHeader(tree, next.column) },
         rows,
         rowKey: ({ client }) => String(client.id),
         columns: [
           {
             key: 'client',
             label: 'Client',
+            sortValue: ({ client }) => clientDisplayName(client),
+            sortDescription: 'Sort siblings; children stay under their parent',
             render: ({ client, depth }) => {
               const cell = document.createElement('div')
               cell.className = 'client-tree-name'
@@ -441,6 +461,7 @@ export const createClientDirectoryController = (
           {
             key: 'parent',
             label: 'Worked-for parent',
+            sortValue: ({ client }) => relation(client, 'parent_client_id'),
             render: ({ client }) => {
               const parentId = clientNumber(client, 'parent_client_id')
               return parentId === null
@@ -451,6 +472,7 @@ export const createClientDirectoryController = (
           {
             key: 'bill-to',
             label: 'Bill-to client',
+            sortValue: ({ client }) => relation(client, 'bill_to_client_id'),
             render: ({ client }) => {
               const billToId = clientNumber(client, 'bill_to_client_id')
               return billToId === null
@@ -1601,6 +1623,7 @@ export const createClientDirectoryController = (
 
   return {
     async activate(identity, signal, onSessionFailure) {
+      if (session?.identity.user_id !== identity.user_id) clientSort = null
       const active: ActiveSession = {
         identity,
         signal,

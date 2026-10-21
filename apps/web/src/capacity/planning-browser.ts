@@ -205,6 +205,7 @@ export const createPlanningEntry = (
     query<HTMLElement>("[data-planning-allocations]").replaceChildren(
       renderDataTable<AllocationRow>({
         caption: "Allocations in these weeks",
+        table: "capacity-allocations",
         rows: [...allocations],
         rowKey: (row) => String(row.id),
         empty: "No allocations in these weeks.",
@@ -212,21 +213,25 @@ export const createPlanningEntry = (
           {
             key: "person",
             label: "Person",
+            sortValue: (row) => personName(row.user_id),
             render: (row) => personName(row.user_id),
           },
           {
             key: "project",
             label: "Project",
+            sortValue: (row) => projectName(row.project_id),
             render: (row) => projectName(row.project_id),
           },
           {
             key: "dates",
             label: "Dates",
+            sortValue: (row) => [row.start_date, row.end_date],
             render: (row) => span(row.start_date, row.end_date),
           },
           {
             key: "hours",
             label: "Planned",
+            sortValue: (row) => row.planned_seconds_per_week,
             render: (row) =>
               `${hoursText(row.planned_seconds_per_week)} per week`,
           },
@@ -263,6 +268,7 @@ export const createPlanningEntry = (
     query<HTMLElement>("[data-planning-timeoff]").replaceChildren(
       renderDataTable<TimeOffRow>({
         caption: "Time off in these weeks",
+        table: "capacity-time-off",
         rows: [...timeOff],
         rowKey: (row) => String(row.id),
         empty: "No time off in these weeks.",
@@ -270,17 +276,20 @@ export const createPlanningEntry = (
           {
             key: "person",
             label: "Person",
+            sortValue: (row) => personName(row.user_id),
             render: (row) => personName(row.user_id),
           },
-          { key: "kind", label: "Kind", render: (row) => kindLabel[row.kind] },
+          { key: "kind", label: "Kind", sortValue: (row) => kindLabel[row.kind], render: (row) => kindLabel[row.kind] },
           {
             key: "dates",
             label: "Dates",
+            sortValue: (row) => [row.start_date, row.end_date],
             render: (row) => span(row.start_date, row.end_date),
           },
           {
             key: "hours",
             label: "Away",
+            sortValue: (row) => row.seconds_per_day,
             render: (row) =>
               row.seconds_per_day === null
                 ? "Whole days"

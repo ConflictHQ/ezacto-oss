@@ -8,6 +8,7 @@ import {
   type Retainer,
   type Whoami,
 } from '@conflict-hq/ezacto-client'
+import { setSortPreferenceOwner } from '../src/components/table-sort.js'
 import { describe, expect, it, vi } from 'vitest'
 import { createClientDirectoryController } from '../src/clients/browser.js'
 import type { ClientDirectoryApi, ClientInvoiceSending } from '../src/clients/model.js'
@@ -589,6 +590,9 @@ describe('Clients V1 browser controller', () => {
 
   it('[browser #486] says the archive is empty rather than that the directory is', async () => {
     writeDocument('client-list', '/clients')
+    const shell = document.querySelector<HTMLElement>('[data-authenticated-shell]')!
+    shell.inert = false
+    shell.hidden = false
     await createClientDirectoryController({
       listDirectoryClients: vi.fn(async () => page([parent, child])),
     }).activate(
@@ -1450,4 +1454,33 @@ describe('a client’s invoice sending', () => {
     expect(to().value).toBe('')
     expect(cc().value).toBe('')
   })
+})
+
+
+it('[browser #852] sorts siblings naturally and retains hierarchy, focus and person-specific memory', async () => {
+  const clients = [parent, { ...child, name: 'Unit 10' }, { ...child, id: 12, name: 'Unit 9' }, { ...parent, id: 20, name: 'Other root' }]
+  const mount = async (userId: number) => {
+    setSortPreferenceOwner(userId)
+    writeDocument('client-list', '/clients')
+    const shell = document.querySelector<HTMLElement>('[data-authenticated-shell]')!
+    shell.inert = false
+    shell.hidden = false
+    await createClientDirectoryController({ listDirectoryClients: async () => page(clients) })
+      .activate({ ...administrator, user_id: userId }, new AbortController().signal, () => false)
+  }
+  const ids = () => [...document.querySelectorAll('[data-client-tree] tbody tr[data-row-key]')].map(row => row.getAttribute('data-row-key'))
+  const header = () => document.querySelector<HTMLButtonElement>('[data-client-tree] button[data-sort-column="client"]')!
+  try {
+    await mount(1)
+    expect(ids()).toEqual(['20', '10', '12', '11'])
+    header().click()
+    expect(ids()).toEqual(['10', '11', '12', '20'])
+    expect(document.activeElement === header()).toBe(true)
+    expect(header().closest('th')?.getAttribute('aria-sort')).toBe('descending')
+    expect(document.querySelector('[data-client-tree] [data-row-key="11"] .client-tree-name')?.getAttribute('style')).toContain('16px')
+    await mount(1)
+    expect(ids()).toEqual(['10', '11', '12', '20'])
+    await mount(2)
+    expect(ids()).toEqual(['20', '10', '12', '11'])
+  } finally { setSortPreferenceOwner(null); localStorage.clear() }
 })
