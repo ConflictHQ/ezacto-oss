@@ -38,3 +38,4 @@ jobs:
           path: ${{ runner.temp }}/verified-source.json
           if-no-files-found: error
           retention-days: 90
+          overwrite: true
