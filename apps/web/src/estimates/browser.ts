@@ -119,6 +119,7 @@ export const createEstimateWorkspaceController = (
     list.replaceChildren(
       renderDataTable<Estimate>({
         caption: 'Estimates',
+        table: 'estimates',
         rows,
         rowKey: (estimate) => String(estimate.id),
         empty:

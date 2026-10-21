@@ -460,6 +460,7 @@ export const createRecurringWorkspaceController = (
     list.replaceChildren(
       renderDataTable<RecurringInvoice>({
         caption: 'Recurring invoices',
+        table: 'recurring-invoices',
         rows,
         rowKey: (definition) => String(definition.id),
         groupBy: (definition) => recurringClientLabel(definition, clients),
