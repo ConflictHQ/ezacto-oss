@@ -18,6 +18,7 @@ export const renderStaffPayments = (view?: string): string =>
         <div class="payment-tabs" role="tablist" aria-label="Payments sections" data-payment-tabs>
           ${[
             ['balances', 'Balances'],
+            ['reconcile', 'Reconcile'],
             ['actuals', 'Review actuals'],
             ['allocations', 'Allocations'],
             ['advances', 'Advances'],
@@ -72,6 +73,13 @@ export const renderStaffPayments = (view?: string): string =>
         <h3>Payment history and audit log</h3><div data-payment-history></div>
       </section>
       </div>
+      </section>
+      <section id="payment-panel-reconcile" role="tabpanel" aria-labelledby="payment-tab-reconcile" data-payment-panel="reconcile" data-contractor-review hidden>
+        <h2>Reconcile contractor payments</h2>
+        <p>Review hours, invoices, receipts and advance credit together. Proposed allocations and credits have not been recorded. Confirm changes in the related section, then reload this review before preparing a payment.</p>
+        <button type="button" data-contractor-review-load disabled>Load reconciliation for work month</button>
+        <p role="status" aria-live="polite" data-contractor-review-status></p>
+        <div data-contractor-review-content></div>
       </section>
       <section id="payment-panel-actuals" role="tabpanel" aria-labelledby="payment-tab-actuals" data-payment-panel="actuals" data-payment-actuals hidden>
         <h2>Review contractor actuals</h2>

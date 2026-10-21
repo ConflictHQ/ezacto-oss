@@ -328,6 +328,16 @@ and respect intended work month. Project-specific or differently intended advanc
 remain visible for explicit target review. The remaining-to-pay figure never
 assumes that a proposal has already executed. Unknown balances remain unknown.
 
+On **Payments → Reconcile**, load the selected work month to review one row per
+person/currency. The sortable summary separates recorded earnings, hours-based
+earnings, paid/reserved amounts, current payable and the projected balance after
+proposed credits. Expand a person for review reasons, captured hours, invoice
+versions/documents, receipts, recorded allocations, advance intent and payment
+attempts. Related-section buttons lead to the existing explicit confirmation
+flows; this screen performs reads only. Refreshes/month changes clear prior
+figures before loading, stale responses are discarded and session end clears
+the evidence.
+
 ### Scheduled-action seam
 
 Reconciliation is a **proposal producer**, currently triggered by the authenticated
@@ -339,7 +349,7 @@ preview/approval, with `processDue` on the existing Worker cron/container timer.
 This slice adds no job type, scheduler, transfer executor or automatic application
 of credit. A later scheduler integration must retain that single execution seam.
 
-Remaining #902 delivery: the combined browser review/acceptance flow, durable
-idempotent application of accepted multi-step plans, the recovery controls and
-full advance → hours → invoice → partial/final payment/refund fixture. The current
-API is the read foundation, not completion of that orchestration issue.
+Remaining #902 delivery: durable review/acceptance and idempotent application of
+accepted multi-step plans, the recovery controls and full advance → hours →
+invoice → partial/final payment/refund fixture. The combined review is the read
+foundation, not completion of that orchestration issue.
