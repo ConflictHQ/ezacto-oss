@@ -167,6 +167,9 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // The migration creates this singleton with the manual default. Keeping it
   // means a demo wipe does not switch an instance's Deel sync mode or time (#1102).
   'deel_sync_settings',
+  // Source triggers update this migration-seeded singleton in place. Keep its
+  // sequence monotonic while clearing the per-person/month source versions.
+  'contractor_source_clock',
 ])
 
 /**
@@ -212,6 +215,8 @@ const wipeStatements = (objects: DemoSchemaObjects): readonly DemoSeedStatement[
   // Authority changed while its triggers were lifted. Advance the preserved
   // revision in the wipe transaction, even if bootstrap/seed never resumes.
   { text: 'UPDATE idempotency_authorization SET revision = revision + 1 WHERE id = 1', bindings: [] },
+  { text: 'UPDATE contractor_source_clock SET revision = revision + 1 WHERE id = 1', bindings: [] },
+  { text: "INSERT INTO contractor_source_versions(scope,revision) SELECT 'all',revision FROM contractor_source_clock WHERE id=1 ON CONFLICT(scope) DO UPDATE SET revision=excluded.revision", bindings: [] },
   // Preserved, but not carried over either: a template version records who
   // saved it, and that person was a row in `users`, which this wipe has just
   // emptied. Deferred, the foreign key bites at commit and D1 rolls the whole
