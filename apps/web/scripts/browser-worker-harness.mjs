@@ -157,6 +157,8 @@ const run = async (statement, ...bindings) => {
   await database.prepare(statement).bind(...bindings).run()
 }
 
+let rateCardFixture = null
+
 const rows = async (statement, ...bindings) =>
   (await database.prepare(statement).bind(...bindings).all()).results
 
@@ -564,7 +566,51 @@ const fixtureControl = async (request, response) => {
     response.end()
     return
   }
-  if (action === 'portal-estimate-seed') {
+  if (action === 'rate-card-seed') {
+    if (rateCardFixture !== null) throw new Error('rate card fixture already active')
+    const client = await database.prepare(
+      `INSERT INTO clients(name,currency,created_at,updated_at)
+       VALUES('Browser Rate Card Client','USD',?,?) RETURNING id`,
+    ).bind(timestamp,timestamp).first()
+    const project = await database.prepare(
+      `INSERT INTO projects(client_id,name,bill_by,created_at,updated_at)
+       VALUES(?,'Browser Rate Card Project','people',?,?) RETURNING id`,
+    ).bind(client.id,timestamp,timestamp).first()
+    const userAssignment = await database.prepare(
+      `INSERT INTO user_assignments(project_id,user_id,use_default_rates,created_at,updated_at)
+       VALUES(?,1,1,?,?) RETURNING id`,
+    ).bind(project.id,timestamp,timestamp).first()
+    const taskAssignment = await database.prepare(
+      `INSERT INTO task_assignments(project_id,task_id,billable,created_at,updated_at)
+       VALUES(?,1,1,?,?) RETURNING id`,
+    ).bind(project.id,timestamp,timestamp).first()
+    const entry = await database.prepare(
+      `INSERT INTO time_entries(user_id,project_id,task_id,user_assignment_id,task_assignment_id,
+        spent_date,seconds,seconds_without_timer,rounded_seconds,billable,
+        billable_rate_cents,cost_rate_cents,notes,created_at,updated_at)
+       VALUES(1,?,1,?,?,?,1800,1800,1800,1,10000,5000,'Browser rate card snapshot',?,?)
+       RETURNING id`,
+    ).bind(project.id,userAssignment.id,taskAssignment.id,spentDate,timestamp,timestamp).first()
+    rateCardFixture = { clientId: client.id, projectId: project.id, entryId: entry.id }
+    await run(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`)
+    response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
+    response.end(JSON.stringify(rateCardFixture))
+    return
+  } else if (action === 'rate-card-cleanup') {
+    if (rateCardFixture !== null) {
+      const { clientId, projectId, entryId } = rateCardFixture
+      // Keep the immutable card/version history on its archived client. Only
+      // this fixture's stopped, uninvoiced work can be removed.
+      await run(`DELETE FROM time_entries WHERE id=? AND project_id=? AND invoice_id IS NULL
+        AND timer_started_at IS NULL AND notes='Browser rate card snapshot'`,entryId,projectId)
+      await run(`UPDATE projects SET is_active=0 WHERE id=? AND client_id=?`,projectId,clientId)
+      await run(`UPDATE clients SET is_active=0 WHERE id=? AND name='Browser Rate Card Client'`,clientId)
+      if ((await rows('SELECT id FROM time_entries WHERE id=?',entryId)).length !== 0) {
+        throw new Error('rate card fixture left work behind')
+      }
+      rateCardFixture = null
+    }
+  } else if (action === 'portal-estimate-seed') {
     const instant = new Date().toISOString()
     await database.batch([
       database.prepare("INSERT INTO clients(id,name,currency,created_at,updated_at) VALUES(120001,'Estimate Contact Fixture','USD',?,?)").bind(instant,instant),

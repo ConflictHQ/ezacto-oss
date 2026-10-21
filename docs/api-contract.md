@@ -230,6 +230,14 @@ A card prices only projects billed by people that use default rates, applies to
 work resolved after it is written, and never changes an existing entry, snapshot
 or invoice.
 
+The client detail page exposes the card, its version history, a task/default-rate
+editor, and a dated preview naming the supplying worked-for ancestor. Publish a
+new version to change rates; for the first version only, an empty date covers all
+prior work dates. Retirement is explicit and publishes an empty version from the
+chosen date. The preview shows the matching card, while a person's assignment
+override still takes precedence when an actual entry is priced. Archived clients
+remain readable without publishing new versions from the page.
+
 General-resource commercial fields are classified in `@ezacto/core`:
 client payment terms/tax/discount defaults, project billing method/bill-by/currency,
 and contact invoice-recipient routing. Finance, executive, administrator, and
