@@ -5,7 +5,7 @@ import {
   type EmailSuppressionRecord,
   type EmailSuppressionLift,
   type EmailSuppressionReason,
-} from '@ezacto/mailer/suppressions'
+} from '@ezacto/core'
 interface Portable {
   all<T>(query: string, bindings?: readonly unknown[]): Promise<T[]>
 }
