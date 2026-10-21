@@ -29,6 +29,8 @@ const present = (run: ProposedRunRecord, items: readonly RunItemRecord[]): Sched
     amount_cents: item.amountCents,
     currency: item.currency,
     target: item.target,
+    quantity_seconds: item.quantitySeconds,
+    client_name: item.clientName,
     state: item.state,
     attempt_count: item.attemptCount,
     failure_reason: item.failureReason,

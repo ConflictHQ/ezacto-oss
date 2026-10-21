@@ -235,6 +235,16 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
         Sentry.captureException(error)
       }
     }
+    if (controller.cron === '* * * * *' && services.scheduledJobProposals !== undefined) {
+      try {
+        const result = await services.scheduledJobProposals.processDue(new Date().toISOString())
+        for (const failure of result.failed)
+          console.error('[worker] scheduled job proposal failed', failure.jobId, failure.message)
+      } catch (error) {
+        console.error('[worker] scheduled job proposal sweep failed', error)
+        Sentry.captureException(error)
+      }
+    }
     if (controller.cron === '* * * * *' && services.scheduledActionExpiry !== undefined) {
       // Proposed month-end runs past their deadline (issue 63). The sweep
       // reports its own failure, so it never stops the drain below.

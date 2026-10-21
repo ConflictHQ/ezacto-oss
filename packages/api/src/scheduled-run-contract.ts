@@ -18,6 +18,8 @@ export const scheduledRunSchemas = {
     amount_cents: nullable(n),
     currency: nullable(s),
     target: nullable(s),
+    quantity_seconds: nullable({type:"integer",minimum:0}),
+    client_name: nullable(s),
     state: {
       type: "string",
       enum: ["pending", "running", "done", "failed"],

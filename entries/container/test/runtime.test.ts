@@ -1,3 +1,6 @@
+import { createContainerSessionStore } from '../../../packages/db/src/sessions.js'
+import { scheduledJobConfig } from '@ezacto/core'
+import { seedMonthEndJobFixture } from '../../../packages/db/test/support/month-end-job-fixture.js'
 import { createContainerEmailFeedbackLedger } from '@ezacto/db'
 import { createContainerDatabase } from '@ezacto/db'
 import { createTimesheetApprovalRepository } from '../../../packages/db/src/timesheet-approvals.js'
@@ -885,6 +888,86 @@ VALUES(1,'Admin','Reviewer','administrator','[]',?,?)`,
     // Lifting does not silently retry the refused job.
     expect(await log.list({ status: 'failed' })).toHaveLength(1)
   } finally {
+    await runtime.close()
+  }
+})
+
+
+it('[integration #63] the container maintenance tick materializes due jobs once without executing them', async () => {
+  const root = await temporary(),
+    captured: EmailMessage[] = []
+  vi.useFakeTimers({ toFake: ['Date'] })
+  const at = Date.parse('2026-10-15T12:00:00.000Z')
+  vi.setSystemTime(at)
+  const configuration = config(root)
+  const runtime = await createContainerRuntime(configuration, { emailProvider: provider(captured) })
+  try {
+    await runtime.drainOutbox()
+    const now = new Date(),
+      period = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0))
+        .toISOString()
+        .slice(0, 7)
+    await seedMonthEndJobFixture(
+      createContainerDatabase(runtime.database),
+      period,
+      now.toISOString(),
+    )
+    const service = runtime.services.scheduledJobs!
+    const session = await createContainerSessionStore(runtime.database).issue(1)
+    const app = createApp(runtime.services, runtime.brandAssets, runtime.instanceTheme)
+    const headers = {
+      'content-type': 'application/json',
+      origin: configuration.appBaseUrl,
+      cookie: `__Host-ezacto_session=${session.token}`,
+    }
+    const created = await app.request(
+      `${configuration.appBaseUrl}/api/v1/scheduled-jobs`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(
+          scheduledJobConfig({
+            name: 'Monthly A',
+            cadence: '0 0 1 * *',
+            scope: { client_ids: [1] },
+          }),
+        ),
+      },
+      configuration.appEnv,
+    )
+    expect(created.status).toBe(201)
+    expect(await created.json()).toMatchObject({ data: { id: 1, version: 0, created_by: 1 } })
+    vi.setSystemTime(at + 120000)
+    await runtime.drainOutbox()
+    vi.setSystemTime(at + 240000)
+    await runtime.drainOutbox()
+    expect(
+      runtime.database
+        .prepare('SELECT job_id,occurrence_key,state,confirmed_by_user_id FROM proposed_runs')
+        .all(),
+    ).toEqual([
+      { job_id: 1, occurrence_key: period, state: 'proposed', confirmed_by_user_id: null },
+    ])
+    expect(
+      runtime.database.prepare('SELECT target,state,attempt_count FROM run_items').all(),
+    ).toEqual([{ target: 'a@example.test', state: 'pending', attempt_count: 0 }])
+    expect(captured).toHaveLength(0)
+    const paused = await app.request(
+      `${configuration.appBaseUrl}/api/v1/scheduled-jobs/1`,
+      { method: 'PATCH', headers, body: JSON.stringify({ expected_version: 0, is_active: false }) },
+      configuration.appEnv,
+    )
+    expect(paused.status).toBe(200)
+    expect(await paused.json()).toMatchObject({ data: { version: 1, is_active: false } })
+    vi.setSystemTime(Date.parse('2026-11-15T12:00:00.000Z'))
+    await runtime.drainOutbox()
+    expect(runtime.database.prepare('SELECT state FROM proposed_runs').all()).toEqual([
+      { state: 'expired' },
+    ])
+    expect((await service.read(1))?.last_checked_at).toBeNull()
+    expect(captured).toHaveLength(0)
+  } finally {
+    vi.useRealTimers()
     await runtime.close()
   }
 })

@@ -2,10 +2,10 @@ import type { ReminderProcessOptions, ReminderProcessSummary } from '@ezacto/db/
 import { appleWebConfiguration } from './apple-web.js'
 import { aggregateAppleCleanup, type AppleCleanupPort, type AppleLifecycleStore, type AppleWebCleanupPort } from '@ezacto/core'
 import type { AccountDeletionStore, AccountClosureStore, AccountRetentionReviewStore, AccountDeletionStatusStore } from '@ezacto/core'
-import type { PaymentRunsService, ScheduledRunsService } from '@ezacto/core'
+import type { PaymentRunsService, ScheduledRunsService, ScheduledJobsService } from '@ezacto/core'
 import { workItemProviders, type WorkItemProviderId } from '@ezacto/core'
 import { installContractorReviewRoutes, installStaffInvoiceRoutes, installPaymentRunRoutes } from '@ezacto/api'
-import { installScheduledRunRoutes } from '@ezacto/api'
+import { installScheduledRunRoutes, installScheduledJobRoutes } from '@ezacto/api'
 import { installDeelSyncRoutes, installStaffPaymentRoutes, type DeelSyncApiDependencies } from '@ezacto/api'
 import type { ContractorReviewStore, StaffPaymentStore } from '@ezacto/core'
 import { installMyPaymentRoutes } from '@ezacto/api'
@@ -606,6 +606,10 @@ export interface RuntimeServices {
    */
   /** Administrator payment register, available without provider credentials. */
   paymentRuns?: PaymentRunsService
+  scheduledJobs?: ScheduledJobsService
+  scheduledJobProposals?: {
+    processDue(now: string): Promise<{ failed: readonly { jobId: number; message: string }[] }>
+  }
   scheduledRuns?: ScheduledRunsService
   contractorReview?: ContractorReviewStore
   staffPayments?: StaffPaymentStore
@@ -916,6 +920,8 @@ export const createApp = (
               if (services.paymentRuns.invoices) installStaffInvoiceRoutes(api, services.paymentRuns.invoices, services.attachments?.objects)
             }
             if (services.contractorReview !== undefined) installContractorReviewRoutes(api, services.contractorReview)
+            if (services.scheduledJobs !== undefined)
+              installScheduledJobRoutes(api, services.scheduledJobs, { cursorSigningKey: services.cursorSigningKey })
             if (services.scheduledRuns !== undefined) installScheduledRunRoutes(api, services.scheduledRuns)
             if (services.staffPayments !== undefined) {
               installStaffPaymentRoutes(api, services.staffPayments)

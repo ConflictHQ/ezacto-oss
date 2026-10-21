@@ -1,3 +1,4 @@
+import { scheduledJobOperations, scheduledJobSchemas } from './scheduled-job-contract.js'
 import { contractorReviewOperations, contractorReviewSchemas } from './contractor-review-contract.js'
 import { staffInvoiceOperations, staffInvoiceSchemas } from './staff-invoice-contract.js'
 import { advanceCreditOperations, advanceCreditSchemas } from './advance-credit-contract.js'
@@ -3650,6 +3651,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...staffInvoiceOperations,
   ...contractorReviewOperations,
   ...scheduledRunOperations,
+  ...scheduledJobOperations,
   ...reportOperations,
   ...moduleSettingsOperations,
   ...signInMethodOperations,
@@ -3921,6 +3923,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...staffInvoiceSchemas,
   ...contractorReviewSchemas,
   ...scheduledRunSchemas,
+  ...scheduledJobSchemas,
   InvoiceReminderPolicy: {
     type: "object",
     required: ["first_after_days", "every_days"],

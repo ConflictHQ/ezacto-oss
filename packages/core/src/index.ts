@@ -1,3 +1,4 @@
+export * from './scheduled-jobs.js'
 export * from './email-suppressions.js'
 export * from './allocation.js'
 export * from './api-authorization.js'

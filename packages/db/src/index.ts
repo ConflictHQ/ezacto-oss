@@ -1,3 +1,4 @@
+export { createScheduledJobsService, proposeDueScheduledJobs } from './scheduled-jobs.js'
 export * from './adapters.js'
 export * from './backup.js'
 export * from './backup-archive.js'

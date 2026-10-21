@@ -153,6 +153,7 @@ export interface ScheduledActionStore {
    */
   propose(input: {
     jobId: number
+    expectedJobVersion?: number
     occurrenceKey: string
     items: readonly RunItemInput[]
     proposedAt: string
@@ -212,11 +213,12 @@ export const createScheduledActionStore = (database: Database): ScheduledActionS
     // The unique occurrence is also the arbiter for overlapping scheduler ticks.
     const inserted = await database.all<RunRow>(sql`
       INSERT INTO proposed_runs
-        (job_id, occurrence_key, state, proposed_at, expires_at, created_at, updated_at, proposal_manifest_json)
+        (job_id, occurrence_key, state, proposed_at, expires_at, created_at, updated_at, proposal_manifest_json, job_version)
       SELECT job.id, ${input.occurrenceKey}, 'proposed', ${input.proposedAt}, ${input.expiresAt},
-        ${input.proposedAt}, ${input.proposedAt}, ${JSON.stringify(input.items)}
+        ${input.proposedAt}, ${input.proposedAt}, ${JSON.stringify(input.items)}, job.version
       FROM scheduled_jobs job
       WHERE job.id=${input.jobId} AND job.is_active=1
+        AND (${input.expectedJobVersion ?? null} IS NULL OR job.version=${input.expectedJobVersion ?? null})
       ON CONFLICT(job_id,occurrence_key) DO NOTHING
       RETURNING ${sql.raw(columns)}`)
     const row = inserted[0]

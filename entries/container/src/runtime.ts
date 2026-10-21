@@ -2,7 +2,7 @@ import { createContainerEmailSuppressionStore } from '@ezacto/db'
 import type { ReminderProcessOptions } from '@ezacto/db'
 import { createRuntimeAppleWeb } from '../../worker/src/apple-web.js'
 import { createContainerAppleWebCustodyStore } from '@ezacto/db'
-import { createPaymentRunsService, createScheduledRunsService } from '@ezacto/db'
+import { createPaymentRunsService, createScheduledRunsService, createScheduledJobsService, proposeDueScheduledJobs } from '@ezacto/db'
 import { createContainerBrandAssetStore, createContainerInstanceThemeStore } from '@ezacto/db'
 import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createContractorReviewStore, createStaffPaymentStore } from '@ezacto/db'
@@ -797,6 +797,13 @@ export const createContainerRuntime = async (
       } catch (error) {
         console.error('[container] automatic approval sweep failed', error)
       }
+      try {
+        const result = await proposeDueScheduledJobs(drizzle, now)
+        for (const failure of result.failed)
+          console.error('[container] scheduled job proposal failed', failure.jobId, failure.message)
+      } catch (error) {
+        console.error('[container] scheduled job proposal sweep failed', error)
+      }
       // Proposed month-end runs past their deadline (issue 63); reports its
       // own failure and never stops the drain.
       await sweepExpiredRuns(createScheduledActionStore(drizzle), now, (error) => {
@@ -908,6 +915,8 @@ export const createContainerRuntime = async (
       ...(wise === null ? {} : { wise: wise.service }),
       ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
       paymentRuns,
+      scheduledJobs: createScheduledJobsService(drizzle),
+      scheduledJobProposals: { processDue: (now: string) => proposeDueScheduledJobs(drizzle, now) },
       scheduledRuns: createScheduledRunsService(drizzle),
       staffPayments: createStaffPaymentStore(drizzle),
       contractorReview: createContractorReviewStore(drizzle),
