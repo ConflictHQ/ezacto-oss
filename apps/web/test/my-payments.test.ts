@@ -127,3 +127,39 @@ describe('my payments screen (issue 100)', () => {
     expect(getMyPayments).not.toHaveBeenCalled()
   })
 })
+
+
+describe('own payment request ordering', () => {
+  it('clears a previous month while loading and ignores an older failure', async () => {
+    mount()
+    const pending = Promise.withResolvers<{ data: MyPayments }>()
+    const getMyPayments = vi.fn().mockResolvedValueOnce({ data: recorded })
+      .mockReturnValueOnce(pending.promise).mockResolvedValueOnce({ data: unrecorded })
+    await createMyPaymentsController({ getMyPayments }).activate(new AbortController().signal)
+    const month = document.querySelector<HTMLInputElement>('[data-my-payments-month]')!
+    month.value = '2026-07'
+    month.dispatchEvent(new Event('change'))
+    expect(text('[data-my-payments-summary]')).toBe('')
+    expect(document.querySelector<HTMLElement>('[data-my-payments-content]')!.hidden).toBe(true)
+    month.value = '2026-09'
+    month.dispatchEvent(new Event('change'))
+    await vi.waitFor(() => expect(text('[data-my-payments-summary]')).toContain('Pending review'))
+    pending.reject(new EzactoApiError(503, {}, 'old'))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(text('[data-my-payments-summary]')).toContain('Pending review')
+    expect(text('[data-my-payments-status]')).toBe('')
+  })
+
+  it('keeps the newest refresh when earlier responses arrive last for the same month', async () => {
+    mount()
+    const pending = Promise.withResolvers<{ data: MyPayments }>()
+    const getMyPayments = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValueOnce({ data: recorded })
+    const first = createMyPaymentsController({ getMyPayments }).activate(new AbortController().signal)
+    document.querySelector<HTMLButtonElement>('[data-my-payments-refresh]')!.click()
+    await vi.waitFor(() => expect(text('[data-my-payments-summary]')).toContain('USD 100.00'))
+    pending.resolve({ data: unrecorded })
+    await first
+    expect(text('[data-my-payments-summary]')).toContain('USD 100.00')
+    expect(text('[data-my-payments-summary]')).not.toContain('Pending review')
+  })
+})
