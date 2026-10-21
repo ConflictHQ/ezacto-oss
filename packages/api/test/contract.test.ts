@@ -383,7 +383,7 @@ const documentedApp = () =>
         setOrganizationJournalFormats: async () => undefined,
       } as never);
       installInvoiceHoursReportRoutes(api, { readHoursReport: async () => null });
-      installInvoiceHoursReconciliationRoutes(api, { readHoursReconciliation: async () => null });
+      installInvoiceHoursReconciliationRoutes(api, { readHoursReconciliation: async () => null, releaseLineTime: unavailable });
       installInvoiceSendingRoutes(api, {
         service: {
           emailDefaults: async () => null,

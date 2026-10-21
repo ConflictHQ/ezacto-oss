@@ -91,6 +91,7 @@ import {
   setOrganizationJournalPolicy,
   readInvoiceHoursReport,
   readInvoiceHoursReconciliation,
+  releaseInvoiceLineTime,
   readJournalFormatsPreference,
   readOrganizationJournalFormats,
   setInvoiceJournalFormats,
@@ -1000,7 +1001,8 @@ export const createContainerRuntime = async (
       },
       // Billed hours against the entries the invoice claims (issue 924).
       invoiceHoursReconciliation: {
-        readHoursReconciliation: (invoiceId: number) =>
+        releaseLineTime: (command, actorUserId, now) => releaseInvoiceLineTime(drizzle, command, actorUserId, now),
+      readHoursReconciliation: (invoiceId: number) =>
           readInvoiceHoursReconciliation(drizzle, invoiceId),
       },
       // Suppressing the thank-you for one invoice (issue 545), which is the

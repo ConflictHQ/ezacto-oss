@@ -359,6 +359,7 @@ const notice = (): unknown =>
 
 const hoursReview = (): InvoiceHoursReconciliationEnvelope['data'] => ({
   invoice_id: 7,
+  hours_version: 'a'.repeat(64),
   invoice_version: 1,
   invoice_state: 'draft',
   linked_seconds: 7200,
@@ -401,13 +402,30 @@ const hoursReview = (): InvoiceHoursReconciliationEnvelope['data'] => ({
       spent_date: '2026-08-01',
       project_id: 1,
       project_name: 'Platform',
-      seconds: 7200,
+      seconds: 7200, eligible_for_release: true,
     },
   ],
 })
 
 describe('invoice edit page', () => {
   afterEach(() => vi.unstubAllGlobals())
+
+  it('saves a quantity and stays in the editor for explicit time selection without releasing anything automatically',async()=>{
+    const backend=server(invoice({state:'draft',sent_at:null})),release=vi.fn()
+    const read=vi.fn(async()=>{
+      const current=backend.current(),seconds=Math.round(current.line_items[0]!.quantity*3600),difference=seconds-7200
+      return {...hoursReview(),invoice_version:current.version,hours_version:'a'.repeat(63)+String(current.version),invoice_state:'draft',billed_seconds:seconds,difference_seconds:difference,status:difference<0?'billed_below_linked' as const:'matched' as const,has_mismatch:difference!==0,lines:[{...hoursReview().lines[0]!,billed_seconds:seconds,difference_seconds:difference,status:difference<0?'billed_below_linked' as const:'matched' as const}]}
+    })
+    await open({...backend.api,getInvoiceHoursReconciliation:read,releaseInvoiceLineTime:release})
+    const nav=stubNavigation()
+    type(field<HTMLInputElement>(0,'quantity'),'1.5')
+    const choose=[...document.querySelectorAll<HTMLButtonElement>('button')].find(button=>button.textContent==='Save changes and review linked time')!
+    expect(choose).toBeDefined();choose.click()
+    await vi.waitFor(()=>expect(result().textContent).toContain('Invoice saved. Choose linked time'))
+    expect(backend.current().line_items[0]!.quantity).toBe(1.5)
+    expect(nav).not.toHaveBeenCalled();expect(release).not.toHaveBeenCalled()
+    expect(control('[data-invoice-time-release]').textContent).toContain('Choose whole entries totalling 0.50 h')
+  })
   it('shows linked vs billed hours immediately when a generated quantity is trimmed and clears them at session end', async () => {
     const { api } = server(invoice()),
       abort = new AbortController()

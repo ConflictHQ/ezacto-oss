@@ -9761,3 +9761,8 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
 }
 
 .invoice-hours-line { grid-column: 1 / -1; margin: 0; }
+
+.invoice-time-release { grid-column: 1 / -1; min-width: 0; display: grid; gap: 8px; padding: 12px; border: 1px solid var(--ez-border); }
+.invoice-time-release p { margin: 0; }
+.invoice-time-release > div { display: grid; gap: 8px; }
+.invoice-time-release label { display: flex; align-items: center; gap: 8px; }

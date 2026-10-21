@@ -2280,6 +2280,7 @@ const invoiceDocumentPreferenceOperations: ApiContractOperation[] = [
     responseSchema: "InvoiceHoursReconciliationEnvelope",
     parameters: [path("id")],
   },
+  {method:'post',path:'/api/v1/invoices/:id/hours-reconciliation/release',operationId:'releaseInvoiceLineTime',summary:'Explicitly release selected whole entries from a saved draft line to match its billed hours',tag:'money',responseStatus:200,responseSchema:'InvoiceLineTimeReleaseEnvelope',requestSchema:'InvoiceLineTimeReleaseInput',parameters:[path('id')]},
 ];
 
 const payoutAccountOperations: ApiContractOperation[] = [
@@ -10666,7 +10667,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           "tolerance_seconds",
           "projects",
           "not_compared",
-          "total_tolerance_seconds","comparison_complete","has_mismatch","invoice_version","invoice_state","not_compared_entry_ids","lines","entries",
+          "hours_version","total_tolerance_seconds","comparison_complete","has_mismatch","invoice_version","invoice_state","not_compared_entry_ids","lines","entries",
         ],
         properties: {
           invoice_id: integerSchema,
@@ -10675,12 +10676,13 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           difference_seconds: signedIntegerSchema,
           status: reconciliationStatusSchema,
           tolerance_seconds: { type: "integer", minimum: 0 },
+          hours_version:nullable({type:'string'}),
           total_tolerance_seconds:{type:'integer',minimum:0},
           comparison_complete:{type:'boolean'},has_mismatch:{type:'boolean'},
           invoice_version:nullable({type:'integer',minimum:0}),invoice_state:nullable({type:'string'}),
           not_compared_entry_ids:{type:'array',items:integerSchema},
           lines:{type:'array',items:{type:'object',required:['line_id','project_id','entry_ids','linked_seconds','billed_seconds','difference_seconds','status'],properties:{line_id:integerSchema,project_id:nullable(integerSchema),entry_ids:{type:'array',items:integerSchema},linked_seconds:signedIntegerSchema,billed_seconds:signedIntegerSchema,difference_seconds:signedIntegerSchema,status:reconciliationStatusSchema},additionalProperties:false}},
-          entries:{type:'array',items:{type:'object',required:['entry_id','user_id','user_name','spent_date','project_id','project_name','seconds'],properties:{entry_id:nullable(integerSchema),user_id:nullable(integerSchema),user_name:nullable({type:'string'}),spent_date:nullable({type:'string'}),project_id:integerSchema,project_name:nullable({type:'string'}),seconds:signedIntegerSchema},additionalProperties:false}},
+          entries:{type:'array',items:{type:'object',required:['entry_id','user_id','user_name','spent_date','project_id','project_name','seconds','eligible_for_release'],properties:{entry_id:nullable(integerSchema),user_id:nullable(integerSchema),user_name:nullable({type:'string'}),spent_date:nullable({type:'string'}),project_id:integerSchema,project_name:nullable({type:'string'}),seconds:signedIntegerSchema,eligible_for_release:{type:'boolean'}},additionalProperties:false}},
           projects: {
             type: "array",
             items: {
@@ -10727,6 +10729,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  InvoiceLineTimeReleaseInput:{type:'object',required:['command_id','line_id','expected_version','hours_version','entry_ids','confirmed'],properties:{command_id:{type:'string',pattern:'^[A-Za-z0-9_-]{1,128}$'},line_id:integerSchema,expected_version:{type:'integer',minimum:0},hours_version:{type:'string',pattern:'^[a-f0-9]{64}$'},entry_ids:{type:'array',minItems:1,maxItems:1000,items:integerSchema},confirmed:{type:'boolean',enum:[true]}},additionalProperties:false},
+  InvoiceLineTimeReleaseEnvelope:{type:'object',required:['data'],properties:{data:{type:'object',required:['command_id','invoice_id','line_id','expected_version','hours_version','released_entry_ids','released_seconds','recorded_at','replayed'],properties:{command_id:{type:'string'},invoice_id:integerSchema,line_id:integerSchema,expected_version:{type:'integer',minimum:0},hours_version:{type:'string'},released_entry_ids:{type:'array',items:integerSchema},released_seconds:signedIntegerSchema,recorded_at:{type:'string'},replayed:{type:'boolean'}},additionalProperties:false}},additionalProperties:false},
+
   ReleasedTimeEnvelope: {
     type: "object",
     required: ["data"],

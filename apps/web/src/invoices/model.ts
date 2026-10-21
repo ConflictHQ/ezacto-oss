@@ -5,6 +5,8 @@ import type {
   GeneralResource,
   Invoice,
   InvoiceHoursReconciliationEnvelope,
+  InvoiceLineTimeReleaseInput,
+  InvoiceLineTimeReleaseEnvelope,
   InvoiceEditInput,
   InvoiceEmailDeliveryInput,
   InvoiceGenerationInput,
@@ -366,10 +368,13 @@ export const invoiceAttachmentChanges = (
  * the same commands under the same keys -- and the two reads are for the
  * read-only client and the projects a line can be linked to.
  */
+export interface InvoiceTimeReleaseApi {
+  releaseInvoiceLineTime?(id:number,command:InvoiceLineTimeReleaseInput,signal?:AbortSignal):Promise<InvoiceLineTimeReleaseEnvelope['data']>
+}
 export type InvoiceHoursReview = InvoiceHoursReconciliationEnvelope['data']
 
 export interface InvoiceEditorApi
-  extends Pick<
+  extends InvoiceTimeReleaseApi, Pick<
     InvoicePaymentApi,
     | 'getInvoice'
     | 'findInvoiceByNumber'
