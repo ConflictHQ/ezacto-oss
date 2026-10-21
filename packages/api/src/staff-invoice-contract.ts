@@ -142,7 +142,7 @@ export const staffInvoiceOperations: readonly ApiContractOperation[] = [
     sessionOnly: true,
     responseStatus: 201,
     responseSchema: "StaffInvoiceDocumentEnvelope",
-    requestSchema: "AttachmentUpload",
+    requestSchema: "AttachmentUploadInput",
     requestRequired: true,
     requestContentType: "multipart/form-data",
     parameters: [

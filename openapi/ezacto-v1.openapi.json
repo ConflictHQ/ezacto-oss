@@ -18849,7 +18849,7 @@
           "content": {
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/AttachmentUpload"
+                "$ref": "#/components/schemas/AttachmentUploadInput"
               }
             }
           }
