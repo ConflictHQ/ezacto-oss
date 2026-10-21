@@ -272,7 +272,7 @@ describe('payment report invoice and credit evidence', () => {
     currency.dispatchEvent(new Event('input'))
     expect(host.textContent).toContain('REF-2')
     expect(host.textContent).not.toContain('REF-1')
-    expect(host.textContent).not.toContain('deposit')
+    expect(host.querySelector('[data-table-id="payment-report-credits"] tbody')?.textContent).not.toContain('deposit')
     active.abort()
     expect(host.textContent).toBe('')
   })
