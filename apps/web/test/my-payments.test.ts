@@ -77,7 +77,7 @@ describe('my payments screen (issue 100)', () => {
       )
     const header = (): HTMLButtonElement =>
       document.querySelector<HTMLButtonElement>('[data-my-payments-upcoming] thead button[data-sort-column="amount"]')!
-    expect(amounts()).toEqual(['USD 50.00', 'USD 200.00', 'USD 9.00'])
+    expect(amounts()).toEqual(['USD 9.00', 'USD 50.00', 'USD 200.00'])
     // Ascending reads 9 before 50 before 200, which is size, not text.
     header().click()
     expect(amounts()).toEqual(['USD 9.00', 'USD 50.00', 'USD 200.00'])

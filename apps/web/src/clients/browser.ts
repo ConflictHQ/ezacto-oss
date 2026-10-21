@@ -498,6 +498,7 @@ export const createClientDirectoryController = (
       renderDataTable<GeneralResource>({
         caption: 'Projects for this client',
         table: 'client-projects',
+        defaultSort: { column: 'name', direction: 'ascending' },
         rows: projects,
         rowKey: (project) => String(project.id),
         empty: 'No projects for this client.',
@@ -593,6 +594,7 @@ export const createClientDirectoryController = (
       renderDataTable<GeneralResource>({
         caption: 'Contacts for this client',
         table: 'client-contacts',
+        defaultSort: { column: 'name', direction: 'ascending' },
         rows: contacts,
         rowKey: (contact) => String(contact.id),
         empty: 'No contacts have been added for this client.',

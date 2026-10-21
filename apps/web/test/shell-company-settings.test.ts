@@ -1269,7 +1269,7 @@ describe('company settings', () => {
     // A domain nobody has looked up and a domain whose record was looked for
     // and not found are both unverified, and one label for both is how an
     // operator who has not published the record yet concludes SSO is broken.
-    expect(ssoStatuses()).toEqual(['Awaiting first check', 'Record not found', 'Verified'])
+    expect(ssoStatuses()).toEqual(['Record not found', 'Awaiting first check', 'Verified'])
     expect(ssoTable().textContent).toContain('_ezacto-challenge.northpeak.test')
     expect(ssoTable().textContent).toContain('ezacto-verification=zLp7c4Qk')
   })

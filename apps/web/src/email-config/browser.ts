@@ -185,6 +185,7 @@ export const createEmailConfigurationController = (
       renderDataTable<SenderIdentity>({
         caption: 'Sender identities',
         table: 'email-senders',
+        defaultSort: { column: 'role', direction: 'ascending' },
         rows,
         rowKey: (identity) => String(identity.id),
         columns: [
@@ -210,6 +211,7 @@ export const createEmailConfigurationController = (
           {
             key: 'evidence',
             label: 'Provider evidence',
+            sortValue: (identity) => senderEvidenceLabel(identity),
             render: (identity) => {
               const pill = document.createElement('span')
               pill.className = 'invoice-state'
@@ -222,6 +224,8 @@ export const createEmailConfigurationController = (
           {
             key: 'role',
             label: 'Role',
+            sortDescription: 'Default first, then available, then archived',
+            sortValue: (identity) => identity.is_default ? 0 : identity.archived_at === null ? 1 : 2,
             render: (identity) =>
               identity.archived_at !== null
                 ? 'Archived'
@@ -321,6 +325,7 @@ export const createEmailConfigurationController = (
       renderDataTable<EmailTemplate>({
         caption: 'Email templates',
         table: 'email-templates',
+        defaultSort: { column: 'kind', direction: 'ascending' },
         rows,
         rowKey: (template) => template.kind,
         columns: [

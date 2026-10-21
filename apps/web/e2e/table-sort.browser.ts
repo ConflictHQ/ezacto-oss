@@ -53,21 +53,21 @@ test("[e2e:table-sort #852] keyboard sorting preserves client hierarchy and reme
   await expect(number()).toBeVisible();
   await number().focus();
   await page.keyboard.press("Enter");
-  await expect(numbers).toHaveText(["EST-9", "EST-10", "EST-1315"]);
+  await expect(numbers).toHaveText(["EST-1315", "EST-10", "EST-9"]);
   await expect(number()).toBeFocused();
   await page.keyboard.press("Space");
-  await expect(numbers).toHaveText(["EST-1315", "EST-10", "EST-9"]);
+  await expect(numbers).toHaveText(["EST-9", "EST-10", "EST-1315"]);
   await expect(
     page.locator('[data-estimate-list] th[data-column="number"]'),
-  ).toHaveAttribute("aria-sort", "descending");
+  ).toHaveAttribute("aria-sort", "ascending");
   await page.reload();
-  await expect(numbers).toHaveText(["EST-1315", "EST-10", "EST-9"]);
+  await expect(numbers).toHaveText(["EST-9", "EST-10", "EST-1315"]);
   await page.goto("/projects");
   await expect(
     page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible();
   await page.goto("/invoices/estimates");
-  await expect(numbers).toHaveText(["EST-1315", "EST-10", "EST-9"]);
+  await expect(numbers).toHaveText(["EST-9", "EST-10", "EST-1315"]);
 
   const clients = [
     { id: 10, name: "Root 10", parent_client_id: null },

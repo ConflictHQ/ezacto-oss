@@ -251,12 +251,12 @@ describe('Clients V1 browser controller', () => {
       document.querySelector<HTMLButtonElement>(
         '[data-client-projects] thead button[data-sort-column="name"]',
       )!
-    expect(names()).toEqual(['[WEB] Launch', 'Alpha site'])
+    expect(names()).toEqual(['Alpha site', '[WEB] Launch'])
     // The table draws itself again on a sort, so the header is found afresh.
     header().click()
-    expect(names()).toEqual(['Alpha site', '[WEB] Launch'])
-    header().click()
     expect(names()).toEqual(['[WEB] Launch', 'Alpha site'])
+    header().click()
+    expect(names()).toEqual(['Alpha site', '[WEB] Launch'])
   })
 
   it('[security #466] renders operational relations but no commercial facts for members', async () => {
@@ -453,10 +453,10 @@ describe('Clients V1 browser controller', () => {
       ),
     ]
     expect(pills.map((pill) => pill.dataset.recipientStatus)).toEqual([
-      'recipient',
-      'cc',
       'bcc',
+      'cc',
       'none',
+      'recipient',
     ])
     const painted = pills.map((pill) => {
       const style = window.getComputedStyle(pill)
@@ -488,7 +488,7 @@ describe('Clients V1 browser controller', () => {
     // The recipient carries the heaviest of them rather than a fill that prints
     // as nothing, so the row that gets the invoice is the boldest on the page
     // instead of the faintest.
-    expect(painted[0]?.border).toBe('2px solid')
+    expect(painted[pills.findIndex(pill => pill.dataset.recipientStatus === 'recipient')]?.border).toBe('2px solid')
   })
 
   it('[browser] filters the tree without orphaning a matched child', async () => {

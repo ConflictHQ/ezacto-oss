@@ -171,6 +171,7 @@ export const createPaymentRunsController = (
         renderDataTable({
           caption: run.name,
           table: `payment-run-items:${run.id}`,
+          defaultSort: { column: "name", direction: "ascending" },
           rows: run.items,
           rowKey: (i) => i.id,
           empty: "No payments.",
@@ -267,6 +268,7 @@ export const createPaymentRunsController = (
       allocationHost.appendChild(renderDataTable({
         caption: "Allocation reconciliation",
         table: "payment-allocation-report",
+        defaultSort: { column: 'name', direction: 'ascending' },
         rows: paymentAllocationRows(allocationReports, rows),
         rowKey: (r) => `${r.user_id}/${r.month}/${r.project_id}/${r.entry_id ?? 'project'}`,
         empty: "No reviewed project or entry earnings match these filters.",
@@ -313,6 +315,7 @@ export const createPaymentRunsController = (
       renderDataTable({
         caption: "Balances by person and work month",
         table: "payment-report-balances",
+        defaultSort: { column: 'name', direction: 'ascending' },
         rows,
         rowKey: (r) => `${r.user_id}/${r.month}`,
         empty: "No matching balances.",
@@ -370,6 +373,7 @@ export const createPaymentRunsController = (
       renderDataTable({
         caption: "Transfer progress",
         table: "payment-report-transfers",
+        defaultSort: { column: 'schedule', direction: 'ascending' },
         rows: items,
         rowKey: (i) => i.id,
         empty: "No matching transfers.",
@@ -429,6 +433,7 @@ export const createPaymentRunsController = (
       renderDataTable({
         caption: "Recorded payments (excluding voided receipts)",
         table: "payment-report-receipts",
+        defaultSort: { column: 'date', direction: 'descending' },
         rows: receipts,
         rowKey: (r) => r.id,
         empty: "No matching recorded payments.",

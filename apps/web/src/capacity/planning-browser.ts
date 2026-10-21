@@ -206,6 +206,7 @@ export const createPlanningEntry = (
       renderDataTable<AllocationRow>({
         caption: "Allocations in these weeks",
         table: "capacity-allocations",
+        defaultSort: { column: 'dates', direction: 'ascending' },
         rows: [...allocations],
         rowKey: (row) => String(row.id),
         empty: "No allocations in these weeks.",
@@ -269,6 +270,7 @@ export const createPlanningEntry = (
       renderDataTable<TimeOffRow>({
         caption: "Time off in these weeks",
         table: "capacity-time-off",
+        defaultSort: { column: 'dates', direction: 'ascending' },
         rows: [...timeOff],
         rowKey: (row) => String(row.id),
         empty: "No time off in these weeks.",

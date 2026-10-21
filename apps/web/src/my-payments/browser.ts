@@ -74,11 +74,12 @@ export const createMyPaymentsController = (api: MyPaymentsApi): MyPaymentsContro
       renderDataTable<MyPayments['payments'][number]>({
         caption: 'Payments and applied credit recorded for this month',
         table: 'my-payments-recorded',
+        defaultSort: { column: 'paid_on', direction: 'descending' },
         rows: [...data.payments],
         rowKey: (payment) => `${payment.paid_on}-${payment.currency}-${payment.amount_cents}`,
         empty: 'No payments recorded for this month.',
         columns: [
-          { key: 'kind', label: 'Kind', render: (payment) => payment.kind === 'credit_application' ? 'Advance credit applied (no new transfer)' : 'Payment' },
+          { key: 'kind', label: 'Kind', sortValue: (payment) => payment.kind ?? 'payment', render: (payment) => payment.kind === 'credit_application' ? 'Advance credit applied (no new transfer)' : 'Payment' },
           { key: 'paid_on', label: 'Paid / applied on', sortValue: (payment) => payment.paid_on, render: (payment) => payment.paid_on },
           {
             key: 'amount',
@@ -94,12 +95,13 @@ export const createMyPaymentsController = (api: MyPaymentsApi): MyPaymentsContro
       renderDataTable<MyPayments['upcoming'][number]>({
         caption: 'Upcoming payments',
         table: 'my-payments-upcoming',
+        defaultSort: { column: 'scheduled_on', direction: 'ascending' },
         rows: [...data.upcoming],
         rowKey: (payment) => `${payment.scheduled_on}-${payment.currency}-${payment.amount_cents}-${payment.status}`,
         empty: 'No payments are scheduled.',
         columns: [
           {
-            key: 'kind', label: 'Kind', render: (payment) => payment.kind === 'advance' ? 'Advance deposit' : 'Payment',
+            key: 'kind', label: 'Kind', sortValue: (payment) => payment.kind ?? 'payment', render: (payment) => payment.kind === 'advance' ? 'Advance deposit' : 'Payment',
           },
           {
             key: 'scheduled_on',

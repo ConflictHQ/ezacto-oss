@@ -218,6 +218,7 @@ export const createActivityController = (api: ActivityApi): ActivityController =
       renderDataTable<ActivityRow>({
         caption: 'Activity',
         table: 'activity',
+        defaultSort: { column: 'when', direction: 'descending' },
         rows: [...rows],
         rowKey: (row) => row.event_id,
         empty: 'Nothing matches these filters.',

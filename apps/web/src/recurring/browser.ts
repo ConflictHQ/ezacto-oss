@@ -461,6 +461,7 @@ export const createRecurringWorkspaceController = (
       renderDataTable<RecurringInvoice>({
         caption: 'Recurring invoices',
         table: 'recurring-invoices',
+        defaultSort: { column: 'subject', direction: 'ascending' },
         rows,
         rowKey: (definition) => String(definition.id),
         groupBy: (definition) => recurringClientLabel(definition, clients),

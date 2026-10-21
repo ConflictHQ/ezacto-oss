@@ -178,17 +178,13 @@ describe('Tasks administration browser controller', () => {
       [...document.querySelectorAll('[data-task-list] tbody tr[data-row] td:first-child')].map(
         (cell) => cell.textContent ?? '',
       )
+    expect(names()).toEqual(['Implementation', 'Quality assurance'])
+    expect(document.querySelector('[data-task-list] thead th[data-column="name"]')?.getAttribute('aria-sort')).toBe('ascending')
+    document.querySelector<HTMLButtonElement>('[data-task-list] thead button[data-sort-column="name"]')!.click()
     expect(names()).toEqual(['Quality assurance', 'Implementation'])
-    // No column claims an order the rows were not put in.
-    expect(document.querySelector('[data-task-list] thead [aria-sort]')).toBeNull()
-
+    expect(document.querySelector('[data-task-list] thead th[data-column="name"]')?.getAttribute('aria-sort')).toBe('descending')
     document.querySelector<HTMLButtonElement>('[data-task-list] thead button[data-sort-column="name"]')!.click()
     expect(names()).toEqual(['Implementation', 'Quality assurance'])
-    expect(document.querySelector('[data-task-list] thead th[data-column="name"]')?.getAttribute('aria-sort')).toBe(
-      'ascending',
-    )
-    document.querySelector<HTMLButtonElement>('[data-task-list] thead button[data-sort-column="name"]')!.click()
-    expect(names()).toEqual(['Quality assurance', 'Implementation'])
     expect(document.querySelector('[data-task-list-status]')?.textContent).toContain(
       'Sorting covers only the rows loaded so far',
     )

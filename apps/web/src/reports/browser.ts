@@ -34,6 +34,7 @@ import { renderFilterBar, type FilterValue } from '../components/filter-bar.js'
 import { sortReportTable, type ReportSortColumn } from '../components/report-table-sort.js'
 import { sortToken, type SortValue, type TableSort } from '../components/table-sort.js'
 import { createPeriodControl } from '../components/period.js'
+import { renderDefinitionResultTable } from './definition-results.js'
 import { reportKindLabel } from './render.js'
 import {
   renderQuickLinks,
@@ -3223,20 +3224,10 @@ export const createReportsController = (
     } else if (report.state === 'too_many_rows') {
       fragment.append(textElement('p', 'This definition matches more than 10,000 rows. Narrow its filters.', 'report-empty'))
     } else {
-      const table = element('table', 'report-table')
-      const body = element('tbody')
-      for (const raw of report.rows) {
-        const row = raw as { label?: unknown; metrics?: unknown; drillThrough?: unknown }
-        const line = element('tr')
-        const heading = element('th')
-        heading.scope = 'row'
-        const label = typeof row.label === 'string' ? row.label : 'Result'
-        heading.append(typeof row.drillThrough === 'string' ? linkElement(row.drillThrough, label) : document.createTextNode(label))
-        line.append(heading, textElement('td', JSON.stringify(row.metrics ?? {})))
-        body.append(line)
-      }
-      table.append(body)
-      fragment.append(table)
+      fragment.append(renderDefinitionResultTable(report, {
+        ...(reportSortAddress === null ? {} : { sort: reportSortAddress }),
+        onSort: sort => reportSortChanged(sort),
+      }))
     }
     results.replaceChildren(fragment)
   }

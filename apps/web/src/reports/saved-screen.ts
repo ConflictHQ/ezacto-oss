@@ -50,6 +50,7 @@ export const renderSavedViewsTable = (
   renderDataTable<SavedReport>({
     caption: 'Saved reports',
     table: 'saved-reports',
+    defaultSort: { column: 'updated', direction: 'descending' },
     rowKey: (report) => report.id,
     rows: reports,
     empty: 'No saved reports match. Save one from any report with Save report.',

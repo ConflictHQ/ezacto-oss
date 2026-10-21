@@ -3153,7 +3153,8 @@ describe('Reports Stage 1 browser controller', () => {
     }))
     const runSavedReport = vi.fn(async () => ({
       definitionId: 'client-hours', definitionVersion: 2, state: 'ready' as const,
-      rows: [{ label: 'Parent', metrics: { hours: { value: 3600 } }, drillThrough: '/reports?report=detailed-time' }],
+      rows: [{ label: 'Parent', metrics: { hours: { value: 3600 } }, drillThrough: '/reports?report=detailed-time' },
+        { label: 'Second', metrics: { hours: { value: 720 } }, drillThrough: '/reports?report=detailed-time&client_id=2' }],
     }))
     const session = new AbortController()
     await createReportsController(baseApi({
@@ -3166,6 +3167,9 @@ describe('Reports Stage 1 browser controller', () => {
     document.querySelector<HTMLButtonElement>('[data-saved-list] article button')!.click()
     await vi.waitFor(() => expect(runSavedReport).toHaveBeenCalledWith('client-hours', expect.anything()))
     expect(document.querySelector('[data-report-results] a')?.getAttribute('href')).toBe('/reports?report=detailed-time')
+    document.querySelector<HTMLButtonElement>('[data-report-results] button[data-sort-column="metric-hours"]')!.click()
+    expect([...document.querySelectorAll('[data-report-results] tbody a')].map(link => link.textContent)).toEqual(['Second', 'Parent'])
+    expect(window.location.search).toContain('sort=metric-hours')
 
     document.querySelector<HTMLButtonElement>('[data-report-builder-open]')!.click()
     await vi.waitFor(() => expect(getReportDefinitionRegistry).toHaveBeenCalled())

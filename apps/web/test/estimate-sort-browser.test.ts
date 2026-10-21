@@ -59,8 +59,8 @@ afterEach(() => {
 });
 it("[browser #852] remembers natural-number, date and money sorts after remount without sharing one person’s selection", async () => {
   await mount(1);
-  header("number").click();
   expect(rows()).toEqual(["2", "1", "3"]);
+  expect(header("number").closest("th")?.getAttribute("aria-sort")).toBe("ascending");
   header("number").click();
   expect(rows()).toEqual(["3", "1", "2"]);
   await mount(1);
@@ -75,7 +75,7 @@ it("[browser #852] remembers natural-number, date and money sorts after remount 
   await mount(1);
   expect(rows()).toEqual(["1", "3", "2"]);
   await mount(2);
-  expect(rows()).toEqual(["1", "2", "3"]);
+  expect(rows()).toEqual(["2", "1", "3"]);
   expect(
     document.querySelector("[data-estimate-list-status]")?.textContent,
   ).toContain("Sorting covers only the rows loaded");

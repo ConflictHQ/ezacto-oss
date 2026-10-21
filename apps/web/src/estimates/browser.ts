@@ -120,6 +120,7 @@ export const createEstimateWorkspaceController = (
       renderDataTable<Estimate>({
         caption: 'Estimates',
         table: 'estimates',
+        defaultSort: { column: 'number', direction: 'ascending' },
         rows,
         rowKey: (estimate) => String(estimate.id),
         empty:

@@ -122,7 +122,7 @@ describe('activity log surface', () => {
       [...document.querySelectorAll('[data-activity-log-list] tbody tr[data-row] td[data-column="when"]')].map(
         (cell) => cell.textContent ?? '',
       )
-    expect(times()).toEqual(['2026-09-06T09:00:00.000Z', '2026-09-08T09:00:00.000Z'])
+    expect(times()).toEqual(['2026-09-08T09:00:00.000Z', '2026-09-06T09:00:00.000Z'])
     expect(status()).toContain('Sorting covers only the rows loaded so far')
 
     // The table draws itself again on a sort, so the header is found afresh.

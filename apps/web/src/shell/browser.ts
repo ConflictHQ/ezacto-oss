@@ -2646,6 +2646,7 @@ export const mountShell = async (
         renderDataTable<ApiToken>({
           caption: 'API tokens',
           table: 'api-tokens',
+          defaultSort: { column: 'name', direction: 'ascending' },
           rows: [...live],
           rowKey: (token) => String(token.id),
           columns: [
