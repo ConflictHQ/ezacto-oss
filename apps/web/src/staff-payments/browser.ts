@@ -1,3 +1,4 @@
+import { createStaffInvoicesController, type StaffInvoicesApi } from './invoices-browser.js'
 import { createAdvanceCreditsController, type AdvanceCreditsApi } from './advances-browser.js'
 import { createActualsController, type PaymentActualsApi } from './actuals-browser.js'
 import { createAllocationsController, type PaymentAllocationsApi } from './allocations-browser.js'
@@ -31,7 +32,8 @@ export interface StaffPaymentsApi
     PaymentActualsApi,
     PaymentAllocationsApi,
     DeelSyncApi,
-    AdvanceCreditsApi {
+    AdvanceCreditsApi,
+    StaffInvoicesApi {
   configureStaffPaymentProvider?(
     command: StaffPaymentProviderCommand,
     signal?: AbortSignal,
@@ -587,6 +589,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       actuals.ledger(response, active)
       allocations.ledger(response, active)
       advances.ledger(response)
+      staffInvoices.ledger(response)
       status.textContent = ''
     } catch (error) {
       if (!active.aborted && generation === ownGeneration) status.textContent = failure(error)
@@ -810,6 +813,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   )
   const deelSync = createDeelSyncController(page, api)
   const advances = createAdvanceCreditsController(page, api, failure)
+  const staffInvoices = createStaffInvoicesController(page, api, failure)
 
   return {
     activate: async (identity: { profile: string }, active: AbortSignal): Promise<void> => {
@@ -873,6 +877,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       actuals.activate(active)
       allocations.activate(active)
       advances.activate(active)
+      staffInvoices.activate(active)
       await runs.activate(active)
       await deelSync.activate(active)
       tabs.activate(reportMode, api.previewPaymentRun !== undefined)

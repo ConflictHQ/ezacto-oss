@@ -1,3 +1,4 @@
+import { staffInvoicesMigration } from './migrations/0137_staff_invoices.js'
 import { contractorAdvancesMigration } from './migrations/0136_contractor_advances.js'
 import { accountRetentionReviewMigration } from './migrations/0106_account_retention_review.js'
 import { appleLifecycleMigration } from './migrations/0104_apple_lifecycle.js'
@@ -1630,6 +1631,7 @@ const migrations = [
   { id: '0134_run_item_quantity', statements: runItemQuantityMigration },
   { id: '0135_deel_sync_settings', statements: deelSyncSettingsMigration },
   { id: '0136_contractor_advances', statements: contractorAdvancesMigration },
+  { id: '0137_staff_invoices', statements: staffInvoicesMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

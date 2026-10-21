@@ -18572,6 +18572,364 @@
         }
       }
     },
+    "/api/v1/staff-invoices": {
+      "get": {
+        "operationId": "getStaffInvoiceReport",
+        "summary": "Reconcile contractor payable invoices against existing reviewed earnings",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffInvoiceReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-invoices",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "saveStaffInvoice",
+        "summary": "Record an immutable contractor invoice version without changing amounts owed",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffInvoiceEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-invoices",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveStaffInvoice"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/staff-invoices": {
+      "get": {
+        "operationId": "getMyStaffInvoices",
+        "summary": "Read only your received payable invoices when own-money viewing is enabled",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffInvoiceReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/me/staff-invoices",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/staff-invoices/{invoiceId}/documents": {
+      "post": {
+        "operationId": "uploadStaffInvoiceDocument",
+        "summary": "Stage a contractor invoice document for explicit inclusion in a version",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffInvoiceDocumentEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-invoices/:invoiceId/documents",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "invoiceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachmentUploadInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/staff-invoices/{invoiceId}/documents/{documentId}/content": {
+      "get": {
+        "operationId": "getStaffInvoiceDocumentContent",
+        "summary": "Download an authorized contractor invoice document",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attachment content",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-invoices/:invoiceId/documents/:documentId/content",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "invoiceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "documentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/scheduled-runs/{id}": {
       "get": {
         "operationId": "getScheduledRun",
@@ -32149,6 +32507,423 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/AdvanceCreditReport"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "StaffInvoiceLine": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entry_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "seconds": {
+            "type": "integer"
+          },
+          "rate_cents": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "description",
+          "project_id",
+          "entry_id",
+          "seconds",
+          "rate_cents"
+        ],
+        "additionalProperties": false
+      },
+      "SaveStaffInvoice": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "invoice_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_version": {
+            "type": "integer"
+          },
+          "user_id": {
+            "type": "integer"
+          },
+          "month": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "received",
+              "void"
+            ]
+          },
+          "from_review": {
+            "type": "boolean"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffInvoiceLine"
+            }
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "acknowledge_paid_history": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "invoice_id",
+          "expected_version",
+          "user_id",
+          "month",
+          "currency",
+          "reference",
+          "kind",
+          "from_review",
+          "lines",
+          "document_id",
+          "reason",
+          "acknowledge_paid_history"
+        ],
+        "additionalProperties": false
+      },
+      "StaffInvoiceVersion": {
+        "type": "object",
+        "properties": {
+          "command_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "month": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "received",
+              "void"
+            ]
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffInvoiceLine"
+            }
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "review_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "actor_id": {
+            "type": "integer"
+          },
+          "recorded_at": {
+            "type": "string"
+          },
+          "paid_cents_at_recording": {
+            "type": "integer"
+          },
+          "has_payment_history": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command_id",
+          "version",
+          "month",
+          "currency",
+          "kind",
+          "lines",
+          "amount_cents",
+          "review_id",
+          "document_id",
+          "reason",
+          "actor_id",
+          "recorded_at",
+          "paid_cents_at_recording",
+          "has_payment_history"
+        ],
+        "additionalProperties": false
+      },
+      "StaffInvoice": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "user_id": {
+            "type": "integer"
+          },
+          "month": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffInvoiceVersion"
+            }
+          },
+          "matched_cents": {
+            "type": "integer"
+          },
+          "flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "line_flags": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "month",
+          "currency",
+          "reference",
+          "versions",
+          "matched_cents",
+          "flags",
+          "line_flags"
+        ],
+        "additionalProperties": false
+      },
+      "StaffInvoicePerson": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "earned_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paid_cents": {
+            "type": "integer"
+          },
+          "invoiced_cents": {
+            "type": "integer"
+          },
+          "matched_invoice_cents": {
+            "type": "integer"
+          },
+          "uninvoiced_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "invoices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffInvoice"
+            }
+          }
+        },
+        "required": [
+          "user_id",
+          "name",
+          "currency",
+          "earned_cents",
+          "paid_cents",
+          "invoiced_cents",
+          "matched_invoice_cents",
+          "uninvoiced_cents",
+          "invoices"
+        ],
+        "additionalProperties": false
+      },
+      "StaffInvoiceReport": {
+        "type": "object",
+        "properties": {
+          "month": {
+            "type": "string"
+          },
+          "people": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffInvoicePerson"
+            }
+          }
+        },
+        "required": [
+          "month",
+          "people"
+        ],
+        "additionalProperties": false
+      },
+      "StaffInvoiceReportEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/StaffInvoiceReport"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "StaffInvoiceEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/StaffInvoice"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "StaffInvoiceDocumentInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "invoice_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "byte_size": {
+            "type": "integer"
+          },
+          "content_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "invoice_id",
+          "name",
+          "byte_size",
+          "content_type"
+        ],
+        "additionalProperties": false
+      },
+      "StaffInvoiceDocumentEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/StaffInvoiceDocumentInfo"
           }
         },
         "required": [

@@ -252,3 +252,52 @@ Person/currency, settled capacity, reviewed earnings, reservations and allocatio
 limits are checked inside the database transaction on SQLite and D1. Source-hour
 changes retain the captured allocation and are reviewed through the Allocations tab.
 No customer-specific correction or live transfer is part of the migration or fixtures.
+
+### Contractor payable invoices (#901)
+
+**Contractor invoices** on Payments documents existing earning obligations. These
+are payable documents, separate from customer receivable invoices, numbering and
+tax. Recording, correcting, receiving or voiding one never changes earnings,
+payments, advances or allocations. A contractor reference is unique across all
+periods/currencies for that contractor (trimmed, ASCII case-insensitive). A retry
+with the same command replays; a different document using that reference is
+refused. Correct the existing document through a new optimistic-versioned command.
+
+Draft from a confirmed actuals review, including signed correction hours, or
+record received lines explicitly. Lines may reference an entry or a project.
+Project summaries match only a single captured rate; mixed rates require entry
+references. Partial quantities are supported. Missing references, wrong rates,
+excess hours/rounded cents and overlapping received claims are flagged for review.
+Project-level and entry-level claims on the same project are conservatively flagged
+instead of inventing a split. Drafts do not consume invoiced capacity; voided
+documents release it. A monthly amount that differs from the reviewed earning
+snapshot also requires review before matching.
+
+The report separates earned, actual received-document totals, matched invoice
+amounts, paid for the work month, and earnings without a matched invoice. The last
+figure is earned minus matched received lines, not a new payable balance. Unmatched
+invoice lines remain visible without becoming earnings. Currency rows never net.
+There is no historical invoice inferred from an old payment or settlement cutoff.
+
+Every correction preserves earlier versions, lines, earning-review IDs, documents,
+reasons and actors. Work-period and currency corrections change the document only;
+earlier payment allocations stay in their original period. Existing or historically
+recorded payments require explicit acknowledgement before a correction. Contractor
+identity and reference stay fixed; void an erroneous identity/reference and record
+the correct document. A received invoice cannot silently become a draft again.
+
+A PDF or other file can be uploaded after the invoice has an identity, then included
+in a new version. Uploads use the shared multipart/file validation, a 25 MiB file
+limit and content-addressed storage. Staged files remain administrator-only until a
+received version explicitly includes them. Download ownership is checked each time;
+files download as attachments with `no-store` and `nosniff`. The public demo refuses
+uploads before parsing or object writes. File objects participate in the existing
+backup/export machinery, and document/version metadata is immutable.
+
+Administrators use session-authenticated `GET/POST /api/v1/staff-invoices` and the
+`/staff-invoices/:invoiceId/documents` upload/content routes. API tokens and other
+profiles cannot record or correct documents. A person with own-money viewing enabled
+can read their received/voided documents at `GET /api/v1/me/staff-invoices?month=…`
+and on **My payments**. The subject comes only from their session; drafts, other
+people's documents, and unpublished uploads are excluded. Reasons entered on a
+received invoice are shared with that contractor.

@@ -1,3 +1,4 @@
+import { renderStaffInvoiceDocuments } from '../staff-payments/invoices-browser.js'
 import { EzactoApiError } from '@conflict-hq/ezacto-client'
 import { previousPaymentMonth, validPaymentMonth, type MyPayments } from '@ezacto/core'
 import { renderDataTable } from '../components/data-table.js'
@@ -35,6 +36,7 @@ export const createMyPaymentsController = (api: MyPaymentsApi): MyPaymentsContro
   const summary = required<HTMLElement>('[data-my-payments-summary]')
   const receipts = required<HTMLElement>('[data-my-payments-receipts]')
   const upcoming = required<HTMLElement>('[data-my-payments-upcoming]')
+  const invoices = required<HTMLElement>('[data-my-staff-invoices]')
 
   let active: AbortSignal | null = null
 
@@ -44,6 +46,7 @@ export const createMyPaymentsController = (api: MyPaymentsApi): MyPaymentsContro
     summary.replaceChildren()
     receipts.replaceChildren()
     upcoming.replaceChildren()
+    invoices.replaceChildren()
   }
 
   const row = (label: string, value: string): HTMLElement[] => {
@@ -130,12 +133,22 @@ export const createMyPaymentsController = (api: MyPaymentsApi): MyPaymentsContro
       status.textContent = 'Choose a valid month.'
       return
     }
+    const requestedMonth = month.value
+    invoices.replaceChildren()
     status.textContent = 'Loading your payments…'
     try {
-      const response = await api.getMyPayments(month.value, signal)
-      if (signal.aborted) return
+      const response = await api.getMyPayments(requestedMonth, signal)
+      if (signal.aborted || active !== signal || month.value !== requestedMonth) return
       render(response.data)
       status.textContent = ''
+      if (api.getMyStaffInvoices) {
+        try {
+          const response = await api.getMyStaffInvoices(requestedMonth, signal)
+          if (!signal.aborted && active === signal && month.value === requestedMonth) invoices.replaceChildren(renderStaffInvoiceDocuments(response.data))
+        } catch {
+          if (!signal.aborted && active === signal && month.value === requestedMonth) invoices.textContent = 'Contractor invoice documents could not be loaded. Refresh to try again.'
+        }
+      }
     } catch (error) {
       if (signal.aborted) return
       clear()
