@@ -1,6 +1,7 @@
 import { hasPaymentActivity } from './model.js';
 import type {
   PaymentRunReport,
+  PaymentAllocationReport,
   PaymentItem,
   StaffPaymentRow,
 } from "@ezacto/core";
@@ -87,6 +88,27 @@ export const filteredPaymentReport = (
   });
   return { rows, items, receipts };
 };
+/** Parent and child rows are separate levels, not additive totals. Payments assigned
+ * only to a month/project stay there; no entry split is inferred. */
+export const paymentAllocationRows = (
+  reports: PaymentAllocationReport[],
+  balances: StaffPaymentRow[],
+) => reports.flatMap((report) => report.people.flatMap((person) => {
+  if (!balances.some((row) => row.user_id === person.user_id && row.month === report.month && row.currency === person.currency)) return [];
+  const base = { name: person.name, user_id: person.user_id, month: report.month, currency: person.currency };
+  return person.projects.flatMap((project) => [
+    { ...base, level: 'Project', project_id: project.project_id, project: project.project_name,
+      entry_id: null as number | null, earned: project.earned_cents, paid: project.applied_cents,
+      reserved: project.reserved_cents, remaining: project.remaining_cents, selected_seconds: null as number | null,
+      remaining_seconds: null as number | null, flags: '' },
+    ...project.entries.map((entry) => ({ ...base, level: 'Entry', project_id: project.project_id,
+      project: project.project_name, entry_id: entry.entry_id, earned: entry.earned_cents,
+      paid: entry.applied_cents, reserved: entry.reserved_cents, remaining: entry.remaining_cents,
+      selected_seconds: entry.selected_seconds, remaining_seconds: entry.remaining_seconds,
+      flags: [entry.source_changed ? 'Source time changed' : '', entry.over_allocated ? 'Over-allocated' : ''].filter(Boolean).join('; ') })),
+  ]);
+}));
+
 export const paymentReportTotals = (rows: StaffPaymentRow[]) => {
   const totals = new Map<
     string,
@@ -128,6 +150,7 @@ const cell = (value: unknown): string => {
 export const paymentRunCsv = (
   report: PaymentRunReport,
   filters: PaymentReportFilters,
+  allocations: PaymentAllocationReport[] = [],
 ): string => {
   const { rows, items, receipts } = filteredPaymentReport(report, filters);
   const lines: unknown[][] = [
@@ -153,6 +176,7 @@ export const paymentRunCsv = (
       "Maximum source cents",
       "Failure",
       "Amount basis",
+      "User ID", "Project ID", "Project", "Entry ID", "Selected seconds", "Remaining seconds", "Flags",
     ],
   ];
   for (const r of rows)
@@ -210,6 +234,16 @@ export const paymentRunCsv = (
       r.paid_on,
       r.source,
       r.reference,
+    ]);
+  // Preserve the existing columns; allocation amounts occupy the same money
+  // columns, with explicit record levels so readers never sum parent + child.
+  for (const row of lines.slice(1)) while (row.length < lines[0]!.length) row.push("");
+  for (const r of paymentAllocationRows(allocations, rows))
+    lines.push([
+      `Allocation ${r.level}`, r.name, r.month, r.currency,
+      r.earned, r.paid, r.reserved, r.remaining, "", ...Array.from({ length: 11 }, () => ""),
+      "allocated_earnings", r.user_id, r.project_id, r.project, r.entry_id,
+      r.selected_seconds, r.remaining_seconds, r.flags,
     ]);
   return (
     "\uFEFF" + lines.map((row) => row.map(cell).join(",")).join("\r\n") + "\r\n"

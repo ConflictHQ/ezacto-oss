@@ -187,6 +187,15 @@ explicitly. Hour splits are never inferred.
   **Reconcile to month** on an unallocated payment prefills a whole-month,
   amount-only allocation of its unallocated cents, which is the explicit path
   for existing monthly payments. Neither step moves money.
+- **Payments report** (`/payments/report`) and **Export filtered CSV** include
+  earned, allocated paid, allocated reserved and remaining amounts for each
+  reviewed project and time entry. They use the same person, currency, status
+  and work-month filters as balances. Source-change and over-allocation flags
+  travel with entry rows. Project totals include entry allocations; the two
+  levels must not be added together. Monthly payments remain unassigned until
+  explicitly reconciled, and project payments are never inferred onto entries.
+  CSV allocation rows identify their level, person/project/entry IDs and
+  selected/remaining seconds; all money columns are integer cents.
 - A work-month correction is refused while allocations are live; reverse them
   first.
 
