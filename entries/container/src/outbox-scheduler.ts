@@ -56,8 +56,11 @@ export class ContainerOutboxScheduler {
       before === undefined ? this.#service.drain() : before().then(() => this.#service.drain())
     this.#active = active
     void active.then(
-      () => {
+      (summary) => {
         if (this.#active === active) this.#active = undefined
+        // The tick stopped on a database failure while claiming (#1104). The
+        // events are still queued; report the stop once, here.
+        if (summary.interrupted !== undefined) this.#reportError('claim_interrupted')
       },
       () => {
         if (this.#active === active) this.#active = undefined

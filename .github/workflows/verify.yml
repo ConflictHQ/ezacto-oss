@@ -84,7 +84,7 @@ jobs:
   test:
     name: test (${{ matrix.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: ${{ matrix.timeout_minutes || 20 }}
     strategy:
       fail-fast: false
       matrix:
@@ -110,7 +110,11 @@ jobs:
           - { name: api 2, workspaces: -w @ezacto/api, shard: 2/3 }
           - { name: api 3, workspaces: -w @ezacto/api, shard: 3/3 }
           - { name: migrate, workspaces: -w @conflict-hq/ezacto-migrate }
-          - { name: worker, workspaces: -w ezacto-worker }
+          # One worker, not two. The worker suite's two-factor and backup-download
+          # tests derive passwords through the isolate's KDF limiter, and two
+          # files deriving at once on a two-vCPU runner overflow its queue
+          # (PasswordDerivationOverloadedError, #745). Each file passes alone.
+          - { name: worker, workspaces: -w ezacto-worker, max_workers: 1, timeout_minutes: 30 }
           # Six files that npm run verify has always covered and this matrix
           # never did, so the merge gate was weaker than the deploy gate.
           - { name: container, workspaces: -w ezacto-container }
@@ -134,6 +138,7 @@ jobs:
         env:
           WORKSPACES: ${{ matrix.workspaces }}
           SHARD: ${{ matrix.shard }}
+          MAX_WORKERS: ${{ matrix.max_workers || 2 }}
           # apps/web's browser suite mounts the whole shell about eighty times
           # and retains roughly 28 MB per test -- measured and linear, so it
           # needs over two gigabytes to finish. A developer machine gives it
@@ -155,9 +160,9 @@ jobs:
           # runner, not to a package.json: the same suite on a developer
           # machine should use the cores it has.
           if [ -n "$SHARD" ]; then
-            npm test $WORKSPACES -- --shard="$SHARD" --maxWorkers=2 2>&1 | tee "$RUNNER_TEMP/test.log"
+            npm test $WORKSPACES -- --shard="$SHARD" --maxWorkers="$MAX_WORKERS" 2>&1 | tee "$RUNNER_TEMP/test.log"
           else
-            npm test $WORKSPACES -- --maxWorkers=2 2>&1 | tee "$RUNNER_TEMP/test.log"
+            npm test $WORKSPACES -- --maxWorkers="$MAX_WORKERS" 2>&1 | tee "$RUNNER_TEMP/test.log"
           fi
       - name: classify the failure against the ledger
         if: failure()

@@ -82,6 +82,12 @@ export interface OutboxDrainSummary {
   retried: number
   failed: number
   contention: number
+  /**
+   * Set only when the database failed while an event was being claimed. The
+   * tick stops there; nothing was claimed by the failed attempt, and every
+   * undelivered event is still queued for the next tick. Absent otherwise.
+   */
+  interrupted?: Error
 }
 
 export interface OutboxDeliveryFilter {
@@ -741,15 +747,23 @@ const createService = (
         const at = timestamp()
         const attemptId = createAttemptId()
         assertIdentifier(attemptId, 'outbox attempt id')
-        const attemptCount = await claim(
-          database,
-          selected.subscriber.id,
-          selected.row.id,
-          attemptId,
-          at,
-          safeAddSeconds(at, attemptLeaseSeconds),
-          maxAttempts,
-        )
+        let attemptCount: number | 'expired-terminal' | null
+        try {
+          attemptCount = await claim(
+            database,
+            selected.subscriber.id,
+            selected.row.id,
+            attemptId,
+            at,
+            safeAddSeconds(at, attemptLeaseSeconds),
+            maxAttempts,
+          )
+        } catch (error) {
+          // The claim is one atomic batch, so a failure here wrote nothing. Stop
+          // this tick rather than throw, so the caller reports it once.
+          summary.interrupted = error instanceof Error ? error : new Error(String(error))
+          break
+        }
         if (attemptCount === 'expired-terminal') {
           summary.failed += 1
           continue

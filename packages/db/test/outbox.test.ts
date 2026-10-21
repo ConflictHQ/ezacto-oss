@@ -171,6 +171,45 @@ for (const [runtime, factory] of factories) {
 
     afterEach(async () => database?.close())
 
+    if (runtime === 'container') {
+      it('[unit] a database failure while claiming ends the tick, reports it, and leaves the event for the next tick', async () => {
+        database = await factory()
+        await installFixture(database)
+        await sendInvoice(database)
+        const transaction = BetterSqlite3.prototype.transaction
+        let transactions = 0
+        vi.spyOn(BetterSqlite3.prototype, 'transaction').mockImplementation(function (
+          this: BetterSqlite3.Database,
+          fn: () => unknown,
+        ) {
+          transactions += 1
+          if (transactions === 1) throw new Error('D1_ERROR: Network connection lost.')
+          return transaction.call(this, fn as never)
+        } as never)
+        const service = database.outbox({
+          now: () => drainAt,
+          createAttemptId: () => 'activity-attempt-1',
+        })
+
+        const interrupted = await service.drain()
+        expect(interrupted).toMatchObject({
+          examined: 1,
+          delivered: 0,
+          interrupted: expect.objectContaining({ message: 'D1_ERROR: Network connection lost.' }),
+        })
+        expect(await service.listDeliveries()).toEqual([])
+        vi.restoreAllMocks()
+
+        await expect(service.drain()).resolves.toEqual({
+          examined: 1,
+          delivered: 1,
+          retried: 0,
+          failed: 0,
+          contention: 0,
+        })
+      })
+    }
+
     it('[unit] applies the activity subscriber once and publishes its durable receipt', async () => {
       database = await factory()
       await installFixture(database)
