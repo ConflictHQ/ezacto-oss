@@ -41924,6 +41924,50 @@
               }
             ]
           },
+          "automatic_approval": {
+            "type": "object",
+            "required": [
+              "actor",
+              "authorized_by_user_id",
+              "window_days",
+              "effective_from",
+              "submitted_at",
+              "approved_at",
+              "command_id"
+            ],
+            "properties": {
+              "actor": {
+                "type": "string",
+                "enum": [
+                  "system"
+                ]
+              },
+              "authorized_by_user_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "window_days": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 60
+              },
+              "effective_from": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "submitted_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "approved_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "command_id": {
+                "type": "string"
+              }
+            }
+          },
           "reviewed_by_user_id": {
             "anyOf": [
               {

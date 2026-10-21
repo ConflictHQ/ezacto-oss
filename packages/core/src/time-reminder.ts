@@ -239,3 +239,44 @@ export const composeSubmissionDigest = (input: {
     footer(input.links, `you approve timesheets and have the weekly digest on at ${input.companyName}`),
   ].join("\n"),
 });
+
+/** Transactional outcome, composed from the immutable automatic decision. */
+export const composeAutoApprovalNotice = (input: {
+  companyName: string;
+  firstName: string;
+  week: ReminderWeek;
+  windowDays: number;
+  approved: { date: string; time: string; zone: string };
+  links: ReminderLinks;
+}): { subject: string; text: string } => ({
+  subject: `Timesheet approved automatically: ${dayName(input.week.start)}`,
+  text: [
+    `Hi ${input.firstName},`,
+    "",
+    `Your timesheet for ${rangeText(input.week)} was approved automatically on ${dayName(input.approved.date)} at ${input.approved.time} (${input.approved.zone}) after the ${input.windowDays}-calendar-day review window.`,
+    "",
+    `Open your timesheet to see its current status: ${input.links.timesheet}`,
+    "",
+    footer(input.links, `an automatic timesheet decision was recorded at ${input.companyName}`),
+  ].join("\n"),
+});
+export const composeAutoApprovalReviewWarning = (input: {
+  companyName: string;
+  firstName: string;
+  personName: string;
+  week: ReminderWeek;
+  deadline: { date: string; time: string; zone: string };
+  reviewUrl: string;
+  links: ReminderLinks;
+}): { subject: string; text: string } => ({
+  subject: `Review due: ${input.personName}'s timesheet will be approved automatically`,
+  text: [
+    `Hi ${input.firstName},`,
+    "",
+    `${input.personName}'s submitted timesheet for ${rangeText(input.week)} will be approved automatically on ${dayName(input.deadline.date)} at ${input.deadline.time} (${input.deadline.zone}) unless an approver decides on it first.`,
+    "",
+    `Review it before the deadline: ${input.reviewUrl}`,
+    "",
+    footer(input.links, `you can review this timesheet at ${input.companyName}`),
+  ].join("\n"),
+});

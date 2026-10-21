@@ -2519,6 +2519,15 @@ export type TimesheetSubmission = {
   "source_observed_at": string | null;
   "submitted_by_user_id": number | null;
   "submitted_at": string | null;
+  "automatic_approval"?: {
+  "actor": "system";
+  "authorized_by_user_id": number;
+  "window_days": number;
+  "effective_from": string;
+  "submitted_at": string;
+  "approved_at": string;
+  "command_id": string;
+};
   "reviewed_by_user_id": number | null;
   "reviewed_at": string | null;
   "rejection_reason": string | null;

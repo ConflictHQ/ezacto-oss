@@ -6474,6 +6474,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       source_observed_at: nullable(timestampSchema),
       submitted_by_user_id: nullable(integerSchema),
       submitted_at: nullable(timestampSchema),
+      automatic_approval: {
+        type: "object", required:["actor","authorized_by_user_id","window_days","effective_from","submitted_at","approved_at","command_id"],
+        properties:{actor:{type:"string",enum:["system"]},authorized_by_user_id:integerSchema,window_days:{type:"integer",minimum:1,maximum:60},effective_from:timestampSchema,submitted_at:timestampSchema,approved_at:timestampSchema,command_id:stringSchema},
+      },
       reviewed_by_user_id: nullable(integerSchema),
       reviewed_at: nullable(timestampSchema),
       rejection_reason: nullable(stringSchema),

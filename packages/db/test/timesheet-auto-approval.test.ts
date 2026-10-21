@@ -216,23 +216,28 @@ for (const [runtime, factory] of factories) {
       const run = await runTimesheetAutoApproval(database.orm, deadline)
       expect(run).toEqual({ approved: [1], skipped: 0, failed: [] })
 
-      // The same path as a manual approval: the week and its entries are
-      // approved, recorded under the administrator who enabled the policy, and
-      // the one automatic approval is on the activity log with no user actor.
+      // The existing approval path locks the week and entries. Its internal FK
+      // retains the policy authority; the immutable receipt and event identify
+      // the system as actor, and the public reviewer is not that administrator.
       expect(await status(database, 1)).toEqual({ status: 'approved', reviewed_by_user_id: 10 })
       expect(
         (await database.rows<{ approval_status: string }>(`SELECT approval_status FROM time_entries WHERE id = 1`))[0]
           ?.approval_status,
       ).toBe('approved')
       const events = await database.rows<{ payload_json: string }>(
-        `SELECT payload_json FROM event_outbox WHERE event_type = 'timesheet.auto_approved'`,
+        `SELECT payload_json FROM event_outbox WHERE event_type = 'timesheet.approved'`,
       )
       expect(events).toHaveLength(1)
       expect(JSON.parse(events[0]!.payload_json)).toMatchObject({
-        actor: { type: 'system', id: null },
-        aggregate: { type: 'timesheet_auto_approval', id: 1 },
-        timesheet_auto_approval: { window_days: 3, user_id: 1, recorded_under_user_id: 10 },
+        actor: { type: 'system' },
+        aggregate: { type: 'timesheet_submission', id: 1 },
+        timesheet_submission: { automatic_approval: {actor:'system',window_days:3,authorized_by_user_id:10,submitted_at:submittedAt} },
       })
+
+      const reviewed = await createTimesheetApprovalRepository(database.orm).get(admin,1)
+      expect(reviewed.reviewedByUserId).toBeNull()
+      expect(reviewed.automaticApproval).toMatchObject({actor:'system',authorized_by_user_id:10,window_days:3,submitted_at:submittedAt,approved_at:deadline})
+      await expect(database.run('UPDATE timesheet_automatic_approval_receipts SET window_days=4')).rejects.toThrow(/immutable/u)
 
       // Nothing left to do, and nothing is approved twice.
       expect(await runTimesheetAutoApproval(database.orm, addMs(deadline, day))).toEqual({
@@ -240,6 +245,25 @@ for (const [runtime, factory] of factories) {
         skipped: 0,
         failed: [],
       })
+    })
+
+    it('[db #1009] rejects a policy disabled after the final read inside the atomic command', async () => {
+      database = await factory()
+      await install(database)
+      await enable(database, 1, addMs(submittedAt, -day))
+      await submit(database, 0, submittedAt)
+      const original = database.orm.all.bind(database.orm)
+      const instrumented = Object.create(database.orm) as Orm
+      let reads = 0
+      instrumented.all = (async (...args: Parameters<typeof original>) => {
+        const rows = await original(...args)
+        if (++reads === 3) await database!.run('UPDATE organizations SET auto_approval_enabled=0 WHERE id=1')
+        return rows
+      }) as typeof database.orm.all
+      expect(await runTimesheetAutoApproval(instrumented, addMs(submittedAt, 2 * day))).toMatchObject({approved:[],skipped:1,failed:[]})
+      expect((await status(database,1)).status).toBe('submitted')
+      expect(await database.rows('SELECT command_id FROM timesheet_automatic_approval_receipts')).toEqual([])
+      expect(await database.rows('SELECT command_id FROM timesheet_bulk_approval_commands')).toEqual([])
     })
 
     it('[db #1009] never sweeps a week submitted before the policy took effect', async () => {

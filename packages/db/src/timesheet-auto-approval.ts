@@ -1,5 +1,4 @@
 import { sql } from 'drizzle-orm'
-import { captureActivityEvent } from './activity-log.js'
 import type { InvoiceStateDatabase } from './invoice-state.js'
 import {
   createTimesheetApprovalRepository,
@@ -33,7 +32,7 @@ export interface TimesheetAutoApprovalSettings {
   readonly windowDays: number | null
   /** Weeks submitted before this are never swept; null while the policy is off. */
   readonly effectiveFrom: string | null
-  /** The administrator whose standing authority the approval is recorded under. */
+  /** The administrator whose standing authority authorizes the system approval. */
   readonly actorUserId: number | null
   /** The sweep does nothing while the Approval module is off. */
   readonly approvalModuleEnabled: boolean
@@ -87,7 +86,7 @@ export interface TimesheetAutoApprovalPatch {
  * stamps `effective_from` with `now`, so enabling is never retroactive; so does
  * turning it on again after it was off. Changing the window of a running policy
  * keeps `effective_from`: weeks already waiting are measured against the new
- * window. The acting administrator becomes the sweep's recorded approver.
+ * window. The acting administrator becomes the policy authority in each immutable system receipt.
  */
 export const updateTimesheetAutoApproval = async (
   database: InvoiceStateDatabase,
@@ -202,6 +201,10 @@ export const runTimesheetAutoApproval = async (
       stopped = 'disabled'
       break
     }
+    if (live.moduleEnabled !== 1) {
+      stopped = 'module_disabled'
+      break
+    }
     if (
       live.windowDays !== start.windowDays ||
       live.effectiveFrom !== start.effectiveFrom ||
@@ -220,6 +223,7 @@ export const runTimesheetAutoApproval = async (
         `auto-approval:${week.id}:${week.version}`,
         [{ submissionId: week.id, expectedVersion: week.version }],
         now,
+        {windowDays:live.windowDays!,effectiveFrom:live.effectiveFrom!,submittedAt:week.submittedAt},
       )
     } catch (error) {
       if (error instanceof TimesheetApprovalError) {
@@ -239,30 +243,7 @@ export const runTimesheetAutoApproval = async (
       continue
     }
     approved.push(week.id)
-    try {
-      await captureActivityEvent(database, {
-        eventType: 'timesheet.auto_approved',
-        subjectId: week.id,
-        actor: { type: 'system' },
-        occurredAt: now,
-        captureId: `auto-approval:${week.id}:${week.version}`,
-        detail: {
-          user_id: week.userId,
-          period_start: week.periodStart,
-          period_end: week.periodEnd,
-          submitted_at: week.submittedAt,
-          window_days: start.windowDays,
-          recorded_under_user_id: live.actorUserId,
-        },
-      })
-    } catch (error) {
-      failed.push({
-        submissionId: week.id,
-        message: `approved, but the activity record failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      })
-    }
+
   }
   return { approved, skipped, failed, ...(stopped === undefined ? {} : { stopped }) }
 }

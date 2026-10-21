@@ -1,5 +1,7 @@
 import {
   composeAutoApprovalWarning,
+  composeAutoApprovalNotice,
+  composeAutoApprovalReviewWarning,
   composeDailyTimeReminder,
   composeSubmissionDigest,
   composeSubmissionReminder,
@@ -47,11 +49,15 @@ export const DAILY_REMINDER_KIND = 'daily_time_reminder'
 export const SUBMISSION_REMINDER_KIND = 'submission_reminder'
 export const SUBMISSION_DIGEST_KIND = 'submission_digest'
 export const AUTO_APPROVAL_WARNING_KIND = 'auto_approval_warning'
+export const AUTO_APPROVAL_REVIEW_WARNING_KIND = 'auto_approval_review_warning'
+export const AUTO_APPROVAL_NOTICE_KIND = 'auto_approval_notice'
 export const REMINDER_TEMPLATES = {
   [DAILY_REMINDER_KIND]: 'time_reminder:v1',
   [SUBMISSION_REMINDER_KIND]: 'submission_reminder:v1',
   [SUBMISSION_DIGEST_KIND]: 'submission_digest:v1',
   [AUTO_APPROVAL_WARNING_KIND]: 'auto_approval_warning:v1',
+  [AUTO_APPROVAL_REVIEW_WARNING_KIND]: 'auto_approval_review_warning:v1',
+  [AUTO_APPROVAL_NOTICE_KIND]: 'auto_approval_notice:v1',
 } as const
 
 const reminderKinds = [
@@ -59,6 +65,8 @@ const reminderKinds = [
   SUBMISSION_REMINDER_KIND,
   SUBMISSION_DIGEST_KIND,
   AUTO_APPROVAL_WARNING_KIND,
+  AUTO_APPROVAL_REVIEW_WARNING_KIND,
+  AUTO_APPROVAL_NOTICE_KIND,
 ] as const
 
 /** How long before the deadline the submitter is told; half the window when that is shorter. */
@@ -88,6 +96,7 @@ interface OrganizationRow {
   autoApprovalEnabled: number
   autoApprovalDays: number | null
   autoApprovalFrom: string | null
+  autoApprovalAuthority: number
   scheduleDay: string | null
   scheduleTime: string | null
 }
@@ -223,6 +232,7 @@ export const prepareTimeReminders = async (
                auto_approval_enabled AS autoApprovalEnabled,
                auto_approval_window_days AS autoApprovalDays,
                auto_approval_effective_from AS autoApprovalFrom,
+               EXISTS(SELECT 1 FROM users authority WHERE authority.id=organizations.auto_approval_actor_user_id AND authority.is_active=1 AND authority.profile IN('administrator','executive_manager')) AS autoApprovalAuthority,
                submission_reminder_day AS scheduleDay, submission_reminder_time AS scheduleTime
         FROM organizations WHERE id = 1`,
   )
@@ -358,6 +368,7 @@ export const prepareTimeReminders = async (
   if (
     organization.approval === 1 &&
     organization.autoApprovalEnabled === 1 &&
+    organization.autoApprovalAuthority === 1 &&
     organization.autoApprovalDays !== null &&
     organization.autoApprovalFrom !== null
   ) {
@@ -365,49 +376,132 @@ export const prepareTimeReminders = async (
     const leadMs = Math.min(AUTO_APPROVAL_WARNING_HOURS * 3_600_000, windowMs / 2)
     const nowMs = Date.parse(input.now)
     const upcoming = await database.all<
-      PersonRow & { submissionId: number; submittedAt: string; periodStart: string; periodEnd: string }
+      PersonRow & {
+        submissionId: number
+        submittedAt: string
+        periodStart: string
+        periodEnd: string
+      }
     >(
       sql`SELECT person.id AS userId, person.first_name AS firstName, person.last_name AS lastName,
-                 person.timezone AS timezone, person.weekly_capacity AS weeklyCapacity,
-                 person.profile AS profile, NULL AS reminderTime, '[]' AS reminderDays,
-                 submission.id AS submissionId, submission.submitted_at AS submittedAt,
-                 submission.period_start AS periodStart, submission.period_end AS periodEnd,
-                 (SELECT email.address FROM user_emails email
-                  WHERE email.user_id = person.id AND email.is_primary = 1
-                    AND email.verified_at IS NOT NULL AND email.invalidated_at IS NULL
-                  LIMIT 1) AS email
-          FROM timesheet_submissions submission
-          JOIN users person ON person.id = submission.user_id
-          WHERE submission.status = 'submitted' AND submission.origin = 'native'
-            AND submission.submitted_at >= ${organization.autoApprovalFrom}
-            AND submission.submitted_at > ${new Date(nowMs - windowMs).toISOString()}
-            AND submission.submitted_at <= ${new Date(nowMs - windowMs + leadMs).toISOString()}
-            AND person.is_active = 1
-          ORDER BY submission.submitted_at, submission.id`,
+                   person.timezone AS timezone, person.weekly_capacity AS weeklyCapacity,
+                   person.profile AS profile, NULL AS reminderTime, '[]' AS reminderDays,
+                   submission.id AS submissionId, submission.submitted_at AS submittedAt,
+                   submission.period_start AS periodStart, submission.period_end AS periodEnd,
+                   (SELECT email.address FROM user_emails email
+                    WHERE email.user_id = person.id AND email.is_primary = 1
+                      AND email.verified_at IS NOT NULL AND email.invalidated_at IS NULL
+                    LIMIT 1) AS email
+            FROM timesheet_submissions submission
+            JOIN users person ON person.id = submission.user_id
+            WHERE submission.status = 'submitted' AND submission.origin = 'native'
+              AND submission.submitted_at >= ${organization.autoApprovalFrom}
+              AND submission.submitted_at > ${new Date(nowMs - windowMs).toISOString()}
+              AND submission.submitted_at <= ${new Date(nowMs - windowMs + leadMs).toISOString()}
+              AND person.is_active = 1
+            ORDER BY submission.submitted_at, submission.id`,
     )
     for (const week of upcoming) {
-      if (week.email === null) continue
       const key = {
         kind: AUTO_APPROVAL_WARNING_KIND,
         userId: week.userId,
         scope: String(week.submissionId),
         period: week.submittedAt,
       }
-      if (await notificationDecided(database, key)) continue
       const zone = effectiveTimeZone(week.timezone, organization.timezone)
-      const deadline = localMoment(new Date(Date.parse(week.submittedAt) + windowMs).toISOString(), zone)
-      await record(
-        key,
-        week,
-        composeAutoApprovalWarning({
-          companyName: organization.name,
-          firstName: week.firstName,
-          week: { start: week.periodStart, end: week.periodEnd },
-          deadline: { date: deadline.date, time: deadline.time, zone },
-          links,
-        }),
+      const deadline = localMoment(
+        new Date(Date.parse(week.submittedAt) + windowMs).toISOString(),
+        zone,
       )
+      if (week.email !== null)
+        await record(
+          key,
+          week,
+          composeAutoApprovalWarning({
+            companyName: organization.name,
+            firstName: week.firstName,
+            week: { start: week.periodStart, end: week.periodEnd },
+            deadline: { date: deadline.date, time: deadline.time, zone },
+            links,
+          }),
+        )
+      const reviewers =
+        await database.all<PersonRow>(sql`SELECT person.id AS userId,person.first_name AS firstName,person.last_name AS lastName,person.timezone AS timezone,person.weekly_capacity AS weeklyCapacity,person.profile AS profile,NULL AS reminderTime,'[]' AS reminderDays,
+          (SELECT email.address FROM user_emails email WHERE email.user_id=person.id AND email.is_primary=1 AND email.verified_at IS NOT NULL AND email.invalidated_at IS NULL LIMIT 1) AS email
+          FROM users person JOIN notification_preferences preference ON preference.user_id=person.id
+          WHERE person.is_active=1 AND person.id<>${week.userId} AND preference.email_enabled=1
+            AND (person.profile IN('administrator','executive_manager') OR (person.profile='project_manager' AND EXISTS(SELECT 1 FROM teammate_assignments assignment WHERE assignment.manager_id=person.id AND assignment.user_id=${week.userId}))) ORDER BY person.id`)
+      for (const reviewer of reviewers) {
+        if (!reviewer.email) continue
+        const localDeadline = localMoment(
+          new Date(Date.parse(week.submittedAt) + windowMs).toISOString(),
+          effectiveTimeZone(reviewer.timezone, organization.timezone),
+        )
+        await record(
+          {
+            kind: AUTO_APPROVAL_REVIEW_WARNING_KIND,
+            userId: reviewer.userId,
+            scope: String(week.submissionId),
+            period: new Date(Date.parse(week.submittedAt) + windowMs).toISOString(),
+          },
+          reviewer,
+          composeAutoApprovalReviewWarning({
+            companyName: organization.name,
+            firstName: reviewer.firstName,
+            personName: `${week.firstName} ${week.lastName}`.trim(),
+            week: { start: week.periodStart, end: week.periodEnd },
+            deadline: {
+              date: localDeadline.date,
+              time: localDeadline.time,
+              zone: effectiveTimeZone(reviewer.timezone, organization.timezone),
+            },
+            reviewUrl: `${input.appUrl.replace(/\/+$/u, '')}/approvals`,
+            links,
+          }),
+        )
+      }
     }
+  }
+
+  // A receipt survives policy changes and a crash after approval. Record each
+  // outcome once using the same notification ledger/queue recovery as reminders.
+  const outcomes = await database.all<
+    PersonRow & {
+      submissionId: number
+      commandId: string
+      periodStart: string
+      periodEnd: string
+      approvedAt: string
+      windowDays: number
+    }
+  >(sql`
+      SELECT person.id AS userId,person.first_name AS firstName,person.last_name AS lastName,person.timezone AS timezone,person.weekly_capacity AS weeklyCapacity,person.profile AS profile,NULL AS reminderTime,'[]' AS reminderDays,
+        receipt.submission_id AS submissionId,receipt.command_id AS commandId,submission.period_start AS periodStart,submission.period_end AS periodEnd,receipt.approved_at AS approvedAt,receipt.window_days AS windowDays,
+        (SELECT email.address FROM user_emails email WHERE email.user_id=person.id AND email.is_primary=1 AND email.verified_at IS NOT NULL AND email.invalidated_at IS NULL LIMIT 1) AS email
+      FROM timesheet_automatic_approval_receipts receipt JOIN timesheet_submissions submission ON submission.id=receipt.submission_id JOIN users person ON person.id=submission.user_id
+      WHERE person.is_active=1 AND EXISTS(SELECT 1 FROM user_emails verified WHERE verified.user_id=person.id AND verified.is_primary=1 AND verified.verified_at IS NOT NULL AND verified.invalidated_at IS NULL) AND receipt.approved_at<=${input.now} AND NOT EXISTS(SELECT 1 FROM notification_deliveries delivered WHERE delivered.kind=${AUTO_APPROVAL_NOTICE_KIND} AND delivered.user_id=person.id AND delivered.scope=CAST(receipt.submission_id AS TEXT) AND delivered.period=receipt.command_id)
+      ORDER BY receipt.approved_at,receipt.submission_id LIMIT 250`)
+  for (const outcome of outcomes) {
+    if (!outcome.email) continue
+    const zone = effectiveTimeZone(outcome.timezone, organization.timezone)
+    const approved = localMoment(outcome.approvedAt, zone)
+    await record(
+      {
+        kind: AUTO_APPROVAL_NOTICE_KIND,
+        userId: outcome.userId,
+        scope: String(outcome.submissionId),
+        period: outcome.commandId,
+      },
+      outcome,
+      composeAutoApprovalNotice({
+        companyName: organization.name,
+        firstName: outcome.firstName,
+        week: { start: outcome.periodStart, end: outcome.periodEnd },
+        windowDays: outcome.windowDays,
+        approved: { date: approved.date, time: approved.time, zone },
+        links,
+      }),
+    )
   }
 
   // Recorded on an earlier pass and never picked up by the queue: queued again
