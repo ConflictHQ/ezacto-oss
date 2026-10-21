@@ -1,3 +1,6 @@
+import { createContainerDatabase } from '@ezacto/db'
+import { createTimesheetApprovalRepository } from '../../../packages/db/src/timesheet-approvals.js'
+import { seedAutomaticApprovalFixture } from '../../../packages/db/test/support/automatic-approval-fixture.js'
 import { mkdtemp, realpath, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -725,6 +728,46 @@ it('passes fixed reminder bounds through the container service', async () => {
   } finally { await runtime.close() }
 })
 
+
+it('[integration #1009] container maintenance approves once and queues the durable submitter notice', async () => {
+  const root = await temporary()
+  const captured: EmailMessage[] = []
+  const runtime = await createContainerRuntime(config(root), { emailProvider: provider(captured) })
+  try {
+    await runtime.drainOutbox()
+    const at = Date.now()
+    const submitted = await seedAutomaticApprovalFixture(async (statement, ...bindings) => {
+      runtime.database.prepare(statement).run(...bindings)
+    }, new Date(at).toISOString())
+    await createTimesheetApprovalRepository(createContainerDatabase(runtime.database)).submit(
+      1,
+      '2026-08-24',
+      '2026-08-30',
+      submitted,
+    )
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(at + 120000)
+    await runtime.drainOutbox()
+    expect(
+      runtime.database
+        .prepare('SELECT count(*) AS n FROM timesheet_automatic_approval_receipts')
+        .get(),
+    ).toEqual({ n: 1 })
+    vi.setSystemTime(at + 240000)
+    await runtime.drainOutbox()
+    await vi.waitFor(() =>
+      expect(captured.filter((mail) => mail.template === 'auto_approval_notice:v1')).toHaveLength(
+        1,
+      ),
+    )
+    expect(captured.find((mail) => mail.template === 'auto_approval_notice:v1')!.to).toEqual([
+      { email: 'maya@example.test', name: 'Maya Member' },
+    ])
+  } finally {
+    vi.useRealTimers()
+    await runtime.close()
+  }
+})
 
 it('[security #1010] composes real contact mail, consumes its token once and keeps staff auth separate', async () => {
   const root = await temporary()

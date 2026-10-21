@@ -3294,7 +3294,7 @@ export const mountShell = async (
     const selfWithdrawn = isSelfWithdrawn(currentSubmission)
     timesheetStatusLabel.textContent =
       status === 'approved'
-        ? 'Approved'
+        ? currentSubmission?.automatic_approval ? 'Approved automatically' : 'Approved'
         : status === 'submitted'
           ? 'Submitted for approval'
           : selfWithdrawn ||
@@ -3579,6 +3579,11 @@ export const mountShell = async (
         totals.className = 'approval-totals'
         totals.textContent = `${formatSeconds(submission.total_seconds)} · ${submission.entry_count} time ${submission.expense_count > 0 ? ` · ${submission.expense_count} expenses` : ''}`
         summary.append(title, period, totals)
+        if (submission.automatic_approval) {
+          const audit = document.createElement('p')
+          audit.textContent = `Approved automatically after a ${submission.automatic_approval.window_days}-day review window.`
+          summary.appendChild(audit)
+        }
         const reopen = document.createElement('button')
         reopen.type = 'button'
         reopen.textContent = 'Reopen'

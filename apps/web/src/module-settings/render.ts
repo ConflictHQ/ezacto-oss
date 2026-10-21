@@ -57,7 +57,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
     </section>
     <section class="settings-section" data-settings-section="approval" aria-labelledby="settings-approval-title">
       <header><h2 id="settings-approval-title">Automatic approval</h2>
-      <p>Off unless you turn it on. When on, a submitted week that nobody has approved or rejected within the number of calendar days you choose is approved for you. The days are counted from the moment the week was submitted, and start again if it is rejected and submitted again. A rejected week is never approved this way, and weeks submitted before you turn this on are left for a person to decide. The approval is recorded under the administrator who last saved this setting and shows on the activity log as automatic.</p></header>
+      <p>Off unless you turn it on. When on, a submitted week that nobody has approved or rejected within the number of calendar days you choose is approved for you. The days are counted from the moment the week was submitted, and start again if it is rejected and submitted again. A rejected week is never approved this way, and weeks submitted before you turn this on are left for a person to decide. The system records the decision with the review window and the administrator who authorized the policy. The submitter receives a confirmation; reviewers with email enabled receive a warning before the deadline.</p></header>
       <p class="form-result" data-auto-approval-status role="status" aria-live="polite">Loading automatic approval…</p>
       <form class="settings-form" data-auto-approval-form hidden>
         <label class="settings-toggle"><input name="enabled" type="checkbox" data-auto-approval-enabled>Approve submitted timesheets automatically</label>

@@ -1,3 +1,4 @@
+import { runTimesheetAutoApproval } from '../src/timesheet-auto-approval.js'
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -578,6 +579,46 @@ for (const [name, factory] of [
       )
       expect(await run(test, '2026-10-14T10:00:00.000Z')).toHaveLength(0)
       expect(await warnings(test)).toEqual([])
+    })
+
+    it('[1009] warns only authorized approvers with email enabled and retries without duplicate records', async () => {
+      const test = await open()
+      await test.run('UPDATE notification_preferences SET email_enabled=1 WHERE user_id IN (1,2,4)')
+      await test.run("UPDATE user_emails SET is_primary=0,invalidated_at='2026-10-13T00:00:00.000Z' WHERE user_id=3")
+      const sent = await run(test, '2026-10-14T10:00:00.000Z')
+      const reviews = sent.filter((mail) => mail.template === 'auto_approval_review_warning:v1')
+      expect(reviews.map((mail) => mail.to.email)).toEqual(['ada@example.test', 'pia@example.test'])
+      expect(
+        reviews.every((mail) => mail.text.includes('Mo Member') && mail.text.includes('/approvals')),
+      ).toBe(true)
+      expect(
+        (await run(test, '2026-10-14T10:01:00.000Z')).filter(
+          (mail) => mail.template === 'auto_approval_review_warning:v1',
+        ),
+      ).toEqual([])
+    })
+
+    it('[1009] mails an immutable approval outcome once even after policy disable and recovers the same queued delivery', async () => {
+      const test = await open()
+      expect((await runTimesheetAutoApproval(test.orm, '2026-10-15T09:00:00.000Z')).approved).toEqual([
+        1,
+      ])
+      await test.run('UPDATE organizations SET auto_approval_enabled=0 WHERE id=1')
+      const sent = await run(test, '2026-10-15T09:01:00.000Z')
+      const notices = sent.filter((mail) => mail.template === 'auto_approval_notice:v1')
+      expect(notices).toHaveLength(1)
+      expect(notices[0]).toMatchObject({ to: { email: 'mo@example.test', name: 'Mo Member' } })
+      expect(notices[0]!.text).toContain('was approved automatically')
+      expect(notices[0]!.text).toContain('3-calendar-day')
+      expect(
+        (await run(test, '2026-10-15T09:02:00.000Z')).filter(
+          (mail) => mail.template === 'auto_approval_notice:v1',
+        ),
+      ).toEqual([])
+      const recovered = (await run(test, '2026-10-15T09:10:00.000Z')).filter(
+        (mail) => mail.template === 'auto_approval_notice:v1',
+      )
+      expect(recovered).toEqual(notices)
     })
 
     it('[unit] a resubmission restarts the clock and is warned about again', async () => {

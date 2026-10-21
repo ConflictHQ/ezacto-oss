@@ -1,3 +1,4 @@
+import { runTimesheetAutoApproval } from '../../db/src/timesheet-auto-approval.js'
 import { Miniflare } from 'miniflare'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createD1Database } from '../../db/src/adapters.js'
@@ -203,6 +204,44 @@ describe('timesheet approval API', () => {
   })
 
   afterEach(async () => harness.close())
+
+  it('[api #1009] exposes the system receipt and removes an automatic approval from the pending queue', async () => {
+    await harness.d1
+      .prepare(
+        "UPDATE organizations SET auto_approval_enabled=1,auto_approval_window_days=1,auto_approval_effective_from='2026-08-01T00:00:00.000Z',auto_approval_actor_user_id=10 WHERE id=1",
+      )
+      .run()
+    const response = await harness.request('/timesheet-submissions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ period_start: '2026-08-24', period_end: '2026-08-30' }),
+    })
+    expect(response.status).toBe(201)
+    const submitted = (await response.json()) as { data: { id: number } }
+    const run = await runTimesheetAutoApproval(
+      createD1Database(harness.d1),
+      '2026-09-01T12:00:00.000Z',
+    )
+    expect(run.approved).toEqual([submitted.data.id])
+    const detail = await harness.request(`/timesheet-submissions/${submitted.data.id}`)
+    expect(await detail.json()).toMatchObject({
+      data: {
+        status: 'approved',
+        reviewed_by_user_id: null,
+        automatic_approval: {
+          actor: 'system',
+          authorized_by_user_id: 10,
+          window_days: 1,
+          approved_at: '2026-09-01T12:00:00.000Z',
+        },
+      },
+    })
+    const pending = await harness.request('/timesheet-submissions/pending', undefined, {
+      userId: 10,
+      profile: 'administrator',
+    })
+    expect(await pending.json()).toMatchObject({ data: [] })
+  })
 
   it('[api][e2e:approve-lock] rejects visibly, resubmits, approves, and locks over real D1', async () => {
     const submit = await harness.request('/timesheet-submissions', {

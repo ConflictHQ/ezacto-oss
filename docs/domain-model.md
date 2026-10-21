@@ -621,9 +621,23 @@ Axes are independent; conflating them is the classic clone mistake.
    the window (calendar days) has passed, only for weeks submitted on or after
    `auto_approval_effective_from`, and only through the version-checked bulk
    approval path. A resubmission rewrites `submitted_at`, so it restarts the clock.
+   Each new automatic decision has an immutable system receipt
+   (`0139_timesheet_automatic_receipts`) in the same transaction as the approval.
+   The receipt pins the policy authority, window, effective date, submitted clock
+   and resulting version. The transaction checks the live policy, authority and
+   active submitter again before writing. Approval events identify the system;
+   `reviewed_by_user_id` is null in the public view and `automatic_approval` carries
+   the authority and policy snapshot. Manual approval events keep their existing
+   shape. No synthetic login-capable administrator account is created.
    The submitter is mailed a notice (`auto_approval_warning`, in the notification
    ledger keyed by submission and `submitted_at`) 24 hours before the deadline, or
    half the window when that is shorter, by the same pass as the time reminders.
+   Reviewers authorized for that person and with email enabled receive a separate
+   warning on the same schedule. A committed automatic receipt also produces a
+   submitter confirmation (`auto_approval_notice`), even if the policy is later
+   disabled. Both use the existing notification ledger and stranded-queue
+   recovery; an approval committed before a process crash remains discoverable
+   and its notification is recorded only once.
 2. **Invoicing**: `invoice_id` nullable. `is_billed` is `invoice_id IS NOT NULL`.
 3. **Editability**: `locked = derived(entry)` — true when invoiced, approved,
    an already-computed policy-lock fact is present, or any parent
