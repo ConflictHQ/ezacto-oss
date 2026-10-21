@@ -2245,15 +2245,16 @@ export const createModuleSettingsController = (
           quickBooksReconcileTable.replaceChildren(
             renderDataTable({
               caption: 'Differences between ezacto and QuickBooks',
+              table: 'quickbooks-comparison',
               rows: differing,
               rowKey: (row) => row.key,
               empty: 'No differences.',
               columns: [
-                { key: 'number', label: 'Invoice', fit: true, render: (row) => row.number || '—' },
-                { key: 'status', label: 'Difference', fit: true, render: (row) => row.difference },
-                { key: 'ezacto', label: 'ezacto', numeric: true, render: (row) => money(row.ezacto) },
-                { key: 'quickbooks', label: 'QuickBooks', numeric: true, render: (row) => money(row.quickbooks) },
-                { key: 'detail', label: 'Detail', wrap: true, render: (row) => row.detail },
+                { key: 'number', label: 'Invoice', sortValue: (row) => row.number || null, fit: true, render: (row) => row.number || '—' },
+                { key: 'status', label: 'Difference', sortValue: (row) => row.difference, fit: true, render: (row) => row.difference },
+                { key: 'ezacto', label: 'ezacto', sortValue: (row) => row.ezacto, numeric: true, render: (row) => money(row.ezacto) },
+                { key: 'quickbooks', label: 'QuickBooks', sortValue: (row) => row.quickbooks, numeric: true, render: (row) => money(row.quickbooks) },
+                { key: 'detail', label: 'Detail', sortValue: (row) => row.detail || null, wrap: true, render: (row) => row.detail },
               ],
             }),
           )

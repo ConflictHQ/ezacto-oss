@@ -94,7 +94,7 @@ describe('QuickBooks reconciliation', () => {
     expect(table.textContent).toContain('450.00')
     expect(table.textContent).not.toContain('1001')
     // Nothing on a row corrects anything.
-    expect(table.querySelector('button')).toBeNull()
+    expect(table.querySelector('tbody button')).toBeNull()
   })
 
   it('[browser #1013] lists a payment voided in QuickBooks and the state of catch-up', async () => {
@@ -124,7 +124,7 @@ describe('QuickBooks reconciliation', () => {
     expect(table.textContent).toContain('1003')
     expect(table.textContent).toContain('payment voided in QuickBooks')
     expect(table.textContent).toContain('300.00')
-    expect(table.querySelector('button')).toBeNull()
+    expect(table.querySelector('tbody button')).toBeNull()
   })
 
   it('[browser #1013] says so when everything agrees', async () => {
@@ -173,4 +173,27 @@ describe('QuickBooks reconciliation', () => {
       true,
     )
   })
+  it('[browser #852] sorts natural invoice numbers and cents, keeping absent amounts last without repair actions', async () => {
+    const rows = [
+      { ...report.rows[1]!, number: '10', ezacto_amount_cents: 900 },
+      { ...report.rows[1]!, number: '9', ezacto_amount_cents: 10000 },
+      { ...report.rows[1]!, number: '1315', ezacto_amount_cents: null },
+    ]
+    await open({ getQuickBooksConnection: async () => connected, getQuickBooksReconciliation: async () => ({ ...report, rows }) })
+    const compare = document.querySelector<HTMLButtonElement>('[data-quickbooks-reconcile]')!
+    await vi.waitFor(() => expect(compare.disabled).toBe(false))
+    compare.click()
+    const table = document.querySelector<HTMLElement>('[data-quickbooks-reconcile-table]')!
+    await vi.waitFor(() => expect(table.hidden).toBe(false))
+    const numbers = () => [...table.querySelectorAll('tbody [data-column="number"]')].map(cell => cell.textContent)
+    const sort = (column: string) => table.querySelector<HTMLButtonElement>(`button[data-sort-column="${column}"]`)!.click()
+    sort('number')
+    expect(numbers()).toEqual(['9', '10', '1315'])
+    sort('ezacto')
+    expect(numbers()).toEqual(['10', '9', '1315'])
+    sort('ezacto')
+    expect(numbers()).toEqual(['9', '10', '1315'])
+    expect(table.querySelector('tbody button')).toBeNull()
+  })
+
 })
