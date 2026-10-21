@@ -53,8 +53,7 @@ out.
    files describes a state nobody else has.
 
 4. **Run the gates CI runs.** `npm run verify` is the whole chain in one
-   command, and `verify.yml` is the same definition the merge gate and the
-   deploy both call, so a green local run is the real answer:
+   command, and `verify.yml` is the same definition the merge gate calls, so a green local run is the real answer:
    ```bash
    npm ci
    npm run verify   # contract:check → typecheck → lint → theme contrast → test → build
@@ -174,8 +173,10 @@ anything you only partly did.
 
 ## After the merge
 
-`deploy.yml` runs on every push to `main`: the same `verify.yml`, then the dev
-deployment. Prod is a manual dispatch and only ever from `main`. So a merge
+`deploy.yml` runs on every push to `main`: a bounded check of the successful
+PR verification receipt against the release tree, then the dev deployment.
+It reuses the PR suite; it does not repeat it. Merge current `main` into the
+branch and verify again if the release tree differs from the tested tree. Prod is a manual dispatch and only ever from `main`. So a merge
 ships something — read the deploy run, not just the merge. Then close the issue
 with the same what / why / verified summary, per `.codex/sdlc-playbook.md`
 step 11.
