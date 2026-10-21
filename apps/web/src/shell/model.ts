@@ -1316,6 +1316,11 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  getClientRateCard: async (id, signal) => (await client.getClientRateCard({id, ...withSignal(signal)})).data,
+  createClientRateCard: async (id, name, signal) => (await client.createClientRateCard({id, body: {name}, ...withSignal(signal)})).data,
+  createClientRateCardVersion: async (id, input, signal) => (await client.createClientRateCardVersion({id, body: input, ...withSignal(signal)})).data,
+  getClientEffectiveRateCard: async (id, taskId, date, signal) => (await client.getClientEffectiveRateCard({id, query: {task_id: taskId, spent_date: date}, ...withSignal(signal)})).data,
+  listRateCardTasks: (cursor, signal) => client.listTasks({query: {per_page: 200, is_active: true, ...(cursor === undefined ? {} : {cursor})}, ...withSignal(signal)}),
   getDirectoryClient: async (id, signal) =>
     (await client.getClient({ id, ...withSignal(signal) })).data,
   createDirectoryClient: async (input, signal) =>

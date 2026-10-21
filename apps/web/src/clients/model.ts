@@ -1,3 +1,4 @@
+import type { ClientRateCardApi } from './rate-card-browser.js'
 import type {
   ClientHierarchyNode,
   ClientInvoiceSendingInput,
@@ -20,7 +21,7 @@ export type ClientDirectoryPage<T = GeneralResource> = {
   readonly page: { readonly next_cursor: string | null }
 }
 
-export interface ClientDirectoryApi {
+export interface ClientDirectoryApi extends ClientRateCardApi {
   listDirectoryClients(
     cursor?: string,
     signal?: AbortSignal,

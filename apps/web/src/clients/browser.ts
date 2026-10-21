@@ -1,3 +1,4 @@
+import { createClientRateCardController } from './rate-card-browser.js'
 import { focusSortHeader, rememberedSort, resolveSort, sortRows, type TableSort } from '../components/table-sort.js'
 import { renderDataTable } from '../components/data-table.js'
 import { markMoney } from '../money-display.js'
@@ -187,6 +188,7 @@ export interface ClientDirectoryController {
 export const createClientDirectoryController = (
   api: Partial<ClientDirectoryApi>,
 ): ClientDirectoryController => {
+  const rateCards = createClientRateCardController(api)
   const listPage = document.documentElement.dataset.appView === 'client-list'
   const detailPage = document.documentElement.dataset.appView === 'client-detail'
   const listPageElement = required<HTMLElement>('[data-client-list-page]')
@@ -1169,6 +1171,13 @@ export const createClientDirectoryController = (
       // the client-directory acceptance caught.
       void refreshRollup(active, id)
       void refreshSending(active, id)
+      void rateCards.activate({
+        identity: active.identity,
+        signal: active.signal,
+        client: selected,
+        clients: allClients,
+        failed: (error, paint) => { active.presentFailure(error, paint) },
+      })
     } catch (error) {
       active.presentFailure(error, () => {
         detailStatus.textContent = messageFor(error)
