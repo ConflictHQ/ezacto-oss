@@ -188,9 +188,9 @@ export interface ScheduledActionStore {
    * identical to a kill before it, and the safe reading of that ambiguity is to
    * redo the work: for an email, that is sending it twice.
    */
-  claimItem(itemId: number, now: string): Promise<boolean>
-  completeItem(itemId: number, now: string): Promise<boolean>
-  failItem(itemId: number, now: string, reason: string): Promise<boolean>
+  claimItem(itemId: number, now: string, leaseToken?: string): Promise<boolean>
+  completeItem(itemId: number, now: string, leaseToken?: string): Promise<boolean>
+  failItem(itemId: number, now: string, reason: string, leaseToken?: string): Promise<boolean>
   /**
    * Moves the run to completed once nothing is outstanding.
    *
@@ -301,29 +301,37 @@ export const createScheduledActionStore = (database: Database): ScheduledActionS
         ORDER BY id`)
     ).map(item),
 
-  claimItem: async (itemId, now) => {
+  claimItem: async (itemId, now, leaseToken) => {
+    const leaseExpiresAt = new Date(Date.parse(now) + 15 * 60000).toISOString()
+    // A process killed on its final attempt must not remain visibly running forever.
+    await database.run(sql`UPDATE run_items SET state='failed',lease_token=NULL,lease_expires_at=NULL,
+      failure_reason='Automatic attempts exhausted after the executor was interrupted.'
+      WHERE id=${itemId} AND state='running' AND attempt_count>=3
+        AND (lease_expires_at IS NULL OR lease_expires_at<=${now})`)
     const rows = await database.all<{ id: number }>(sql`
       UPDATE run_items
-      SET state = 'running', attempted_at = ${now}, attempt_count = attempt_count + 1
-      WHERE id = ${itemId} AND state <> 'done'
+      SET state = 'running', attempted_at = ${now}, attempt_count = attempt_count + 1,
+          lease_token=${leaseToken ?? null}, lease_expires_at=${leaseExpiresAt}
+      WHERE id = ${itemId} AND state <> 'done' AND attempt_count<3
+        AND (state <> 'running' OR lease_expires_at IS NULL OR lease_expires_at<=${now})
       RETURNING id`)
     return rows.length > 0
   },
 
-  completeItem: async (itemId, now) => {
+  completeItem: async (itemId, now, leaseToken) => {
     const rows = await database.all<{ id: number }>(sql`
       UPDATE run_items
-      SET state = 'done', completed_at = ${now}, failure_reason = NULL
-      WHERE id = ${itemId} AND state <> 'done'
+      SET state = 'done', completed_at = ${now}, failure_reason = NULL, lease_token=NULL, lease_expires_at=NULL
+      WHERE id = ${itemId} AND state='running' AND lease_token IS ${leaseToken ?? null}
       RETURNING id`)
     return rows.length > 0
   },
 
-  failItem: async (itemId, now, reason) => {
+  failItem: async (itemId, now, reason, leaseToken) => {
     const rows = await database.all<{ id: number }>(sql`
       UPDATE run_items
-      SET state = 'failed', failure_reason = ${reason}, attempted_at = ${now}
-      WHERE id = ${itemId} AND state <> 'done'
+      SET state = 'failed', failure_reason = ${reason}, attempted_at = ${now}, lease_token=NULL, lease_expires_at=NULL
+      WHERE id = ${itemId} AND state='running' AND lease_token IS ${leaseToken ?? null}
       RETURNING id`)
     return rows.length > 0
   },

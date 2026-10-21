@@ -69,18 +69,18 @@ export const executeRun = async (
 
   for (const item of await store.outstanding(runId)) {
     if (options.signal?.aborted === true) break
-    // Claimed before the work. A claim that comes back false is an item some
-    // other pass already finished -- which is the normal outcome of two workers
-    // meeting, not an error.
-    if (!(await store.claimItem(item.id, options.now()))) continue
+    // Claim before work. Completed items, a live lease, or an exhausted retry
+    // budget are all ordinary reasons another pass must leave this item alone.
+    // Only this lease's owner may settle the result after the handler returns.
+    const leaseToken = crypto.randomUUID()
+    if (!(await store.claimItem(item.id, options.now(), leaseToken))) continue
     try {
       await handler(item)
-      await store.completeItem(item.id, options.now())
-      completed += 1
+      if (await store.completeItem(item.id, options.now(), leaseToken)) completed += 1
     } catch (error) {
       const reason = reasonOf(error)
-      await store.failItem(item.id, options.now(), reason)
-      failed.push({ itemId: item.id, reason })
+      if (await store.failItem(item.id, options.now(), reason, leaseToken))
+        failed.push({ itemId: item.id, reason })
     }
   }
 
