@@ -533,3 +533,8 @@ export { releaseInvoiceLineTime } from './invoice-time-release.js'
 export * from './email-suppressions.js'
 
 export * from './scheduled-run-notifications.js'
+
+export * from './scheduled-run-dispatch.js'
+
+export { executeInvoiceLifecycleCommand } from './invoice-state.js'
+export { proposeMonthEndPack } from './month-end-pack.js'

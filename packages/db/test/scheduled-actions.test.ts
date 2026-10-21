@@ -235,9 +235,9 @@ describe('executing a confirmed run, exactly once per item (#62)', () => {
     const [first, second] = await store.outstanding(runId)
 
     // The first item ran; then the process died holding the second.
-    await store.claimItem(first!.id, t(11))
-    await store.completeItem(first!.id, t(11))
-    await store.claimItem(second!.id, t(11))
+    await store.claimItem(first!.id, t(11), 'test-owner')
+    await store.completeItem(first!.id, t(11), 'test-owner')
+    await store.claimItem(second!.id, t(11), 'test-owner')
 
     // What a resume picks up: the one left running, and not the one done.
     const afterCrash = await store.outstanding(runId)
@@ -249,12 +249,12 @@ describe('executing a confirmed run, exactly once per item (#62)', () => {
     const { sqlite: database, store } = await fixture()
     const runId = await confirmed(store)
     const [first] = await store.outstanding(runId)
-    await store.claimItem(first!.id, t(11))
-    await store.completeItem(first!.id, t(11))
+    await store.claimItem(first!.id, t(11), 'test-owner')
+    await store.completeItem(first!.id, t(11), 'test-owner')
 
     // Through the store it is simply unclaimable...
-    expect(await store.claimItem(first!.id, t(12))).toBe(false)
-    expect(await store.completeItem(first!.id, t(12))).toBe(false)
+    expect(await store.claimItem(first!.id, t(12), 'test-owner')).toBe(false)
+    expect(await store.completeItem(first!.id, t(12), 'test-owner')).toBe(false)
     // ...and the schema refuses it even to a writer going around the store,
     // which is what makes a resume safe to run as often as it likes.
     expect(() =>
@@ -266,10 +266,10 @@ describe('executing a confirmed run, exactly once per item (#62)', () => {
     const { store } = await fixture()
     const runId = await confirmed(store)
     const [first, second] = await store.outstanding(runId)
-    await store.claimItem(first!.id, t(11))
-    await store.completeItem(first!.id, t(11))
-    await store.claimItem(second!.id, t(11))
-    await store.failItem(second!.id, t(11), 'the client has no invoice address')
+    await store.claimItem(first!.id, t(11), 'test-owner')
+    await store.completeItem(first!.id, t(11), 'test-owner')
+    await store.claimItem(second!.id, t(11), 'test-owner')
+    await store.failItem(second!.id, t(11), 'the client has no invoice address', 'test-owner')
 
     const retry = await store.outstanding(runId)
     expect(retry.map((row) => row.id)).toEqual([second!.id])
@@ -283,8 +283,8 @@ describe('executing a confirmed run, exactly once per item (#62)', () => {
     const runId = await confirmed(store)
     const [first] = await store.outstanding(runId)
     for (const hour of [11, 12, 13]) {
-      await store.claimItem(first!.id, t(hour))
-      await store.failItem(first!.id, t(hour), 'still unreachable')
+      await store.claimItem(first!.id, t(hour), 'test-owner')
+      await store.failItem(first!.id, t(hour), 'still unreachable', 'test-owner')
     }
     expect((await store.outstanding(runId))[0]?.attemptCount).toBe(3)
   })
@@ -293,16 +293,16 @@ describe('executing a confirmed run, exactly once per item (#62)', () => {
     const { store } = await fixture()
     const runId = await confirmed(store)
     const [first, second] = await store.outstanding(runId)
-    await store.claimItem(first!.id, t(11))
-    await store.completeItem(first!.id, t(11))
+    await store.claimItem(first!.id, t(11), 'test-owner')
+    await store.completeItem(first!.id, t(11), 'test-owner')
 
     // A partial run stays visibly partial. Reporting it finished would leave
     // items nobody ever did and nobody was told about.
     expect(await store.settleRun(runId, t(12))).toBe(false)
     expect((await store.read(runId))?.state).toBe('confirmed')
 
-    await store.claimItem(second!.id, t(12))
-    await store.completeItem(second!.id, t(12))
+    await store.claimItem(second!.id, t(12), 'test-owner')
+    await store.completeItem(second!.id, t(12), 'test-owner')
     expect(await store.settleRun(runId, t(13))).toBe(true)
     expect((await store.read(runId))?.state).toBe('completed')
   })
@@ -314,7 +314,7 @@ describe('executing a confirmed run, exactly once per item (#62)', () => {
     const proposed = await propose(store)
     if (proposed.outcome !== 'proposed') throw new Error(proposed.outcome)
     const [first] = await store.outstanding(proposed.run.id)
-    await expect(store.claimItem(first!.id, t(11))).rejects.toThrow(/only a confirmed run/u)
+    await expect(store.claimItem(first!.id, t(11), 'test-owner')).rejects.toThrow(/only a confirmed run/u)
   })
 
   it('[money] a result must say when it finished or why it did not', async () => {

@@ -87,7 +87,8 @@ const { data: job } = await response.json()
 
 An empty `client_ids` list covers all clients. A job proposes the preceding
 calendar month's eligible invoices with their concrete client, amount/currency,
-recipient and claimed rounded hours (null when the invoice claims no time).
+recipient and claimed rounded hours (null when the invoice claims no time),
+plus each named person's hours in the exact saved report.
 Reports must render before a proposal is stored. The proposal and all its items
 are committed together, so a failed item leaves no partial manifest. Overlapping
 ticks cannot materialize the same job/month twice. Nothing becomes confirmed or
@@ -117,9 +118,9 @@ commit a proposal from a stale configuration already being rendered. Job
 configuration requires an active administrator session; API tokens cannot create,
 change or read these definitions. Month-end jobs always require confirmation.
 
-This release supplies definition, proposal, administrator review notices and
-expiry handling. Execution of confirmed packs remains separate work; creating
-a job does not send client email or initiate a payment.
+This release supplies definition, proposal, administrator review notices,
+authenticated confirmation, durable dispatch and expiry handling. Creating a job
+does not authorize client email or initiate a payment.
 
 ### Review notices and authenticated answers
 
@@ -141,5 +142,45 @@ flow, so there is no separate bearer-link lifetime to manage.
 
 The manifest screen shows each captured item and its recorded result. If an
 answer's response is lost, refresh before trying again; the screen reloads the
-server's state instead of assuming the answer failed. Confirmed execution and
-its activity trail remain the separate #62 delivery work.
+server's state instead of assuming the answer failed.
+
+### Saved reports, delivery and recovery
+
+Each proposal saves its exact PDFs in the attachment store before it becomes
+answerable. Use **Review saved PDF** beside an item to inspect that document.
+Changing a report brand, notes or live time afterwards does not replace the saved
+PDF. Report-note warnings are captured with it; when warnings exist, confirmation
+requires an explicit acknowledgement on the review screen. The acknowledgement is
+recorded with the administrator and the original confirmation time.
+
+After confirmation, the Worker minute cron or container maintenance tick dispatches
+the items. Each item owns a 15-minute lease. Another executor cannot enter it while
+the lease is live, and a recovered lease cannot be settled by the old executor.
+Automatic attempts stop after three failures or interruptions. The manifest names
+the failed item and its reason. **Retry failed items** authorizes another bounded
+window for exhausted failures only; it never repeats a completed item. The same
+control is `POST /api/v1/scheduled-runs/:id/retry`, with an administrator session.
+
+Before queue handoff, the dispatcher records an immutable delivery intent, sender
+binding and attachment identity. An interrupted handoff reuses those identities
+and the captured recipient instead of composing another message or adding another
+attachment. A changed invoice recipient or a closed invoice is refused before a
+new intent is recorded. A missing or changed artifact is refused; restore the
+original artifact rather than replacing what was reviewed. Sender configuration
+must remain valid for the recorded binding when a queued handoff is retried.
+
+**Complete** means every item was handed to the mail queue. The per-item delivery
+status separately shows queued, sent or failed provider delivery. A scheduled pack
+sends work detail; it does not mark an invoice paid or initiate a transfer. The
+activity log records proposal, attributed confirmation/cancellation, expiry,
+per-item attempts/results, retry authorization and completion. These events and
+their subject links are administrator-only.
+
+The Worker needs configured attachment storage and organization email delivery;
+the container uses its normal disk attachment store and SMTP sender. Saved reports are registered as file objects; retain the instance's attachment
+store with its database when backing up or restoring.
+Older proposals without saved reports remain readable but are never silently
+rendered and sent by the dispatcher. Pause their old job and create a replacement
+job with the reviewed scope, then review and confirm its newly captured proposal;
+cancel an older unconfirmed proposal. A legacy confirmation with no captured PDF
+remains a named failed item rather than an invented delivery.

@@ -22,7 +22,7 @@ import type { RunItemRecord, ScheduledActionStore } from './scheduled-actions.js
  * returns would have the item recorded as done, which is the one thing this
  * design is protecting.
  */
-export type RunItemHandler = (item: RunItemRecord) => Promise<void>
+export type RunItemHandler = (item: RunItemRecord, context: { leaseToken: string }) => Promise<void>
 
 export interface RunExecutionReport {
   runId: number
@@ -44,6 +44,7 @@ export interface RunExecutorOptions {
    * an item to be re-attempted for no reason.
    */
   signal?: AbortSignal
+  maxItems?: number
 }
 
 const reasonOf = (error: unknown): string =>
@@ -67,7 +68,10 @@ export const executeRun = async (
   const failed: { itemId: number; reason: string }[] = []
   let completed = 0
 
+  let examined = 0
   for (const item of await store.outstanding(runId)) {
+    if (examined >= (options.maxItems ?? Infinity)) break
+    examined += 1
     if (options.signal?.aborted === true) break
     // Claim before work. Completed items, a live lease, or an exhausted retry
     // budget are all ordinary reasons another pass must leave this item alone.
@@ -75,7 +79,7 @@ export const executeRun = async (
     const leaseToken = crypto.randomUUID()
     if (!(await store.claimItem(item.id, options.now(), leaseToken))) continue
     try {
-      await handler(item)
+      await handler(item, { leaseToken })
       if (await store.completeItem(item.id, options.now(), leaseToken)) completed += 1
     } catch (error) {
       const reason = reasonOf(error)

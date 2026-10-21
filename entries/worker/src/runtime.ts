@@ -1,3 +1,4 @@
+import { createScheduledRunDispatchService } from '@ezacto/db/d1'
 import { prepareScheduledRunNotifications } from '@ezacto/db/d1'
 import { createD1EmailSuppressionStore } from '@ezacto/db/d1'
 import type { ReminderProcessOptions } from '@ezacto/db/d1'
@@ -1175,6 +1176,26 @@ export const createRuntimeServices = async (
       )?.address ?? null,
   })
 
+  const scheduledObjects = env.ATTACHMENTS === undefined ? undefined : createR2AttachmentObjectStore(env.ATTACHMENTS)
+  const scheduledRunDispatch = scheduledObjects === undefined || organizationMailer?.enqueuePersisted === undefined
+    ? undefined : createScheduledRunDispatchService(drizzle, {
+      sender: async () => {
+        await organizationMailer!.assertAvailable()
+        const sender = await emailConfiguration.resolveSenderIdentity()
+        if (!sender?.evidence) throw new Error('A verified sender identity is required for month-end delivery.')
+        return {
+          senderIdentityId: sender.id, senderIdentityVersion: sender.version, senderEvidenceVersion: sender.evidence.version,
+          from: { email: sender.email, name: sender.displayName },
+          ...(sender.replyToEmail === null ? {} : { replyTo: [{ email: sender.replyToEmail }] }),
+        }
+      },
+      enqueue: organizationMailer.enqueuePersisted.bind(organizationMailer),
+      readBytes: async (key: string) => {
+        const object = await scheduledObjects.get(key)
+        return object === null ? null : new Uint8Array(await new Response(object.body).arrayBuffer())
+      },
+      now: () => new Date().toISOString(),
+    })
   return {
     bootstrap: (input) => bootstrapInstanceD1(database, input),
     enrollOwnerPassword: (input) =>
@@ -1446,7 +1467,10 @@ export const createRuntimeServices = async (
           }),
         }, notificationMailer),
     scheduledJobs: createScheduledJobsService(drizzle),
-    scheduledJobProposals: { processDue: (now: string) => proposeDueScheduledJobs(drizzle, now) },
+    scheduledRunDispatch,
+    scheduledJobProposals: { processDue: (now: string) => proposeDueScheduledJobs(drizzle, now, scheduledObjects ?? {
+      put: async () => { throw new Error('Configure attachment storage before proposing a month-end report.') },
+    }) },
     scheduledRuns: createScheduledRunsService(drizzle),
     staffPayments: createStaffPaymentStore(drizzle),
     contractorReview: createContractorReviewStore(drizzle),

@@ -8,7 +8,7 @@ import {
   type ScheduledJobsService,
 } from '@ezacto/core'
 import type { createScheduledActionStore } from './scheduled-actions.js'
-import { proposeMonthEndPack } from './month-end-pack.js'
+import { proposeMonthEndPack, type MonthEndArtifactObjects } from './month-end-pack.js'
 
 type Database = Parameters<typeof createScheduledActionStore>[0]
 interface Row {
@@ -156,6 +156,7 @@ export interface ScheduledJobSweepResult {
 export const proposeDueScheduledJobs = async (
   database: Database,
   now: string,
+  objects?: MonthEndArtifactObjects,
 ): Promise<ScheduledJobSweepResult> => {
   const organization = (
     await database.all<{ timezone: string }>(sql`SELECT timezone FROM organizations WHERE id=1`)
@@ -190,14 +191,20 @@ export const proposeDueScheduledJobs = async (
         await record(job, null, existing.id)
         continue
       }
-      const result = await proposeMonthEndPack(database, {
-        jobId: job.id,
-        expectedJobVersion: job.version,
-        occurrenceKey: occurrence,
-        clientIds: config.scope.client_ids,
-        proposedAt: now,
-        expiresAt: new Date(Date.parse(now) + config.confirm_within_minutes * 60000).toISOString(),
-      })
+      const result = await proposeMonthEndPack(
+        database,
+        {
+          jobId: job.id,
+          expectedJobVersion: job.version,
+          occurrenceKey: occurrence,
+          clientIds: config.scope.client_ids,
+          proposedAt: now,
+          expiresAt: new Date(
+            Date.parse(now) + config.confirm_within_minutes * 60000,
+          ).toISOString(),
+        },
+        objects,
+      )
       if (result.outcome.outcome === 'proposed') {
         proposed.push({ jobId: job.id, runId: result.outcome.run.id })
         await record(job, null, result.outcome.run.id)

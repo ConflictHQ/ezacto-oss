@@ -19274,6 +19274,145 @@
         }
       }
     },
+    "/api/v1/scheduled-runs/{id}/items/{itemId}/report": {
+      "get": {
+        "operationId": "downloadScheduledRunReport",
+        "summary": "Download the exact saved report an administrator is reviewing",
+        "tags": [
+          "scheduled-runs"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attachment content",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/scheduled-runs/:id/items/:itemId/report",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/scheduled-runs/{id}/retry": {
+      "post": {
+        "operationId": "retryScheduledRun",
+        "summary": "Authorize another bounded attempt window for exhausted failed items only",
+        "tags": [
+          "scheduled-runs"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduledRunEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/scheduled-runs/:id/retry",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/scheduled-runs/{id}": {
       "get": {
         "operationId": "getScheduledRun",
@@ -19402,7 +19541,17 @@
               "type": "integer"
             }
           }
-        ]
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduledRunConfirmInput"
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/scheduled-runs/{id}/cancel": {
@@ -34329,9 +34478,24 @@
         ],
         "additionalProperties": false
       },
+      "ScheduledRunConfirmInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "acknowledge_report_warnings": {
+            "type": "boolean"
+          }
+        }
+      },
       "ScheduledRunItem": {
         "type": "object",
         "required": [
+          "report_people",
+          "report_name",
+          "report_warnings",
+          "attempt_limit",
+          "delivery_id",
+          "delivery_status",
           "id",
           "subject_type",
           "subject_id",
@@ -34348,6 +34512,91 @@
         ],
         "additionalProperties": false,
         "properties": {
+          "report_people": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name",
+                "seconds"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "seconds": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "report_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "report_warnings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "entryId",
+                "kind",
+                "match"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "entryId": {
+                  "type": "integer"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "url",
+                    "mention",
+                    "ticket_reference",
+                    "teammate_name"
+                  ]
+                },
+                "match": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "attempt_limit": {
+            "type": "integer"
+          },
+          "delivery_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delivery_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "type": "integer"
           },

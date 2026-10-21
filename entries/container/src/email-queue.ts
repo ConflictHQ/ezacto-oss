@@ -3,6 +3,7 @@ import {
   InProcessEmailQueue,
   processQueuedEmail,
   type EmailLogStore,
+  type EmailAttachmentResolver,
   type EmailSuppressionReason,
   type EmailQueue,
   type HttpEmailProvider,
@@ -27,6 +28,7 @@ export class ContainerEmailQueue implements EmailQueue {
     log: EmailLogStore,
     provider: HttpEmailProvider,
     getRecipientSuppression?: (recipients: readonly string[]) => Promise<EmailSuppressionReason | null>,
+    resolveAttachment?: EmailAttachmentResolver,
   ) {
     const scheduler: InProcessEmailScheduler = (task, delaySeconds) => {
       const scheduled: Scheduled = {
@@ -51,7 +53,10 @@ export class ContainerEmailQueue implements EmailQueue {
       (job, attempt) =>
         processQueuedEmail(
           job, attempt, log, shutdownAwareProvider,
-          getRecipientSuppression === undefined ? {} : { getRecipientSuppression },
+          {
+            ...(getRecipientSuppression === undefined ? {} : { getRecipientSuppression }),
+            ...(resolveAttachment === undefined ? {} : { resolveAttachment }),
+          },
         ),
       scheduler,
     )

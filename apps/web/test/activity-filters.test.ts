@@ -126,5 +126,6 @@ describe('activity log filters and links', () => {
     expect(await linksFor(true)).toEqual(['/approvals', '/invoices/by-id/41'])
     expect(await linksFor(false)).toEqual([])
     expect(subjectHref({ type: 'api_token', id: 1 })).toBeNull()
+    expect(subjectHref({ type: 'scheduled_run', id: 17 })).toBe('/scheduled-runs/17')
   })
 })

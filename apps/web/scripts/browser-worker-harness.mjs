@@ -1,5 +1,5 @@
 import { createHmac, randomUUID } from 'node:crypto'
-import { createScheduledActionStore, createD1EmailLogStore } from '@ezacto/db/d1'
+import { proposeMonthEndPack, executeInvoiceLifecycleCommand, createD1EmailConfigurationStore, createD1EmailLogStore } from '@ezacto/db/d1'
 import { Buffer } from 'node:buffer'
 import http from 'node:http'
 import { resolve } from 'node:path'
@@ -163,6 +163,7 @@ const run = async (statement, ...bindings) => {
 }
 
 let rateCardFixture = null
+let scheduledManifestFixture = null
 
 const rows = async (statement, ...bindings) =>
   (await database.prepare(statement).bind(...bindings).all()).results
@@ -618,15 +619,51 @@ const fixtureControl = async (request, response) => {
   } else if (action === 'scheduled-manifest-seed') {
     await run(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`)
     const now = new Date().toISOString(), expires = new Date(Date.now()+3600000).toISOString()
+    const clients=[], invoices=[]
+    scheduledManifestFixture={clientIds:clients,projectIds:[],jobId:null}
+    for (const [index,label] of ['A','B'].entries()) {
+      const brand=await database.prepare(`INSERT INTO report_brands(name,created_at,updated_at) VALUES(?,?,?) RETURNING id`).bind(`Browser Month End Brand ${label}`,now,now).first()
+      const client=await database.prepare(`INSERT INTO clients(name,currency,report_brand_id,created_at,updated_at) VALUES(?,'USD',?,?,?) RETURNING id`).bind(`Browser Month End Client ${label}`,brand.id,now,now).first()
+      clients.push(client.id)
+      await run(`INSERT INTO contacts(client_id,first_name,email,invoice_recipient_status,created_at,updated_at) VALUES(?,'Accounts',?,'recipient',?,?)`,client.id,index===0?'month-end-accounts@example.test':'month-end-b@example.test',now,now)
+      const invoice=await database.prepare(`INSERT INTO invoices(client_id,number,currency,issue_date,due_date,created_at,updated_at) VALUES(?,?,'USD','2026-09-15','2026-10-01',?,?) RETURNING id`).bind(client.id,`BROWSER-MONTH-${label}-${randomUUID()}`,now,now).first()
+      invoices.push(invoice.id)
+      await run(`INSERT INTO invoice_line_items(invoice_id,position,kind,description,quantity,unit_price_cents,amount_cents,created_at,updated_at) VALUES(?,0,'Service','Monthly service',1,?,?,?,?)`,invoice.id,12345*(index+1),12345*(index+1),now,now)
+      await executeInvoiceLifecycleCommand(createD1Database(database),{invoiceId:invoice.id,commandId:`browser-month-send-${invoice.id}`,command:'send',actor:{type:'user',id:1},authorize:async()=>true,expectedVersion:0,occurredAt:now,messageId:1000000+invoice.id,eventId:`browser-month-sent-${invoice.id}`})
+      const project=await database.prepare(`INSERT INTO projects(client_id,name,billing_method,created_at,updated_at) VALUES(?,?,'time_materials',?,?) RETURNING id`).bind(client.id,`Month End Work ${label}`,now,now).first()
+      scheduledManifestFixture.projectIds.push(project.id)
+      const user=await database.prepare(`INSERT INTO user_assignments(project_id,user_id,created_at,updated_at) VALUES(?,1,?,?) RETURNING id`).bind(project.id,now,now).first()
+      const task=await database.prepare(`INSERT INTO task_assignments(project_id,task_id,billable,created_at,updated_at) VALUES(?,1,1,?,?) RETURNING id`).bind(project.id,now,now).first()
+      await run(`INSERT INTO time_entries(user_id,project_id,task_id,user_assignment_id,task_assignment_id,spent_date,seconds,seconds_without_timer,rounded_seconds,notes,client_visible,billable,cost_rate_cents,created_at,updated_at)
+        VALUES(1,?,1,?,?,'2026-09-15',5400,5400,5400,?,1,1,5000,?,?)`,project.id,user.id,task.id,index===0?'Reviewed https://reference.example.test/55':'Client approved work',now,now)
+    }
+    const configuration=createD1EmailConfigurationStore(database)
+    const senderId=(await database.prepare(`SELECT coalesce(max(id),0)+1 AS id FROM sender_identities`).first()).id
+    await configuration.createSenderIdentity({id:senderId,email:'billing@example.test',displayName:'Month End Billing',provider:'mailgun',providerIdentity:'billing@example.test',actorUserId:1,commandId:`browser-month-sender-${senderId}`,occurredAt:now})
+    await configuration.recordSenderEvidence({id:senderId,expectedEvidenceVersion:0,evidence:{source:'deployment_config',identityKind:'email_address',verificationStatus:'operator_configured',dkimStatus:'not_applicable',mailFromDomain:null,mailFromStatus:'not_configured',observedAt:now},actorUserId:1,commandId:`browser-month-evidence-${senderId}`,occurredAt:now})
+    await configuration.setDefaultSenderIdentity({id:senderId,expectedVersion:0,actorUserId:1,commandId:`browser-month-default-${senderId}`,occurredAt:now})
     const job = await database.prepare(`INSERT INTO scheduled_jobs(action,name,scope_json,cadence,created_by_user_id,created_at,updated_at)
-      VALUES('month_end_pack','Browser month-end review','{}','0 9 1 * *',1,?,?) RETURNING id`).bind(now,now).first()
-    const result = await createScheduledActionStore(createD1Database(database)).propose({
-      jobId:job.id, occurrenceKey:'2026-09',proposedAt:now,expiresAt:expires,
-      items:[{subjectType:'invoice',subjectId:1,description:'Browser September work detail',clientName:'Browser Month End Client',quantitySeconds:5400,amountCents:12345,currency:'USD',target:'month-end-accounts@example.test'}],
-    })
-    if (result.outcome !== 'proposed') throw new Error('Manifest fixture was not proposed')
+      VALUES('month_end_pack','Browser month-end review',?,'0 9 1 * *',1,?,?) RETURNING id`).bind(JSON.stringify({client_ids:clients}),now,now).first()
+    scheduledManifestFixture.jobId=job.id
+    const bucket=await miniflare.getR2Bucket('ATTACHMENTS')
+    const result = await proposeMonthEndPack(createD1Database(database),{jobId:job.id,occurrenceKey:'2026-09',clientIds:clients,proposedAt:now,expiresAt:expires},{put:async(key,bytes)=>{await bucket.put(key,bytes)}})
+    if (result.outcome.outcome !== 'proposed') throw new Error('Manifest fixture was not proposed')
     response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
-    response.end(JSON.stringify({runId:result.run.id}));return
+    response.end(JSON.stringify({runId:result.outcome.run.id,invoiceIds:invoices}));return
+  } else if (action === 'scheduled-manifest-cleanup') {
+    if (scheduledManifestFixture) {
+      const now=new Date().toISOString()
+      for(const projectId of scheduledManifestFixture.projectIds) {
+        await run(`DELETE FROM time_entries WHERE project_id=? AND invoice_id IS NULL AND timer_started_at IS NULL`,projectId)
+        await run(`UPDATE projects SET is_active=0,updated_at=? WHERE id=?`,now,projectId)
+      }
+      for(const clientId of scheduledManifestFixture.clientIds)
+        await run(`UPDATE clients SET is_active=0,updated_at=? WHERE id=?`,now,clientId)
+      if(scheduledManifestFixture.jobId!==null)
+        await run(`UPDATE scheduled_jobs SET is_active=0,version=version+1,updated_at=? WHERE id=?`,now,scheduledManifestFixture.jobId)
+      // Keep the immutable manifest, invoices, attachments and delivery history.
+      scheduledManifestFixture=null
+    }
   } else if (action === 'email-feedback-seed') {
     await run(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`)
     const log = createD1EmailLogStore(database)

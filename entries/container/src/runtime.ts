@@ -1,3 +1,4 @@
+import { createScheduledRunDispatchService } from '@ezacto/db'
 import { prepareScheduledRunNotifications } from '@ezacto/db'
 import { createContainerEmailSuppressionStore } from '@ezacto/db'
 import type { ReminderProcessOptions } from '@ezacto/db'
@@ -465,7 +466,13 @@ export const createContainerRuntime = async (
       }
     }
     const emailSuppressions = createContainerEmailSuppressionStore(database)
-    queue = new ContainerEmailQueue(emailLog, smtp, emailSuppressions.lookup)
+    const objects = await createDiskAttachmentObjectStore(
+      config.attachmentDirectory,
+    )
+    queue = new ContainerEmailQueue(emailLog, smtp, emailSuppressions.lookup, async (reference) => {
+      const object = await objects.get(reference.key)
+      return object === null ? null : new Uint8Array(await new Response(object.body).arrayBuffer())
+    })
     // HTML mail wears the instance header (#1011): read when each message
     // is queued, so a changed logo or colour reaches the next send.
     const brandAssetStore = createContainerBrandAssetStore(database)
@@ -778,6 +785,24 @@ export const createContainerRuntime = async (
     // Budget alerts (issue 934). The tick is every fifteen seconds and a pass
     // reads each alerting project's time, so it is held to once a minute, the
     // Worker's own cadence. A failed pass is reported and never stops the drain.
+    const scheduledRunDispatch = createScheduledRunDispatchService(drizzle, {
+      sender: async () => {
+        await organizationMailer.assertAvailable()
+        const sender = await emailConfiguration.resolveSenderIdentity()
+        if (!sender?.evidence) throw new Error('A verified sender identity is required for month-end delivery.')
+        return {
+          senderIdentityId: sender.id, senderIdentityVersion: sender.version, senderEvidenceVersion: sender.evidence.version,
+          from: { email: sender.email, name: sender.displayName },
+          ...(sender.replyToEmail === null ? {} : { replyTo: [{ email: sender.replyToEmail }] }),
+        }
+      },
+      enqueue: organizationMailer.enqueuePersisted!.bind(organizationMailer),
+      readBytes: async (key: string) => {
+        const object = await objects.get(key)
+        return object === null ? null : new Uint8Array(await new Response(object.body).arrayBuffer())
+      },
+      now: () => new Date().toISOString(),
+    })
     let lastMinutePass = 0
     const minutePasses = async (): Promise<void> => {
       const at = Date.now()
@@ -807,7 +832,7 @@ export const createContainerRuntime = async (
         console.error('[container] automatic approval sweep failed', error)
       }
       try {
-        const result = await proposeDueScheduledJobs(drizzle, now)
+        const result = await proposeDueScheduledJobs(drizzle, now, objects)
         for (const failure of result.failed)
           console.error('[container] scheduled job proposal failed', failure.jobId, failure.message)
       } catch (error) {
@@ -817,6 +842,12 @@ export const createContainerRuntime = async (
         await scheduledRunNotices.processDue(now)
       } catch (error) {
         console.error('[container] scheduled manifest notice failed', error)
+      }
+      try {
+        const result = await scheduledRunDispatch.processDue(now)
+        for (const failure of result.failed) console.error('[container] scheduled run item failed', failure)
+      } catch (error) {
+        console.error('[container] scheduled run dispatch failed', error)
       }
       // Proposed month-end runs past their deadline (issue 63); reports its
       // own failure and never stops the drain.
@@ -836,9 +867,6 @@ export const createContainerRuntime = async (
         await reconcileBillPayments()
       },
     })
-    const objects = await createDiskAttachmentObjectStore(
-      config.attachmentDirectory,
-    )
     const brandAssets = await createContainerBrandAssetSurface(
       database,
       config.brandDirectory,
@@ -930,8 +958,9 @@ export const createContainerRuntime = async (
       ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
       paymentRuns,
       scheduledRunNotices,
+      scheduledRunDispatch,
       scheduledJobs: createScheduledJobsService(drizzle),
-      scheduledJobProposals: { processDue: (now: string) => proposeDueScheduledJobs(drizzle, now) },
+      scheduledJobProposals: { processDue: (now: string) => proposeDueScheduledJobs(drizzle, now, objects) },
       scheduledRuns: createScheduledRunsService(drizzle),
       staffPayments: createStaffPaymentStore(drizzle),
       contractorReview: createContractorReviewStore(drizzle),

@@ -606,6 +606,7 @@ export interface RuntimeServices {
    */
   /** Administrator payment register, available without provider credentials. */
   paymentRuns?: PaymentRunsService
+  scheduledRunDispatch?: { processDue(now: string): Promise<{ completed: number; failed: readonly { runId: number; itemId: number; reason: string }[] }> }
   scheduledRunNotices?: { processDue(now: string): Promise<{ queued: number }> }
   scheduledJobs?: ScheduledJobsService
   scheduledJobProposals?: {
@@ -923,7 +924,7 @@ export const createApp = (
             if (services.contractorReview !== undefined) installContractorReviewRoutes(api, services.contractorReview)
             if (services.scheduledJobs !== undefined)
               installScheduledJobRoutes(api, services.scheduledJobs, { cursorSigningKey: services.cursorSigningKey })
-            if (services.scheduledRuns !== undefined) installScheduledRunRoutes(api, services.scheduledRuns)
+            if (services.scheduledRuns !== undefined) installScheduledRunRoutes(api, services.scheduledRuns, services.attachments?.objects)
             if (services.staffPayments !== undefined) {
               installStaffPaymentRoutes(api, services.staffPayments)
             }
