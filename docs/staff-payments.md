@@ -100,8 +100,8 @@ a partial payment against the whole month's earnings, confirm all hours and
 change the payment amount at the separate **Pay now → review → send/schedule** step.
 
 Historical settlements block actuals imports until explicitly reopened. Contractor
-invoices and advance credits are separate follow-up capabilities; importing actuals
-does not generate invoices or record deposits.
+invoices and advance credits have their own audit tabs; importing actuals does
+not generate invoices or record deposits.
 
 ### Correcting a work-month allocation
 
@@ -301,3 +301,45 @@ can read their received/voided documents at `GET /api/v1/me/staff-invoices?month
 and on **My payments**. The subject comes only from their session; drafts, other
 people's documents, and unpublished uploads are excluded. Reasons entered on a
 received invoice are shared with that contractor.
+
+
+## Combined contractor review (#902)
+
+`GET /api/v1/staff-payments/contractor-review?month=YYYY-MM` is an
+administrator-session-only, uncached read available on Worker and container.
+It joins captured-hours proposals, the latest immutable actuals review (actor,
+reason and version), recorded obligations and receipts, contractor invoice
+versions, allocation evidence, advance credit and payment-run item states.
+Currency rows are independent. The `credit_period` states the date range of the
+credit statement; payable balances and transfer states describe current records.
+
+`version` identifies the exact financial/source review content deterministically.
+Repeated reads do not create earnings, invoices, allocations, credit applications
+or payments. It changes when those sources change, not merely when the request
+clock advances. Entry-rate/source changes and unfinished work months block
+monetary proposals; historical settlements stay settled, and explicit amount or
+selection overrides retain their evidence.
+
+Monthly allocation proposals link existing unassigned payments to reviewed monthly
+earnings without inferring a project/entry split. Those payments take capacity
+before a proposed credit application; both consume one shared reviewed-earnings
+capacity. Credit proposals use only settled available credit in the same currency
+and respect intended work month. Project-specific or differently intended advances
+remain visible for explicit target review. The remaining-to-pay figure never
+assumes that a proposal has already executed. Unknown balances remain unknown.
+
+### Scheduled-action seam
+
+Reconciliation is a **proposal producer**, currently triggered by the authenticated
+read. General scheduled actions (#61/#62/#63) can use the same reader to prepare a
+manifest keyed by person, work month and source version. Their notification or
+confirmation never becomes authority to create/fund a payout. Accepted monetary
+work continues through the immutable ledger commands and existing payment-run
+preview/approval, with `processDue` on the existing Worker cron/container timer.
+This slice adds no job type, scheduler, transfer executor or automatic application
+of credit. A later scheduler integration must retain that single execution seam.
+
+Remaining #902 delivery: the combined browser review/acceptance flow, durable
+idempotent application of accepted multi-step plans, the recovery controls and
+full advance → hours → invoice → partial/final payment/refund fixture. The current
+API is the read foundation, not completion of that orchestration issue.

@@ -18930,6 +18930,71 @@
         ]
       }
     },
+    "/api/v1/staff-payments/contractor-review": {
+      "get": {
+        "operationId": "getContractorReview",
+        "summary": "Review contractor earnings, invoices, existing payments, advance credit and allocation proposals without executing them",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractorReviewEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/staff-payments/contractor-review",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/scheduled-runs/{id}": {
       "get": {
         "operationId": "getScheduledRun",
@@ -32924,6 +32989,565 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/StaffInvoiceDocumentInfo"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "ContractorEarningsReview": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "expected_version": {
+            "type": "integer"
+          },
+          "actor_id": {
+            "type": "integer"
+          },
+          "note": {
+            "type": "string"
+          },
+          "recorded_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "currency",
+          "amount_cents",
+          "expected_version",
+          "actor_id",
+          "note",
+          "recorded_at"
+        ],
+        "additionalProperties": false
+      },
+      "ContractorReviewEntry": {
+        "type": "object",
+        "properties": {
+          "entry_id": {
+            "type": "integer"
+          },
+          "project_id": {
+            "type": "integer"
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "spent_date": {
+            "type": "string"
+          },
+          "rounded_seconds": {
+            "type": "integer"
+          },
+          "cost_rate_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selected_seconds": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entry_id",
+          "project_id",
+          "project_name",
+          "spent_date",
+          "rounded_seconds",
+          "cost_rate_cents",
+          "selected_seconds"
+        ],
+        "additionalProperties": false
+      },
+      "ContractorReviewEarnings": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "proposed_cents": {
+            "type": "integer"
+          },
+          "confirmed_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "new",
+              "converged",
+              "differs",
+              "attention"
+            ]
+          },
+          "exceptions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "enum": [
+                    "missing_rate",
+                    "changed_source"
+                  ]
+                },
+                "entry_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              },
+              "required": [
+                "code",
+                "entry_ids"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "user_id",
+          "name",
+          "proposed_cents",
+          "confirmed_cents",
+          "status",
+          "exceptions"
+        ],
+        "additionalProperties": false
+      },
+      "ContractorAllocationProposal": {
+        "type": "object",
+        "properties": {
+          "payment_kind": {
+            "type": "string",
+            "enum": [
+              "event",
+              "run_item"
+            ]
+          },
+          "payment_id": {
+            "type": "string"
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "month"
+            ]
+          }
+        },
+        "required": [
+          "payment_kind",
+          "payment_id",
+          "amount_cents",
+          "scope"
+        ],
+        "additionalProperties": false
+      },
+      "ContractorCreditProposal": {
+        "type": "object",
+        "properties": {
+          "advance_item_id": {
+            "type": "string"
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "month"
+            ]
+          }
+        },
+        "required": [
+          "advance_item_id",
+          "amount_cents",
+          "scope"
+        ],
+        "additionalProperties": false
+      },
+      "ContractorReviewItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "run_name": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "earnings",
+              "advance"
+            ]
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "queued",
+              "creating",
+              "funding",
+              "processing",
+              "paid",
+              "failed",
+              "attention",
+              "cancelled"
+            ]
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "queued",
+              "processing",
+              "settled",
+              "failed",
+              "attention",
+              "cancelled"
+            ]
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attempts": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "run_name",
+          "purpose",
+          "amount_cents",
+          "state",
+          "phase",
+          "failure",
+          "attempts"
+        ],
+        "additionalProperties": false
+      },
+      "ContractorCurrencyReview": {
+        "type": "object",
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "recorded_earnings_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "proposed_earnings_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paid_cents": {
+            "type": "integer"
+          },
+          "reserved_cents": {
+            "type": "integer"
+          },
+          "available_to_pay_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "available_credit_cents": {
+            "type": "integer"
+          },
+          "proposed_credit_cents": {
+            "type": "integer"
+          },
+          "remaining_after_credit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "invoices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffInvoice"
+            }
+          },
+          "advances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdvanceCredit"
+            }
+          },
+          "allocations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaymentAllocation"
+            }
+          },
+          "allocation_proposals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContractorAllocationProposal"
+            }
+          },
+          "credit_proposals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContractorCreditProposal"
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContractorReviewItem"
+            }
+          },
+          "proposal_blocked": {
+            "type": "boolean"
+          },
+          "flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "currency",
+          "recorded_earnings_cents",
+          "proposed_earnings_cents",
+          "paid_cents",
+          "reserved_cents",
+          "available_to_pay_cents",
+          "available_credit_cents",
+          "proposed_credit_cents",
+          "remaining_after_credit_cents",
+          "invoices",
+          "advances",
+          "allocations",
+          "allocation_proposals",
+          "credit_proposals",
+          "items",
+          "proposal_blocked",
+          "flags"
+        ],
+        "additionalProperties": false
+      },
+      "ContractorReviewPerson": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "ledger_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "settled_through": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ledger_events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffPaymentEvent"
+            }
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "review",
+              "queued",
+              "processing",
+              "settled",
+              "failed",
+              "attention"
+            ]
+          },
+          "latest_review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContractorEarningsReview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "earnings": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContractorReviewEarnings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContractorReviewEntry"
+            }
+          },
+          "currencies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContractorCurrencyReview"
+            }
+          }
+        },
+        "required": [
+          "user_id",
+          "name",
+          "active",
+          "ledger_version",
+          "settled_through",
+          "ledger_events",
+          "phase",
+          "latest_review",
+          "earnings",
+          "entries",
+          "currencies"
+        ],
+        "additionalProperties": false
+      },
+      "ContractorReview": {
+        "type": "object",
+        "properties": {
+          "month": {
+            "type": "string"
+          },
+          "completed": {
+            "type": "boolean"
+          },
+          "credit_period": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ],
+            "additionalProperties": false
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "people": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContractorReviewPerson"
+            }
+          }
+        },
+        "required": [
+          "month",
+          "completed",
+          "credit_period",
+          "version",
+          "people"
+        ],
+        "additionalProperties": false
+      },
+      "ContractorReviewEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ContractorReview"
           }
         },
         "required": [

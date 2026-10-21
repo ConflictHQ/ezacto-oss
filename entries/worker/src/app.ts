@@ -4,10 +4,10 @@ import { aggregateAppleCleanup, type AppleCleanupPort, type AppleLifecycleStore,
 import type { AccountDeletionStore, AccountClosureStore, AccountRetentionReviewStore, AccountDeletionStatusStore } from '@ezacto/core'
 import type { PaymentRunsService, ScheduledRunsService } from '@ezacto/core'
 import { workItemProviders, type WorkItemProviderId } from '@ezacto/core'
-import { installStaffInvoiceRoutes, installPaymentRunRoutes } from '@ezacto/api'
+import { installContractorReviewRoutes, installStaffInvoiceRoutes, installPaymentRunRoutes } from '@ezacto/api'
 import { installScheduledRunRoutes } from '@ezacto/api'
 import { installDeelSyncRoutes, installStaffPaymentRoutes, type DeelSyncApiDependencies } from '@ezacto/api'
-import type { StaffPaymentStore } from '@ezacto/core'
+import type { ContractorReviewStore, StaffPaymentStore } from '@ezacto/core'
 import { installMyPaymentRoutes } from '@ezacto/api'
 import type { MyPaymentsStore } from '@ezacto/core'
 import { captureException } from "@sentry/cloudflare";
@@ -604,6 +604,7 @@ export interface RuntimeServices {
   /** Administrator payment register, available without provider credentials. */
   paymentRuns?: PaymentRunsService
   scheduledRuns?: ScheduledRunsService
+  contractorReview?: ContractorReviewStore
   staffPayments?: StaffPaymentStore
   /** A person's own payment summary (issue 100). */
   myPayments?: MyPaymentsStore
@@ -910,6 +911,7 @@ export const createApp = (
               installPaymentRunRoutes(api, services.paymentRuns)
               if (services.paymentRuns.invoices) installStaffInvoiceRoutes(api, services.paymentRuns.invoices, services.attachments?.objects)
             }
+            if (services.contractorReview !== undefined) installContractorReviewRoutes(api, services.contractorReview)
             if (services.scheduledRuns !== undefined) installScheduledRunRoutes(api, services.scheduledRuns)
             if (services.staffPayments !== undefined) {
               installStaffPaymentRoutes(api, services.staffPayments)

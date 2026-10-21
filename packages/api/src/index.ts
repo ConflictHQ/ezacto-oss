@@ -544,3 +544,5 @@ export {
 } from './client-rate-cards.js'
 
 export { installStaffInvoiceRoutes } from './staff-invoices.js'
+
+export { installContractorReviewRoutes } from './contractor-review.js'

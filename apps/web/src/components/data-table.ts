@@ -198,6 +198,10 @@ const actionsCell = (actions: readonly RowAction[]): HTMLTableCellElement => {
 }
 
 export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElement => {
+  const previousFocus = document.activeElement
+  const focusedColumn = options.table !== undefined && previousFocus instanceof HTMLButtonElement
+    && previousFocus.closest('table')?.dataset.tableId === options.table
+    ? previousFocus.dataset.sortColumn : undefined
   const { columns, rowKey, groupBy, renderGroup, actions, caption, empty } = options
   const sort = resolveSort(
     [options.sort, options.table === undefined ? null : rememberedSort(options.table)],
@@ -221,6 +225,7 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
     }
   }
   const table = document.createElement('table')
+  if (options.table !== undefined) table.dataset.tableId = options.table
   table.className = columns.length > 4 ? 'data-table data-table-wide' : 'data-table'
 
   const captionElement = document.createElement('caption')
@@ -382,5 +387,12 @@ export const renderDataTable = <Row>(options: DataTableOptions<Row>): HTMLElemen
     scroll.appendChild(hint)
   }
   scroll.appendChild(table)
+  if (focusedColumn !== undefined) queueMicrotask(() => {
+    // Callers mount the replacement after this function returns. A late data
+    // refresh must keep the header's focus, but never steal it from a control
+    // the person focused in the meantime.
+    if (scroll.isConnected && (document.activeElement === previousFocus || document.activeElement === document.body))
+      focusSortHeader(scroll, focusedColumn)
+  })
   return scroll
 }

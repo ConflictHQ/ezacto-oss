@@ -1,3 +1,4 @@
+import { contractorReviewOperations, contractorReviewSchemas } from './contractor-review-contract.js'
 import { staffInvoiceOperations, staffInvoiceSchemas } from './staff-invoice-contract.js'
 import { advanceCreditOperations, advanceCreditSchemas } from './advance-credit-contract.js'
 import { ACCOUNT_PRIVACY_FRAMEWORKS } from '@ezacto/core';
@@ -3635,6 +3636,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...paymentRunOperations,
   ...advanceCreditOperations,
   ...staffInvoiceOperations,
+  ...contractorReviewOperations,
   ...scheduledRunOperations,
   ...reportOperations,
   ...moduleSettingsOperations,
@@ -3905,6 +3907,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...paymentRunSchemas,
   ...advanceCreditSchemas,
   ...staffInvoiceSchemas,
+  ...contractorReviewSchemas,
   ...scheduledRunSchemas,
   InvoiceReminderPolicy: {
     type: "object",
