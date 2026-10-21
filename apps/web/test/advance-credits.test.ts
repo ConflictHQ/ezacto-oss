@@ -304,3 +304,16 @@ it("reverses credit applications with a reason and records only a confirmed retu
     ),
   );
 });
+
+it("explains why live advance transfers are withheld on the public demo", () => {
+  document.documentElement.setAttribute("data-demo-deployment", "true");
+  try {
+    const api = { previewPaymentRun: vi.fn(async () => run), approvePaymentRun: vi.fn(async () => run) };
+    mount(api);
+    expect(document.querySelector("[data-advance-create]")!.textContent).toContain("not available on the public demo");
+    expect(byLabel("Advance amount")).toBeNull();
+    expect(api.previewPaymentRun).not.toHaveBeenCalled();
+  } finally {
+    document.documentElement.removeAttribute("data-demo-deployment");
+  }
+});

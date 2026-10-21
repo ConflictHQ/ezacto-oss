@@ -10,7 +10,7 @@ import {
 } from "@ezacto/core";
 import { renderDataTable } from "../components/data-table.js";
 import { moneyText } from "../money-display.js";
-import { isDemoDeployment } from "../demo.js";
+import { demoUnavailable, isDemoDeployment } from "../demo.js";
 import { staffPaymentAmount, staffPaymentMoney } from "./model.js";
 import type { PaymentRunsApi } from "./runs-browser.js";
 import type { PaymentAllocationsApi } from "./allocations-browser.js";
@@ -365,13 +365,19 @@ export const createAdvanceCreditsController = (
   const prepare = () => {
     const box = panel.querySelector<HTMLElement>("[data-advance-create]")!;
     box.replaceChildren();
-    if (
-      !ledger ||
-      !api.previewPaymentRun ||
-      !api.approvePaymentRun ||
-      isDemoDeployment()
-    )
+    if (!ledger) return;
+    if (isDemoDeployment()) {
+      box.appendChild(node("p", demoUnavailable("Preparing advance transfers")));
       return;
+    }
+    if (!api.previewPaymentRun || !api.approvePaymentRun) {
+      box.appendChild(node("p", "Advance transfers are unavailable on this instance."));
+      return;
+    }
+    if (!ledger.rows.some((r) => r.active && r.is_contractor !== false && r.wise_ready && r.payout_provider === "wise")) {
+      box.appendChild(node("p", "No active contractors have a verified Wise destination with Wise selected. Set these in Team and Payment settings before preparing an advance."));
+      return;
+    }
     const form = node("form"),
       person = field(form, "Contractor receiving the advance", node("select"));
     person.setAttribute("aria-label", "Contractor receiving the advance");
