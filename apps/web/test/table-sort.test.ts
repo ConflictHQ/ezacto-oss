@@ -332,3 +332,23 @@ describe('a sortable table', () => {
     expect(header(fallen, 'number').getAttribute('aria-sort')).toBe('descending')
   })
 })
+
+
+it('[browser #745 #852] preserves a named header through a caller refresh without stealing focus from another control', async () => {
+  setSortPreferenceOwner(1)
+  const options = { columns, rows: invoices, rowKey: (row: Invoice) => String(row.id), caption: 'Invoices', table: 'refreshing-invoices' }
+  const host = draw(options)
+  sortButton(host, 'client').focus()
+  sortButton(host, 'client').click()
+  expect(document.activeElement === sortButton(host, 'client')).toBe(true)
+  host.replaceChildren(renderDataTable(options))
+  await Promise.resolve()
+  expect(document.activeElement === sortButton(host, 'client')).toBe(true)
+  expect(header(host, 'client').getAttribute('aria-sort')).toBe('ascending')
+  const search = document.createElement('input')
+  document.body.append(search)
+  host.replaceChildren(renderDataTable(options))
+  search.focus()
+  await Promise.resolve()
+  expect(document.activeElement === search).toBe(true)
+})
