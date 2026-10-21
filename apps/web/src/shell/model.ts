@@ -1,3 +1,4 @@
+import type { ScheduledRunApi } from '../scheduled-runs/model.js'
 import type { StaffPaymentsApi } from '../staff-payments/browser.js'
 import {
   EzactoClient,
@@ -142,6 +143,7 @@ export interface ShellApi
   planning?: PlanningApi
   /** The signed-in person's own payment summary (issue 100). */
   getMyPayments?(month: string, signal?: AbortSignal): ReturnType<MyPaymentsApi['getMyPayments']>
+  scheduledRuns?: ScheduledRunApi
   getMyStaffInvoices?: MyPaymentsApi['getMyStaffInvoices']
   /** The page size a caller may raise when it is walking, not browsing. */
   listActivityLog?(
@@ -2007,6 +2009,11 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     updateTimeOff: (id, patch, signal) =>
       client.updateTimeOff({ id, body: patch, ...withSignal(signal) }),
     deleteTimeOff: (id, signal) => client.deleteTimeOff({ id, ...withSignal(signal) }),
+  },
+  scheduledRuns: {
+    read: (id, signal) => client.getScheduledRun({ id, ...withSignal(signal) }),
+    confirm: (id, signal) => client.confirmScheduledRun({ id, ...withSignal(signal) }),
+    cancel: (id, signal) => client.cancelScheduledRun({ id, ...withSignal(signal) }),
   },
   getMyPayments: (month, signal) =>
     client.getMyPayments({ query: { month }, ...withSignal(signal) }),

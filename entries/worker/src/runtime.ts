@@ -1,3 +1,4 @@
+import { prepareScheduledRunNotifications } from '@ezacto/db/d1'
 import { createD1EmailSuppressionStore } from '@ezacto/db/d1'
 import type { ReminderProcessOptions } from '@ezacto/db/d1'
 import { createRuntimeAppleWeb } from './apple-web.js'
@@ -1437,6 +1438,13 @@ export const createRuntimeServices = async (
           }),
         }),
     paymentRuns,
+    scheduledRunNotices: notificationMailer === undefined || env.APP_BASE_URL === undefined
+      ? undefined
+      : createTimeReminderService({
+          prepare: (now: string) => prepareScheduledRunNotifications(drizzle, {
+            now, from: notificationMailer.from, appUrl: env.APP_BASE_URL!,
+          }),
+        }, notificationMailer),
     scheduledJobs: createScheduledJobsService(drizzle),
     scheduledJobProposals: { processDue: (now: string) => proposeDueScheduledJobs(drizzle, now) },
     scheduledRuns: createScheduledRunsService(drizzle),

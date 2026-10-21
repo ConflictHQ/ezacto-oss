@@ -12,6 +12,19 @@ export default {
   ...production,
   async fetch(request, env, context) {
     const url = new globalThis.URL(request.url)
+    if (url.pathname === '/__ezacto_browser_fixture__/scheduled-notices') {
+      if (request.method !== 'POST' || request.headers.get('x-ezacto-browser-fixture-control') !== 'start-end-round-trip')
+        return new globalThis.Response(null, { status: 403 })
+      const noticeOrigin = new globalThis.URL(url.origin)
+      noticeOrigin.hostname = 'localhost'
+      const services = await createRuntimeServices({
+        ...env, EMAIL_QUEUE: queue, APP_BASE_URL: noticeOrigin.origin,
+        MAILGUN_API_KEY: 'local-browser-fixture-only', MAILGUN_DOMAIN: 'example.test', MAIL_FROM: 'notify@example.test',
+      })
+      if (!services.scheduledRunNotices) return new globalThis.Response(null, {status:503})
+      await services.scheduledRunNotices.processDue(new Date().toISOString())
+      return globalThis.Response.json({jobs:captured}, {headers:{'cache-control':'no-store'}})
+    }
     if (url.pathname === '/__ezacto_browser_fixture__/drain-outbox') {
       if (
         request.method !== 'POST' ||

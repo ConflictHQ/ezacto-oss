@@ -117,6 +117,29 @@ commit a proposal from a stale configuration already being rendered. Job
 configuration requires an active administrator session; API tokens cannot create,
 change or read these definitions. Month-end jobs always require confirmation.
 
-This release supplies definition, proposal and expiry handling. Background
-notification and execution of confirmed packs remain separate work; creating a
-job does not send client email or initiate a payment.
+This release supplies definition, proposal, administrator review notices and
+expiry handling. Execution of confirmed packs remains separate work; creating
+a job does not send client email or initiate a payment.
+
+### Review notices and authenticated answers
+
+A due proposal sends a concrete manifest notice to each active administrator with
+a verified primary email, using the deployment sender and the normal durable
+Mailer queue. A notice lists the captured client, hours, amount/currency and
+recipient for each item, the deadline, and `/scheduled-runs/<id>`. Queue retries
+reuse the recorded delivery; they do not compose another notice for that run and
+person. Configure email and the application base URL to enable notices.
+
+The URL contains no sign-in or confirmation credential. It can be forwarded, but
+it grants no access: the normal sign-in screen preserves the destination, and
+only an administrator session can load or answer the manifest. GET requests,
+email scanners and navigation never confirm, cancel or execute a run. An explicit
+Confirm or Cancel button sends the authenticated POST. The decision is single
+use: repeat confirmation returns the original decision, and expiry/cancellation
+cannot become confirmation. No signed read-only action links are issued by this
+flow, so there is no separate bearer-link lifetime to manage.
+
+The manifest screen shows each captured item and its recorded result. If an
+answer's response is lost, refresh before trying again; the screen reloads the
+server's state instead of assuming the answer failed. Confirmed execution and
+its activity trail remain the separate #62 delivery work.

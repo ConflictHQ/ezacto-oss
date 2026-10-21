@@ -1,5 +1,5 @@
 import { createHmac, randomUUID } from 'node:crypto'
-import { createD1EmailLogStore } from '@ezacto/db/d1'
+import { createScheduledActionStore, createD1EmailLogStore } from '@ezacto/db/d1'
 import { Buffer } from 'node:buffer'
 import http from 'node:http'
 import { resolve } from 'node:path'
@@ -615,6 +615,18 @@ const fixtureControl = async (request, response) => {
       }
       rateCardFixture = null
     }
+  } else if (action === 'scheduled-manifest-seed') {
+    await run(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`)
+    const now = new Date().toISOString(), expires = new Date(Date.now()+3600000).toISOString()
+    const job = await database.prepare(`INSERT INTO scheduled_jobs(action,name,scope_json,cadence,created_by_user_id,created_at,updated_at)
+      VALUES('month_end_pack','Browser month-end review','{}','0 9 1 * *',1,?,?) RETURNING id`).bind(now,now).first()
+    const result = await createScheduledActionStore(createD1Database(database)).propose({
+      jobId:job.id, occurrenceKey:'2026-09',proposedAt:now,expiresAt:expires,
+      items:[{subjectType:'invoice',subjectId:1,description:'Browser September work detail',clientName:'Browser Month End Client',quantitySeconds:5400,amountCents:12345,currency:'USD',target:'month-end-accounts@example.test'}],
+    })
+    if (result.outcome !== 'proposed') throw new Error('Manifest fixture was not proposed')
+    response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
+    response.end(JSON.stringify({runId:result.run.id}));return
   } else if (action === 'email-feedback-seed') {
     await run(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`)
     const log = createD1EmailLogStore(database)

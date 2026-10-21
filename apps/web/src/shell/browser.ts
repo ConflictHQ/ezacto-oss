@@ -1,3 +1,4 @@
+import { createScheduledRunController } from '../scheduled-runs/browser.js'
 import { createStaffPaymentsController } from '../staff-payments/browser.js'
 import { mountPasswordRecovery, takePasswordResetLink } from './password-recovery.js'
 import {
@@ -1611,6 +1612,20 @@ export const mountShell = async (
       return api.getCapacity(range, signal)
     },
     ...(api.planning === undefined ? {} : { planning: api.planning }),
+  })
+  const scheduledRun = createScheduledRunController({
+    read: (id, signal) => {
+      if (!api.scheduledRuns) throw new Error('Scheduled runs are unavailable.')
+      return api.scheduledRuns.read(id, signal)
+    },
+    confirm: (id, signal) => {
+      if (!api.scheduledRuns) throw new Error('Scheduled runs are unavailable.')
+      return api.scheduledRuns.confirm(id, signal)
+    },
+    cancel: (id, signal) => {
+      if (!api.scheduledRuns) throw new Error('Scheduled runs are unavailable.')
+      return api.scheduledRuns.cancel(id, signal)
+    },
   })
   const myPayments = createMyPaymentsController({
     getMyPayments: async (month, signal) => {
@@ -4684,6 +4699,8 @@ export const mountShell = async (
         }),
         loadWeek(authenticated),
       ])
+    } else if (document.querySelector('[data-scheduled-run-page]:not([hidden])') !== null) {
+      await scheduledRun.activate(authenticated.signal, identity.profile === 'administrator')
     } else if (document.querySelector('[data-my-payments-page]:not([hidden])') !== null) {
       await myPayments.activate(authenticated.signal)
     } else if (document.querySelector('[data-capacity-page]:not([hidden])') !== null) {
