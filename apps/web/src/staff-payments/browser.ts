@@ -1,3 +1,4 @@
+import { createAdvanceCreditsController, type AdvanceCreditsApi } from './advances-browser.js'
 import { createActualsController, type PaymentActualsApi } from './actuals-browser.js'
 import { createAllocationsController, type PaymentAllocationsApi } from './allocations-browser.js'
 import { createPaymentTabs } from './tabs.js'
@@ -29,7 +30,8 @@ export interface StaffPaymentsApi
   extends PaymentRunsApi,
     PaymentActualsApi,
     PaymentAllocationsApi,
-    DeelSyncApi {
+    DeelSyncApi,
+    AdvanceCreditsApi {
   configureStaffPaymentProvider?(
     command: StaffPaymentProviderCommand,
     signal?: AbortSignal,
@@ -250,7 +252,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
             key: 'source',
             label: 'Source / reference',
             sortValue: (event) => [event.source, event.reference],
-            render: (event) => `${event.source} ${event.reference}`,
+            render: (event) => `${event.source === "advance_credit" ? "Advance credit applied" : event.source} ${event.reference}`,
           },
           { key: 'note', label: 'Note', render: (event) => event.note },
           {
@@ -584,6 +586,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       runs.ledger(response)
       actuals.ledger(response, active)
       allocations.ledger(response, active)
+      advances.ledger(response)
       status.textContent = ''
     } catch (error) {
       if (!active.aborted && generation === ownGeneration) status.textContent = failure(error)
@@ -806,6 +809,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     download(true),
   )
   const deelSync = createDeelSyncController(page, api)
+  const advances = createAdvanceCreditsController(page, api, failure)
 
   return {
     activate: async (identity: { profile: string }, active: AbortSignal): Promise<void> => {
@@ -868,6 +872,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       if (heading) heading.textContent = reportMode ? 'Payments report' : 'Payments'
       actuals.activate(active)
       allocations.activate(active)
+      advances.activate(active)
       await runs.activate(active)
       await deelSync.activate(active)
       tabs.activate(reportMode, api.previewPaymentRun !== undefined)

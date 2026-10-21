@@ -18325,6 +18325,253 @@
         ]
       }
     },
+    "/api/v1/payment-runs/advances": {
+      "get": {
+        "operationId": "getAdvanceCreditReport",
+        "summary": "Reconcile contractor advance credit by settlement and application date",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdvanceCreditReportEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/payment-runs/advances",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/payment-runs/advances/applications": {
+      "post": {
+        "operationId": "applyAdvanceCredit",
+        "summary": "Apply settled advance credit to reviewed earnings without moving funds",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/payment-runs/advances/applications",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyAdvanceCredit"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payment-runs/advances/reversals": {
+      "post": {
+        "operationId": "reverseAdvanceCredit",
+        "summary": "Reverse an advance application and restore credit",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/payment-runs/advances/reversals",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReverseAdvanceCredit"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payment-runs/advances/returns": {
+      "post": {
+        "operationId": "returnAdvanceCredit",
+        "summary": "Record a confirmed return of unapplied advance credit",
+        "tags": [
+          "staff-payments"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/payment-runs/advances/returns",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReturnAdvanceCredit"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/scheduled-runs/{id}": {
       "get": {
         "operationId": "getScheduledRun",
@@ -29722,7 +29969,8 @@
             "enum": [
               "wise",
               "deel",
-              "historical"
+              "historical",
+              "advance_credit"
             ]
           },
           "version": {
@@ -29745,6 +29993,7 @@
       "StaffPaymentRow": {
         "type": "object",
         "required": [
+          "is_contractor",
           "user_id",
           "name",
           "active",
@@ -29771,6 +30020,9 @@
         ],
         "additionalProperties": false,
         "properties": {
+          "is_contractor": {
+            "type": "boolean"
+          },
           "user_id": {
             "type": "integer"
           },
@@ -30643,6 +30895,12 @@
                 },
                 "paid_on": {
                   "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "credit_application"
+                  ]
                 }
               }
             }
@@ -30659,6 +30917,12 @@
               ],
               "additionalProperties": false,
               "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "advance"
+                  ]
+                },
                 "amount_cents": {
                   "type": "integer"
                 },
@@ -30999,6 +31263,36 @@
           },
           "expected_version": {
             "type": "integer"
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "earnings",
+              "advance"
+            ]
+          },
+          "currency": {
+            "type": "string"
+          },
+          "advance_project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "advance_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -31131,6 +31425,9 @@
           "month",
           "amount_cents",
           "expected_version",
+          "purpose",
+          "advance_project_id",
+          "advance_reason",
           "id",
           "run_id",
           "name",
@@ -31163,6 +31460,33 @@
           },
           "expected_version": {
             "type": "integer"
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "earnings",
+              "advance"
+            ]
+          },
+          "advance_project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "advance_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "type": "string"
@@ -31432,6 +31756,405 @@
             "$ref": "#/components/schemas/PaymentRunReport"
           }
         }
+      },
+      "ApplyAdvanceCredit": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "advance_item_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "month": {
+            "type": "string"
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "month",
+              "project",
+              "entry"
+            ]
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entry_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "reason",
+          "advance_item_id",
+          "user_id",
+          "currency",
+          "month",
+          "amount_cents",
+          "scope",
+          "project_id",
+          "entry_id"
+        ],
+        "additionalProperties": false
+      },
+      "ReverseAdvanceCredit": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "application_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "reason",
+          "application_id"
+        ],
+        "additionalProperties": false
+      },
+      "ReturnAdvanceCredit": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "advance_item_id": {
+            "type": "string"
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "reference": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "reason",
+          "advance_item_id",
+          "amount_cents",
+          "reference"
+        ],
+        "additionalProperties": false
+      },
+      "AdvanceCreditApplication": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "advance_item_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "month": {
+            "type": "string"
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "month",
+              "project",
+              "entry"
+            ]
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entry_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "actor_id": {
+            "type": "integer"
+          },
+          "recorded_at": {
+            "type": "string"
+          },
+          "reversed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reversal_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "reason",
+          "advance_item_id",
+          "user_id",
+          "currency",
+          "month",
+          "amount_cents",
+          "scope",
+          "project_id",
+          "entry_id",
+          "actor_id",
+          "recorded_at",
+          "reversed_at",
+          "reversal_reason"
+        ],
+        "additionalProperties": false
+      },
+      "AdvanceCreditReturn": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "advance_item_id": {
+            "type": "string"
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "actor_id": {
+            "type": "integer"
+          },
+          "recorded_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "reason",
+          "advance_item_id",
+          "amount_cents",
+          "reference",
+          "actor_id",
+          "recorded_at"
+        ],
+        "additionalProperties": false
+      },
+      "AdvanceCredit": {
+        "type": "object",
+        "properties": {
+          "advance_item_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "month": {
+            "type": "string"
+          },
+          "advance_project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "advance_reason": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "settled_cents": {
+            "type": "integer"
+          },
+          "settled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "applied_cents": {
+            "type": "integer"
+          },
+          "returned_cents": {
+            "type": "integer"
+          },
+          "reserved_cents": {
+            "type": "integer"
+          },
+          "available_cents": {
+            "type": "integer"
+          },
+          "opening_cents": {
+            "type": "integer"
+          },
+          "period_settled_cents": {
+            "type": "integer"
+          },
+          "period_applied_cents": {
+            "type": "integer"
+          },
+          "period_returned_cents": {
+            "type": "integer"
+          },
+          "closing_cents": {
+            "type": "integer"
+          },
+          "applications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdvanceCreditApplication"
+            }
+          },
+          "returns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdvanceCreditReturn"
+            }
+          }
+        },
+        "required": [
+          "advance_item_id",
+          "user_id",
+          "name",
+          "currency",
+          "month",
+          "advance_project_id",
+          "advance_reason",
+          "state",
+          "amount_cents",
+          "settled_cents",
+          "settled_at",
+          "applied_cents",
+          "returned_cents",
+          "reserved_cents",
+          "available_cents",
+          "opening_cents",
+          "period_settled_cents",
+          "period_applied_cents",
+          "period_returned_cents",
+          "closing_cents",
+          "applications",
+          "returns"
+        ],
+        "additionalProperties": false
+      },
+      "AdvanceCreditReport": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "advances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdvanceCredit"
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "advances"
+        ],
+        "additionalProperties": false
+      },
+      "AdvanceCreditReportEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AdvanceCreditReport"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
       },
       "ScheduledRunItem": {
         "type": "object",

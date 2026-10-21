@@ -200,3 +200,55 @@ explicitly. Hour splits are never inferred.
   first.
 
 People see only their own figures, read-only, at `/my-payments` (`GET /api/v1/me/payments`) when the `own_money` setting is on; see [`contractor-payments.md`](contractor-payments.md). These administrator routes are unchanged.
+
+
+### Contractor advances (#900)
+
+The **Advances** tab prepares an advance/deposit before work or an invoice exists.
+Only administrators with a session may prepare/approve transfers or manage credit;
+API tokens and other profiles cannot use these routes. Choose an active contractor,
+Wise destination, recipient/source currencies, amount, intended work month and a
+reason. Review the verified recipient and maximum source cost including fees, then
+explicitly confirm the transfer. The normal payment-run processor handles retries,
+scheduling and reconciliation. Advances are labeled in History and transfer reports.
+The preview API also accepts an optional intended `advance_project_id`.
+
+Pending transfers reserve advance funds, **not a work month's payable balance**.
+Only confirmed settlement creates credit. No future hours automatically consume it.
+Existing payments and monthly balances are not migrated or reinterpreted.
+
+Load credit by activity dates to see settled, applied, returned and unapplied amounts,
+plus **opening + settlements − net applications − returns = closing credit** for each
+advance/currency. Current pending and available amounts are separate from historical
+statement dates. Reversals are negative applications in their activity period.
+
+To apply credit, choose a reviewed earning month and an eligible month, project or
+entry; enter the partial amount and a reason, review the remaining earnings, and
+confirm. One atomic database command consumes credit and projects its settlement
+onto the monthly register/allocation ledger with source `advance_credit`, referencing
+the original advance. It creates no new earning, payment run or provider transfer.
+A payee sees **Advance credit applied (no new transfer)**, rather than another paycheck.
+Month/project allocations never invent a split across time entries.
+
+Reversing an application requires a reason and restores both credit and the payable
+balance; the application, allocation and reversal history remain. Recording a return
+requires the amount, bank reference and confirmation that the money was already
+returned; this action sends no funds. Duplicate return references on one advance are
+refused. Credit still applied must be reversed before it can be returned. A confirmed
+provider refund reverses outstanding applications and returns the remaining credit
+atomically. Cancellation before settlement releases pending funds without credit.
+
+Routes (administrator sessions only):
+
+- `GET /api/v1/payment-runs/advances?from=YYYY-MM-DD&to=YYYY-MM-DD`
+- `POST /api/v1/payment-runs/advances/applications`
+- `POST /api/v1/payment-runs/advances/reversals`
+- `POST /api/v1/payment-runs/advances/returns`
+
+Advance selections use `purpose: "advance"`, explicit `currency`, `advance_reason`
+and optional `advance_project_id` on the existing payment-run preview command.
+An application's `id` is its retry key; changing the content under that ID is refused.
+Person/currency, settled capacity, reviewed earnings, reservations and allocation
+limits are checked inside the database transaction on SQLite and D1. Source-hour
+changes retain the captured allocation and are reviewed through the Allocations tab.
+No customer-specific correction or live transfer is part of the migration or fixtures.

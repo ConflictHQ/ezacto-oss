@@ -213,6 +213,7 @@ it('moves a completed register without changing its physical receipt and lets ei
     {
       ...corrected.events[0]!,
       id: 'july-note',
+      source: 'historical',
       kind: 'note',
       amount_cents: null,
       currency: null,

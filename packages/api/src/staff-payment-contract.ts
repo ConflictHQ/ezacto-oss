@@ -112,6 +112,7 @@ export const staffPaymentSchemas = {
   StaffPaymentCommand: object(command),
   StaffPaymentEvent: object({
     ...command,
+    source: { type: 'string', enum: ['wise','deel','historical','advance_credit'] },
     version: integer,
     actor_id: integer,
     actor_name: string,
@@ -119,6 +120,7 @@ export const staffPaymentSchemas = {
     request_id: string,
   }),
   StaffPaymentRow: object({
+    is_contractor: bool,
     user_id: integer,
     name: string,
     active: bool,
@@ -267,16 +269,17 @@ export const staffPaymentSchemas = {
     balance_cents: nullable(integer),
     payments: {
       type: 'array',
-      items: object({ amount_cents: integer, currency: string, paid_on: string }),
+      items: { ...object({ amount_cents: integer, currency: string, paid_on: string, kind: { type: 'string', enum: ['credit_application'] } }), required: ['amount_cents','currency','paid_on'] },
     },
     upcoming: {
       type: 'array',
-      items: object({
+      items: { ...object({
+        kind: { type: 'string', enum: ['advance'] },
         amount_cents: integer,
         currency: string,
         scheduled_on: string,
         status: { type: 'string', enum: ['scheduled', 'processing'] },
-      }),
+      }), required: ['amount_cents','currency','scheduled_on','status'] },
     },
   }),
   MyPaymentsEnvelope: object({ data: ref('MyPayments') }),

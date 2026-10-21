@@ -63,13 +63,14 @@ export const createMyPaymentsStore = (database: Database): MyPaymentsStore => ({
         SELECT COALESCE(SUM(rounded_seconds), 0) AS seconds FROM time_entries
         WHERE user_id = ${userId} AND spent_date BETWEEN ${month + '-01'} AND ${paymentMonthEnd(month)}`),
       database.all<{
+        purpose: string
         amount_cents: number
         currency: string
         state: string
         scheduled_at: string
         timezone: string
       }>(sql`
-        SELECT item.amount_cents, item.currency, item.state, run.scheduled_at, run.timezone
+        SELECT item.purpose, item.amount_cents, item.currency, item.state, run.scheduled_at, run.timezone
         FROM payment_run_items item JOIN payment_runs run ON run.id = item.run_id
         WHERE item.user_id = ${userId} AND run.state = 'approved'
           AND item.state IN ('queued','creating','funding','processing','attention')
@@ -80,6 +81,7 @@ export const createMyPaymentsStore = (database: Database): MyPaymentsStore => ({
       return { ...(JSON.parse(command_json) as StaffPaymentCommand), ...audit }
     })
     const upcoming: MyUpcomingPayment[] = items.map((item) => ({
+      ...(item.purpose === 'advance' ? { kind: 'advance' as const } : {}),
       amount_cents: item.amount_cents,
       currency: item.currency,
       scheduled_on: scheduledDate(item.scheduled_at, item.timezone),

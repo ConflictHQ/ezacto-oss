@@ -20,6 +20,7 @@ export const renderStaffPayments = (view?: string): string =>
             ['balances', 'Balances'],
             ['actuals', 'Review actuals'],
             ['allocations', 'Allocations'],
+            ['advances', 'Advances'],
             ['send', 'Send or schedule'],
             ['history', 'History'],
             ['settings', 'Settings'],
@@ -84,6 +85,18 @@ export const renderStaffPayments = (view?: string): string =>
         <button type="button" data-allocations-load>Load allocations for work month</button>
         <p role="status" aria-live="polite" data-allocations-status></p>
         <div data-allocations-content></div>
+      </section>
+      <section id="payment-panel-advances" role="tabpanel" aria-labelledby="payment-tab-advances" data-payment-panel="advances" data-payment-advances hidden>
+        <h2>Contractor advance deposits</h2>
+        <p>Prepare a deposit before work exists, then apply settled credit explicitly to reviewed earnings. Future hours never consume credit automatically. Applying credit does not send another payment.</p>
+        <details><summary>Prepare an advance transfer</summary><div data-advance-create></div></details>
+        <form data-advance-period class="staff-payment-toolbar">
+          <label>Credit activity from<input type="date" name="from" required></label>
+          <label>Through<input type="date" name="to" required></label>
+          <button type="submit">Load advance credit</button>
+        </form>
+        <p data-advance-status role="status" aria-live="polite"></p>
+        <div data-advance-content></div>
       </section>
       ${renderPaymentRuns()}
       <section id="payment-panel-settings" role="tabpanel" aria-labelledby="payment-tab-settings" data-payment-panel="settings" hidden>

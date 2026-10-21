@@ -277,3 +277,55 @@ test('[e2e:payments] reviews actual hours before confirming earnings and handing
   await expect(page.locator('[data-run-form]')).toBeVisible()
   expect(previews).toBe(0)
 })
+
+test('[e2e:advances] reviews a deposit, waits for settlement and applies credit without a second transfer', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  let approved = 0, applications = 0;
+  const advanceRun = { ...run, name: 'Deposit', items: run.items.map((i) => ({ ...i, purpose: 'advance', advance_reason: 'Deposit before work', amount_cents: 15000, quote: { ...i.quote, target_cents: 15000, source_cents: 15050 } })) };
+  const credit = { advance_item_id: 'payment', user_id: 2, name: row.name, currency: 'USD', month: row.month, advance_project_id: null, advance_reason: 'Deposit before work', state: 'queued', amount_cents: 15000,
+    settled_cents: 0, settled_at: null as string | null, applied_cents: 0, returned_cents: 0, reserved_cents: 15000, available_cents: 0, opening_cents: 0, period_settled_cents: 0, period_applied_cents: 0, period_returned_cents: 0, closing_cents: 0, applications: [], returns: [] };
+  await page.route('**/api/v1/staff-payments?*', (route) => route.fulfill({ json: { data: ledger } }));
+  await page.route('**/api/v1/payment-runs/report?*', (route) => route.fulfill({ json: { data: { from: row.month, to: row.month, ledgers: [ledger], runs: [] } } }));
+  await page.route('**/api/v1/payment-runs/preview', (route) => {
+    expect(route.request().postDataJSON().items[0]).toMatchObject({ purpose: 'advance', user_id: 2, amount_cents: 15000, currency: 'USD', advance_reason: 'Deposit before work' });
+    return route.fulfill({ status: 201, json: { data: advanceRun } });
+  });
+  await page.route('**/api/v1/payment-runs/run/approve', (route) => {
+    approved++;
+    return route.fulfill({ json: { data: { ...advanceRun, state: 'approved' } } });
+  });
+  await page.route('**/api/v1/payment-runs/advances?*', (route) => route.fulfill({ json: { data: { from: '2026-10-01', to: '2026-10-31', advances: [credit] } } }));
+  await page.route('**/api/v1/staff-payments/allocations?*', (route) => route.fulfill({ json: { data: { month: row.month, people: [{ user_id: 2, name: row.name, currency: 'USD', remaining_cents: 10000, projects: [] }] } } }));
+  await page.route('**/api/v1/payment-runs/advances/applications', (route) => {
+    applications++;
+    expect(route.request().postDataJSON()).toMatchObject({ advance_item_id: 'payment', user_id: 2, currency: 'USD', month: row.month, amount_cents: 4000, scope: 'month', reason: 'Apply deposit to reviewed work' });
+    credit.applied_cents = 4000; credit.available_cents = 11000; credit.closing_cents = 11000;
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto('/payments?month=2026-08');
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(email);
+  await page.getByLabel('Password', { exact: true }).fill(password);
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await page.getByRole('tab', { name: 'Advances', exact: true }).click();
+  const panel = page.locator('[data-payment-advances]');
+  await panel.getByText('Prepare an advance transfer', { exact: true }).click();
+  await panel.getByLabel('Advance amount', { exact: true }).fill('150');
+  await panel.getByLabel('Advance reason', { exact: true }).fill('Deposit before work');
+  await panel.getByRole('button', { name: 'Review advance transfer', exact: true }).click();
+  await expect(panel.getByText(/Verified Wise recipient: Verified Wise Person/)).toBeVisible();
+  expect(approved).toBe(0);
+  await panel.getByRole('button', { name: 'Confirm advance transfer', exact: true }).click();
+  await expect(panel.getByRole('table', { name: 'Contractor advance credit' })).toContainText('queued');
+  await expect(panel.getByRole('button', { name: 'Load eligible earnings' })).toHaveCount(0);
+  credit.state = 'paid'; credit.settled_at = '2026-10-01T12:00:00.000Z'; credit.settled_cents = 15000; credit.period_settled_cents = 15000; credit.closing_cents = 15000; credit.reserved_cents = 0; credit.available_cents = 15000;
+  await panel.getByRole('button', { name: 'Load advance credit', exact: true }).click();
+  await panel.getByText(`${row.name} · USD · ${row.month} advance`, { exact: true }).click();
+  await panel.getByRole('button', { name: 'Load eligible earnings', exact: true }).click();
+  await panel.getByLabel('Credit to apply', { exact: true }).fill('40');
+  await panel.getByLabel('Application reason', { exact: true }).fill('Apply deposit to reviewed work');
+  await panel.getByLabel('I reviewed the earnings and want to apply credit without sending another payment', { exact: true }).check();
+  await panel.getByRole('button', { name: 'Apply advance credit', exact: true }).click();
+  await expect(panel.getByRole('table', { name: 'Contractor advance credit' })).toContainText('110.00');
+  expect(approved).toBe(1);
+  expect(applications).toBe(1);
+});

@@ -175,7 +175,7 @@ export const createPaymentRunsController = (
             {
               key: "name",
               label: "Person",
-              render: (i) => `${i.name} · ${i.month}`,
+              render: (i) => `${i.name} · ${i.month}${i.purpose === "advance" ? " · Advance deposit" : ""}`,
             },
             {
               key: "amount",
@@ -361,7 +361,7 @@ export const createPaymentRunsController = (
         empty: "No matching transfers.",
         columns: [
           { key: "run", label: "Run", render: (i) => i.run_name },
-          { key: "name", label: "Person", render: (i) => i.name },
+          { key: "name", label: "Person", render: (i) => `${i.name}${i.purpose === "advance" ? " · Advance deposit" : ""}` },
           { key: "month", label: "Work month", render: (i) => i.month },
           {
             key: "amount",
@@ -475,7 +475,7 @@ export const createPaymentRunsController = (
           {
             key: "person",
             label: "Person / Wise recipient",
-            render: (i) => `${i.name} (${i.month}) → ${i.quote.recipient_name}`,
+            render: (i) => `${i.name} (${i.month})${i.purpose === "advance" ? " · Advance deposit" : ""} → ${i.quote.recipient_name}`,
           },
           {
             key: "destination",

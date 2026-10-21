@@ -53,3 +53,12 @@ describe('own payment summary (issue 100)', () => {
     expect(summarizeMyPayments('2026-07', [], 3600, [], '2026-10-19')).toMatchObject({ status: 'pending_review', owed: null, balance_cents: null })
   })
 })
+
+it('labels an application of existing advance credit separately from a new payment and an upcoming deposit', () => {
+  const summary = summarizeMyPayments('2026-08', [event({}), event({ id: 'credit', version: 2, kind: 'payment', source: 'advance_credit', amount_cents: 4000, paid_on: '2026-10-01' })], 7200,
+    [{ kind: 'advance', amount_cents: 10000, currency: 'USD', scheduled_on: '2026-10-02', status: 'scheduled' }], '2026-10-01')
+  expect(summary.paid_cents).toBe(4000)
+  expect(summary.balance_cents).toBe(6000)
+  expect(summary.payments).toEqual([{ kind: 'credit_application', amount_cents: 4000, currency: 'USD', paid_on: '2026-10-01' }])
+  expect(summary.upcoming[0]).toMatchObject({ kind: 'advance' })
+})

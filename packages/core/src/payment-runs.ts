@@ -1,3 +1,4 @@
+import type { AdvanceCreditsStore } from './contractor-advances.js'
 import type { StaffPaymentReport } from "./staff-payments.js";
 
 export type PaymentItemState =
@@ -11,6 +12,11 @@ export type PaymentItemState =
   | "attention"
   | "cancelled";
 export interface PaymentSelection {
+  /** Default earnings. An advance creates credit only after confirmed settlement. */
+  purpose?: 'earnings' | 'advance';
+  currency?: string;
+  advance_project_id?: number | null;
+  advance_reason?: string | null;
   user_id: number;
   month: string;
   amount_cents: number;
@@ -120,6 +126,7 @@ export interface PaymentRunReport {
   runs: PaymentRun[];
 }
 export interface PaymentRunsService {
+  advances?: AdvanceCreditsStore;
   preview(
     command: PaymentRunCommand,
     actorId: number,

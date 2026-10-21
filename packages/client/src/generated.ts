@@ -144,7 +144,7 @@ export type StaffPaymentEvent = {
   "reference": string;
   "note": string;
   "payment_id": string | null;
-  "source": "wise" | "deel" | "historical";
+  "source": "wise" | "deel" | "historical" | "advance_credit";
   "version": number;
   "actor_id": number;
   "actor_name": string;
@@ -153,6 +153,7 @@ export type StaffPaymentEvent = {
 };
 
 export type StaffPaymentRow = {
+  "is_contractor": boolean;
   "user_id": number;
   "name": string;
   "active": boolean;
@@ -324,8 +325,10 @@ export type MyPayments = {
   "amount_cents": number;
   "currency": string;
   "paid_on": string;
+  "kind"?: "credit_application";
 }>;
   "upcoming": Array<{
+  "kind"?: "advance";
   "amount_cents": number;
   "currency": string;
   "scheduled_on": string;
@@ -402,6 +405,10 @@ export type PaymentSelection = {
   "month": string;
   "amount_cents": number;
   "expected_version": number;
+  "purpose"?: "earnings" | "advance";
+  "currency"?: string;
+  "advance_project_id"?: number | null;
+  "advance_reason"?: string | null;
 };
 
 export type PaymentRunCommand = {
@@ -439,6 +446,9 @@ export type PaymentItem = {
   "month": string;
   "amount_cents": number;
   "expected_version": number;
+  "purpose": "earnings" | "advance";
+  "advance_project_id": number | null;
+  "advance_reason": string | null;
   "id": string;
   "run_id": string;
   "name": string;
@@ -494,6 +504,95 @@ export type PaymentRunReport = {
 
 export type PaymentRunReportEnvelope = {
   "data": PaymentRunReport;
+};
+
+export type ApplyAdvanceCredit = {
+  "id": string;
+  "reason": string;
+  "advance_item_id": string;
+  "user_id": number;
+  "currency": string;
+  "month": string;
+  "amount_cents": number;
+  "scope": "month" | "project" | "entry";
+  "project_id": number | null;
+  "entry_id": number | null;
+};
+
+export type ReverseAdvanceCredit = {
+  "id": string;
+  "reason": string;
+  "application_id": string;
+};
+
+export type ReturnAdvanceCredit = {
+  "id": string;
+  "reason": string;
+  "advance_item_id": string;
+  "amount_cents": number;
+  "reference": string;
+};
+
+export type AdvanceCreditApplication = {
+  "id": string;
+  "reason": string;
+  "advance_item_id": string;
+  "user_id": number;
+  "currency": string;
+  "month": string;
+  "amount_cents": number;
+  "scope": "month" | "project" | "entry";
+  "project_id": number | null;
+  "entry_id": number | null;
+  "actor_id": number;
+  "recorded_at": string;
+  "reversed_at": string | null;
+  "reversal_reason": string | null;
+};
+
+export type AdvanceCreditReturn = {
+  "id": string;
+  "reason": string;
+  "advance_item_id": string;
+  "amount_cents": number;
+  "reference": string;
+  "actor_id": number;
+  "recorded_at": string;
+};
+
+export type AdvanceCredit = {
+  "advance_item_id": string;
+  "user_id": number;
+  "name": string;
+  "currency": string;
+  "month": string;
+  "advance_project_id": number | null;
+  "advance_reason": string;
+  "state": string;
+  "amount_cents": number;
+  "settled_cents": number;
+  "settled_at": string | null;
+  "applied_cents": number;
+  "returned_cents": number;
+  "reserved_cents": number;
+  "available_cents": number;
+  "opening_cents": number;
+  "period_settled_cents": number;
+  "period_applied_cents": number;
+  "period_returned_cents": number;
+  "closing_cents": number;
+  "applications": Array<AdvanceCreditApplication>;
+  "returns": Array<AdvanceCreditReturn>;
+};
+
+export type AdvanceCreditReport = {
+  "from": string;
+  "to": string;
+  "advances": Array<AdvanceCredit>;
+};
+
+export type AdvanceCreditReportEnvelope = {
+  "data": AdvanceCreditReport;
 };
 
 export type ScheduledRunItem = {
@@ -6947,6 +7046,46 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<PaymentRunEnvelope>("POST", "/api/v1/payment-runs/:id/items/:itemId/reconcile".replace(":id", encodeURIComponent(String(args["id"]))).replace(":itemId", encodeURIComponent(String(args["itemId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getAdvanceCreditReport(args: { query?: { "from"?: string; "to"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<AdvanceCreditReportEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<AdvanceCreditReportEnvelope>("GET", "/api/v1/payment-runs/advances", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async applyAdvanceCredit(args: { body: ApplyAdvanceCredit; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/api/v1/payment-runs/advances/applications", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async reverseAdvanceCredit(args: { body: ReverseAdvanceCredit; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/api/v1/payment-runs/advances/reversals", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async returnAdvanceCredit(args: { body: ReturnAdvanceCredit; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/api/v1/payment-runs/advances/returns", {
+      body: args.body,
       signal: args.signal,
       headers,
     });
