@@ -39,7 +39,7 @@ export const createApiIdempotencyAuthorization = (
       invoiceSegment ??= /^\/api\/v1\/invoices\/([^/]+)\/line-items\/[^/]+\/?$/.exec(path)?.[1]
     let elevation
     if (credential.kind === 'token' && invoiceSegment !== undefined) {
-      let invoiceId = NaN
+      let invoiceId: number
       try {
         invoiceId = Number(decodeURIComponent(invoiceSegment))
       } catch {
