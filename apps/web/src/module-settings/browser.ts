@@ -1269,6 +1269,25 @@ export const createModuleSettingsController = (
     loaded.clear()
     retention.clear()
     deletionRequests.clear()
+    backupHistoryOwner?.abort()
+    backupHistoryOwner = null
+    backupLog = null
+    backupFacts.replaceChildren()
+    backupFacts.hidden = true
+    backupRuns.replaceChildren()
+    backupRuns.hidden = backupControls.hidden = true
+    backupRunsStatus.textContent = ''
+    backupAlarm.hidden = true
+    backupAlarm.textContent = backupStatus.textContent = ''
+    backupDownload.hidden = true
+    backupDownloadCode.value = backupDownloadLink.value = ''
+    backupDownloadResult.textContent = ''
+    backupDownloadCodeRow.hidden = backupDownloadLinkRow.hidden = true
+    backupDownloadMint.disabled = false
+    offsiteSession = null
+    offsiteCheckRow.hidden = true
+    offsiteCheckResult.textContent = ''
+    offsiteCheck.disabled = false
     // Its controls come back with the page rather than from the finally of an
     // operation that is no longer allowed to touch anything.
     noteSubmit.disabled = false
@@ -1964,6 +1983,7 @@ export const createModuleSettingsController = (
    * and not enough to find out when the last one before it did.
    */
   let backupLog: PagedLog | null = null
+  let backupHistoryOwner: AbortController | null = null
   const backupHistory = (list: NonNullable<CompanySettingsApi['listBackupRuns']>): PagedLog => {
     backupLog ??= createPagedLog<BackupRun>({
       prefix: 'backup',
@@ -2035,22 +2055,28 @@ export const createModuleSettingsController = (
     return 'The link could not be created. Try again.'
   }
   const mintBackupDownload = async (): Promise<void> => {
-    if (api.createBackupDownloadLink === undefined) return
+    const active = currentSession()
+    if (active === null || active.identity.profile !== 'administrator' || api.createBackupDownloadLink === undefined) return
     backupDownloadMint.disabled = true
     backupDownloadLinkRow.hidden = true
     backupDownloadLink.value = ''
     backupDownloadResult.textContent = 'Creating the link…'
     const code = backupDownloadCode.value.trim()
     try {
-      const link = await api.createBackupDownloadLink(code === '' ? {} : { code })
-      backupDownloadCode.value = ''
-      backupDownloadLink.value = new URL(link.url, globalThis.location.origin).href
-      backupDownloadLinkRow.hidden = false
-      backupDownloadResult.textContent = `Link created. It works once and expires at ${new Date(link.expires_at).toLocaleString()}. It will not be shown again.`
+      const link = await api.createBackupDownloadLink(code === '' ? {} : { code },active.signal)
+      active.present(() => {
+        backupDownloadCode.value = ''
+        backupDownloadLink.value = new URL(link.url, globalThis.location.origin).href
+        backupDownloadLinkRow.hidden = false
+        backupDownloadResult.textContent = `Link created. It works once and expires at ${new Date(link.expires_at).toLocaleString()}. It will not be shown again.`
+      })
     } catch (error) {
-      backupDownloadResult.textContent = backupDownloadFailure(error)
+      const paint = () => { backupDownloadResult.textContent = backupDownloadFailure(error) }
+      const factorCode = backupDownloadErrorCode(error)
+      if (factorCode === 'two_factor_code_required' || factorCode === 'invalid_two_factor_code' || factorCode === 'two_factor_locked') active.present(paint)
+      else active.presentFailure(error,paint)
     } finally {
-      backupDownloadMint.disabled = false
+      if (currentSession() === active) backupDownloadMint.disabled = false
     }
   }
   backupDownloadMint.addEventListener('click', () => void mintBackupDownload())
@@ -2061,7 +2087,7 @@ export const createModuleSettingsController = (
   let offsiteSession: ActiveSession | null = null
   offsiteCheck.addEventListener('click', () => {
     const active = offsiteSession
-    if (!active || !api.checkOffsiteBackupDestination) return
+    if (!active || currentSession() !== active || active.identity.profile !== 'administrator' || !api.checkOffsiteBackupDestination) return
     offsiteCheck.disabled = true
     offsiteCheckResult.textContent = 'Verifying an encrypted test object…'
     void api
@@ -2109,7 +2135,7 @@ export const createModuleSettingsController = (
     }
     try {
       const status = await api.getBackupStatus(active.signal)
-      if (active.signal.aborted) return
+      if (currentSession() !== active) return
       offsiteSession = active
       active.signal.addEventListener(
         'abort',
@@ -2201,16 +2227,19 @@ export const createModuleSettingsController = (
           backupRuns.hidden = false
         }
       })
-      if (api.listBackupRuns !== undefined && !active.signal.aborted) {
+      if (api.listBackupRuns !== undefined && currentSession() === active) {
         backupControls.hidden = false
         backupRuns.hidden = false
-        try {
-          backupZone = (await api.getTimesheetLockPolicy?.(active.signal))?.timezone ?? 'UTC'
-        } catch {
-          // The runs are then said in UTC, and the column says so.
-          backupZone = 'UTC'
-        }
-        await backupHistory(api.listBackupRuns).load(active.signal)
+        let zone = 'UTC'
+        try { zone = (await api.getTimesheetLockPolicy?.(active.signal))?.timezone ?? 'UTC' }
+        catch { /* The header explicitly says UTC when the setting is unavailable. */ }
+        if (currentSession() !== active) return
+        backupZone = zone
+        backupHistoryOwner?.abort()
+        const owner = new AbortController()
+        backupHistoryOwner = owner
+        active.signal.addEventListener('abort',()=>owner.abort(),{once:true})
+        await backupHistory(api.listBackupRuns).load(owner.signal)
       }
     } catch (error) {
       active.presentFailure(error, () => {
@@ -2745,6 +2774,7 @@ export const createModuleSettingsController = (
         brandStatus.textContent = ''
         quickBooksStatus.textContent = ''
         ssoStatus.textContent = ''
+        backupStatus.textContent = 'Backups are visible to administrators only.'
         return
       }
 
@@ -2753,7 +2783,9 @@ export const createModuleSettingsController = (
         identity,
         ...sessionPresenter(() => currentSession() === active, onSessionFailure),
       }
+      if (signal.aborted) return
       session = active
+      signal.addEventListener('abort',()=>{if(session===active)clearPrivatePresentation()},{once:true})
 
       revealWiseSection()
       await load(shownSection())

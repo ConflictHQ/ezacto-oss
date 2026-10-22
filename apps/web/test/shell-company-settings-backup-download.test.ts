@@ -112,7 +112,7 @@ describe("company settings: backup download link", () => {
     expect(button.disabled).toBe(false);
     button.click();
     await vi.waitFor(() => expect(linkRow.hidden).toBe(false));
-    expect(mint).toHaveBeenCalledWith({});
+    expect(mint).toHaveBeenCalledWith({}, expect.any(AbortSignal));
     expect(linkBox.value).toMatch(/\/backup-download\/secret-token$/u);
     expect(result.textContent).toContain("works once");
   });
@@ -138,7 +138,7 @@ describe("company settings: backup download link", () => {
     code.value = "123456";
     button.click();
     await vi.waitFor(() => expect(linkRow.hidden).toBe(false));
-    expect(mint).toHaveBeenLastCalledWith({ code: "123456" });
+    expect(mint).toHaveBeenLastCalledWith({ code: "123456" }, expect.any(AbortSignal));
     expect(code.value).toBe("");
   });
 
