@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/cloudflare'
+import { scheduleConfirmedRunWorkflows } from './scheduled-run-workflow-scheduler.js'
 import type { QueuedEmailJob } from '@ezacto/mailer'
 import { createApiIdempotencyAuthorization, withIdempotency } from '@ezacto/api'
 import { createApp, demoDeployment, demoMailDomains, type WorkerEnv } from './app.js'
@@ -255,8 +256,14 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
     }
     if (controller.cron === '* * * * *' && services.scheduledRunDispatch !== undefined) {
       try {
-        const result = await services.scheduledRunDispatch.processDue(new Date().toISOString())
-        for (const failure of result.failed) console.error('[worker] scheduled run item failed', failure)
+        if (env.SCHEDULED_RUN_WORKFLOW !== undefined) {
+          const result = await scheduleConfirmedRunWorkflows(env.SCHEDULED_RUN_WORKFLOW, services.scheduledRunDispatch)
+          for (const failure of result.failed) console.error('[worker] scheduled run Workflow failed', failure)
+        } else {
+          // Direct invocation remains available to unbound native fixtures and older installs.
+          const result = await services.scheduledRunDispatch.processDue(new Date().toISOString())
+          for (const failure of result.failed) console.error('[worker] scheduled run item failed', failure)
+        }
       } catch (error) {
         console.error('[worker] scheduled run dispatch failed', error)
         Sentry.captureException(error)

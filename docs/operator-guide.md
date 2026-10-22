@@ -170,9 +170,21 @@ PDF. Report-note warnings are captured with it; when warnings exist, confirmatio
 requires an explicit acknowledgement on the review screen. The acknowledgement is
 recorded with the administrator and the original confirmation time.
 
-After confirmation, the Worker minute cron or container maintenance tick dispatches
-the items. Each item owns a 15-minute lease. Another executor cannot enter it while
-the lease is live, and a recovered lease cannot be settled by the old executor.
+After confirmation, the Worker minute cron starts a Cloudflare Workflow for the
+captured proposal. Each checkpoint dispatches a bounded item batch; durable
+one-minute sleeps separate retry passes. The container maintenance queue calls the
+same executor and receipts. A Workflow restart cannot repeat completed items.
+Cron checks at most ten eligible runs per pass in oldest-checked order, so a
+control-plane failure cannot indefinitely starve later proposals. Workflow IDs
+include proposal identity and retry-budget generation: an explicit failed-item
+retry creates a new instance, and a nightly demo reset cannot reuse an old one.
+Errored instances may restart; cron respects an operator's pause or termination.
+The binding is `SCHEDULED_RUN_WORKFLOW`, exported class `ScheduledRunWorkflow`;
+Wrangler provisions the named Workflow with the Worker deployment. Older unbound
+installations retain direct minute-cron dispatch until they adopt this config.
+
+For both runtimes, each item owns a 15-minute lease. Another executor cannot
+enter it while the lease is live, and a recovered lease cannot be settled by the old executor.
 Automatic attempts stop after three failures or interruptions. The manifest names
 the failed item and its reason. **Retry failed items** authorizes another bounded
 window for exhausted failures only; it never repeats a completed item. The same

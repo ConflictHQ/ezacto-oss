@@ -180,6 +180,51 @@ for (const runtime of ['SQLite', 'D1'])
         },
       }
     }
+    it('[workflow #62] control-plane candidates advance fairly past the first ten runs', async () => {
+      const f = await setup()
+      await f.runs.confirm(1, 1, '2026-10-01T09:01:00.000Z')
+      for (let month = 1; month <= 11; month += 1) {
+        const proposal = await f.store.propose({
+          jobId: 1,
+          occurrenceKey: `2025-${String(month).padStart(2, '0')}`,
+          proposedAt: now,
+          expiresAt: '2026-10-02T09:00:00.000Z',
+          items: [
+            {
+              subjectType: 'invoice',
+              subjectId: 1,
+              description: 'Legacy work detail',
+              amountCents: 10000,
+              currency: 'USD',
+              target: 'a@example.test',
+            },
+          ],
+        })
+        if (proposal.outcome !== 'proposed') throw new Error(proposal.outcome)
+        await f.runs.confirm(proposal.run.id, 1, '2026-10-01T09:01:00.000Z')
+      }
+      expect(
+        (await f.dispatch.workflowCandidates()).map((row) => row.id).sort((a, b) => a - b),
+      ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+      f.advance('2026-10-01T09:03:00.000Z')
+      const next = await f.dispatch.workflowCandidates()
+      expect(next).toHaveLength(10)
+      expect(next.map((row) => row.id)).toEqual(expect.arrayContaining([11, 12]))
+    })
+    it('[workflow #62] scopes a pass to its immutable proposal and excludes finished runs', async () => {
+      const f = await setup()
+      expect(await f.dispatch.workflowCandidates()).toEqual([])
+      await f.runs.confirm(1, 1, '2026-10-01T09:01:00.000Z')
+      const candidates = await f.dispatch.workflowCandidates()
+      expect(candidates).toEqual([{ id: 1, proposed_at: now, generation: 6 }])
+      expect(await f.dispatch.processRun(1, '2026-09-01T09:00:00.000Z')).toMatchObject({
+        completed: 0,
+        pending: false,
+      })
+      expect(f.jobs).toHaveLength(0)
+      expect(await f.dispatch.processRun(1, now)).toMatchObject({ completed: 2, pending: false })
+      expect(await f.dispatch.workflowCandidates()).toEqual([])
+    })
     it('[e2e #58 #62] captures branded PDFs once, attaches to the right invoices and reuses durable queue IDs after an ambiguous handoff', async () => {
       const f = await setup()
       const items = await f.store.manifest(1)
