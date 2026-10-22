@@ -21,7 +21,7 @@ jobs:
       D1_DATABASE_NAME: ${{ vars.PROD_D1_DATABASE_NAME }}
       R2_BUCKET: ${{ vars.PROD_R2_BUCKET }}
       INSTANCE_FQDN: ${{ vars.PROD_HOST }}
-      DRILL_SCRATCH_ROOT: ${{ runner.temp }}/ezacto-monthly-restore
+      DRILL_SCRATCH_ROOT: /tmp/ezacto-monthly-restore-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
