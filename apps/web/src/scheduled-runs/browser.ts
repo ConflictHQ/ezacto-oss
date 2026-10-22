@@ -13,6 +13,19 @@ export const createScheduledRunController = (api: ScheduledRunApi) => {
   }
   if (!page) return { activate: async () => {} }
   const status = required('[data-scheduled-run-status]')
+  const reviewStatus = required('[data-scheduled-run-review-status]')
+  // Remove the email credential before sign-in or any subsequent request.
+  const currentUrl = new URL(location.href)
+  let reviewToken: string | null = null
+  if (/^\/scheduled-runs\//u.test(currentUrl.pathname)) {
+    const fragment = new URLSearchParams(currentUrl.hash.slice(1))
+    reviewToken = fragment.get('review')
+    if (reviewToken !== null) {
+      fragment.delete('review')
+      currentUrl.hash = fragment.toString()
+      history.replaceState(history.state, '', currentUrl.href)
+    }
+  }
   const content = required('[data-scheduled-run-content]')
   const summary = required('[data-scheduled-run-summary]')
   const items = required('[data-scheduled-run-items]')
@@ -280,14 +293,46 @@ export const createScheduledRunController = (api: ScheduledRunApi) => {
           if (active === signal) {
             ++generation
             clear()
+            reviewStatus.hidden = true
+            reviewStatus.textContent = ''
             status.textContent = 'Sign in to review this proposal.'
           }
         },
         { once: true },
       )
+      reviewStatus.hidden = true
+      reviewStatus.textContent = ''
       if (!administrator) {
         status.textContent = 'Only administrators may review scheduled manifests.'
         return
+      }
+      if (reviewToken !== null) {
+        const token = reviewToken,
+          request = generation
+        reviewToken = null
+        const id = Number(/^\/scheduled-runs\/([1-9]\d*)$/u.exec(location.pathname)?.[1])
+        try {
+          if (!api.consumeReviewLink) throw new Error('Email review links are unavailable.')
+          await api.consumeReviewLink(id, token, signal)
+        } catch (error) {
+          if (signal.aborted || request !== generation) return
+          if (error instanceof EzactoApiError && (error.status === 401 || error.status === 403)) {
+            status.textContent = 'Sign in with an administrator account to review this proposal.'
+            return
+          }
+          const code =
+            error instanceof EzactoApiError
+              ? (error.body as { error?: { code?: string } })?.error?.code
+              : null
+          reviewStatus.textContent =
+            code === 'review_link_expired'
+              ? 'This email review link has expired. Your administrator session can still read the recorded run.'
+              : code === 'review_link_used'
+                ? 'This email review link has already been opened. Your administrator session can still read the recorded run.'
+                : 'This email review link could not be verified. Your administrator session can still read the recorded run.'
+          reviewStatus.hidden = false
+        }
+        if (signal.aborted || request !== generation) return
       }
       await load(signal)
     },

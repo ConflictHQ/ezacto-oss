@@ -55,6 +55,43 @@ export const installScheduledRunRoutes = <Bindings extends object>(
       })
     return c.json({ data: run }, 200, { 'cache-control': 'no-store' })
   })
+  api.post('/scheduled-runs/:id/review-link', async (c) => {
+    const id = runId(c.req.param('id')),
+      actor = requireSessionPrincipal(c)
+    const body = await readObjectBody(c)
+    assertFields(unknownFieldErrors(body, new Set(['token'])))
+    if (
+      typeof body.token !== 'string' ||
+      !/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/u.test(body.token)
+    )
+      throw validationError([
+        { field: 'token', code: 'invalid', message: 'Provide a valid email review link.' },
+      ])
+    if (!service.consumeReviewLink)
+      throw new ApiError({
+        status: 503,
+        code: 'review_link_unavailable',
+        message: 'Email review links are unavailable.',
+      })
+    const result = await service.consumeReviewLink(
+      id,
+      actor.userId,
+      body.token,
+      new Date().toISOString(),
+    )
+    if (result !== 'accepted')
+      throw new ApiError({
+        status: result === 'invalid' ? 404 : 409,
+        code: `review_link_${result}`,
+        message:
+          result === 'expired'
+            ? 'This email review link has expired.'
+            : result === 'used'
+              ? 'This email review link has already been opened.'
+              : 'This email review link could not be verified.',
+      })
+    return c.json({ data: { path: `/scheduled-runs/${id}` } }, 200, { 'cache-control': 'no-store' })
+  })
   api.get('/scheduled-runs/:id/items/:itemId/report', async (c) => {
     const report = await service.readReport?.(
       runId(c.req.param('id')),

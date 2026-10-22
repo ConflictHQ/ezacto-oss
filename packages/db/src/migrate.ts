@@ -1,3 +1,4 @@
+import { scheduledReviewLinksMigration } from './migrations/0145_scheduled_review_links.js'
 import { scheduledRunDeliveryMigration } from './migrations/0144_scheduled_run_delivery.js'
 import { scheduledRunLeasesMigration } from './migrations/0143_scheduled_run_leases.js'
 import { scheduledJobControlsMigration } from './migrations/0142_scheduled_job_controls.js'
@@ -1646,6 +1647,7 @@ const migrations = [
   { id: '0142_scheduled_job_controls', statements: scheduledJobControlsMigration },
   { id: '0143_scheduled_run_leases', statements: scheduledRunLeasesMigration },
   { id: '0144_scheduled_run_delivery', statements: scheduledRunDeliveryMigration },
+  { id: '0145_scheduled_review_links', statements: scheduledReviewLinksMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

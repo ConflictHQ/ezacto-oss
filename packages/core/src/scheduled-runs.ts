@@ -56,7 +56,14 @@ export type ScheduledRunOutcome =
       run?: ScheduledRun
     }
 
+export type ScheduledReviewLinkOutcome = 'accepted' | 'invalid' | 'expired' | 'used'
 export interface ScheduledRunsService {
+  consumeReviewLink?(
+    id: number,
+    userId: number,
+    token: string,
+    now: string,
+  ): Promise<ScheduledReviewLinkOutcome>
   readReport?(id: number, itemId: number): Promise<{ key: string; name: string } | null>
   retry?(id: number, userId: number, now: string): Promise<ScheduledRunOutcome>
   read(id: number): Promise<ScheduledRun | null>

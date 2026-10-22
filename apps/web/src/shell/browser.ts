@@ -1614,6 +1614,10 @@ export const mountShell = async (
     ...(api.planning === undefined ? {} : { planning: api.planning }),
   })
   const scheduledRun = createScheduledRunController({
+    consumeReviewLink: async (id,token,signal) => {
+      if (!api.scheduledRuns?.consumeReviewLink) throw new Error('Email review links are unavailable.')
+      await api.scheduledRuns.consumeReviewLink(id,token,signal)
+    },
     read: (id, signal) => {
       if (!api.scheduledRuns) throw new Error('Scheduled runs are unavailable.')
       return api.scheduledRuns.read(id, signal)

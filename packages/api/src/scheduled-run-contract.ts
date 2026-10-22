@@ -10,6 +10,19 @@ const object = (properties: Record<string, unknown>) => ({
   properties,
 })
 export const scheduledRunSchemas = {
+  ScheduledReviewLinkInput: {
+    type: 'object',
+    required: ['token'],
+    additionalProperties: false,
+    properties: {
+      token: {
+        type: 'string',
+        pattern: '^[A-Za-z0-9_-]{43}\\.[A-Za-z0-9_-]{43}$',
+        writeOnly: true,
+      },
+    },
+  },
+  ScheduledReviewLinkEnvelope: object({ data: object({ path: s }) }),
   ScheduledRunConfirmInput: {
     type: 'object',
     additionalProperties: false,
@@ -65,6 +78,19 @@ export const scheduledRunSchemas = {
 }
 const id = { name: 'id', location: 'path', required: true, schema: n } as const
 export const scheduledRunOperations: readonly ApiContractOperation[] = [
+  {
+    method: 'post',
+    path: '/api/v1/scheduled-runs/:id/review-link',
+    operationId: 'consumeScheduledReviewLink',
+    summary:
+      'Record the single authenticated opening of an expiring email review link; never confirm or execute',
+    tag: 'scheduled-runs',
+    responseStatus: 200,
+    responseSchema: 'ScheduledReviewLinkEnvelope',
+    requestSchema: 'ScheduledReviewLinkInput',
+    sessionOnly: true,
+    parameters: [id],
+  },
   {
     method: 'get',
     path: '/api/v1/scheduled-runs/:id/items/:itemId/report',

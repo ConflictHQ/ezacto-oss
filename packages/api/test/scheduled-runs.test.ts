@@ -20,7 +20,10 @@ const run: ScheduledRun = {
 const fixture = (profile = "administrator", kind = "session") => {
   const api = new Hono<ApiContext<object>>();
   const service = {
-    retry: vi.fn(async () => ({ outcome: 'ok', run }) as never),
+    consumeReviewLink: vi.fn<NonNullable<ScheduledRunsService["consumeReviewLink"]>>(
+      async () => "accepted",
+    ),
+    retry: vi.fn(async () => ({ outcome: "ok", run }) as never),
     read: vi.fn(async () => run as ScheduledRun | null),
     confirm: vi.fn(async () => ({ outcome: "ok", run }) as never),
     cancel: vi.fn(async () => ({ outcome: "ok", run }) as never),
@@ -54,6 +57,16 @@ describe("scheduled run authorization", () => {
     expect((await post(api, "7/cancel")).status).toBe(403);
     expect((await post(api, "7/retry")).status).toBe(403);
     expect((await api.request("/scheduled-runs/7/items/1/report")).status).toBe(403);
+    expect(
+      (
+        await api.request("/scheduled-runs/7/review-link", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ token: "A".repeat(43) + "." + "B".repeat(43) }),
+        })
+      ).status,
+    ).toBe(403);
+    expect(service.consumeReviewLink).not.toHaveBeenCalled();
     expect(service.read).not.toHaveBeenCalled();
     expect(service.confirm).not.toHaveBeenCalled();
     expect(service.cancel).not.toHaveBeenCalled();
@@ -61,15 +74,46 @@ describe("scheduled run authorization", () => {
 });
 
 describe("scheduled run routes", () => {
-  it('binds explicit warning acknowledgement to the session and refuses unknown mutation fields', async () => {
-    const {api,service}=fixture()
-    const postBody=(body:object)=>api.request('/scheduled-runs/7/confirm',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
-    expect((await postBody({acknowledge_report_warnings:true})).status).toBe(200)
-    expect(service.confirm).toHaveBeenCalledWith(7,3,expect.any(String),true)
-    expect((await postBody({acknowledge_report_warnings:'yes'})).status).toBe(422)
-    expect((await postBody({user_id:99})).status).toBe(422)
-    expect(service.confirm).toHaveBeenCalledTimes(1)
-  })
+  it("consumes a review link as the session actor, maps reuse/expiry, and never answers the proposal", async () => {
+    const { api, service } = fixture(),
+      token = "A".repeat(43) + "." + "B".repeat(43);
+    const review = (body: object) =>
+      api.request("/scheduled-runs/7/review-link", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const opened = await review({ token });
+    expect(opened.status).toBe(200);
+    expect(await opened.json()).toEqual({ data: { path: "/scheduled-runs/7" } });
+    expect(service.consumeReviewLink).toHaveBeenCalledWith(7, 3, token, expect.any(String));
+    service.consumeReviewLink.mockResolvedValueOnce("used");
+    expect((await review({ token })).status).toBe(409);
+    service.consumeReviewLink.mockResolvedValueOnce("expired");
+    expect((await review({ token })).status).toBe(409);
+    service.consumeReviewLink.mockResolvedValueOnce("invalid");
+    expect((await review({ token })).status).toBe(404);
+    expect((await review({ token, user_id: 99 })).status).toBe(422);
+    expect((await review({ token: "bad" })).status).toBe(422);
+    expect(service.confirm).not.toHaveBeenCalled();
+    expect(service.cancel).not.toHaveBeenCalled();
+    expect(service.retry).not.toHaveBeenCalled();
+  });
+
+  it("binds explicit warning acknowledgement to the session and refuses unknown mutation fields", async () => {
+    const { api, service } = fixture();
+    const postBody = (body: object) =>
+      api.request("/scheduled-runs/7/confirm", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    expect((await postBody({ acknowledge_report_warnings: true })).status).toBe(200);
+    expect(service.confirm).toHaveBeenCalledWith(7, 3, expect.any(String), true);
+    expect((await postBody({ acknowledge_report_warnings: "yes" })).status).toBe(422);
+    expect((await postBody({ user_id: 99 })).status).toBe(422);
+    expect(service.confirm).toHaveBeenCalledTimes(1);
+  });
   it("reads a run", async () => {
     const { api } = fixture();
     const response = await api.request("/scheduled-runs/7");

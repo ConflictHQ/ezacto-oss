@@ -1,3 +1,4 @@
+import { EzactoApiError } from '@conflict-hq/ezacto-client'
 /** @vitest-environment happy-dom */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ScheduledRun } from '@ezacto/core'
@@ -123,4 +124,72 @@ describe('authenticated manifest screen (#61)', () => {
     }).activate(new AbortController().signal, true)
     expect(document.querySelector<HTMLElement>('[data-scheduled-run-actions]')!.hidden).toBe(true)
   })
+})
+
+it('[review-link #61] removes the credential before sign-in and records only an authenticated opening', async () => {
+  const token = 'A'.repeat(43) + '.' + 'B'.repeat(43)
+  window.history.replaceState({}, '', `/scheduled-runs/1#review=${token}`)
+  document.body.innerHTML = renderScheduledRunPage('scheduled-run')
+  const consumeReviewLink = vi.fn(async () => {}),
+    confirm = vi.fn(),
+    cancel = vi.fn(),
+    read = vi.fn(async () => ({ data: run }))
+  const controller = createScheduledRunController({ consumeReviewLink, read, confirm, cancel })
+  expect(window.location.hash).toBe('')
+  expect(consumeReviewLink).not.toHaveBeenCalled()
+  const signal = new AbortController().signal
+  await controller.activate(signal, true)
+  expect(consumeReviewLink).toHaveBeenCalledWith(1, token, signal)
+  expect(read).toHaveBeenCalledTimes(1)
+  expect(confirm).not.toHaveBeenCalled()
+  expect(cancel).not.toHaveBeenCalled()
+})
+
+it('[review-link #61] an aborted link response cannot load private data into a later session', async () => {
+  window.history.replaceState(
+    {},
+    '',
+    `/scheduled-runs/1#review=${'A'.repeat(43)}.${'B'.repeat(43)}`,
+  )
+  document.body.innerHTML = renderScheduledRunPage('scheduled-run')
+  let resolve!: () => void
+  const signal = new AbortController(),
+    read = vi.fn(async () => ({ data: run }))
+  const controller = createScheduledRunController({
+    consumeReviewLink: () =>
+      new Promise<void>((done) => {
+        resolve = done
+      }),
+    read,
+    confirm: vi.fn(),
+    cancel: vi.fn(),
+  })
+  const activated = controller.activate(signal.signal, true)
+  signal.abort()
+  resolve()
+  await activated
+  expect(read).not.toHaveBeenCalled()
+  expect(document.body.textContent).not.toContain('accounts@example.test')
+  expect(document.body.textContent).toContain('Sign in to review')
+})
+
+it('[review-link #61] does not fall back to a private read after the exchange reports lost administrator access', async () => {
+  window.history.replaceState(
+    {},
+    '',
+    `/scheduled-runs/1#review=${'A'.repeat(43)}.${'B'.repeat(43)}`,
+  )
+  document.body.innerHTML = renderScheduledRunPage('scheduled-run')
+  const read = vi.fn(async () => ({ data: run }))
+  await createScheduledRunController({
+    consumeReviewLink: async () => {
+      throw new EzactoApiError(403, { error: { code: 'profile_forbidden' } }, null)
+    },
+    read,
+    confirm: vi.fn(),
+    cancel: vi.fn(),
+  }).activate(new AbortController().signal, true)
+  expect(read).not.toHaveBeenCalled()
+  expect(document.body.textContent).toContain('Sign in with an administrator account')
+  expect(document.body.textContent).not.toContain('accounts@example.test')
 })

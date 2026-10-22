@@ -2011,6 +2011,7 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     deleteTimeOff: (id, signal) => client.deleteTimeOff({ id, ...withSignal(signal) }),
   },
   scheduledRuns: {
+    consumeReviewLink: async (id,token,signal) => {await client.consumeScheduledReviewLink({id,body:{token},...withSignal(signal)})},
     read: (id, signal) => client.getScheduledRun({ id, ...withSignal(signal) }),
     confirm: (id, signal, acknowledgeReportWarnings) => client.confirmScheduledRun({ id, body: {acknowledge_report_warnings:acknowledgeReportWarnings===true}, ...withSignal(signal) }),
     retry: (id, signal) => client.retryScheduledRun({ id, ...withSignal(signal) }),

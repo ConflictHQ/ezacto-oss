@@ -77,10 +77,13 @@ export const notificationDecided = async (
  * Records the message and its ledger row, or answers that the occurrence was
  * already decided. Both rows or neither: the ledger points at the log, and a
  * log row with nothing explaining it is the record of a send nobody can trace.
+ * Domain receipts (for example a single-use review link) may join the same
+ * transaction after the notification row, without disturbing its log identity.
  */
 export const recordNotificationMail = async (
   database: InvoiceStateDatabase,
   input: Readonly<NotificationMailInput>,
+  additionalStatements: Parameters<typeof runAtomic>[1] = [],
 ): Promise<NotificationRecordOutcome> => {
   if ((await readLedger(database, input)) !== null) return { outcome: 'already_recorded' }
   const toJson = JSON.stringify([
@@ -123,6 +126,7 @@ export const recordNotificationMail = async (
           input.now,
         ],
       },
+      ...additionalStatements,
     ])
   } catch (error) {
     // Two evaluators racing the same occurrence: the second lost on the key and

@@ -26,7 +26,16 @@ test('[e2e:month-end #61] email deep-link requires sign-in and an explicit, sing
     expect(notice).toBeDefined()
     expect(notice!.message.text).toContain('Browser Month End Client')
     expect(notice!.message.text).toContain('USD 123.45')
-    const link = /https?:\/\/\S+\/scheduled-runs\/\d+/.exec(notice!.message.text)![0]
+    const link = /https?:\/\/\S+\/scheduled-runs\/\d+(?:#review=[A-Za-z0-9_.-]+)?/.exec(
+      notice!.message.text,
+    )![0]
+    const reviewToken = new URLSearchParams(new URL(link).hash.slice(1)).get('review')!
+    expect(reviewToken).toMatch(/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/u)
+    const unauthenticatedReview = await request.post(
+      `${new URL(link).origin}/api/v1/scheduled-runs/${runId}/review-link`,
+      { data: { token: reviewToken }, headers: { origin: new URL(link).origin } },
+    )
+    expect(unauthenticatedReview.status()).toBe(401)
     const unauthenticated = await request.post(
       `${new URL(link).origin}/api/v1/scheduled-runs/${runId}/confirm`,
       {
@@ -36,6 +45,12 @@ test('[e2e:month-end #61] email deep-link requires sign-in and an explicit, sing
     expect(unauthenticated.status()).toBe(401)
     await page.goto(link)
     await expect(page.locator('[data-sign-in-form]')).toBeVisible()
+    await expect.poll(() => new URL(page.url()).hash).toBe('')
+    const reviewed = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === `/api/v1/scheduled-runs/${runId}/review-link` &&
+        response.request().method() === 'POST',
+    )
     await page
       .locator('[data-sign-in-form]')
       .getByLabel('Email')
@@ -50,12 +65,27 @@ test('[e2e:month-end #61] email deep-link requires sign-in and an explicit, sing
     )
     await page.getByRole('button', { name: 'Sign in', exact: true }).click()
     expect((await signedIn).status()).toBe(200)
+    expect((await reviewed).status()).toBe(200)
     await expect(page.getByRole('heading', { name: 'Review month-end pack' })).toBeVisible()
     await expect(page.locator('[data-scheduled-run-items]')).toContainText(
       'month-end-accounts@example.test',
     )
     await expect(page.locator('[data-scheduled-run-items]')).toContainText('Browser Owner — 1h 30m')
     await expect(page.locator('[data-scheduled-run-summary]')).toContainText('proposed')
+    const usedReview = await page.request.post(
+      `${new URL(link).origin}/api/v1/scheduled-runs/${runId}/review-link`,
+      { data: { token: reviewToken }, headers: { origin: new URL(link).origin } },
+    )
+    expect(usedReview.status()).toBe(409)
+    expect((await usedReview.json()).error.code).toBe('review_link_used')
+    expect(
+      JSON.stringify(
+        await page.evaluate(() => ({
+          local: Object.values(localStorage),
+          session: Object.values(sessionStorage),
+        })),
+      ),
+    ).not.toContain(reviewToken)
     await page.screenshot({ path: test.info().outputPath('manifest-phone.png'), fullPage: true })
     await page.setViewportSize({ width: 1440, height: 1000 })
     await page.screenshot({ path: test.info().outputPath('manifest-desktop.png'), fullPage: true })

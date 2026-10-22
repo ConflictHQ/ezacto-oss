@@ -828,6 +828,16 @@ export type ContractorReviewEnvelope = {
   "data": ContractorReview;
 };
 
+export type ScheduledReviewLinkInput = {
+  "token": string;
+};
+
+export type ScheduledReviewLinkEnvelope = {
+  "data": {
+  "path": string;
+};
+};
+
 export type ScheduledRunConfirmInput = {
   "acknowledge_report_warnings"?: boolean;
 };
@@ -7587,6 +7597,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<ContractorAcceptanceEnvelope>("POST", "/api/v1/staff-payments/contractor-review/acceptances", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async consumeScheduledReviewLink(args: { "id": number; body?: ScheduledReviewLinkInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<ScheduledReviewLinkEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ScheduledReviewLinkEnvelope>("POST", "/api/v1/scheduled-runs/:id/review-link".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
       signal: args.signal,
       headers,
