@@ -551,3 +551,5 @@ export { installContractorReviewRoutes } from './contractor-review.js'
 export { createQueuedPortalMagicLinkMailer } from './portal-magic-link-email.js'
 
 export * from './email-suppressions.js'
+
+export * from './estimate-templates.js'

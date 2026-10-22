@@ -3010,6 +3010,72 @@ export type Estimate = {
   "line_items": Array<EstimateLine>;
 };
 
+export type EstimateContent = {
+  "subject": string | null;
+  "notes": string | null;
+  "currency": string;
+  "tax_rate_ppm": number | null;
+  "tax2_rate_ppm": number | null;
+  "discount_rate_ppm": number | null;
+  "lines": Array<EstimateContentLine>;
+};
+
+export type EstimateContentLine = {
+  "kind": string;
+  "description": string | null;
+  "quantity": number;
+  "unit_price_cents": number;
+  "taxed": boolean;
+  "taxed2": boolean;
+};
+
+export type EstimateTemplate = {
+  "id": string;
+  "name": string;
+  "version": number;
+  "archived": boolean;
+  "content": EstimateContent;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type EstimateTemplateInput = {
+  "name": string;
+  "content": EstimateContent;
+};
+
+export type EstimateTemplateUpdateInput = {
+  "name": string;
+  "content": EstimateContent;
+  "expected_version": number;
+  "archived"?: boolean;
+};
+
+export type EstimateTemplateEnvelope = {
+  "data": EstimateTemplate;
+  "links": Links;
+};
+
+export type EstimateTemplateListEnvelope = {
+  "data": Array<EstimateTemplate>;
+  "truncated": boolean;
+};
+
+export type EstimateDraftInput = {
+  "client_id": number;
+  "number": string;
+  "issue_date": string;
+  "content": EstimateContent;
+  "template_id"?: string | null;
+  "template_version"?: number | null;
+};
+
+export type EstimateDraftEnvelope = {
+  "data": {
+  "id": number;
+};
+};
+
 export type EstimateEnvelope = {
   "data": Estimate;
   "links": Links;
@@ -9100,6 +9166,45 @@ export class EzactoClient {
 
     return this.request<EffectiveClientRateCardEnvelope>("GET", "/api/v1/clients/:id/effective-rate-card".replace(":id", encodeURIComponent(String(args["id"]))), {
       query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listEstimateTemplates(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<EstimateTemplateListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<EstimateTemplateListEnvelope>("GET", "/api/v1/estimate-templates", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createEstimateTemplate(args: { body: EstimateTemplateInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<EstimateTemplateEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<EstimateTemplateEnvelope>("POST", "/api/v1/estimate-templates", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateEstimateTemplate(args: { "id": string; body: EstimateTemplateUpdateInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<EstimateTemplateEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<EstimateTemplateEnvelope>("PATCH", "/api/v1/estimate-templates/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createEstimateDraft(args: { "Idempotency-Key": string; body: EstimateDraftInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<EstimateDraftEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<EstimateDraftEnvelope>("POST", "/api/v1/estimates", {
+      body: args.body,
       signal: args.signal,
       headers,
     });

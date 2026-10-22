@@ -9787,3 +9787,68 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
 .settings-data-command { max-width: 100%; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .settings-bulk-actions { display: grid; gap: 1rem; padding-inline-start: 1.25rem; }
 .settings-bulk-actions li { min-width: 0; }
+
+/* A quote is edited as a document; fields and line groups wrap on phones. */
+[data-estimate-composer] {
+  min-width: 0;
+  margin-block: 1rem;
+}
+[data-quote-form],
+[data-quote-form] fieldset {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 1rem;
+  min-width: 0;
+}
+[data-quote-form] > fieldset,
+[data-quote-lines],
+[data-quote-form] > output,
+[data-quote-form] > .recurring-actions {
+  grid-column: 1 / -1;
+}
+[data-quote-form] label {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+[data-quote-form] input:not([type='checkbox']),
+[data-quote-form] select,
+[data-quote-form] textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+[data-quote-form] button,
+[data-estimate-composer] summary {
+  min-height: 44px;
+  overflow-wrap: anywhere;
+}
+[data-quote-form] input:not([type='checkbox']),
+[data-quote-form] select,
+[data-quote-form] textarea {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font: inherit;
+}
+[data-quote-form] textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+[data-quote-form] fieldset {
+  padding: 1rem;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+[data-quote-lines] {
+  display: grid;
+  gap: 1rem;
+}
+[data-quote-form] .quote-tax-flag {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}

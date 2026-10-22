@@ -1,3 +1,4 @@
+import { createEstimateTemplateRepository } from '@ezacto/db'
 import { createScheduledRunDispatchService } from '@ezacto/db'
 import { prepareScheduledRunNotifications } from '@ezacto/db'
 import { createContainerEmailSuppressionStore } from '@ezacto/db'
@@ -884,7 +885,8 @@ export const createContainerRuntime = async (
         descendants: (clientId) => listClientDescendants(drizzle, clientId),
       },
       team: createTeamRepository(drizzle),
-      clientRateCards: createClientRateCardRepository(drizzle),
+      estimateTemplates: createEstimateTemplateRepository(drizzle),
+    clientRateCards: createClientRateCardRepository(drizzle),
       trackedResources,
       calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
       allocations: new DrizzleAllocationRepository(drizzle),

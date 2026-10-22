@@ -1,3 +1,4 @@
+import { renderEstimateComposer } from './composer.js'
 /**
  * The estimates pane behind the Invoices strip (issue 485).
  *
@@ -22,6 +23,7 @@ export const renderEstimatesPage = (view?: string): string => `
     <header class="context-row">
       <div><p class="eyebrow">Money</p><h1>Estimates</h1></div>
     </header>
+    ${renderEstimateComposer()}
     <section data-estimate-list-view aria-labelledby="estimate-list-heading">
       <h2 class="visually-hidden" id="estimate-list-heading">Estimates</h2>
       <p class="invoice-intro">What was quoted, and what happened to it. An accepted estimate can be turned into an invoice.</p>
