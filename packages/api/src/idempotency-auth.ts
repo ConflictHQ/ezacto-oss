@@ -1,3 +1,4 @@
+import { requireInvoiceTokenElevation, type InvoiceElevationStore } from './invoice-elevations.js'
 import { Hono } from 'hono'
 import { apiAuthenticationMiddleware, type ApiAuthentication } from './auth.js'
 import type { ApiContext } from './context.js'
@@ -14,6 +15,7 @@ import type { IdempotencyOptions } from './idempotency.js'
 export const createApiIdempotencyAuthorization = (
   authentication: ApiAuthentication,
   authorizationRevision: () => Promise<string>,
+  options: { invoiceElevations?: InvoiceElevationStore; clock?: () => string } = {},
 ): IdempotencyOptions['authorize'] => {
   const app = new Hono<ApiContext>()
   app.use('*', async (context, next) => {
@@ -25,12 +27,43 @@ export const createApiIdempotencyAuthorization = (
   app.all('*', async (context) => {
     const principal = context.get('principal')
     const credential = principal.authentication
+    const path = context.req.path,
+      method = context.req.method
+    let invoiceSegment: string | undefined
+    if (method === 'PATCH') invoiceSegment = /^\/api\/v1\/invoices\/([^/]+)\/?$/.exec(path)?.[1]
+    if (method === 'POST')
+      invoiceSegment = /^\/api\/v1\/invoices\/([^/]+)\/(?:line-items|unlink-time)\/?$/.exec(
+        path,
+      )?.[1]
+    if (method === 'PATCH' || method === 'DELETE')
+      invoiceSegment ??= /^\/api\/v1\/invoices\/([^/]+)\/line-items\/[^/]+\/?$/.exec(path)?.[1]
+    let elevation
+    if (credential.kind === 'token' && invoiceSegment !== undefined) {
+      let invoiceId = NaN
+      try {
+        invoiceId = Number(decodeURIComponent(invoiceSegment))
+      } catch {}
+      if (Number.isSafeInteger(invoiceId) && invoiceId > 0)
+        elevation = await requireInvoiceTokenElevation(
+          context,
+          invoiceId,
+          options.invoiceElevations,
+          options.clock?.() ?? new Date().toISOString(),
+        )
+    }
     return context.json([
-      'api-v1', await authorizationRevision(), principal.userId, principal.profile,
-      [...(principal.managerGrants ?? [])].sort(), principal.ownMoneyVisible ?? false,
+      'api-v1',
+      await authorizationRevision(),
+      principal.userId,
+      principal.profile,
+      [...(principal.managerGrants ?? [])].sort(),
+      principal.ownMoneyVisible ?? false,
       credential.kind === 'token'
         ? ['token', credential.tokenId, [...credential.scopes].sort()]
         : ['session', credential.sessionId],
+      ...(elevation === undefined
+        ? []
+        : [['invoice-elevation', elevation.id, elevation.expiresAt]]),
     ])
   })
   app.onError((error, context) => errorResponse(error, context))
@@ -42,15 +75,23 @@ export const createApiIdempotencyAuthorization = (
     // that replacement instead of swallowing it and running the command under
     // the now-revoked request cookie. This answer never means the write ran.
     if (response.status === 200 && response.headers.getSetCookie().length > 0) {
-      return Response.json({
-        error: {
-          code: 'authentication_changed',
-          message: 'Your session changed. Reload before retrying this action.',
-          fields: [],
+      return Response.json(
+        {
+          error: {
+            code: 'authentication_changed',
+            message: 'Your session changed. Reload before retrying this action.',
+            fields: [],
+          },
+          request_id: crypto.randomUUID(),
         },
-        request_id: crypto.randomUUID(),
-      }, { status: 409, headers: response.headers })
+        { status: 409, headers: response.headers },
+      )
     }
+    if (
+      response.status === 200 &&
+      (path === '/api/v1/invoice-elevations' || path.startsWith('/api/v1/invoice-elevations/'))
+    )
+      return null
     return response.status === 200 ? response.text() : response
   }
 }

@@ -1,3 +1,4 @@
+import { createInvoiceElevationStore, unlinkElevatedInvoiceTime } from '@ezacto/db/d1'
 import { createEstimateTemplateRepository } from '@ezacto/db/d1'
 import { createWorkerOffsiteBackups } from './offsite-backups.js'
 import { createScheduledRunDispatchService } from '@ezacto/db/d1'
@@ -1215,6 +1216,8 @@ export const createRuntimeServices = async (
       descendants: (clientId) => listClientDescendants(drizzle, clientId),
     },
     team: createTeamRepository(drizzle),
+    invoiceElevations: createInvoiceElevationStore(drizzle),
+    invoiceTimeUnlink: (command, elevation, now) => unlinkElevatedInvoiceTime(drizzle, command, elevation, now),
     estimateTemplates: createEstimateTemplateRepository(drizzle),
     clientRateCards: createClientRateCardRepository(drizzle),
     moneyResources,

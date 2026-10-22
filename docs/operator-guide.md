@@ -269,3 +269,14 @@ the same draft. The native API exposes `GET/POST /api/v1/estimate-templates`,
 `Idempotency-Key`. All four require `invoices:write`; the instance also checks the
 acting profile. The picker shows at most 1000 templates and states when the
 catalog is truncated.
+
+## Administrator CLI draft edits
+
+Use `ez sudo invoice edit <number>` or
+`ez sudo invoice unlink-time <number> --entries <ids>` from a current source
+build. See the [CLI reauthentication guide](../packages/cli/README.md#editing-draft-invoices)
+for scopes, private credential input, second factors and partial header/line
+failure handling. The short-lived elevation belongs to one administrator API
+token and one draft; password reset, token revocation, role changes and invoice
+state changes invalidate it. Browser invoice editing retains its existing
+session policy. Unlinking tracked time does not recalculate invoice lines.
