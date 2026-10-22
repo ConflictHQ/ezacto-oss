@@ -1,3 +1,4 @@
+import { consumeScheduledReviewLink } from './scheduled-review-links.js'
 import { sql } from 'drizzle-orm'
 import type { ScheduledRun, ScheduledRunOutcome, ScheduledRunsService } from '@ezacto/core'
 import {
@@ -42,7 +43,10 @@ const present = (run: ProposedRunRecord, items: readonly RunItemRecord[]): Sched
 })
 
 /** The administrator-facing read, confirm and cancel of a proposed run. */
-export const createScheduledRunsService = (database: ActionDatabase): ScheduledRunsService => {
+export const createScheduledRunsService = (
+  database: ActionDatabase,
+  options: { reviewLinkSigningKey?: Uint8Array } = {},
+): ScheduledRunsService => {
   const store = createScheduledActionStore(database)
   const read = async (id: number): Promise<ScheduledRun | null> => {
     const run = await store.read(id)
@@ -66,6 +70,19 @@ export const createScheduledRunsService = (database: ActionDatabase): ScheduledR
     return run === null ? { outcome } : { outcome, run }
   }
   return {
+    ...(options.reviewLinkSigningKey
+      ? {
+          consumeReviewLink: (id: number, userId: number, token: string, now: string) =>
+            consumeScheduledReviewLink(
+              database,
+              options.reviewLinkSigningKey!,
+              id,
+              userId,
+              token,
+              now,
+            ),
+        }
+      : {}),
     read,
     readReport: async (id, itemId) => {
       const item = (await store.manifest(id)).find((item) => item.id === itemId)

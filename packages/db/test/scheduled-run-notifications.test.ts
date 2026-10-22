@@ -48,6 +48,7 @@ for (const runtime of ['SQLite', 'D1'])
           now: at,
           from: { email: 'notice@example.test' },
           appUrl: 'https://ezacto.test/',
+          reviewLinkSigningKey: new Uint8Array(32).fill(0x43),
         })
       return { database, prepare, runs: createScheduledRunsService(database) }
     }

@@ -1462,7 +1462,7 @@ export const createRuntimeServices = async (
     scheduledRunNotices: notificationMailer === undefined || env.APP_BASE_URL === undefined
       ? undefined
       : createTimeReminderService({
-          prepare: (now: string) => prepareScheduledRunNotifications(drizzle, {
+          prepare: (now: string) => prepareScheduledRunNotifications(drizzle, { reviewLinkSigningKey: cursorSigningKey,
             now, from: notificationMailer.from, appUrl: env.APP_BASE_URL!,
           }),
         }, notificationMailer),
@@ -1471,7 +1471,7 @@ export const createRuntimeServices = async (
     scheduledJobProposals: { processDue: (now: string) => proposeDueScheduledJobs(drizzle, now, scheduledObjects ?? {
       put: async () => { throw new Error('Configure attachment storage before proposing a month-end report.') },
     }) },
-    scheduledRuns: createScheduledRunsService(drizzle),
+    scheduledRuns: createScheduledRunsService(drizzle, {reviewLinkSigningKey:cursorSigningKey}),
     staffPayments: createStaffPaymentStore(drizzle),
     contractorReview: createContractorReviewStore(drizzle),
     myPayments: createMyPaymentsStore(drizzle),

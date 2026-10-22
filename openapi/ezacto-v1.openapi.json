@@ -19274,6 +19274,81 @@
         }
       }
     },
+    "/api/v1/scheduled-runs/{id}/review-link": {
+      "post": {
+        "operationId": "consumeScheduledReviewLink",
+        "summary": "Record the single authenticated opening of an expiring email review link; never confirm or execute",
+        "tags": [
+          "scheduled-runs"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduledReviewLinkEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/scheduled-runs/:id/review-link",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduledReviewLinkInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/scheduled-runs/{id}/items/{itemId}/report": {
       "get": {
         "operationId": "downloadScheduledRunReport",
@@ -34477,6 +34552,41 @@
           "data"
         ],
         "additionalProperties": false
+      },
+      "ScheduledReviewLinkInput": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}\\.[A-Za-z0-9_-]{43}$",
+            "writeOnly": true
+          }
+        }
+      },
+      "ScheduledReviewLinkEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "path"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string"
+              }
+            }
+          }
+        }
       },
       "ScheduledRunConfirmInput": {
         "type": "object",

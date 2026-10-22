@@ -131,14 +131,31 @@ recipient for each item, the deadline, and `/scheduled-runs/<id>`. Queue retries
 reuse the recorded delivery; they do not compose another notice for that run and
 person. Configure email and the application base URL to enable notices.
 
-The URL contains no sign-in or confirmation credential. It can be forwarded, but
-it grants no access: the normal sign-in screen preserves the destination, and
-only an administrator session can load or answer the manifest. GET requests,
-email scanners and navigation never confirm, cancel or execute a run. An explicit
-Confirm or Cancel button sends the authenticated POST. The decision is single
-use: repeat confirmation returns the original decision, and expiry/cancellation
-cannot become confirmation. No signed read-only action links are issued by this
-flow, so there is no separate bearer-link lifetime to manage.
+The email URL carries a signed, single-use review credential in its fragment.
+It expires at the proposal's original deadline and is bound to the intended
+administrator, run and instance signing key. The browser removes it from the URL
+before sign-in, retains it only in memory, and submits it by authenticated POST
+after the administrator signs in. It is never sent in a query string, referrer,
+browser storage or GET request. The token hash and expiry are committed in the
+same transaction as the notification and email-log receipt; queue recovery sends
+the original recorded message instead of minting another link.
+
+This credential records only an authenticated opening. It grants no sign-in,
+confirmation, cancellation or execution authority. GET requests never spend it; spending requires a POST from the intended active
+administrator session. A second
+opening or an opening at/after the deadline is refused by the link endpoint. The
+canonical `/scheduled-runs/<id>` subject remains readable with an administrator
+session, including after a link was used or expired, so audit bookmarks remain
+useful. A stale email link explains its state and shows only the record that the
+current session is already allowed to read.
+
+Confirm or Cancel remains a separate explicit authenticated POST. The decision
+is single use: repeat confirmation returns the original decision, and expiry or
+cancellation cannot become confirmation. Opening or replaying a review link never
+answers the run. The instance uses its cursor-signing secret with a separate
+review-link signing context; rotating that secret invalidates old review links.
+Older emails without a review fragment remain ordinary authenticated subject
+bookmarks and never gain action authority.
 
 The manifest screen shows each captured item and its recorded result. If an
 answer's response is lost, refresh before trying again; the screen reloads the

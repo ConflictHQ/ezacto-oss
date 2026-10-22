@@ -524,7 +524,7 @@ export const createContainerRuntime = async (
     )
     const scheduledRunNotices = createTimeReminderService(
       {
-        prepare: (now: string) => prepareScheduledRunNotifications(drizzle, {
+        prepare: (now: string) => prepareScheduledRunNotifications(drizzle, { reviewLinkSigningKey: config.cursorSigningKey,
           now, from: notificationMailer.from, appUrl: config.appBaseUrl,
         }),
       },
@@ -961,7 +961,7 @@ export const createContainerRuntime = async (
       scheduledRunDispatch,
       scheduledJobs: createScheduledJobsService(drizzle),
       scheduledJobProposals: { processDue: (now: string) => proposeDueScheduledJobs(drizzle, now, objects) },
-      scheduledRuns: createScheduledRunsService(drizzle),
+      scheduledRuns: createScheduledRunsService(drizzle, {reviewLinkSigningKey:config.cursorSigningKey}),
       staffPayments: createStaffPaymentStore(drizzle),
       contractorReview: createContractorReviewStore(drizzle),
       myPayments: createMyPaymentsStore(drizzle),
