@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "replace-me-worker-name",
-  "main": "src/index.ts",
+  "main": "src/workflow-main.ts",
   "compatibility_date": "2026-08-26",
   // AsyncLocalStorage for @sentry/cloudflare's request isolation.
   "compatibility_flags": ["nodejs_als"],
@@ -35,6 +35,7 @@
     // unintended.
     "prod": {
       "name": "replace-me-worker-name",
+      "workflows": [{"binding":"SCHEDULED_RUN_WORKFLOW","name":"replace-me-worker-name-scheduled-runs","class_name":"ScheduledRunWorkflow"}],
       "routes": [{ "pattern": "replace-me.invalid", "custom_domain": true }],
       "triggers": { "crons": ["* * * * *", "0 * * * *", "0 3 * * *"] },
       "vars": {
@@ -93,6 +94,7 @@
     // The dev deployment, which becomes the public demo. Apex of the .io.
     "dev": {
       "name": "ezacto-dev",
+      "workflows": [{"binding":"SCHEDULED_RUN_WORKFLOW","name":"ezacto-dev-scheduled-runs","class_name":"ScheduledRunWorkflow"}],
       "routes": [{ "pattern": "ezacto.io", "custom_domain": true }],
       "triggers": { "crons": ["* * * * *", "0 * * * *", "0 3 * * *"] },
       "vars": {

@@ -1,3 +1,4 @@
+import { scheduledWorkflowSweepMigration } from './migrations/0146_scheduled_workflow_sweep.js'
 import { scheduledReviewLinksMigration } from './migrations/0145_scheduled_review_links.js'
 import { scheduledRunDeliveryMigration } from './migrations/0144_scheduled_run_delivery.js'
 import { scheduledRunLeasesMigration } from './migrations/0143_scheduled_run_leases.js'
@@ -1648,6 +1649,7 @@ const migrations = [
   { id: '0143_scheduled_run_leases', statements: scheduledRunLeasesMigration },
   { id: '0144_scheduled_run_delivery', statements: scheduledRunDeliveryMigration },
   { id: '0145_scheduled_review_links', statements: scheduledReviewLinksMigration },
+  { id: '0146_scheduled_workflow_sweep', statements: scheduledWorkflowSweepMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

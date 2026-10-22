@@ -261,6 +261,7 @@ export type AppEnv = Env & {
 
 export type WorkerEnv = AppEnv & {
   DB: D1Database
+  SCHEDULED_RUN_WORKFLOW?: Workflow<{runId: number; proposedAt: string}>
   /** Sentry DSN. Absent means error reporting is off (a no-op wrapper). */
   SENTRY_DSN?: string
   /** Content-addressed attachment objects. Metadata remains in DB. */
@@ -606,7 +607,7 @@ export interface RuntimeServices {
    */
   /** Administrator payment register, available without provider credentials. */
   paymentRuns?: PaymentRunsService
-  scheduledRunDispatch?: { processDue(now: string): Promise<{ completed: number; failed: readonly { runId: number; itemId: number; reason: string }[] }> }
+  scheduledRunDispatch?: ReturnType<typeof import('@ezacto/db/d1').createScheduledRunDispatchService>
   scheduledRunNotices?: { processDue(now: string): Promise<{ queued: number }> }
   scheduledJobs?: ScheduledJobsService
   scheduledJobProposals?: {

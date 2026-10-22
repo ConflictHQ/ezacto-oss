@@ -52,9 +52,21 @@ export const createScheduledRunDispatchService = (
         sql`SELECT * FROM scheduled_run_deliveries WHERE run_item_id=${itemId}`,
       )
     )[0] ?? null
-  const prepare = async (item: RunItemRecord, runId: number, leaseToken: string) => {
+  const prepare = async (
+    item: RunItemRecord,
+    runId: number,
+    leaseToken: string,
+    proposedAt: string,
+  ) => {
     const prior = await receipt(item.id)
-    if (prior) return prior
+    if (prior) {
+      const owner = await database.all<{ id: number }>(sql`SELECT item.id FROM run_items item
+        JOIN proposed_runs run ON run.id=item.run_id WHERE item.id=${item.id} AND item.lease_token=${leaseToken}
+          AND item.state='running' AND run.id=${runId} AND run.proposed_at=${proposedAt} AND run.state='confirmed'`)
+      if (!owner.length)
+        throw new Error('The proposal or execution lease changed before receipt recovery.')
+      return prior
+    }
     if (!item.report || !item.target)
       throw new Error('This legacy item has no saved report and cannot be sent automatically.')
     const sender = await ports.sender(),
@@ -80,7 +92,7 @@ export const createScheduledRunDispatchService = (
             JOIN users actor ON actor.id=run.confirmed_by_user_id
             WHERE item.id=? AND item.state='running' AND item.lease_token=? AND run.state='confirmed'
               AND actor.is_active=1 AND actor.profile='administrator' AND invoice.state='open'
-              AND item.target=? AND item.report_content_hash IS NOT NULL
+              AND item.target=? AND run.proposed_at=? AND item.report_content_hash IS NOT NULL
               AND (SELECT contact.email FROM contacts contact WHERE contact.client_id=invoice.client_id
                 AND contact.invoice_recipient_status='recipient' AND contact.email IS NOT NULL AND trim(contact.email)<>'' ORDER BY contact.id LIMIT 1)=item.target
           )`,
@@ -97,6 +109,7 @@ export const createScheduledRunDispatchService = (
             item.id,
             leaseToken,
             item.target,
+            proposedAt,
           ],
         },
         {
@@ -128,15 +141,36 @@ export const createScheduledRunDispatchService = (
     // never the scheduler or the historical creator of the monthly job.
     return recorded
   }
-  return {
-    async processDue(now = ports.now()) {
+  const service = {
+    /** A stable proposal identity also fences old Workflows after a demo reset. */
+    async workflowCandidates(now = ports.now()) {
+      return database.all<{ id: number; proposed_at: string; generation: number }>(sql`
+        UPDATE proposed_runs SET workflow_checked_at=${now} WHERE id IN(
+          SELECT run.id FROM proposed_runs run WHERE run.state='confirmed' AND EXISTS(
+            SELECT 1 FROM run_items item WHERE item.run_id=run.id AND
+            ((item.state IN('pending','failed') AND item.attempt_count<item.attempt_limit)
+              OR (item.state='running' AND (item.lease_expires_at IS NULL OR item.lease_expires_at<=${now}))))
+          ORDER BY COALESCE(run.workflow_checked_at,run.confirmed_at),run.id LIMIT 10)
+        RETURNING id,proposed_at,(SELECT SUM(attempt_limit) FROM run_items WHERE run_id=proposed_runs.id) AS generation`)
+    },
+    async processRun(runId: number, proposedAt: string) {
+      const result = await service.processDue(ports.now(), { runId, proposedAt })
+      const pending = await database.all<{ id: number }>(sql`
+        SELECT run.id FROM proposed_runs run WHERE run.id=${runId} AND run.proposed_at=${proposedAt}
+          AND run.state='confirmed' AND EXISTS(SELECT 1 FROM run_items item WHERE item.run_id=run.id
+            AND (item.state='running' OR (item.state IN('pending','failed') AND item.attempt_count<item.attempt_limit)))`)
+      return { ...result, pending: pending.length > 0 }
+    },
+    async processDue(now = ports.now(), only?: { runId: number; proposedAt: string }) {
       const deadline = Date.now() + 20000,
         signal = AbortSignal.timeout(20000)
       const rows = await database.all<{
         id: number
         confirmed_by_user_id: number
-      }>(sql`SELECT run.id,run.confirmed_by_user_id FROM proposed_runs run
-        WHERE run.state='confirmed' AND EXISTS(SELECT 1 FROM run_items item WHERE item.run_id=run.id AND
+        proposed_at: string
+      }>(sql`SELECT run.id,run.confirmed_by_user_id,run.proposed_at FROM proposed_runs run
+        WHERE run.state='confirmed' AND ${only ? sql`run.id=${only.runId} AND run.proposed_at=${only.proposedAt}` : sql`1=1`}
+        AND EXISTS(SELECT 1 FROM run_items item WHERE item.run_id=run.id AND
           ((item.state IN('pending','failed') AND item.attempt_count<item.attempt_limit)
             OR (item.state='running' AND (item.lease_expires_at IS NULL OR item.lease_expires_at<=${now})))) ORDER BY run.id LIMIT 10`)
       let completed = 0
@@ -164,7 +198,7 @@ export const createScheduledRunDispatchService = (
               throw new Error(
                 'The saved report is missing or does not match its captured hash. Restore the original artifact before retrying.',
               )
-            const recorded = await prepare(item, row.id, leaseToken)
+            const recorded = await prepare(item, row.id, leaseToken, row.proposed_at)
             const message = JSON.parse(recorded.message_json) as EmailMessage
             await attachments.createInvoiceAttachment({
               invoiceId: item.subjectId,
@@ -181,7 +215,9 @@ export const createScheduledRunDispatchService = (
               updatedAt: recorded.created_at,
             })
             const current = await database.all<{ id: number }>(
-              sql`SELECT id FROM run_items WHERE id=${item.id} AND state='running' AND lease_token=${leaseToken}`,
+              sql`SELECT item.id FROM run_items item JOIN proposed_runs run ON run.id=item.run_id
+                WHERE item.id=${item.id} AND item.state='running' AND item.lease_token=${leaseToken}
+                  AND run.id=${row.id} AND run.proposed_at=${row.proposed_at} AND run.state='confirmed'`,
             )
             if (!current.length)
               throw new Error('The execution lease changed before queue handoff.')
@@ -211,4 +247,5 @@ export const createScheduledRunDispatchService = (
       return { completed, failed }
     },
   }
+  return service
 }
