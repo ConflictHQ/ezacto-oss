@@ -1,3 +1,4 @@
+import { installEstimateTemplateRoutes, type EstimateTemplateRepository } from '@ezacto/api'
 import type { OffsiteBackupEnvironment } from './offsite-backups.js'
 import type { ReminderProcessOptions, ReminderProcessSummary } from '@ezacto/db/d1'
 import { appleWebConfiguration } from './apple-web.js'
@@ -627,6 +628,7 @@ export interface RuntimeServices {
     setOptedIn(clientId: number, enabled: boolean): Promise<boolean>
   }
   /** Named rate cards on client nodes, inherited down the tree (issue 34). */
+  estimateTemplates?: EstimateTemplateRepository
   clientRateCards?: ClientRateCardRepository
 }
 
@@ -841,6 +843,7 @@ export const createApp = (
               teamRepository: services.team,
             })
             installClientTreeRoutes(api, services.clientTree)
+            if (services.estimateTemplates) installEstimateTemplateRoutes(api, services.estimateTemplates, () => systemClock.now().instant)
             if (services.clientRateCards) installClientRateCardRoutes(api, { repository: services.clientRateCards, clock: systemClock })
             installTeamRoutes(api, {
               repository: services.team,

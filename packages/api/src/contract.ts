@@ -2902,6 +2902,62 @@ const clientTreeOperations: ApiContractOperation[] = [
   },
 ];
 
+
+const estimateTemplateOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/estimate-templates",
+    operationId: "listEstimateTemplates",
+    summary: "List reusable quote content",
+    description:
+      "Requires invoices:write. Archived templates remain visible for audit; only active templates can create drafts. At most 1000 rows with an explicit truncated indicator.",
+    tag: "estimates",
+    responseStatus: 200,
+    responseSchema: "EstimateTemplateListEnvelope",
+  },
+  {
+    method: "post",
+    path: "/api/v1/estimate-templates",
+    operationId: "createEstimateTemplate",
+    summary: "Save reusable quote content",
+    description:
+      "Creates audited reusable content without customer, document or delivery identity.",
+    tag: "estimates",
+    responseStatus: 201,
+    responseSchema: "EstimateTemplateEnvelope",
+    requestSchema: "EstimateTemplateInput",
+    requestRequired: true,
+  },
+  {
+    method: "patch",
+    path: "/api/v1/estimate-templates/:id",
+    operationId: "updateEstimateTemplate",
+    summary: "Edit or archive reusable quote content",
+    description:
+      "Requires the current version; changes never rewrite estimates already created. Archiving is final.",
+    tag: "estimates",
+    responseStatus: 200,
+    responseSchema: "EstimateTemplateEnvelope",
+    requestSchema: "EstimateTemplateUpdateInput",
+    requestRequired: true,
+    parameters: [stringPath("id")],
+  },
+  {
+    method: "post",
+    path: "/api/v1/estimates",
+    operationId: "createEstimateDraft",
+    summary: "Create a new estimate draft",
+    description:
+      "Requires invoices:write and an idempotency key. Copies content into independent quote rows, with explicit client, number and issue date. Never sends, accepts, charges or converts. Optional template provenance must still be current and active.",
+    tag: "estimates",
+    responseStatus: 201,
+    responseSchema: "EstimateDraftEnvelope",
+    requestSchema: "EstimateDraftInput",
+    requestRequired: true,
+    parameters: [header("Idempotency-Key")],
+  },
+];
+
 const clientRateCardOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -3688,6 +3744,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...teamOperations,
   ...clientTreeOperations,
   ...clientRateCardOperations,
+  ...estimateTemplateOperations,
 ];
 
 const reconciliationStatusSchema: JsonSchema = {
@@ -7209,6 +7266,149 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+
+  EstimateContent: {
+    type: "object",
+    required: [
+      "subject",
+      "notes",
+      "currency",
+      "tax_rate_ppm",
+      "tax2_rate_ppm",
+      "discount_rate_ppm",
+      "lines",
+    ],
+    properties: {
+      subject: nullable({ type: "string", maxLength: 500 }),
+      notes: nullable({ type: "string", maxLength: 20000 }),
+      currency: { type: "string", pattern: "^[A-Z]{3}$" },
+      tax_rate_ppm: nullable({ type: "integer", minimum: 0, maximum: 1000000 }),
+      tax2_rate_ppm: nullable({
+        type: "integer",
+        minimum: 0,
+        maximum: 1000000,
+      }),
+      discount_rate_ppm: nullable({
+        type: "integer",
+        minimum: 0,
+        maximum: 1000000,
+      }),
+      lines: {
+        type: "array",
+        minItems: 1,
+        maxItems: 100,
+        items: reference("EstimateContentLine"),
+      },
+    },
+    additionalProperties: false,
+  },
+  EstimateContentLine: {
+    type: "object",
+    required: [
+      "kind",
+      "description",
+      "quantity",
+      "unit_price_cents",
+      "taxed",
+      "taxed2",
+    ],
+    properties: {
+      kind: { type: "string", minLength: 1, maxLength: 100 },
+      description: nullable({ type: "string", maxLength: 10000 }),
+      quantity: {
+        type: "number",
+        minimum: -9007199254740991,
+        maximum: 9007199254740991,
+      },
+      unit_price_cents: {
+        type: "integer",
+        minimum: -9000000000000,
+        maximum: 9000000000000,
+      },
+      taxed: { type: "boolean" },
+      taxed2: { type: "boolean" },
+    },
+    additionalProperties: false,
+  },
+  EstimateTemplate: {
+    type: "object",
+    required: [
+      "id",
+      "name",
+      "version",
+      "archived",
+      "content",
+      "created_at",
+      "updated_at",
+    ],
+    properties: {
+      id: stringSchema,
+      name: stringSchema,
+      version: { type: "integer", minimum: 0 },
+      archived: { type: "boolean" },
+      content: reference("EstimateContent"),
+      created_at: timestampSchema,
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  EstimateTemplateInput: {
+    type: "object",
+    required: ["name", "content"],
+    properties: {
+      name: { type: "string", minLength: 1, maxLength: 120 },
+      content: reference("EstimateContent"),
+    },
+    additionalProperties: false,
+  },
+  EstimateTemplateUpdateInput: {
+    type: "object",
+    required: ["name", "content", "expected_version"],
+    properties: {
+      name: { type: "string", minLength: 1, maxLength: 120 },
+      content: reference("EstimateContent"),
+      expected_version: { type: "integer", minimum: 0 },
+      archived: { type: "boolean" },
+    },
+    additionalProperties: false,
+  },
+  EstimateTemplateEnvelope: envelope("EstimateTemplate"),
+  EstimateTemplateListEnvelope: {
+    type: "object",
+    required: ["data", "truncated"],
+    properties: {
+      data: { type: "array", items: reference("EstimateTemplate") },
+      truncated: { type: "boolean" },
+    },
+    additionalProperties: false,
+  },
+  EstimateDraftInput: {
+    type: "object",
+    required: ["client_id", "number", "issue_date", "content"],
+    properties: {
+      client_id: integerSchema,
+      number: { type: "string", minLength: 1, maxLength: 100 },
+      issue_date: dateSchema,
+      content: reference("EstimateContent"),
+      template_id: nullable(stringSchema),
+      template_version: nullable({ type: "integer", minimum: 0 }),
+    },
+    additionalProperties: false,
+  },
+  EstimateDraftEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["id"],
+        properties: { id: integerSchema },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+
   EstimateEnvelope: envelope("Estimate"),
   EstimateExpiryInput: {
     type: "object",

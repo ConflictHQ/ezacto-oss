@@ -1,3 +1,4 @@
+import { createEstimateComposer, type EstimateComposerApi } from './composer.js'
 import { renderDataTable } from '../components/data-table.js'
 import { loadedRowsSortNotice } from '../components/table-sort.js'
 import { moneyText } from '../money-display.js'
@@ -54,8 +55,9 @@ export interface EstimateWorkspaceController {
 }
 
 export const createEstimateWorkspaceController = (
-  api: Partial<EstimateWorkspaceApi>,
+  api: Partial<EstimateWorkspaceApi & EstimateComposerApi>,
 ): EstimateWorkspaceController => {
+  const composer = createEstimateComposer(api)
   const isPage = document.documentElement.dataset.appView === 'invoice-estimates'
   const page = required<HTMLElement>('[data-invoice-estimates-page]')
   const listView = required<HTMLElement>('[data-estimate-list-view]')
@@ -369,6 +371,7 @@ export const createEstimateWorkspaceController = (
       if (!isPage) return
       page.hidden = false
       writable = estimateIdentityCanWrite(identity)
+      void composer.activate(identity, signal, onSessionFailure)
 
       search.addEventListener('input', renderList)
       loadMore.addEventListener('click', () => void loadPage(signal, true))

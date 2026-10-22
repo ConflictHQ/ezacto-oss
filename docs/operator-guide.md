@@ -239,3 +239,33 @@ report's mark-invoiced, mark-uninvoiced and move workflows. Choosing records and
 confirming a change happens in those workflows; opening the catalog makes no
 change. Company catalogs are administrator-only; each destination retains its
 own authorization and record-lock checks.
+
+## Reusable estimate content
+
+In **Invoices → Estimates → New estimate / templates**, accounting, executive
+managers and administrators can prepare quote lines, currency, taxes, discount,
+subject and notes. Unit prices use integer cents. The displayed total applies the
+discount before each independent tax and rounds half away from zero.
+
+Use **Save as new template** to name reusable content. Select a template to load
+its content, edit it, then use **Update selected template** to save a new audited
+version. Reload templates after a version conflict. **Archive selected template**
+is final: its content remains readable, but it cannot start another draft.
+Existing estimates keep the content they already copied.
+
+To create a quote, choose its client explicitly, enter a new estimate number and
+issue date, then choose **Create draft**. Changing the template clears the client
+and number. The draft receives fresh document identity and a snapshot of the
+content; it inherits no recipient, customer credential, response, payment or
+invoice association. Creation does not send a message, accept a quote, charge a
+customer or create an invoice. Open the resulting draft to review it and use the
+existing estimate correspondence and conversion commands separately.
+
+Templates have an append-only version audit in `estimate_template_versions`.
+Draft creation records its actor, request, optional source template/version and
+result in `estimate_draft_commands`; retries with the same idempotency key return
+the same draft. The native API exposes `GET/POST /api/v1/estimate-templates`,
+`PATCH /api/v1/estimate-templates/:id`, and `POST /api/v1/estimates` with
+`Idempotency-Key`. All four require `invoices:write`; the instance also checks the
+acting profile. The picker shows at most 1000 templates and states when the
+catalog is truncated.

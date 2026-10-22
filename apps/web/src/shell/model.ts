@@ -1,3 +1,4 @@
+import type { EstimateComposerApi } from '../estimates/composer.js'
 import type { ScheduledRunApi } from '../scheduled-runs/model.js'
 import type { StaffPaymentsApi } from '../staff-payments/browser.js'
 import {
@@ -96,6 +97,7 @@ export interface ShellApi
     Partial<EmailConfigurationApi>,
     Partial<RecurringWorkspaceApi>,
     Partial<EstimateWorkspaceApi>,
+    Partial<EstimateComposerApi>,
     Partial<RetainerWorkspaceApi>,
     Partial<InvoicePaymentApi>,
     Partial<InvoiceEditorApi>,
@@ -2097,6 +2099,10 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       query: { per_page: 50, ...(cursor === undefined ? {} : { cursor }) },
       ...withSignal(signal),
     }),
+  listEstimateTemplates: (signal) => client.listEstimateTemplates({...withSignal(signal)}),
+  createEstimateTemplate: async (body, signal) => (await client.createEstimateTemplate({body,...withSignal(signal)})).data,
+  updateEstimateTemplate: async (id, body, signal) => (await client.updateEstimateTemplate({id,body,...withSignal(signal)})).data,
+  createEstimateDraft: async (body, key, signal) => (await client.createEstimateDraft({body,'Idempotency-Key':key,...withSignal(signal)})).data,
   getEstimate: async (id, signal) =>
     (await client.getEstimate({ id, ...withSignal(signal) })).data,
   listEstimateMessages: async (id, signal) =>

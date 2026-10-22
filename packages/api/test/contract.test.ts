@@ -1,3 +1,4 @@
+import { installEstimateTemplateRoutes } from '../src/estimate-templates.js';
 import { installScheduledJobRoutes } from '../src/scheduled-jobs.js';
 import { installContractorReviewRoutes } from '../src/contractor-review.js';
 import { installBackupDownloadMintRoute } from '../src/backup-download.js';
@@ -495,6 +496,9 @@ const documentedApp = () =>
         isTeamModuleEnabled: async () => true,
       });
       installClientTreeRoutes(api, treeReader);
+      installEstimateTemplateRoutes(api, {
+        list: async () => [], get: unavailable, save: unavailable, createDraft: unavailable,
+      }, () => "2026-08-28T12:00:00.000Z");
       installClientRateCardRoutes(api, {
         repository: rateCards,
         clock: {

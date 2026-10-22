@@ -1,3 +1,4 @@
+import { estimateTemplatesMigration } from './migrations/0148_estimate_templates.js'
 import { offsiteBackupSyncMigration } from './migrations/0147_offsite_backup_sync.js'
 import { scheduledWorkflowSweepMigration } from './migrations/0146_scheduled_workflow_sweep.js'
 import { scheduledReviewLinksMigration } from './migrations/0145_scheduled_review_links.js'
@@ -1652,6 +1653,7 @@ const migrations = [
   { id: '0145_scheduled_review_links', statements: scheduledReviewLinksMigration },
   { id: '0146_scheduled_workflow_sweep', statements: scheduledWorkflowSweepMigration },
   { id: '0147_offsite_backup_sync', statements: offsiteBackupSyncMigration },
+  { id: '0148_estimate_templates', statements: estimateTemplatesMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

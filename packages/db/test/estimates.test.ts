@@ -210,9 +210,12 @@ for (const [runtime, factory] of factories) {
       ).toEqual([
         { name: 'estimate_attachments' },
         { name: 'estimate_command_ledger' },
+        { name: 'estimate_draft_commands' },
         { name: 'estimate_item_categories' },
         { name: 'estimate_line_items' },
         { name: 'estimate_messages' },
+        { name: 'estimate_template_versions' },
+        { name: 'estimate_templates' },
         { name: 'estimates' },
       ])
       expect(
