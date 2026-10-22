@@ -23,6 +23,7 @@ export interface ContainerConfig {
   /** Uploaded brand marks (#489), kept apart from the attachment content store. */
   brandDirectory: string
   appBaseUrl: string
+  webhookEncryptionKey?: string
   cursorSigningKey: Uint8Array
   /**
    * Portal magic-link signing key. Absent means portal auth is off: the routes
@@ -262,6 +263,7 @@ export const readContainerConfig = (
     attachmentDirectory: `${directory}/attachments`,
     brandDirectory: `${directory}/brand`,
     appBaseUrl,
+    ...(optional(environment, 'WEBHOOK_ENCRYPTION_KEY', 128) === undefined ? {} : { webhookEncryptionKey: optional(environment, 'WEBHOOK_ENCRYPTION_KEY', 128)! }),
     cursorSigningKey: signingKey(
       required(environment, 'API_CURSOR_SIGNING_KEY', 128),
     ),

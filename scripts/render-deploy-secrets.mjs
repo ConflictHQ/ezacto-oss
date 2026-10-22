@@ -232,6 +232,7 @@ export const deploySecretPayload = (environment) => {
     // reach BILL's real book. Absent still means production; `sandbox` is the
     // only value that selects the test organisation.
     BILL_ENVIRONMENT: optionalCredential(environment.BILL_ENVIRONMENT),
+    WEBHOOK_ENCRYPTION_KEY: optionalSigningKey(environment.WEBHOOK_ENCRYPTION_KEY, 'WEBHOOK_ENCRYPTION_KEY'),
     STRIPE_API_KEY: optionalCredential(environment.STRIPE_API_KEY),
     EZACTO_BACKUP_S3_BUCKET: optionalCredential(environment.EZACTO_BACKUP_S3_BUCKET),
     EZACTO_BACKUP_S3_ENDPOINT: optionalCredential(environment.EZACTO_BACKUP_S3_ENDPOINT),

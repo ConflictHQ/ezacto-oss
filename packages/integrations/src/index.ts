@@ -289,3 +289,5 @@ export type {
   WorkItemWebhookRequest,
   WorkItemWebhookVerdict,
 } from './work-items/provider.js'
+
+export { createWorkerWebhookTransport } from './outbound-webhooks.js'

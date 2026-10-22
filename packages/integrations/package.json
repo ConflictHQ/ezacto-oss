@@ -17,6 +17,11 @@
       "types": "./src/backup-s3.ts",
       "development": "./src/backup-s3.ts",
       "default": "./dist/backup-s3.js"
+    },
+    "./node-webhooks": {
+      "types": "./src/node-webhooks.ts",
+      "development": "./src/node-webhooks.ts",
+      "default": "./dist/node-webhooks.js"
     }
   },
   "engines": {
