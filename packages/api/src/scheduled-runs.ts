@@ -98,7 +98,7 @@ export const installScheduledRunRoutes = <Bindings extends object>(
     )
   })
   api.post('/scheduled-runs/:id/confirm', async (c) => {
-    const body = c.req.raw.body === null ? {} : await readObjectBody(c)
+    const body = await readObjectBody(c, { allowEmptyObject: true, maxBytes: 4096 })
     assertFields(unknownFieldErrors(body, new Set(['acknowledge_report_warnings'])))
     if (
       body.acknowledge_report_warnings !== undefined &&
