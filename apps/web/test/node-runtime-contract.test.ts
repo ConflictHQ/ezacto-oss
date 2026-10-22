@@ -19,7 +19,7 @@ it('[security #469] keeps the advertised minimum and storage-regression runtime 
   }
   const workflow = readFileSync(resolve(root, '.github/workflows/verify.yml'), 'utf8')
   const compatibility = workflow.slice(workflow.indexOf('  web-runtime-compatibility:'), workflow.indexOf('  typecheck:'))
-  expect(compatibility).toContain('node: [22, 25]')
+  expect(compatibility).toContain('node: [22, 26]')
   expect(compatibility).toContain('node-version: ${{ matrix.node }}')
   expect(compatibility).toContain('test/dashboard-browser.test.ts')
   expect(compatibility).toContain('test/browser-storage.test.ts')
