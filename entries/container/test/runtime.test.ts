@@ -971,3 +971,47 @@ it('[integration #63] the container maintenance tick materializes due jobs once 
     await runtime.close()
   }
 })
+
+it('[integration #58 #61 #62] authenticated confirmation is durably dispatched by maintenance with real disk attachments and one provider send per item', async () => {
+  const root=await temporary(),captured:EmailMessage[]=[]
+  vi.useFakeTimers({toFake:['Date']})
+  const at=Date.parse('2026-10-15T12:00:00.000Z')
+  vi.setSystemTime(at)
+  const configuration=config(root)
+  const runtime=await createContainerRuntime(configuration,{emailProvider:provider(captured)})
+  try{
+    await runtime.drainOutbox()
+    await seedMonthEndJobFixture(createContainerDatabase(runtime.database),'2026-09',new Date().toISOString())
+    const {createContainerEmailConfigurationStore}=await import('@ezacto/db')
+    const email=createContainerEmailConfigurationStore(runtime.database),now=new Date().toISOString()
+    await email.createSenderIdentity({id:10,email:'billing@example.test',displayName:'Billing',provider:'smtp',providerIdentity:'billing@example.test',actorUserId:1,commandId:'month-end-smtp',occurredAt:now})
+    await email.recordSenderEvidence({id:10,expectedEvidenceVersion:0,evidence:{source:'deployment_config',identityKind:'email_address',verificationStatus:'operator_configured',dkimStatus:'not_applicable',mailFromDomain:null,mailFromStatus:'not_configured',observedAt:now},actorUserId:1,commandId:'month-end-smtp-evidence',occurredAt:now})
+    await email.setDefaultSenderIdentity({id:10,expectedVersion:0,actorUserId:1,commandId:'month-end-smtp-default',occurredAt:now})
+    await runtime.services.scheduledJobs!.create(1,scheduledJobConfig({name:'Native complete pack',cadence:'0 0 1 * *'}),now)
+    vi.setSystemTime(at+120000);await runtime.drainOutbox()
+    const session=await createContainerSessionStore(runtime.database).issue(1)
+    const app=createApp(runtime.services,runtime.brandAssets,runtime.instanceTheme)
+    const headers={origin:configuration.appBaseUrl,cookie:`__Host-ezacto_session=${session.token}`}
+    const confirmed=await app.request(`${configuration.appBaseUrl}/api/v1/scheduled-runs/1/confirm`,{method:'POST',headers},configuration.appEnv)
+    expect(confirmed.status).toBe(200)
+    expect(captured).toHaveLength(0)
+    vi.setSystemTime(at+240000);await runtime.drainOutbox()
+    // drainOutbox joins an active pass; a subsequent drain begins a fresh maintenance pass.
+    await runtime.drainOutbox()
+    expect((await runtime.services.scheduledRuns!.read(1))?.state, JSON.stringify({run:await runtime.services.scheduledRuns!.read(1),mail:runtime.database.prepare('SELECT status,failure_reason FROM email_log').all()})).toBe('completed')
+    await vi.waitFor(()=>expect(captured).toHaveLength(2))
+    expect(captured.map(message=>message.to[0]!.email)).toEqual(['a@example.test','b@example.test'])
+    for(const message of captured){
+      expect(message.attachments).toHaveLength(1)
+      expect(new TextDecoder().decode(message.attachments![0]!.content)).toContain('Scheduled Job Fixture')
+    }
+    expect(runtime.database.prepare('SELECT invoice_id,count(*) AS count FROM invoice_attachments GROUP BY invoice_id ORDER BY invoice_id').all()).toEqual([{invoice_id:1,count:1},{invoice_id:2,count:1}])
+    expect((await runtime.services.scheduledRuns!.read(1))?.state).toBe('completed')
+    vi.setSystemTime(at+360000);await runtime.drainOutbox()
+    expect(captured).toHaveLength(2)
+    const trail=runtime.database.prepare("SELECT event.event_type FROM activity_log activity JOIN event_outbox event ON event.id=activity.event_id WHERE event.aggregate_type='scheduled_run' ORDER BY event.aggregate_sequence").all() as {event_type:string}[]
+    expect(trail.map(event=>event.event_type)).toContain('scheduled_run.confirmed')
+    expect(trail.map(event=>event.event_type)).toContain('scheduled_run.item_completed')
+    expect(trail.map(event=>event.event_type)).toContain('scheduled_run.completed')
+  }finally{vi.useRealTimers();await runtime.close()}
+})

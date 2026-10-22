@@ -169,7 +169,7 @@ export type EmailLogKind = (typeof EMAIL_LOG_KINDS)[number]
  * `<name>:<version>`, so a kind is a set of names, matched whole.
  */
 export const EMAIL_LOG_KIND_TEMPLATES: Readonly<Record<EmailLogKind, readonly string[]>> = {
-  invoice: ['invoice'],
+  invoice: ['invoice', 'month-end-pack'],
   invoice_preview: ['invoice_preview'],
   reminder: ['reminder'],
   thank_you: ['thank_you'],

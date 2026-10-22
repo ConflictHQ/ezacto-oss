@@ -2012,7 +2012,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   },
   scheduledRuns: {
     read: (id, signal) => client.getScheduledRun({ id, ...withSignal(signal) }),
-    confirm: (id, signal) => client.confirmScheduledRun({ id, ...withSignal(signal) }),
+    confirm: (id, signal, acknowledgeReportWarnings) => client.confirmScheduledRun({ id, body: {acknowledge_report_warnings:acknowledgeReportWarnings===true}, ...withSignal(signal) }),
+    retry: (id, signal) => client.retryScheduledRun({ id, ...withSignal(signal) }),
     cancel: (id, signal) => client.cancelScheduledRun({ id, ...withSignal(signal) }),
   },
   getMyPayments: (month, signal) =>

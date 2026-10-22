@@ -1,8 +1,5 @@
-import type {
-  ScheduledRun,
-  ScheduledRunOutcome,
-  ScheduledRunsService,
-} from '@ezacto/core'
+import { sql } from 'drizzle-orm'
+import type { ScheduledRun, ScheduledRunOutcome, ScheduledRunsService } from '@ezacto/core'
 import {
   createScheduledActionStore,
   type ProposedRunRecord,
@@ -35,6 +32,12 @@ const present = (run: ProposedRunRecord, items: readonly RunItemRecord[]): Sched
     attempt_count: item.attemptCount,
     failure_reason: item.failureReason,
     completed_at: item.completedAt,
+    report_name: item.report?.name ?? null,
+    report_warnings: item.reportWarnings ?? [],
+    report_people: item.reportPeople ?? [],
+    attempt_limit: item.attemptLimit ?? 3,
+    delivery_id: null,
+    delivery_status: null,
   })),
 })
 
@@ -43,7 +46,17 @@ export const createScheduledRunsService = (database: ActionDatabase): ScheduledR
   const store = createScheduledActionStore(database)
   const read = async (id: number): Promise<ScheduledRun | null> => {
     const run = await store.read(id)
-    return run === null ? null : present(run, await store.manifest(id))
+    if (run === null) return null
+    const shown = present(run, await store.manifest(id))
+    const deliveries = await database.all<{ itemId: number; deliveryId: number; status: string }>(
+      sql`SELECT receipt.run_item_id AS itemId,receipt.delivery_id AS deliveryId,log.status FROM scheduled_run_deliveries receipt JOIN run_items item ON item.id=receipt.run_item_id JOIN email_log log ON log.id=receipt.delivery_id WHERE item.run_id=${id}`,
+    )
+    for (const item of shown.items) {
+      const delivery = deliveries.find((record) => record.itemId === item.id)
+      item.delivery_id = delivery?.deliveryId ?? null
+      item.delivery_status = delivery?.status ?? null
+    }
+    return shown
   }
   const refused = async (
     id: number,
@@ -54,8 +67,28 @@ export const createScheduledRunsService = (database: ActionDatabase): ScheduledR
   }
   return {
     read,
-    confirm: async (id, userId, now) => {
-      const result = await store.confirm(id, userId, now)
+    readReport: async (id, itemId) => {
+      const item = (await store.manifest(id)).find((item) => item.id === itemId)
+      return item?.report ? { key: item.report.key, name: item.report.name } : null
+    },
+    retry: async (id, userId, now) => {
+      await database.run(sql`UPDATE run_items SET attempt_limit=attempt_count+3,retry_requested_by_user_id=${userId},retry_requested_at=${now}
+        WHERE run_id=${id} AND state='failed' AND attempt_count>=attempt_limit
+          AND EXISTS(SELECT 1 FROM proposed_runs WHERE id=${id} AND state='confirmed')
+          AND EXISTS(SELECT 1 FROM users WHERE id=${userId} AND is_active=1 AND profile='administrator')`)
+      const actor = await database.all<{ id: number }>(
+        sql`SELECT id FROM users WHERE id=${userId} AND is_active=1 AND profile='administrator'`,
+      )
+      const run = await read(id)
+      if (run === null) return { outcome: 'not_found' }
+      return actor.length && run.state === 'confirmed'
+        ? { outcome: 'ok', run }
+        : { outcome: 'not_proposed', run }
+    },
+    confirm: async (id, userId, now, acknowledgeReportWarnings) => {
+      const result = await store.confirm(id, userId, now, acknowledgeReportWarnings)
+      if (result.outcome === 'report_warnings_unacknowledged')
+        return { outcome: result.outcome, run: (await read(id))! }
       if (result.outcome === 'confirmed') return { outcome: 'ok', run: (await read(id))! }
       if (result.outcome === 'expired') {
         // Settle it now rather than leave it to the sweep, so the run a caller

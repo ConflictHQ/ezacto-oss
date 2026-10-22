@@ -30,6 +30,8 @@ interface ApiErrorOptions {
 export interface JsonBodyOptions {
   /** Maximum UTF-8 bytes accepted before JSON parsing. Defaults to 1 MiB. */
   maxBytes?: number
+  /** An absent or empty stream may represent an empty optional JSON object. */
+  allowEmptyObject?: boolean
 }
 
 export const DEFAULT_MAX_JSON_BODY_BYTES = 1024 * 1024
@@ -84,22 +86,25 @@ type JsonRequestContext = Pick<Context, 'req'>
 
 export const readJsonBody = async <T>(
   context: JsonRequestContext,
-  { maxBytes = DEFAULT_MAX_JSON_BODY_BYTES }: JsonBodyOptions = {},
+  { maxBytes = DEFAULT_MAX_JSON_BODY_BYTES, allowEmptyObject = false }: JsonBodyOptions = {},
 ): Promise<T> => {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
     throw new RangeError('JSON body byte limit must be a positive safe integer')
   }
   const contentType = context.req.header('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
-  if (
-    contentType === undefined ||
-    (contentType !== 'application/json' && !contentType.endsWith('+json'))
-  ) {
-    throw new ApiError({
-      status: 415,
-      code: 'unsupported_media_type',
-      message: 'Request body must use an application/json content type.',
-    })
+  const assertContentType = (): void => {
+    if (
+      contentType === undefined ||
+      (contentType !== 'application/json' && !contentType.endsWith('+json'))
+    ) {
+      throw new ApiError({
+        status: 415,
+        code: 'unsupported_media_type',
+        message: 'Request body must use an application/json content type.',
+      })
+    }
   }
+  if (!allowEmptyObject) assertContentType()
 
   const declaredLength = context.req.header('content-length')
   if (declaredLength !== undefined) {
@@ -114,6 +119,8 @@ export const readJsonBody = async <T>(
   }
 
   const bytes = await readLimitedBody(context.req.raw.body, maxBytes)
+  if (allowEmptyObject && bytes.length === 0) return {} as T
+  if (allowEmptyObject) assertContentType()
   try {
     const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
     return JSON.parse(text) as T

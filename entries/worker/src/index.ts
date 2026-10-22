@@ -253,6 +253,15 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
         Sentry.captureException(error)
       }
     }
+    if (controller.cron === '* * * * *' && services.scheduledRunDispatch !== undefined) {
+      try {
+        const result = await services.scheduledRunDispatch.processDue(new Date().toISOString())
+        for (const failure of result.failed) console.error('[worker] scheduled run item failed', failure)
+      } catch (error) {
+        console.error('[worker] scheduled run dispatch failed', error)
+        Sentry.captureException(error)
+      }
+    }
     if (controller.cron === '* * * * *' && services.scheduledActionExpiry !== undefined) {
       // Proposed month-end runs past their deadline (issue 63). The sweep
       // reports its own failure, so it never stops the drain below.

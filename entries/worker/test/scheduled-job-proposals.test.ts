@@ -27,6 +27,7 @@ it('[integration #63] the real minute cron proposes one manifest and never confi
     compatibilityDate: '2026-08-06',
     compatibilityFlags: ['nodejs_als'],
     d1Databases: ['DB'],
+    r2Buckets: ['ATTACHMENTS'],
     modules: true,
     script: bundled.outputFiles[0]!.text,
     unsafeTriggerHandlers: true,

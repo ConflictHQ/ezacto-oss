@@ -20,6 +20,7 @@ const run: ScheduledRun = {
 const fixture = (profile = "administrator", kind = "session") => {
   const api = new Hono<ApiContext<object>>();
   const service = {
+    retry: vi.fn(async () => ({ outcome: 'ok', run }) as never),
     read: vi.fn(async () => run as ScheduledRun | null),
     confirm: vi.fn(async () => ({ outcome: "ok", run }) as never),
     cancel: vi.fn(async () => ({ outcome: "ok", run }) as never),
@@ -51,6 +52,8 @@ describe("scheduled run authorization", () => {
     expect((await api.request("/scheduled-runs/7")).status).toBe(403);
     expect((await post(api, "7/confirm")).status).toBe(403);
     expect((await post(api, "7/cancel")).status).toBe(403);
+    expect((await post(api, "7/retry")).status).toBe(403);
+    expect((await api.request("/scheduled-runs/7/items/1/report")).status).toBe(403);
     expect(service.read).not.toHaveBeenCalled();
     expect(service.confirm).not.toHaveBeenCalled();
     expect(service.cancel).not.toHaveBeenCalled();
@@ -58,6 +61,15 @@ describe("scheduled run authorization", () => {
 });
 
 describe("scheduled run routes", () => {
+  it('binds explicit warning acknowledgement to the session and refuses unknown mutation fields', async () => {
+    const {api,service}=fixture()
+    const postBody=(body:object)=>api.request('/scheduled-runs/7/confirm',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
+    expect((await postBody({acknowledge_report_warnings:true})).status).toBe(200)
+    expect(service.confirm).toHaveBeenCalledWith(7,3,expect.any(String),true)
+    expect((await postBody({acknowledge_report_warnings:'yes'})).status).toBe(422)
+    expect((await postBody({user_id:99})).status).toBe(422)
+    expect(service.confirm).toHaveBeenCalledTimes(1)
+  })
   it("reads a run", async () => {
     const { api } = fixture();
     const response = await api.request("/scheduled-runs/7");
@@ -77,9 +89,11 @@ describe("scheduled run routes", () => {
   it("confirms and cancels as the session user", async () => {
     const { api, service } = fixture();
     expect((await post(api, "7/confirm")).status).toBe(200);
-    expect(service.confirm).toHaveBeenCalledWith(7, 3, expect.any(String));
+    expect(service.confirm).toHaveBeenCalledWith(7, 3, expect.any(String), false);
     expect((await post(api, "7/cancel")).status).toBe(200);
     expect(service.cancel).toHaveBeenCalledWith(7, 3, expect.any(String));
+    expect((await post(api, "7/retry")).status).toBe(200);
+    expect(service.retry).toHaveBeenCalledWith(7, 3, expect.any(String));
   });
 
   it("maps a lapsed or answered run to 409 and a missing one to 404", async () => {

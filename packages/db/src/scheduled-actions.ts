@@ -1,3 +1,4 @@
+import type { ReportNoteWarning, ScheduledReportPerson } from '@ezacto/core'
 /**
  * Proposing a run, and settling it (#63).
  *
@@ -20,14 +21,21 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
 
-type Database =
-  | BetterSQLite3Database<typeof schema>
-  | DrizzleD1Database<typeof schema>
+type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 
 export type RunState = 'proposed' | 'confirmed' | 'cancelled' | 'expired' | 'completed'
 export type RunItemState = 'pending' | 'running' | 'done' | 'failed'
 
+export interface ScheduledReportArtifact {
+  key: string
+  contentHash: string
+  name: string
+  byteSize: number
+}
 export interface RunItemInput {
+  report?: ScheduledReportArtifact | null
+  reportWarnings?: readonly ReportNoteWarning[]
+  reportPeople?: readonly ScheduledReportPerson[]
   subjectType: string
   subjectId: number
   description: string
@@ -50,6 +58,7 @@ export interface RunItemRecord extends RunItemInput {
   attemptCount: number
   failureReason: string | null
   completedAt: string | null
+  attemptLimit?: number
 }
 
 export interface ProposedRunRecord {
@@ -72,14 +81,13 @@ export type RunRefusal =
   | 'not_proposed'
   | 'expired'
   | 'unknown_run'
+  | 'report_warnings_unacknowledged'
 
 export type ProposeOutcome =
-  | { outcome: 'proposed'; run: ProposedRunRecord }
-  | { outcome: RunRefusal }
+  { outcome: 'proposed'; run: ProposedRunRecord } | { outcome: RunRefusal }
 
 export type ConfirmOutcome =
-  | { outcome: 'confirmed'; run: ProposedRunRecord }
-  | { outcome: RunRefusal }
+  { outcome: 'confirmed'; run: ProposedRunRecord } | { outcome: RunRefusal }
 
 interface RunRow {
   id: number
@@ -120,8 +128,15 @@ interface ItemRow {
   client_name: string | null
   state: RunItemState
   attempt_count: number
+  attempt_limit: number
   failure_reason: string | null
   completed_at: string | null
+  report_file_key: string | null
+  report_content_hash: string | null
+  report_name: string | null
+  report_byte_size: number | null
+  report_people_json: string
+  report_warnings_json: string
 }
 
 const item = (row: ItemRow): RunItemRecord => ({
@@ -136,12 +151,24 @@ const item = (row: ItemRow): RunItemRecord => ({
   clientName: row.client_name,
   state: row.state,
   attemptCount: row.attempt_count,
+  attemptLimit: row.attempt_limit,
   failureReason: row.failure_reason,
   completedAt: row.completed_at,
+  report:
+    row.report_content_hash === null
+      ? null
+      : {
+          key: row.report_file_key!,
+          contentHash: row.report_content_hash,
+          name: row.report_name!,
+          byteSize: row.report_byte_size!,
+        },
+  reportPeople: JSON.parse(row.report_people_json) as ScheduledReportPerson[],
+  reportWarnings: JSON.parse(row.report_warnings_json) as ReportNoteWarning[],
 })
 
 const itemColumns = `id, subject_type, subject_id, description, amount_cents,
-  currency, target, quantity_seconds, client_name, state, attempt_count, failure_reason, completed_at`
+  currency, target, quantity_seconds, client_name, state, attempt_count, attempt_limit, failure_reason, completed_at, report_file_key, report_content_hash, report_name, report_byte_size, report_warnings_json, report_people_json`
 
 export interface ScheduledActionStore {
   /**
@@ -162,7 +189,12 @@ export interface ScheduledActionStore {
   read(runId: number): Promise<ProposedRunRecord | null>
   /** The rows a person is agreeing to. */
   manifest(runId: number): Promise<readonly RunItemRecord[]>
-  confirm(runId: number, userId: number, now: string): Promise<ConfirmOutcome>
+  confirm(
+    runId: number,
+    userId: number,
+    now: string,
+    acknowledgeReportWarnings?: boolean,
+  ): Promise<ConfirmOutcome>
   cancel(runId: number, now: string, reason: string, userId?: number): Promise<boolean>
   /**
    * Settles everything whose deadline has passed. Returns what it settled, so
@@ -188,9 +220,9 @@ export interface ScheduledActionStore {
    * identical to a kill before it, and the safe reading of that ambiguity is to
    * redo the work: for an email, that is sending it twice.
    */
-  claimItem(itemId: number, now: string): Promise<boolean>
-  completeItem(itemId: number, now: string): Promise<boolean>
-  failItem(itemId: number, now: string, reason: string): Promise<boolean>
+  claimItem(itemId: number, now: string, leaseToken: string): Promise<boolean>
+  completeItem(itemId: number, now: string, leaseToken: string): Promise<boolean>
+  failItem(itemId: number, now: string, reason: string, leaseToken: string): Promise<boolean>
   /**
    * Moves the run to completed once nothing is outstanding.
    *
@@ -199,6 +231,11 @@ export interface ScheduledActionStore {
    * quietly never done.
    */
   settleRun(runId: number, now: string): Promise<boolean>
+}
+
+const assertLeaseToken = (token: string): void => {
+  if (typeof token !== 'string' || token.length < 1 || token.length > 128)
+    throw new TypeError('An execution lease token is required.')
 }
 
 export const createScheduledActionStore = (database: Database): ScheduledActionStore => ({
@@ -225,7 +262,7 @@ export const createScheduledActionStore = (database: Database): ScheduledActionS
     if (row === undefined) {
       const existing = await database.all<{ id: number }>(sql`
         SELECT id FROM proposed_runs WHERE job_id=${input.jobId} AND occurrence_key=${input.occurrenceKey}`)
-      return {outcome:existing.length>0?'already_proposed':'job_unavailable'}
+      return { outcome: existing.length > 0 ? 'already_proposed' : 'job_unavailable' }
     }
 
     return { outcome: 'proposed', run: run(row) }
@@ -251,17 +288,23 @@ export const createScheduledActionStore = (database: Database): ScheduledActionS
    * has run the sweep yet -- otherwise the guarantee would be "nothing expires
    * into action, unless you are quick".
    */
-  confirm: async (runId, userId, now) => {
+  confirm: async (runId, userId, now, acknowledgeReportWarnings = false) => {
     const rows = await database.all<RunRow>(sql`
       SELECT ${sql.raw(columns)} FROM proposed_runs WHERE id = ${runId}`)
     const current = rows[0]
     if (current === undefined) return { outcome: 'unknown_run' }
     if (current.state !== 'proposed') return { outcome: 'not_proposed' }
     if (current.expires_at <= now) return { outcome: 'expired' }
+    const warnings = await database.all<{ id: number }>(
+      sql`SELECT id FROM run_items WHERE run_id=${runId} AND json_array_length(report_warnings_json)>0 LIMIT 1`,
+    )
+    if (warnings.length && !acknowledgeReportWarnings)
+      return { outcome: 'report_warnings_unacknowledged' }
 
     const updated = await database.all<RunRow>(sql`
       UPDATE proposed_runs
       SET state = 'confirmed', confirmed_by_user_id = ${userId}, confirmed_at = ${now},
+          report_warnings_acknowledged=${acknowledgeReportWarnings ? 1 : 0},
           updated_at = ${now}
       WHERE id = ${runId} AND state = 'proposed' AND expires_at > ${now}
         AND EXISTS(SELECT 1 FROM users WHERE id=${userId} AND is_active=1 AND profile='administrator')
@@ -274,7 +317,7 @@ export const createScheduledActionStore = (database: Database): ScheduledActionS
   cancel: async (runId, now, reason, userId) => {
     const rows = await database.all<{ id: number }>(sql`
       UPDATE proposed_runs
-      SET state = 'cancelled', settled_at = ${now}, settled_reason = ${reason},
+      SET state = 'cancelled', settled_at = ${now}, settled_reason = ${reason}, cancelled_by_user_id=${userId ?? null},
           updated_at = ${now}
       WHERE id = ${runId} AND state = 'proposed' AND expires_at > ${now}
         AND (${userId ?? null} IS NULL OR EXISTS(SELECT 1 FROM users WHERE id=${userId ?? null} AND is_active=1 AND profile='administrator'))
@@ -301,29 +344,40 @@ export const createScheduledActionStore = (database: Database): ScheduledActionS
         ORDER BY id`)
     ).map(item),
 
-  claimItem: async (itemId, now) => {
+  claimItem: async (itemId, now, leaseToken) => {
+    assertLeaseToken(leaseToken)
+    const leaseExpiresAt = new Date(Date.parse(now) + 15 * 60000).toISOString()
+    // A process killed on its final attempt must not remain visibly running forever.
+    await database.run(sql`UPDATE run_items SET state='failed',lease_token=NULL,lease_expires_at=NULL,attempted_at=${now},
+      failure_reason='Automatic attempts exhausted after the executor was interrupted.'
+      WHERE id=${itemId} AND state='running' AND attempt_count>=attempt_limit
+        AND (lease_expires_at IS NULL OR lease_expires_at<=${now})`)
     const rows = await database.all<{ id: number }>(sql`
       UPDATE run_items
-      SET state = 'running', attempted_at = ${now}, attempt_count = attempt_count + 1
-      WHERE id = ${itemId} AND state <> 'done'
+      SET state = 'running', attempted_at = ${now}, attempt_count = attempt_count + 1,
+          lease_token=${leaseToken}, lease_expires_at=${leaseExpiresAt}
+      WHERE id = ${itemId} AND state <> 'done' AND attempt_count<attempt_limit
+        AND (state <> 'running' OR lease_expires_at IS NULL OR lease_expires_at<=${now})
       RETURNING id`)
     return rows.length > 0
   },
 
-  completeItem: async (itemId, now) => {
+  completeItem: async (itemId, now, leaseToken) => {
+    assertLeaseToken(leaseToken)
     const rows = await database.all<{ id: number }>(sql`
       UPDATE run_items
-      SET state = 'done', completed_at = ${now}, failure_reason = NULL
-      WHERE id = ${itemId} AND state <> 'done'
+      SET state = 'done', completed_at = ${now}, failure_reason = NULL, lease_token=NULL, lease_expires_at=NULL
+      WHERE id = ${itemId} AND state='running' AND lease_token=${leaseToken}
       RETURNING id`)
     return rows.length > 0
   },
 
-  failItem: async (itemId, now, reason) => {
+  failItem: async (itemId, now, reason, leaseToken) => {
+    assertLeaseToken(leaseToken)
     const rows = await database.all<{ id: number }>(sql`
       UPDATE run_items
-      SET state = 'failed', failure_reason = ${reason}, attempted_at = ${now}
-      WHERE id = ${itemId} AND state <> 'done'
+      SET state = 'failed', failure_reason = ${reason}, attempted_at = ${now}, lease_token=NULL, lease_expires_at=NULL
+      WHERE id = ${itemId} AND state='running' AND lease_token=${leaseToken}
       RETURNING id`)
     return rows.length > 0
   },

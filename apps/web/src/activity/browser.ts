@@ -81,11 +81,22 @@ export const KNOWN_ACTIVITY_EVENT_TYPES: readonly string[] = [
   'timesheet.locked',
   'timesheet.unlocked',
   'invoice.created',
+  'scheduled_run.proposed',
+  'scheduled_run.confirmed',
+  'scheduled_run.cancelled',
+  'scheduled_run.expired',
+  'scheduled_run.completed',
+  'scheduled_run.item_started',
+  'scheduled_run.item_completed',
+  'scheduled_run.item_failed',
+  'scheduled_run.item_retry_requested',
+
 ]
 
 /** The kinds of record an entry can be about, with the words the picker uses. */
 export const ACTIVITY_ENTITY_KINDS: readonly (readonly [type: string, label: string])[] = [
   ['invoice', 'Invoice'],
+  ['scheduled_run', 'Scheduled run'],
   ['timesheet_submission', 'Timesheet approval'],
   ['timesheet_lock', 'Timesheet lock'],
   ['user_authentication', 'Sign-in'],
@@ -102,6 +113,8 @@ export const ACTIVITY_ENTITY_KINDS: readonly (readonly [type: string, label: str
  */
 export const subjectHref = (aggregate: { readonly type: string; readonly id: number }): string | null => {
   switch (aggregate.type) {
+    case 'scheduled_run':
+      return `/scheduled-runs/${aggregate.id}`
     case 'invoice':
       return `/invoices/by-id/${aggregate.id}`
     case 'timesheet_submission':

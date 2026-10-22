@@ -162,6 +162,16 @@ const ADMINISTRATOR_ONLY_ACTIVITY_EVENTS: readonly string[] = [
   'account.deletion_requested',
   'timesheet_auto_approval.updated',
   'activity_log.rolled',
+  'scheduled_run.proposed',
+  'scheduled_run.confirmed',
+  'scheduled_run.cancelled',
+  'scheduled_run.expired',
+  'scheduled_run.completed',
+  'scheduled_run.item_started',
+  'scheduled_run.item_completed',
+  'scheduled_run.item_failed',
+  'scheduled_run.item_retry_requested',
+
 ]
 
 const identifierQuery = (requestUrl: URL, name: string): string | undefined => {

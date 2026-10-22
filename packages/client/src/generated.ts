@@ -828,7 +828,25 @@ export type ContractorReviewEnvelope = {
   "data": ContractorReview;
 };
 
+export type ScheduledRunConfirmInput = {
+  "acknowledge_report_warnings"?: boolean;
+};
+
 export type ScheduledRunItem = {
+  "report_people": Array<{
+  "id": number;
+  "name": string;
+  "seconds": number;
+}>;
+  "report_name": string | null;
+  "report_warnings": Array<{
+  "entryId": number;
+  "kind": "url" | "mention" | "ticket_reference" | "teammate_name";
+  "match": string;
+}>;
+  "attempt_limit": number;
+  "delivery_id": number | null;
+  "delivery_status": string | null;
   "id": number;
   "subject_type": string;
   "subject_id": number;
@@ -7575,6 +7593,25 @@ export class EzactoClient {
     });
   }
 
+  async downloadScheduledRunReport(args: { "id": number; "itemId": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<ArrayBuffer> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ArrayBuffer>("GET", "/api/v1/scheduled-runs/:id/items/:itemId/report".replace(":id", encodeURIComponent(String(args["id"]))).replace(":itemId", encodeURIComponent(String(args["itemId"]))), {
+      signal: args.signal,
+      binary: true,
+      headers,
+    });
+  }
+
+  async retryScheduledRun(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<ScheduledRunEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ScheduledRunEnvelope>("POST", "/api/v1/scheduled-runs/:id/retry".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
   async getScheduledRun(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<ScheduledRunEnvelope> {
     const headers = new Headers(args.headers);
 
@@ -7584,10 +7621,11 @@ export class EzactoClient {
     });
   }
 
-  async confirmScheduledRun(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<ScheduledRunEnvelope> {
+  async confirmScheduledRun(args: { "id": number; body?: ScheduledRunConfirmInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<ScheduledRunEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<ScheduledRunEnvelope>("POST", "/api/v1/scheduled-runs/:id/confirm".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });

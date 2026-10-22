@@ -38,9 +38,12 @@ export const prepareScheduledRunNotifications = async (
       [
         item.client_name ?? item.description,
         item.description,
+        ...(item.report_people ?? []).map(
+          (person) => `${person.name}: ${(person.seconds / 3600).toFixed(2)} report hours`,
+        ),
         item.quantity_seconds === null
-          ? 'Hours not recorded'
-          : `${(item.quantity_seconds / 3600).toFixed(2)} hours`,
+          ? 'Invoice hours not recorded'
+          : `${(item.quantity_seconds / 3600).toFixed(2)} invoice hours`,
         item.amount_cents === null
           ? 'Amount not recorded'
           : `${item.currency} ${(item.amount_cents / 100).toFixed(2)}`,

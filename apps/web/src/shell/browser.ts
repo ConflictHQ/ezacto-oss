@@ -1618,9 +1618,13 @@ export const mountShell = async (
       if (!api.scheduledRuns) throw new Error('Scheduled runs are unavailable.')
       return api.scheduledRuns.read(id, signal)
     },
-    confirm: (id, signal) => {
+    confirm: (id, signal, acknowledgeReportWarnings) => {
       if (!api.scheduledRuns) throw new Error('Scheduled runs are unavailable.')
-      return api.scheduledRuns.confirm(id, signal)
+      return api.scheduledRuns.confirm(id, signal, acknowledgeReportWarnings)
+    },
+    retry: (id, signal) => {
+      if (!api.scheduledRuns?.retry) throw new Error('Scheduled run retry is unavailable.')
+      return api.scheduledRuns.retry(id, signal)
     },
     cancel: (id, signal) => {
       if (!api.scheduledRuns) throw new Error('Scheduled runs are unavailable.')
