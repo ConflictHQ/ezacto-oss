@@ -39,6 +39,7 @@ export const ACTIVITY_EVENT_AGGREGATES = {
   'two_factor.email_disabled': 'user_authentication',
   'backup.exported': 'backup_run',
   'backup.restored': 'backup_restore',
+  'backup.restore_drilled': 'backup_drill',
   // A person asking for their own account to be deleted (account-deletion.ts).
   'account.deletion_requested': 'user_account',
   // Issue 1009: an administrator changing the automatic-approval policy (subject

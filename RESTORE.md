@@ -319,3 +319,14 @@ a suspended account cannot erase it. Configure the bucket, not just the client:
 
 Restore from a copy by downloading the bundle directory with any S3 tool, then
 `ez export --verify <dir>` and `ez restore <dir> --database <target.sqlite>`.
+
+## Monthly retained-backup drill
+
+The `restore-drill` Actions workflow restores the latest verified R2 SQL backup
+in private scratch SQLite, checks integrity, foreign keys, invoice accounting
+invariants and every recorded table count, then deletes the scratch copy.
+`backup.restore_drilled` in the activity log records both passing and failing
+results without row contents. The [operator guide](docs/operator-guide.md#monthly-operational-sql-restore-drill)
+describes scheduling, manual dispatch, the 72-hour freshness bound and the
+initial updated SQL backup needed to publish its latest-complete pointer.
+This offline drill never starts an application or replaces a live database.

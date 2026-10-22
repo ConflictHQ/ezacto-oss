@@ -259,6 +259,33 @@ for (const [runtime, factory] of factories) {
       )
     })
 
+    it('[api] publishes passing and failing restore drills to activity exactly once', async () => {
+      database = await factory()
+      for (const status of ['pass', 'fail']) {
+        const input = {
+          eventType: 'backup.restore_drilled' as const,
+          subjectId: 1,
+          actor: { type: 'system' as const },
+          occurredAt: '2026-09-08T04:00:00.000Z',
+          captureId: `monthly-drill:${status}`,
+          detail: { status, failed: status === 'fail' ? 'sha256' : null,
+            scratch_removed: true, counts: { tables: 200, rows: 500 } },
+        }
+        await captureActivityEvent(database.orm, input)
+        const replay = await captureActivityEvent(database.orm, input)
+        expect(replay.captured).toBe(false)
+      }
+      const service = database.outbox()
+      await service.drain()
+      const events = (await service.listActivity()).filter(event => event.eventType === 'backup.restore_drilled')
+      expect(events).toHaveLength(2)
+      expect(events.map(event => event.payload.backup_drill)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ status: 'pass', failed: null, scratch_removed: true }),
+        expect.objectContaining({ status: 'fail', failed: 'sha256', scratch_removed: true }),
+      ]))
+      expect(events.every(event => event.aggregateType === 'backup_drill')).toBe(true)
+    })
+
     it('[unit] records every invoice state transition exactly once alongside a capture', async () => {
       database = await factory()
       await installInvoiceFixture(database)

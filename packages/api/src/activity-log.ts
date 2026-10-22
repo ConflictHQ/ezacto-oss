@@ -24,6 +24,7 @@ export type ActivityEventType =
   | 'two_factor.email_disabled'
   | 'backup.exported'
   | 'backup.restored'
+  | 'backup.restore_drilled'
   | 'timesheet_auto_approval.updated'
   | 'work_item_connection.connected'
   | 'work_item_connection.disconnected'

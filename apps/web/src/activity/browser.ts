@@ -73,6 +73,7 @@ export const KNOWN_ACTIVITY_EVENT_TYPES: readonly string[] = [
   'api_token.revoked',
   'backup.exported',
   'backup.restored',
+  'backup.restore_drilled',
   'account.deletion_requested',
   'timesheet.submitted',
   'timesheet.approved',

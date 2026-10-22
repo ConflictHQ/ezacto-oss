@@ -57,7 +57,13 @@ function readManifest(text) {
  * is called with the scratch database path just before it is removed, so a test
  * can look at the file's mode.
  */
-export async function runDrill({ dumpPath, manifestPath, scratchRoot = tmpdir(), beforeCleanup }) {
+export async function runDrill({
+  dumpPath,
+  manifestPath,
+  scratchRoot = tmpdir(),
+  beforeCleanup,
+  productInvariants = false,
+}) {
   const started = Date.now()
   const checks = {}
   const result = {
@@ -163,6 +169,33 @@ export async function runDrill({ dumpPath, manifestPath, scratchRoot = tmpdir(),
     const fk = db.prepare('PRAGMA foreign_key_check').all()
     if (fk.length === 0) pass('foreign_key_check')
     else fail('foreign_key_check', `${fk.length} violation(s)`)
+
+    if (productInvariants) {
+      stage = 'product_invariants'
+      // Read-only cross-row checks complement SQLite's CHECK/FK validation.
+      // Every invoice correction commits its command receipt atomically.
+      const incomplete = Number(
+        db.prepare('SELECT count(*) AS n FROM invoice_command_ledger WHERE completed <> 1').get().n,
+      )
+      const money = Number(
+        db
+          .prepare(
+            `SELECT count(*) AS n FROM invoices invoice
+        WHERE invoice.amount_cents IS NOT (
+          (SELECT coalesce(sum(line.amount_cents),0) FROM invoice_line_items line WHERE line.invoice_id=invoice.id)
+          - invoice.discount_amount_cents + invoice.tax_amount_cents + invoice.tax2_amount_cents)
+        OR invoice.due_amount_cents IS NOT (invoice.amount_cents - invoice.written_off_cents
+          - (SELECT coalesce(sum(payment.amount_cents),0) FROM invoice_payments payment WHERE payment.invoice_id=invoice.id))`,
+          )
+          .get().n,
+      )
+      if (incomplete === 0 && money === 0) pass('product_invariants')
+      else
+        fail(
+          'product_invariants',
+          `${incomplete} incomplete invoice command(s), ${money} inconsistent invoice total(s)`,
+        )
+    }
 
     stage = 'table_count'
     const tables = db
