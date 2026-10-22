@@ -77,6 +77,7 @@ const bundle = await build({
 const miniflare = new Miniflare({
   bindings: {
     API_CURSOR_SIGNING_KEY: cursorSigningKey,
+    WEBHOOK_ENCRYPTION_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY',
     MAILGUN_WEBHOOK_SIGNING_KEY: feedbackWebhookKey,
     // Contact sign-in is opt-in, including the real queued-mail browser fixture.
     PORTAL_MAGIC_LINK_SIGNING_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQ',

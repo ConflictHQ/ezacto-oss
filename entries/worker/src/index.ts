@@ -202,6 +202,14 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
   },
   async scheduled(controller, env) {
     const services = await createRuntimeServices(env)
+    if (controller.cron === '* * * * *' && services.webhooks) {
+      try {
+        await services.webhooks.processDue()
+        await services.webhooks.purge()
+      } catch {
+        console.error('[worker] webhook sweep failed')
+      }
+    }
     if (controller.cron === '* * * * *')
       await services.paymentRuns?.processDue(new Date().toISOString())
     if (controller.cron === '* * * * *' && services.budgetAlerts !== undefined) {

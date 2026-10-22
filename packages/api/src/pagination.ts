@@ -150,7 +150,7 @@ export interface KeysetWindow<Position> {
   take: number
 }
 
-export interface KeysetSource<Row extends { id: number; created_at: string }, Position> {
+export interface KeysetSource<Row extends { id: number | string; created_at: string }, Position> {
   /**
    * Latest creation instant at the start of a traversal, as a UTC timestamp
    * with milliseconds, or null for an empty collection.
@@ -172,7 +172,7 @@ export interface KeysetOrder<Row, Position> {
 }
 
 interface KeysetCursorPageOptions<
-  Row extends { id: number; created_at: string },
+  Row extends { id: number | string; created_at: string },
   Position,
   Output,
   Viewer,
@@ -187,7 +187,7 @@ interface KeysetCursorPageOptions<
 }
 
 export const keysetCursorPage = async <
-  Row extends { id: number; created_at: string },
+  Row extends { id: number | string; created_at: string },
   Position,
   Output,
   Viewer,
@@ -477,7 +477,7 @@ const validateRows = <Row extends { id: number }>(
   }
 }
 
-const validateKeysetRows = <Row extends { id: number; created_at: string }, Position>(
+const validateKeysetRows = <Row extends { id: number | string; created_at: string }, Position>(
   rows: readonly Row[],
   after: Position | null,
   createdThrough: string,
@@ -488,7 +488,8 @@ const validateKeysetRows = <Row extends { id: number; created_at: string }, Posi
   const bound = Date.parse(createdThrough)
   let previous = after
   for (const row of rows) {
-    assertSafeInteger(row.id, 'source row id')
+    if (typeof row.id === 'number') assertSafeInteger(row.id, 'source row id')
+    else if (!/^[a-zA-Z0-9_-]{1,128}$/.test(row.id)) throw new Error('invalid source row id')
     const position = order.positionOf(row)
     const created = Date.parse(row.created_at)
     if (

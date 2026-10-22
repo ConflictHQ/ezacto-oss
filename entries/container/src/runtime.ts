@@ -1,3 +1,7 @@
+import { demoDeployment } from '../../worker/src/app.js'
+import { createWebhookSecretVault } from '@ezacto/core'
+import { createWebhookService } from '@ezacto/db'
+import { createNodeWebhookTransport } from '@ezacto/integrations/node-webhooks'
 import {migrationLoadStatusProjection} from '@ezacto/db/queued-migrations'
 import type {MigrationLoadStatus} from '@ezacto/core'
 import { createInvoiceElevationStore, unlinkElevatedInvoiceTime } from '@ezacto/db'
@@ -437,6 +441,10 @@ export const createContainerRuntime = async (
     await chmod(config.databasePath, 0o600)
 
     const drizzle = createContainerDatabase(database)
+    const webhooks = createWebhookService(drizzle, {
+      vault: !demoDeployment(config.appEnv) && config.webhookEncryptionKey ? await createWebhookSecretVault(config.webhookEncryptionKey) : null,
+      transport: createNodeWebhookTransport(),
+    })
     const timesheetLockPolicy = createTimesheetLockPolicyRepository(drizzle)
     const trackedResources = new DrizzleTrackedResourceRepository(drizzle, timesheetLockPolicy)
     const touch =
@@ -817,6 +825,12 @@ export const createContainerRuntime = async (
       lastMinutePass = at
       const now = new Date(at).toISOString()
       try {
+        await webhooks.processDue()
+        await webhooks.purge()
+      } catch {
+        console.error('[container] webhook sweep failed')
+      }
+      try {
         await evaluateProjectBudgetAlerts(drizzle, now)
       } catch (error) {
         console.error('[container] budget alert evaluation failed', error)
@@ -893,6 +907,7 @@ export const createContainerRuntime = async (
       team: createTeamRepository(drizzle),
       invoiceElevations: createInvoiceElevationStore(drizzle),
     invoiceTimeUnlink: (command, elevation, now) => unlinkElevatedInvoiceTime(drizzle, command, elevation, now),
+    webhooks,
     migrationLoads: {status:async(id:string)=>database.prepare(`SELECT ${migrationLoadStatusProjection} FROM migration_loads WHERE id=?`).get(id) as MigrationLoadStatus|undefined??null},
     estimateTemplates: createEstimateTemplateRepository(drizzle),
     clientRateCards: createClientRateCardRepository(drizzle),

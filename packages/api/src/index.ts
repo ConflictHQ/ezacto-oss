@@ -557,3 +557,5 @@ export * from './estimate-templates.js'
 export * from './invoice-elevations.js'
 
 export * from './migration-loads.js'
+
+export { installOutboundWebhookRoutes } from './outbound-webhooks.js'

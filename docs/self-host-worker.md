@@ -72,6 +72,7 @@ values as environment secrets:
 | `CLOUDFLARE_ACCOUNT_ID` | repository secret | yes | account holding every binding |
 | `CLOUDFLARE_API_TOKEN` | repository secret | yes | scoped deploy/provision authority |
 | `API_CURSOR_SIGNING_KEY` | `dev` secret | yes | 32 random bytes, unpadded base64url |
+| `WEBHOOK_ENCRYPTION_KEY` | selected environment secret | outbound webhooks | separate 32 random bytes, unpadded base64url; retain for recovery; see [webhooks](integrations.md#outbound-webhooks) |
 | `OIDC_REDIRECT_ORIGIN` | `dev` variable | yes for `prod` | the origin OIDC returns to: scheme and host only. `prod` refuses to start without it rather than falling back to a request-derived value |
 | `EZACTO_BOOTSTRAP_TOKEN` | `dev` secret | initial setup | temporary first-owner authority |
 | `EZACTO_OWNER_PASSWORD` | `dev` secret | password setup | first owner's password |

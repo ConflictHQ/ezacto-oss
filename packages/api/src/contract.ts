@@ -1,3 +1,4 @@
+import { outboundWebhookOperations, outboundWebhookSchemas } from './outbound-webhook-contract.js'
 import { invoiceElevationOperations, invoiceElevationSchemas, documentInvoiceTokenElevation } from './invoice-elevation-contract.js'
 import { scheduledJobOperations, scheduledJobSchemas } from './scheduled-job-contract.js'
 import { contractorReviewOperations, contractorReviewSchemas } from './contractor-review-contract.js'
@@ -3765,6 +3766,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...estimateTemplateOperations,
   ...migrationLoadOperations,
   ...invoiceElevationOperations,
+  ...outboundWebhookOperations,
 ];
 
 const reconciliationStatusSchema: JsonSchema = {
@@ -4002,6 +4004,7 @@ const timeReportTotalsRequired: readonly string[] = [
 ];
 
 export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
+  ...outboundWebhookSchemas,
   ...invoiceElevationSchemas,
   ...attachmentContractSchemas,
   ...staffPaymentSchemas,

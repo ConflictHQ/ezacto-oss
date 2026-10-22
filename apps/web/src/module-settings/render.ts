@@ -1,3 +1,4 @@
+import { renderWebhookSettings } from './webhooks-render.js'
 import { renderCompanyDataTools } from './data-tools.js'
 import { renderEmailSuppressionReview } from './email-suppressions-render.js'
 import { renderTimeRoundingSection } from './time-rounding-render.js'
@@ -42,6 +43,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p class="form-result" data-settings-sign-in-status role="status" aria-live="polite">Loading sign-in methods&hellip;</p>
       <section class="module-settings-list" data-settings-sign-in-list aria-label="Sign-in methods" hidden></section>
     </section>
+    ${renderWebhookSettings()}
     ${renderRetentionSection()}
     <section class="settings-section" data-settings-section="time" aria-labelledby="settings-time-title">
       <header><h2 id="settings-time-title">Time tracking</h2>

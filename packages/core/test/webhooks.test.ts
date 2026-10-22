@@ -195,3 +195,17 @@ it('supports both keys during rotation; old keys cannot verify fresh deliveries 
     }),
   ).toBe(false)
 })
+it('enforces a retiring key deadline even when its holder can still compute a valid HMAC', async () => {
+  const expiry = timestamp + 900,
+    now = expiry + 1
+  const forged = await webhookSignature({ timestamp: now, body, secrets: [previous] })
+  expect(
+    await verifyWebhookSignature({
+      timestamp: String(now),
+      body: new TextEncoder().encode(body),
+      signature: forged,
+      secrets: [{ secret: previous, validUntil: expiry }],
+      now,
+    }),
+  ).toBe(false)
+})

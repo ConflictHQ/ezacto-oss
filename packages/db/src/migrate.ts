@@ -1,3 +1,4 @@
+import { outboundWebhooksMigration } from './migrations/0151_outbound_webhooks.js'
 import { queuedMigrationsMigration } from './migrations/0150_queued_migrations.js'
 import { invoiceElevationsMigration } from './migrations/0149_invoice_elevations.js'
 import { estimateTemplatesMigration } from './migrations/0148_estimate_templates.js'
@@ -1658,6 +1659,7 @@ const migrations = [
   { id: '0148_estimate_templates', statements: estimateTemplatesMigration },
   { id: '0149_invoice_elevations', statements: invoiceElevationsMigration },
   { id: '0150_queued_migrations', statements: queuedMigrationsMigration },
+  { id: '0151_outbound_webhooks', statements: outboundWebhooksMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

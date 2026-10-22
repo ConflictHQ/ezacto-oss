@@ -65,3 +65,34 @@ The UI settings pages are the easiest authenticated checks. A bare unauthenticat
 Use the exact canonical HTTPS host and route from each provider guide. Register callbacks before attempting OAuth and deploy verification credentials before enabling webhook deliveries. Webhooks must reach their signed handler without an interactive login/Access page; do not make the rest of the application public merely to expose a webhook.
 
 The payment webhook paths are `/webhooks/quickbooks`, `/webhooks/wise` and `/webhooks/stripe`, all at the site root. They are not OAuth callbacks and are not under `/api/v1`. Keep raw bodies intact for signature verification. Provider acceptance of a URL is not evidence that its event was processed; check both delivery results and application state.
+
+## Outbound webhooks
+
+Administrators manage endpoints at **Settings → Company → Webhooks**. Management requires a native administrator session; API tokens and other profiles are refused. Create an endpoint with a public HTTPS URL and selected event types. URLs and event selections are immutable: create a replacement endpoint to change them. Pause stops new event fanout and skips pending delivery work; resume permits pending work again. Deleting an endpoint stops pending work and clears its signing keys. A request already sent cannot be recalled.
+
+Set `WEBHOOK_ENCRYPTION_KEY` to a dedicated, canonical base64url value encoding 32 random bytes. Generate it in your secret manager, or privately with `openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n'`. Save it in the selected GitHub environment for the stock Worker deployment, or in the private container environment. Keep it with your recovery material: database backups contain sealed signing keys and require the original deployment key. Do not reuse cursor, backup, or API credentials. Replacing this deployment key does not rotate receiver keys; losing it requires deleting/recreating affected endpoints or rotating each endpoint with zero overlap. Missing configuration leaves listing, pause and deletion available but refuses creation, resume, rotation and replay. Public demo outbound delivery is disabled even if a key is present.
+
+The create and rotate responses show the receiver signing secret **once**. Store it at the receiver before closing the dialog; list and log endpoints never return it. Secret issuance uses the HTTP idempotency claim but never stores its response. If the response is lost, refresh the endpoint list and rotate the secret rather than retrying creation blindly. Rotation defaults to a 900-second overlap, supports 0–86400 seconds, and emits signatures under both valid keys during overlap. Record the displayed `previous_valid_until` at the receiver and reject that retiring key after its deadline, even when the HMAC is otherwise valid. A second overlapping rotation is refused; zero overlap permits emergency replacement.
+
+Only events emitted after an active subscription is created are fanned out. Supported events are enumerated by `GET /api/v1/webhook-subscriptions` in `configuration.event_types`: invoice creation/lifecycle, payment recorded/updated/deleted, and administrator time-entry changes on behalf of another person. Ordinary own-time edits and client/project/expense events are not currently emitted. Payloads contain `schema_version`, `event_id`, `event_type`, `occurred_at`, `resource` (type, ID, sequence) and a relative `links.resource`; amounts, notes, actor identities and source event payloads are omitted. Fetch resource details separately with your receiver's own authorized API credential. That credential is never sent with the webhook.
+
+Delivery is at least once. A minute sweep claims at most ten deliveries, runs at most three concurrently, gives each HTTP request five seconds, and never follows redirects. Each delivery has five attempts, retrying network/timeouts, HTTP 408/425/429 and 5xx after 60, 300, 900 and 3600 seconds. Other 4xx and redirects fail permanently. A subscription failure does not prevent another endpoint's attempt. HTTP response bodies are ignored, and logs retain only status codes and controlled error codes. Logs are purged in bounded sweeps after 30 days. Administrators can replay a settled delivery created within seven days; replay retains the original event ID and exact body, with a new timestamp/signature. Receivers must deduplicate by event ID, not by signature or delivery attempt.
+
+Every POST has these headers:
+
+- `Content-Type: application/json`
+- `X-Ezacto-Event-Id`: the body event ID
+- `X-Ezacto-Timestamp`: canonical integer Unix seconds
+- `X-Ezacto-Signature`: comma-separated `v1=<lowercase SHA-256 HMAC hex>` signatures
+
+Verify the **raw request bytes** before JSON parsing. Compute HMAC-SHA256 using the literal `ezwh_…` secret over the UTF-8 timestamp, a period, and raw body bytes. Require a timestamp within five minutes of your clock, use a timing-safe comparison, check the header event ID against the verified body, then atomically record/deduplicate that ID with your receiver's work before acknowledging success. Do not reserialize JSON for verification. Keep receiver clocks synchronized. The core's `verifyWebhookSignature` supports active keys and retiring keys with an explicit Unix-second `validUntil`.
+
+For delivery logs and replay from a terminal, pipe a private JSON object containing the HTTPS `base_url` and complete `__Host-ezacto_session=…` cookie into the CLI. Use an existing native administrator session and keep this file/pipe private. The CLI never saves the session or accepts it in argv, does not use the stored API token, and refuses HTTP/redirects:
+
+```sh
+secret-manager-read ezacto-webhook-session | ez webhooks log
+secret-manager-read ezacto-webhook-session | ez webhooks log SUBSCRIPTION_UUID
+secret-manager-read ezacto-webhook-session | ez webhooks replay DELIVERY_ID
+```
+
+Here `secret-manager-read` stands for your own secret manager's command; its JSON output has exactly `base_url` and `session_cookie`. Log output is one JSON delivery per line. Replay prints the queued delivery, preserving its original event ID. Browser Settings offers the same log and replay actions without exporting a session cookie.

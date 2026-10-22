@@ -1,5 +1,5 @@
-/** A deliberately closed publication vocabulary; new internal events are not exposed implicitly. */
-export const webhookEventTypes = [
+/** Frozen v1 publication vocabulary, also used by migration 0151. Extend through a new version/migration. */
+export const webhookEventTypesV1 = Object.freeze([
   'invoice.created',
   'invoice.sent',
   'invoice.viewed',
@@ -19,7 +19,8 @@ export const webhookEventTypes = [
   'time_entry.updated_on_behalf',
   'time_entry.stopped_on_behalf',
   'time_entry.deleted_on_behalf',
-] as const
+] as const)
+export const webhookEventTypes = webhookEventTypesV1
 export type WebhookEventType = (typeof webhookEventTypes)[number]
 export const webhookLimits = {
   subscriptions: 25,
@@ -46,6 +47,65 @@ export class WebhookError extends Error {
     super('The webhook operation could not be completed with the supplied input or current state.')
     this.name = 'WebhookError'
   }
+}
+
+export interface WebhookSubscription {
+  id: string
+  url: string
+  events: readonly WebhookEventType[]
+  isActive: boolean
+  version: number
+  generation: number
+  previousValidUntil: string | null
+  createdAt: string
+  updatedAt: string
+  deletedAt: string | null
+}
+export const webhookDeliveryStatuses = ['pending', 'processing', 'delivered', 'failed'] as const
+export type WebhookDeliveryStatus = (typeof webhookDeliveryStatuses)[number]
+export const webhookDeliveryErrorsV1 = Object.freeze([
+  'timeout',
+  'network_error',
+  'destination_forbidden',
+  'redirect',
+  'http_error',
+  'signing_secret_unavailable',
+  'invalid_payload',
+  'subscription_deleted',
+  'delivery_expired',
+  'attempt_abandoned',
+] as const)
+export const webhookDeliveryErrors = webhookDeliveryErrorsV1
+export type WebhookDeliveryError = (typeof webhookDeliveryErrors)[number]
+export interface WebhookDelivery {
+  id: string
+  subscriptionId: string
+  eventId: string
+  eventType: WebhookEventType
+  payloadJson: string
+  status: WebhookDeliveryStatus
+  attemptCount: number
+  cycleAttempts: number
+  replayCount: number
+  lastStatus: number | null
+  lastErrorCode: WebhookDeliveryError | null
+  nextAttemptAt: string | null
+  lastAttemptAt: string | null
+  deliveredAt: string | null
+  failedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+export interface WebhookTransport {
+  /** The implementation validates/pins network destinations and never follows redirects. */
+  send(input: {
+    url: string
+    body: string
+    eventId: string
+    timestamp: string
+    signature: string
+    signal: AbortSignal
+  }): Promise<{ status: number }>
 }
 export const isWebhookEventType = (value: unknown): value is WebhookEventType =>
   typeof value === 'string' && webhookEventTypes.includes(value as WebhookEventType)
@@ -243,12 +303,13 @@ export const webhookSignature = async (input: {
     )
   ).join(',')
 }
-/** Verify raw request bytes before parsing JSON, and deduplicate accepted event IDs separately. */
+export type WebhookVerificationKey = string | { secret: string; validUntil: number }
+/** Verify raw bytes before parsing JSON; give a retiring key its deadline and deduplicate IDs separately. */
 export const verifyWebhookSignature = async (input: {
   timestamp: string
   signature: string
   body: Uint8Array
-  secrets: readonly string[]
+  secrets: readonly WebhookVerificationKey[]
   now?: number
   toleranceSeconds?: number
 }): Promise<boolean> => {
@@ -265,7 +326,13 @@ export const verifyWebhookSignature = async (input: {
     input.signature.length > 140 ||
     input.secrets.length < 1 ||
     input.secrets.length > 2 ||
-    input.secrets.some((secret) => !secretIsValid(secret))
+    input.secrets.some((value) =>
+      typeof value === 'string'
+        ? !secretIsValid(value)
+        : !secretIsValid(value.secret) ||
+          !Number.isSafeInteger(value.validUntil) ||
+          value.validUntil < 1,
+    )
   )
     return false
   const signatures = input.signature.split(',').map((value) => value.trim())
@@ -275,7 +342,9 @@ export const verifyWebhookSignature = async (input: {
     signatures.some((value) => !/^v1=[a-f0-9]{64}$/.test(value))
   )
     return false
-  for (const secret of input.secrets)
+  for (const candidate of input.secrets) {
+    if (typeof candidate !== 'string' && now >= candidate.validUntil) continue
+    const secret = typeof candidate === 'string' ? candidate : candidate.secret
     for (const signature of signatures) {
       const bytes = Uint8Array.from(signature.slice(3).match(/../g)!, (value) =>
         Number.parseInt(value, 16),
@@ -290,5 +359,42 @@ export const verifyWebhookSignature = async (input: {
       )
         return true
     }
+  }
   return false
+}
+
+export interface WebhookDeliveryFilter {
+  subscriptionId?: string
+  status?: WebhookDeliveryStatus
+}
+export interface WebhookDeliveryWindow extends WebhookDeliveryFilter {
+  after: { createdAt: string; id: string } | null
+  createdThrough: string
+  take: number
+}
+export interface WebhookManagement {
+  readonly configured: boolean
+  list(): Promise<WebhookSubscription[]>
+  get(id: string): Promise<WebhookSubscription | null>
+  create(
+    actor: number,
+    input: { url: string; events: unknown },
+  ): Promise<{ subscription: WebhookSubscription; secret: string }>
+  setActive(
+    actor: number,
+    id: string,
+    active: boolean,
+    version: number,
+  ): Promise<WebhookSubscription>
+  rotate(
+    actor: number,
+    id: string,
+    input: { version: number; overlapSeconds?: number },
+  ): Promise<{ subscription: WebhookSubscription; secret: string }>
+  remove(actor: number, id: string, version: number): Promise<WebhookSubscription>
+  delivery(id: string): Promise<WebhookDelivery | null>
+  replay(actor: number, id: string): Promise<WebhookDelivery>
+  deliveriesSnapshot(filter: WebhookDeliveryFilter): Promise<string | null>
+  countDeliveries(filter: WebhookDeliveryFilter): Promise<number>
+  pageDeliveries(window: WebhookDeliveryWindow): Promise<WebhookDelivery[]>
 }

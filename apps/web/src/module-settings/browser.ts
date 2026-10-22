@@ -1,3 +1,4 @@
+import { createWebhookController } from './webhooks.js'
 import { createCompanyDataTools } from './data-tools.js'
 import { createEmailSuppressionController } from './email-suppressions-browser.js'
 import { createDeletionRequestsController } from './deletion-requests.js'
@@ -387,6 +388,7 @@ export const createModuleSettingsController = (
   const emailSenders = required<HTMLElement>('[data-settings-sender-identities]')
   const emailReputation = required<HTMLElement>('[data-settings-email-reputation]')
   const emailIdentityHealth = required<HTMLElement>('[data-settings-email-identities-health]')
+  const webhookController = createWebhookController(api.webhooks)
   const suppressionReview = createEmailSuppressionController(api)
   const wiseSection = required<HTMLElement>('[data-settings-wise]')
   const wiseStatus = required<HTMLElement>('[data-settings-wise-status]')
@@ -1295,6 +1297,7 @@ export const createModuleSettingsController = (
     ssoBusy = false
     emailSenders.replaceChildren()
     emailSenders.hidden = true
+    webhookController.clear()
     suppressionReview.clear()
     emailIdentityHealth.replaceChildren()
     emailIdentityHealth.hidden = true
@@ -2688,6 +2691,7 @@ export const createModuleSettingsController = (
   const dataTools = createCompanyDataTools(api,signal=>fetchModules(signal))
   const sectionLoaders: Readonly<Record<string, (active: ActiveSession) => Promise<void>>> = {
     modules: loadModules,
+    webhooks: active => webhookController.load(active),
     'import-export': async active=>{
       try { await dataTools.loadExports(active) }
       catch(error){active.presentFailure(error,()=>sectionFailed('import-export',required<HTMLElement>('[data-settings-data-status]'),error,'Only administrators can use company import and export.','Available exports could not be loaded.'))}
