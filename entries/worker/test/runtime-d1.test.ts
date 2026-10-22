@@ -1,5 +1,6 @@
 import {
   createApiTokenStore,
+  createInvoiceElevationStore,
   createD1Database,
   migrationIds,
 } from "@ezacto/db/d1";
@@ -452,14 +453,39 @@ describe("Worker D1 runtime composition", () => {
     }
   });
 
-  it("[api] executes and replays a generated-client money command through the real D1 binding", async () => {
+  it("[api] executes and replays an elevated generated-client money command through the real D1 binding", async () => {
     const client = new EzactoClient({
       baseUrl: "https://worker.test",
       token: moneyBearer,
       fetch: workerFetch,
     });
+    const native = createD1Database(database);
+    const principal = await createApiTokenStore(native).authenticate(moneyBearer);
+    if (principal === null)
+      throw new Error("Native administrator token fixture is unavailable");
+    // Full password/MFA reauthentication is exercised by invoice-sudo.browser.ts.
+    // This composition test seeds a capability through the real authority store.
+    await run(
+      `INSERT INTO user_passwords(user_id,credential_version,algorithm,iterations,salt,password_hash,created_at,updated_at)
+        VALUES(1,1,'pbkdf2-sha256',600000,?,?,?,?)`,
+      "A".repeat(22),
+      "A".repeat(43),
+      timestamp,
+      timestamp,
+    );
+    const elevations = createInvoiceElevationStore(native);
+    const grant = await elevations.mint(
+      {
+        userId: 1,
+        tokenId: principal.tokenId,
+        invoiceId: 1,
+        credentialVersion: 1,
+      },
+      new Date().toISOString(),
+    );
     const command = {
       id: 1,
+      headers: { "X-Ezacto-Invoice-Elevation": grant.credential },
       "Idempotency-Key": "runtime-money-line-1",
       body: {
         expected_version: 0,
@@ -471,8 +497,20 @@ describe("Worker D1 runtime composition", () => {
       },
     } as const;
 
+    await expect(
+      client.createInvoiceLine({ ...command, headers: {} }),
+    ).rejects.toMatchObject({ status: 403 });
     const created = await client.createInvoiceLine(command);
     const replayed = await client.createInvoiceLine(command);
+    await elevations.revoke(
+      grant.elevation.id,
+      { userId: 1, tokenId: principal.tokenId },
+      new Date().toISOString(),
+    );
+    // Revocation also fences a previously successful HTTP-cache replay.
+    await expect(client.createInvoiceLine(command)).rejects.toMatchObject({
+      status: 403,
+    });
 
     expect(created.data.invoice).toMatchObject({
       id: 1,
@@ -487,7 +525,7 @@ describe("Worker D1 runtime composition", () => {
       await database
         .prepare(
           `SELECT COUNT(*) AS lineCount, SUM(amount_cents) AS amountCents
-           FROM invoice_line_items WHERE invoice_id = ?`,
+             FROM invoice_line_items WHERE invoice_id = ?`,
         )
         .bind(1)
         .first(),
@@ -496,7 +534,7 @@ describe("Worker D1 runtime composition", () => {
       await database
         .prepare(
           `SELECT COUNT(*) AS eventCount
-           FROM event_outbox WHERE aggregate_type = 'invoice' AND aggregate_id = ?`,
+             FROM event_outbox WHERE aggregate_type = 'invoice' AND aggregate_id = ?`,
         )
         .bind(1)
         .first(),
