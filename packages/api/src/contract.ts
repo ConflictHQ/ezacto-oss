@@ -1,3 +1,4 @@
+import { invoiceElevationOperations, invoiceElevationSchemas, documentInvoiceTokenElevation } from './invoice-elevation-contract.js'
 import { scheduledJobOperations, scheduledJobSchemas } from './scheduled-job-contract.js'
 import { contractorReviewOperations, contractorReviewSchemas } from './contractor-review-contract.js'
 import { staffInvoiceOperations, staffInvoiceSchemas } from './staff-invoice-contract.js'
@@ -39,6 +40,7 @@ export interface ApiContractOperation {
   requestContentType?: "application/json" | "multipart/form-data";
   binaryResponse?: boolean;
   sessionOnly?: boolean;
+  tokenOnly?: boolean;
   public?: boolean;
   parameters?: readonly ApiContractParameter[];
   generateClient?: boolean;
@@ -2291,7 +2293,7 @@ const invoiceDocumentPreferenceOperations: ApiContractOperation[] = [
     responseSchema: "InvoiceHoursReconciliationEnvelope",
     parameters: [path("id")],
   },
-  {method:'post',path:'/api/v1/invoices/:id/hours-reconciliation/release',operationId:'releaseInvoiceLineTime',summary:'Explicitly release selected whole entries from a saved draft line to match its billed hours',tag:'money',responseStatus:200,responseSchema:'InvoiceLineTimeReleaseEnvelope',requestSchema:'InvoiceLineTimeReleaseInput',parameters:[path('id')]},
+  {method:'post',path:'/api/v1/invoices/:id/hours-reconciliation/release',operationId:'releaseInvoiceLineTime',sessionOnly:true,summary:'Explicitly release selected whole entries from a saved draft line to match its billed hours',tag:'money',responseStatus:200,responseSchema:'InvoiceLineTimeReleaseEnvelope',requestSchema:'InvoiceLineTimeReleaseInput',parameters:[path('id')]},
 ];
 
 const payoutAccountOperations: ApiContractOperation[] = [
@@ -3708,7 +3710,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...timesheetApprovalOperations,
   ...timesheetLockPolicyOperations,
   ...expenseOperations,
-  ...moneyOperations,
+  ...moneyOperations.map(documentInvoiceTokenElevation),
   ...attachmentContractOperations,
   ...staffPaymentOperations,
   ...deelSyncOperations,
@@ -3745,6 +3747,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...clientTreeOperations,
   ...clientRateCardOperations,
   ...estimateTemplateOperations,
+  ...invoiceElevationOperations,
 ];
 
 const reconciliationStatusSchema: JsonSchema = {
@@ -3982,6 +3985,7 @@ const timeReportTotalsRequired: readonly string[] = [
 ];
 
 export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
+  ...invoiceElevationSchemas,
   ...attachmentContractSchemas,
   ...staffPaymentSchemas,
   ...deelSyncSchemas,
@@ -11400,7 +11404,9 @@ export const generateOpenApiDocument = (): Record<string, unknown> => {
         ? []
         : operation.sessionOnly
           ? [{ cookieSession: [] }]
-          : [{ bearerAuth: [] }, { cookieSession: [] }],
+          : operation.tokenOnly
+            ? [{ bearerAuth: [] }]
+            : [{ bearerAuth: [] }, { cookieSession: [] }],
       responses,
       "x-ezacto-runtime-path": operation.path,
       "x-ezacto-generate-client": operation.generateClient !== false,

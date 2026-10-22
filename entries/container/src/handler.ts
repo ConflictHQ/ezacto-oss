@@ -14,7 +14,7 @@ interface App {
  * shell's pages -- goes straight to the app, as on the Worker.
  */
 export const createContainerHandler = (
-  services: Pick<RuntimeServices, 'idempotency' | 'tokens' | 'sessions' | 'authenticationSessions' | 'isOwnMoneyVisible'>,
+  services: Pick<RuntimeServices, 'idempotency' | 'tokens' | 'sessions' | 'authenticationSessions' | 'isOwnMoneyVisible' | 'invoiceElevations'>,
   app: App,
   env: AppEnv,
 ): ((request: Request) => Promise<Response>) => {
@@ -22,7 +22,7 @@ export const createContainerHandler = (
     tokens: services.tokens,
     sessions: services.authenticationSessions ?? services.sessions,
     ownMoneyVisible: services.isOwnMoneyVisible,
-  }, async () => JSON.stringify([await services.idempotency.store.authorizationRevision(), env.RELEASE, demoDeployment(env)]))
+  }, async () => JSON.stringify([await services.idempotency.store.authorizationRevision(), env.RELEASE, demoDeployment(env)]), { ...(services.invoiceElevations === undefined ? {} : {invoiceElevations:services.invoiceElevations}) })
   const answer = (request: Request): Promise<Response> => Promise.resolve(app.fetch(request, env))
   return (request) => {
     if (!isDataRequest(request)) return answer(request)

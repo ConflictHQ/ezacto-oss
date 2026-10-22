@@ -1,3 +1,4 @@
+import { requireInvoiceTokenElevation, type InvoiceElevationStore } from './invoice-elevations.js';
 import {
   calculateInvoiceLineAmountCents,
   compareInvoiceListPositionsBy,
@@ -390,6 +391,7 @@ type InvoiceEdit =
   | { type: "line_delete"; lineId: number; expectedLineUpdatedAt: string };
 
 interface CommonCommand {
+  elevation?: Readonly<{ id: string; tokenId: number }>;
   invoiceId: number;
   commandId: string;
   actor: InvoiceCommandActor;
@@ -784,6 +786,7 @@ export interface BandClaimBackfillPort {
 }
 
 export interface MoneyResourceRouteOptions {
+  invoiceElevations?: InvoiceElevationStore;
   service: MoneyResourceService;
   cursorSigningKey: Uint8Array;
   clock?: () => string;
@@ -2483,11 +2486,15 @@ const installInvoiceEdits = <Bindings extends object>(
   api.patch("/invoices/:id", async (context) => {
     const principal = requireWrite(context);
     const invoiceId = resourceId(context.req.param("id"), "invoice");
+    const elevation = await requireInvoiceTokenElevation(
+      context, invoiceId, options.invoiceElevations, options.clock(),
+    );
     const commandId = idempotencyKey(context);
     const parsed = parseInvoiceEdit(await readObjectBody(context));
     try {
       const result = await options.service.executeEdit({
         ...commonCommand(principal, invoiceId, commandId, options.clock()),
+        ...(elevation === undefined ? {} : { elevation: { id: elevation.id, tokenId: elevation.tokenId } }),
         expectedVersion: parsed.expectedVersion,
         eventIds: await eventIds(invoiceId, commandId),
         edit: parsed.edit,
@@ -2604,12 +2611,16 @@ const installInvoiceEdits = <Bindings extends object>(
   api.post("/invoices/:id/line-items", async (context) => {
     const principal = requireWrite(context);
     const invoiceId = resourceId(context.req.param("id")!, "invoice");
+    const elevation = await requireInvoiceTokenElevation(
+      context, invoiceId, options.invoiceElevations, options.clock(),
+    );
     const commandId = idempotencyKey(context);
     const lineId = await stableId("invoice-line", invoiceId, commandId);
     const parsed = parseLine(await readObjectBody(context), false, lineId);
     try {
       const result = await options.service.executeEdit({
         ...commonCommand(principal, invoiceId, commandId, options.clock()),
+        ...(elevation === undefined ? {} : { elevation: { id: elevation.id, tokenId: elevation.tokenId } }),
         expectedVersion: parsed.expectedVersion,
         eventIds: await eventIds(invoiceId, commandId),
         edit: parsed.edit,
@@ -2626,12 +2637,16 @@ const installInvoiceEdits = <Bindings extends object>(
   api.patch("/invoices/:id/line-items/:lineId", async (context) => {
     const principal = requireWrite(context);
     const invoiceId = resourceId(context.req.param("id")!, "invoice");
+    const elevation = await requireInvoiceTokenElevation(
+      context, invoiceId, options.invoiceElevations, options.clock(),
+    );
     const lineId = resourceId(context.req.param("lineId"), "invoice line");
     const commandId = idempotencyKey(context);
     const parsed = parseLine(await readObjectBody(context), true, lineId);
     try {
       const result = await options.service.executeEdit({
         ...commonCommand(principal, invoiceId, commandId, options.clock()),
+        ...(elevation === undefined ? {} : { elevation: { id: elevation.id, tokenId: elevation.tokenId } }),
         expectedVersion: parsed.expectedVersion,
         eventIds: await eventIds(invoiceId, commandId),
         edit: parsed.edit,
@@ -2647,6 +2662,9 @@ const installInvoiceEdits = <Bindings extends object>(
   api.delete("/invoices/:id/line-items/:lineId", async (context) => {
     const principal = requireWrite(context);
     const invoiceId = resourceId(context.req.param("id"), "invoice");
+    const elevation = await requireInvoiceTokenElevation(
+      context, invoiceId, options.invoiceElevations, options.clock(),
+    );
     const lineId = resourceId(context.req.param("lineId"), "invoice line");
     const commandId = idempotencyKey(context);
     const body = await readObjectBody(context);
@@ -2662,6 +2680,7 @@ const installInvoiceEdits = <Bindings extends object>(
     try {
       const result = await options.service.executeEdit({
         ...commonCommand(principal, invoiceId, commandId, options.clock()),
+        ...(elevation === undefined ? {} : { elevation: { id: elevation.id, tokenId: elevation.tokenId } }),
         expectedVersion: version!,
         eventIds: await eventIds(invoiceId, commandId),
         edit: {

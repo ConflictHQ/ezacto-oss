@@ -83,14 +83,33 @@ server; local config cannot grant access.
 ## Editing draft invoices
 
 ```sh
-ez invoice edit 1400 --subject "October retainer" --notes-file notes.txt \
-  --issue-date 2026-10-05 --terms net_30
-ez invoice edit 1400 --line 2 --quantity 3 --rate 150.50 --description "Review"
-ez invoice unlink-time --entries 101,102
+ez sudo invoice edit 1400 --subject "October retainer" --notes-file notes.txt \
+  --issue-date 2026-10-05 --due-date 2026-11-04 --terms net_30
+ez sudo invoice edit 1400 --line 2 --quantity 3 --rate 150.50 --description "Review"
+ez sudo invoice unlink-time 1400 --entries 101,102
 ```
 
-`edit` takes the invoice number and refuses any invoice that is not a draft
-before it sends a write. Each write carries a fresh `Idempotency-Key` and the
-current `expected_version`. It needs `invoices:write`; `unlink-time` (mark
-entries uninvoiced) needs `reports:read`, `time_entries:write` and
-`invoices:write`, and prints which entries changed and which were ineligible.
+`sudo` requires an administrator API token with `invoices:read` and
+`invoices:write`. It prompts privately for the same administrator's verified
+email and password, then any enrolled authenticator/recovery or email second
+factor. Password sign-in must be enabled. For automation, pass `--reauth-stdin`
+and pipe a private JSON object with `email`, `password`, and optional `code`
+(authenticator or recovery code); credentials are never command-line arguments.
+Email-code reauthentication is interactive.
+
+The server issues an elevation bound to that API token and that draft invoice
+for at most 15 minutes. The CLI holds it in memory and revokes it when the
+command finishes; it never saves the password or elevation in config. Ordinary
+`ez invoice edit` and `unlink-time` calls without elevation receive HTTP 403.
+
+`edit` reviews the draft before reauthentication and refuses a changed document.
+Each write carries a fresh `Idempotency-Key` and `expected_version`. Line numbers
+are one-based; rates are decimal currency units. Header and line edits are
+separate commands: if the header saves and a later line fails, the CLI reports
+the saved header so the operator can review it before retrying.
+
+`unlink-time` additionally requires `time_entries:write`. It releases only the
+explicit stopped entries linked to the named draft, atomically; an ineligible or
+cross-invoice selection changes nothing. Invoice line amounts remain as saved
+and need review. Every edit/release records the actor, elevation and exact
+before/after values in the same database transaction.

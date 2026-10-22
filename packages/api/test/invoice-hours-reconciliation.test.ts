@@ -138,11 +138,14 @@ const releaseRequest=(body:unknown=releaseBody):RequestInit=>({method:'POST',hea
 it.each(['member','project_manager','people_admin'])('denies release to %s before the store is called',async profile=>{
  const api=app({profile,writable:true});expect((await api.request('/invoices/77/hours-reconciliation/release',releaseRequest())).status).toBe(403);expect(api.releaseLineTime).not.toHaveBeenCalled()
 })
-it('requires all existing Detailed-time accounting scopes on a token and explicit confirmation',async()=>{
+it('refuses token release even with all scopes and requires browser confirmation',async()=>{
  const denied=app({writable:true,authentication:{kind:'token',tokenId:1,scopes:['reports:read','invoices:write']}})
  expect((await denied.request('/invoices/77/hours-reconciliation/release',releaseRequest())).status).toBe(403)
  expect(denied.releaseLineTime).not.toHaveBeenCalled()
- const api=app({writable:true,authentication:{kind:'token',tokenId:1,scopes:['reports:read','time_entries:write','invoices:write']}})
+ const token=app({writable:true,authentication:{kind:'token',tokenId:1,scopes:['reports:read','time_entries:write','invoices:write']}})
+ expect((await token.request('/invoices/77/hours-reconciliation/release',releaseRequest())).status).toBe(403)
+ expect(token.releaseLineTime).not.toHaveBeenCalled()
+ const api=app({writable:true})
  expect((await api.request('/invoices/77/hours-reconciliation/release',releaseRequest({...releaseBody,confirmed:false}))).status).toBe(422)
  expect((await api.request('/invoices/77/hours-reconciliation/release',releaseRequest({...releaseBody,actor_id:2}))).status).toBe(422)
  const response=await api.request('/invoices/77/hours-reconciliation/release',releaseRequest())

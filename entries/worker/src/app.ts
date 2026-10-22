@@ -1,3 +1,4 @@
+import { installInvoiceElevationRoutes, type InvoiceElevationStore, type ElevatedInvoiceTimeUnlinkPort } from '@ezacto/api'
 import { installEstimateTemplateRoutes, type EstimateTemplateRepository } from '@ezacto/api'
 import type { OffsiteBackupEnvironment } from './offsite-backups.js'
 import type { ReminderProcessOptions, ReminderProcessSummary } from '@ezacto/db/d1'
@@ -628,6 +629,8 @@ export interface RuntimeServices {
     setOptedIn(clientId: number, enabled: boolean): Promise<boolean>
   }
   /** Named rate cards on client nodes, inherited down the tree (issue 34). */
+  invoiceTimeUnlink?: ElevatedInvoiceTimeUnlinkPort
+  invoiceElevations?: InvoiceElevationStore
   estimateTemplates?: EstimateTemplateRepository
   clientRateCards?: ClientRateCardRepository
 }
@@ -843,6 +846,15 @@ export const createApp = (
               teamRepository: services.team,
             })
             installClientTreeRoutes(api, services.clientTree)
+            if (services.invoiceElevations && services.twoFactor) installInvoiceElevationRoutes(api, {
+              store: services.invoiceElevations, passwords: services.passwordAuth,
+              ...(services.invoiceTimeUnlink === undefined ? {} : {unlinkTime:services.invoiceTimeUnlink}),
+              policy: createSignInMethodPolicy({service: services.signInMethods, configured: bindings => deployedSignInMethods(bindings as WorkerEnv)}),
+              secondFactor: services.twoFactor, emailCodesReady: services.twoFactorEmailCodes !== undefined,
+              ...(services.twoFactorEmailCodes === undefined ? {} : {emailCodeMailer:services.twoFactorEmailCodes}),
+              clock: () => systemClock.now().instant,
+              clientKey: request => request.headers.get('cf-connecting-ip') ?? 'unknown-client',
+            })
             if (services.estimateTemplates) installEstimateTemplateRoutes(api, services.estimateTemplates, () => systemClock.now().instant)
             if (services.clientRateCards) installClientRateCardRoutes(api, { repository: services.clientRateCards, clock: systemClock })
             installTeamRoutes(api, {
@@ -885,6 +897,7 @@ export const createApp = (
               clock: () => systemClock.now().instant,
             })
             installMoneyResourceRoutes(api, {
+              ...(services.invoiceElevations === undefined ? {} : {invoiceElevations:services.invoiceElevations}),
               service: services.moneyResources,
               generation: services.invoiceGeneration,
               recurringGeneration: services.recurringInvoices,

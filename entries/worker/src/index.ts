@@ -156,7 +156,7 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
               tokens: services.tokens,
               sessions: services.authenticationSessions ?? services.sessions,
               ownMoneyVisible: services.isOwnMoneyVisible,
-            }, async () => JSON.stringify([await services.idempotency.store.authorizationRevision(), env.RELEASE, demoDeployment(env)])),
+            }, async () => JSON.stringify([await services.idempotency.store.authorizationRevision(), env.RELEASE, demoDeployment(env)]), { ...(services.invoiceElevations === undefined ? {} : {invoiceElevations:services.invoiceElevations}) }),
             secret: services.idempotency.secret,
             waitUntil: (promise) => executionContext.waitUntil(promise),
             report: (error) => {

@@ -166,7 +166,7 @@ const safePrincipal = (principal: ResolvedUserIdentity) => ({
   manager_grants: [...principal.managerGrants],
 })
 
-const translateAuthError = (error: unknown): never => {
+export const translateAuthError = (error: unknown): never => {
   if (error instanceof Error && error.name === 'AuthRateLimitError') {
     const retryAfter =
       'retryAfterSeconds' in error &&

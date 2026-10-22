@@ -2486,6 +2486,7 @@ export const installReportRoutes = <Bindings extends object>(
     }
     if (action === "mark_invoiced" || action === "mark_uninvoiced") {
       requireApiScope(context, "invoices:write");
+      if (principal.authentication.kind === "token") throw new ApiError({status:403,code:"invoice_elevation_required",message:"Invoice time links require the invoice-scoped elevated command. Use ez sudo invoice unlink-time for a draft invoice."});
     }
     if (typeof body.command_id !== "string" || !Array.isArray(body.entry_ids)) {
       throw new ApiError({ status: 422, code: "invalid_time_action", message: "command_id and entry_ids are required" });
