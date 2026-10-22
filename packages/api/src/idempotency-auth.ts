@@ -42,7 +42,9 @@ export const createApiIdempotencyAuthorization = (
       let invoiceId = NaN
       try {
         invoiceId = Number(decodeURIComponent(invoiceSegment))
-      } catch {}
+      } catch {
+        invoiceId = NaN
+      }
       if (Number.isSafeInteger(invoiceId) && invoiceId > 0)
         elevation = await requireInvoiceTokenElevation(
           context,
