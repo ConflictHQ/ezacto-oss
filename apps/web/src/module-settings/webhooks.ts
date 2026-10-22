@@ -32,7 +32,7 @@ export const createWebhookController = (api: WebhookApi | undefined) => {
     for (const control of root.querySelectorAll<
       HTMLButtonElement | HTMLInputElement | HTMLSelectElement
     >('button,input,select'))
-      control.disabled = enabled
+      if (!secret.contains(control)) control.disabled = enabled
     create.hidden = !ready
   }
   const clear = () => {
@@ -117,6 +117,7 @@ export const createWebhookController = (api: WebhookApi | undefined) => {
               find<HTMLElement>('action-description').textContent =
                 `${row.url}. ${kind === 'delete' ? 'Pending deliveries stop and signing keys are erased.' : 'Copy the new secret once and update your receiver.'}`
               find<HTMLElement>('overlap').hidden = kind !== 'rotate'
+              find<HTMLElement>('overlap-note').hidden = kind !== 'rotate'
               ;(actionForm.elements.namedItem('overlap_seconds') as HTMLInputElement).disabled =
                 kind !== 'rotate'
               action.showModal()

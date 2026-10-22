@@ -3,7 +3,7 @@ export const renderWebhookSettings = () => `
  <header><h2 id="settings-webhooks-title">Webhooks</h2><p>Notify your own HTTPS endpoint when invoice, payment or administrator time events occur. Events carry IDs and links. Receivers must verify signatures and deduplicate event IDs.</p></header>
  <p data-webhooks-status class="form-result" role="status" aria-live="polite">Loading webhooks…</p>
  <div data-webhooks-content hidden>
-  <button type="button" class="secondary-action" data-webhooks-refresh>Refresh</button>
+  <div class="settings-form"><button type="button" data-webhooks-refresh>Refresh</button></div>
   <form class="settings-form" data-webhooks-create>
    <h3>Add an endpoint</h3>
    <label>HTTPS endpoint URL<input name="url" type="url" required maxlength="2048" autocomplete="off"></label>
@@ -17,20 +17,20 @@ export const renderWebhookSettings = () => `
    <label>Result<select name="status"><option value="">All results</option><option>pending</option><option>processing</option><option>delivered</option><option>failed</option></select></label>
    <button type="submit">Filter deliveries</button>
   </form>
-  <div data-webhooks-log class="settings-table"></div><button type="button" data-webhooks-more hidden>Load more deliveries</button>
+  <div data-webhooks-log class="settings-table"></div><div class="settings-form"><button type="button" data-webhooks-more hidden>Load more deliveries</button></div>
  </div>
  <dialog class="settings-token-dialog" data-webhooks-action aria-labelledby="webhook-action-title">
   <form class="settings-form" data-webhooks-action-form>
    <h3 id="webhook-action-title" data-webhooks-action-title></h3><p data-webhooks-action-description></p>
    <label data-webhooks-overlap>Old secret overlap in seconds<input name="overlap_seconds" type="number" min="0" max="86400" step="1" value="900" required></label>
-   <p>Zero invalidates the old signing key immediately. The default overlap is 15 minutes.</p>
+   <p data-webhooks-overlap-note>Zero invalidates the old signing key immediately. The default overlap is 15 minutes.</p>
    <div class="dialog-actions"><button type="button" data-webhooks-cancel>Cancel</button><button type="submit" class="primary-action">Confirm</button></div>
   </form>
  </dialog>
  <dialog class="settings-token-dialog" data-webhooks-secret aria-labelledby="webhook-secret-title">
-  <h3 id="webhook-secret-title">Copy this signing secret now</h3><p>It will not be shown again. Save it securely at your receiver before closing this window.</p>
+  <div class="settings-form"><h3 id="webhook-secret-title">Copy this signing secret now</h3><p>It will not be shown again. Save it securely at your receiver before closing this window.</p>
   <label>Signing secret<input data-webhooks-secret-value readonly autocomplete="off" spellcheck="false"></label>
   <p data-webhooks-secret-status role="status" aria-live="polite"></p>
-  <div class="dialog-actions"><button type="button" data-webhooks-copy>Copy secret</button><button type="button" data-webhooks-secret-close>I saved the secret</button></div>
+  <div class="dialog-actions"><button type="button" data-webhooks-copy>Copy secret</button><button type="button" data-webhooks-secret-close>I saved the secret</button></div></div>
  </dialog>
 </section>`

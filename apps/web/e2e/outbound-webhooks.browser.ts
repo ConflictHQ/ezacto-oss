@@ -19,6 +19,9 @@ test('[e2e #107] administrator manages a signed endpoint and clears once-only se
   const section = page.locator('[data-settings-section="webhooks"]')
   await expect(section).toBeVisible()
   await expect(section.locator('[data-webhooks-create]')).toBeVisible()
+  expect(
+    (await section.getByRole('button', { name: 'Refresh', exact: true }).boundingBox())!.height,
+  ).toBeGreaterThanOrEqual(44)
   await section
     .getByLabel('HTTPS endpoint URL')
     .fill('https://receiver.example/events/' + crypto.randomUUID())
@@ -26,6 +29,7 @@ test('[e2e #107] administrator manages a signed endpoint and clears once-only se
   await section.getByRole('button', { name: 'Create endpoint', exact: true }).click()
   const secret = section.locator('[data-webhooks-secret]')
   await expect(secret).toBeVisible()
+  await expect(secret.getByLabel('Signing secret', { exact: true })).toBeFocused()
   expect(await secret.getByLabel('Signing secret', { exact: true }).inputValue()).toMatch(
     /^ezwh_[A-Za-z0-9_-]{43}$/,
   )
@@ -44,7 +48,8 @@ test('[e2e #107] administrator manages a signed endpoint and clears once-only se
   await dialog.getByLabel('Old secret overlap in seconds').fill('0')
   await dialog.getByRole('button', { name: 'Confirm', exact: true }).click()
   await expect(secret).toBeVisible()
-  await secret.getByRole('button', { name: 'I saved the secret' }).click()
+  await page.keyboard.press('Escape')
+  await expect(secret.getByLabel('Signing secret', { exact: true })).toHaveValue('')
   await expect(section.locator('[data-webhooks-status]')).toHaveText(
     'New matching events are queued for signed delivery.',
   )
