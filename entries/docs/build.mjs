@@ -26,6 +26,7 @@ const GUIDES = [
   ['self-host-worker', 'docs/self-host-worker.md', 'Self-host on Cloudflare Workers'],
   ['self-host-container', 'docs/self-host-container.md', 'Self-host in a container'],
   ['restore', 'RESTORE.md', 'Backup and restore'],
+  ['csv-import', 'docs/csv-import.md', 'CSV time import'],
   ['migrating-from-harvest', 'docs/migrating-from-harvest.md', 'Migrating from Harvest'],
   ['migration-spec', 'docs/migration-spec.md', 'Migration specification'],
   ['api-contract', 'docs/api-contract.md', 'API contract'],

@@ -9782,3 +9782,8 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
 .scheduled-run [hidden] { display: none !important; }
 .scheduled-run .data-table { min-width: 800px; table-layout: auto; }
 .scheduled-run .data-table tbody td { max-width: none; white-space: normal; overflow-wrap: anywhere; }
+
+.settings-data-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.settings-data-command { max-width: 100%; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.settings-bulk-actions { display: grid; gap: 1rem; padding-inline-start: 1.25rem; }
+.settings-bulk-actions li { min-width: 0; }

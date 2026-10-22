@@ -224,3 +224,18 @@ configured credentials; it does not create a backup. Configure the dedicated
 deployment secrets and retain the encryption key as described in RESTORE.md.
 Worker logical copies exclude attachment bytes and do not replace physical/SQL
 recovery. Self-hosted container operators schedule the existing CLI bundle copy.
+
+### Company import/export and bulk actions
+
+Administrators can open Company → Import and export to download time CSV/Excel
+files or the detailed expense CSV for an inclusive date range. Time files use
+client-visible notes unless internal notes are explicitly selected. Disabled
+modules hide the corresponding exports or links. The section links to the actual
+CSV and Harvest migration guides, with a working source-checkout command for the
+operator CLI; it does not run a browser import.
+
+Company → Bulk actions links to selected-week approval and the detailed-time
+report's mark-invoiced, mark-uninvoiced and move workflows. Choosing records and
+confirming a change happens in those workflows; opening the catalog makes no
+change. Company catalogs are administrator-only; each destination retains its
+own authorization and record-lock checks.

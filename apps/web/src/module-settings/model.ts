@@ -1,3 +1,4 @@
+import type { ReportWorkspaceApi } from '../reports/model.js'
 import {
   EzactoApiError,
   type BackupRun,
@@ -256,6 +257,8 @@ export interface TimeRoundingApi {
 }
 
 export interface CompanySettingsApi {
+  downloadDetailedTimeReport?: ReportWorkspaceApi['downloadDetailedTimeReport']
+  getDetailedExpenseReport?: ReportWorkspaceApi['getDetailedExpenseReport']
   /** Optional: a build without the route hides nothing it cannot save. */
   getInvoiceDefaults?(signal?: AbortSignal): Promise<InvoiceDefaultsSetting>
   /** The attachment defaults, under Sending in the same section. Optional the same way. */

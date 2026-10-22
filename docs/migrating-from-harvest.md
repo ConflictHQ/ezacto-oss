@@ -1,5 +1,11 @@
 # Migrating off Harvest
 
+From an operator checkout, build the standalone tool with `npm ci` and
+`npm run build -w @conflict-hq/ezacto-migrate`. Run
+`node packages/migrate/dist/cli.js` in place of the installed `ezacto-migrate`
+command below when the published package is unavailable. Keep the checkout,
+credentials and snapshot files on the operator's machine.
+
 The happy path, for somebody who is not us.
 
 [`cutover-runbook.md`](cutover-runbook.md) is the full walkthrough of one real

@@ -21,6 +21,21 @@ Always dry-run first. `--dry-run` opens the database without migrating it,
 reports, and rolls back everything it touched. Without it the file is applied,
 and applying the same file again adds nothing.
 
+## Run from an operator checkout
+
+Use the repository build when the standalone package is unavailable. From the
+checkout root, with Node 22 or newer:
+
+```sh
+npm ci
+npm run build -w @conflict-hq/ezacto-migrate
+node packages/migrate/dist/cli.js import-csv --database /data/db.sqlite --file time.csv --dry-run
+```
+
+Use a copy of the target database for the rehearsal. Review the dry-run report
+before applying to the intended database; the browser does not accept or run an
+import on your behalf. Harvest imports use the separate migration guide.
+
 ## The file
 
 UTF-8, comma separated, one header row, one row per entry, at most 5 MiB and
