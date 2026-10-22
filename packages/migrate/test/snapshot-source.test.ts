@@ -69,6 +69,17 @@ const bucket = (
 })
 
 describe('reading a snapshot from disk (#409)', () => {
+  it('[unit #409] preserves CRLF bytes identically to R2 so checkpoints resume at the same offset', async () => {
+    const body = ROWS.join('\r\n') + '\r\n',
+      source = fileSnapshotSource(await onDisk(body))
+    const remote = r2SnapshotSource(bucket(body), 'snapshots/run-1/')
+    const local = await collect(source.openRaw('clients', 0))
+    expect(local).toEqual(ROWS.map((row) => row + '\r'))
+    expect(await collect(remote.openRaw('clients', 0))).toEqual(local)
+    const offset = Buffer.byteLength(local[0]! + '\n')
+    expect(await collect(source.openRaw('clients', offset))).toEqual(local.slice(1))
+    expect(await collect(remote.openRaw('clients', offset))).toEqual(local.slice(1))
+  })
   it('[unit] yields every row, and resumes from a byte offset', async () => {
     const body = `${ROWS.join('\n')}\n`
     const source = fileSnapshotSource(await onDisk(body))
@@ -86,7 +97,11 @@ describe('reading a snapshot from disk (#409)', () => {
     expect(await source.fingerprint('clients')).toBe(before)
     // Same length, so only the modification time can tell.
     await new Promise((resolve) => setTimeout(resolve, 20))
-    await writeFile(join(root, 'raw', 'clients.jsonl'), body.replace('Northpeak', 'Northpeek'), 'utf8')
+    await writeFile(
+      join(root, 'raw', 'clients.jsonl'),
+      body.replace('Northpeak', 'Northpeek'),
+      'utf8',
+    )
     expect(await source.fingerprint('clients')).not.toBe(before)
   })
 
@@ -178,17 +193,27 @@ describe('splitting a byte stream into lines (#409)', () => {
 })
 
 it('[security] rejects invalid UTF-8 rather than replacing source bytes', async () => {
-  const stream = new ReadableStream<Uint8Array>({ start(controller) {
-    controller.enqueue(new Uint8Array([0xff, 0x0a])); controller.close()
-  } })
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array([0xff, 0x0a]))
+      controller.close()
+    },
+  })
   await expect(collect(linesFromStream(stream))).rejects.toThrow()
 })
 it('[unit] cancels the unread R2 response when a bounded chunk stops early', async () => {
   let cancelled = false
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) { controller.enqueue(new TextEncoder().encode('first\nsecond\n')) },
-    cancel() { cancelled = true },
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('first\nsecond\n'))
+    },
+    cancel() {
+      cancelled = true
+    },
   })
-  for await (const line of linesFromStream(stream)) { expect(line).toBe('first'); break }
+  for await (const line of linesFromStream(stream)) {
+    expect(line).toBe('first')
+    break
+  }
   expect(cancelled).toBe(true)
 })

@@ -23,7 +23,17 @@
       "development": "./src/importer.ts",
       "default": "./dist/importer.js"
     },
-    "./schema": "./dist/schema.js"
+    "./schema": "./dist/schema.js",
+    "./load-lease-schema": {
+      "types": "./src/load-lease-schema.ts",
+      "development": "./src/load-lease-schema.ts",
+      "default": "./dist/load-lease-schema.js"
+    },
+    "./queued-migrations": {
+      "types": "./src/queued-migrations.ts",
+      "development": "./src/queued-migrations.ts",
+      "default": "./dist/queued-migrations.js"
+    }
   },
   "engines": {
     "node": ">=22"

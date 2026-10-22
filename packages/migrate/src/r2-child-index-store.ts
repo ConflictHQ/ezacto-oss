@@ -4,6 +4,7 @@
  * Every exclusive turn reloads the current directory; ETag CAS refuses stale turns.
  * https://developers.cloudflare.com/r2/api/workers/workers-api-reference/#conditional-operations
  */
+import { queuedMigrationLimits } from '@ezacto/core'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
 import { sha256Hex } from './portable-hash.js'
 import { memoryChildIndexStore, type MemoryChildIndexStore } from './memory-child-index-store.js'
@@ -32,8 +33,8 @@ export class R2ChildIndexConflictError extends Error {
     this.name = 'R2ChildIndexConflictError'
   }
 }
-export const DEFAULT_R2_INDEX_BUDGET = 4 * 1024 * 1024
-const MAX_R2_INDEX_BUDGET = 8 * 1024 * 1024
+export const DEFAULT_R2_INDEX_BUDGET = queuedMigrationLimits.indexBytes
+const MAX_R2_INDEX_BUDGET = queuedMigrationLimits.maxIndexBytes
 const MAX_FILES = 128
 const safeName = (name: string) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/.test(name)
 interface Cache {

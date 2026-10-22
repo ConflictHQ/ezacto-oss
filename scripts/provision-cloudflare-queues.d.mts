@@ -30,6 +30,7 @@ export interface QueueConvergenceResult {
 export function readQueueContract(
   environment: string,
   configUrl?: URL,
+  binding?: "EMAIL_QUEUE" | "MIGRATION_QUEUE",
 ): Promise<QueueContract>;
 
 export function convergeQueues(

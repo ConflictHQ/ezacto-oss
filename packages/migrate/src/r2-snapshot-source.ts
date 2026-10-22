@@ -73,6 +73,7 @@ export interface SnapshotBucket {
  */
 export const linesFromStream = async function* (
   stream: ReadableStream<Uint8Array>,
+  options: { maxLineBytes?: number } = {},
 ): AsyncGenerator<string> {
   const reader = stream.getReader()
   const decoder = new TextDecoder('utf-8', { fatal: true })
@@ -88,14 +89,21 @@ export const linesFromStream = async function* (
       carry += decoder.decode(value, { stream: true })
       let newline = carry.indexOf('\n')
       while (newline !== -1) {
-        yield carry.slice(0, newline)
+        const line = carry.slice(0, newline)
+        if (options.maxLineBytes !== undefined && new TextEncoder().encode(line).length > options.maxLineBytes)
+          throw new Error('Snapshot row exceeds the queued loader line limit')
+        yield line
         carry = carry.slice(newline + 1)
         newline = carry.indexOf('\n')
       }
+      if (options.maxLineBytes !== undefined && new TextEncoder().encode(carry).length > options.maxLineBytes)
+        throw new Error('Snapshot row exceeds the queued loader line limit')
     }
     carry += decoder.decode()
     // A final line with no trailing newline is still a row. Dropping it would
     // lose the last record of every snapshot whose writer omitted one.
+    if (options.maxLineBytes !== undefined && new TextEncoder().encode(carry).length > options.maxLineBytes)
+      throw new Error('Snapshot row exceeds the queued loader line limit')
     if (carry !== '') yield carry
   } finally {
     try {

@@ -1,3 +1,4 @@
+import {installMigrationLoadRoutes,type MigrationLoadStatusReader} from '@ezacto/api'
 import { installInvoiceElevationRoutes, type InvoiceElevationStore, type ElevatedInvoiceTimeUnlinkPort } from '@ezacto/api'
 import { installEstimateTemplateRoutes, type EstimateTemplateRepository } from '@ezacto/api'
 import type { OffsiteBackupEnvironment } from './offsite-backups.js'
@@ -294,6 +295,8 @@ export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & {
   PORTAL_MAGIC_LINK_SIGNING_KEY?: string
   /** Bound together with a provider implementation; absent deployments fail auth email closed. */
   EMAIL_QUEUE?: Queue<QueuedEmailJob>
+  MIGRATION_QUEUE?: Queue<{kind:'migration-load-v1';runId:string;sequence:number}>
+  MIGRATION_QUEUE_NAME?: string
   /** Optional Cloudflare Access provider; both values are required together. */
   ACCESS_TEAM_DOMAIN?: string
   ACCESS_POLICY_AUD?: string
@@ -631,6 +634,7 @@ export interface RuntimeServices {
   /** Named rate cards on client nodes, inherited down the tree (issue 34). */
   invoiceTimeUnlink?: ElevatedInvoiceTimeUnlinkPort
   invoiceElevations?: InvoiceElevationStore
+  migrationLoads?: MigrationLoadStatusReader
   estimateTemplates?: EstimateTemplateRepository
   clientRateCards?: ClientRateCardRepository
 }
@@ -855,6 +859,7 @@ export const createApp = (
               clock: () => systemClock.now().instant,
               clientKey: request => request.headers.get('cf-connecting-ip') ?? 'unknown-client',
             })
+            if (services.migrationLoads) installMigrationLoadRoutes(api, services.migrationLoads)
             if (services.estimateTemplates) installEstimateTemplateRoutes(api, services.estimateTemplates, () => systemClock.now().instant)
             if (services.clientRateCards) installClientRateCardRoutes(api, { repository: services.clientRateCards, clock: systemClock })
             installTeamRoutes(api, {

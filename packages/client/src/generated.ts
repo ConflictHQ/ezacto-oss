@@ -3113,6 +3113,28 @@ export type EstimateTemplateUpdateInput = {
   "archived"?: boolean;
 };
 
+export type MigrationLoadStatus = {
+  "id": string;
+  "status": "ready" | "queued" | "running" | "completed" | "failed" | "cancelled";
+  "snapshot_sha256": string;
+  "source_rows": number;
+  "resource": string | null;
+  "rows_done": number;
+  "sequence": number;
+  "attempts": number;
+  "error_code": string | null;
+  "created_at": string;
+  "started_at": string | null;
+  "completed_at": string | null;
+  "source_cleaned_at": string | null;
+  "updated_at": string;
+};
+
+export type MigrationLoadStatusEnvelope = {
+  "data": MigrationLoadStatus;
+  "links": Links;
+};
+
 export type EstimateTemplateEnvelope = {
   "data": EstimateTemplate;
   "links": Links;
@@ -9271,6 +9293,15 @@ export class EzactoClient {
     if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<EstimateDraftEnvelope>("POST", "/api/v1/estimates", {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getMigrationLoadStatus(args: { "id": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<MigrationLoadStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<MigrationLoadStatusEnvelope>("GET", "/api/v1/migration-loads/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });

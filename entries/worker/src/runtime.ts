@@ -1,3 +1,4 @@
+import { createQueuedMigrationStore } from '@ezacto/db/queued-migrations'
 import { createInvoiceElevationStore, unlinkElevatedInvoiceTime } from '@ezacto/db/d1'
 import { createEstimateTemplateRepository } from '@ezacto/db/d1'
 import { createWorkerOffsiteBackups } from './offsite-backups.js'
@@ -225,6 +226,7 @@ const cursorSecretPattern = /^[A-Za-z0-9_-]+$/;
 const cursorSecretBytes = 32;
 
 const readyDatabases = new WeakSet<object>();
+const ordinaryDatabases = new WeakSet<object>();
 
 let cachedAccessVerifier:
   | {
@@ -528,6 +530,15 @@ export const ensureRuntimeDatabaseReady = async (
   readyDatabases.add(identity);
 };
 
+/** Empty destinations are rechecked until a normal instance is irreversibly populated. */
+export const ensureOrdinaryMigrationAccess = async (database: D1Database): Promise<void> => {
+  if (ordinaryDatabases.has(database)) return;
+  // Both observations belong to one SQL snapshot: an import cannot win between them.
+  const access = await createQueuedMigrationStore(database).access();
+  if (access.blocked) throw new Error("Queued migration target is quarantined.");
+  if (access.populated) ordinaryDatabases.add(database);
+};
+
 export const createR2AttachmentObjectStore = (
   bucket: R2Bucket,
 ): AttachmentObjectPort => ({
@@ -702,6 +713,7 @@ export const createRuntimeServices = async (
       ? undefined
       : parseCursorSigningKey(env.PORTAL_MAGIC_LINK_SIGNING_KEY);
   await ensureRuntimeDatabaseReady(database);
+  await ensureOrdinaryMigrationAccess(binding);
   const drizzle = createD1Database(database);
   const timesheetLockPolicy = createTimesheetLockPolicyRepository(drizzle);
   const trackedResources = new DrizzleTrackedResourceRepository(drizzle, timesheetLockPolicy);
@@ -1218,6 +1230,7 @@ export const createRuntimeServices = async (
     team: createTeamRepository(drizzle),
     invoiceElevations: createInvoiceElevationStore(drizzle),
     invoiceTimeUnlink: (command, elevation, now) => unlinkElevatedInvoiceTime(drizzle, command, elevation, now),
+    migrationLoads: createQueuedMigrationStore(binding),
     estimateTemplates: createEstimateTemplateRepository(drizzle),
     clientRateCards: createClientRateCardRepository(drizzle),
     moneyResources,

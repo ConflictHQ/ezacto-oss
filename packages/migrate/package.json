@@ -23,7 +23,9 @@
     "ezacto-migrate": "./dist/cli.js"
   },
   "files": [
-    "dist/cli.js"
+    "dist/cli.js",
+    "dist/queued-loader.js",
+    "src/queued-loader-api.d.ts"
   ],
   "engines": {
     "node": ">=22"
@@ -57,5 +59,11 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "exports": {
+    "./queued-loader": {
+      "types": "./src/queued-loader-api.d.ts",
+      "default": "./dist/queued-loader.js"
+    }
   }
 }

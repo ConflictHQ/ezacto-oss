@@ -48,3 +48,12 @@ for (const output of Object.values(result.metafile.outputs)) {
 if (undeclared.size > 0) {
   throw new Error(`dist/cli.js imports undeclared runtime dependencies: ${[...undeclared].join(', ')}`)
 }
+
+// The Worker entry contains the portable loader and its workspace dependencies,
+// while the standalone CLI retains its existing Node dependency contract.
+await build({
+  entryPoints: [resolve(root, 'src/queued-loader.ts')],
+  outfile: resolve(root, 'dist/queued-loader.js'),
+  bundle: true, platform: 'browser', format: 'esm', target: 'es2022',
+  conditions: ['development'], external: ['node:async_hooks'], logLevel: 'warning',
+})

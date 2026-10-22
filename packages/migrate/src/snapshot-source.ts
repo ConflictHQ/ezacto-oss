@@ -24,20 +24,22 @@
 
 import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { createInterface } from 'node:readline'
+import { Readable } from 'node:stream'
+import { linesFromStream } from './r2-snapshot-source.js'
 import { join } from 'node:path'
 import type { SnapshotSource } from './r2-snapshot-source.js'
 export * from './r2-snapshot-source.js'
 
 export const fileSnapshotSource = (snapshotDir: string): SnapshotSource => ({
   openRaw: (resource, byteOffset) =>
-    createInterface({
-      input: createReadStream(
-        join(snapshotDir, 'raw', `${resource}.jsonl`),
-        byteOffset === 0 ? undefined : { start: byteOffset },
-      ),
-      crlfDelay: Infinity,
-    }),
+    linesFromStream(
+      Readable.toWeb(
+        createReadStream(
+          join(snapshotDir, 'raw', `${resource}.jsonl`),
+          byteOffset === 0 ? undefined : { start: byteOffset },
+        ),
+      ) as ReadableStream<Uint8Array>,
+    ),
   size: async (resource) => (await stat(join(snapshotDir, 'raw', `${resource}.jsonl`))).size,
   fingerprint: async (resource) => {
     const found = await stat(join(snapshotDir, 'raw', `${resource}.jsonl`))
