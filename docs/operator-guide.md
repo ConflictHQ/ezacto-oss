@@ -291,6 +291,8 @@ The nightly `backup-sql` workflow publishes `backups/latest.json` only after
 uploading the complete dump/manifest pair. New manifests include per-table
 counts verified from a scratch restore. Existing older manifests without those
 counts cannot pass the monthly drill: run the updated SQL backup workflow first.
+A scratch-validation failure still retains the dated dump/manifest pair,
+leaves the previous latest pointer unchanged and fails the backup run visibly.
 Both workflows use the existing production Cloudflare credentials and share a
 concurrency lock. This checks the retained R2 SQL copy; encrypted off-site
 recovery and attachment-byte reconciliation remain separate restore checks.

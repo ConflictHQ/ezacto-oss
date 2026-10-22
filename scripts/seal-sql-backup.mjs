@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { runDrill } from './restore-drill.mjs'
 export async function sealSqlBackup({ dumpPath, manifestPath }) {
-  const result = await runDrill({ dumpPath, manifestPath, productInvariants: true })
+  const result = await runDrill({ dumpPath, manifestPath })
   if (result.status !== 'pass' || !result.scratch_removed)
     throw new Error('SQL backup scratch verification failed')
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))

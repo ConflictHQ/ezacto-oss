@@ -182,14 +182,24 @@ jobs:
           }
           JSON
           # Independent monthly drills compare every restored table to these counts.
-          node scripts/seal-sql-backup.mjs dump.sql.gz manifest.json
+          # A validation failure must not discard a newly captured raw backup.
+          sealed=false
+          if node scripts/seal-sql-backup.mjs dump.sql.gz manifest.json; then
+            sealed=true
+          else
+            echo "::error::scratch restore validation failed; retain the dated backup and keep the previous latest pointer"
+          fi
           npx --yes wrangler@4.131.1 r2 object put "${R2_BUCKET}/${prefix}/${key_name}.sql.gz" \
             --file dump.sql.gz --content-type application/gzip --remote
           npx --yes wrangler@4.131.1 r2 object put "${R2_BUCKET}/${prefix}/${key_name}.manifest.json" \
             --file manifest.json --content-type application/json --remote
           # Publish last: a pointer always names a complete, verified pair.
-          npx --yes wrangler@4.131.1 r2 object put "${R2_BUCKET}/${INSTANCE_FQDN}/backups/latest.json" \
-            --file manifest.json --content-type application/json --remote
+          if [ "$sealed" = true ]; then
+            npx --yes wrangler@4.131.1 r2 object put "${R2_BUCKET}/${INSTANCE_FQDN}/backups/latest.json" \
+              --file manifest.json --content-type application/json --remote
+          else
+            exit 1
+          fi
           echo "::notice::wrote ${prefix}/${key_name}.sql.gz (${compressed_bytes} bytes, ${tables} tables)"
 
       # A copy outside Cloudflare, because a backup that shares a provider with
