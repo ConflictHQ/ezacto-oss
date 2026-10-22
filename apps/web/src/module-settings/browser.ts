@@ -1,3 +1,4 @@
+import { createCompanyDataTools } from './data-tools.js'
 import { createEmailSuppressionController } from './email-suppressions-browser.js'
 import { createDeletionRequestsController } from './deletion-requests.js'
 import { createRetentionController } from './retention.js'
@@ -1302,6 +1303,7 @@ export const createModuleSettingsController = (
     timeFacts.replaceChildren()
     noteForm.hidden = true
     timeRounding.clear()
+    dataTools.clear()
     // The result line sits outside the form, so hiding the form leaves the
     // previous session's "Saved." or its 403 on screen under the next
     // person's notice.
@@ -2640,6 +2642,8 @@ export const createModuleSettingsController = (
             try {
               const updated = await patchModule(moduleName, toggle.checked, active.signal)
               active.present(() => {
+                loaded.delete('import-export')
+                loaded.delete('bulk-actions')
                 const state = updated.find((m) => m.module === moduleName)
                 if (span) span.textContent = state?.enabled ? 'Enabled' : 'Disabled'
                 if (result) result.textContent = ''
@@ -2681,8 +2685,17 @@ export const createModuleSettingsController = (
    * for the session; what it showed stays, and a Retry or Refresh reads it
    * once more.
    */
+  const dataTools = createCompanyDataTools(api,signal=>fetchModules(signal))
   const sectionLoaders: Readonly<Record<string, (active: ActiveSession) => Promise<void>>> = {
     modules: loadModules,
+    'import-export': async active=>{
+      try { await dataTools.loadExports(active) }
+      catch(error){active.presentFailure(error,()=>sectionFailed('import-export',required<HTMLElement>('[data-settings-data-status]'),error,'Only administrators can use company import and export.','Available exports could not be loaded.'))}
+    },
+    'bulk-actions': async active=>{
+      try { await dataTools.loadBulk(active) }
+      catch(error){active.presentFailure(error,()=>sectionFailed('bulk-actions',required<HTMLElement>('[data-settings-bulk-status]'),error,'Only administrators can view company bulk actions.','Available bulk actions could not be loaded.'))}
+    },
     erasure: async (active) => {
       try { await retention.load(active); await deletionRequests.load(active) }
       catch (error) {

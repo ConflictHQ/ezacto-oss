@@ -1686,6 +1686,19 @@ describe('company settings', () => {
       false,
     )
   })
+  it('[data-tools #67] retries a failed capability read without starting an export', async () => {
+    openCompanySettings('import-export')
+    vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({error:{code:'unavailable'}}),{status:503,headers:{'content-type':'application/json'}})))
+    const download=vi.fn(async()=>({blob:new Blob(),filename:'unused.csv'}))
+    await mountShell({...companyApi(),downloadDetailedTimeReport:download})
+    await vi.waitFor(()=>expect(document.querySelector('[data-settings-retry="import-export"]')).not.toBeNull(),{timeout:5000})
+    expect(download).not.toHaveBeenCalled()
+    stubModulesEndpoint()
+    document.querySelector<HTMLButtonElement>('[data-settings-retry="import-export"]')!.click()
+    await vi.waitFor(()=>expect(document.querySelector<HTMLElement>('[data-settings-data-content]')!.hidden).toBe(false))
+    expect(download).not.toHaveBeenCalled()
+  })
+
   it('[browser] reports when this instance last backed itself up', async () => {
     // The endpoint has served this since it was written and no screen asked it,
     // so whether the nightly export worked was a question only a terminal could

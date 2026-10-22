@@ -26,6 +26,8 @@ export const COMPANY_SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: 'reminders', label: 'Reminders' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'payouts', label: 'Payouts' },
+  { id: 'import-export', label: 'Import and export' },
+  { id: 'bulk-actions', label: 'Bulk actions' },
   { id: 'backup', label: 'Backups' },
   { id: 'brand', label: 'Brand' },
   { id: 'appearance', label: 'Appearance' },
