@@ -176,3 +176,19 @@ describe('splitting a byte stream into lines (#409)', () => {
     expect(await collect(linesFromStream(stream))).toEqual([])
   })
 })
+
+it('[security] rejects invalid UTF-8 rather than replacing source bytes', async () => {
+  const stream = new ReadableStream<Uint8Array>({ start(controller) {
+    controller.enqueue(new Uint8Array([0xff, 0x0a])); controller.close()
+  } })
+  await expect(collect(linesFromStream(stream))).rejects.toThrow()
+})
+it('[unit] cancels the unread R2 response when a bounded chunk stops early', async () => {
+  let cancelled = false
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new TextEncoder().encode('first\nsecond\n')) },
+    cancel() { cancelled = true },
+  })
+  for await (const line of linesFromStream(stream)) { expect(line).toBe('first'); break }
+  expect(cancelled).toBe(true)
+})

@@ -27,7 +27,7 @@
  * anything, since it is compared in the database.
  */
 
-import { createHash } from 'node:crypto'
+import { sha256Hex } from './portable-hash.js'
 import { RESOURCES } from './resources.js'
 import type { Manifest } from './manifest.js'
 import type { SnapshotSource } from './snapshot-source.js'
@@ -310,5 +310,5 @@ export const sourceFingerprint = async (
   const lines = await Promise.all(
     names.sort().map(async (name) => `${name}=${await source.fingerprint(name)}`),
   )
-  return createHash('sha256').update(lines.join('\n')).digest('hex')
+  return sha256Hex(lines.join('\n'))
 }
