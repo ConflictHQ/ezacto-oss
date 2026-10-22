@@ -2,7 +2,63 @@ import { build } from 'esbuild'
 import { Miniflare } from 'miniflare'
 import { expect, it } from 'vitest'
 import { migrateD1 } from '@ezacto/db/d1'
+import { createD1DemoResetDriver, wipeAndSeedDemo } from '@ezacto/db/d1'
 import { createQueuedMigrationStore } from '@ezacto/db/queued-migrations'
+import { ensureOrdinaryMigrationAccess } from '../src/runtime.js'
+
+it('[crash #409] rechecks demo quarantine after a populated instance is wiped before bootstrap', async () => {
+  const mf = new Miniflare({
+    modules: true,
+    script: 'export default {fetch(){return new Response("ok")}}',
+    d1Databases: ['DB'],
+  })
+  try {
+    const db = await mf.getD1Database('DB')
+    await migrateD1(db)
+    const now = new Date().toISOString()
+    await db
+      .prepare(
+        "INSERT INTO users(id,first_name,last_name,manager_grants,created_at,updated_at) VALUES(1,'Demo','Fixture','[]',?,?)",
+      )
+      .bind(now, now)
+      .run()
+    await ensureOrdinaryMigrationAccess(db, false)
+    await expect(
+      wipeAndSeedDemo(
+        {
+          ...createD1DemoResetDriver(db),
+          bootstrap: async () => {
+            throw new Error('forced bootstrap interruption')
+          },
+        },
+        { now, years: 0, confirm: 'wipe-and-reload' },
+      ),
+    ).rejects.toThrow('forced bootstrap interruption')
+    await createQueuedMigrationStore(db).create(
+      {
+        version: 1,
+        jobId: crypto.randomUUID(),
+        snapshotSha256: '1'.repeat(64),
+        manifestSha256: '2'.repeat(64),
+        checksumsSha256: '3'.repeat(64),
+        sourceFingerprint: '4'.repeat(64),
+        sourceRows: 0,
+        indexBytes: 0,
+        files: [
+          { path: 'manifest.json', bytes: 2, sha256: '2'.repeat(64), etag: 'm' },
+          { path: 'checksums.json', bytes: 2, sha256: '3'.repeat(64), etag: 'c' },
+        ],
+      },
+      {},
+      now,
+    )
+    await expect(ensureOrdinaryMigrationAccess(db, false)).rejects.toThrow(
+      'Queued migration target is quarantined',
+    )
+  } finally {
+    await mf.dispose()
+  }
+}, 60000)
 
 it('[e2e #409] routes imports without email credentials, quarantines a newly reserved target, and dead-letters poison', async () => {
   const bundle = await build({

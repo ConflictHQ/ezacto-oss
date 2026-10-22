@@ -531,12 +531,12 @@ export const ensureRuntimeDatabaseReady = async (
 };
 
 /** Empty destinations are rechecked until a normal instance is irreversibly populated. */
-export const ensureOrdinaryMigrationAccess = async (database: D1Database): Promise<void> => {
-  if (ordinaryDatabases.has(database)) return;
+export const ensureOrdinaryMigrationAccess = async (database: D1Database, cachePopulated = true): Promise<void> => {
+  if (cachePopulated && ordinaryDatabases.has(database)) return;
   // Both observations belong to one SQL snapshot: an import cannot win between them.
   const access = await createQueuedMigrationStore(database).access();
   if (access.blocked) throw new Error("Queued migration target is quarantined.");
-  if (access.populated) ordinaryDatabases.add(database);
+  if (cachePopulated && access.populated) ordinaryDatabases.add(database);
 };
 
 export const createR2AttachmentObjectStore = (
@@ -713,7 +713,8 @@ export const createRuntimeServices = async (
       ? undefined
       : parseCursorSigningKey(env.PORTAL_MAGIC_LINK_SIGNING_KEY);
   await ensureRuntimeDatabaseReady(database);
-  await ensureOrdinaryMigrationAccess(binding);
+  // The nightly demo wipe can make a populated database empty again.
+  await ensureOrdinaryMigrationAccess(binding, !demo);
   const drizzle = createD1Database(database);
   const timesheetLockPolicy = createTimesheetLockPolicyRepository(drizzle);
   const trackedResources = new DrizzleTrackedResourceRepository(drizzle, timesheetLockPolicy);
