@@ -456,8 +456,22 @@ export const createWebhookService = (
           retryable = false
         try {
           const subscription = await privateSubscription(row.subscription_id)
-          if (!subscription || !subscription.is_active || subscription.deleted_at !== null)
+          if (!subscription || subscription.deleted_at !== null)
             throw new WebhookError('webhook_subscription_deleted')
+          if (!subscription.is_active) {
+            // A pause after claim is not a failed HTTP attempt. Keep the original work for resume.
+            const pausedAt = clock()
+            await execute([
+              {
+                sql: `UPDATE webhook_deliveries SET status='pending',cycle_attempts=cycle_attempts-1,
+                next_attempt_at=?,lease_token=NULL,lease_expires_at=NULL,updated_at=?
+                WHERE id=? AND status='processing' AND lease_token=? AND lease_expires_at>?`,
+                params: [pausedAt, pausedAt, row.id, token, pausedAt],
+              },
+            ])
+            summary.contention++
+            continue
+          }
           const url = webhookUrl(subscription.url),
             cipher = vault(),
             keys = [

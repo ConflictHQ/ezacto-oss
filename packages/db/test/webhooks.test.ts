@@ -330,4 +330,43 @@ for (const runtime of ['SQLite', 'D1'] as const)
       expect((await f.service.purge()).removed).toBe(1)
       expect(await f.service.delivery(delivery.id)).toBeNull()
     })
+    it('[concurrency #107] retains queued work when pause wins immediately after the claim', async () => {
+      let sends = 0
+      const f = await setup({
+        send: async () => {
+          sends++
+          return { status: 200 }
+        },
+      })
+      const created = await f.service.create(1, {
+        url: 'https://hooks.example.com/pause-race',
+        events,
+      })
+      await f.emit()
+      // Deterministically place the concurrent pause between claim completion and the fresh subscription read.
+      await f.query(`CREATE TRIGGER fixture_pause_after_claim AFTER UPDATE OF status ON webhook_deliveries
+        WHEN NEW.status='processing' BEGIN
+          UPDATE webhook_subscriptions SET is_active=0,version=version+1 WHERE id=NEW.subscription_id;
+        END`)
+      await f.service.processDue()
+      expect(sends).toBe(0)
+      const delivery = (
+        await f.service.pageDeliveries({
+          after: null,
+          createdThrough: '9999-01-01T00:00:00.000Z',
+          take: 10,
+        })
+      )[0]!
+      expect(delivery).toMatchObject({
+        status: 'pending',
+        cycleAttempts: 0,
+        attemptCount: 1,
+        lastErrorCode: null,
+      })
+      await f.query('DROP TRIGGER fixture_pause_after_claim')
+      await f.service.setActive(1, created.subscription.id, true, 1)
+      expect(await f.service.processDue()).toMatchObject({ delivered: 1 })
+      expect(sends).toBe(1)
+      expect((await f.service.delivery(delivery.id))?.eventId).toBe(delivery.eventId)
+    })
   })
