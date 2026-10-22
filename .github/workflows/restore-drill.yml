@@ -1,0 +1,43 @@
+name: restore-drill
+on:
+  schedule:
+    # Read a retained backup after the nightly SQL job, once each month.
+    - cron: '0 6 1 * *'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  # Share the deposit lock: the latest pointer cannot rotate mid-drill.
+  group: backup-sql-prod
+  cancel-in-progress: false
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: prod
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_NAME: ${{ vars.PROD_D1_DATABASE_NAME }}
+      R2_BUCKET: ${{ vars.PROD_R2_BUCKET }}
+      INSTANCE_FQDN: ${{ vars.PROD_HOST }}
+      DRILL_SCRATCH_ROOT: /tmp/ezacto-monthly-restore-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Create a private scratch root
+        run: install -d -m 700 "$DRILL_SCRATCH_ROOT"
+      - run: npm ci
+      - name: Build the shared activity writer
+        run: npm run build -w @ezacto/core -w @ezacto/db
+      - name: Restore the latest retained backup and record its result
+        env:
+          TMPDIR: ${{ env.DRILL_SCRATCH_ROOT }}
+        run: node scripts/monthly-restore-drill.mjs
+      # SQL, credentials and restored rows never become Actions artifacts.
+      - name: Remove all private scratch/download files
+        if: always()
+        run: rm -rf "$DRILL_SCRATCH_ROOT"

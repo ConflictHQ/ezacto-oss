@@ -36,12 +36,17 @@ jobs:
       - uses: ./.github/actions/node-workspace
       - run: npm run typecheck
 
-  # Needs no install: it reads the git index only.
+  # Stdlib guards need no dependency install.
   tracked-symlinks:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: SQL backup and monthly restore safety checks
+        run: node --test scripts/restore-drill.test.mjs scripts/monthly-restore-drill.test.mjs
       - name: no tracked symlink points outside the repo or into node_modules
         run: |
           node --test scripts/check-tracked-symlinks.test.mjs

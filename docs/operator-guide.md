@@ -270,6 +270,33 @@ the same draft. The native API exposes `GET/POST /api/v1/estimate-templates`,
 acting profile. The picker shows at most 1000 templates and states when the
 catalog is truncated.
 
+## Monthly operational SQL restore drill
+
+The `restore-drill` Actions workflow runs at 06:00 UTC on the first of each
+month, or by manual dispatch. It reads the latest complete SQL backup retained
+in the production R2 bucket, checks that it belongs to the configured instance
+and database and is no older than 72 hours, and restores it into private local
+SQLite scratch storage. It checks SHA-256, gzip sizes, SQLite integrity and
+foreign keys, invoice totals/payment balances, completed invoice command
+receipts and every table's recorded row count. It never boots the restored app.
+
+Filter the Activity log by `backup.restore_drilled` to see the pass/fail status,
+failed check, source key/checksum, aggregate counts and scratch-cleanup result.
+The shared outbox delivers that event normally. A persistence failure fails the
+Actions run; a green restore without a durable result is not reported as a
+completed operational drill. Restored rows and SQL are deleted on both success
+and failure and are never uploaded as Actions artifacts.
+
+The nightly `backup-sql` workflow publishes `backups/latest.json` only after
+uploading the complete dump/manifest pair. New manifests include per-table
+counts verified from a scratch restore. Existing older manifests without those
+counts cannot pass the monthly drill: run the updated SQL backup workflow first.
+A scratch-validation failure still retains the dated dump/manifest pair,
+leaves the previous latest pointer unchanged and fails the backup run visibly.
+Both workflows use the existing production Cloudflare credentials and share a
+concurrency lock. This checks the retained R2 SQL copy; encrypted off-site
+recovery and attachment-byte reconciliation remain separate restore checks.
+
 ## Administrator CLI draft edits
 
 Use `ez sudo invoice edit <number>` or
