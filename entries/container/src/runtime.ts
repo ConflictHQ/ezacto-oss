@@ -1,3 +1,5 @@
+import {migrationLoadStatusProjection} from '@ezacto/db/queued-migrations'
+import type {MigrationLoadStatus} from '@ezacto/core'
 import { createInvoiceElevationStore, unlinkElevatedInvoiceTime } from '@ezacto/db'
 import { createEstimateTemplateRepository } from '@ezacto/db'
 import { createScheduledRunDispatchService } from '@ezacto/db'
@@ -284,6 +286,9 @@ export const prepareContainerDatabase = (
   database.pragma('busy_timeout = 5000')
   database.pragma('wal_autocheckpoint = 1000')
   migrateContainer(database)
+  if (database.prepare("SELECT 1 FROM migration_loads WHERE status<>'completed' AND (status<>'cancelled' OR started_at IS NOT NULL) LIMIT 1").get()) {
+    throw new Error('Queued migration target is quarantined; finish or recover the import before serving this database.')
+  }
   if(database.prepare('SELECT 1 FROM account_restore_quarantine WHERE id=1 AND quarantined=1').get())throw new Error('Restored privacy evidence must be reconciled before this instance serves traffic.')
 
   assertPragma(database, 'journal_mode', 'wal')
@@ -888,6 +893,7 @@ export const createContainerRuntime = async (
       team: createTeamRepository(drizzle),
       invoiceElevations: createInvoiceElevationStore(drizzle),
     invoiceTimeUnlink: (command, elevation, now) => unlinkElevatedInvoiceTime(drizzle, command, elevation, now),
+    migrationLoads: {status:async(id:string)=>database.prepare(`SELECT ${migrationLoadStatusProjection} FROM migration_loads WHERE id=?`).get(id) as MigrationLoadStatus|undefined??null},
     estimateTemplates: createEstimateTemplateRepository(drizzle),
     clientRateCards: createClientRateCardRepository(drizzle),
       trackedResources,

@@ -1,3 +1,4 @@
+import { consumeMigrationBatch } from './migration-queue.js'
 import * as Sentry from '@sentry/cloudflare'
 import { scheduleConfirmedRunWorkflows } from './scheduled-run-workflow-scheduler.js'
 import type { QueuedEmailJob } from '@ezacto/mailer'
@@ -122,7 +123,7 @@ const unavailable = (): Response => {
   )
 }
 
-export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
+export const worker: ExportedHandler<WorkerEnv, unknown> = {
   async fetch(request, env, executionContext) {
     // First, before a route is matched or a service is constructed: nothing
     // below this line should ever compose a response for a cleartext request.
@@ -173,6 +174,10 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
     }
   },
   async queue(batch, env) {
+    if(env.MIGRATION_QUEUE_NAME !== undefined && batch.queue === env.MIGRATION_QUEUE_NAME) {
+      await consumeMigrationBatch(batch,env)
+      return
+    }
     const provider = createWorkerMailProvider(env)
     if (provider === null) {
       throw new TypeError('no email provider is configured')
@@ -183,7 +188,7 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
     // The consumer fetches what a job names, immediately before sending. Bytes
     // never rode the queue to get here (issue 626).
     await consumeCloudflareEmailBatch(
-      batch,
+      batch as MessageBatch<QueuedEmailJob>,
       services.emailLog,
       provider,
       env.ATTACHMENTS === undefined

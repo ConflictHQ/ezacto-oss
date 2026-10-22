@@ -29,9 +29,14 @@ const prefix = join(directory, 'global')
 
 // Never inherit a developer's Harvest credentials or npm workspace settings.
 // --live passes the two it needs back in explicitly.
-const environment = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
-  !/^(NODE_OPTIONS|NODE_PATH|EZACTO_.*|HARVEST_.*|npm_config_(workspace|workspaces|prefix))$/i.test(key),
-))
+const environment = Object.fromEntries(
+  Object.entries(process.env).filter(
+    ([key]) =>
+      !/^(NODE_OPTIONS|NODE_PATH|EZACTO_.*|HARVEST_.*|CLOUDFLARE_.*|npm_config_(workspace|workspaces|prefix))$/i.test(
+        key,
+      ),
+  ),
+)
 const liveEnvironment = { ...environment }
 if (live) {
   for (const key of ['HARVEST_PAT', 'HARVEST_ACCOUNT_ID', 'HARVEST_USER_AGENT_EMAIL']) {
@@ -42,7 +47,10 @@ if (live) {
 
 const run = (command, args, { cwd = directory, env = environment, allowFailure = false } = {}) => {
   const result = spawnSync(command, args, {
-    cwd, env, encoding: 'utf8', timeout: live ? 3_600_000 : 180_000,
+    cwd,
+    env,
+    encoding: 'utf8',
+    timeout: live ? 3_600_000 : 180_000,
   })
   if (result.error) throw result.error
   if (!allowFailure && result.status !== 0) {
@@ -52,14 +60,36 @@ const run = (command, args, { cwd = directory, env = environment, allowFailure =
 }
 
 try {
-  const [packed] = JSON.parse(execFileSync('npm', [
-    'pack', '--workspace', '@conflict-hq/ezacto-migrate', '--pack-destination', directory, '--json',
-  ], { cwd: root, env: environment, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], timeout: 180_000 }))
+  const [packed] = JSON.parse(
+    execFileSync(
+      'npm',
+      [
+        'pack',
+        '--workspace',
+        '@conflict-hq/ezacto-migrate',
+        '--pack-destination',
+        directory,
+        '--json',
+      ],
+      {
+        cwd: root,
+        env: environment,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'inherit'],
+        timeout: 180_000,
+      },
+    ),
+  )
   const tarball = join(directory, packed.filename)
 
-  // The release is one self-contained file: the workspace packages are bundled
-  // into it, and nothing else may ride along.
-  assert.deepEqual(packed.files.map((file) => file.path).filter((path) => path !== 'package.json' && !/^README/i.test(path)).sort(), ['dist/cli.js'])
+  // Both entry points are self-contained bundles; no private workspace or source tree rides along.
+  assert.deepEqual(
+    packed.files
+      .map((file) => file.path)
+      .filter((path) => path !== 'package.json' && !/^README/i.test(path))
+      .sort(),
+    ['dist/cli.js', 'dist/queued-loader.js', 'src/queued-loader-api.d.ts'],
+  )
 
   // Never ignore lifecycle scripts: the SQLite native binding is part of the product.
   run('npm', ['install', '--global', '--prefix', prefix, '--no-audit', '--no-fund', tarball])
@@ -69,6 +99,14 @@ try {
   for (const name of Object.keys({ ...manifest.dependencies, ...manifest.optionalDependencies })) {
     assert.ok(!name.startsWith('@ezacto/'), `unpublished runtime dependency: ${name}`)
   }
+  const workerEntry = run(process.execPath, [
+    '--input-type=module',
+    '-e',
+    'const {deliverQueuedLoad}=await import(' +
+      JSON.stringify(new URL('file://' + join(installed, 'dist/queued-loader.js')).href) +
+      '); if(typeof deliverQueuedLoad!=="function")process.exit(1)',
+  ])
+  assert.equal(workerEntry.status, 0)
   const bin = join(prefix, 'bin/ezacto-migrate')
 
   // The bin symlink runs, and prints its command list (usage exits 1 by design).
@@ -79,14 +117,18 @@ try {
   // The npx path: resolve the bin from the tarball in a directory with nothing
   // in it, the way a first-time user would.
   const empty = mkdtempSync(join(directory, 'empty-'))
-  const viaNpx = run('npm', [
-    'exec', '--yes', '--no-audit', '--no-fund', `--package=${tarball}`, '--', 'ezacto-migrate',
-  ], { cwd: empty, allowFailure: true })
+  const viaNpx = run(
+    'npm',
+    ['exec', '--yes', '--no-audit', '--no-fund', `--package=${tarball}`, '--', 'ezacto-migrate'],
+    { cwd: empty, allowFailure: true },
+  )
   assert.equal(viaNpx.status, 1)
   assert.match(viaNpx.stdout, /ezacto-migrate <command>/)
 
   // Without a token the tool says so and stops, instead of reaching for anything.
-  const noToken = run(bin, ['auth', '--snapshot-dir', join(directory, 'none')], { allowFailure: true })
+  const noToken = run(bin, ['auth', '--snapshot-dir', join(directory, 'none')], {
+    allowFailure: true,
+  })
   assert.notEqual(noToken.status, 0)
   assert.match(noToken.stderr, /HARVEST_PAT/)
 
@@ -108,7 +150,11 @@ try {
     const step = (args) => {
       const result = run(bin, args, { env: liveEnvironment, allowFailure: true })
       process.stdout.write(`$ ezacto-migrate ${args[0]}: exit ${result.status}\n`)
-      assert.equal(result.status, 0, `${args[0]} failed:\n${result.stderr.replaceAll(liveEnvironment.HARVEST_PAT, '[token]')}`)
+      assert.equal(
+        result.status,
+        0,
+        `${args[0]} failed:\n${result.stderr.replaceAll(liveEnvironment.HARVEST_PAT, '[token]')}`,
+      )
       return result.stdout
     }
     step(['auth', '--snapshot-dir', snapshot])
@@ -119,7 +165,7 @@ try {
   }
 
   process.stdout.write(
-    `Packed migrate ${manifest.version}: isolated global install, npx path, ledger preflight${live ? ', live Harvest sweep, load and reconcile' : ''} passed.\n`,
+    `Packed migrate ${manifest.version}: isolated global install, portable Worker import, npx path, ledger preflight${live ? ', live Harvest sweep, load and reconcile' : ''} passed.\n`,
   )
 } finally {
   rmSync(directory, { recursive: true, force: true })

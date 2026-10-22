@@ -20,7 +20,7 @@
   // The named App Review instance renders prod separately; see docs/app-review-instance.md.
   // No per-branch preview workers — deploy targets are hosts we own and name.
   // The runtime reads D1 as DB, R2 as ATTACHMENTS, and the mail producer as
-  // EMAIL_QUEUE.
+  // EMAIL_QUEUE; migration jobs use MIGRATION_QUEUE in the same Queues binding type.
   // API_CURSOR_SIGNING_KEY and AWS credentials are Worker secrets. The optional
   // ACCESS_TEAM_DOMAIN/ACCESS_POLICY_AUD pair, SES_REGION, SES_FROM, and the
   // optional SES_CONFIGURATION_SET are deployment vars.
@@ -42,6 +42,7 @@
         "ENVIRONMENT": "prod",
         "RELEASE": "unknown",
         "APP_BASE_URL": "https://replace-me.invalid",
+        "MIGRATION_QUEUE_NAME": "replace-me-email-queue-migration",
         // Deployment brand seam (#72). A prod install carries the operator's
         // name through the shell, the sign-in gateway and outbound mail rather
         // than the product default. Wordmark and favicon stay unset here and no
@@ -73,6 +74,7 @@
             "binding": "EMAIL_QUEUE",
             "queue": "replace-me-email-queue",
           },
+          { "binding": "MIGRATION_QUEUE", "queue": "replace-me-email-queue-migration" },
         ],
         "consumers": [
           {
@@ -82,6 +84,15 @@
             "max_retries": 100,
             "retry_delay": 5,
             "dead_letter_queue": "replace-me-email-queue-dlq",
+            "max_concurrency": 1,
+          },
+          {
+            "queue": "replace-me-email-queue-migration",
+            "max_batch_size": 1,
+            "max_batch_timeout": 1,
+            "max_retries": 5,
+            "retry_delay": 60,
+            "dead_letter_queue": "replace-me-email-queue-migration-dlq",
             "max_concurrency": 1,
           },
         ],
@@ -101,6 +112,7 @@
         "ENVIRONMENT": "dev",
         "RELEASE": "unknown",
         "APP_BASE_URL": "https://ezacto.io",
+        "MIGRATION_QUEUE_NAME": "ezacto-dev-migration",
         // A made-up firm. Nothing on ezacto.io is CONFLICT's -- not a client,
         // not a project, not an hour -- and the tagline and description below
         // are where the demo says so, on every page that carries the brand.
@@ -136,6 +148,7 @@
             "binding": "EMAIL_QUEUE",
             "queue": "ezacto-dev-email",
           },
+          { "binding": "MIGRATION_QUEUE", "queue": "ezacto-dev-migration" },
         ],
         "consumers": [
           {
@@ -145,6 +158,15 @@
             "max_retries": 100,
             "retry_delay": 5,
             "dead_letter_queue": "ezacto-dev-email-dlq",
+            "max_concurrency": 1,
+          },
+          {
+            "queue": "ezacto-dev-migration",
+            "max_batch_size": 1,
+            "max_batch_timeout": 1,
+            "max_retries": 5,
+            "retry_delay": 60,
+            "dead_letter_queue": "ezacto-dev-migration-dlq",
             "max_concurrency": 1,
           },
         ],

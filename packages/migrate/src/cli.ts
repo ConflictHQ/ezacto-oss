@@ -7,6 +7,7 @@ import { loadDevVars, readHarvestEnv } from './env.js'
 import { runAuth } from './auth.js'
 import { runExtract, type ExtractResult } from './extract.js'
 import { runLoad } from './load.js'
+import {queuedMigrationCommands,runQueuedMigrationCommand} from './queued-commands.js'
 import { reconciliationExitCode, runReconcile } from './reconcile.js'
 import { runSync, syncExitCode } from './sync.js'
 import { runVerify } from './verify.js'
@@ -31,6 +32,11 @@ Commands:
   sync     Run an incremental extract, then a complete full-ID delete witness.
   verify   Check snapshot counts/FKs and capture report checksums per currency
   load     Transform a verified snapshot into an ezacto SQLite database
+  queue-upload Upload and verify an allowlisted snapshot into R2; reserve an empty D1 target
+  queue-start Start the reviewed run; processing continues without this CLI process
+  queue-status Read safe aggregate progress through Cloudflare operator credentials
+  queue-retry Resume the same immutable failed run after its cause has been resolved
+  queue-cancel Stop processing; a partially loaded target remains quarantined
   reconcile Compare Harvest checksums, snapshot rows, and the loaded database
   preflight-migrations Assert an exact, checksum-verified deployment migration ledger
   carry-invoices Carry the invoices a live database is missing across from a
@@ -46,6 +52,12 @@ Commands:
 Options:
   --account-id <id>    Harvest account id to use (skips auto-pick/prompt)
   --snapshot-dir <dir> Snapshot directory to write manifest.json into (default: ./snapshot)
+  --target-d1 <uuid>   Queued commands: target D1 database UUID
+  --confirm-target-d1 <uuid> Repeat the target for queue-start/retry/cancel
+  --bucket <name>      Queued commands: target ATTACHMENTS bucket
+  --queue-id <id>      Queued commands: deployed MIGRATION_QUEUE id
+  --run-id <uuid>      Queued run identity (queue-upload generates one if omitted)
+                       Credentials: CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN env only
   --database <path>    SQLite database path for load/reconcile (required)
   --input <path>       Completed worksheet JSON, or wrangler query JSON for preflight-migrations
   --organization-currency <code>  ISO currency when Company/client data is ambiguous
@@ -137,6 +149,7 @@ const main = async (): Promise<number> => {
     allowPositionals: true,
     options: {
       'account-id': { type: 'string' },
+      'target-d1':{type:'string'},'confirm-target-d1':{type:'string'},'bucket':{type:'string'},'queue-id':{type:'string'},'run-id':{type:'string'},
       'snapshot-dir': { type: 'string' },
       'request-timeout': { type: 'string' },
       database: { type: 'string' },
@@ -156,6 +169,7 @@ const main = async (): Promise<number> => {
     },
   })
   const command = positionals[0]
+  if(queuedMigrationCommands.some(value=>value===command)) return runQueuedMigrationCommand(command!,values)
 
   if (
     command !== 'auth' &&

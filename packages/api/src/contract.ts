@@ -2905,6 +2905,22 @@ const clientTreeOperations: ApiContractOperation[] = [
 ];
 
 
+const migrationLoadOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/migration-loads/:id",
+    operationId: "getMigrationLoadStatus",
+    summary: "Read migration progress (administrator session)",
+    description:
+      "Reports safe aggregate progress and an error code. During import quarantine the operator uses Cloudflare CLI status; ordinary application traffic remains unavailable.",
+    tag: "migration",
+    responseStatus: 200,
+    responseSchema: "MigrationLoadStatusEnvelope",
+    sessionOnly: true,
+    parameters: [stringPath("id")],
+  },
+];
+
 const estimateTemplateOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -3747,6 +3763,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...clientTreeOperations,
   ...clientRateCardOperations,
   ...estimateTemplateOperations,
+  ...migrationLoadOperations,
   ...invoiceElevationOperations,
 ];
 
@@ -7376,6 +7393,53 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  MigrationLoadStatus: {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "id",
+      "status",
+      "snapshot_sha256",
+      "source_rows",
+      "resource",
+      "rows_done",
+      "sequence",
+      "attempts",
+      "error_code",
+      "created_at",
+      "started_at",
+      "completed_at",
+      "source_cleaned_at",
+      "updated_at",
+    ],
+    properties: {
+      id: { type: "string", format: "uuid" },
+      status: {
+        type: "string",
+        enum: [
+          "ready",
+          "queued",
+          "running",
+          "completed",
+          "failed",
+          "cancelled",
+        ],
+      },
+      snapshot_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      source_rows: { type: "integer", minimum: 0 },
+      resource: nullable(stringSchema),
+      rows_done: { type: "integer", minimum: 0 },
+      sequence: { type: "integer", minimum: 0 },
+      attempts: { type: "integer", minimum: 0 },
+      error_code: nullable(stringSchema),
+      created_at: timestampSchema,
+      started_at: nullable(timestampSchema),
+      completed_at: nullable(timestampSchema),
+      source_cleaned_at: nullable(timestampSchema),
+      updated_at: timestampSchema,
+    },
+  },
+  MigrationLoadStatusEnvelope: envelope("MigrationLoadStatus"),
   EstimateTemplateEnvelope: envelope("EstimateTemplate"),
   EstimateTemplateListEnvelope: {
     type: "object",

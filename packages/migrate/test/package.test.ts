@@ -7,9 +7,10 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-const repo = (path: string): string =>
-  fileURLToPath(new URL(`../../../${path}`, import.meta.url))
-const manifest = (path: string): Record<string, unknown> & {
+const repo = (path: string): string => fileURLToPath(new URL(`../../../${path}`, import.meta.url))
+const manifest = (
+  path: string,
+): Record<string, unknown> & {
   version: string
   dependencies: Record<string, string>
 } => JSON.parse(readFileSync(repo(path), 'utf8'))
@@ -29,8 +30,18 @@ describe('@conflict-hq/ezacto-migrate release manifest', () => {
     })
   })
 
-  it('[unit] ships only the bundle and depends on nothing unpublished', () => {
-    expect(migrate['files']).toEqual(['dist/cli.js'])
+  it('[unit] ships standalone CLI/Worker bundles and depends on nothing unpublished', () => {
+    expect(migrate['files']).toEqual([
+      'dist/cli.js',
+      'dist/queued-loader.js',
+      'src/queued-loader-api.d.ts',
+    ])
+    expect(migrate['exports']).toEqual({
+      './queued-loader': {
+        types: './src/queued-loader-api.d.ts',
+        default: './dist/queued-loader.js',
+      },
+    })
     // @ezacto/* are never published; they are bundled into dist/cli.js.
     const unpublished = Object.keys(migrate.dependencies).filter((name) =>
       name.startsWith('@ezacto/'),
