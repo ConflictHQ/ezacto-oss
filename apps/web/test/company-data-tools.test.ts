@@ -119,22 +119,26 @@ it('does not fetch company capabilities or export for a non-administrator', asyn
   )
   expect(download).not.toHaveBeenCalled()
 })
-it('a download finishing after sign-out cannot create a file for the next session', async () => {
-  let finish!: (file: { blob: Blob; filename: string }) => void
-  const pending = new Promise<{ blob: Blob; filename: string }>((resolve) => {
-    finish = resolve
-  })
-  const download = vi.fn(async () => pending),
-    tools = createCompanyDataTools({ downloadDetailedTimeReport: download }, async () => flags)
-  const previous = active()
-  await tools.loadExports(previous)
-  by<HTMLButtonElement>('[data-settings-data-download="time-csv"]').click()
-  expect(download).toHaveBeenCalledOnce()
-  previous.owner.abort()
-  await tools.loadExports(active('member'))
-  finish({ blob: new Blob(['private result']), filename: 'private-result.csv' })
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  expect(urls).not.toHaveBeenCalled()
-  expect(by('[data-settings-data-result]').textContent).toBe('')
-  expect(by('[data-settings-data-content]').hidden).toBe(true)
-})
+it.each(['abort', 'replace'])(
+  'a download finishing after sign-out cannot create a file for the next session (%s)',
+  async (mode) => {
+    let finish!: (file: { blob: Blob; filename: string }) => void
+    const pending = new Promise<{ blob: Blob; filename: string }>((resolve) => {
+      finish = resolve
+    })
+    const download = vi.fn(async () => pending),
+      tools = createCompanyDataTools({ downloadDetailedTimeReport: download }, async () => flags)
+    const previous = active()
+    await tools.loadExports(previous)
+    by<HTMLButtonElement>('[data-settings-data-download="time-csv"]').click()
+    expect(download).toHaveBeenCalledOnce()
+    if (mode === 'abort') previous.owner.abort()
+    else tools.clear()
+    await tools.loadExports(active('member'))
+    finish({ blob: new Blob(['private result']), filename: 'private-result.csv' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(urls).not.toHaveBeenCalled()
+    expect(by('[data-settings-data-result]').textContent).toBe('')
+    expect(by('[data-settings-data-content]').hidden).toBe(true)
+  },
+)

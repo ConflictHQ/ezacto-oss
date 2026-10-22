@@ -1284,6 +1284,7 @@ export const createModuleSettingsController = (
     timeFacts.replaceChildren()
     noteForm.hidden = true
     timeRounding.clear()
+    dataTools.clear()
     // The result line sits outside the form, so hiding the form leaves the
     // previous session's "Saved." or its 403 on screen under the next
     // person's notice.

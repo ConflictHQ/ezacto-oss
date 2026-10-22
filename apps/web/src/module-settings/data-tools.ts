@@ -187,6 +187,7 @@ export const createCompanyDataTools = (
           active.signal,
         )
       }
+      if (session !== active || active.signal.aborted) return
       active.present(() => {
         const href = URL.createObjectURL(file.blob),
           link = document.createElement('a')
@@ -229,6 +230,7 @@ export const createCompanyDataTools = (
         api.getTimesheetLockPolicy?.(active.signal),
       ])
       const zone = policy?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
+      if (session !== active || active.signal.aborted) return
       const today = dateInTimeZone(new Date().toISOString(), zone)
       active.present(() => {
         expenses = flags.some((flag) => flag.module === 'expenses' && flag.enabled)
@@ -254,6 +256,7 @@ export const createCompanyDataTools = (
       list.hidden = true
       bulkStatus.textContent = 'Loading available actions…'
       const flags = await modules(active.signal)
+      if (session !== active || active.signal.aborted) return
       active.present(() => {
         list.replaceChildren(
           ...companyBulkActions.map((action) => {
