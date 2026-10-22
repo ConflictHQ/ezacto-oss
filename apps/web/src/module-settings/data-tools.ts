@@ -76,7 +76,7 @@ export const renderCompanyDataTools = () => `
   <h3>CSV time imports</h3>
   <p>Run a dry run from the operator checkout before applying a file. CSV import covers people, clients, projects, tasks and time; it does not import invoices, payments, expenses or credentials.</p>
   <pre class="settings-data-command"><code>npm ci
-npm run build -w @conflict-hq/ezacto-migrate
+npm run build -w ./packages/migrate
 node packages/migrate/dist/cli.js import-csv --database /data/db.sqlite --file time.csv --dry-run</code></pre>
   <p><a href="https://ezacto.dev/docs/csv-import/" target="_blank" rel="noopener">CSV format and import guide</a></p>
   <h3>Move from Harvest</h3>
