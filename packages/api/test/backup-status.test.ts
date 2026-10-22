@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   createApiApp,
   installBackupStatusRoutes,
@@ -80,7 +80,12 @@ const readerOver = (runs: BackupStatusRecord[]): BackupStatusReader => {
   return {
     latestRuns: async () => runs,
     runsSnapshot: async () =>
-      runs.length === 0 ? null : runs.map((run) => run.started_at).sort().at(-1)!,
+      runs.length === 0
+        ? null
+        : runs
+            .map((run) => run.started_at)
+            .sort()
+            .at(-1)!,
     pageRuns: async (window) =>
       matching(window)
         .filter((run) => run.started_at <= window.startedThrough)
@@ -90,7 +95,9 @@ const readerOver = (runs: BackupStatusRecord[]): BackupStatusReader => {
             run.started_at < window.after.startedAt ||
             (run.started_at === window.after.startedAt && run.id < window.after.id),
         )
-        .sort((a, b) => (a.started_at === b.started_at ? b.id - a.id : a.started_at < b.started_at ? 1 : -1))
+        .sort((a, b) =>
+          a.started_at === b.started_at ? b.id - a.id : a.started_at < b.started_at ? 1 : -1,
+        )
         .slice(0, window.take),
     countRuns: async (filter) => matching(filter).length,
   }
@@ -175,17 +182,17 @@ describe('backup status API', () => {
   })
 
   it('[api] pages the run history newest first, with a total, and walks it by cursor', async () => {
-    const runs = [1, 2, 3, 4, 5].map(
-      (id): BackupStatusRecord => ({
-        ...completedRun,
-        id,
-        trigger: id % 2 === 0 ? 'manual' : 'nightly',
-        started_at: `2026-09-0${String(id)}T03:00:00.000Z`,
-      }),
-    )
+    const runs = [1, 2, 3, 4, 5].map((id): BackupStatusRecord => ({
+      ...completedRun,
+      id,
+      trigger: id % 2 === 0 ? 'manual' : 'nightly',
+      started_at: `2026-09-0${String(id)}T03:00:00.000Z`,
+    }))
     const app = createApp(runs)
     const get = async (path: string) =>
-      (await app.request(path, { headers: { 'x-test-profile': 'administrator' } })).json() as Promise<{
+      (
+        await app.request(path, { headers: { 'x-test-profile': 'administrator' } })
+      ).json() as Promise<{
         data: { id: number }[]
         links: { next: string | null }
         page: { per_page: number; next_cursor: string | null; total: number }
@@ -222,5 +229,107 @@ describe('backup status API', () => {
       (await app.request('/api/v1/backup/runs', { headers: { 'x-test-profile': 'accounting' } }))
         .status,
     ).toBe(403)
+  })
+})
+
+it('[offsite #38] separates L1 from L2 status and requires an administrator session for a real preflight', async () => {
+  const check = vi.fn(async () => ({
+    verified: true as const,
+    checked_at: '2026-10-01T09:00:00.000Z',
+  }))
+  const app = createApiApp({
+    authentication,
+    installApi(api) {
+      installBackupStatusRoutes(
+        api,
+        {
+          ...readerOver([completedRun]),
+          checkOffsite: check,
+          offsiteStatus: async () => ({
+            configured: true,
+            state: 'failed',
+            destination: 's3.example.test/backup',
+            last_completed: null,
+            latest: null,
+            error: { code: 'E14', message: 'Check bucket permissions.' },
+          }),
+        },
+        { cursorSigningKey },
+      )
+    },
+  })
+  const status = await app.request('/api/v1/backup/status', {
+    headers: { origin: 'http://localhost', 'x-test-profile': 'administrator' },
+  })
+  expect(await status.json()).toMatchObject({
+    data: { last_completed: { id: 1 }, offsite: { state: 'failed', error: { code: 'E14' } } },
+  })
+  expect(check).not.toHaveBeenCalled()
+  for (const profile of profiles.filter((value) => value !== 'administrator')) {
+    expect(
+      (
+        await app.request('/api/v1/backup/offsite/check', {
+          method: 'POST',
+          headers: { origin: 'http://localhost', 'x-test-profile': profile },
+        })
+      ).status,
+    ).toBe(403)
+  }
+  expect(
+    (
+      await app.request('/api/v1/backup/offsite/check', {
+        method: 'POST',
+        headers: { origin: 'http://localhost', authorization: 'Bearer unelevated-token' },
+      })
+    ).status,
+  ).toBe(401)
+  expect(check).not.toHaveBeenCalled()
+  expect(
+    (
+      await app.request('/api/v1/backup/offsite/check', {
+        method: 'POST',
+        headers: {
+          origin: 'http://localhost',
+          'x-test-profile': 'administrator',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ access_key: 'never-accept-credentials' }),
+      })
+    ).status,
+  ).toBe(422)
+  expect(check).not.toHaveBeenCalled()
+  const verified = await app.request('/api/v1/backup/offsite/check', {
+    method: 'POST',
+    headers: { origin: 'http://localhost', 'x-test-profile': 'administrator' },
+  })
+  expect(verified.status).toBe(200)
+  expect(await verified.json()).toMatchObject({ data: { verified: true } })
+  expect(check).toHaveBeenCalledOnce()
+})
+it('[offsite #38] returns actionable E14 destination failures', async () => {
+  const app = createApiApp({
+    authentication,
+    installApi(api) {
+      installBackupStatusRoutes(
+        api,
+        {
+          ...readerOver([]),
+          checkOffsite: async () => {
+            throw Object.assign(new Error('Check backup bucket read/write permissions.'), {
+              code: 'E14',
+            })
+          },
+        },
+        { cursorSigningKey },
+      )
+    },
+  })
+  const response = await app.request('/api/v1/backup/offsite/check', {
+    method: 'POST',
+    headers: { origin: 'http://localhost', 'x-test-profile': 'administrator' },
+  })
+  expect(response.status).toBe(503)
+  expect(await response.json()).toMatchObject({
+    error: { code: 'offsite_backup_unavailable', message: 'E14: Check backup bucket read/write permissions.' },
   })
 })

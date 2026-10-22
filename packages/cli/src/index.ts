@@ -1,3 +1,4 @@
+export * from './backup-decrypt.js'
 export * from './backup.js'
 export * from './config.js'
 export * from './money.js'

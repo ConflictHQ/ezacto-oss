@@ -12,6 +12,11 @@
       "types": "./src/index.ts",
       "development": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./backup-s3": {
+      "types": "./src/backup-s3.ts",
+      "development": "./src/backup-s3.ts",
+      "default": "./dist/backup-s3.js"
     }
   },
   "engines": {
@@ -34,6 +39,7 @@
     "vitest": "^4.1.11"
   },
   "dependencies": {
-    "@ezacto/core": "0.0.0"
+    "@ezacto/core": "0.0.0",
+    "aws4fetch": "^1.0.20"
   }
 }

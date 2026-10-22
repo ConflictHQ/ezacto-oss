@@ -1,3 +1,4 @@
+export { createOffsiteBackupSyncService, type OffsiteBackupSettings } from './offsite-backups.js'
 export { createScheduledJobsService, proposeDueScheduledJobs } from './scheduled-jobs.js'
 export * from './adapters.js'
 export * from './backup.js'

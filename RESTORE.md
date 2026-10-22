@@ -10,7 +10,7 @@ incident.
 | D1 Time Travel              | Cloudflare-native, in-place undo | D1 database only; not R2 attachments               |
 | Container logical bundle    | available (`ez backup`)          | database copy, one CSV per table, attachments      |
 | Worker nightly CSV bundle   | written to R2; no restore command | one CSV per table, no schema, no attachment bytes |
-| Off-platform S3 copy        | container bundles only (`--sync-to`) | a copy of a container bundle in your own bucket |
+| Off-platform S3 copy        | scheduled encrypted Worker logical bundles; container bundles via `--sync-to` | copies in an operator-owned S3-compatible bucket |
 
 ## Container physical snapshots
 
@@ -214,9 +214,83 @@ Limits, stated plainly:
   There is no multipart upload.
 - Only AWS S3 and MinIO-style servers are exercised. Other S3-compatible vendors
   differ on checksum headers; a failure names the service's error code.
-- The Worker nightly bundle is not synced by this command. The scheduled Worker
-  sync, off-site status in `backup/status`, and a destination preflight are not
-  built yet (#38).
+- The container command does not read Worker bundles. Worker logical copies use
+  the encrypted scheduled path below; the two bundle formats remain distinct.
+
+## Scheduled encrypted Worker copies (L2)
+
+The minute cron copies completed L1 logical bundles from R2 into a separate,
+operator-owned S3-compatible bucket. Configure these **GitHub deployment environment
+secrets** (`dev` or `prod`); the deployment renderer retains them during `secret
+bulk`. A secret set only on the Worker is removed by the next managed deployment.
+
+| Secret | Value |
+| --- | --- |
+| `EZACTO_BACKUP_S3_BUCKET` | Existing private bucket |
+| `EZACTO_BACKUP_S3_ACCESS_KEY_ID` / `EZACTO_BACKUP_S3_SECRET_ACCESS_KEY` | Dedicated backup credential; separate from mail credentials |
+| `EZACTO_BACKUP_ENCRYPTION_KEY` | Random 32-byte key encoded as base64url; retain it outside the instance |
+| `EZACTO_BACKUP_S3_ENDPOINT` | Optional HTTPS S3-compatible endpoint; default AWS regional endpoint |
+| `EZACTO_BACKUP_S3_REGION` | Optional; defaults to `us-east-1` |
+| `EZACTO_BACKUP_S3_PREFIX` | Optional relative prefix; defaults to `<APP_BASE_URL hostname>/backups` |
+| `EZACTO_BACKUP_S3_SESSION_TOKEN` | Optional temporary-credential session token |
+
+Generate the encryption key locally with
+`node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))"`
+and save it in your secret manager and the deployment environment. The key and S3
+credentials are never stored in the database or the source backup. Partial
+configuration produces a visible E14 error; no configuration leaves L2 disabled.
+Production endpoints require HTTPS. Native tests may use HTTP on loopback only.
+
+Grant scoped `s3:ListBucket`, `s3:GetObject` and `s3:PutObject`; deletion is not
+required. Check any additional KMS permissions if the bucket uses SSE-KMS.
+Versioning, Object Lock, public-access blocking and bucket encryption guidance
+below still apply. The implementation supports ordinary AWS S3 and MinIO-style
+path addressing, rather than S3 Express directory buckets.
+
+Each object is encrypted with AES-256-GCM before upload. Its random nonce, source
+checksum and object identity are frozen before the first attempt; retries reuse
+the same ciphertext. Headers expose the format, relative filename, key fingerprint,
+nonce and plaintext checksum, but not the row contents or encryption key. Uploaded
+bytes are verified using the service checksum or a bounded read-back. Conditional
+PUTs refuse to overwrite a conflicting object. Requests include the SHA-256
+checksum and algorithm headers required by [S3 Object Lock uploads](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html). `manifest.json.ezenc` is committed
+last, so its absence identifies an incomplete copy.
+
+The scheduler handles at most ten objects per pass with a 20-second scheduling
+budget. A 2-minute ownership lease permits recovery after a killed process; a
+failed pass retries from its receipts after five minutes. Missing or changed L1
+objects fail visibly. Tables over 16 MiB require an operator export: this path has
+no multipart upload. Source bundles remain available in R2.
+
+Settings → Company → Backups separates the last L1 export from the last completed
+L2 copy, shows progress and E14 failures, and offers **Check off-site destination**.
+That administrator-only, authenticated POST writes and verifies an encrypted probe
+under `runs/checks/`; a successful check is not a backup. The API exposes the same
+facts at `GET /api/v1/backup/status` and the preflight at
+`POST /api/v1/backup/offsite/check`. Expected failures use machine code
+`offsite_backup_unavailable` and an E14 message. GET never performs a sync or check.
+
+Copy paths are `<prefix>/runs/<sync UUID>/...`. To inspect a recovered copy,
+download **one run directory**, preserving its relative paths, then run:
+
+```sh
+# Load the original key from your secret manager into the environment.
+export EZACTO_BACKUP_ENCRYPTION_KEY=...
+ez backup-decrypt /secure/downloaded-run --output /secure/new-plaintext-directory
+```
+
+The command needs no account credential. It authenticates every object, verifies
+all CSVs against the decrypted manifest, rejects symlinks/unexpected paths, and
+writes a new private directory. Wrong keys or damaged input remove its partial
+plaintext output; an existing output directory is refused. Retain old keys when
+rotating: a new key/destination produces new copy identities, and cannot decrypt
+previous copies.
+
+**Recovery limit:** these are the Worker's existing logical rows and recovery
+instructions. They do not include attachment bytes or provide an automatic D1
+restore. Keep the physical/SQL recovery paths and attachment copies described
+above. Container operators can schedule `ez backup --sync-to` with their own cron;
+that command still has the separate format and encryption limits stated above.
 
 ### Make the bucket hard to destroy
 

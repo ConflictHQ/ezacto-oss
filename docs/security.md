@@ -295,6 +295,18 @@ Namespaced by instance, so one bucket can hold several and a restore never has
 to guess which book it is holding. Foldered by month, so a listing reads as a
 calendar rather than a heap.
 
+### Portable scheduled logical copies
+
+The product L2 path encrypts each Worker logical-backup object with AES-256-GCM
+before sending it to an operator-owned S3-compatible bucket. A dedicated 32-byte
+key stays in deployment secrets and the operator's secret manager; only its
+fingerprint, random per-object nonce, frozen source hash and upload receipt enter
+the database. Immutable identities prevent retries from changing plaintext under
+an existing nonce. The encrypted manifest is published last. RESTORE.md documents
+the format, offline decryption, permissions, rotation, size limits and the
+remaining attachment/restore boundary. Container CLI copies retain their documented
+separate encryption limitations.
+
 ### Encryption
 
 Every copy that leaves Cloudflare is encrypted; the R2 copy is not.

@@ -1,3 +1,4 @@
+export { createOffsiteBackupSyncService, type OffsiteBackupSettings } from './offsite-backups.js'
 export { createScheduledJobsService, proposeDueScheduledJobs } from './scheduled-jobs.js'
 import { drizzle } from 'drizzle-orm/d1'
 import * as schema from './schema.js'

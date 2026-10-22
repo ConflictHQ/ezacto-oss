@@ -1,3 +1,5 @@
+export * from './offsite-backups.js'
+export * from './backup-encryption.js'
 export * from './scheduled-jobs.js'
 export * from './email-suppressions.js'
 export * from './allocation.js'

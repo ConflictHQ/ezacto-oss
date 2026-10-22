@@ -2053,7 +2053,48 @@ export const createModuleSettingsController = (
   }
   backupDownloadMint.addEventListener('click', () => void mintBackupDownload())
 
+  const offsiteCheckRow = required<HTMLElement>('[data-backup-offsite-check-row]')
+  const offsiteCheck = required<HTMLButtonElement>('[data-backup-offsite-check]')
+  const offsiteCheckResult = required<HTMLElement>('[data-backup-offsite-check-result]')
+  let offsiteSession: ActiveSession | null = null
+  offsiteCheck.addEventListener('click', () => {
+    const active = offsiteSession
+    if (!active || !api.checkOffsiteBackupDestination) return
+    offsiteCheck.disabled = true
+    offsiteCheckResult.textContent = 'Verifying an encrypted test object…'
+    void api
+      .checkOffsiteBackupDestination(active.signal)
+      .then((result) => {
+        active.present(() => {
+          offsiteCheckResult.textContent = `Destination verified at ${new Date(result.checked_at).toLocaleString()}. This check did not create a backup.`
+        })
+      })
+      .catch((error) => {
+        active.presentFailure(error, () => {
+          const detail =
+            error instanceof EzactoApiError && typeof error.body === 'object' && error.body !== null
+              ? Reflect.get(error.body, 'error')
+              : null
+          const message =
+            typeof detail === 'object' && detail !== null ? Reflect.get(detail, 'message') : null
+          offsiteCheckResult.textContent =
+            backupDownloadErrorCode(error) === 'offsite_backup_unavailable' &&
+            typeof message === 'string'
+              ? message
+              : 'E14: The off-site destination could not be verified. Check its configuration and bucket permissions.'
+        })
+      })
+      .finally(() => {
+        active.present(() => {
+          offsiteCheck.disabled = false
+        })
+      })
+  })
+
   const loadBackups = async (identity: Whoami, active: ActiveSession): Promise<void> => {
+    offsiteSession = null
+    offsiteCheckRow.hidden = true
+    offsiteCheckResult.textContent = ''
     if (identity.profile !== 'administrator') {
       backupStatus.textContent = 'Backups are visible to administrators only.'
       return
@@ -2061,25 +2102,63 @@ export const createModuleSettingsController = (
     if (api.getBackupStatus === undefined) {
       // The container composes no reader: its backups are the operator's
       // filesystem, and RESTORE.md is the contract there rather than this page.
-      backupStatus.textContent =
-        'This deployment does not manage its own backups. See RESTORE.md.'
+      backupStatus.textContent = 'This deployment does not manage its own backups. See RESTORE.md.'
       return
     }
     try {
       const status = await api.getBackupStatus(active.signal)
+      if (active.signal.aborted) return
+      offsiteSession = active
+      active.signal.addEventListener(
+        'abort',
+        () => {
+          if (offsiteSession === active) {
+            offsiteSession = null
+            offsiteCheckRow.hidden = true
+            offsiteCheckResult.textContent = ''
+          }
+        },
+        { once: true },
+      )
       active.present(() => {
         const now = Date.now()
         facts(backupFacts, [
           [
-            'Last completed',
+            'Last completed (L1)',
             status.last_completed === null
               ? 'Never'
               : `${sinceLabel(status.last_completed.completed_at ?? status.last_completed.started_at, now)} · ${(status.last_completed.total_rows ?? 0).toLocaleString('en-US')} rows`,
           ],
+          ['Destination', status.last_completed?.r2_prefix ?? '—'],
           [
-            'Destination',
-            status.last_completed?.r2_prefix ?? '—',
+            'Last off-site copy (L2)',
+            status.offsite?.last_completed
+              ? sinceLabel(
+                  status.offsite.last_completed.completed_at ??
+                    status.offsite.last_completed.started_at,
+                  now,
+                )
+              : status.offsite === undefined
+                ? 'Not reported by this deployment'
+                : 'Never',
           ],
+          [
+            'Off-site state',
+            status.offsite === undefined
+              ? 'See RESTORE.md'
+              : status.offsite.state === 'disabled'
+                ? 'Not configured'
+                : status.offsite.state === 'misconfigured'
+                  ? 'Configuration needs attention'
+                  : status.offsite.state === 'waiting'
+                    ? 'Waiting for a scheduled copy'
+                    : status.offsite.state === 'running'
+                      ? `Copy in progress · ${status.offsite.latest?.uploaded_objects ?? 0}/${status.offsite.latest?.total_objects ?? 0} objects`
+                      : status.offsite.state === 'failed'
+                        ? 'Copy failed'
+                        : 'Verified encrypted copy completed',
+          ],
+          ['Off-site destination', status.offsite?.destination ?? '—'],
           // Without a paged history the status is all there is to count; with
           // one, the pager under the table says how many runs there are.
           ...(api.listBackupRuns === undefined
@@ -2100,7 +2179,12 @@ export const createModuleSettingsController = (
           backupAlarm.textContent =
             'No backup has ever completed, so there is nothing to restore from.'
         }
-        backupStatus.textContent = ''
+        backupStatus.textContent = status.offsite?.error
+          ? `${status.offsite.error.code}: ${status.offsite.error.message}`
+          : ''
+        offsiteCheckRow.hidden =
+          !status.offsite?.configured || api.checkOffsiteBackupDestination === undefined
+        offsiteCheck.disabled = false
         if (api.createBackupDownloadLink !== undefined) {
           backupDownload.hidden = false
           const none = status.last_completed === null
@@ -2128,6 +2212,11 @@ export const createModuleSettingsController = (
       }
     } catch (error) {
       active.presentFailure(error, () => {
+        if (error instanceof EzactoApiError && error.status === 404) {
+          backupStatus.textContent =
+            'This deployment uses operator-managed backups. See RESTORE.md for scheduling and recovery.'
+          return
+        }
         sectionFailed(
           'backup',
           backupStatus,

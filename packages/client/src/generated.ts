@@ -1259,12 +1259,43 @@ export type BackupDownloadLinkEnvelope = {
 };
 };
 
+export type OffsiteBackupRun = {
+  "id": string;
+  "backup_run_id": number;
+  "status": "pending" | "running" | "completed" | "failed";
+  "started_at": string;
+  "completed_at": string | null;
+  "uploaded_objects": number;
+  "total_objects": number;
+  "error_message": string | null;
+};
+
+export type OffsiteBackupStatus = {
+  "configured": boolean;
+  "state": "disabled" | "misconfigured" | "waiting" | "running" | "completed" | "failed";
+  "destination": string | null;
+  "last_completed": OffsiteBackupRun | null;
+  "latest": OffsiteBackupRun | null;
+  "error": {
+  "code": "E14";
+  "message": string;
+} | null;
+};
+
+export type OffsiteBackupCheckEnvelope = {
+  "data": {
+  "verified": true;
+  "checked_at": string;
+};
+};
+
 export type BackupStatusEnvelope = {
   "data": {
   "last_completed": BackupRun | null;
   "last_failed": BackupRun | null;
   "recent_runs": Array<BackupRun>;
   "has_failure": boolean;
+  "offsite"?: OffsiteBackupStatus;
 };
   "links": Links;
 };
@@ -8215,6 +8246,15 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<AccountDeletionDetailEnvelope>("POST", "/api/v1/admin/deletion-requests/:id/notification".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async checkOffsiteBackupDestination(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<OffsiteBackupCheckEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OffsiteBackupCheckEnvelope>("POST", "/api/v1/backup/offsite/check", {
       signal: args.signal,
       headers,
     });

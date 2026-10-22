@@ -213,3 +213,14 @@ rendered and sent by the dispatcher. Pause their old job and create a replacemen
 job with the reviewed scope, then review and confirm its newly captured proposal;
 cancel an older unconfirmed proposal. A legacy confirmation with no captured PDF
 remains a named failed item rather than an invented delivery.
+
+### Off-site backup visibility
+
+Company → Backups labels L1 (the R2 logical export) and L2 (the verified encrypted
+S3-compatible copy) separately. A successful L1 does not imply an L2 copy exists.
+Progress, the last completed copy and actionable E14 failures come from durable
+receipts. **Check off-site destination** verifies an encrypted probe with the
+configured credentials; it does not create a backup. Configure the dedicated
+deployment secrets and retain the encryption key as described in RESTORE.md.
+Worker logical copies exclude attachment bytes and do not replace physical/SQL
+recovery. Self-hosted container operators schedule the existing CLI bundle copy.

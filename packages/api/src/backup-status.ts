@@ -1,3 +1,5 @@
+import { readObjectBody } from './resources/support.js'
+import type { OffsiteBackupStatus } from '@ezacto/core'
 import type { Hono } from 'hono'
 import { requireSessionPrincipal } from './auth.js'
 import type { ApiContext } from './context.js'
@@ -30,6 +32,8 @@ export interface BackupRunPageWindow extends BackupRunFilter {
 }
 
 export interface BackupStatusReader {
+  offsiteStatus?(): Promise<OffsiteBackupStatus>
+  checkOffsite?(): Promise<{ verified: true; checked_at: string }>
   latestRuns(limit: number): Promise<BackupStatusRecord[]>
   /** The latest start in the whole history, or null when nothing has run. */
   runsSnapshot(): Promise<string | null>
@@ -73,6 +77,46 @@ export const installBackupStatusRoutes = <Bindings extends object>(
   reader: BackupStatusReader,
   options: BackupStatusRouteOptions,
 ): void => {
+  api.post('/backup/offsite/check', async (context) => {
+    requireAdministratorSession(context)
+    const unavailable = (message: string) =>
+      context.json(
+        {
+          error: { code: 'offsite_backup_unavailable', message: 'E14: ' + message, fields: [] },
+          request_id: context.get('requestId'),
+        },
+        503,
+        { 'cache-control': 'no-store' },
+      )
+    if (reader.checkOffsite === undefined)
+      return unavailable(
+        'This deployment does not manage an off-site backup destination. See RESTORE.md.',
+      )
+    const body = await readObjectBody(context, { allowEmptyObject: true, maxBytes: 1024 })
+    if (Object.keys(body).length)
+      throw new ApiError({
+        status: 422,
+        code: 'validation_failed',
+        message: 'The destination comes from deployment secrets; this endpoint accepts no fields.',
+        fields: Object.keys(body).map((field) => ({
+          field: 'body.' + field,
+          code: 'unknown_field',
+          message: 'This endpoint accepts no fields.',
+        })),
+      })
+    try {
+      return context.json({ data: await reader.checkOffsite() }, 200, {
+        'cache-control': 'no-store',
+      })
+    } catch (error) {
+      // Adapter E14 messages are deliberately sanitized; arbitrary failures
+      // still use the application's generic internal-error response.
+      if (error instanceof Error && 'code' in error && error.code === 'E14')
+        return unavailable(error.message)
+      throw error
+    }
+  })
+
   api.get('/backup/status', async (context) => {
     requireAdministratorSession(context)
     const runs = await reader.latestRuns(20)
@@ -85,6 +129,7 @@ export const installBackupStatusRoutes = <Bindings extends object>(
           last_failed: lastFailed === null ? null : serializeRun(lastFailed),
           recent_runs: runs.map(serializeRun),
           has_failure: lastFailed !== null,
+          ...(reader.offsiteStatus === undefined ? {} : { offsite: await reader.offsiteStatus() }),
         },
         links: { self: '/api/v1/backup/status' },
       },

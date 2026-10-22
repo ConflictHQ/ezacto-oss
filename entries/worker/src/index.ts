@@ -236,6 +236,13 @@ export const worker: ExportedHandler<WorkerEnv, QueuedEmailJob> = {
         Sentry.captureException(error)
       }
     }
+    if (controller.cron === '* * * * *' && services.offsiteBackupSync !== undefined) {
+      try { await services.offsiteBackupSync.processDue() }
+      catch (error) {
+        console.error('[worker] off-site backup checkpoint failed', error)
+        Sentry.captureException(error)
+      }
+    }
     if (controller.cron === '* * * * *' && services.scheduledJobProposals !== undefined) {
       try {
         const result = await services.scheduledJobProposals.processDue(new Date().toISOString())

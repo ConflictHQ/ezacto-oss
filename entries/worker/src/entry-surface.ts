@@ -119,6 +119,7 @@ export const WISE_ROUTES: readonly string[] = [
  */
 export const WORKER_ONLY_ROUTES: readonly string[] = [
   'get /api/v1/backup/status',
+  'post /api/v1/backup/offsite/check',
   'get /api/v1/backup/runs',
   // The signed download of a nightly bundle (issue 39): the bundle lives in
   // the Worker's R2 bucket, so the mint and the redemption go together.
