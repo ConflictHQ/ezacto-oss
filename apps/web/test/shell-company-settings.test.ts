@@ -1563,7 +1563,7 @@ describe('company settings', () => {
     await settled()
 
     expect(ssoResult()).not.toContain('is verified')
-    expect(ssoStatuses()).toEqual(['Awaiting first check'])
+    expect(ssoStatuses()).toEqual([])
   })
 
   it('[security] does not paint a remove that answers after the next person signs in', async () => {
@@ -1854,6 +1854,52 @@ describe('company settings', () => {
     await vi.waitFor(()=>expect(document.querySelector('[data-settings-backup-status]')!.textContent).toContain('operator-managed backups'))
     expect(document.querySelector('[data-settings-backup-status]')!.textContent).toContain('RESTORE.md')
     expect(document.querySelector('[data-settings-retry="backup"]')).toBeNull()
+  })
+
+  it.each(['replace','abort'])('[backup-session] clears minted links and private backup controls on %s', async mode => {
+    stubModulesEndpoint();openCompanySettings('backup')
+    backupStatusPayload={last_completed:backupRun(),last_failed:null,recent_runs:[backupRun()],has_failure:false,
+      offsite:{configured:true,state:'waiting',destination:'private-backup.example.test/company',last_completed:null,latest:null,error:null}}
+    const mint=vi.fn(async()=>({id:9,run_id:1,url:'/backup-download/backup-session-fixture',expires_at:'2099-01-01T00:00:00.000Z'})),check=vi.fn(async()=>({verified:true,checked_at:timestamp}))
+    const controller=createModuleSettingsController({...companyApi(),createBackupDownloadLink:mint,checkOffsiteBackupDestination:check} as never)
+    const owner = new AbortController()
+    await controller.activate(identity,owner.signal,()=>false)
+    document.querySelector<HTMLButtonElement>('[data-backup-download-mint]')!.click()
+    await vi.waitFor(()=>expect(document.querySelector<HTMLInputElement>('[data-backup-download-link]')!.value).toContain('backup-session-fixture'))
+    if(mode==='abort') owner.abort()
+    else await controller.activate(secondIdentity,new AbortController().signal,()=>false)
+    expect(document.querySelector<HTMLInputElement>('[data-backup-download-link]')!.value).toBe('')
+    expect(document.querySelector('[data-settings-backup-facts]')!.textContent).toBe('')
+    expect(document.querySelector('[data-settings-backup-runs]')!.textContent).toBe('')
+    expect(document.querySelector<HTMLElement>('[data-backup-offsite-check-row]')!.hidden).toBe(true)
+    document.querySelector<HTMLButtonElement>('[data-backup-download-mint]')!.click()
+    document.querySelector<HTMLButtonElement>('[data-backup-offsite-check]')!.click()
+    expect(mint).toHaveBeenCalledOnce();expect(check).not.toHaveBeenCalled()
+  })
+  it('[backup-session] ignores a minted bearer link that arrives after identity replacement',async()=>{
+    stubModulesEndpoint();openCompanySettings('backup')
+    const pending=deferred<{id:number;run_id:number;url:string;expires_at:string}>()
+    const mint=vi.fn(async()=>pending.promise),controller=createModuleSettingsController({...companyApi(),createBackupDownloadLink:mint} as never)
+    await controller.activate(identity,new AbortController().signal,()=>false)
+    document.querySelector<HTMLButtonElement>('[data-backup-download-mint]')!.click()
+    await vi.waitFor(()=>expect(mint).toHaveBeenCalledOnce())
+    await controller.activate(secondIdentity,new AbortController().signal,()=>false)
+    pending.resolve({id:10,run_id:1,url:'/backup-download/stale-backup-session-fixture',expires_at:'2099-01-01T00:00:00.000Z'})
+    await new Promise(resolve=>setTimeout(resolve,0))
+    expect(document.querySelector<HTMLInputElement>('[data-backup-download-link]')!.value).toBe('')
+    expect(document.querySelector('[data-backup-download-result]')!.textContent).not.toContain('Link created')
+  })
+  it('[backup-session] cancels the old history presenter even when its supplied signal was not aborted',async()=>{
+    stubModulesEndpoint();openCompanySettings('backup')
+    const pending=deferred<LogPageResult<ReturnType<typeof backupRun>>>()
+    const history=vi.fn(async()=>pending.promise),controller=createModuleSettingsController({...companyApi(),listBackupRuns:history} as never)
+    const first=controller.activate(identity,new AbortController().signal,()=>false)
+    await vi.waitFor(()=>expect(history).toHaveBeenCalledOnce())
+    await controller.activate(secondIdentity,new AbortController().signal,()=>false)
+    pending.resolve({data:[backupRun()],links:{next:null},page:{per_page:50,next_cursor:null,total:1}})
+    await first
+    expect(document.querySelector('[data-settings-backup-runs]')!.textContent).toBe('')
+    expect(document.querySelector<HTMLElement>('[data-settings-backup-controls]')!.hidden).toBe(true)
   })
 
   it('[browser] says where backups live when the deployment does not keep them', async () => {
