@@ -89,23 +89,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # @ezacto/db is over half the suite: 39 files, each replaying the
-          # migration ledger through a Miniflare D1. Sharded until no shard is
-          # the reason the run is slow. --shard splits by file count, not by
-          # duration, so at 8 the hot shard ran 6m08s against another's 1m49s
-          # and set the whole gate's clock. Finer splits spread the slow files.
-          - { name: db 1, workspaces: -w @ezacto/db, shard: 1/12 }
-          - { name: db 2, workspaces: -w @ezacto/db, shard: 2/12 }
-          - { name: db 3, workspaces: -w @ezacto/db, shard: 3/12 }
-          - { name: db 4, workspaces: -w @ezacto/db, shard: 4/12 }
-          - { name: db 5, workspaces: -w @ezacto/db, shard: 5/12 }
-          - { name: db 6, workspaces: -w @ezacto/db, shard: 6/12 }
-          - { name: db 7, workspaces: -w @ezacto/db, shard: 7/12 }
-          - { name: db 8, workspaces: -w @ezacto/db, shard: 8/12 }
-          - { name: db 9, workspaces: -w @ezacto/db, shard: 9/12 }
-          - { name: db 10, workspaces: -w @ezacto/db, shard: 10/12 }
-          - { name: db 11, workspaces: -w @ezacto/db, shard: 11/12 }
-          - { name: db 12, workspaces: -w @ezacto/db, shard: 12/12 }
+          # D1 cases replay the full migration ledger. Keep every shard/test;
+          # schema growth pushed a healthy shard past the old 20-minute job
+          # deadline (#745). A bounded 30 minutes leaves completion headroom.
+          - { name: db 1, workspaces: -w @ezacto/db, shard: 1/12, timeout_minutes: 30 }
+          - { name: db 2, workspaces: -w @ezacto/db, shard: 2/12, timeout_minutes: 30 }
+          - { name: db 3, workspaces: -w @ezacto/db, shard: 3/12, timeout_minutes: 30 }
+          - { name: db 4, workspaces: -w @ezacto/db, shard: 4/12, timeout_minutes: 30 }
+          - { name: db 5, workspaces: -w @ezacto/db, shard: 5/12, timeout_minutes: 30 }
+          - { name: db 6, workspaces: -w @ezacto/db, shard: 6/12, timeout_minutes: 30 }
+          - { name: db 7, workspaces: -w @ezacto/db, shard: 7/12, timeout_minutes: 30 }
+          - { name: db 8, workspaces: -w @ezacto/db, shard: 8/12, timeout_minutes: 30 }
+          - { name: db 9, workspaces: -w @ezacto/db, shard: 9/12, timeout_minutes: 30 }
+          - { name: db 10, workspaces: -w @ezacto/db, shard: 10/12, timeout_minutes: 30 }
+          - { name: db 11, workspaces: -w @ezacto/db, shard: 11/12, timeout_minutes: 30 }
+          - { name: db 12, workspaces: -w @ezacto/db, shard: 12/12, timeout_minutes: 30 }
           # reports.test.ts did not finish before the 20-minute limit while
           # sharing two CPUs with general-resources (399s) in run 39658039722.
           # Keep the complete suite; give reports its own worker and partition
