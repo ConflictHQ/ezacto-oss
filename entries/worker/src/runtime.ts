@@ -1,3 +1,6 @@
+import { createWebhookSecretVault } from '@ezacto/core'
+import { createWebhookService } from '@ezacto/db/d1'
+import { createWorkerWebhookTransport } from '@ezacto/integrations'
 import { createQueuedMigrationStore } from '@ezacto/db/queued-migrations'
 import { createInvoiceElevationStore, unlinkElevatedInvoiceTime } from '@ezacto/db/d1'
 import { createEstimateTemplateRepository } from '@ezacto/db/d1'
@@ -1231,6 +1234,10 @@ export const createRuntimeServices = async (
     team: createTeamRepository(drizzle),
     invoiceElevations: createInvoiceElevationStore(drizzle),
     invoiceTimeUnlink: (command, elevation, now) => unlinkElevatedInvoiceTime(drizzle, command, elevation, now),
+    webhooks: createWebhookService(drizzle, {
+      vault: !demoDeployment(env) && env.WEBHOOK_ENCRYPTION_KEY ? await createWebhookSecretVault(env.WEBHOOK_ENCRYPTION_KEY) : null,
+      transport: createWorkerWebhookTransport(),
+    }),
     migrationLoads: createQueuedMigrationStore(binding),
     estimateTemplates: createEstimateTemplateRepository(drizzle),
     clientRateCards: createClientRateCardRepository(drizzle),

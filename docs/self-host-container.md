@@ -245,3 +245,5 @@ files and is not a Worker-to-container escape bundle.
 - **Account linking trusts configured providers' verified email.** A sign-in
   provider that reports an email as verified is linked to the existing account
   with that email. Configure only providers whose email verification you trust.
+
+Outbound webhooks require a separate `WEBHOOK_ENCRYPTION_KEY` in the private container environment. Keep this 32-byte base64url key with recovery material; see [outbound webhook setup and verification](integrations.md#outbound-webhooks). Administrators manage endpoints at Settings → Company → Webhooks.

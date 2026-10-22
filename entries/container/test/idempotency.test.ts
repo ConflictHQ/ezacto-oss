@@ -43,6 +43,7 @@ beforeAll(async () => {
     brandDirectory: join(root, 'brand'),
     appBaseUrl: 'http://localhost:3000',
     cursorSigningKey: new Uint8Array(32).fill(0x43),
+    webhookEncryptionKey: 'A'.repeat(43),
     smtp: { url: 'smtp://127.0.0.1:2525', from: 'billing@example.test' },
     appEnv: {
       ENVIRONMENT: 'test-container',
@@ -318,4 +319,25 @@ describe('Idempotency-Key through the container (#952)', () => {
     const page = await handle(new Request('http://localhost:3000/'))
     expect(page.headers.get('idempotency-key-lifetime')).toBeNull()
   })
+})
+
+it('[security #107] issues a webhook signing secret once without keeping it in the idempotency response cache', async () => {
+  const issued = await runtime.services.sessions.issue(2), cookie = issued.setCookie.split(';')[0]!
+  const request = () => handle(new Request('http://localhost:3000/api/v1/webhook-subscriptions', {
+    method: 'POST', headers: { cookie, origin: 'http://localhost:3000', 'content-type': 'application/json', 'idempotency-key': 'webhook-once-only' },
+    body: JSON.stringify({ url: 'https://receiver.example/once', events: ['invoice.created'] }),
+  }))
+  const first = await request()
+  expect(first.status).toBe(201)
+  const created = await first.json() as { data: { id: string }; signing_secret: string }
+  expect(created.signing_secret).toMatch(/^ezwh_[A-Za-z0-9_-]{43}$/)
+  const retry = await request()
+  expect(retry.status).toBe(409)
+  expect(await retry.text()).not.toContain(created.signing_secret)
+  expect((runtime.database.prepare("SELECT count(*) AS n FROM webhook_subscriptions WHERE url='https://receiver.example/once'").get() as { n: number }).n).toBe(1)
+  expect(runtime.database.prepare("SELECT state,sealed FROM idempotency_keys WHERE state='done' AND sealed IS NULL").all().length).toBeGreaterThan(0)
+  const stored = JSON.stringify(runtime.database.prepare('SELECT * FROM webhook_subscriptions WHERE id=?').get(created.data.id))
+  expect(stored).not.toContain(created.signing_secret)
+  const publicResponse = await handle(new Request('http://localhost:3000/api/v1/webhook-subscriptions', { headers: { cookie } }))
+  expect(await publicResponse.text()).not.toContain(created.signing_secret)
 })
