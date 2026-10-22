@@ -12550,6 +12550,7 @@
       "patch": {
         "operationId": "updateInvoice",
         "summary": "Apply one retry-safe invoice edit",
+        "description": " API-token edits require an administrator and X-Ezacto-Invoice-Elevation bound to this base token and draft invoice. Browser sessions retain their existing policy.",
         "tags": [
           "invoices"
         ],
@@ -12618,6 +12619,15 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "X-Ezacto-Invoice-Elevation",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^ezi_[0-9a-f]{64}$"
             }
           }
         ],
@@ -13260,6 +13270,7 @@
       "post": {
         "operationId": "createInvoiceLine",
         "summary": "Add a parent-owned invoice line",
+        "description": " API-token edits require an administrator and X-Ezacto-Invoice-Elevation bound to this base token and draft invoice. Browser sessions retain their existing policy.",
         "tags": [
           "invoices"
         ],
@@ -13329,6 +13340,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "X-Ezacto-Invoice-Elevation",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^ezi_[0-9a-f]{64}$"
+            }
           }
         ],
         "requestBody": {
@@ -13347,6 +13367,7 @@
       "patch": {
         "operationId": "updateInvoiceLine",
         "summary": "Update a parent-owned invoice line",
+        "description": " API-token edits require an administrator and X-Ezacto-Invoice-Elevation bound to this base token and draft invoice. Browser sessions retain their existing policy.",
         "tags": [
           "invoices"
         ],
@@ -13424,6 +13445,15 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "X-Ezacto-Invoice-Elevation",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^ezi_[0-9a-f]{64}$"
             }
           }
         ],
@@ -13441,6 +13471,7 @@
       "delete": {
         "operationId": "deleteInvoiceLine",
         "summary": "Delete a parent-owned invoice line",
+        "description": " API-token edits require an administrator and X-Ezacto-Invoice-Elevation bound to this base token and draft invoice. Browser sessions retain their existing policy.",
         "tags": [
           "invoices"
         ],
@@ -13518,6 +13549,15 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "X-Ezacto-Invoice-Elevation",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^ezi_[0-9a-f]{64}$"
             }
           }
         ],
@@ -27265,9 +27305,6 @@
         ],
         "security": [
           {
-            "bearerAuth": []
-          },
-          {
             "cookieSession": []
           }
         ],
@@ -30711,6 +30748,369 @@
           }
         }
       }
+    },
+    "/api/v1/invoice-elevations/email-code": {
+      "post": {
+        "operationId": "sendInvoiceElevationEmailCode",
+        "summary": "Send a second-factor code and rotate its bound elevation challenge",
+        "description": "Requires the original administrator API token and pending challenge. The replacement remains bound to its original password verification, base token and invoice. Use the returned challenge token; the earlier one is no longer valid.",
+        "tags": [
+          "invoice-elevations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceElevationChallengeEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoice-elevations/email-code",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceElevationEmailInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/invoice-elevations": {
+      "post": {
+        "operationId": "createInvoiceElevation",
+        "summary": "Reauthenticate an administrator for temporary draft invoice edits",
+        "description": "Requires an administrator API token with invoices:write, live password authentication, and the same verified user credentials. Confirmed authenticator or email MFA requires a bound second step. The returned capability belongs to this base token and invoice, lasts at most 15 minutes, and is returned once. Credential responses cannot be replayed from the HTTP cache.",
+        "tags": [
+          "invoice-elevations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceElevationStartEnvelope"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceElevationStartEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoice-elevations",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceElevationInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/invoice-elevations/verify": {
+      "post": {
+        "operationId": "verifyInvoiceElevation",
+        "summary": "Complete the bound second factor for a draft invoice elevation",
+        "description": "A valid MFA challenge can only be completed by its original administrator and base API token. The verified capability never creates a browser session.",
+        "tags": [
+          "invoice-elevations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceElevationIssuedEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoice-elevations/verify",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceElevationVerifyInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/invoice-elevations/{id}": {
+      "delete": {
+        "operationId": "revokeInvoiceElevation",
+        "summary": "Revoke this administrator token’s temporary invoice capability",
+        "tags": [
+          "invoice-elevations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoice-elevations/:id",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/invoices/{id}/unlink-time": {
+      "post": {
+        "operationId": "unlinkElevatedInvoiceTime",
+        "summary": "Atomically unlink selected time from one draft invoice",
+        "description": "Administrator API token only; requires invoices:write, time_entries:write and X-Ezacto-Invoice-Elevation bound to this invoice. All selected stopped entries must still belong to the same current draft. The whole command and its before/after audit commit together. Invoice line amounts remain unchanged.",
+        "tags": [
+          "invoice-elevations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ElevatedInvoiceTimeUnlinkEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoices/:id/unlink-time",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          },
+          {
+            "name": "X-Ezacto-Invoice-Elevation",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^ezi_[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ElevatedInvoiceTimeUnlinkInput"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -30818,6 +31218,263 @@
       }
     },
     "schemas": {
+      "InvoiceElevationChallengeEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InvoiceElevationChallenge"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceElevationEmailInput": {
+        "type": "object",
+        "required": [
+          "challenge_token"
+        ],
+        "properties": {
+          "challenge_token": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceElevationInput": {
+        "type": "object",
+        "required": [
+          "invoice_id",
+          "email",
+          "password"
+        ],
+        "properties": {
+          "invoice_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 320
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "writeOnly": true,
+            "description": "At most 4096 UTF-8 bytes; never an argv argument or a stored CLI setting."
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceElevationVerifyInput": {
+        "type": "object",
+        "required": [
+          "challenge_token",
+          "code"
+        ],
+        "properties": {
+          "challenge_token": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "writeOnly": true
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceElevationIssued": {
+        "type": "object",
+        "required": [
+          "status",
+          "credential",
+          "id",
+          "invoice_id",
+          "expires_at",
+          "scope"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "elevated"
+          },
+          "credential": {
+            "type": "string",
+            "pattern": "^ezi_[0-9a-f]{64}$",
+            "description": "Returned once; keep only in process memory and send as X-Ezacto-Invoice-Elevation with the original API token."
+          },
+          "id": {
+            "type": "string"
+          },
+          "invoice_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "scope": {
+            "type": "string",
+            "const": "invoice_drafts:write"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceElevationChallenge": {
+        "type": "object",
+        "required": [
+          "status",
+          "challenge_token",
+          "expires_at",
+          "methods"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "challenge_required"
+          },
+          "challenge_token": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "totp",
+                "email"
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 2
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceElevationStartEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InvoiceElevationIssued"
+              },
+              {
+                "$ref": "#/components/schemas/InvoiceElevationChallenge"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvoiceElevationIssuedEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InvoiceElevationIssued"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ElevatedInvoiceTimeUnlinkInput": {
+        "type": "object",
+        "required": [
+          "expected_version",
+          "entry_ids",
+          "confirmed"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "entry_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "minItems": 1,
+            "maxItems": 1000,
+            "uniqueItems": true
+          },
+          "confirmed": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ElevatedInvoiceTimeUnlink": {
+        "type": "object",
+        "required": [
+          "invoice_id",
+          "command_id",
+          "elevation_id",
+          "released_entry_ids",
+          "recorded_at",
+          "replayed"
+        ],
+        "properties": {
+          "invoice_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "command_id": {
+            "type": "string"
+          },
+          "elevation_id": {
+            "type": "string"
+          },
+          "released_entry_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ElevatedInvoiceTimeUnlinkEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ElevatedInvoiceTimeUnlink"
+          }
+        },
+        "additionalProperties": false
+      },
       "AttachmentUploadInput": {
         "type": "object",
         "required": [

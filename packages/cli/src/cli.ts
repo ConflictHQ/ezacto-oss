@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-import { readFileSync, realpathSync } from 'node:fs'
+import { invoiceEditInput, invoiceTimeSelection } from './invoice-input.js'
+import { beginInvoiceSudo, createSudoClients, endInvoiceSudo, readTerminalSecret } from './sudo.js'
+import { realpathSync } from 'node:fs'
 import { decryptBackupBundle } from './backup-decrypt.js'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
@@ -24,6 +26,8 @@ import {
   confidentialityFilteredFetch,
   exportExpenses,
   editInvoice,
+  prepareInvoiceEdit,
+  resolveInvoice,
   exportTimeEntries,
   generateInvoice,
   listInvoices,
@@ -37,6 +41,7 @@ import {
   validReportDefinitions,
   requiredReportScope,
   type MoneyCommandResult,
+  type InvoiceEditInput,
 } from './money.js'
 import {
   logTime,
@@ -61,7 +66,8 @@ Commands:
   timer        Start, stop, or inspect the one running timer
   week         Show the Monday–Sunday time grid
   uninvoiced   Show uninvoiced amounts (requires reports:read)
-  invoice      Generate, send, list, or edit invoices; unlink-time frees entries from an invoice
+  invoice      Generate, send, list, or edit invoices; edits and unlink-time require sudo
+  sudo         Reauthenticate for one draft edit: ez sudo invoice edit <number> [options]
   report       List or run reports; report list shows each required scope
   export       Export time entries or expenses as CSV (or --verify a backup bundle)
   backup       Create a full backup bundle from a local database (--sync-to copies it to S3)
@@ -105,6 +111,8 @@ Options:
   --subject <text>          Invoice edit: new subject
   --notes-file <path>       Invoice edit: replace the notes with the contents of a file
   --issue-date <yyyy-mm-dd> Invoice edit: new issue date
+  --due-date <yyyy-mm-dd>   Invoice edit: new due date
+  --reauth-stdin           Sudo: read JSON email/password and optional authenticator/recovery code from stdin
   --terms <terms>           Invoice edit: upon_receipt, net_15, net_30, net_45, net_60, or custom
   --line <n>                Invoice edit: line to change, counted from 1 in invoice order
   --quantity <n>            Invoice edit: new quantity for --line
@@ -128,10 +136,12 @@ export interface CliRuntime {
   stdout(line: string): void
   stderr(line: string): void
   readStdin(): Promise<string>
+  readSecret?(prompt: string): Promise<string>
 }
 
 const processRuntime = (): CliRuntime => ({
   environment: process.env,
+  readSecret: readTerminalSecret,
   stdout: (line) => process.stdout.write(`${line}\n`),
   stderr: (line) => process.stderr.write(`${line}\n`),
   readStdin: async () => {
@@ -373,11 +383,38 @@ const logout = async (
   return 0
 }
 
-export const runCli = async (
+interface InvoiceElevationContext {
+  credential: string
+  invoiceId: number
+  version: number
+  organizationName: string
+  organization: OrganizationConfig
+  client: EzactoClient
+  edit?: InvoiceEditInput
+}
+const invoiceClient = (
+  selected: { name: string; organization: OrganizationConfig; client: EzactoClient },
+  elevation: InvoiceElevationContext | undefined,
+): EzactoClient => {
+  if (elevation === undefined) return selected.client
+  if (
+    selected.name !== elevation.organizationName ||
+    selected.organization.base_url !== elevation.organization.base_url ||
+    selected.organization.token !== elevation.organization.token ||
+    selected.organization.user_id !== elevation.organization.user_id
+  )
+    throw new Error(
+      'The stored organization changed during reauthentication. Review the configuration before retrying.',
+    )
+  return elevation.client
+}
+const executeCli = async (
   argv: readonly string[],
-  runtime: CliRuntime = processRuntime(),
+  runtime: CliRuntime,
+  elevation?: InvoiceElevationContext,
 ): Promise<number> => {
-  const { positionals, values } = parseArgs({
+  const { positionals, values, tokens } = parseArgs({
+    tokens: true,
     args: [...argv],
     allowPositionals: true,
     strict: true,
@@ -386,6 +423,7 @@ export const runCli = async (
       'base-url': { type: 'string' },
       token: { type: 'string' },
       'token-stdin': { type: 'boolean', default: false },
+      'reauth-stdin': { type: 'boolean', default: false },
       config: { type: 'string' },
       message: { type: 'string', short: 'm' },
       date: { type: 'string' },
@@ -418,6 +456,7 @@ export const runCli = async (
       subject: { type: 'string' },
       'notes-file': { type: 'string' },
       'issue-date': { type: 'string' },
+      'due-date': { type: 'string' },
       terms: { type: 'string' },
       line: { type: 'string' },
       quantity: { type: 'string' },
@@ -467,6 +506,97 @@ export const runCli = async (
   if (values.columns !== undefined && command !== 'export') {
     throw new Error('--columns is valid only with ez export')
   }
+if (values['reauth-stdin'] && command !== 'sudo')
+  throw new Error('--reauth-stdin is valid only with ez sudo')
+if (command === 'sudo') {
+  if (
+    commandArguments.length !== 3 ||
+    commandArguments[0] !== 'invoice' ||
+    !['edit', 'unlink-time'].includes(commandArguments[1]!)
+  )
+    throw new Error('usage: ez sudo invoice <edit|unlink-time> <number> [options]')
+  const allowed = new Set([
+    'org',
+    'config',
+    'reauth-stdin',
+    'json',
+    'csv',
+    'subject',
+    'notes-file',
+    'issue-date',
+    'due-date',
+    'terms',
+    'line',
+    'quantity',
+    'rate',
+    'description',
+    'entries',
+  ])
+  for (const token of tokens)
+    if (token.kind === 'option' && !allowed.has(token.name))
+      throw new Error(`--${token.name} is not valid with ez sudo invoice`)
+  const action = commandArguments[1]!,
+    number = commandArguments[2]!
+  const edit = invoiceEditInput(number, action === 'edit' ? values : {})
+  if (action === 'edit') {
+    if (values.entries !== undefined) throw new Error('--entries is valid only with unlink-time')
+    prepareInvoiceEdit(edit)
+  } else {
+    if (
+      [
+        'subject',
+        'notes-file',
+        'issue-date',
+        'due-date',
+        'terms',
+        'line',
+        'quantity',
+        'rate',
+        'description',
+      ].some((key) => values[key as keyof typeof values] !== undefined)
+    )
+      throw new Error('Invoice content options are valid only with edit')
+    invoiceTimeSelection(values.entries)
+  }
+  const selected = await selectedClient(configPath, values.org)
+  for (const scope of [
+    'invoices:read',
+    'invoices:write',
+    ...(action === 'unlink-time' ? ['time_entries:write'] : []),
+  ])
+    requireStoredScope(selected.organization, scope)
+  const clients = createSudoClients(selected.organization)
+  const invoice = await resolveInvoice(clients.business, number)
+  if (invoice.state !== 'draft')
+    throw new Error(`invoice #${invoice.number} is ${invoice.state}; ez sudo edits drafts only`)
+  if (
+    action === 'edit' &&
+    edit.line !== undefined &&
+    !invoice.line_items.sort((a, b) => a.position - b.position)[edit.line - 1]
+  )
+    throw new Error(`invoice #${invoice.number} has no line ${edit.line}`)
+  const grant = await beginInvoiceSudo(clients.issuer, invoice.id, runtime, values['reauth-stdin'])
+  const omit = new Set(
+    tokens
+      .filter((token) => token.kind === 'option' && token.name === 'reauth-stdin')
+      .map((token) => token.index),
+  )
+  omit.add(tokens.find((token) => token.kind === 'positional')!.index)
+  const child = argv.filter((_arg, index) => !omit.has(index))
+  try {
+    return await executeCli(child, runtime, {
+      credential: grant.credential,
+      invoiceId: invoice.id,
+      version: invoice.version,
+      organizationName: selected.name,
+      organization: selected.organization,
+      client: clients.business,
+      ...(action === 'edit' ? { edit } : {}),
+    })
+  } finally {
+    await endInvoiceSudo(clients.issuer, grant, runtime)
+  }
+}
   if (command === 'log') {
     if (commandArguments.length !== 3) {
       throw new Error('usage: ez log <duration> <project> <task> [-m note] [--date yyyy-mm-dd]')
@@ -602,11 +732,11 @@ export const runCli = async (
     const action = commandArguments[0]
     const editOptions =
       values.subject !== undefined || values['notes-file'] !== undefined ||
-      values['issue-date'] !== undefined || values.terms !== undefined ||
+      values['issue-date'] !== undefined || values['due-date'] !== undefined || values.terms !== undefined ||
       values.line !== undefined || values.quantity !== undefined ||
       values.rate !== undefined || values.description !== undefined
     if (editOptions && action !== 'edit') {
-      throw new Error('--subject, --notes-file, --issue-date, --terms, --line, --quantity, --rate, and --description are valid only with ez invoice edit')
+      throw new Error('--subject, --notes-file, --issue-date, --due-date, --terms, --line, --quantity, --rate, and --description are valid only with ez invoice edit')
     }
     if (values.entries !== undefined && action !== 'unlink-time') {
       throw new Error('--entries is valid only with ez invoice unlink-time')
@@ -616,29 +746,13 @@ export const runCli = async (
       if (commandArguments.length !== 2) {
         throw new Error('usage: ez invoice edit <number> [--subject s] [--notes-file path] [--issue-date d] [--terms t] [--line n --quantity q --rate r --description d]')
       }
-      let line: number | undefined
-      if (values.line !== undefined) {
-        line = Number(values.line)
-        if (!/^[1-9]\d*$/.test(values.line) || !Number.isSafeInteger(line)) {
-          throw new Error(`invalid --line: ${values.line}; use 1 for the first line`)
-        }
-      }
-      const notes = values['notes-file'] === undefined
-        ? undefined
-        : readFileSync(values['notes-file'], 'utf8')
+      const edit = elevation?.edit ?? invoiceEditInput(commandArguments[1]!, values)
       const selected = await selectedClient(configPath, values.org)
       requireStoredScope(selected.organization, 'invoices:write')
       return printMoneyResult(
-        await editInvoice(selected.client, {
-          number: commandArguments[1]!,
-          ...(values.subject === undefined ? {} : { subject: values.subject }),
-          ...(notes === undefined ? {} : { notes }),
-          ...(values['issue-date'] === undefined ? {} : { issueDate: values['issue-date'] }),
-          ...(values.terms === undefined ? {} : { terms: values.terms }),
-          ...(line === undefined ? {} : { line }),
-          ...(values.quantity === undefined ? {} : { quantity: values.quantity }),
-          ...(values.rate === undefined ? {} : { rate: values.rate }),
-          ...(values.description === undefined ? {} : { description: values.description }),
+        await editInvoice(invoiceClient(selected, elevation), {
+          ...edit,
+          ...(elevation === undefined ? {} : {elevationCredential:elevation.credential,expectedVersion:elevation.version,expectedInvoiceId:elevation.invoiceId}),
         }),
         values.json,
         values.csv,
@@ -647,21 +761,14 @@ export const runCli = async (
     }
 
     if (action === 'unlink-time') {
-      if (commandArguments.length !== 1) throw new Error('usage: ez invoice unlink-time --entries <id,id,...>')
-      if (values.entries === undefined) throw new Error('ez invoice unlink-time requires --entries')
-      const entryIds = values.entries.split(',').map((part) => {
-        const id = Number(part.trim())
-        if (!/^\d+$/.test(part.trim()) || !Number.isSafeInteger(id) || id < 1) {
-          throw new Error(`invalid time entry id: ${part}`)
-        }
-        return id
-      })
+      if (commandArguments.length !== 2) throw new Error('usage: ez invoice unlink-time <number> --entries <id,id,...>')
+      const entryIds = invoiceTimeSelection(values.entries)
       const selected = await selectedClient(configPath, values.org)
-      for (const scope of ['reports:read', 'time_entries:write', 'invoices:write']) {
+      for (const scope of ['invoices:read', 'time_entries:write', 'invoices:write']) {
         requireStoredScope(selected.organization, scope)
       }
       return printMoneyResult(
-        await unlinkTime(selected.client, { entryIds: [...new Set(entryIds)] }),
+        await unlinkTime(invoiceClient(selected, elevation), {number:commandArguments[1]!,entryIds,...(elevation===undefined?{}:{elevationCredential:elevation.credential,expectedVersion:elevation.version,expectedInvoiceId:elevation.invoiceId})}),
         values.json,
         values.csv,
         runtime,
@@ -1137,6 +1244,8 @@ const errorMessage = (error: unknown): string => {
     .filter((part) => part !== undefined).join(', ')
   return `${details.message} (${context})`
 }
+
+export const runCli = (argv:readonly string[],runtime:CliRuntime=processRuntime()):Promise<number>=>executeCli([...argv],runtime)
 
 const isMain = ((): boolean => {
   const entry = process.argv[1]

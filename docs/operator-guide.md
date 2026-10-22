@@ -294,3 +294,14 @@ counts cannot pass the monthly drill: run the updated SQL backup workflow first.
 Both workflows use the existing production Cloudflare credentials and share a
 concurrency lock. This checks the retained R2 SQL copy; encrypted off-site
 recovery and attachment-byte reconciliation remain separate restore checks.
+
+## Administrator CLI draft edits
+
+Use `ez sudo invoice edit <number>` or
+`ez sudo invoice unlink-time <number> --entries <ids>` from a current source
+build. See the [CLI reauthentication guide](../packages/cli/README.md#editing-draft-invoices)
+for scopes, private credential input, second factors and partial header/line
+failure handling. The short-lived elevation belongs to one administrator API
+token and one draft; password reset, token revocation, role changes and invoice
+state changes invalidate it. Browser invoice editing retains its existing
+session policy. Unlinking tracked time does not recalculate invoice lines.

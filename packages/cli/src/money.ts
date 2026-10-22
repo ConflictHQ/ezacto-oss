@@ -336,45 +336,51 @@ export const listInvoices = async (
 
 // --- invoice edit -----------------------------------------------------------
 
-const invoiceTerms = [
-  'upon_receipt', 'net_15', 'net_30', 'net_45', 'net_60', 'custom',
-] as const
-type InvoiceTerms = typeof invoiceTerms[number]
+const invoiceTerms = ['upon_receipt', 'net_15', 'net_30', 'net_45', 'net_60', 'custom'] as const
+type InvoiceTerms = (typeof invoiceTerms)[number]
 
 const rateToCents = (raw: string): number => {
   if (!/^\d+(\.\d{1,2})?$/.test(raw)) {
     throw new Error(`invalid --rate: ${raw}; use dollars such as 150 or 150.50`)
   }
-  return Math.round(Number(raw) * 100)
+  const [whole, fraction = ''] = raw.split('.')
+  const cents = BigInt(whole!) * 100n + BigInt(fraction.padEnd(2, '0'))
+  if (cents > 9_000_000_000_000n) throw new Error('--rate exceeds the invoice unit-price limit')
+  return Number(cents)
 }
 
-const resolveInvoice = async (client: EzactoClient, raw: string): Promise<Invoice> => {
+export const resolveInvoice = async (client: EzactoClient, raw: string): Promise<Invoice> => {
   const number = raw.replace(/^#/, '')
   const matches = (await collectInvoices(client)).filter((invoice) => invoice.number === number)
   if (matches.length === 0) throw new Error(`no invoice numbered ${number}`)
-  if (matches.length > 1) throw new Error(`invoice number ${number} is ambiguous; use ez invoice list`)
+  if (matches.length > 1)
+    throw new Error(`invoice number ${number} is ambiguous; use ez invoice list`)
   // The list rows can be summaries; the full read carries line_items and version.
   return (await client.getInvoice({ id: matches[0]!.id })).data
 }
 
-export const editInvoice = async (
-  client: EzactoClient,
-  input: {
-    number: string
-    subject?: string
-    notes?: string
-    issueDate?: string
-    terms?: string
-    line?: number
-    quantity?: string
-    rate?: string
-    description?: string
-  },
-): Promise<MoneyCommandResult> => {
+export interface InvoiceEditInput {
+  number: string
+  subject?: string
+  notes?: string
+  issueDate?: string
+  terms?: string
+  line?: number
+  quantity?: string
+  rate?: string
+  description?: string
+  dueDate?: string
+  expectedVersion?: number
+  expectedInvoiceId?: number
+  elevationCredential?: string
+}
+
+export const prepareInvoiceEdit = (input: InvoiceEditInput) => {
   const header: Record<string, string> = {}
   if (input.subject !== undefined) header.subject = input.subject
   if (input.notes !== undefined) header.notes = input.notes
   if (input.issueDate !== undefined) header.issue_date = canonicalDate(input.issueDate)
+  if (input.dueDate !== undefined) header.due_date = canonicalDate(input.dueDate)
   if (input.terms !== undefined) {
     if (!invoiceTerms.includes(input.terms as InvoiceTerms)) {
       throw new Error(`invalid --terms: ${input.terms}; use ${invoiceTerms.join(', ')}`)
@@ -386,63 +392,111 @@ export const editInvoice = async (
   if (lineChange && input.line === undefined) {
     throw new Error('--quantity, --rate, and --description require --line')
   }
+  if (input.line !== undefined && (!Number.isSafeInteger(input.line) || input.line < 1))
+    throw new Error('--line must be a positive line number')
   if (input.line !== undefined && !lineChange) {
     throw new Error('--line needs at least one of --quantity, --rate, or --description')
   }
   if (Object.keys(header).length === 0 && !lineChange) {
-    throw new Error('nothing to edit; pass --subject, --notes-file, --issue-date, --terms, or --line with --quantity, --rate, or --description')
+    throw new Error(
+      'nothing to edit; pass --subject, --notes-file, --issue-date, --terms, or --line with --quantity, --rate, or --description',
+    )
   }
   let quantity: number | undefined
   if (input.quantity !== undefined) {
     quantity = Number(input.quantity)
-    if (!Number.isFinite(quantity) || quantity <= 0) {
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > Number.MAX_SAFE_INTEGER) {
       throw new Error(`invalid --quantity: ${input.quantity}; use a positive number`)
     }
   }
   const unitPriceCents = input.rate === undefined ? undefined : rateToCents(input.rate)
 
+  return { header, lineChange, quantity, unitPriceCents }
+}
+
+export const editInvoice = async (
+  client: EzactoClient,
+  input: InvoiceEditInput,
+): Promise<MoneyCommandResult> => {
+  const { header, lineChange, quantity, unitPriceCents } = prepareInvoiceEdit(input)
   let invoice = await resolveInvoice(client, input.number)
   if (invoice.state !== 'draft') {
-    throw new Error(`invoice #${invoice.number} is ${invoice.state}; ez invoice edit changes drafts only`)
+    throw new Error(
+      `invoice #${invoice.number} is ${invoice.state}; ez invoice edit changes drafts only`,
+    )
   }
+  if (input.expectedInvoiceId !== undefined && invoice.id !== input.expectedInvoiceId)
+    throw new Error(
+      'The invoice number now belongs to another document. Review it before retrying.',
+    )
+  if (input.expectedVersion !== undefined && invoice.version !== input.expectedVersion)
+    throw new Error('The draft changed during reauthentication. Review it before retrying.')
+  const originalLine =
+    input.line === undefined
+      ? undefined
+      : [...invoice.line_items].sort((a, b) => a.position - b.position)[input.line - 1]
+  if (lineChange && originalLine === undefined)
+    throw new Error(
+      `invoice #${invoice.number} has ${invoice.line_items.length} line(s); there is no line ${input.line}`,
+    )
+  const headers =
+    input.elevationCredential === undefined
+      ? {}
+      : { 'X-Ezacto-Invoice-Elevation': input.elevationCredential }
   const changed: string[] = []
 
   if (Object.keys(header).length > 0) {
+    const expectedHeaderVersion = invoice.version + 1
     invoice = (
       await client.updateInvoice({
         id: invoice.id,
         'Idempotency-Key': randomUUID(),
         body: { expected_version: invoice.version, ...header },
+        headers,
       })
     ).data.invoice
     changed.push(...Object.keys(header))
+    if (lineChange && invoice.version !== expectedHeaderVersion)
+      throw new Error(
+        'The header was saved, but the draft changed before its line edit. Review the draft before retrying.',
+      )
   }
 
   if (lineChange) {
-    const lines = [...invoice.line_items].sort((a, b) => a.position - b.position)
-    const line = lines[input.line! - 1]
-    if (line === undefined) {
-      throw new Error(`invoice #${invoice.number} has ${lines.length} line(s); there is no line ${input.line}`)
+    const line = invoice.line_items.find((candidate) => candidate.id === originalLine!.id)
+    if (line === undefined || line.updated_at !== originalLine!.updated_at)
+      throw new Error(
+        'The draft line changed. Review it before retrying; any requested header edit was already saved.',
+      )
+    try {
+      invoice = (
+        await client.updateInvoiceLine({
+          id: invoice.id,
+          lineId: line.id,
+          headers,
+          'Idempotency-Key': randomUUID(),
+          body: {
+            expected_version: invoice.version,
+            expected_updated_at: line.updated_at,
+            position: line.position,
+            kind: line.kind,
+            description: input.description ?? line.description,
+            quantity: quantity ?? line.quantity,
+            unit_price_cents: unitPriceCents ?? line.unit_price_cents,
+            taxed: line.taxed,
+            taxed2: line.taxed2,
+            project_id: line.project_id,
+          },
+        })
+      ).data.invoice
+    } catch (error) {
+      if (changed.length > 0)
+        throw new Error(
+          `invoice #${invoice.number} header was saved, but its line edit failed. Review the draft before retrying.`,
+          { cause: error },
+        )
+      throw error
     }
-    invoice = (
-      await client.updateInvoiceLine({
-        id: invoice.id,
-        lineId: line.id,
-        'Idempotency-Key': randomUUID(),
-        body: {
-          expected_version: invoice.version,
-          expected_updated_at: line.updated_at,
-          position: line.position,
-          kind: line.kind,
-          description: input.description ?? line.description,
-          quantity: quantity ?? line.quantity,
-          unit_price_cents: unitPriceCents ?? line.unit_price_cents,
-          taxed: line.taxed,
-          taxed2: line.taxed2,
-          project_id: line.project_id,
-        },
-      })
-    ).data.invoice
     changed.push(`line ${input.line}`)
   }
 
@@ -460,30 +514,39 @@ export const editInvoice = async (
 
 export const unlinkTime = async (
   client: EzactoClient,
-  input: { entryIds: number[] },
+  input: {
+    number: string
+    entryIds: number[]
+    expectedVersion?: number
+    expectedInvoiceId?: number
+    elevationCredential?: string
+  },
 ): Promise<MoneyCommandResult> => {
   if (input.entryIds.length === 0) throw new Error('ez invoice unlink-time requires --entries')
+  const invoice = await resolveInvoice(client, input.number)
+  if (invoice.state !== 'draft')
+    throw new Error(
+      `invoice #${invoice.number} is ${invoice.state}; time can only be unlinked from a draft`,
+    )
+  if (input.expectedInvoiceId !== undefined && invoice.id !== input.expectedInvoiceId)
+    throw new Error(
+      'The invoice number now belongs to another document. Review it before retrying.',
+    )
+  if (input.expectedVersion !== undefined && invoice.version !== input.expectedVersion)
+    throw new Error('The draft changed during reauthentication. Review it before retrying.')
   const result = (
-    await client.executeDetailedTimeAction({
-      body: {
-        command_id: randomUUID(),
-        action: 'mark_uninvoiced',
-        entry_ids: input.entryIds,
-        confirmed: true,
-      },
+    await client.unlinkElevatedInvoiceTime({
+      id: invoice.id,
+      'Idempotency-Key': randomUUID(),
+      'X-Ezacto-Invoice-Elevation': input.elevationCredential ?? '',
+      body: { expected_version: invoice.version, entry_ids: input.entryIds, confirmed: true },
     })
   ).data
-  const ids = (values: readonly number[]): string => (values.length === 0 ? 'none' : values.join(', '))
   return {
     json: result,
-    human: [
-      `unlinked ${result.changed_entry_ids.length} of ${result.requested} time entries from their invoices`,
-      `  changed:    ${ids(result.changed_entry_ids)}`,
-      `  ineligible: ${ids(result.ineligible_entry_ids)}`,
-    ].join('\n'),
+    human: `unlinked ${result.released_entry_ids.length} selected time entries from draft #${invoice.number}\n  Invoice line amounts remain as saved; review the draft totals.`,
   }
 }
-
 // --- report run -------------------------------------------------------------
 
 const reportDefinitions: ReadonlySet<string> = new Set(

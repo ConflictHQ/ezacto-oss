@@ -133,6 +133,7 @@ export const installInvoiceHoursReconciliationRoutes = <Bindings extends object>
       requireApiScope(context, 'reports:read')
       requireApiScope(context, 'time_entries:write')
       requireApiScope(context, 'invoices:write')
+      if (context.get('principal').authentication.kind === 'token') throw new ApiError({status:403,code:'invoice_elevation_required',message:'Use the invoice-scoped elevated CLI command to unlink draft time. The line-hours review workflow uses a browser session.'})
       context.header('cache-control', 'no-store')
       const body = await readObjectBody(context),
         invoiceId = Number(context.req.param('id'))

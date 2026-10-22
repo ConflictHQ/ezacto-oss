@@ -1,3 +1,4 @@
+import { invoiceElevationSnapshotSql } from './invoice-elevation-audit.js'
 import {
   deriveInvoicePaymentStatus,
   reduceInvoiceCommand,
@@ -223,6 +224,7 @@ export interface ExecuteInvoiceLifecycleCommand {
 }
 
 interface InvoiceMutationCommand {
+  elevation?: Readonly<{ id: string; tokenId: number }>
   invoiceId: number
   commandId: string
   actor: InvoiceCommandActor
@@ -234,7 +236,7 @@ interface InvoiceMutationCommand {
 
 type CommandIdentity = Pick<
   InvoiceMutationCommand,
-  'invoiceId' | 'commandId' | 'actor' | 'occurredAt' | 'authorize'
+  'invoiceId' | 'commandId' | 'actor' | 'occurredAt' | 'authorize' | 'elevation'
 >
 
 export interface ManualInvoicePaymentInput {
@@ -1277,6 +1279,7 @@ const completionStatement = (input: CommandIdentity, expectedEventCount: number)
           )
         ) FROM invoices invoice WHERE invoice.id = ?
       ),
+      elevation_after_json = CASE WHEN elevation_id IS NULL THEN NULL ELSE (${invoiceElevationSnapshotSql('invoice_command_ledger.invoice_id')}) END,
       completed_at = occurred_at,
       completed = 1
     WHERE invoice_id = ? AND command_id = ? AND completed = 0`,
@@ -1307,8 +1310,8 @@ const pendingLedgerInsert = (
 ): SqlStatement => ({
   text: `INSERT INTO invoice_command_ledger (
       invoice_id, command_id, command_kind, input_fingerprint, actor_type, actor_id,
-      expected_invoice_version, occurred_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      expected_invoice_version, occurred_at, elevation_id, elevation_token_id, elevation_before_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE (${invoiceElevationSnapshotSql('?')}) END)`,
   params: [
     input.invoiceId,
     input.commandId,
@@ -1318,6 +1321,10 @@ const pendingLedgerInsert = (
     input.actor.id,
     expectedVersion,
     input.occurredAt,
+    input.elevation?.id ?? null,
+    input.elevation?.tokenId ?? null,
+    input.elevation?.id ?? null,
+    input.invoiceId,
   ],
 })
 
@@ -2453,6 +2460,9 @@ export const executeInvoiceEdit = async (
       `invoice ${input.invoiceId} does not exist`,
     )
   }
+  if (input.elevation !== undefined && before.state !== 'draft') {
+    throw new InvoiceCommandOperationError('forbidden', 'Elevated invoice edits are restricted to drafts.')
+  }
   if (before.version !== input.expectedVersion) {
     throw new InvoiceVersionConflictError(input.invoiceId, input.expectedVersion, before.version)
   }
@@ -2729,7 +2739,16 @@ export const executeInvoiceEdit = async (
 
   try {
     await runAtomic(database, statements)
-  } catch {
+  } catch (error) {
+    let cause: unknown = error
+    for (let depth = 0; depth < 8 && cause instanceof Error; depth++) {
+      if (/invoice_elevation_/u.test(cause.message))
+        throw new InvoiceCommandOperationError(
+          'forbidden',
+          'The invoice elevation expired or its authority changed. Reauthenticate before editing the draft.',
+        )
+      cause = cause.cause
+    }
     const completed = await readLedger(database, input.invoiceId, input.commandId)
     if (completed !== null) {
       await assertAuthorized(input)

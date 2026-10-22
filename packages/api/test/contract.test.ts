@@ -1,3 +1,4 @@
+import { installInvoiceElevationRoutes } from '../src/invoice-elevations.js';
 import { installEstimateTemplateRoutes } from '../src/estimate-templates.js';
 import { installScheduledJobRoutes } from '../src/scheduled-jobs.js';
 import { installContractorReviewRoutes } from '../src/contractor-review.js';
@@ -496,6 +497,11 @@ const documentedApp = () =>
         isTeamModuleEnabled: async () => true,
       });
       installClientTreeRoutes(api, treeReader);
+      installInvoiceElevationRoutes(api, {
+        store: {createRequest:unavailable,pending:unavailable,mint:unavailable,verify:unavailable,revoke:unavailable},
+        passwords:passwordAuth,policy:{isLive:async()=>true},secondFactor:twoFactor,emailCodesReady:false,
+        unlinkTime:unavailable,clock:()=>"2026-08-28T12:00:00.000Z",clientKey:()=>"contract-fixture",
+      });
       installEstimateTemplateRoutes(api, {
         list: async () => [], get: unavailable, save: unavailable, createDraft: unavailable,
       }, () => "2026-08-28T12:00:00.000Z");
@@ -584,6 +590,22 @@ describe("OpenAPI contract", () => {
     ).toMatchObject({ "200": expect.any(Object) });
     expect(schemas).toHaveProperty("TimesheetSubmissionDetail");
     expect(schemas).toHaveProperty("TimesheetSubmissionEntry");
+
+    for (const [path, method] of [
+      ["/api/v1/invoice-elevations", "post"],
+      ["/api/v1/invoice-elevations/verify", "post"],
+      ["/api/v1/invoice-elevations/email-code", "post"],
+      ["/api/v1/invoice-elevations/{id}", "delete"],
+      ["/api/v1/invoices/{id}/unlink-time", "post"],
+    ]) {
+      expect(paths[path!]?.[method!]).toMatchObject({ security: [{ bearerAuth: [] }] });
+    }
+    expect(paths["/api/v1/invoices/{id}"]?.patch).toMatchObject({
+      parameters: expect.arrayContaining([expect.objectContaining({ name: "X-Ezacto-Invoice-Elevation", in: "header" })]),
+    });
+    expect(paths["/api/v1/invoices/{id}/hours-reconciliation/release"]?.post).toMatchObject({
+      security: [{ cookieSession: [] }],
+    });
 
     const categoryCollection = paths["/api/v1/expense-categories"] as
       | {
