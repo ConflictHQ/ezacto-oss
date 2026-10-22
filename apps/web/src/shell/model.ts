@@ -1441,6 +1441,7 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   liftEmailSuppression: async (id, input, signal) => (await client.liftEmailSuppression({id,body:input,...withSignal(signal)})).data,
   getEmailHealth: async (signal) =>
     (await client.getEmailHealth(withSignal(signal))).data,
+  checkOffsiteBackupDestination: async (signal) => (await client.checkOffsiteBackupDestination(withSignal(signal))).data,
   getBackupStatus: async (signal) =>
     (await client.getBackupStatus(withSignal(signal))).data,
   createBackupDownloadLink: async (input, signal) =>

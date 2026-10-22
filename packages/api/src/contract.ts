@@ -1524,6 +1524,16 @@ const signInMethodOperations: ApiContractOperation[] = [
  */
 const backupOperations: ApiContractOperation[] = [
   {
+    method: "post",
+    path: "/api/v1/backup/offsite/check",
+    operationId: "checkOffsiteBackupDestination",
+    summary: "Verify the deployment-configured encrypted off-site backup destination",
+    sessionOnly: true,
+    tag: "backup",
+    responseStatus: 200,
+    responseSchema: "OffsiteBackupCheckEnvelope",
+  },
+  {
     method: "get",
     path: "/api/v1/backup/status",
     operationId: "getBackupStatus",
@@ -4507,6 +4517,24 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  OffsiteBackupRun: {
+    type: "object",
+    required: ["id","backup_run_id","status","started_at","completed_at","uploaded_objects","total_objects","error_message"],
+    properties: { id:stringSchema,backup_run_id:integerSchema,status:{type:"string",enum:["pending","running","completed","failed"]},
+      started_at:timestampSchema,completed_at:nullable(timestampSchema),uploaded_objects:{type:"integer",minimum:0},total_objects:{type:"integer",minimum:0},error_message:nullable(stringSchema)},
+    additionalProperties:false,
+  },
+  OffsiteBackupStatus: {
+    type:"object",required:["configured","state","destination","last_completed","latest","error"],
+    properties:{configured:booleanSchema,state:{type:"string",enum:["disabled","misconfigured","waiting","running","completed","failed"]},
+      destination:nullable(stringSchema),last_completed:nullable(reference("OffsiteBackupRun")),latest:nullable(reference("OffsiteBackupRun")),
+      error:nullable({type:"object",required:["code","message"],properties:{code:{type:"string",enum:["E14"]},message:stringSchema},additionalProperties:false})},
+    additionalProperties:false,
+  },
+  OffsiteBackupCheckEnvelope: {
+    type:"object",required:["data"],properties:{data:{type:"object",required:["verified","checked_at"],
+      properties:{verified:{type:"boolean",enum:[true]},checked_at:timestampSchema},additionalProperties:false}},additionalProperties:false,
+  },
   BackupStatusEnvelope: {
     type: "object",
     required: ["data", "links"],
@@ -4519,6 +4547,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           last_failed: nullable(reference("BackupRun")),
           recent_runs: { type: "array", items: reference("BackupRun") },
           has_failure: { type: "boolean" },
+          offsite: reference("OffsiteBackupStatus"),
         },
         additionalProperties: false,
       },

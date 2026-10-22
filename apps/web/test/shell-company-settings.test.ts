@@ -1,4 +1,5 @@
 /** @vitest-environment happy-dom */
+import type { OffsiteBackupStatus } from '@ezacto/core'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { EzactoClient } from '@conflict-hq/ezacto-client'
@@ -103,6 +104,7 @@ describe('company settings', () => {
     last_failed: ReturnType<typeof backupRun> | null
     recent_runs: ReturnType<typeof backupRun>[]
     has_failure: boolean
+    offsite?: OffsiteBackupStatus
   } = {
     last_completed: backupRun(),
     last_failed: null,
@@ -186,6 +188,7 @@ describe('company settings', () => {
   })
 
   afterEach(async () => {
+    delete backupStatusPayload.offsite
     // happy-dom delivers hashchange on a timer. The controllers this file has
     // mounted keep listening, and each answers the cleared hash by reading the
     // first section, so the event is let through before fetch is unstubbed
@@ -1776,6 +1779,31 @@ describe('company settings', () => {
     ).toBe('2026-09-07 21:00')
   })
 
+  it('[offsite #38] shows L1 success alongside a missing L2 copy and offers an explicit destination check', async () => {
+    stubModulesEndpoint()
+    openCompanySettings('backup')
+    backupStatusPayload = {last_completed:backupRun(),last_failed:null,recent_runs:[backupRun()],has_failure:false,
+      offsite:{configured:true,state:'failed',destination:'s3.example.test/backup',last_completed:null,latest:null,error:{code:'E14',message:'Check bucket permissions.'}}}
+    const check = vi.fn(async()=>({verified:true,checked_at:timestamp}))
+    const api = {...companyApi(),checkOffsiteBackupDestination:check}
+    await mountShell(api)
+    const button=document.querySelector<HTMLButtonElement>('[data-backup-offsite-check]')!
+    await vi.waitFor(()=>expect(document.querySelector<HTMLElement>('[data-backup-offsite-check-row]')!.hidden).toBe(false))
+    const facts=document.querySelector('[data-settings-backup-facts]')!.textContent
+    expect(facts).toContain('Last completed (L1)')
+    expect(facts).toContain('Last off-site copy (L2)Never')
+    expect(facts).toContain('Copy failed')
+    expect(document.querySelector('[data-settings-backup-status]')!.textContent).toContain('E14: Check bucket permissions.')
+    expect(check).not.toHaveBeenCalled()
+    button.click()
+    await vi.waitFor(()=>expect(document.querySelector('[data-backup-offsite-check-result]')!.textContent).toContain('did not create a backup'))
+    expect(check).toHaveBeenCalledOnce()
+    await vi.waitFor(()=>expect(button.disabled).toBe(false))
+    check.mockRejectedValueOnce(new EzactoApiError(503,{error:{code:'offsite_backup_unavailable',message:'E14: Check the configured bucket permissions.'}},'preflight-fixture'))
+    button.click()
+    await vi.waitFor(()=>expect(document.querySelector('[data-backup-offsite-check-result]')!.textContent).toBe('E14: Check the configured bucket permissions.'))
+  })
+
   it('[browser] raises the last failure above the table rather than in it', async () => {
     // A failed run found by scanning a table is a failure nobody reads. It is
     // the answer to the only question this section is asked, so it is the
@@ -1816,6 +1844,16 @@ describe('company settings', () => {
     const alarm = document.querySelector<HTMLElement>('[data-settings-backup-alarm]')!
     await vi.waitFor(() => expect(alarm.hidden).toBe(false))
     expect(alarm.textContent).toContain('nothing to restore from')
+  })
+
+  it('[offsite #38] explains the container backup boundary when its reader route is absent', async () => {
+    stubModulesEndpoint()
+    openCompanySettings('backup')
+    const api={...companyApi(),getBackupStatus:vi.fn(async()=>{throw new EzactoApiError(404,{error:{code:'not_found'}},'container-backup-fixture')})}
+    await mountShell(api)
+    await vi.waitFor(()=>expect(document.querySelector('[data-settings-backup-status]')!.textContent).toContain('operator-managed backups'))
+    expect(document.querySelector('[data-settings-backup-status]')!.textContent).toContain('RESTORE.md')
+    expect(document.querySelector('[data-settings-retry="backup"]')).toBeNull()
   })
 
   it('[browser] says where backups live when the deployment does not keep them', async () => {

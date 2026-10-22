@@ -1,3 +1,4 @@
+import type { OffsiteBackupEnvironment } from './offsite-backups.js'
 import type { ReminderProcessOptions, ReminderProcessSummary } from '@ezacto/db/d1'
 import { appleWebConfiguration } from './apple-web.js'
 import { aggregateAppleCleanup, type AppleCleanupPort, type AppleLifecycleStore, type AppleWebCleanupPort } from '@ezacto/core'
@@ -259,7 +260,7 @@ export type AppEnv = Env & {
   DEMO_MAIL_ALLOWED_DOMAINS?: string
 }
 
-export type WorkerEnv = AppEnv & {
+export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & {
   DB: D1Database
   SCHEDULED_RUN_WORKFLOW?: Workflow<{runId: number; proposedAt: string}>
   /** Sentry DSN. Absent means error reporting is off (a no-op wrapper). */
@@ -487,6 +488,7 @@ export interface RuntimeServices {
   /** Where credential events are recorded. Absent leaves them unrecorded. */
   activity?: ActivityRecorder
   backupStatus?: BackupStatusReader
+  offsiteBackupSync?: ReturnType<typeof import('@ezacto/db/d1').createOffsiteBackupSyncService>
   /**
    * The signed download of a backup run (issue 39). Composed only where the
    * bundle exists to be read, and mounted only with the activity log: a copy of

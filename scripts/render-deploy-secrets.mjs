@@ -233,6 +233,14 @@ export const deploySecretPayload = (environment) => {
     // only value that selects the test organisation.
     BILL_ENVIRONMENT: optionalCredential(environment.BILL_ENVIRONMENT),
     STRIPE_API_KEY: optionalCredential(environment.STRIPE_API_KEY),
+    EZACTO_BACKUP_S3_BUCKET: optionalCredential(environment.EZACTO_BACKUP_S3_BUCKET),
+    EZACTO_BACKUP_S3_ENDPOINT: optionalCredential(environment.EZACTO_BACKUP_S3_ENDPOINT),
+    EZACTO_BACKUP_S3_REGION: optionalCredential(environment.EZACTO_BACKUP_S3_REGION),
+    EZACTO_BACKUP_S3_PREFIX: optionalCredential(environment.EZACTO_BACKUP_S3_PREFIX),
+    EZACTO_BACKUP_S3_ACCESS_KEY_ID: optionalCredential(environment.EZACTO_BACKUP_S3_ACCESS_KEY_ID),
+    EZACTO_BACKUP_S3_SECRET_ACCESS_KEY: optionalCredential(environment.EZACTO_BACKUP_S3_SECRET_ACCESS_KEY),
+    EZACTO_BACKUP_S3_SESSION_TOKEN: optionalCredential(environment.EZACTO_BACKUP_S3_SESSION_TOKEN),
+    EZACTO_BACKUP_ENCRYPTION_KEY: optionalCredential(environment.EZACTO_BACKUP_ENCRYPTION_KEY),
     STRIPE_WEBHOOK_SECRET: optionalCredential(environment.STRIPE_WEBHOOK_SECRET),
     // Rendered because `secret bulk` replaces the Worker's whole secret set, so
     // anything this payload omits is deleted on the next deploy. The bootstrap

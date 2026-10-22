@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync } from 'node:fs'
+import { decryptBackupBundle } from './backup-decrypt.js'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { EzactoApiError, EzactoClient, type Whoami } from '@conflict-hq/ezacto-client'
@@ -64,6 +65,7 @@ Commands:
   report       List or run reports; report list shows each required scope
   export       Export time entries or expenses as CSV (or --verify a backup bundle)
   backup       Create a full backup bundle from a local database (--sync-to copies it to S3)
+  backup-decrypt  Decrypt and verify a downloaded encrypted Worker logical bundle
   restore      Restore a backup bundle into a fresh database
 
 Options:
@@ -110,7 +112,7 @@ Options:
   --description <text>      Invoice edit: new description for --line
   --entries <id,id,...>     Invoice unlink-time: time entry IDs to mark uninvoiced
   --database <path>         SQLite database path (or set EZACTO_DATA_DIR)
-  --output <path>           Output directory for ez backup (default: current directory)
+  --output <path>           Output directory for backup or backup-decrypt
   --attachments <path>      Attachment directory for backup/restore
   --sync-to <s3://bucket/prefix>  Copy the bundle to an S3-compatible bucket after ez backup
                             (credentials: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY; optional
@@ -938,6 +940,16 @@ export const runCli = async (
   if ((values['sync-to'] !== undefined || values.bundle !== undefined) && command !== 'backup') {
     throw new Error('--sync-to and --bundle are valid only with ez backup')
   }
+
+  if (command === 'backup-decrypt') {
+    if (commandArguments.length !== 1 || values.output === undefined)
+      throw new Error('usage: ez backup-decrypt <encrypted-run-directory> --output <new-directory>; set EZACTO_BACKUP_ENCRYPTION_KEY in the environment')
+    const result = await decryptBackupBundle({inputDirectory:commandArguments[0]!,outputDirectory:values.output,
+      encodedKey:runtime.environment.EZACTO_BACKUP_ENCRYPTION_KEY??''})
+    runtime.stdout(values.json?json(result):`Decrypted and verified ${result.tableCount} tables: ${result.outputDirectory}. This is a Worker logical bundle; see RESTORE.md for recovery limits.`)
+    return 0
+  }
+
 
   if (command === 'backup') {
     if (commandArguments.length !== 0) throw new Error('ez backup accepts no positional arguments')

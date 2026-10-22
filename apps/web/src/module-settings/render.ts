@@ -190,6 +190,11 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p class="form-result" data-settings-backup-status role="status" aria-live="polite">Loading backup status…</p>
       <p class="form-result settings-backup-alarm" data-settings-backup-alarm role="status" aria-live="polite" hidden></p>
       <dl class="settings-facts" data-settings-backup-facts hidden></dl>
+      <div data-backup-offsite-check-row hidden>
+        <p class="hint">Scheduled off-site copies protect logical database rows. Attachment bytes require a separate full backup; see RESTORE.md.</p>
+        <button class="secondary-action" type="button" data-backup-offsite-check>Check off-site destination</button>
+        <p class="form-result" data-backup-offsite-check-result role="status" aria-live="polite"></p>
+      </div>
       <div class="settings-form" data-settings-backup-download hidden>
         <p class="hint">The download is a complete copy of the database. It contains password hashes and authenticator seeds, so treat the file and the link like a credential. The link works once and stops working after ten minutes.</p>
         <label data-backup-download-code-row hidden>Verification code

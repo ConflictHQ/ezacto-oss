@@ -323,6 +323,7 @@ export interface CompanySettingsApi {
    * backups are the operator's filesystem, where `RESTORE.md` is the contract.
    */
   getBackupStatus?(signal?: AbortSignal): Promise<BackupStatus>
+  checkOffsiteBackupDestination?(signal?: AbortSignal): Promise<{verified:boolean;checked_at:string}>
   /** Mints a single-use download link for the latest completed run (issue 39). */
   createBackupDownloadLink?(
     input: { readonly code?: string },

@@ -1,3 +1,4 @@
+import { createWorkerOffsiteBackups } from './offsite-backups.js'
 import { createScheduledRunDispatchService } from '@ezacto/db/d1'
 import { prepareScheduledRunNotifications } from '@ezacto/db/d1'
 import { createD1EmailSuppressionStore } from '@ezacto/db/d1'
@@ -1176,6 +1177,7 @@ export const createRuntimeServices = async (
       )?.address ?? null,
   })
 
+  const offsiteBackupSync = await createWorkerOffsiteBackups(drizzle,env)
   const scheduledObjects = env.ATTACHMENTS === undefined ? undefined : createR2AttachmentObjectStore(env.ATTACHMENTS)
   const scheduledRunDispatch = scheduledObjects === undefined || organizationMailer?.enqueuePersisted === undefined
     ? undefined : createScheduledRunDispatchService(drizzle, {
@@ -1432,7 +1434,10 @@ export const createRuntimeServices = async (
         verifyCode: (userId: number, code: string) => twoFactor.verifyCode(userId, code),
       },
     },
+    offsiteBackupSync,
     backupStatus: {
+      offsiteStatus: () => offsiteBackupSync.status(),
+      checkOffsite: () => offsiteBackupSync.checkDestination(),
       latestRuns: (limit: number) => getLatestBackupRuns(database, limit),
       runsSnapshot: () => getBackupRunsSnapshot(database),
       pageRuns: (window) => pageBackupRuns(database, window),
