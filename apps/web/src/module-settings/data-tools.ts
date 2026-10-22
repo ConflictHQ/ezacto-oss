@@ -265,20 +265,21 @@ export const createCompanyDataTools = (
               detail = document.createElement('p')
             heading.textContent = action.label
             detail.textContent = action.description
-            item.append(heading, detail)
+            item.appendChild(heading)
+            item.appendChild(detail)
             if (
               action.module &&
               !flags.some((flag) => flag.module === action.module && flag.enabled)
             ) {
               const disabled = document.createElement('p')
               disabled.textContent = 'Unavailable while Timesheet approval is off.'
-              item.append(disabled)
+              item.appendChild(disabled)
             } else {
               const link = document.createElement('a')
               link.href = action.href
               link.textContent =
                 action.id === 'approve-weeks' ? 'Open Approvals' : 'Open detailed time report'
-              item.append(link)
+              item.appendChild(link)
             }
             return item
           }),
