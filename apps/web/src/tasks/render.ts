@@ -5,7 +5,7 @@ export const renderTaskAdminPage = (view?: string): string => `
       <button class="primary-action" type="button" data-task-create data-task-write data-auth-action hidden disabled>Add task</button>
     </header>
     <p class="task-admin-intro">Manage the account-wide task templates available to projects and time entries.</p>
-    <p class="hint">Default tasks are added to new projects only. For an existing project, open <a href="/projects">Projects</a>, choose the project, then use Assigned tasks → Add task.</p>
+    <p class="hint">Default tasks are added to new projects only. For an existing project, open <a href="/projects">Projects</a>, choose the project, then use Assigned tasks → Assign task.</p>
     <div class="task-admin-toolbar">
       <fieldset aria-label="Task status">
         <legend class="visually-hidden">Task status</legend>
