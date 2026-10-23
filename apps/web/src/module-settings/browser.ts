@@ -1,4 +1,5 @@
 import { createWebhookController } from './webhooks.js'
+import { createPayoutProviderSwitches } from './payout-provider-switches.js'
 import { createCompanyDataTools } from './data-tools.js'
 import { createEmailSuppressionController } from './email-suppressions-browser.js'
 import { createDeletionRequestsController } from './deletion-requests.js'
@@ -1909,6 +1910,11 @@ export const createModuleSettingsController = (
    * administrator or an executive manager before any of these loaders run, so a
    * second one here would be a branch nothing can reach.
    */
+  const payoutProviderSwitches = createPayoutProviderSwitches(
+    required<HTMLElement>('[data-settings-payout-providers]'),
+    api,
+  )
+
   const loadWiseConnection = async (active: ActiveSession): Promise<void> => {
     const read = api.getWiseConnection
     if (read === undefined) return
@@ -2713,7 +2719,9 @@ export const createModuleSettingsController = (
     reminders: loadReminders,
     approval: loadAutoApproval,
     notifications: loadNotifications,
-    payouts: loadWiseConnection,
+    payouts: async (active) => {
+      await Promise.all([loadWiseConnection(active), payoutProviderSwitches.load(active.signal)])
+    },
     backup: (active) => loadBackups(active.identity, active),
     brand: (active) => loadBrandAssets(active.identity, active),
     appearance: (active) => loadInstanceTheme(active.identity, active),
