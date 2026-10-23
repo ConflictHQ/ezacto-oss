@@ -136,7 +136,7 @@ export {
   type ReleaseTimeOutcome,
 } from './invoice-time-claims.js'
 export {
-  installPayoutAccountRoutes, type PayoutProviderEnablement,
+  installPayoutAccountRoutes, type PayoutProviderEnablement, type PayoutPreferenceService,
   type PayoutAccount,
   type PayoutAccountService,
   type PayoutLinkResult,
