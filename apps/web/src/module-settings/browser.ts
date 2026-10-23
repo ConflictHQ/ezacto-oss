@@ -2433,7 +2433,7 @@ export const createModuleSettingsController = (
             report.recovery?.last_outcome === 'failed'
               ? ' The last catch-up for missed QuickBooks events failed.'
               : report.recovery?.last_outcome === 'full_reconcile_needed'
-                ? ' Missed QuickBooks events older than 30 days cannot be recovered; this comparison is the check.'
+                ? ' QuickBooks catch-up could not prove a complete history (an old gap or the provider response limit). Compare the books and review missing payments.'
                 : ''
           quickBooksReconcileResult.textContent =
             (differing.length === 0

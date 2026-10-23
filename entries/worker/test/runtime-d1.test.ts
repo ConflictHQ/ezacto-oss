@@ -21,6 +21,7 @@ const timestamp = "2026-08-28T08:00:00.000Z";
 const cursorSecret = encodeBase64Url(new Uint8Array(32).fill(0x41));
 
 let miniflare: Miniflare;
+let bundledWorker: string;
 let database: D1Database;
 let bootstrapResponse: Response;
 let bearer: string;
@@ -58,6 +59,7 @@ beforeAll(async () => {
     target: "es2022",
     write: false,
   });
+  bundledWorker = bundled.outputFiles[0]!.text;
   miniflare = new Miniflare({
     bindings: {
       API_CURSOR_SIGNING_KEY: cursorSecret,
@@ -226,6 +228,39 @@ beforeAll(async () => {
 afterAll(async () => miniflare.dispose());
 
 describe("Worker D1 runtime composition", () => {
+  it('[#1167] serves expenses without attachment storage and bootstraps the same capability into pages', async () => {
+    const runtime = new Miniflare({
+      bindings: { API_CURSOR_SIGNING_KEY: cursorSecret, ENVIRONMENT: 'test', RELEASE: 'no-storage-test' },
+      compatibilityDate: '2026-08-06', compatibilityFlags: ['nodejs_als'],
+      d1Databases: ['DB'], modules: true, script: bundledWorker,
+    });
+    try {
+      const first = await runtime.dispatchFetch('https://worker.test/api/v1/expenses');
+      expect(first.status).toBe(401);
+      const db = await runtime.getD1Database('DB');
+      await db.prepare("INSERT INTO organizations (id, name, modules, created_at, updated_at) VALUES (1, 'Fixture', ?, ?, ?)")
+        .bind(JSON.stringify({expenses: true}), timestamp, timestamp).run();
+      await db.prepare("INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at) VALUES (1, 'Fixture', 'Owner', 'administrator', '[]', ?, ?)")
+        .bind(timestamp, timestamp).run();
+      const store = createApiTokenStore(createD1Database(db as unknown as D1Database));
+      const token = (await store.issue({userId: 1, name: 'No storage', scopes: ['expenses:read', 'projects:read']})).token;
+      const headers = { authorization: `Bearer ${token}` };
+      const expenses = await runtime.dispatchFetch('https://worker.test/api/v1/expenses', {headers});
+      expect(expenses.status).toBe(200);
+      expect(await expenses.json()).toMatchObject({data: []});
+      const projects = await runtime.dispatchFetch('https://worker.test/api/v1/projects', {headers});
+      expect(projects.status).toBe(200);
+      const attachments = await runtime.dispatchFetch('https://worker.test/api/v1/projects/1/attachments', {headers});
+      expect(attachments.status).toBe(403);
+      expect(await attachments.json()).toMatchObject({error: {code: 'feature_unavailable'}});
+      for (const path of ['/projects/1', '/expenses', '/expenses/1']) {
+        const page = await runtime.dispatchFetch(`https://worker.test${path}`);
+        expect(page.status).toBe(200);
+        expect(await page.text()).toContain('data-attachments-unavailable');
+      }
+    } finally { await runtime.dispose(); }
+  });
+
   it("[api] migrates the real D1 binding before its first DB-backed fetch", async () => {
     expect(bootstrapResponse.status).toBe(401);
     expect(bootstrapResponse.headers.get("www-authenticate")).toBe(

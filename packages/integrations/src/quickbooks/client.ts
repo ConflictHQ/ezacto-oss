@@ -162,6 +162,8 @@ export interface QuickBooksClientOptions {
   readonly accessToken: string
   readonly fetch: (request: Request) => Promise<Response>
   readonly baseUrl?: string
+  /** The caller clock, used to interpret an HTTP-date Retry-After. */
+  readonly now?: () => Date
 }
 
 const object = (value: unknown, field: string): Record<string, unknown> => {
@@ -169,6 +171,24 @@ const object = (value: unknown, field: string): Record<string, unknown> => {
     throw new QuickBooksResponseError(`${field} must be an object`)
   }
   return value as Record<string, unknown>
+}
+
+/** Invalid or unrepresentable retry dates use the caller's provider fallback. */
+const retryDelaySeconds = (value: string | null, now: number): number | null => {
+  if (value === null) return null
+  const raw = value.trim()
+  const seconds = /^\d+$/u.test(raw)
+    ? Number(raw)
+    : /[A-Za-z]/u.test(raw) && Number.isFinite(Date.parse(raw))
+      ? Math.max(0, Math.ceil((Date.parse(raw) - now) / 1000))
+      : null
+  return seconds !== null &&
+    Number.isSafeInteger(seconds) &&
+    seconds >= 0 &&
+    // The durable cursor uses canonical UTC timestamps with four-digit years.
+    now + seconds * 1000 <= 253_402_300_799_999
+    ? seconds
+    : null
 }
 
 /**
@@ -184,6 +204,7 @@ export class QuickBooksClient {
   readonly #accessToken: string
   readonly #fetch: (request: Request) => Promise<Response>
   readonly #baseUrl: string
+  readonly #now: () => Date
 
   constructor(options: Readonly<QuickBooksClientOptions>) {
     if (options.realmId.trim() === '') {
@@ -195,6 +216,7 @@ export class QuickBooksClient {
     this.#realmId = options.realmId
     this.#accessToken = options.accessToken
     this.#fetch = options.fetch
+    this.#now = options.now ?? (() => new Date())
     this.#baseUrl = options.baseUrl ?? QUICKBOOKS_PRODUCTION_BASE_URL
   }
 
@@ -229,13 +251,11 @@ export class QuickBooksClient {
       } catch {
         // A non-JSON error body is itself the diagnosis; the status says the rest.
       }
-      const retryAfter = Number(response.headers.get('retry-after'))
-      throw new QuickBooksApiError(
-        response.status,
-        code,
-        detail,
-        Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : null,
+      const retryAfter = retryDelaySeconds(
+        response.headers.get('retry-after'),
+        this.#now().getTime(),
       )
+      throw new QuickBooksApiError(response.status, code, detail, retryAfter)
     }
     return object(await response.json(), 'response body')
   }

@@ -1,3 +1,5 @@
+import { quickBooksRetryMigration } from './migrations/0154_quickbooks_retry.js'
+import { exampleProjectsMigration } from './migrations/0153_example_projects.js'
 import { outboundWebhooksMigration } from './migrations/0151_outbound_webhooks.js'
 import { queuedMigrationsMigration } from './migrations/0150_queued_migrations.js'
 import { invoiceElevationsMigration } from './migrations/0149_invoice_elevations.js'
@@ -1662,6 +1664,8 @@ const migrations = [
   { id: '0150_queued_migrations', statements: queuedMigrationsMigration },
   { id: '0151_outbound_webhooks', statements: outboundWebhooksMigration },
   { id: '0152_payout_provider_enablement', statements: payoutProviderEnablementMigration },
+  { id: '0153_example_projects', statements: exampleProjectsMigration },
+  { id: '0154_quickbooks_retry', statements: quickBooksRetryMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

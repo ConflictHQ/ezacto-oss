@@ -324,6 +324,37 @@ for (const [runtime, factory] of factories) {
     let harness: Harness | undefined;
     afterEach(async () => harness?.close());
 
+    it('[#1163] omits archived practice data while keeping ordinary archived project history', async () => {
+      harness = await factory();
+      const range = { from: '2026-08-01', to: '2026-08-31' };
+      await harness.run('UPDATE projects SET is_example=1 WHERE id=1', []);
+      expect((await harness.reports.timeReport(range)).projects.map(row => row.projectId)).toContain(1);
+      await harness.run('UPDATE projects SET is_active=0 WHERE id=1', []);
+      const report = await harness.reports.timeReport(range);
+      expect(report.projects.map(row => row.projectId).sort()).toEqual([2, 3, 4]);
+      expect(report.totals.timeEntryCount).toBe(3);
+      expect(report.totals.roundedSeconds).toBe(6300);
+      expect(await harness.reports.detailedTime({...range, projectId: 1})).toMatchObject({kind: 'report', report: {rows: []}});
+      expect(await harness.reports.detailedTime({...range, projectId: 4})).toMatchObject({kind: 'report', report: {rows: [expect.objectContaining({projectId: 4})]}});
+      const expenses = await harness.reports.detailedExpense(range);
+      expect(expenses.rows.map(row => row.expenseId).sort()).toEqual([202, 203, 204]);
+      const saved = await harness.request('/report-definitions', 'administrator', [], 1, {
+        method: 'POST', headers: {'content-type': 'application/json'},
+        body: JSON.stringify({name: 'Practice exclusion', fields: [{id: 'project_name', label: 'Project', visible: true}], metrics: ['hours'], filters: [], group_by: {dimension: 'project'}, presentation: {result: 'summary', grouped: true, include_zero_values: false}}),
+      });
+      expect(saved.status).toBe(201);
+      const { data: { id } } = await saved.json() as {data: {id: string}};
+      const run = await harness.request(`/report-definitions/${id}/run`, 'administrator', [], 1, {method: 'POST'});
+      expect(run.status).toBe(200);
+      const custom = await run.json() as {data: {rows: {label: string}[]}};
+      expect(custom.data.rows.map(row => row.label).sort()).toEqual(['Archived project', 'Child project', 'Leaf project']);
+      // Archiving changes visibility, never the stored practice time or expense.
+      await harness.run('UPDATE projects SET is_active=1 WHERE id=1', []);
+      expect((await harness.reports.timeReport(range)).totals.timeEntryCount).toBe(4);
+      expect((await harness.reports.detailedExpense(range)).rows).toHaveLength(4);
+    });
+
+
     it("[api #715] saves, shares, pins and reruns a live definition", async () => {
       harness = await factory();
       const create = await harness.request("/report-definitions", "administrator", [], 1, {

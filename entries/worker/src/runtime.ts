@@ -35,6 +35,7 @@ import {
   createQuickBooksReconciliationSource,
   createQuickBooksStore,
   createGeneralResourceRepository,
+  recoverProjectMissingRates,
   createMoneyResourceRepository,
   listClientAncestors,
   createClientRateCardRepository,
@@ -1228,6 +1229,7 @@ export const createRuntimeServices = async (
       touchIntervalMs,
       ...(demoDeployment(env) ? { maxLifetimeMs: DEMO_API_TOKEN_MAX_LIFETIME_MS } : {}),
     }),
+    projectMissingRates: { recover: input => recoverProjectMissingRates(drizzle, input, dates => timesheetLockPolicy.lockedDates(dates)) },
     generalResources: createGeneralResourceRepository(drizzle),
     clientTree: {
       ancestors: (clientId) => listClientAncestors(drizzle, clientId),

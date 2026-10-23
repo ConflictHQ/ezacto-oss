@@ -476,7 +476,13 @@ export const createTaskAdminController = (
         editingTask = null
         formDialog.close()
         syncMutationControls()
-        await loadList(active, false, create ? 'Task added.' : 'Task saved.')
+        await loadList(
+          active,
+          false,
+          create
+            ? 'Task added. To use it on an existing project, open Projects, choose the project, then choose Assign task under Assigned tasks.'
+            : 'Task saved.',
+        )
       })
       .catch((error: unknown) => {
         active.presentFailure(error, () => {
