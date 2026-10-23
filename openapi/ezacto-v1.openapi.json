@@ -28650,8 +28650,11 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "integer",
-              "minimum": 1
+              "type": "string",
+              "enum": [
+                "deel",
+                "wise"
+              ]
             }
           }
         ],

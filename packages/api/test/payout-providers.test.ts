@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { describe, expect, it, vi } from 'vitest'
+import type { ApiContext } from '../src/context.js'
 import { errorResponse } from '../src/errors.js'
 import {
   installPayoutAccountRoutes,
@@ -46,14 +47,14 @@ const app = (
   options: { enablement?: PayoutProviderEnablement },
   principal = { userId: 1, profile: 'administrator' },
 ) => {
-  const instance = new Hono<{ Bindings: object; Variables: Record<string, unknown> }>()
+  const instance = new Hono<ApiContext<object>>()
   instance.use('*', async (context, next) => {
     context.set('principal', { type: 'user', ...principal, authentication: { kind: 'session', sessionId: 't' } } as never)
     context.set('requestId', 'r')
     await next()
   })
   instance.onError((error, context) => errorResponse(error, context))
-  installPayoutAccountRoutes(instance as never, service, options)
+  installPayoutAccountRoutes(instance, service, options)
   return instance
 }
 

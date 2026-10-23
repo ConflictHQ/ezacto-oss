@@ -2353,7 +2353,13 @@ const payoutAccountOperations: ApiContractOperation[] = [
     requestSchema: "PayoutProviderSettingInput",
     requestRequired: true,
     sessionOnly: true,
-    parameters: [path("provider")],
+    parameters: [
+      {
+        name: "provider",
+        location: "path",
+        schema: { type: "string", enum: ["deel", "wise"] },
+      },
+    ],
   },
 ];
 
