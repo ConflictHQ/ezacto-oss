@@ -3235,6 +3235,7 @@ const teamOperations: ApiContractOperation[] = [
 ];
 
 export const apiContractOperations: readonly ApiContractOperation[] = [
+  { method: "post", path: "/api/v1/projects/:id/missing-rates", operationId: "recoverProjectMissingRates", summary: "Preview or explicitly repair missing project-rate snapshots on open time", tag: "projects", responseStatus: 200, responseSchema: "ProjectMissingRatesEnvelope", requestSchema: "ProjectMissingRatesInput", requestRequired: true, sessionOnly: true, parameters: [path("id")] },
   { method:"get",path:"/auth/apple/native-capabilities",operationId:"getNativeAppleCapabilities",summary:"Check explicit native Apple lifecycle protocol support",tag:"authentication",public:true,responseStatus:200,responseSchema:"NativeAppleCapabilities" },
   { method:"post",path:"/auth/apple",operationId:"signInNativeApple",summary:"Verify origin-bound Apple lifecycle custody and native identity before sign-in",tag:"authentication",public:true,responseStatus:200,responseSchema:"NativeAppleSignInEnvelope",requestSchema:"NativeAppleSignInInput",requestRequired:true },
   { method:"post",path:"/auth/apple/deletion-requests/:id/binding",operationId:"rebindAppleCleanup",summary:"Bind fresh cleanup-purpose Apple custody to a pending deletion request",tag:"authentication",public:true,responseStatus:204,requestSchema:"AppleLifecycleProofInput",requestRequired:true,parameters:[stringPath("id")] },
@@ -5780,6 +5781,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  ProjectMissingRatesInput: { type: "object", properties: { fingerprint: { type: "string", pattern: "^[a-f0-9]{64}$" } }, additionalProperties: false },
+  ProjectMissingRatesEnvelope: { type: "object", required: ["data"], properties: { data: reference("ProjectMissingRates") }, additionalProperties: false },
+  ProjectMissingRates: { type: "object", required: ["project_id", "hourly_rate_cents", "entry_count", "seconds", "earliest_date", "latest_date", "fingerprint", "applied_entries"], properties: {
+    project_id: integerSchema, hourly_rate_cents: { type: "integer", minimum: 0 }, entry_count: { type: "integer", minimum: 0 }, seconds: { type: "integer", minimum: 0 }, earliest_date: { type: "string", nullable: true }, latest_date: { type: "string", nullable: true }, fingerprint: stringSchema, applied_entries: { type: "integer", minimum: 0 }
+  }, additionalProperties: false },
   CostRateBackfillInput: {
     type: "object",
     required: ["from", "to", "cost_rate_cents", "reason"],

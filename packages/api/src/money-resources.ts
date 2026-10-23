@@ -1354,6 +1354,10 @@ const translateMoneyError = (error: unknown): never => {
       },
     ]);
   }
+  if (code === "missing_billable_rate") {
+    const projectId = isJsonObject(error) && Number.isSafeInteger(error.projectId) ? Number(error.projectId) : null;
+    throw validationError([{ field: projectId === null ? "project_ids" : `project_ids.${projectId}`, code, message: databaseMessage }]);
+  }
   if (code === "invalid_command_input") {
     throw validationError([
       {

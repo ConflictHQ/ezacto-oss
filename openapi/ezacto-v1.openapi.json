@@ -11,6 +11,82 @@
     }
   ],
   "paths": {
+    "/api/v1/projects/{id}/missing-rates": {
+      "post": {
+        "operationId": "recoverProjectMissingRates",
+        "summary": "Preview or explicitly repair missing project-rate snapshots on open time",
+        "tags": [
+          "projects"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectMissingRatesEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/projects/:id/missing-rates",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectMissingRatesInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/auth/apple/native-capabilities": {
       "get": {
         "operationId": "getNativeAppleCapabilities",
@@ -42287,6 +42363,75 @@
               "billable",
               "cost"
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectMissingRatesInput": {
+        "type": "object",
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectMissingRatesEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ProjectMissingRates"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectMissingRates": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "hourly_rate_cents",
+          "entry_count",
+          "seconds",
+          "earliest_date",
+          "latest_date",
+          "fingerprint",
+          "applied_entries"
+        ],
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "hourly_rate_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "earliest_date": {
+            "type": "string",
+            "nullable": true
+          },
+          "latest_date": {
+            "type": "string",
+            "nullable": true
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "applied_entries": {
+            "type": "integer",
+            "minimum": 0
           }
         },
         "additionalProperties": false

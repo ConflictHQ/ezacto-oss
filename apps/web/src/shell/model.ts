@@ -1811,6 +1811,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getProject({ id, ...withSignal(signal) })).data,
   createDirectoryProject: async (input, signal) =>
     (await client.createProject({ body: input, ...withSignal(signal) })).data,
+  recoverProjectMissingRates: async (id, fingerprint, signal) =>
+    (await client.recoverProjectMissingRates({ id, body: fingerprint === undefined ? {} : { fingerprint }, ...withSignal(signal) })).data,
   updateDirectoryProject: async (id, input, signal) =>
     (await client.updateProject({ id, body: input, ...withSignal(signal) })).data,
   archiveDirectoryProject: async (id, signal) => {

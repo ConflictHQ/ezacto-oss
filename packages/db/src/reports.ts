@@ -1110,6 +1110,8 @@ const receivablesReport = async (
 }
 
 export interface UninvoicedTimeCandidateRow {
+  projectBillBy?: string
+  projectHourlyRateCents?: number | null
   id: number
   clientId: number
   clientName: string
@@ -1225,6 +1227,7 @@ export const readUninvoicedCandidates = async (
   const timeEntries = await database.all<UninvoicedTimeCandidateRow>(sql`
     SELECT entry.id AS "id", project.client_id AS "clientId", client.name AS "clientName",
       project.id AS "projectId", project.name AS "projectName", project.code AS "projectCode",
+      project.bill_by AS "projectBillBy", project.hourly_rate_cents AS "projectHourlyRateCents",
       task.id AS "taskId", task.name AS "taskName", user.id AS "userId",
       trim(user.first_name || ' ' || coalesce(user.last_name, '')) AS "userName",
       entry.spent_date AS "spentDate", entry.notes AS "notes",

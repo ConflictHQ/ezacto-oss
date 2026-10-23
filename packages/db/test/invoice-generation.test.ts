@@ -1,3 +1,4 @@
+import { repriceTimeEntry } from '../src/rate-resolver.js'
 import BetterSqlite3 from 'better-sqlite3'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -221,6 +222,16 @@ for (const [runtime, factory] of factories) {
       await seed(active)
       return active
     }
+
+    it('[money] names the project and exact missing-rate cause before any invoice is created', async () => {
+      const database = await setup()
+      await database.run("UPDATE projects SET billing_method = 'time_materials', bill_by = 'project', hourly_rate_cents = NULL WHERE id = 1")
+      await repriceTimeEntry(database.orm, { timeEntryId: 1, reason: 'Missing-rate test', repricedAt: occurredAt })
+      await expect(generator(database).generate(command('unpriced-project'))).rejects.toMatchObject({ code: 'missing_billable_rate', projectId: 1, message: expect.stringContaining('project "Generation Project" bills by project but has no hourly rate') })
+      expect(await database.rows('SELECT id FROM invoices')).toHaveLength(0)
+      await database.run('UPDATE projects SET hourly_rate_cents = 1000 WHERE id = 1')
+      await expect(generator(database).generate(command('unpriced-history'))).rejects.toMatchObject({ code: 'missing_billable_rate', message: expect.stringContaining('Preview and confirm Repair missing rates') })
+    })
 
     it('[unit] concurrently generates one complete invoice and never double bills source rows', async () => {
       const database = await setup()

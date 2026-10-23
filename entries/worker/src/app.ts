@@ -392,6 +392,7 @@ export interface RuntimeServices {
     input: InstanceOwnerPasswordInput,
   ): Promise<InstanceOwnerPasswordResult>
   tokens: ApiTokenService
+  projectMissingRates?: GeneralResourceRouteOptions['missingRates']
   generalResources: GeneralResourceRouteOptions['repository']
   /** Rooted reads of the client closure, behind the documented tree routes. */
   clientTree: ClientTreeReader
@@ -852,6 +853,7 @@ export const createApp = (
               timezone: organizationTimezone,
             })
             installGeneralResourceRoutes(api, {
+              ...(services.projectMissingRates === undefined ? {} : { missingRates: services.projectMissingRates }),
               repository: services.generalResources,
               cursorSigningKey: services.cursorSigningKey,
               isExpensesModuleEnabled: services.isExpensesModuleEnabled,
