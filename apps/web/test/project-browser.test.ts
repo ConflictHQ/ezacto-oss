@@ -186,6 +186,13 @@ const detailApi = (overrides: Partial<ProjectDirectoryApi> = {}): Partial<Projec
 })
 
 describe('Projects V1 browser controller', () => {
+  it('[#1163] identifies practice data even after the example project is renamed', async () => {
+    writeDocument('project-detail', '/projects/7')
+    await createProjectDirectoryController(detailApi({getDirectoryProject: async () => ({...project, name: 'Renamed', is_example: true})})).activate(identity('administrator'), new AbortController().signal, () => false)
+    expect(document.querySelector('[data-project-facts]')?.textContent).toContain('For practice only')
+    expect(document.querySelector('[data-project-facts]')?.textContent).toContain('Archive this example')
+  })
+
   it('[security] renders read-only detail without restricted values or mutation controls', async () => {
     writeDocument('project-detail', '/projects/7')
     const api = detailApi()

@@ -739,6 +739,9 @@ export const createProjectDirectoryController = (
     const currency = projectCurrency(currentProject, clients)
     const rows = [
       fact('Status', projectIsActive(currentProject) ? 'Active' : 'Archived'),
+      ...(projectBoolean(currentProject, 'is_example')
+        ? [fact('Example project', 'For practice only. Create a separate project for real work. Archive this example to hide its practice time and expenses from reports.')]
+        : []),
       clientFact(currentProject),
       fact('Code', projectText(currentProject, 'code') ?? 'None'),
       ...(active.capabilities.canManageCommercialTerms ? [
