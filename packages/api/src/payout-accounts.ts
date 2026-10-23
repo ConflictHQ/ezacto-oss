@@ -51,6 +51,22 @@ export interface PayoutAccountService {
 
 const providers = new Set<string>(['deel', 'wise'])
 
+/** What an administrator has made available. Injected so the routes stay storage-free. */
+export interface PayoutProviderEnablement {
+  list(): Promise<readonly { provider: string; enabled: boolean }[]>
+  setEnabled(provider: string, enabled: boolean, userId: number, now: string): Promise<boolean>
+}
+
+export interface PayoutAccountRouteOptions {
+  /** Absent means every provider is available, which is the default for an instance. */
+  enablement?: PayoutProviderEnablement
+  clock?: () => string
+}
+
+// Deel matches a person by the email they use there (the payroll address the
+// Deel sync matches on), so that is the identifier stored for Deel.
+const emailShape = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u
+
 /**
  * The person, or an administrator acting for them.
  *
@@ -99,7 +115,49 @@ const serialize = (account: PayoutAccount) => ({
 export const installPayoutAccountRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   service: Readonly<PayoutAccountService>,
+  options: PayoutAccountRouteOptions = {},
 ): void => {
+  api.get('/payout-providers', async (context) => {
+    requireSessionPrincipal(context)
+    const settings =
+      options.enablement === undefined
+        ? [...providers].map((provider) => ({ provider, enabled: true }))
+        : await options.enablement.list()
+    return context.json(
+      { data: settings.filter((row) => providers.has(row.provider)) },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  api.patch('/payout-providers/:provider', async (context) => {
+    const principal = requireSessionPrincipal(context)
+    if (principal.profile !== 'administrator') {
+      throw new ApiError({
+        status: 403,
+        code: 'profile_forbidden',
+        message: 'Only administrators can change which payout providers are enabled.',
+      })
+    }
+    const provider = context.req.param('provider') ?? ''
+    if (!providers.has(provider)) {
+      throw new ApiError({ status: 404, code: 'not_found', message: 'That payout provider does not exist.' })
+    }
+    const body = await readObjectBody(context)
+    if (typeof body['enabled'] !== 'boolean') {
+      throw validationError([{ field: 'enabled', code: 'invalid', message: 'enabled must be true or false.' }])
+    }
+    if (options.enablement === undefined) {
+      throw new ApiError({ status: 503, code: 'unavailable', message: 'Payout provider settings are not available here.' })
+    }
+    const now = (options.clock ?? (() => new Date().toISOString()))()
+    const found = await options.enablement.setEnabled(provider, body['enabled'], principal.userId, now)
+    if (!found) {
+      throw new ApiError({ status: 404, code: 'not_found', message: 'That payout provider does not exist.' })
+    }
+    return context.body(null, 204, { 'cache-control': 'no-store' })
+  })
+
   api.get('/users/:id/payout-accounts', async (context) => {
     const userId = pathId(context, 'id')
     requireSelfOrAdministrator(context, userId)
@@ -125,13 +183,36 @@ export const installPayoutAccountRoutes = <Bindings extends object>(
         },
       ])
     }
-    const externalId = body['external_id']
-    if (typeof externalId !== 'string' || externalId.trim() === '') {
+    if (options.enablement !== undefined) {
+      const setting = (await options.enablement.list()).find((row) => row.provider === provider)
+      if (setting?.enabled !== true) {
+        throw validationError([
+          {
+            field: 'provider',
+            code: 'disabled',
+            message: `${provider} is not enabled for payouts on this instance.`,
+          },
+        ])
+      }
+    }
+    const rawExternalId = body['external_id']
+    if (typeof rawExternalId !== 'string' || rawExternalId.trim() === '') {
       throw validationError([
         {
           field: 'external_id',
           code: 'required',
           message: 'external_id must be the identifier the provider gave for this person.',
+        },
+      ])
+    }
+    const externalId =
+      provider === 'deel' ? rawExternalId.trim().toLowerCase() : rawExternalId.trim()
+    if (provider === 'deel' && !emailShape.test(externalId)) {
+      throw validationError([
+        {
+          field: 'external_id',
+          code: 'invalid',
+          message: 'Enter the email address this person uses in Deel.',
         },
       ])
     }

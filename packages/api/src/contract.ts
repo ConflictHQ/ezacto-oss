@@ -2332,6 +2332,29 @@ const payoutAccountOperations: ApiContractOperation[] = [
     sessionOnly: true,
     parameters: [path("id")],
   },
+  {
+    method: "get",
+    path: "/api/v1/payout-providers",
+    operationId: "listPayoutProviders",
+    summary: "The payout providers an administrator has made available",
+    tag: "payout-accounts",
+    responseStatus: 200,
+    responseSchema: "PayoutProviderListEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "patch",
+    path: "/api/v1/payout-providers/:provider",
+    operationId: "setPayoutProviderEnabled",
+    summary: "Enable or disable a payout provider for new links",
+    description: "Disabling a provider stops new links to it. Accounts already linked are kept.",
+    tag: "payout-accounts",
+    responseStatus: 204,
+    requestSchema: "PayoutProviderSettingInput",
+    requestRequired: true,
+    sessionOnly: true,
+    parameters: [path("provider")],
+  },
 ];
 
 const billOperations: ApiContractOperation[] = [
@@ -11099,6 +11122,27 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // person. A link nobody checked is a claim.
       verified_at: nullable(timestampSchema),
     },
+    additionalProperties: false,
+  },
+  PayoutProviderListEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: { type: "array", items: reference("PayoutProviderSetting") } },
+    additionalProperties: false,
+  },
+  PayoutProviderSetting: {
+    type: "object",
+    required: ["provider", "enabled"],
+    properties: {
+      provider: { type: "string", enum: ["deel", "wise"] },
+      enabled: { type: "boolean" },
+    },
+    additionalProperties: false,
+  },
+  PayoutProviderSettingInput: {
+    type: "object",
+    required: ["enabled"],
+    properties: { enabled: { type: "boolean" } },
     additionalProperties: false,
   },
   PayoutAccountListEnvelope: {

@@ -224,6 +224,10 @@ export {
   type PayoutProvider,
 } from './payout-accounts.js'
 export {
+  createPayoutProviderEnablementStore,
+  type PayoutProviderSetting,
+} from './payout-provider-enablement.js'
+export {
   createWiseDeliveryStore,
   type WiseDeliveryClaim,
   type WiseDeliveryRecord,

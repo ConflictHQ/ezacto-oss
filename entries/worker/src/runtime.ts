@@ -91,6 +91,7 @@ import {
   createBillLinkStore,
   createBillMirrorSource,
   createPayoutAccountStore,
+  createPayoutProviderEnablementStore,
   createWiseDeliveryStore,
   createDeelSyncSettingsStore,
   createDeelSyncStore,
@@ -1506,6 +1507,7 @@ export const createRuntimeServices = async (
     staffPayments: createStaffPaymentStore(drizzle),
     contractorReview: createContractorReviewStore(drizzle),
     myPayments: createMyPaymentsStore(drizzle),
+    payoutProviderEnablement: createPayoutProviderEnablementStore(drizzle),
     payoutAccounts: (() => {
       const store = createPayoutAccountStore(drizzle)
       return {
