@@ -28542,6 +28542,134 @@
         ]
       }
     },
+    "/api/v1/payout-providers": {
+      "get": {
+        "operationId": "listPayoutProviders",
+        "summary": "The payout providers an administrator has made available",
+        "tags": [
+          "payout-accounts"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayoutProviderListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/payout-providers",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/payout-providers/{provider}": {
+      "patch": {
+        "operationId": "setPayoutProviderEnabled",
+        "summary": "Enable or disable a payout provider for new links",
+        "description": "Disabling a provider stops new links to it. Accounts already linked are kept.",
+        "tags": [
+          "payout-accounts"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/payout-providers/:provider",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "deel",
+                "wise"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayoutProviderSettingInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/integrations/bill": {
       "get": {
         "operationId": "getBillStatus",
@@ -58270,6 +58398,53 @@
                 "type": "null"
               }
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "PayoutProviderListEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayoutProviderSetting"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "PayoutProviderSetting": {
+        "type": "object",
+        "required": [
+          "provider",
+          "enabled"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "deel",
+              "wise"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PayoutProviderSettingInput": {
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false

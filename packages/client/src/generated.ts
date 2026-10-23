@@ -5250,6 +5250,19 @@ export type PayoutAccount = {
   "verified_at": string | null;
 };
 
+export type PayoutProviderListEnvelope = {
+  "data": Array<PayoutProviderSetting>;
+};
+
+export type PayoutProviderSetting = {
+  "provider": "deel" | "wise";
+  "enabled": boolean;
+};
+
+export type PayoutProviderSettingInput = {
+  "enabled": boolean;
+};
+
 export type PayoutAccountListEnvelope = {
   "data": Array<PayoutAccount>;
 };
@@ -9080,6 +9093,25 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<void>("DELETE", "/api/v1/payout-accounts/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listPayoutProviders(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<PayoutProviderListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PayoutProviderListEnvelope>("GET", "/api/v1/payout-providers", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setPayoutProviderEnabled(args: { "provider": "deel" | "wise"; body: PayoutProviderSettingInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("PATCH", "/api/v1/payout-providers/:provider".replace(":provider", encodeURIComponent(String(args["provider"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });

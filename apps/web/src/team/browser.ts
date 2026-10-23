@@ -1,3 +1,4 @@
+import { createPayoutProvidersPanel } from './payout-providers-browser.js'
 import { renderDataTable } from '../components/data-table.js'
 import { demoUnavailable, isDemoDeployment } from '../demo.js'
 import { markMoney } from '../money-display.js'
@@ -1192,12 +1193,16 @@ export const createTeamDirectoryController = (
     active.identity.user_id === userId || active.capabilities.canManagePeople
 
   let payoutUserId: number | null = null
+  // Wise's form hides when an administrator has turned Wise off (#1152).
+  let payoutWiseEnabled = true
+  const payoutPanelRoot = required<HTMLElement>('[data-team-panel="payout"]')
+  const payoutProviders = createPayoutProvidersPanel(payoutPanelRoot, api)
 
   const paintPayout = (state: PayoutDestinationState): void => {
     payoutUnconfigured.hidden = state.configured
     const destination = state.destination
     payoutCurrent.hidden = destination === null
-    payoutForm.hidden = destination !== null || !state.configured
+    payoutForm.hidden = destination !== null || !state.configured || !payoutWiseEnabled
     if (destination === null) {
       payoutStatus.textContent = state.configured
         ? 'No payout destination yet.'
@@ -1218,6 +1223,8 @@ export const createTeamDirectoryController = (
     if (read === undefined || payoutTab.hidden) return
     payoutCurrent.hidden = true
     payoutForm.hidden = true
+    const providers = await payoutProviders.load(userId, active.signal, active.identity.profile === 'administrator')
+    payoutWiseEnabled = providers.wise
     // The public demo pays nobody (issue 931). It has no Wise to ask, so the
     // read could only fail; the panel says why instead, and offers no form.
     if (isDemoDeployment()) {
