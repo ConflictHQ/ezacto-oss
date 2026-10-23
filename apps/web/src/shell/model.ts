@@ -1578,6 +1578,21 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   removeWisePayoutDestination: async (userId, signal) => {
     await client.removeWisePayoutDestination({ userId, ...withSignal(signal) })
   },
+  listPayoutProviders: async (args) => {
+    return client.listPayoutProviders({ ...withSignal(args?.signal) })
+  },
+  listPayoutAccounts: async ({ id, signal }) => {
+    return client.listPayoutAccounts({ id, ...withSignal(signal) })
+  },
+  linkPayoutAccount: async ({ id, body, signal }) => {
+    await client.linkPayoutAccount({ id, body, ...withSignal(signal) })
+  },
+  detachPayoutAccount: async ({ id, signal }) => {
+    await client.detachPayoutAccount({ id, ...withSignal(signal) })
+  },
+  setPayoutProviderEnabled: async ({ provider, body, signal }) => {
+    await client.setPayoutProviderEnabled({ provider, body, ...withSignal(signal) })
+  },
   getUserEmailFactor: async (userId, signal) =>
     (await client.getUserTwoFactorEmail({ id: userId, ...withSignal(signal) })).data
       .email_enabled,
