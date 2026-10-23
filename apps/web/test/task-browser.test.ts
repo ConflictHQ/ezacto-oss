@@ -218,6 +218,14 @@ describe('Tasks administration browser controller', () => {
       expect(document.querySelector('[data-task-form-dialog]')?.hasAttribute('open')).toBe(false),
     )
 
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-task-list-status]')?.textContent).toContain(
+        'To use it on an existing project, open Projects',
+      ),
+    )
+    expect(document.querySelector('.task-admin-workspace a[href="/projects"]')?.textContent).toBe('Projects')
+    expect(document.querySelector('#task-default-help')?.textContent).toContain('Existing projects keep their assigned tasks')
+
     document.querySelector<HTMLButtonElement>('[data-task-list] tbody button')!.click()
     ;(form.elements.namedItem('name') as HTMLInputElement).value = 'Delivery'
     ;(form.elements.namedItem('default_hourly_rate') as HTMLInputElement).value = '125.01'

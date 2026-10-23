@@ -342,6 +342,20 @@ for (const [runtime, createHarness] of factories) {
     }, 20_000);
     afterEach(async () => harness.close());
 
+    it('[#1163] exposes a true example marker read-only and preserves ordinary response shape', async () => {
+      const client = await data(await harness.request('/clients', json({name: 'Example client'})));
+      const project = await data(await harness.request('/projects', json({client_id: client.id, name: 'Example project'})));
+      expect(project).not.toHaveProperty('is_example');
+      await harness.run('UPDATE projects SET is_example=1 WHERE id=?', project.id);
+      const example = await data(await harness.request(`/projects/${project.id}`));
+      expect(example.is_example).toBe(true);
+      const refused = await harness.request(`/projects/${project.id}`, json({is_example: false}, 'PATCH'));
+      expect(refused.status).toBe(422);
+      await data(await harness.request(`/projects/${project.id}`, json({name: 'Renamed'}, 'PATCH')));
+      expect((await data(await harness.request(`/projects/${project.id}`))).is_example).toBe(true);
+    });
+
+
     it('[issue 740] refuses inherited property names as fields with 422', async () => {
       for (const field of ['constructor', 'toString', '__proto__']) {
         const body = `{"name":"Kestrel","${field}":"x"}`;
@@ -686,6 +700,21 @@ for (const [runtime, createHarness] of factories) {
         expect(await names('/tasks', init)).toEqual(['Delivery', 'Retired work']);
       }
     }, 30_000);
+
+    it('[1164] defaults apply to new projects while existing projects need an explicit assignment', async () => {
+      const client = await data(await harness.request('/clients', json({ name: 'Default-task client' })));
+      const existing = await data(await harness.request('/projects', json({ client_id: client.id, name: 'Existing project' })));
+      const task = await data(await harness.request('/tasks', json({ name: 'Default delivery', is_default: true, billable_by_default: false })));
+      expect((await page(await harness.request(`/task-assignments?project_id=${existing.id}&task_id=${task.id}`))).data).toEqual([]);
+      const future = await data(await harness.request('/projects', json({ client_id: client.id, name: 'Future project' })));
+      expect((await page(await harness.request(`/task-assignments?project_id=${future.id}&task_id=${task.id}`))).data).toEqual([
+        expect.objectContaining({ project_id: future.id, task_id: task.id, billable: false }),
+      ]);
+      await data(await harness.request('/task-assignments', json({ project_id: existing.id, task_id: task.id })));
+      expect((await page(await harness.request(`/task-assignments?project_id=${existing.id}&task_id=${task.id}`))).data).toEqual([
+        expect.objectContaining({ project_id: existing.id, task_id: task.id, billable: false }),
+      ]);
+    });
 
     it("[api] provides CRUD and every combinable general-resource list filter", async () => {
       const parent = await data(

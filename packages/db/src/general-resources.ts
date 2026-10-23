@@ -330,6 +330,12 @@ const recordFromRow = (
 ): GeneralResourceRecord => {
   const output: Record<string, GeneralValue> = {}
   for (const [column, raw] of Object.entries(row)) {
+    // A read-only bootstrap marker. Ordinary project responses keep their
+    // existing shape; practice projects remain identifiable after a rename.
+    if (definition.table === 'projects' && column === 'is_example') {
+      if (raw === 1) output['isExample'] = true
+      continue
+    }
     if (
       column === 'statement_key' ||
       (definition.table === 'users' && (column === 'version' || column === 'team_write_token'))

@@ -27,6 +27,24 @@ import {
 describe('invoice generation browser behavior', () => {
   afterEach(() => vi.useRealTimers())
 
+  it('[money] links a missing-rate failure to the affected project', async () => {
+    renderBrowserShell({ view: 'invoice-generation' })
+    const api = browserApi()
+    api.listClients = async () => ({ data: [resource(11, 'Northwind')], page: { next_cursor: null } })
+    api.listProjects = async () => ({ data: [{ ...resource(7, 'Launch'), client_id: 11 }], page: { next_cursor: null } })
+    api.generateInvoice = vi.fn().mockRejectedValue(new EzactoApiError(422, { error: { code: 'validation_failed', message: 'Invalid fields', fields: [{ field: 'project_ids.7', code: 'missing_billable_rate', message: 'Project Launch bills by project but has no hourly rate. Set the project rate.' }] } }, null))
+    await mountShell(api)
+    const form = document.querySelector<HTMLFormElement>('[data-invoice-generation-form]')!
+    const client = form.querySelector<HTMLSelectElement>('[data-invoice-client]')!
+    await vi.waitFor(() => expect(client.options).toHaveLength(1))
+    client.value = '11'
+    client.dispatchEvent(new Event('change'))
+    await vi.waitFor(() => expect(form.querySelector('input[name="project"]')).not.toBeNull())
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(document.querySelector('[data-invoice-generation-result] a')?.getAttribute('href')).toBe('/projects/7'))
+    expect(document.querySelector('[data-invoice-generation-result]')?.textContent).toContain('Set the project rate')
+  })
+
   it('[unit] loads and operates the global running timer on the invoice page', async () => {
     renderBrowserShell({ view: 'invoice-generation' })
     const api = browserApi()
@@ -584,6 +602,7 @@ describe('invoice generation browser behavior', () => {
     await vi.waitFor(() => expect(clientSelect.options.length).toBe(1))
     clientSelect.value = '11'
     clientSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    await vi.waitFor(() => expect(wizard.querySelector('[data-project-uninvoiced]')?.textContent).toContain('1 unpriced entry; amount incomplete'))
     const banded = wizard.querySelector<HTMLInputElement>('[data-invoice-kind][value="banded"]')!
     banded.checked = true
     banded.dispatchEvent(new Event('change', { bubbles: true }))

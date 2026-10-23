@@ -1,6 +1,7 @@
 import { renderDataTable } from '../components/data-table.js'
 import { loadedRowsSortNotice } from '../components/table-sort.js'
 import { isDemoDeployment } from '../demo.js'
+import { attachmentsAvailable, ATTACHMENTS_UNAVAILABLE } from '../attachments-availability.js'
 import { moneyText } from '../money-display.js'
 import { icon } from '../components/icons.js'
 import { createPeriodControl } from '../components/period.js'
@@ -343,7 +344,8 @@ export const createExpenseWorkflowController = (
     for (const field of [...attachmentForm.elements]) {
       if (field instanceof HTMLInputElement) field.disabled = demo || !hasDetail || mutationPending
     }
-    attachmentSubmit.disabled = demo || !hasDetail || mutationPending
+    attachmentForm.hidden = !attachmentsAvailable() || demo
+    attachmentSubmit.disabled = !attachmentsAvailable() || demo || !hasDetail || mutationPending
   }
 
   const clearPrivatePresentation = (): void => {
@@ -758,7 +760,7 @@ export const createExpenseWorkflowController = (
       session === null ||
       expenseId === null ||
       api.getWorkflowExpense === undefined ||
-      api.listWorkflowExpenseAttachments === undefined
+      (attachmentsAvailable() && api.listWorkflowExpenseAttachments === undefined)
     ) return
     const requestGeneration = ++detailRequestGeneration
     detailStatus.textContent = 'Loading expense…'
@@ -767,12 +769,16 @@ export const createExpenseWorkflowController = (
     try {
       const [expense, attachments] = await Promise.all([
         api.getWorkflowExpense(expenseId, session.signal),
-        api.listWorkflowExpenseAttachments(expenseId, session.signal),
+        attachmentsAvailable()
+          ? api.listWorkflowExpenseAttachments!(expenseId, session.signal)
+          : Promise.resolve([]),
       ])
       if (current() !== session || requestGeneration !== detailRequestGeneration) return
       renderDetail(expense)
       renderAttachments(expense.id, attachments)
-      attachmentStatus.textContent = attachments.length === 0 ? '' : `${attachments.length} receipt ${attachments.length === 1 ? 'file' : 'files'}.`
+      attachmentStatus.textContent = !attachmentsAvailable()
+        ? ATTACHMENTS_UNAVAILABLE
+        : attachments.length === 0 ? '' : `${attachments.length} receipt ${attachments.length === 1 ? 'file' : 'files'}.`
     } catch (error) {
       if (current() !== session || requestGeneration !== detailRequestGeneration) return
       if (sessionFailure(error, session)) return
@@ -962,6 +968,7 @@ export const createExpenseWorkflowController = (
     if (
       session === null ||
       currentExpense === null ||
+      !attachmentsAvailable() ||
       mutationPending ||
       api.uploadWorkflowExpenseAttachment === undefined ||
       api.listWorkflowExpenseAttachments === undefined
