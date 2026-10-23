@@ -34,6 +34,15 @@ export const renderTeamPages = (view?: string): string => `
       </label>
     </div>
     <section class="team-summary" data-team-summary aria-label="Team utilization summary" hidden></section>
+    <section class="team-defaults" data-team-defaults hidden aria-labelledby="team-defaults-heading">
+      <h2 id="team-defaults-heading">Payment defaults</h2>
+      <p class="hint">Each person is paid through their default. They choose it once they hold an account, and you can change it here. Turning a provider off on Company settings stops new links only.</p>
+      <table class="team-defaults-table">
+        <thead><tr><th scope="col">Person</th><th scope="col">Accounts</th><th scope="col">Paid through</th><th scope="col">Set</th><th scope="col"><span class="visually-hidden">Save</span></th></tr></thead>
+        <tbody data-team-defaults-rows></tbody>
+      </table>
+      <p class="form-result" data-team-defaults-status role="status" aria-live="polite"></p>
+    </section>
     <p class="form-result team-page-status" data-team-list-status role="status" aria-live="polite">Loading team…</p>
     <div data-team-list></div>
     <button type="button" data-team-list-retry hidden>Retry loading team</button>

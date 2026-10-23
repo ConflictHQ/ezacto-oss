@@ -22,7 +22,7 @@ const mount = () => {
   return document.querySelector<HTMLElement>('[data-team-panel="payout"]')!
 }
 
-const api = (overrides: Partial<PayoutProvidersApi> = {}): Required<PayoutProvidersApi> => ({
+const api = (overrides: Partial<PayoutProvidersApi> = {}): Required<Pick<PayoutProvidersApi, 'listPayoutProviders' | 'listPayoutAccounts' | 'linkPayoutAccount' | 'detachPayoutAccount' | 'setPayoutProviderEnabled'>> => ({
   listPayoutProviders: vi.fn(async () => ({
     data: [
       { provider: 'deel' as const, enabled: true },

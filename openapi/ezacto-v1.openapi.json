@@ -28670,6 +28670,196 @@
         }
       }
     },
+    "/api/v1/users/{id}/payout-preference": {
+      "get": {
+        "operationId": "getPayoutPreference",
+        "summary": "A person's default payout provider, and the organization's",
+        "description": "Their own choice, or an administrator's. effective_provider is the default used for their payouts: their choice, else the organization default.",
+        "tags": [
+          "payout-accounts"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayoutPreferenceEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/users/:id/payout-preference",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "setPayoutPreference",
+        "summary": "Choose a person's default payout provider",
+        "description": "A person chooses their own; an administrator may choose it for them. Only a provider the person holds and the instance has enabled. Null returns to the organization default. expected_version must match the current version, or the answer is 409.",
+        "tags": [
+          "payout-accounts"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "description": "No content"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "description": "No content"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/users/:id/payout-preference",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayoutPreferenceInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payout-preferences": {
+      "get": {
+        "operationId": "listPayoutPreferences",
+        "summary": "Every person's default payout provider, for administrators",
+        "tags": [
+          "payout-accounts"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayoutPreferenceRosterEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/payout-preferences",
+        "x-ezacto-generate-client": true
+      }
+    },
     "/api/v1/integrations/bill": {
       "get": {
         "operationId": "getBillStatus",
@@ -58398,6 +58588,215 @@
                 "type": "null"
               }
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "PayoutPreference": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "provider",
+          "effective_provider",
+          "organization_default",
+          "version",
+          "set_by",
+          "linked_providers"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "deel",
+                  "wise"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "effective_provider": {
+            "type": "string",
+            "enum": [
+              "deel",
+              "wise"
+            ]
+          },
+          "organization_default": {
+            "type": "string",
+            "enum": [
+              "deel",
+              "wise"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "set_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "person",
+                  "administrator",
+                  "automatic"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "linked_providers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "deel",
+                "wise"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "PayoutPreferenceEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PayoutPreference"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PayoutPreferenceInput": {
+        "type": "object",
+        "required": [
+          "provider",
+          "expected_version"
+        ],
+        "properties": {
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "deel",
+                  "wise"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "PayoutPreferenceRosterEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "organization_default",
+              "people"
+            ],
+            "properties": {
+              "organization_default": {
+                "type": "string",
+                "enum": [
+                  "deel",
+                  "wise"
+                ]
+              },
+              "people": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "user_id",
+                    "name",
+                    "provider",
+                    "version",
+                    "set_by",
+                    "linked_providers"
+                  ],
+                  "properties": {
+                    "user_id": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "provider": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "deel",
+                            "wise"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "set_by": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "person",
+                            "administrator",
+                            "automatic"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "linked_providers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "deel",
+                          "wise"
+                        ]
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": false

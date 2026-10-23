@@ -1,3 +1,4 @@
+import { wirePayoutDefaultSelf } from './payout-default-self.js'
 import { createScheduledRunController } from '../scheduled-runs/browser.js'
 import { wireDeelSelfPayout } from './payout-deel-self.js'
 import { createStaffPaymentsController } from '../staff-payments/browser.js'
@@ -2498,6 +2499,7 @@ export const mountShell = async (
     section.hidden = false
     const deelSection = section.querySelector<HTMLElement>('[data-settings-payout-deel]')
     if (deelSection !== null) wireDeelSelfPayout(deelSection, api, identity.user_id)
+    wirePayoutDefaultSelf(section, api, identity.user_id)
     // The public demo pays nobody (issue 931). It has no Wise to ask, so the
     // read could only fail; it says why instead, and offers no form.
     if (isDemoDeployment()) {

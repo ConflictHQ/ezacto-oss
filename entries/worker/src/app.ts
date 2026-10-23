@@ -1,4 +1,4 @@
-import type { PayoutProviderEnablement } from '@ezacto/api'
+import type { PayoutPreferenceService, PayoutProviderEnablement } from '@ezacto/api'
 import { installOutboundWebhookRoutes } from '@ezacto/api'
 import type { WebhookManagement } from '@ezacto/core'
 import {installMigrationLoadRoutes,type MigrationLoadStatusReader} from '@ezacto/api'
@@ -633,6 +633,8 @@ export interface RuntimeServices {
   payoutAccounts?: PayoutAccountService
   /** Which payout providers an administrator has enabled (#1152). */
   payoutProviderEnablement?: PayoutProviderEnablement
+  /** Each person's default payout provider (issue 1152). */
+  payoutPreferences?: PayoutPreferenceService
   billDelivery?: {
     isOptedIn(clientId: number): Promise<boolean>
     setOptedIn(clientId: number, enabled: boolean): Promise<boolean>
@@ -1057,6 +1059,7 @@ export const createApp = (
             if (services.payoutAccounts !== undefined) {
               installPayoutAccountRoutes(api, services.payoutAccounts, {
                 enablement: services.payoutProviderEnablement,
+                preferences: services.payoutPreferences,
               })
             }
             if (services.bill !== undefined && services.billDelivery !== undefined) {

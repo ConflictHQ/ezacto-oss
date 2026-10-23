@@ -9,6 +9,9 @@ import type {
 /** Monthly staff payment register. Recording a payment never initiates a transfer. */
 export type StaffPaymentKind = 'amount' | 'payment' | 'void' | 'opening' | 'reopen' | 'note'
 export type StaffPaymentProvider = 'wise' | 'deel'
+/** The note written when a first account link sets a person's default provider. */
+export const AUTOMATIC_PREFERENCE_NOTE = 'Set automatically when the first account was linked.'
+
 export interface StaffPaymentProviderCommand {
   id: string
   user_id: number | null

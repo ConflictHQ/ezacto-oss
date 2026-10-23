@@ -2361,6 +2361,42 @@ const payoutAccountOperations: ApiContractOperation[] = [
       },
     ],
   },
+  {
+    method: "get",
+    path: "/api/v1/users/:id/payout-preference",
+    operationId: "getPayoutPreference",
+    summary: "A person's default payout provider, and the organization's",
+    description: "Their own choice, or an administrator's. effective_provider is the default used for their payouts: their choice, else the organization default.",
+    tag: "payout-accounts",
+    responseStatus: 200,
+    responseSchema: "PayoutPreferenceEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "patch",
+    path: "/api/v1/users/:id/payout-preference",
+    operationId: "setPayoutPreference",
+    summary: "Choose a person's default payout provider",
+    description: "A person chooses their own; an administrator may choose it for them. Only a provider the person holds and the instance has enabled. Null returns to the organization default. expected_version must match the current version, or the answer is 409.",
+    tag: "payout-accounts",
+    responseStatus: 204,
+    additionalResponseStatuses: [409, 422],
+    requestSchema: "PayoutPreferenceInput",
+    requestRequired: true,
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "get",
+    path: "/api/v1/payout-preferences",
+    operationId: "listPayoutPreferences",
+    summary: "Every person's default payout provider, for administrators",
+    tag: "payout-accounts",
+    responseStatus: 200,
+    responseSchema: "PayoutPreferenceRosterEnvelope",
+    sessionOnly: true,
+  },
 ];
 
 const billOperations: ApiContractOperation[] = [
@@ -11127,6 +11163,66 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // Null until the provider itself confirmed the id resolves to this
       // person. A link nobody checked is a claim.
       verified_at: nullable(timestampSchema),
+    },
+    additionalProperties: false,
+  },
+  PayoutPreference: {
+    type: "object",
+    required: ["user_id", "provider", "effective_provider", "organization_default", "version", "set_by", "linked_providers"],
+    properties: {
+      user_id: { type: "integer", minimum: 1 },
+      provider: { anyOf: [{ type: "string", enum: ["deel", "wise"] }, { type: "null" }] },
+      effective_provider: { type: "string", enum: ["deel", "wise"] },
+      organization_default: { type: "string", enum: ["deel", "wise"] },
+      version: { type: "integer", minimum: 0 },
+      set_by: { anyOf: [{ type: "string", enum: ["person", "administrator", "automatic"] }, { type: "null" }] },
+      linked_providers: { type: "array", items: { type: "string", enum: ["deel", "wise"] } },
+    },
+    additionalProperties: false,
+  },
+  PayoutPreferenceEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("PayoutPreference") },
+    additionalProperties: false,
+  },
+  PayoutPreferenceInput: {
+    type: "object",
+    required: ["provider", "expected_version"],
+    properties: {
+      provider: { anyOf: [{ type: "string", enum: ["deel", "wise"] }, { type: "null" }] },
+      expected_version: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  PayoutPreferenceRosterEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["organization_default", "people"],
+        properties: {
+          organization_default: { type: "string", enum: ["deel", "wise"] },
+          people: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["user_id", "name", "provider", "version", "set_by", "linked_providers"],
+              properties: {
+                user_id: { type: "integer", minimum: 1 },
+                name: { type: "string" },
+                provider: { anyOf: [{ type: "string", enum: ["deel", "wise"] }, { type: "null" }] },
+                version: { type: "integer", minimum: 0 },
+                set_by: { anyOf: [{ type: "string", enum: ["person", "administrator", "automatic"] }, { type: "null" }] },
+                linked_providers: { type: "array", items: { type: "string", enum: ["deel", "wise"] } },
+              },
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
+      },
     },
     additionalProperties: false,
   },

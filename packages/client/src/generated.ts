@@ -5250,6 +5250,39 @@ export type PayoutAccount = {
   "verified_at": string | null;
 };
 
+export type PayoutPreference = {
+  "user_id": number;
+  "provider": "deel" | "wise" | null;
+  "effective_provider": "deel" | "wise";
+  "organization_default": "deel" | "wise";
+  "version": number;
+  "set_by": "person" | "administrator" | "automatic" | null;
+  "linked_providers": Array<"deel" | "wise">;
+};
+
+export type PayoutPreferenceEnvelope = {
+  "data": PayoutPreference;
+};
+
+export type PayoutPreferenceInput = {
+  "provider": "deel" | "wise" | null;
+  "expected_version": number;
+};
+
+export type PayoutPreferenceRosterEnvelope = {
+  "data": {
+  "organization_default": "deel" | "wise";
+  "people": Array<{
+  "user_id": number;
+  "name": string;
+  "provider": "deel" | "wise" | null;
+  "version": number;
+  "set_by": "person" | "administrator" | "automatic" | null;
+  "linked_providers": Array<"deel" | "wise">;
+}>;
+};
+};
+
 export type PayoutProviderListEnvelope = {
   "data": Array<PayoutProviderSetting>;
 };
@@ -9112,6 +9145,34 @@ export class EzactoClient {
 
     return this.request<void>("PATCH", "/api/v1/payout-providers/:provider".replace(":provider", encodeURIComponent(String(args["provider"]))), {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getPayoutPreference(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<PayoutPreferenceEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PayoutPreferenceEnvelope>("GET", "/api/v1/users/:id/payout-preference".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setPayoutPreference(args: { "id": number; body: PayoutPreferenceInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("PATCH", "/api/v1/users/:id/payout-preference".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listPayoutPreferences(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<PayoutPreferenceRosterEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PayoutPreferenceRosterEnvelope>("GET", "/api/v1/payout-preferences", {
       signal: args.signal,
       headers,
     });

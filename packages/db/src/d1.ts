@@ -228,6 +228,11 @@ export {
   type PayoutProviderSetting,
 } from './payout-provider-enablement.js'
 export {
+  createPayoutPreferenceStore,
+  type PersonPayoutPreference,
+  type PayoutPreferenceRosterRow,
+} from './payout-preferences.js'
+export {
   createWiseDeliveryStore,
   type WiseDeliveryClaim,
   type WiseDeliveryRecord,

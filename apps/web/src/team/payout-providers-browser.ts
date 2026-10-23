@@ -7,7 +7,40 @@ import { EzactoApiError } from '@conflict-hq/ezacto-client'
  */
 type ProviderName = 'deel' | 'wise'
 
+export type PreferenceSource = 'person' | 'administrator' | 'automatic'
+
+export interface PayoutPreferenceDto {
+  user_id: number
+  provider: ProviderName | null
+  effective_provider: ProviderName
+  organization_default: ProviderName
+  version: number
+  set_by: PreferenceSource | null
+  linked_providers: readonly ProviderName[]
+}
+
+export interface PayoutPreferenceRosterDto {
+  organization_default: ProviderName
+  people: readonly {
+    user_id: number
+    name: string
+    provider: ProviderName | null
+    version: number
+    set_by: PreferenceSource | null
+    linked_providers: readonly ProviderName[]
+  }[]
+}
+
 export interface PayoutProvidersApi {
+  /** A person's default provider (issue 1152): their own, or an administrator's. */
+  getPayoutPreference?(args: { id: number; signal?: AbortSignal }): Promise<{ data: PayoutPreferenceDto }>
+  setPayoutPreference?(args: {
+    id: number
+    provider: ProviderName | null
+    expectedVersion: number
+    signal?: AbortSignal
+  }): Promise<void>
+  listPayoutPreferences?(args?: { signal?: AbortSignal }): Promise<{ data: PayoutPreferenceRosterDto }>
   listPayoutProviders?(args?: { signal?: AbortSignal }): Promise<{
     data: readonly { provider: ProviderName; enabled: boolean }[]
   }>
