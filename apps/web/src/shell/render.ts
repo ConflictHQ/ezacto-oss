@@ -1,3 +1,4 @@
+import { renderFirstRunChecklist } from '../first-run/render.js'
 import { renderScheduledRunPage } from '../scheduled-runs/render.js'
 import { renderStaffPayments } from '../staff-payments/render.js'
 import { PASSWORD_MIN_CODE_POINTS, PASSWORD_MAX_CODE_POINTS } from '@ezacto/core'
@@ -52,6 +53,8 @@ export interface ShellTab {
 }
 
 export interface AppShellOptions {
+  /** Whether this runtime has an attachment storage adapter. */
+  readonly attachmentsAvailable?: boolean
   readonly environment: string
   readonly release: string
   readonly brand?: Partial<DeploymentBrand>
@@ -565,7 +568,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const menuFoldedNavigation = foldedSections.map(menuCard).join('')
 
   return `<!doctype html>
-<html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="${colorScheme}"${instancePalette ? ' data-ez-palette="instance"' : ''} data-ez-nav="${navLayout}" data-ez-sidebar="${sidebar}" data-ez-time-layout="${timeLayout}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
+<html lang="en"${options.attachmentsAvailable === false ? ' data-attachments-unavailable' : ''} data-ez-theme="${defaultTheme}" data-ez-scheme="${colorScheme}"${instancePalette ? ' data-ez-palette="instance"' : ''} data-ez-nav="${navLayout}" data-ez-sidebar="${sidebar}" data-ez-time-layout="${timeLayout}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -705,12 +708,14 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         </span>
         <a class="identity-settings" href="/settings/user" data-settings-link>${iconMarkup('sliders')}<span class="identity-action-label">Settings</span></a>
         ${(options.signInProviders ?? []).includes('apple') ? '<a class="identity-settings" href="/auth/apple/disconnect">Disconnect Apple</a>' : ''}
+        <button type="button" class="identity-settings" data-first-run-help hidden>Help: setup guide</button>
         <button type="button" class="identity-signout" data-logout>${iconMarkup('sign-out')}<span class="identity-action-label">Sign out</span></button>
         <p class="auth-result visually-hidden" data-logout-result role="status" aria-live="polite"></p>
       </div>
     </div>
   </header>
   ${renderTabStrip(options)}
+  ${renderFirstRunChecklist()}
   <main class="app-content page--grid" data-app-content${view === 'time' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">This week</p><h1>Time</h1></div>
@@ -1211,10 +1216,15 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   <dialog class="row-dialog" data-row-dialog aria-labelledby="row-title">
     <form data-row-form>
       <header><div><p class="eyebrow">Timesheet row</p><h2 id="row-title">Add project and task</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
-      <label>Project<select name="project" data-row-project required></select></label>
-      <label>Task<select name="task" data-row-task required></select></label>
+      <label data-row-selection>Project<select name="project" data-row-project required></select></label>
+      <label data-row-selection>Task<select name="task" data-row-task required></select></label>
+      <div class="time-setup-guidance" data-row-empty hidden>
+        <p>Set up a project and task to start a timer or log time.</p>
+        <p class="hint" data-row-empty-reason></p>
+        <a class="primary-action" data-row-setup href="/projects">Set up a project</a>
+      </div>
       <p class="form-result" data-row-result role="status"></p>
-      <button class="primary-action" type="submit">Add row</button>
+      <button class="primary-action" type="submit" data-row-submit>Add row</button>
     </form>
   </dialog>
   <dialog class="rejection-dialog" data-rejection-dialog aria-labelledby="rejection-title">

@@ -74,7 +74,7 @@ const bundle = await build({
   write: false,
 })
 
-const miniflare = new Miniflare({
+const workerOptions = {
   bindings: {
     API_CURSOR_SIGNING_KEY: cursorSigningKey,
     WEBHOOK_ENCRYPTION_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY',
@@ -94,7 +94,9 @@ const miniflare = new Miniflare({
   modules: true,
   port: 0,
   script: bundle.outputFiles[0].text,
-})
+}
+const miniflare = new Miniflare(workerOptions)
+let firstRunRuntime = null
 
 // https, because the Worker now refuses cleartext on a real hostname (#548) and
 // this probe is the one request the harness makes under its own name rather
@@ -566,14 +568,39 @@ const fixtureControl = async (request, response) => {
     chunks.push(chunk)
   }
   let action
+  let payload
   try {
-    action = JSON.parse(Buffer.concat(chunks).toString('utf8')).action
+    payload = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    action = payload.action
   } catch {
     response.statusCode = 400
     response.end()
     return
   }
-  if (action === 'rate-card-seed') {
+  if (action === 'first-run-create') {
+    if (firstRunRuntime !== null || typeof payload.password !== 'string') {
+      response.statusCode = 400
+      response.end()
+      return
+    }
+    // A separate, newly migrated database: no fixture directory rows or time
+    // entries are removed from the suite's normal acceptance workspace.
+    firstRunRuntime = new Miniflare(workerOptions)
+    const probe = await firstRunRuntime.dispatchFetch('https://worker.test/api/v1/whoami')
+    if (probe.status !== 401) throw new Error('first-run fixture did not fail closed')
+    const fresh = await firstRunRuntime.getD1Database('DB')
+    const auth = createD1PasswordAuthService(fresh, { now: () => fixtureInstant })
+    const delivery = await auth.signup({
+      organizationName: 'Fresh Setup Acceptance', firstName: 'Fresh', lastName: 'Owner',
+      email: fixtureEmail, password: payload.password, clientKey: 'first-run-acceptance',
+    })
+    await auth.verifyEmail(delivery.token, 'first-run-acceptance')
+    response.setHeader('set-cookie', 'ezacto_browser_first_run=1; Path=/; HttpOnly; SameSite=Strict')
+  } else if (action === 'first-run-reset') {
+    await firstRunRuntime?.dispose()
+    firstRunRuntime = null
+    response.setHeader('set-cookie', 'ezacto_browser_first_run=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict')
+  } else if (action === 'rate-card-seed') {
     if (rateCardFixture !== null) throw new Error('rate card fixture already active')
     const client = await database.prepare(
       `INSERT INTO clients(name,currency,created_at,updated_at)
@@ -1554,7 +1581,9 @@ const proxyFetch = async (request, response) => {
   const chunks = []
   for await (const chunk of request) chunks.push(chunk)
   const body = chunks.length === 0 ? undefined : Buffer.concat(chunks)
-  const upstream = await miniflare.dispatchFetch(url, {
+  const runtime = firstRunRuntime !== null && /(?:^|;\s*)ezacto_browser_first_run=1(?:;|$)/u.test(request.headers.cookie ?? '')
+    ? firstRunRuntime : miniflare
+  const upstream = await runtime.dispatchFetch(url, {
     method: request.method,
     headers: request.headers,
     ...(body === undefined ? {} : { body }),
@@ -1598,7 +1627,7 @@ await new Promise((resolveReady, reject) => {
 })
 
 const shutdown = () => {
-  server.close(() => void miniflare.dispose())
+  server.close(() => { void miniflare.dispose(); void firstRunRuntime?.dispose() })
 }
 process.once('SIGINT', shutdown)
 process.once('SIGTERM', shutdown)

@@ -361,7 +361,7 @@ describe("owner-scoped attachment routes", () => {
     expect(response.status).toBe(404);
   });
 
-  it("[unit] fails closed with a redacted 503 when object storage is absent", async () => {
+  it("[unit] reports an unavailable feature without a server error when object storage is absent", async () => {
     const app = createApiApp({
       authentication: {
         tokens: {
@@ -383,11 +383,11 @@ describe("owner-scoped attachment routes", () => {
     const response = await app.request("/api/v1/invoices/7/attachments", {
       headers: { authorization: "Bearer token" },
     });
-    expect(response.status).toBe(503);
+    expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({
       error: {
-        code: "internal_error",
-        message: "The request could not be completed.",
+        code: "feature_unavailable",
+        message: "File attachments are not enabled on this instance.",
       },
     });
   });

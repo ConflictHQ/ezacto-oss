@@ -51,6 +51,7 @@ import {
   createTwoFactorService,
   deriveTwoFactorEmailCodeKey,
   createGeneralResourceRepository,
+  recoverProjectMissingRates,
   createInvoiceGenerationService,
   createMoneyResourceRepository,
   createReportRepository,
@@ -899,6 +900,7 @@ export const createContainerRuntime = async (
       enrollOwnerPassword: (input) =>
         enrollInstanceOwnerPasswordContainer(database, input),
       tokens: createApiTokenStore(drizzle, touch),
+      projectMissingRates: { recover: input => recoverProjectMissingRates(drizzle, input, dates => timesheetLockPolicy.lockedDates(dates)) },
       generalResources: createGeneralResourceRepository(drizzle),
       clientTree: {
         ancestors: (clientId) => listClientAncestors(drizzle, clientId),

@@ -130,6 +130,20 @@ const catalogs = (): Pick<
 })
 
 describe('Expenses V1 browser controller', () => {
+  it('[#1167] loads the expense and explains receipts without calling unavailable storage', async () => {
+    writeDocument('expense-detail', '/expenses/8')
+    document.documentElement.setAttribute('data-attachments-unavailable', '')
+    const listWorkflowExpenseAttachments = vi.fn(async () => { throw new Error('storage absent') })
+    const getWorkflowExpense = vi.fn(async () => baseExpense)
+    const controller = createExpenseWorkflowController({ ...catalogs(), getWorkflowExpense, listWorkflowExpenseAttachments })
+    await controller.activate(identity, new AbortController().signal, () => false)
+    expect(getWorkflowExpense).toHaveBeenCalled()
+    expect(listWorkflowExpenseAttachments).not.toHaveBeenCalled()
+    expect(document.querySelector<HTMLElement>('[data-expense-attachment-form]')?.hidden).toBe(true)
+    expect(document.querySelector('[data-expense-attachment-status]')?.textContent).toContain('not enabled')
+    expect(document.querySelector('[data-expense-detail-status]')?.textContent).toBe('')
+  })
+
   it('[security #465] does not interpret omitted invoice state as not invoiced', async () => {
     const redacted: Expense = { ...baseExpense, is_locked: true, locked_reason_code: 'locked', locked_reason: 'This record is locked.' }
     delete redacted.invoice_id

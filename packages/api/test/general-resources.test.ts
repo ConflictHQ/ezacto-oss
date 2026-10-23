@@ -701,6 +701,21 @@ for (const [runtime, createHarness] of factories) {
       }
     }, 30_000);
 
+    it('[1164] defaults apply to new projects while existing projects need an explicit assignment', async () => {
+      const client = await data(await harness.request('/clients', json({ name: 'Default-task client' })));
+      const existing = await data(await harness.request('/projects', json({ client_id: client.id, name: 'Existing project' })));
+      const task = await data(await harness.request('/tasks', json({ name: 'Default delivery', is_default: true, billable_by_default: false })));
+      expect((await page(await harness.request(`/task-assignments?project_id=${existing.id}&task_id=${task.id}`))).data).toEqual([]);
+      const future = await data(await harness.request('/projects', json({ client_id: client.id, name: 'Future project' })));
+      expect((await page(await harness.request(`/task-assignments?project_id=${future.id}&task_id=${task.id}`))).data).toEqual([
+        expect.objectContaining({ project_id: future.id, task_id: task.id, billable: false }),
+      ]);
+      await data(await harness.request('/task-assignments', json({ project_id: existing.id, task_id: task.id })));
+      expect((await page(await harness.request(`/task-assignments?project_id=${existing.id}&task_id=${task.id}`))).data).toEqual([
+        expect.objectContaining({ project_id: existing.id, task_id: task.id, billable: false }),
+      ]);
+    });
+
     it("[api] provides CRUD and every combinable general-resource list filter", async () => {
       const parent = await data(
         await harness.request("/clients", json({ name: "Parent" })),

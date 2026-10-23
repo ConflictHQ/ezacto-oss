@@ -193,6 +193,48 @@ describe('Projects V1 browser controller', () => {
     expect(document.querySelector('[data-project-facts]')?.textContent).toContain('Archive this example')
   })
 
+  it('[browser] explains missing project rates and why a person rate may not apply', async () => {
+    writeDocument('project-detail', '/projects/7')
+    await createProjectDirectoryController(detailApi({ getDirectoryProject: vi.fn(async () => ({ ...project, hourly_rate_cents: null })) })).activate(identity('administrator'), new AbortController().signal, () => false)
+    document.querySelector<HTMLButtonElement>('[data-project-edit]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[data-project-rate-hint]')?.textContent).toContain('Person and task rates are ignored'))
+    const rate = document.querySelector<HTMLInputElement>('[data-project-form] [name="hourly_rate_cents"]')!
+    rate.value = '10'
+    rate.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(document.querySelector('[data-project-rate-hint]')?.textContent).toContain('existing snapshots are preserved')
+    document.querySelector<HTMLButtonElement>('[data-user-assignment-create]')!.click()
+    expect(document.querySelector('[data-user-assignment-form]')?.textContent).toContain('used only when the project bills by person')
+  })
+
+  it('[money] requires a preview and explicit confirmation before repairing project time', async () => {
+    writeDocument('project-detail', '/projects/7')
+    const report = { project_id: 7, hourly_rate_cents: 15000, currency: 'EUR', entry_count: 2, seconds: 7200, earliest_date: '2026-09-01', latest_date: '2026-09-02', fingerprint: 'a'.repeat(64), applied_entries: 0 }
+    const recover = vi.fn().mockResolvedValueOnce(report).mockResolvedValueOnce({ ...report, applied_entries: 2 })
+    await createProjectDirectoryController(detailApi({ recoverProjectMissingRates: recover })).activate(identity('administrator'), new AbortController().signal, () => false)
+    const button = document.querySelector<HTMLButtonElement>('[data-project-missing-rates]')!
+    expect(recover).not.toHaveBeenCalled()
+    button.click()
+    await vi.waitFor(() => expect(button.textContent).toBe('Confirm repair of 2 entries'))
+    expect(recover).toHaveBeenCalledWith(7, undefined, expect.any(AbortSignal))
+    expect(document.querySelector('[data-project-facts]')?.textContent).toContain('2 entries (2.00 hours)')
+    expect(document.querySelector('[data-project-facts]')?.textContent).toContain('€150.00/hour')
+    expect(document.querySelector('[data-project-facts]')?.textContent).not.toContain('[object')
+    button.click()
+    await vi.waitFor(() => expect(document.querySelector('[data-project-facts]')?.textContent).toContain('2 entries repaired'))
+    expect(recover).toHaveBeenLastCalledWith(7, report.fingerprint, expect.any(AbortSignal))
+  })
+
+  it('[#1167] loads project detail without requesting unavailable attachments', async () => {
+    writeDocument('project-detail', '/projects/7')
+    document.documentElement.setAttribute('data-attachments-unavailable', '')
+    const api = detailApi()
+    await createProjectDirectoryController(api).activate(identity('administrator'), new AbortController().signal, () => false)
+    expect(api.listDirectoryProjectAttachments).not.toHaveBeenCalled()
+    expect(document.querySelector<HTMLElement>('[data-project-detail]')?.hidden).toBe(false)
+    expect(document.querySelector<HTMLElement>('[data-project-attachment-form]')?.hidden).toBe(true)
+    expect(document.querySelector('[data-project-attachment-status]')?.textContent).toContain('not enabled')
+  })
+
   it('[security] renders read-only detail without restricted values or mutation controls', async () => {
     writeDocument('project-detail', '/projects/7')
     const api = detailApi()
