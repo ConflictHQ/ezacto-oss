@@ -11,6 +11,7 @@ import { EzactoApiError, type Attachment, type GeneralResource, type Whoami } fr
 
 import { renderDataTable, type CellContent, type DataSortValue } from '../components/data-table.js'
 import { isDemoDeployment } from '../demo.js'
+import { attachmentsAvailable, ATTACHMENTS_UNAVAILABLE } from '../attachments-availability.js'
 import { moneyText } from '../money-display.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
 import { localDate } from '../shell/model.js'
@@ -1453,8 +1454,8 @@ export const createProjectDirectoryController = (
   }
 
   const loadAttachmentData = async (active: ActiveSession, projectId: number): Promise<void> => {
-    if (api.listDirectoryProjectAttachments === undefined) {
-      attachmentStatus.textContent = 'Attachment storage is unavailable in this build.'
+    if (!attachmentsAvailable() || api.listDirectoryProjectAttachments === undefined) {
+      attachmentStatus.textContent = ATTACHMENTS_UNAVAILABLE
       return
     }
     try {
@@ -1510,8 +1511,8 @@ export const createProjectDirectoryController = (
       renderFacts()
       renderStaffing()
       renderAssignments()
-      attachmentForm.hidden = demo || !active.capabilities.canWrite
-      attachmentDemo.hidden = !demo || !active.capabilities.canWrite
+      attachmentForm.hidden = !attachmentsAvailable() || demo || !active.capabilities.canWrite
+      attachmentDemo.hidden = !attachmentsAvailable() || !demo || !active.capabilities.canWrite
       await loadAttachmentData(active, projectId)
     } catch (error) {
       active.presentFailure(error, () => {
@@ -1843,6 +1844,7 @@ export const createProjectDirectoryController = (
       active === null ||
       !active.capabilities.canWrite ||
       currentProject === null ||
+      !attachmentsAvailable() ||
       mutationPending ||
       api.uploadDirectoryProjectAttachment === undefined
     ) return
