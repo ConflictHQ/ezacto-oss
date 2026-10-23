@@ -9854,3 +9854,19 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   align-items: center;
   justify-content: space-between;
 }
+
+/* Payment defaults on the team page (issue 1152). A table that stacks into
+   blocks on a phone, so the page never scrolls sideways. */
+.team-defaults { margin: 1rem 0; }
+.team-defaults-table { width: 100%; border-collapse: collapse; }
+.team-defaults-table th,
+.team-defaults-table td { padding: 0.4rem 0.5rem; text-align: left; vertical-align: middle; }
+@media (max-width: 720px) {
+  .team-defaults-table thead { display: none; }
+  .team-defaults-table,
+  .team-defaults-table tbody,
+  .team-defaults-table tr,
+  .team-defaults-table td { display: block; width: 100%; box-sizing: border-box; }
+  .team-defaults-table tr { padding: 0.5rem 0; border-bottom: 1px solid currentColor; }
+  .team-defaults-table td { padding: 0.25rem 0; }
+}
