@@ -13,6 +13,13 @@ const env: Env = { ENVIRONMENT: 'test', RELEASE: 'abc1234def5678' }
 const app = createApp()
 
 describe('worker entry', () => {
+  it('[#1167] bootstraps attachment availability from the runtime before session restoration', async () => {
+    const withoutStorage = await (await app.request('/projects/1', {}, env)).text()
+    expect(withoutStorage).toContain('data-attachments-unavailable')
+    const withStorage = await (await app.request('/projects/1', {}, { ...env, ATTACHMENTS: {} })).text()
+    expect(withStorage).not.toContain('data-attachments-unavailable')
+  })
+
   it('reports health with the environment and release it was deployed with', async () => {
     const res = await app.request('/healthz', {}, env)
 

@@ -3809,6 +3809,7 @@ a {
   color: var(--ez-ink);
 }
 .timer-chip {
+  min-height: 44px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -5674,7 +5675,7 @@ button.primary-action.primary-action {
     /* The top bar's floor is for a chip that shares a row; in the column it is
        the column's width, and narrowed it is an icon. */
     min-width: 0;
-    min-height: 40px;
+    min-height: 44px;
     margin: 8px 0 0;
   }
   [data-ez-nav='sidebar'] .timer-chip [data-timer-elapsed] {
@@ -6634,6 +6635,21 @@ dialog header button[aria-label^='Close'] {
 dialog header button[aria-label^='Close']:hover {
   background: var(--ez-surface-2);
   color: var(--ez-ink);
+}
+.time-setup-guidance {
+  display: grid;
+  gap: 14px;
+}
+.time-setup-guidance p {
+  margin: 0;
+}
+.time-setup-guidance a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 8px 12px;
+  text-align: center;
 }
 dialog label {
   display: grid;
