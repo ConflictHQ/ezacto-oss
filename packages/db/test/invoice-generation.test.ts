@@ -2136,8 +2136,9 @@ for (const [runtime, factory] of factories) {
       // cannot be billed -- the same refusal a tracked draft gives.
       await database.run('UPDATE time_entries SET billable_rate_cents = NULL WHERE id = 12')
       await expect(service.generate(banded('band-unpriced-overage', hoursCeiling))).rejects.toMatchObject({
-        code: 'invalid_command_input',
-        message: 'time entry 12 has no billable rate',
+        code: 'missing_billable_rate',
+        projectId: 1,
+        message: expect.stringContaining('Changing rates affects new entries only'),
       })
       expect(
         await database.rows(
