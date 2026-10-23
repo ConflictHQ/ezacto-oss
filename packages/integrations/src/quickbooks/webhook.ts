@@ -98,11 +98,120 @@ export const verifyWebhookSignature = async (
 const text = (value: unknown): string | null =>
   typeof value === 'string' && value.trim() !== '' ? value : null
 
+const cloudEntityNames = new Map(
+  [
+    'Account',
+    'Bill',
+    'BillPayment',
+    'Budget',
+    'Class',
+    'CreditMemo',
+    'Currency',
+    'Customer',
+    'Department',
+    'Deposit',
+    'Employee',
+    'Estimate',
+    'Invoice',
+    'Item',
+    'JournalCode',
+    'JournalEntry',
+    'Payment',
+    'PaymentMethod',
+    'Preferences',
+    'Purchase',
+    'PurchaseOrder',
+    'RefundReceipt',
+    'SalesReceipt',
+    'TaxAgency',
+    'Term',
+    'TimeActivity',
+    'Transfer',
+    'Vendor',
+    'VendorCredit',
+  ].map((name) => [name.toLowerCase(), name]),
+)
+const cloudOperations = new Map([
+  ['created', 'Create'],
+  ['updated', 'Update'],
+  ['deleted', 'Delete'],
+  ['merged', 'Merge'],
+  ['voided', 'Void'],
+  ['emailed', 'Emailed'],
+])
+
+const cloudIdentity = (value: unknown): string | null =>
+  typeof value === 'string' &&
+  value.trim() === value &&
+  value.length > 0 &&
+  value.length <= 255 &&
+  !/[\p{Cc}]/u.test(value)
+    ? value
+    : null
+
+/** RFC 3339, including Intuit's nanosecond fractions, without Date's calendar rollover. */
+const cloudTime = (value: unknown): string | null => {
+  if (typeof value !== 'string' || value.length > 64) return null
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/iu.exec(
+      value,
+    )
+  if (match === null) return null
+  const [year, month, day, hour, minute, second] = match.slice(1, 7).map(Number)
+  const leap = year! % 4 === 0 && (year! % 100 !== 0 || year! % 400 === 0)
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  const parsed = new Date(value)
+  if (
+    month! < 1 ||
+    month! > 12 ||
+    day! < 1 ||
+    day! > days[month! - 1]! ||
+    hour! > 23 ||
+    minute! > 59 ||
+    second! > 59 ||
+    Number(match[8] ?? 0) > 23 ||
+    Number(match[9] ?? 0) > 59 ||
+    !Number.isFinite(parsed.getTime()) ||
+    parsed.getUTCFullYear() < 0 ||
+    parsed.getUTCFullYear() > 9999
+  )
+    return null
+  return value.replace('t', 'T').replace('z', 'Z')
+}
+
+const cloudChanges = (events: readonly unknown[]): readonly QuickBooksEntityChange[] => {
+  const changes: QuickBooksEntityChange[] = []
+  for (const event of events) {
+    if (typeof event !== 'object' || event === null || Array.isArray(event)) continue
+    const row = event as Record<string, unknown>
+    if (row['specversion'] !== '1.0' || typeof row['type'] !== 'string') continue
+    const type = /^qbo\.([a-z]+)\.([a-z]+)\.v1$/u.exec(row['type'])
+    if (type === null) continue
+    const name = cloudEntityNames.get(type[1]!)
+    const operation = cloudOperations.get(type[2]!)
+    const realmId = cloudIdentity(row['intuitaccountid'])
+    const id = cloudIdentity(row['intuitentityid'])
+    const lastUpdated = cloudTime(row['time'])
+    if (
+      name === undefined ||
+      operation === undefined ||
+      realmId === null ||
+      id === null ||
+      lastUpdated === null
+    )
+      continue
+    // The CloudEvent id names the envelope, not the payment. Keep the existing
+    // entity identity used by existing delivery claims and receipt guards.
+    changes.push({ realmId, name, id, operation, lastUpdated })
+  }
+  return changes
+}
+
 /**
  * The changes in one delivery, flattened.
  *
- * Intuit batches: one delivery carries a list of realms, each with a list of
- * entities. Callers want the entities, each still knowing which company it came
+ * CloudEvents arrays and legacy realm/entity batches share one normalized shape.
+ * Callers want the entities, each still knowing which company it came
  * from, because a delivery for a realm we are not connected to must be refused
  * rather than applied to whichever company we happen to hold.
  */
@@ -113,7 +222,8 @@ export const parseWebhookNotification = (payload: string): readonly QuickBooksEn
   } catch {
     throw new QuickBooksWebhookError('webhook payload was not JSON')
   }
-  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+  if (Array.isArray(body)) return cloudChanges(body)
+  if (typeof body !== 'object' || body === null) {
     throw new QuickBooksWebhookError('webhook payload was not an object')
   }
   const notifications = (body as Record<string, unknown>)['eventNotifications']
