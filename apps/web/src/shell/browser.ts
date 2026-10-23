@@ -1,4 +1,5 @@
 import { createScheduledRunController } from '../scheduled-runs/browser.js'
+import { wireDeelSelfPayout } from './payout-deel-self.js'
 import { createStaffPaymentsController } from '../staff-payments/browser.js'
 import { mountPasswordRecovery, takePasswordResetLink } from './password-recovery.js'
 import {
@@ -33,6 +34,7 @@ import {
   DEFAULT_COMPANY_SETTINGS_SECTION,
   applySettingsSection,
   resolveSettingsSection,
+  USER_SETTINGS_SECTIONS,
 } from '../settings-sections.js'
 import { browserTextSizeStore, createTextSizeRuntime, type TextSize, textSizes } from '../text-size.js'
 import {
@@ -2494,6 +2496,8 @@ export const mountShell = async (
     const result = required<HTMLElement>('[data-settings-payout-result]')
     const submit = required<HTMLButtonElement>('[data-settings-payout-submit]')
     section.hidden = false
+    const deelSection = section.querySelector<HTMLElement>('[data-settings-payout-deel]')
+    if (deelSection !== null) wireDeelSelfPayout(deelSection, api, identity.user_id)
     // The public demo pays nobody (issue 931). It has no Wise to ask, so the
     // read could only fail; it says why instead, and offers no form.
     if (isDemoDeployment()) {
@@ -7249,6 +7253,24 @@ export const mountShell = async (
     }
     showSection()
     globalThis.addEventListener('hashchange', showSection)
+  }
+
+  // The personal settings page, one part at a time (issue 1152): the same hash
+  // rule as the company page, with panes of their own, so the controllers that
+  // show and hide their sections are left alone.
+  if (settingsUserPage) {
+    const panes = [...document.querySelectorAll<HTMLElement>('[data-settings-user-pane]')]
+    const links = [...document.querySelectorAll<HTMLElement>('[data-settings-user-link]')]
+    const showPart = (): void => {
+      const wanted = resolveSettingsSection(globalThis.location.hash, USER_SETTINGS_SECTIONS)
+      for (const pane of panes) pane.hidden = pane.dataset['settingsUserPane'] !== wanted
+      for (const link of links) {
+        if (link.dataset['settingsUserLink'] === wanted) link.setAttribute('aria-current', 'page')
+        else link.removeAttribute('aria-current')
+      }
+    }
+    showPart()
+    globalThis.addEventListener('hashchange', showPart)
   }
 
   // The theme runtime resolved a stored choice against an organization default

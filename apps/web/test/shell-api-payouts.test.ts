@@ -15,7 +15,7 @@ const teamPayoutMethods = [
   'setPayoutProviderEnabled',
 ] as const
 
-describe('shell API adapter for the team payout panel (#1152)', () => {
+describe('shell API adapter for the team payout panel (issue 1152)', () => {
   it('[unit] exposes every payout method the team page calls', () => {
     const api = createShellApi({} as never) as unknown as Record<string, unknown>
     for (const name of teamPayoutMethods) {

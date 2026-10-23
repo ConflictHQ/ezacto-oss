@@ -2,7 +2,7 @@ import { EzactoApiError } from '@conflict-hq/ezacto-client'
 
 /**
  * The Deel destination and the provider switches on a person's payout panel
- * (#1152). A person may hold a destination at every provider an administrator
+ * (issue 1152). A person may hold a destination at every provider an administrator
  * has enabled; Wise keeps its own flow in the team browser.
  */
 type ProviderName = 'deel' | 'wise'

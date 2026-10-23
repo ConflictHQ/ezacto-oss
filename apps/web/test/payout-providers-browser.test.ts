@@ -38,7 +38,7 @@ const api = (overrides: Partial<PayoutProvidersApi> = {}): Required<PayoutProvid
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
 
-describe('payout providers panel (#1152)', () => {
+describe('payout providers panel (issue 1152)', () => {
   it('[unit] shows the Deel form when no Deel destination is set, and saves the email as typed', async () => {
     const root = mount()
     const client = api()

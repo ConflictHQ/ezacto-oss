@@ -1,7 +1,7 @@
 import { EzactoApiError } from '@conflict-hq/ezacto-client'
 
 /**
- * The payout provider switches on Company > Payouts (#1152). Turning a provider
+ * The payout provider switches on Company > Payouts (issue 1152). Turning a provider
  * off stops new links to it; destinations people already have are kept. An
  * administrator only: the section above it already refuses anyone else.
  */

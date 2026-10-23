@@ -88,3 +88,17 @@ export const applySettingsSection = <Section extends SettingsSectionElement>(
     else link.removeAttribute('aria-current')
   }
 }
+
+/**
+ * The personal settings page, one part at a time. The same hash rule as the
+ * company page, with panes of their own: the controllers that show and hide
+ * their sections are left alone, so a part a controller reveals stays hidden
+ * until its tab is open.
+ */
+export const USER_SETTINGS_SECTIONS: readonly SettingsSection[] = [
+  { id: 'reminders', label: 'Reminders' },
+  { id: 'payouts', label: 'Where you are paid' },
+  { id: 'two-factor', label: 'Two-step sign-in' },
+  { id: 'tokens', label: 'Access tokens' },
+  { id: 'appearance', label: 'Appearance' },
+]

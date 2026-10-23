@@ -14,7 +14,7 @@ const mount = () => {
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
 
-describe('company payout provider switches (#1152)', () => {
+describe('company payout provider switches (issue 1152)', () => {
   it('[unit] shows which providers are on, and sends a change', async () => {
     const root = mount()
     const api = {

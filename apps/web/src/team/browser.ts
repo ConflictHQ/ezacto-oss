@@ -949,7 +949,7 @@ export const createTeamDirectoryController = (
   }
 
   /**
-   * Take back a rate nobody meant to add (#727).
+   * Take back a rate nobody meant to add (issue 727).
    *
    * No confirmation dialog: the schema only admits a rate that has priced
    * nothing, so the button cannot destroy anything anybody was charged under,
@@ -1193,7 +1193,7 @@ export const createTeamDirectoryController = (
     active.identity.user_id === userId || active.capabilities.canManagePeople
 
   let payoutUserId: number | null = null
-  // Wise's form hides when an administrator has turned Wise off (#1152).
+  // Wise's form hides when an administrator has turned Wise off (issue 1152).
   let payoutWiseEnabled = true
   const payoutPanelRoot = required<HTMLElement>('[data-team-panel="payout"]')
   const payoutProviders = createPayoutProvidersPanel(payoutPanelRoot, api)
