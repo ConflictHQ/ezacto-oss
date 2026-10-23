@@ -8,6 +8,7 @@ type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof 
 export interface ProjectMissingRatesReport {
   project_id: number
   hourly_rate_cents: number
+  currency: string
   entry_count: number
   seconds: number
   earliest_date: string | null
@@ -37,8 +38,9 @@ export const recoverProjectMissingRates = async (
   input: { projectId: number; actorUserId: number; fingerprint?: string; occurredAt: string },
   lockedDates: LockedDates,
 ): Promise<ProjectMissingRatesReport> => {
-  const [project] = await database.all<{ rate: number | null; updatedAt: string }>(sql`
-    SELECT project.hourly_rate_cents AS rate, project.updated_at AS updatedAt
+  const [project] = await database.all<{ rate: number | null; updatedAt: string; currency: string }>(sql`
+    SELECT project.hourly_rate_cents AS rate, project.updated_at AS updatedAt,
+      upper(coalesce(project.billing_currency, client.currency)) AS currency
     FROM projects project JOIN clients client ON client.id = project.client_id
     WHERE project.id = ${input.projectId} AND project.bill_by = 'project'
       AND project.billing_method = 'time_materials' AND project.is_active = 1 AND client.is_active = 1
@@ -87,9 +89,11 @@ export const recoverProjectMissingRates = async (
       JOIN clients client ON client.id = project.client_id
       WHERE entry.project_id = ${input.projectId}
         AND entry.updated_at = json_extract(change.value, '$.updatedAt')
+        AND entry.spent_date = json_extract(change.value, '$.spentDate')
         AND entry.rounded_seconds = json_extract(change.value, '$.seconds')
         AND ${sql.raw(open('entry'))}
         AND project.updated_at = ${project.updatedAt} AND project.hourly_rate_cents = ${project.rate}
+        AND upper(coalesce(project.billing_currency, client.currency)) = ${project.currency}
         AND project.bill_by = 'project' AND project.billing_method = 'time_materials'
         AND project.is_active = 1 AND client.is_active = 1
         AND EXISTS (SELECT 1 FROM users WHERE id = ${input.actorUserId} AND profile = 'administrator' AND is_active = 1)
@@ -101,6 +105,7 @@ export const recoverProjectMissingRates = async (
   return {
     project_id: input.projectId,
     hourly_rate_cents: project.rate,
+    currency: project.currency,
     entry_count: rows.length,
     seconds,
     earliest_date: dates[0] ?? null,

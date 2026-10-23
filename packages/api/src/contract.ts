@@ -5783,8 +5783,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   ProjectMissingRatesInput: { type: "object", properties: { fingerprint: { type: "string", pattern: "^[a-f0-9]{64}$" } }, additionalProperties: false },
   ProjectMissingRatesEnvelope: { type: "object", required: ["data"], properties: { data: reference("ProjectMissingRates") }, additionalProperties: false },
-  ProjectMissingRates: { type: "object", required: ["project_id", "hourly_rate_cents", "entry_count", "seconds", "earliest_date", "latest_date", "fingerprint", "applied_entries"], properties: {
-    project_id: integerSchema, hourly_rate_cents: { type: "integer", minimum: 0 }, entry_count: { type: "integer", minimum: 0 }, seconds: { type: "integer", minimum: 0 }, earliest_date: { type: "string", nullable: true }, latest_date: { type: "string", nullable: true }, fingerprint: stringSchema, applied_entries: { type: "integer", minimum: 0 }
+  ProjectMissingRates: { type: "object", required: ["project_id", "hourly_rate_cents", "currency", "entry_count", "seconds", "earliest_date", "latest_date", "fingerprint", "applied_entries"], properties: {
+    project_id: integerSchema, hourly_rate_cents: { type: "integer", minimum: 0 }, currency: stringSchema, entry_count: { type: "integer", minimum: 0 }, seconds: { type: "integer", minimum: 0 }, earliest_date: { type: "string", nullable: true }, latest_date: { type: "string", nullable: true }, fingerprint: stringSchema, applied_entries: { type: "integer", minimum: 0 }
   }, additionalProperties: false },
   CostRateBackfillInput: {
     type: "object",

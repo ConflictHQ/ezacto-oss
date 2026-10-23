@@ -201,7 +201,7 @@ describe('Projects V1 browser controller', () => {
 
   it('[money] requires a preview and explicit confirmation before repairing project time', async () => {
     writeDocument('project-detail', '/projects/7')
-    const report = { project_id: 7, hourly_rate_cents: 15000, entry_count: 2, seconds: 7200, earliest_date: '2026-09-01', latest_date: '2026-09-02', fingerprint: 'a'.repeat(64), applied_entries: 0 }
+    const report = { project_id: 7, hourly_rate_cents: 15000, currency: 'EUR', entry_count: 2, seconds: 7200, earliest_date: '2026-09-01', latest_date: '2026-09-02', fingerprint: 'a'.repeat(64), applied_entries: 0 }
     const recover = vi.fn().mockResolvedValueOnce(report).mockResolvedValueOnce({ ...report, applied_entries: 2 })
     await createProjectDirectoryController(detailApi({ recoverProjectMissingRates: recover })).activate(identity('administrator'), new AbortController().signal, () => false)
     const button = document.querySelector<HTMLButtonElement>('[data-project-missing-rates]')!
@@ -210,7 +210,7 @@ describe('Projects V1 browser controller', () => {
     await vi.waitFor(() => expect(button.textContent).toBe('Confirm repair of 2 entries'))
     expect(recover).toHaveBeenCalledWith(7, undefined, expect.any(AbortSignal))
     expect(document.querySelector('[data-project-facts]')?.textContent).toContain('2 entries (2.00 hours)')
-    expect(document.querySelector('[data-project-facts]')?.textContent).toContain('$150.00/hour')
+    expect(document.querySelector('[data-project-facts]')?.textContent).toContain('€150.00/hour')
     expect(document.querySelector('[data-project-facts]')?.textContent).not.toContain('[object')
     button.click()
     await vi.waitFor(() => expect(document.querySelector('[data-project-facts]')?.textContent).toContain('2 entries repaired'))

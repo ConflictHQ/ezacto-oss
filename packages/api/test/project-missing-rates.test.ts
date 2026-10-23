@@ -5,6 +5,7 @@ import type { GeneralResourceRouteOptions } from '../src/general-resources.js'
 const report = {
   project_id: 7,
   hourly_rate_cents: 1000,
+  currency: 'USD',
   entry_count: 2,
   seconds: 7200,
   earliest_date: '2026-09-01',

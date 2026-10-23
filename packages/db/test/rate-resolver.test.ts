@@ -248,6 +248,45 @@ for (const [runtime, factory] of factories) {
       })
       expect(raced.applied_entries).toBe(0)
       expect(await db.rows('SELECT * FROM time_entry_rate_reprices')).toHaveLength(0)
+      // A reassignment to another date may share the clock's updated_at. It
+      // must not evade that date's lazy lock-policy check or reuse this preview.
+      const datePreview = await recoverProjectMissingRates(db.drizzle, args, locks)
+      const dateRace = await recoverProjectMissingRates(db.drizzle, { ...args, fingerprint: datePreview.fingerprint }, async () => {
+        await db.run("UPDATE time_entries SET spent_date = '2026-06-29' WHERE project_id = 1")
+        return new Map<string, boolean>()
+      })
+      expect(dateRace.applied_entries).toBe(0)
+      expect(await db.rows('SELECT * FROM time_entry_rate_reprices')).toHaveLength(0)
+      const currencyPreview = await recoverProjectMissingRates(db.drizzle, args, locks)
+      expect(currencyPreview.currency).toBe('USD')
+      const currencyRace = await recoverProjectMissingRates(db.drizzle, { ...args, fingerprint: currencyPreview.fingerprint }, async () => {
+        await db.run("UPDATE clients SET currency = 'EUR' WHERE id = 1")
+        return new Map<string, boolean>()
+      })
+      expect(currencyRace.applied_entries).toBe(0)
+      expect(await db.rows('SELECT * FROM time_entry_rate_reprices')).toHaveLength(0)
+    })
+
+    it('[money] repairs only unchanged entries when one row moves after confirmation planning', async () => {
+      const db = await setup()
+      await db.run("UPDATE users SET profile = 'administrator' WHERE id = 1")
+      await db.run("UPDATE projects SET bill_by = 'project', hourly_rate_cents = NULL WHERE id = 1")
+      const moved = await createStoppedTimeEntry(db.drizzle, stoppedInput())
+      const retained = await createStoppedTimeEntry(db.drizzle, stoppedInput(1, 1, '2026-06-29'))
+      await db.run('UPDATE projects SET hourly_rate_cents = 1000 WHERE id = 1')
+      const args = { projectId: 1, actorUserId: 1, occurredAt: timestamp }
+      const preview = await recoverProjectMissingRates(db.drizzle, args, async () => new Map())
+      expect(preview.entry_count).toBe(2)
+      const result = await recoverProjectMissingRates(db.drizzle, { ...args, fingerprint: preview.fingerprint }, async () => {
+        await db.run("UPDATE time_entries SET spent_date = '2026-06-28' WHERE id = ?", moved.id)
+        return new Map<string, boolean>()
+      })
+      expect(result.applied_entries).toBe(1)
+      expect(await db.rows('SELECT id, billable_rate_cents AS rate, cost_rate_cents AS cost FROM time_entries ORDER BY id')).toEqual([
+        { id: moved.id, rate: null, cost: moved.costRateCents },
+        { id: retained.id, rate: 1000, cost: retained.costRateCents },
+      ])
+      expect(await db.rows('SELECT time_entry_id AS id FROM time_entry_rate_reprices')).toEqual([{ id: retained.id }])
     })
 
     it('[unit] populates both native snapshot columns from spent_date and returns the live budget grain', async () => {

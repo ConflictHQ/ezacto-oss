@@ -2088,6 +2088,7 @@ export type ProjectMissingRatesEnvelope = {
 export type ProjectMissingRates = {
   "project_id": number;
   "hourly_rate_cents": number;
+  "currency": string;
   "entry_count": number;
   "seconds": number;
   "earliest_date": string;

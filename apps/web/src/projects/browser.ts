@@ -828,7 +828,7 @@ export const createProjectDirectoryController = (
               } else {
                 result.replaceChildren(
                   `${report.entry_count} ${report.entry_count === 1 ? 'entry' : 'entries'} (${(report.seconds / 3600).toFixed(2)} hours), ${report.earliest_date} to ${report.latest_date}, will be priced at `,
-                  moneyText(projectMoney(report.hourly_rate_cents, currency)),
+                  moneyText(projectMoney(report.hourly_rate_cents, report.currency)),
                   '/hour. Confirm to record an audited repair.',
                 )
               }

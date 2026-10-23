@@ -33,7 +33,7 @@ import { installProjectMissingRatesRoutes } from "./project-missing-rates.js";
 export interface GeneralResourceRouteOptions {
   missingRates?: {
     recover(input: { projectId: number; actorUserId: number; fingerprint?: string; occurredAt: string }): Promise<{
-      project_id: number; hourly_rate_cents: number; entry_count: number; seconds: number;
+      project_id: number; hourly_rate_cents: number; currency: string; entry_count: number; seconds: number;
       earliest_date: string | null; latest_date: string | null; fingerprint: string; applied_entries: number;
     }>;
   };
