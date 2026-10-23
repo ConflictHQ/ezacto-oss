@@ -2623,7 +2623,7 @@ for (const [runtime, factory] of factories) {
       ]);
     });
 
-    it("[db] entry grain is one row per entry with its id and notes; day grain carries neither", async () => {
+    it("[db] entry grain is one row per entry with its id and notes; day grain has no id and joins the notes it folds", async () => {
       harness = await factory();
       await seedDetailedDay(harness);
       await harness.run(`UPDATE time_entries SET notes = 'wrote the thing' WHERE id = 111`, []);
@@ -2652,7 +2652,12 @@ for (const [runtime, factory] of factories) {
       if (day.kind !== "report") throw new Error("expected a report");
       expect(day.report.grain).toBe("day");
       expect(day.report.rows).toHaveLength(1);
-      expect(day.report.rows[0]).toMatchObject({ timeEntryId: null, notes: null });
+      // A daily line has no entry id, but it says what was done: the note of the
+      // entry it folds (issue 1160). The other daily lines have none.
+      expect(day.report.rows.every((row) => row.timeEntryId === null)).toBe(true);
+      expect(day.report.rows.map((row) => row.notes).filter((note) => note !== null)).toEqual([
+        "wrote the thing",
+      ]);
     });
 
     it("[api] emits time_entry_id and notes at entry grain only, and refuses an unknown grain", async () => {
