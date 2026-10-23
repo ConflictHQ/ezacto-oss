@@ -9870,3 +9870,46 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   .team-defaults-table tr { padding: 0.5rem 0; border-bottom: 1px solid currentColor; }
   .team-defaults-table td { padding: 0.25rem 0; }
 }
+
+
+/* The owner’s first-run guide stays usable in either navigation layout. */
+.first-run-checklist {
+  margin: 20px;
+  padding: 20px;
+  border: 1px solid var(--ez-border);
+  border-radius: 12px;
+  background: var(--ez-ground);
+}
+.first-run-checklist header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+}
+.first-run-checklist h2 {
+  margin: 4px 0 12px;
+}
+.first-run-checklist ol {
+  padding-left: 24px;
+}
+.first-run-checklist li a,
+.first-run-checklist button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+}
+.first-run-checklist li[data-complete="true"] a {
+  text-decoration-style: dotted;
+}
+.first-run-checklist button {
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: 6px;
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  cursor: pointer;
+}
+
+button[data-first-run-help] {
+  min-height: 44px;
+}

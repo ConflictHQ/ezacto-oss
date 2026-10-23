@@ -1,3 +1,4 @@
+import { createFirstRunController } from '../first-run/browser.js'
 import { wirePayoutDefaultSelf } from './payout-default-self.js'
 import { createScheduledRunController } from '../scheduled-runs/browser.js'
 import { wireDeelSelfPayout } from './payout-deel-self.js'
@@ -1558,6 +1559,7 @@ export const mountShell = async (
   const invoiceResult = required<HTMLElement>('[data-invoice-generation-result]')
   const invoiceSubmit = required<HTMLButtonElement>('[data-invoice-generation-submit]')
   const invoiceRetry = required<HTMLButtonElement>('[data-retry-invoice-catalog]')
+  const firstRun = createFirstRunController(api)
   const clientDirectory = createClientDirectoryController(api)
   const projectDirectory = createProjectDirectoryController(api)
   const taskAdmin = createTaskAdminController(api)
@@ -3923,6 +3925,7 @@ export const mountShell = async (
     // disagreed with what the timesheet called the same week.
     invoicePeriod.setWeekStartDay(loadedWeekStartDay)
     snapshot = loaded
+    if (requestedPerson === null && loaded.entries.length > 0) firstRun.markTimeEntrySaved()
     // A module an administrator switched off is not offered in the strip
     // (issue 815), the way Approvals and Team already are not. Only hidden,
     // never removed: the route still answers with its own "unavailable" state
@@ -4625,6 +4628,9 @@ export const mountShell = async (
           handleSessionFailure(error, authenticated)
         })
     }
+    firstRun.activate(identity, authenticated.signal, (error) =>
+      handleSessionFailure(error, authenticated),
+    )
     void loadTeamNavigation(identity, authenticated)
     hideActivityLogWhenOff(identity, authenticated)
     if (invoiceGenerationPage) {
