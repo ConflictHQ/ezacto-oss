@@ -480,7 +480,7 @@ export const createTaskAdminController = (
           active,
           false,
           create
-            ? 'Task added. To use it on an existing project, open Projects, choose the project, then Assigned tasks → Assign task.'
+            ? 'Task added. To use it on an existing project, open Projects, choose the project, then choose Assign task under Assigned tasks.'
             : 'Task saved.',
         )
       })
