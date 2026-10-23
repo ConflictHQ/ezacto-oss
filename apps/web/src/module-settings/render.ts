@@ -341,6 +341,12 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <p class="form-result" data-settings-payout-result role="status" aria-live="polite"></p>
         <button class="primary-action" type="submit" data-settings-payout-submit>Save payout destination</button>
       </form>
+      <form class="settings-payout-default" data-settings-payout-default-form hidden>
+        <label for="ez-settings-payout-default">Pay me through<select id="ez-settings-payout-default" name="default_provider" data-settings-payout-default></select></label>
+        <p class="hint">Your default is where every payout to you goes. You can choose any provider you hold an account at; leave it on the organization default to follow the instance.</p>
+        <p class="form-result" data-settings-payout-default-result role="status" aria-live="polite"></p>
+        <button class="primary-action" type="submit">Save default</button>
+      </form>
       <section class="settings-payout-deel" data-settings-payout-deel hidden>
         <h3>Deel</h3>
         <p data-settings-payout-deel-summary></p>

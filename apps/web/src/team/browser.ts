@@ -1,3 +1,4 @@
+import { createPayoutDefaultsPanel } from './payout-defaults-browser.js'
 import { createPayoutProvidersPanel } from './payout-providers-browser.js'
 import { renderDataTable } from '../components/data-table.js'
 import { demoUnavailable, isDemoDeployment } from '../demo.js'
@@ -140,6 +141,7 @@ export const createTeamDirectoryController = (
   const listPageElement = required<HTMLElement>('[data-team-list-page]')
   const personPageElement = required<HTMLElement>('[data-team-person-page]')
   const listStatus = required<HTMLElement>('[data-team-list-status]')
+  const payoutDefaults = createPayoutDefaultsPanel(required<HTMLElement>('[data-team-defaults]'), api)
   const list = required<HTMLElement>('[data-team-list]')
   const listRetry = required<HTMLButtonElement>('[data-team-list-retry]')
   const search = required<HTMLInputElement>('[data-team-search]')
@@ -651,6 +653,8 @@ export const createTeamDirectoryController = (
   // that has just written a person has to say what the reader can now see, and
   // "it reloaded" is not the same answer as "the request came back".
   const loadPeople = async (active: ActiveSession): Promise<boolean> => {
+    // Payment defaults for everyone are an administrator's view (issue 1152).
+    if (active.identity.profile === 'administrator') void payoutDefaults.load(active.signal)
     if (!active.capabilities.canRead) {
       listStatus.textContent = readDenialMessage(active)
       list.replaceChildren()

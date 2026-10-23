@@ -1593,6 +1593,15 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   setPayoutProviderEnabled: async ({ provider, body, signal }) => {
     await client.setPayoutProviderEnabled({ provider, body, ...withSignal(signal) })
   },
+  getPayoutPreference: async ({ id, signal }) => client.getPayoutPreference({ id, ...withSignal(signal) }),
+  setPayoutPreference: async ({ id, provider, expectedVersion, signal }) => {
+    await client.setPayoutPreference({
+      id,
+      body: { provider, expected_version: expectedVersion },
+      ...withSignal(signal),
+    })
+  },
+  listPayoutPreferences: async (args) => client.listPayoutPreferences({ ...withSignal(args?.signal) }),
   getUserEmailFactor: async (userId, signal) =>
     (await client.getUserTwoFactorEmail({ id: userId, ...withSignal(signal) })).data
       .email_enabled,
