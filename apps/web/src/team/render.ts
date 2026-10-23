@@ -133,6 +133,24 @@ export const renderTeamPages = (view?: string): string => `
           <p class="hint" data-team-payout-unverified hidden>Wise has not confirmed this destination resolves. Remove it and add it again.</p>
           <button type="button" class="danger-action" data-team-payout-remove>Remove destination</button>
         </section>
+        <fieldset class="team-payout-providers" data-team-payout-providers hidden>
+          <legend>Payout providers on this instance</legend>
+          <p class="hint">A person can be paid through each provider that is on, and picks one as primary. Turning a provider off stops new links; existing destinations are kept.</p>
+          <label><input type="checkbox" data-team-provider-toggle="wise"> Wise</label>
+          <label><input type="checkbox" data-team-provider-toggle="deel"> Deel</label>
+          <p class="form-result" data-team-provider-result role="status" aria-live="polite"></p>
+        </fieldset>
+        <section class="team-payout-deel" data-team-payout-deel hidden>
+          <h3>Deel</h3>
+          <p data-team-payout-deel-summary></p>
+          <button type="button" class="danger-action" data-team-payout-deel-remove hidden>Remove Deel destination</button>
+          <form class="team-person-form" data-team-payout-deel-form hidden>
+            <label for="ez-team-payout-deel-email">Email in Deel<input id="ez-team-payout-deel-email" name="email" type="email" autocomplete="off" maxlength="254" placeholder="ana@example.com" required aria-describedby="team-payout-deel-hint"></label>
+            <p class="hint" id="team-payout-deel-hint">Use the email address this person has in Deel. Their payouts are matched on it.</p>
+            <p class="form-result" data-team-payout-deel-result role="status" aria-live="polite"></p>
+            <button class="primary-action" type="submit">Save Deel destination</button>
+          </form>
+        </section>
         <form class="team-person-form" data-team-payout-form hidden>
           <p>Share the Wisetag on their Wise account — or the email address or phone number that account is discoverable by. Wise keeps the bank details; we never see them.</p>
           <label for="ez-team-payout-identifier">Wisetag, email or phone<input id="ez-team-payout-identifier" name="identifier" autocomplete="off" maxlength="255" placeholder="@theirtag" required aria-describedby="team-payout-hint"></label>
