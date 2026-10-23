@@ -71,6 +71,8 @@ describe('first-run setup guide', () => {
     expect(document.querySelector('[data-first-run-status]')?.textContent).toContain(
       'first time entry is saved',
     )
+    controller.markTimeEntrySaved()
+    expect(panel().hidden).toBe(false)
   })
 
   it('does not read administrative setup for members or token identities', () => {

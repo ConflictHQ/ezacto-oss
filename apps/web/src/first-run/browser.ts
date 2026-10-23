@@ -64,6 +64,7 @@ export const createFirstRunController = (api: Partial<FirstRunApi>) => {
         panel.hidden = true
         return
       }
+      entrySaved ||= state.hasTimeEntry
       paint(state)
       panel.hidden =
         !forceOpen && (state.hasTimeEntry || entrySaved || dismissed(active.identity.user_id))
