@@ -232,7 +232,7 @@ test('[e2e:scheme] switches from the Theme picker and remembers it across a relo
   context,
 }) => {
   await page.emulateMedia({ colorScheme: 'light' })
-  await page.goto('/settings/user')
+  await page.goto('/settings/user#appearance')
   await signIn(page)
   const picker = page.getByRole('group', { name: 'Theme' })
   await picker.getByRole('button', { name: 'Dark', exact: true }).click()
