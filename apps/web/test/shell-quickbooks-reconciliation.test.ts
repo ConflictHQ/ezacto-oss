@@ -119,7 +119,7 @@ describe('QuickBooks reconciliation', () => {
     document.querySelector<HTMLButtonElement>('[data-quickbooks-reconcile]')!.click()
     const result = document.querySelector<HTMLElement>('[data-quickbooks-reconcile-result]')!
     await vi.waitFor(() => expect(result.textContent).toContain('1 to look at, 4 matched.'))
-    expect(result.textContent).toContain('older than 30 days')
+    expect(result.textContent).toContain('could not prove a complete history')
     const table = document.querySelector<HTMLElement>('[data-quickbooks-reconcile-table]')!
     expect(table.textContent).toContain('1003')
     expect(table.textContent).toContain('payment voided in QuickBooks')

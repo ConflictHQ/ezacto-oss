@@ -303,7 +303,7 @@ export interface QuickBooksConnectionStore {
     lastUpdated: string;
     now: string;
   }): Promise<boolean>;
-  readSyncCursor(realmId: string): Promise<QuickBooksSyncCursor | null>;
+  readSyncCursor(realmId: string): Promise<(QuickBooksSyncCursor & { readonly retryNotBefore: string | null }) | null>;
   /** Places or moves the cursor, together with the outcome of the run that did. */
   saveSyncCursor(input: {
     realmId: string;
@@ -316,6 +316,7 @@ export interface QuickBooksConnectionStore {
     realmId: string;
     lastRunAt: string;
     lastOutcome: QuickBooksSyncOutcome;
+    retryNotBefore?: string;
   }): Promise<void>;
   /**
    * Notes that a QuickBooks payment was voided or deleted there. Writes only
@@ -434,7 +435,7 @@ export interface QuickBooksRuntimeOptions {
   readonly now: () => Date;
   /** Injected so a test can state the value rather than tolerate randomness. */
   readonly newState?: () => string;
-  /** How a throttled catch-up waits; injected so a test never sleeps. */
+  /** @deprecated Catch-up now stores a retry time instead of sleeping inline. */
   readonly sleep?: (milliseconds: number) => Promise<void>;
 }
 
@@ -442,10 +443,8 @@ export interface QuickBooksRuntimeOptions {
 const CDC_OVERLAP_MS = 5 * 60 * 1000;
 /** Intuit answers change data capture for 30 days; a day's margin is kept. */
 const CDC_HORIZON_MS = 29 * 24 * 60 * 60 * 1000;
-/** Windows of up to a thousand payments one run reads; the cursor keeps the rest for the next. */
-const CDC_MAXIMUM_WINDOWS = 5;
-const THROTTLE_ATTEMPTS = 4;
-const THROTTLE_MAXIMUM_WAIT_MS = 30_000;
+/** Intuit asks clients to wait 60 seconds after a throttle without Retry-After. */
+const THROTTLE_DEFAULT_WAIT_SECONDS = 60;
 
 const CALLBACK_PATH = "/api/v1/integrations/quickbooks/callback";
 const SETTINGS_PATH = "/settings/integrations";
@@ -562,6 +561,7 @@ export const createQuickBooksRuntime = (
       accessToken = refreshed.accessToken;
     }
     return new QuickBooksClient({
+      now: options.now,
       realmId: connection.realmId,
       accessToken,
       fetch: options.fetch,
@@ -866,12 +866,16 @@ export const createQuickBooksRuntime = (
     if (client === null) return null;
     const remote = await client.listInvoices();
     const local = await options.reconciliation.invoicesOfRecord(connection.realmId);
+    const cursor = await store.readSyncCursor(connection.realmId);
     return {
       ...reconcileInvoices(local, remote),
       realmId: connection.realmId,
       generatedAt: options.now().toISOString(),
       paymentDivergences: await options.reconciliation.paymentDivergences(connection.realmId),
-      recovery: await store.readSyncCursor(connection.realmId),
+      // Retry scheduling is private operational state, not reconciliation data.
+      recovery: cursor === null ? null : {
+        cdcCursor: cursor.cdcCursor, lastRunAt: cursor.lastRunAt, lastOutcome: cursor.lastOutcome,
+      },
     };
   };
 
@@ -980,29 +984,6 @@ export const createQuickBooksRuntime = (
   };
 
 
-  /** Waits out Intuit's throttling (429) rather than failing the run on the first one. */
-  const unthrottled = async <Result>(attempt: () => Promise<Result>): Promise<Result> => {
-    const sleep =
-      options.sleep ??
-      ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
-    for (let tried = 1; ; tried += 1) {
-      try {
-        return await attempt();
-      } catch (error) {
-        if (
-          !(error instanceof QuickBooksApiError) ||
-          error.status !== 429 ||
-          tried >= THROTTLE_ATTEMPTS
-        ) {
-          throw error;
-        }
-        await sleep(
-          Math.min((error.retryAfterSeconds ?? 2 ** tried) * 1000, THROTTLE_MAXIMUM_WAIT_MS),
-        );
-      }
-    }
-  };
-
   /** One captured payment: claimed, applied the way the webhook applies it, completed. */
   const applyCaptured = async (
     client: Pick<QuickBooksClient, "readInvoice">,
@@ -1103,56 +1084,38 @@ export const createQuickBooksRuntime = (
       };
     }
 
+    if (cursor.retryNotBefore !== null && Date.parse(cursor.retryNotBefore) > now.getTime()) {
+      throw new QuickBooksApiError(429, 'retry_deferred', 'catch-up is waiting for the provider retry time',
+        Math.ceil((Date.parse(cursor.retryNotBefore) - now.getTime()) / 1000));
+    }
     let examined = 0;
     let alreadyProcessed = 0;
-    let resumeAt = cursor.cdcCursor;
     try {
       const client = await authorizedClient();
       if (client === null) return null;
-      const throttled: Pick<QuickBooksClient, "readInvoice"> = {
-        readInvoice: (id) => unthrottled(() => client.readInvoice(id)),
-      };
-      let changedSince = from.toISOString();
-      for (let window = 0; window < CDC_MAXIMUM_WINDOWS; window += 1) {
-        const since = changedSince;
-        const changes = await unthrottled(() => client.paymentChangesSince(since));
-        const answeredAt = canonicalLastUpdated(changes.time);
-        let newest = since;
-        for (const captured of changes.payments) {
-          examined += 1;
-          const processed = await applyCaptured(throttled, realmId, captured, answeredAt);
-          if (!processed.applied) alreadyProcessed += 1;
-          if (processed.lastUpdated > newest) newest = processed.lastUpdated;
-        }
-        if (!changes.full) {
-          resumeAt = answeredAt;
-          await store.saveSyncCursor({
-            realmId,
-            cdcCursor: resumeAt,
-            lastRunAt: nowIso,
-            lastOutcome: "caught_up",
-          });
-          return { seeded: false, outcome: "caught_up", examined, alreadyProcessed, cursor: resumeAt };
-        }
-        // A full window may have more behind it. Resume from the newest change
-        // seen; if a thousand share one instant there is nothing to resume from.
-        if (newest <= since) {
-          throw new Error(
-            "a thousand QuickBooks payments share one instant; catch-up cannot page past them",
-          );
-        }
-        changedSince = newest;
-        resumeAt = newest;
-        await store.saveSyncCursor({
-          realmId,
-          cdcCursor: resumeAt,
-          lastRunAt: nowIso,
-          lastOutcome: "caught_up",
-        });
+      const changes = await client.paymentChangesSince(from.toISOString());
+      const answeredAt = canonicalLastUpdated(changes.time);
+      if (changes.full) {
+        // CDC has an object ceiling, not a continuation cursor. Deleted objects
+        // follow active ones, so the newest visible timestamp cannot prove that
+        // every earlier change was returned. Do not apply an incomplete window.
+        await store.recordSyncOutcome({ realmId, lastRunAt: nowIso, lastOutcome: "full_reconcile_needed" });
+        return { seeded: false, outcome: "full_reconcile_needed", examined: 0, alreadyProcessed: 0, cursor: cursor.cdcCursor };
       }
-      return { seeded: false, outcome: "caught_up", examined, alreadyProcessed, cursor: resumeAt };
+      for (const captured of changes.payments) {
+        examined += 1;
+        const processed = await applyCaptured(client, realmId, captured, answeredAt);
+        if (!processed.applied) alreadyProcessed += 1;
+      }
+      await store.saveSyncCursor({ realmId, cdcCursor: answeredAt, lastRunAt: nowIso, lastOutcome: "caught_up" });
+      return { seeded: false, outcome: "caught_up", examined, alreadyProcessed, cursor: answeredAt };
     } catch (error) {
-      await store.recordSyncOutcome({ realmId, lastRunAt: nowIso, lastOutcome: "failed" });
+      const failedAt = options.now();
+      await store.recordSyncOutcome({ realmId, lastRunAt: failedAt.toISOString(), lastOutcome: "failed",
+        ...(error instanceof QuickBooksApiError && error.status === 429 ? {
+          retryNotBefore: new Date(failedAt.getTime() + (error.retryAfterSeconds ?? THROTTLE_DEFAULT_WAIT_SECONDS) * 1000).toISOString(),
+        } : {}),
+      });
       throw error;
     }
   };
