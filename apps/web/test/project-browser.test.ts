@@ -217,6 +217,17 @@ describe('Projects V1 browser controller', () => {
     expect(recover).toHaveBeenLastCalledWith(7, report.fingerprint, expect.any(AbortSignal))
   })
 
+  it('[#1167] loads project detail without requesting unavailable attachments', async () => {
+    writeDocument('project-detail', '/projects/7')
+    document.documentElement.setAttribute('data-attachments-unavailable', '')
+    const api = detailApi()
+    await createProjectDirectoryController(api).activate(identity('administrator'), new AbortController().signal, () => false)
+    expect(api.listDirectoryProjectAttachments).not.toHaveBeenCalled()
+    expect(document.querySelector<HTMLElement>('[data-project-detail]')?.hidden).toBe(false)
+    expect(document.querySelector<HTMLElement>('[data-project-attachment-form]')?.hidden).toBe(true)
+    expect(document.querySelector('[data-project-attachment-status]')?.textContent).toContain('not enabled')
+  })
+
   it('[security] renders read-only detail without restricted values or mutation controls', async () => {
     writeDocument('project-detail', '/projects/7')
     const api = detailApi()

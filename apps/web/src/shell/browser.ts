@@ -1,3 +1,4 @@
+import { createFirstRunController } from '../first-run/browser.js'
 import { wirePayoutDefaultSelf } from './payout-default-self.js'
 import { createScheduledRunController } from '../scheduled-runs/browser.js'
 import { wireDeelSelfPayout } from './payout-deel-self.js'
@@ -1164,11 +1165,16 @@ const renderTimer = (running: DisplayTimeEntry | null): void => {
   if (timerInterval !== undefined) globalThis.clearInterval(timerInterval)
   if (running === null) {
     chip.dataset.state = 'stopped'
+    chip.setAttribute('aria-label', 'Start timer')
+    chip.title = 'Start timer'
     label.textContent = 'Start timer'
     elapsed.textContent = formatDuration(0, 'hours_minutes')
     return
   }
   chip.dataset.state = 'running'
+  const accessibleLabel = `Running timer: ${running.project_label} / ${running.task_label}`
+  chip.setAttribute('aria-label', accessibleLabel)
+  chip.title = accessibleLabel
   label.textContent = `${running.project_label} / ${running.task_label}`
   const update = (): void => {
     // A running clock reads as a clock on every client, whatever the
@@ -1558,6 +1564,7 @@ export const mountShell = async (
   const invoiceResult = required<HTMLElement>('[data-invoice-generation-result]')
   const invoiceSubmit = required<HTMLButtonElement>('[data-invoice-generation-submit]')
   const invoiceRetry = required<HTMLButtonElement>('[data-retry-invoice-catalog]')
+  const firstRun = createFirstRunController(api)
   const clientDirectory = createClientDirectoryController(api)
   const projectDirectory = createProjectDirectoryController(api)
   const taskAdmin = createTaskAdminController(api)
@@ -2041,6 +2048,14 @@ export const mountShell = async (
     configureNoteInput(entryNoteInput, entryNoteHint, 0)
     required<HTMLSelectElement>('[data-row-project]').replaceChildren()
     required<HTMLSelectElement>('[data-row-task]').replaceChildren()
+    required<HTMLElement>('[data-row-empty]').hidden = true
+    required<HTMLElement>('[data-row-empty-reason]').textContent = ''
+    const setup = required<HTMLAnchorElement>('[data-row-setup]')
+    setup.textContent = 'Set up a project'
+    setup.href = '/projects'
+    const timer = required<HTMLButtonElement>('[data-timer-chip]')
+    timer.setAttribute('aria-label', 'Timer')
+    timer.title = 'Timer'
     required<HTMLElement>('[data-command-result]').textContent = ''
     entryResult.textContent = ''
     required<HTMLElement>('[data-row-result]').textContent = ''
@@ -3287,6 +3302,28 @@ export const mountShell = async (
       ...projects.map((resource) => option(resource.id, resourceLabel(resource))),
     )
     updateRowTaskOptions(projects[0]?.id ?? 0)
+    const empty = projects.length === 0
+    required<HTMLElement>('[data-row-empty]').hidden = !empty
+    for (const label of document.querySelectorAll<HTMLElement>('[data-row-selection]')) {
+      label.hidden = empty
+    }
+    const submit = required<HTMLButtonElement>('[data-row-submit]')
+    submit.hidden = empty
+    submit.disabled = empty
+    const canSetUp = currentIdentity !== null &&
+      canProfileUseApiScope(currentIdentity.profile, 'projects:write')
+    required<HTMLElement>('[data-row-empty-reason]').textContent = canSetUp
+      ? 'You have no available project and task pair. In a project, use Assigned tasks → Assign task, and add the person logging time to its Project team.'
+      : 'You have no available project and task pair. Ask a project manager to add you to a project and assign a task to it.'
+    const setup = required<HTMLAnchorElement>('[data-row-setup]')
+    setup.hidden = !canSetUp
+    const firstProject = snapshot.catalog.projects[0]
+    setup.href = firstProject === undefined
+      ? '/projects'
+      : `/projects/${firstProject.id}#project-tasks-heading`
+    setup.textContent = firstProject === undefined
+      ? 'Set up a project'
+      : `Assign a task to ${resourceLabel(firstProject)}`
     updateEntrySuggestions()
   }
 
@@ -3923,6 +3960,7 @@ export const mountShell = async (
     // disagreed with what the timesheet called the same week.
     invoicePeriod.setWeekStartDay(loadedWeekStartDay)
     snapshot = loaded
+    if (requestedPerson === null && loaded.entries.length > 0) firstRun.markTimeEntrySaved()
     // A module an administrator switched off is not offered in the strip
     // (issue 815), the way Approvals and Team already are not. Only hidden,
     // never removed: the route still answers with its own "unavailable" state
@@ -4628,6 +4666,9 @@ export const mountShell = async (
           handleSessionFailure(error, authenticated)
         })
     }
+    firstRun.activate(identity, authenticated.signal, (error) =>
+      handleSessionFailure(error, authenticated),
+    )
     void loadTeamNavigation(identity, authenticated)
     hideActivityLogWhenOff(identity, authenticated)
     if (invoiceGenerationPage) {
@@ -5535,6 +5576,10 @@ export const mountShell = async (
       setSessionStatus('Go back to your own timesheet to start a timer.', 'ready')
       return
     }
+    if (snapshot.catalog.timeEntryOptions.length === 0) {
+      openRowDialog('timer')
+      return
+    }
     configureEntryEditor({
       context: 'timer',
       entry: null,
@@ -5560,8 +5605,16 @@ export const mountShell = async (
     )
     firstLink?.focus()
   })
+  function openRowDialog(purpose: 'row' | 'timer' = 'row'): void {
+    if (currentIdentity === null || snapshot === null) return
+    updateRowOptions()
+    required<HTMLElement>('#row-title').textContent =
+      purpose === 'timer' ? 'Start timer' : 'Add project and task'
+    required<HTMLElement>('[data-row-result]').textContent = ''
+    open(rowDialog)
+  }
   required<HTMLButtonElement>('[data-add-row-trigger]').addEventListener('click', () => {
-    if (currentIdentity !== null) open(rowDialog)
+    openRowDialog()
   })
   for (const close of document.querySelectorAll<HTMLButtonElement>('[data-dialog-close]')) {
     close.addEventListener('click', () => close.closest('dialog')?.close())
@@ -5623,7 +5676,7 @@ export const mountShell = async (
     // modifier and works from inside a cell.
     if (modified && event.key === 'Enter') {
       event.preventDefault()
-      open(rowDialog)
+      openRowDialog()
       return
     }
     if (event.altKey || modified || typingInAField()) return
