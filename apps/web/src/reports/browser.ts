@@ -44,7 +44,7 @@ import {
   type SavedScreenActions,
 } from './saved-screen.js'
 import { invoiceIdentityCanWrite, invoicePagePath } from '../invoices/model.js'
-import { moneyText } from '../money-display.js'
+import { markMoney, moneyText } from '../money-display.js'
 import { personLabel } from '../projects/model.js'
 // The team roster's own formatter. Utilization is one figure with one meaning,
 // and a second renderer for it here is how the same person comes to read 17%
@@ -1992,6 +1992,13 @@ const detailedEntryScope = (report: Readonly<DetailedTimeReport>, options: Reado
   group: options.grouping,
 })
 
+/** A figure that is money, marked so the header's hide-money control masks it. */
+const moneyElement = (tag: 'span' | 'strong', text: string): HTMLElement => {
+  const node = textElement(tag, text)
+  markMoney(node)
+  return node
+}
+
 const detailedTimeCells = (
   row: Readonly<DetailedTimeRow>,
   grain: DetailedTimeGrain,
@@ -2014,6 +2021,9 @@ const detailedTimeCells = (
     textElement('td', row.roles.join(', ')),
     textElement('td', row.user_name),
   ]
+  // The daily line carries every note its entries have (the server joins them);
+  // the entry line carries its own, further down, with the claim.
+  if (grain !== 'entry') cells.push(textElement('td', row.notes ?? ''))
   if (grain === 'entry') {
     // What the drill-through is for: at the folded grain two entries share a
     // line and have two notes between them, so the column can only exist here.
@@ -2084,7 +2094,7 @@ const renderDetailedTime = (
     totals.append(
       fact(
         `Billable amount (${currency.currency})`,
-        formatReportMoney(currency.billable_amount_cents, currency.currency),
+        moneyText(formatReportMoney(currency.billable_amount_cents, currency.currency)),
       ),
     )
   }
@@ -2300,7 +2310,7 @@ const renderDetailedTime = (
   const headers =
     options.grain === 'entry'
       ? [...(selectable ? ['Select'] : []), ...(dated ? ['Date'] : []), 'Client', 'Project', 'Task', 'Roles', 'Person', 'Notes', 'Claimed by', 'Hours']
-      : [...(dated ? ['Date'] : []), 'Client', 'Project', 'Task', 'Roles', 'Person', 'Hours']
+      : [...(dated ? ['Date'] : []), 'Client', 'Project', 'Task', 'Roles', 'Person', 'Notes', 'Hours']
   if (showRounded) headers.push('Rounded hours')
   // Last, after the figures, so the band and total rows keep their hours under
   // the hours column and only gain an empty cell at the end.
@@ -2450,7 +2460,7 @@ const timeSummary = (totals: Readonly<TimeReportTotals>, url: (hours?: DetailedT
       else {
         for (const amount of totals.amounts!) {
           wrapper.append(
-            textElement('strong', formatReportMoney(pick(amount), amount.currency)),
+            moneyElement('strong', formatReportMoney(pick(amount), amount.currency)),
           )
         }
       }
@@ -2552,7 +2562,7 @@ const amountCell = (
     return cell
   }
   for (const amount of amounts) {
-    cell.append(textElement('span', formatReportMoney(pick(amount), amount.currency)))
+    cell.append(moneyElement('span', formatReportMoney(pick(amount), amount.currency)))
   }
   return cell
 }
