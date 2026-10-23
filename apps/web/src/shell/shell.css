@@ -794,6 +794,7 @@
   min-width: 0;
 }
 .period-step {
+  min-height: 44px;
   display: grid;
   place-items: center;
   flex: none;
@@ -4437,6 +4438,7 @@ button.primary-action.primary-action {
 /* Leaving a half-finished second factor has to be as reachable as finishing
    it: the alternative is a person stuck on a code they cannot produce. */
 .sign-in-restart {
+  min-height: 44px;
   border: 0;
   padding: 0;
   background: none;
