@@ -513,6 +513,20 @@ for (const [runtime, factory] of factories) {
       expect(detailed.report.rows).toEqual([
         expect.objectContaining({ spentDate: '2026-09-15', seconds: fiveHours, timeEntryCount: 3 }),
       ])
+
+      // The daily line says what was done: every distinct note its entries carry,
+      // once each. The entry grain keeps each entry's own note.
+      await db.run(
+        `UPDATE time_entries SET notes = CASE WHEN seconds = 3600 THEN 'Migration review' ELSE 'Client call' END WHERE user_id = 2`,
+      )
+      const daily = await reports.detailedTime({ ...week, grain: 'day' })
+      if (daily.kind !== 'report') throw new Error('expected a report')
+      expect(daily.report.rows[0]?.notes?.split(' · ').sort()).toEqual(['Client call', 'Migration review'])
+      const perEntry = await reports.detailedTime({ ...week, grain: 'entry' })
+      if (perEntry.kind !== 'report') throw new Error('expected a report')
+      expect(perEntry.report.rows.map((row) => row.notes).sort()).toEqual(
+        expect.arrayContaining(['Client call', 'Client call', 'Migration review']),
+      )
       expect(await reports.memberHours({ ...week, userId: 2 })).toMatchObject({
         seconds: fiveHours,
         roundedSeconds: fiveHours,

@@ -3180,6 +3180,9 @@ const detailedTimeReport = async (
   let uninvoicedBillableSeconds = 0
   let claimedSeconds = 0
   let unclaimedSeconds = 0
+  // Daily lines fold several entries, so they carry every note the reader may see,
+  // joined: the line says what was done without splitting the figures (issue 1160).
+  const dayNotes = new Map<string, Set<string>>()
   for (const row of rows) {
     const key =
       grain === 'entry'
@@ -3291,7 +3294,28 @@ const detailedTimeReport = async (
         }
       }
     }
+    if (grain !== 'entry') {
+      const note = row.notes?.trim() ?? ''
+      const visible =
+        note !== '' &&
+        (audience === 'internal' ||
+          reportNoteIsClientVisible(
+            { clientVisible: row.clientVisible === null ? null : row.clientVisible === 1 },
+            row.visibleDefault !== 0,
+          ))
+      if (visible) {
+        const set = dayNotes.get(key) ?? new Set<string>()
+        set.add(note)
+        dayNotes.set(key, set)
+      }
+    }
     lines.set(key, line)
+  }
+  if (grain !== 'entry') {
+    for (const [key, line] of lines) {
+      const set = dayNotes.get(key)
+      line.notes = set === undefined ? null : [...set].join(' · ')
+    }
   }
   return {
     kind: 'report',
