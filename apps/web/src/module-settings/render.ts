@@ -186,6 +186,13 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p class="form-result" data-settings-wise-status role="status" aria-live="polite">Loading payout connection…</p>
       <dl class="settings-facts" data-settings-wise-facts hidden></dl>
       <p class="form-result settings-backup-alarm" data-settings-wise-alarm role="status" aria-live="polite" hidden></p>
+      <fieldset class="settings-payout-providers" data-settings-payout-providers hidden>
+        <legend>Payout providers</legend>
+        <p class="hint">Turn a provider on to let people be paid through it. A person can be linked to every provider that is on, and picks one as primary. Turning one off stops new links; destinations already set are kept.</p>
+        <label><input type="checkbox" data-settings-provider-toggle="wise"> Wise</label>
+        <label><input type="checkbox" data-settings-provider-toggle="deel"> Deel (people are matched by the email they use in Deel)</label>
+        <p class="form-result" data-settings-provider-result role="status" aria-live="polite"></p>
+      </fieldset>
     </section>
     ${renderCompanyDataTools()}
     <section class="settings-section" data-settings-section="backup" aria-labelledby="settings-backup-title">
