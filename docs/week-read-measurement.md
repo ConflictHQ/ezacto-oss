@@ -13,22 +13,28 @@ results table.
 
 ## What each app sends when it opens
 
-Read from `repos/mobile` and `repos/chrome` at the time of writing.
+The mobile scenario targets [mobile PR #192](https://github.com/ConflictHQ/ezacto-mobile/pull/192)
+(source `428bc072`), which fixes the single-page/Monday-only behavior found in
+#1038. Confirm the installed candidate contains that change before comparing its
+actual traffic with this scenario. This source inventory does not claim that PR
+is merged, shipped or accepted on a handset. The Chrome inventory is unchanged.
 
 ### Mobile, Week screen (focus)
 
-`loadWeek` in `src/store/time/index.ts` calls `entriesInRange`
-(`src/api/time.ts`):
+`loadWeek` in `src/store/time/index.ts` reads the existing time-entry settings,
+then calls `entriesInRange` (`src/api/time.ts`) for the aligned week:
 
-| #   | Request                                         | Notes                                |
-| --- | ----------------------------------------------- | ------------------------------------ |
-| 1   | `GET /api/v1/time-entries?from&to&per_page=200` | One page only; no cursor is followed |
+| Phase | Request                                         | Notes                                           |
+| ----- | ----------------------------------------------- | ----------------------------------------------- |
+| 1     | `GET /api/v1/time-entry-settings`               | Every load; its `week_start_day` sets the range |
+| 2     | `GET /api/v1/time-entries?from&to&per_page=200` | Follow every `page.next_cursor` sequentially    |
 
-One round trip. Two things the harness cannot judge but a reader should know:
-
-- A week with more than 200 entries is silently cut off at 200.
-- The start of the week is hard-coded to Monday (`weekStart(todayIso(), 'monday')`)
-  and ignores the instance's `week_start_day`.
+Minimum two dependent requests; each extra entry page adds a request. Both
+settings latency/decoded bytes and every entry page belong to each measured
+sample. There is no unmeasured settings warm-up request. Sunday and Saturday
+boundaries are honored rather than assuming Monday. A failed settings/page read,
+unknown boundary or malformed/repeated cursor fails the measurement; no partial
+number is reported. A setting change between samples also fails the run.
 
 The Home tab separately issues `running` and `today` reads (two parallel
 requests) through `loadToday`; those are not week reads and are not measured.
@@ -77,6 +83,9 @@ EZACTO_TOKEN=ezacto_... node scripts/measure-week-read.mjs \
   the mobile app should still be taken on a handset with the OS network
   conditioner, and the profile name written next to it.
 - Bytes are the decoded body size, not wire size; compression is not counted.
+- Record the installed client build/source alongside the server release. This
+  harness replays HTTP traffic; it does not measure native rendering or app
+  launch time, even when its network crosses a phone hotspot.
 - Run it against an account whose week looks like a real user's (about 5 to 25
   entries a week for most; include a heavy user). An empty dev account
   understates payloads.
@@ -116,6 +125,7 @@ Steps:
    The second command prints the table that goes in the Results section.
    Repeat with `--profile 3g` from wifi if no cellular link is at hand, and say
    so in the Profile column (simulated, not a device measurement).
+
 4. Revoke the token in settings when done.
 5. Add one row per scenario and mode to the Results table (date, instance, link
    used, scenario, mode, requests, bytes, p50, p95), comment the table on
@@ -135,5 +145,8 @@ If the script prints `answered 401` the token has expired or been revoked;
 Open. Suggested rule once numbers exist, to be confirmed by the owner on the
 issue: build slice B if the Chrome week reads (phase 2) or the mobile read cost
 more than about one second at p95 on the 3g profile for a typical week, or if
-heavy weeks page; otherwise close as "composed client-side is fine" and fix the
-two mobile defects above instead.
+heavy-week measurements demonstrate a need; otherwise close as "composed
+client-side is fine". Pagination is required client correctness and now modeled
+by the harness; a heavy week needing multiple pages alone does not establish
+that a new endpoint improves it. Confirm the decision rule with the owner and
+record the actual measurements before choosing slice B.
