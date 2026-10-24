@@ -1,5 +1,8 @@
-import { accountingAvailable } from '../accounting-availability.js'
-import { backupsAvailable } from '../backups-availability.js'
+import {
+  moduleAvailable,
+  SETTINGS_SECTION_MODULES,
+  withdrawUnavailableSettingsSections,
+} from '../module-availability.js'
 import { createWebhookController } from './webhooks.js'
 import { createPayoutProviderSwitches } from './payout-provider-switches.js'
 import { createCompanyDataTools } from './data-tools.js'
@@ -1835,7 +1838,7 @@ export const createModuleSettingsController = (
         'Connecting an accounting system is an administrator action.'
       return
     }
-    if (api.getQuickBooksConnection === undefined || !accountingAvailable()) {
+    if (api.getQuickBooksConnection === undefined || !moduleAvailable('accounting')) {
       quickBooksStatus.textContent =
         'This deployment is not configured for QuickBooks.'
       return
@@ -2724,7 +2727,7 @@ export const createModuleSettingsController = (
     payouts: async (active) => {
       await Promise.all([loadWiseConnection(active), payoutProviderSwitches.load(active.signal)])
     },
-    backup: (active) => (backupsAvailable() ? loadBackups(active.identity, active) : Promise.resolve()),
+    backup: (active) => (moduleAvailable('backups') ? loadBackups(active.identity, active) : Promise.resolve()),
     brand: (active) => loadBrandAssets(active.identity, active),
     appearance: (active) => loadInstanceTheme(active.identity, active),
     integrations: (active) => loadQuickBooks(active.identity, active),
@@ -2734,7 +2737,10 @@ export const createModuleSettingsController = (
   const load = (section: string): Promise<void> => {
     const active = currentSession()
     const read = sectionLoaders[section]
-    if (active === null || read === undefined) return Promise.resolve()
+    const owner = SETTINGS_SECTION_MODULES[section]
+    if (active === null || read === undefined || (owner !== undefined && !moduleAvailable(owner))) {
+      return Promise.resolve()
+    }
     const pending = loaded.get(section)
     if (pending !== undefined) return pending
     const run = read(active)
@@ -2749,25 +2755,17 @@ export const createModuleSettingsController = (
    */
   const shownSection = (): string => {
     const wanted = resolveSettingsSection(globalThis.location.hash)
+    const owner = SETTINGS_SECTION_MODULES[wanted]
     return (wanted === 'payouts' && wiseSection.hasAttribute('data-settings-unavailable')) ||
-      (wanted === 'integrations' && !accountingAvailable()) ||
-      (wanted === 'backup' && !backupsAvailable())
+      (owner !== undefined && !moduleAvailable(owner))
       ? DEFAULT_COMPANY_SETTINGS_SECTION
       : wanted
   }
 
-  // Where the platform backs the tenant up the screen is not offered at all
-  // (issue 1216): withdrawn from the strip like Payouts, and never read, so no
-  // request reaches the backup endpoints.
-  if (!backupsAvailable()) {
-    document
-      .querySelector<HTMLElement>('[data-settings-section="backup"]')
-      ?.setAttribute('data-settings-unavailable', '')
-    for (const link of document.querySelectorAll<HTMLElement>(
-      '[data-settings-section-link="backup"]',
-    )) {
-      link.hidden = true
-    }
+  // A module the operator switched off (issues 1216, 1254) is not offered at
+  // all: its sections are withdrawn from the strip like Payouts, and never
+  // read, so no request reaches its endpoints.
+  if (withdrawUnavailableSettingsSections()) {
     globalThis.dispatchEvent(new Event('hashchange'))
   }
 

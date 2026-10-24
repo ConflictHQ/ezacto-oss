@@ -6,7 +6,7 @@ import { ensureRuntimeDatabaseReady } from './runtime.js'
 import * as Sentry from '@sentry/cloudflare'
 import { scheduleConfirmedRunWorkflows } from './scheduled-run-workflow-scheduler.js'
 import type { QueuedEmailJob } from '@ezacto/mailer'
-import { createApiIdempotencyAuthorization, withIdempotency } from '@ezacto/api'
+import { createApiIdempotencyAuthorization, moduleAvailability, withIdempotency } from '@ezacto/api'
 import { createApp, demoDeployment, demoMailDomains, type WorkerEnv } from './app.js'
 import { isDataRequest } from './data-request.js'
 import { workerBrandAssetSurface } from './brand-assets.js'
@@ -253,6 +253,9 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     // Exhaustion propagates to withSentry once and marks this tick failed;
     // readiness is cached only on success, so the next tick can recover.
     const services = await createRuntimeServices(env, { retryReadiness: true, reportError: report })
+    // The operator's invoices switch (issue 1254): where it is off none of the
+    // invoice sweeps run, and what they would have touched stays as it is.
+    const invoices = moduleAvailability(env).invoices
     const isolate = async <T>(name: string, job: () => Promise<T>): Promise<T | undefined> => {
       try { return await job() }
       catch (error) {
@@ -311,7 +314,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         report(error, { phase: 'scheduled' })
       }
     }
-    if (controller.cron === '* * * * *' && services.scheduledJobProposals !== undefined) {
+    if (controller.cron === '* * * * *' && invoices && services.scheduledJobProposals !== undefined) {
       try {
         const result = await services.scheduledJobProposals.processDue(new Date().toISOString())
         for (const failure of result.failed)
@@ -321,7 +324,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         report(error, { phase: 'scheduled' })
       }
     }
-    if (controller.cron === '* * * * *' && services.scheduledRunNotices !== undefined) {
+    if (controller.cron === '* * * * *' && invoices && services.scheduledRunNotices !== undefined) {
       try {
         await services.scheduledRunNotices.processDue(new Date().toISOString())
       } catch (error) {
@@ -329,7 +332,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         report(error, { phase: 'scheduled' })
       }
     }
-    if (controller.cron === '* * * * *' && services.scheduledRunDispatch !== undefined) {
+    if (controller.cron === '* * * * *' && invoices && services.scheduledRunDispatch !== undefined) {
       try {
         if (env.SCHEDULED_RUN_WORKFLOW !== undefined) {
           const result = await scheduleConfirmedRunWorkflows(env.SCHEDULED_RUN_WORKFLOW, services.scheduledRunDispatch)
@@ -344,7 +347,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         report(error, { phase: 'scheduled' })
       }
     }
-    if (controller.cron === '* * * * *' && services.scheduledActionExpiry !== undefined) {
+    if (controller.cron === '* * * * *' && invoices && services.scheduledActionExpiry !== undefined) {
       // Proposed month-end runs past their deadline (issue 63). The sweep
       // reports its own failure, so it never stops the drain below.
       await isolate('scheduled run expiry', () => services.scheduledActionExpiry!.expireDue(new Date().toISOString(), (error) => {
@@ -362,7 +365,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     ) {
       await isolate('nightly export', () => runNightlyExport(env.DB, env.ATTACHMENTS!))
     }
-    if (controller.cron === '0 3 * * *') {
+    if (controller.cron === '0 3 * * *' && invoices) {
       // Daily rather than every minute: a definition is due on a date, so the
       // finest resolution the cadence has is a day, and fifty-nine of every
       // sixty extra passes could only find the same nothing.
