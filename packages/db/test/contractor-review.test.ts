@@ -10,6 +10,7 @@ import {
   migrateD1Through,
 } from '../src/migrate.js'
 import { createContractorReviewStore } from '../src/contractor-review.js'
+import { createContractorAcceptanceStore } from '../src/contractor-acceptance.js'
 import { createStaffPaymentStore } from '../src/staff-payments.js'
 import { createPaymentRunsService } from '../src/payment-runs.js'
 import type { AcceptContractorReview, PaymentProvider } from '@ezacto/core'
@@ -305,6 +306,68 @@ for (const runtime of ['sqlite', 'd1'] as const)
       expect(raced.filter((result) => result.status === 'rejected')).toHaveLength(1)
       expect((await f.counts()).staff_payment_allocations).toBe(2)
     }, 60000)
+    it.each(['same command', 'changed intent', 'different actor', 'different command id'])(
+      'rechecks a committed acceptance after a review barrier: %s',
+      async (variant) => {
+        const f = await fixture(runtime)
+        await f.hours()
+        await f.confirm()
+        await partial(f)
+        const command = await commandFor(f)
+        let release!: () => void
+        let entered!: () => void
+        const barrier = new Promise<void>((resolve) => {
+          release = resolve
+        })
+        const reviewing = new Promise<void>((resolve) => {
+          entered = resolve
+        })
+        const delayed = createContractorAcceptanceStore(f.db, async (...args) => {
+          // Its first command lookup missed. Force the other caller to commit
+          // before this caller reads the now-changed review/source versions.
+          entered()
+          await barrier
+          return f.review.review(...args)
+        })
+        const delayedCommand =
+          variant === 'changed intent'
+            ? { ...command, reason: 'Different requested intent' }
+            : variant === 'different command id'
+              ? { ...command, id: 'other-command' }
+              : command
+        const result = delayed
+          .accept(delayedCommand, variant === 'different actor' ? 2 : 1, 'delayed-retry', now)
+          .then(
+            (value) => ({ status: 'completed' as const, value }),
+            (error: unknown) => ({ status: 'conflict' as const, error }),
+          )
+        await reviewing
+        try {
+          const accepted = await f.review.accept!(command, 1, 'winner', now)
+          const afterWinner = await f.counts()
+          const changed = await commandFor(f)
+          expect(changed.source_revision).not.toBe(command.source_revision)
+          expect(changed.review_version).not.toBe(command.review_version)
+          release()
+          const replayed = await result
+          if (variant === 'same command') {
+            expect(replayed).toEqual({ status: 'completed', value: accepted })
+          } else {
+            expect(replayed.status).toBe('conflict')
+            if (replayed.status === 'conflict')
+              expect(replayed.error).toMatchObject({ code: 'conflict' })
+          }
+          expect(await f.counts()).toEqual(afterWinner)
+          expect(afterWinner.staff_payment_allocations).toBe(1)
+          expect(afterWinner.staff_advance_applications).toBe(0)
+          expect(await f.review.acceptances!(month)).toEqual([accepted])
+        } finally {
+          release()
+          await result
+        }
+      },
+      60000,
+    )
     it('refuses stale hours and catches a source mutation after the read but before the atomic insert', async () => {
       const f = await fixture(runtime)
       await f.hours()
