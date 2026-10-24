@@ -3774,6 +3774,7 @@ export const allocations = sqliteTable(
     startDate: text('start_date').notNull(),
     endDate: text('end_date').notNull(),
     plannedSecondsPerWeek: integer('planned_seconds_per_week').notNull(),
+    version: integer('version').notNull().default(0),
     ...timestamps,
   },
   (table) => [
@@ -4225,6 +4226,7 @@ export const timeOff = sqliteTable(
     endDate: text('end_date').notNull(),
     kind: text('kind', { enum: ['vacation', 'sick', 'holiday', 'other'] }).notNull(),
     secondsPerDay: integer('seconds_per_day'),
+    version: integer('version').notNull().default(0),
     ...timestamps,
   },
   (table) => [index('time_off_user_dates').on(table.userId, table.startDate, table.endDate)],

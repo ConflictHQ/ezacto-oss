@@ -44,7 +44,7 @@ export class AllocationOverlapError extends Error {
 export class AllocationConflictError extends Error {
   readonly code = "allocation_changed" as const;
 
-  constructor() {
+  constructor(readonly currentVersion?: number, readonly current?: unknown) {
     super("The allocation changed while this request was being made. Read it again and retry.");
     this.name = "AllocationConflictError";
   }

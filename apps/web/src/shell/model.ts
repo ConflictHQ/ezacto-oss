@@ -2102,7 +2102,7 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       client.createAllocation({ body: input, ...withSignal(signal) }),
     updateAllocation: (id, patch, signal) =>
       client.updateAllocation({ id, body: patch, ...withSignal(signal) }),
-    deleteAllocation: (id, signal) => client.deleteAllocation({ id, ...withSignal(signal) }),
+    deleteAllocation: (id, version, signal) => client.deleteAllocation({ id, body: { version }, ...withSignal(signal) }),
     listTimeOff: (range, signal) =>
       collectPlanned(
         (cursor) =>
@@ -2115,7 +2115,7 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     createTimeOff: (input, signal) => client.createTimeOff({ body: input, ...withSignal(signal) }),
     updateTimeOff: (id, patch, signal) =>
       client.updateTimeOff({ id, body: patch, ...withSignal(signal) }),
-    deleteTimeOff: (id, signal) => client.deleteTimeOff({ id, ...withSignal(signal) }),
+    deleteTimeOff: (id, version, signal) => client.deleteTimeOff({ id, body: { version }, ...withSignal(signal) }),
   },
   scheduledRuns: {
     consumeReviewLink: async (id,token,signal) => {await client.consumeScheduledReviewLink({id,body:{token},...withSignal(signal)})},

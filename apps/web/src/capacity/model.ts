@@ -45,6 +45,7 @@ export interface CapacityApi {
  * who may write.
  */
 export interface AllocationRow {
+  readonly version: number
   readonly id: number
   readonly user_id: number
   readonly project_id: number
@@ -57,6 +58,7 @@ export const timeOffKinds = ['vacation', 'sick', 'holiday', 'other'] as const
 export type TimeOffKindName = (typeof timeOffKinds)[number]
 
 export interface TimeOffRow {
+  readonly version: number
   readonly id: number
   readonly user_id: number
   readonly start_date: string
@@ -83,21 +85,21 @@ export interface PlanningApi {
     signal?: AbortSignal,
   ): Promise<readonly { readonly id: number; readonly name: string }[]>
   listAllocations(range: PlanningRange, signal?: AbortSignal): Promise<readonly AllocationRow[]>
-  createAllocation(input: Omit<AllocationRow, 'id'>, signal?: AbortSignal): Promise<unknown>
+  createAllocation(input: Omit<AllocationRow, 'id' | 'version'>, signal?: AbortSignal): Promise<unknown>
   updateAllocation(
     id: number,
-    patch: Partial<Omit<AllocationRow, 'id' | 'user_id' | 'project_id'>>,
+    patch: Partial<Omit<AllocationRow, 'id' | 'version' | 'user_id' | 'project_id'>> & { version: number },
     signal?: AbortSignal,
   ): Promise<unknown>
-  deleteAllocation(id: number, signal?: AbortSignal): Promise<unknown>
+  deleteAllocation(id: number, version: number, signal?: AbortSignal): Promise<unknown>
   listTimeOff(range: PlanningRange, signal?: AbortSignal): Promise<readonly TimeOffRow[]>
-  createTimeOff(input: Omit<TimeOffRow, 'id'>, signal?: AbortSignal): Promise<unknown>
+  createTimeOff(input: Omit<TimeOffRow, 'id' | 'version'>, signal?: AbortSignal): Promise<unknown>
   updateTimeOff(
     id: number,
-    patch: Partial<Omit<TimeOffRow, 'id' | 'user_id'>>,
+    patch: Partial<Omit<TimeOffRow, 'id' | 'version' | 'user_id'>> & { version: number },
     signal?: AbortSignal,
   ): Promise<unknown>
-  deleteTimeOff(id: number, signal?: AbortSignal): Promise<unknown>
+  deleteTimeOff(id: number, version: number, signal?: AbortSignal): Promise<unknown>
 }
 
 /** Hours as typed (`7.5`) to whole seconds; null when it is not a positive number. */

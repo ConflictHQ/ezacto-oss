@@ -41,7 +41,7 @@ export class TimeOffOverlapError extends Error {
 export class TimeOffConflictError extends Error {
   readonly code = "time_off_changed" as const;
 
-  constructor() {
+  constructor(readonly currentVersion?: number, readonly current?: unknown) {
     super("The time off changed while this request was being made. Read it again and retry.");
     this.name = "TimeOffConflictError";
   }

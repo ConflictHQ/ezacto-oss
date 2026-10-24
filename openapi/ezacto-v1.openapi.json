@@ -9637,6 +9637,7 @@
       "delete": {
         "operationId": "deleteAllocation",
         "summary": "Delete an allocation",
+        "description": "Send the version last read in the JSON body. A stale version is 409; omitted versions are deprecated until the 2027-01-22 sunset, then refused.",
         "tags": [
           "schedule"
         ],
@@ -9699,7 +9700,17 @@
               "minimum": 1
             }
           }
-        ]
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanningRevisionInput"
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/capacity": {
@@ -10103,6 +10114,7 @@
       "delete": {
         "operationId": "deleteTimeOff",
         "summary": "Delete time off",
+        "description": "Send the version last read in the JSON body. A stale version is 409; omitted versions are deprecated until the 2027-01-22 sunset, then refused.",
         "tags": [
           "schedule"
         ],
@@ -10165,7 +10177,17 @@
               "minimum": 1
             }
           }
-        ]
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanningRevisionInput"
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/organization-holidays": {
@@ -38330,6 +38352,21 @@
           "fields"
         ],
         "properties": {
+          "currentVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "current": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Allocation"
+              },
+              {
+                "$ref": "#/components/schemas/TimeOff"
+              }
+            ]
+          },
           "code": {
             "type": "string"
           },
@@ -43984,9 +44021,21 @@
         },
         "additionalProperties": false
       },
+      "PlanningRevisionInput": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      },
       "Allocation": {
         "type": "object",
         "required": [
+          "version",
           "id",
           "user_id",
           "project_id",
@@ -43997,6 +44046,11 @@
           "updated_at"
         ],
         "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
           "id": {
             "type": "integer",
             "minimum": 1
@@ -44070,6 +44124,12 @@
       "AllocationPatch": {
         "type": "object",
         "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Version last read. Required from 2027-01-22; supplied values are always enforced."
+          },
           "start_date": {
             "type": "string",
             "format": "date"
@@ -44249,6 +44309,7 @@
       "TimeOff": {
         "type": "object",
         "required": [
+          "version",
           "id",
           "user_id",
           "start_date",
@@ -44259,6 +44320,11 @@
           "updated_at"
         ],
         "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
           "id": {
             "type": "integer",
             "minimum": 1
@@ -44355,6 +44421,12 @@
       "TimeOffPatch": {
         "type": "object",
         "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Version last read. Required from 2027-01-22; supplied values are always enforced."
+          },
           "start_date": {
             "type": "string",
             "format": "date"

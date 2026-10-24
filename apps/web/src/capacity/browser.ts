@@ -71,6 +71,7 @@ export const createCapacityController = (api: CapacityApi): CapacityController =
       : createPlanningEntry(planningHost, api.planning, () => void load())
 
   let active: AbortSignal | null = null
+  let releaseActivation: (() => void) | null = null
   let windows = 0
 
   const render = (report: CapacityData): void => {
@@ -107,13 +108,13 @@ export const createCapacityController = (api: CapacityApi): CapacityController =
 
   const load = async (): Promise<void> => {
     const signal = active
-    if (signal === null) return
+    if (signal === null || signal.aborted) return
     status.textContent = 'Loading capacity…'
     retry.hidden = true
     try {
       const range = capacityRange(localToday(), windows)
       const response = await api.getCapacity(range, signal)
-      if (signal.aborted) return
+      if (signal.aborted || active !== signal) return
       render(response.data)
       status.textContent = ''
       await planning?.refresh(
@@ -127,7 +128,7 @@ export const createCapacityController = (api: CapacityApi): CapacityController =
         signal,
       )
     } catch (error) {
-      if (signal.aborted) return
+      if (signal.aborted || active !== signal) return
       grid.replaceChildren()
       retry.hidden = false
       status.textContent = error instanceof Error ? error.message : 'Capacity could not be loaded.'
@@ -145,7 +146,29 @@ export const createCapacityController = (api: CapacityApi): CapacityController =
 
   return {
     async activate(signal, options = {}) {
+      if (active !== signal) {
+        releaseActivation?.()
+        planning?.unmount()
+        grid.replaceChildren()
+        label.textContent = '—'
+        status.textContent = ''
+        retry.hidden = true
+        windows = 0
+      }
       active = signal
+      const clear = (): void => {
+        if (active !== signal) return
+        active = null
+        planning?.unmount()
+        grid.replaceChildren()
+        label.textContent = '—'
+        status.textContent = ''
+        retry.hidden = true
+      }
+      releaseActivation?.()
+      signal.addEventListener('abort', clear, { once: true })
+      releaseActivation = () => signal.removeEventListener('abort', clear)
+      if (signal.aborted) { clear(); return }
       // Entry is for an administrator only; anyone else gets no control at all.
       if (options.administrator === true) planning?.mount()
       else planning?.unmount()

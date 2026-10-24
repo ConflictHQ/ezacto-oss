@@ -47,7 +47,7 @@ interface Harness {
   request(path: string, init?: RequestInit): Promise<Response>
 }
 
-const harness = (): Harness => {
+const harness = (instant = '2026-10-06T09:00:00.000Z'): Harness => {
   const sqlite = new BetterSqlite3(':memory:')
   migrateContainer(sqlite)
   const run = (sql: string, ...params: unknown[]) => sqlite.prepare(sql).run(...params)
@@ -83,7 +83,7 @@ const harness = (): Harness => {
       installAllocationRoutes(api, {
         repository: new DrizzleAllocationRepository(orm),
         clock: {
-          now: () => ({ instant: '2026-10-06T09:00:00.000Z', date: '2026-10-06', time: '09:00' }),
+          now: () => ({ instant, date: instant.slice(0, 10), time: instant.slice(11, 16) }),
         },
         cursorSigningKey: new TextEncoder().encode('allocation-cursor-key-32-bytes!!!'),
       })
@@ -141,7 +141,49 @@ describe('allocation routes (issue 1007)', () => {
     current?.sqlite.close()
     current = null
   })
-  const setup = () => (current = harness())
+  const setup = (instant?: string) => (current = harness(instant))
+
+  it('[api #1190] requires client versions after the published compatibility sunset', async () => {
+    const h = setup('2027-01-22T00:00:00.000Z')
+    const { data } = await (await h.request('/api/v1/allocations', send('POST', admin, plan()))).json() as { data: AllocationBody }
+    const path = `/api/v1/allocations/${data.id}`
+    for (const response of [
+      await h.request(path, send('PATCH', admin, { planned_seconds_per_week: hours(4) })),
+      await h.request(path, send('DELETE', admin)),
+    ]) {
+      expect(response.status).toBe(422)
+      expect(await response.json()).toMatchObject({ error: { fields: [{ field: 'version', code: 'version_required' }] } })
+    }
+    const response = await h.request(path, send('PATCH', admin, { version: 0, planned_seconds_per_week: hours(4) }))
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Deprecation')).toBeNull()
+    expect((await h.request(path, send('DELETE', admin, { version: 1 }))).status).toBe(200)
+  })
+
+  it('[api #1190] enforces supplied versions, emits safe conflicts and deprecates legacy writes', async () => {
+    const h = setup()
+    const created = await h.request('/api/v1/allocations', send('POST', admin, plan()))
+    const { data } = await created.json() as { data: AllocationBody & { version: number } }
+    expect(data.version).toBe(0)
+    const path = `/api/v1/allocations/${data.id}`
+    const updated = await h.request(path, send('PATCH', admin, { version: 0, planned_seconds_per_week: hours(20) }))
+    expect(updated.status).toBe(200)
+    expect(updated.headers.get('Deprecation')).toBeNull()
+    expect((await updated.json() as { data: { version: number } }).data.version).toBe(1)
+    const count = h.sqlite.prepare("SELECT count(*) AS n FROM event_outbox WHERE aggregate_type='allocation'").get()
+    const stale = await h.request(path, send('PATCH', admin, { version: 0, planned_seconds_per_week: hours(2) }))
+    expect(stale.status).toBe(409)
+    expect(await stale.json()).toMatchObject({ error: { code: 'allocation_changed', currentVersion: 1, current: { id: data.id, version: 1, planned_seconds_per_week: hours(20) } } })
+    expect((await h.request(path, send('DELETE', admin, { version: 0 }))).status).toBe(409)
+    expect(h.sqlite.prepare("SELECT count(*) AS n FROM event_outbox WHERE aggregate_type='allocation'").get()).toEqual(count)
+    for (const version of [null, -1, '1', 0.5]) expect((await h.request(path, send('PATCH', admin, { version, planned_seconds_per_week: hours(8) }))).status).toBe(422)
+    const legacy = await h.request(path, send('PATCH', admin, { planned_seconds_per_week: hours(8) }))
+    expect(legacy.status).toBe(200)
+    expect(legacy.headers.get('Deprecation')).not.toBeNull()
+    expect(legacy.headers.get('Sunset')).toBe('Fri, 22 Jan 2027 00:00:00 GMT')
+    expect((await h.request(path, send('DELETE', admin, { version: 2 }))).status).toBe(200)
+    expect((await h.request(path, send('DELETE', admin, { version: 2 }))).status).toBe(404)
+  })
 
   it('[api] an administrator plans, reads, updates and removes a plan', async () => {
     const h = setup()

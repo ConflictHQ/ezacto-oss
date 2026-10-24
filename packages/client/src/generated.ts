@@ -1152,6 +1152,8 @@ export type FieldError = {
 };
 
 export type ErrorDetail = {
+  "currentVersion"?: number;
+  "current"?: Allocation | TimeOff;
   "code": string;
   "message": string;
   "fields": Array<FieldError>;
@@ -2342,7 +2344,12 @@ export type CalendarProposalPage = {
   "page": PageMetadata;
 };
 
+export type PlanningRevisionInput = {
+  "version"?: number;
+};
+
 export type Allocation = {
+  "version": number;
   "id": number;
   "user_id": number;
   "project_id": number;
@@ -2362,6 +2369,7 @@ export type AllocationInput = {
 };
 
 export type AllocationPatch = {
+  "version"?: number;
   "start_date"?: string;
   "end_date"?: string;
   "planned_seconds_per_week"?: number;
@@ -2407,6 +2415,7 @@ export type CapacityEnvelope = {
 };
 
 export type TimeOff = {
+  "version": number;
   "id": number;
   "user_id": number;
   "start_date": string;
@@ -2426,6 +2435,7 @@ export type TimeOffInput = {
 };
 
 export type TimeOffPatch = {
+  "version"?: number;
   "start_date"?: string;
   "end_date"?: string;
   "kind"?: "vacation" | "sick" | "holiday" | "other";
@@ -6756,10 +6766,11 @@ export class EzactoClient {
     });
   }
 
-  async deleteAllocation(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<AllocationEnvelope> {
+  async deleteAllocation(args: { "id": number; body?: PlanningRevisionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<AllocationEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<AllocationEnvelope>("DELETE", "/api/v1/allocations/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });
@@ -6814,10 +6825,11 @@ export class EzactoClient {
     });
   }
 
-  async deleteTimeOff(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimeOffEnvelope> {
+  async deleteTimeOff(args: { "id": number; body?: PlanningRevisionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<TimeOffEnvelope> {
     const headers = new Headers(args.headers);
 
     return this.request<TimeOffEnvelope>("DELETE", "/api/v1/time-off/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });

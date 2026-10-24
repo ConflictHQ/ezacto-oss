@@ -597,7 +597,7 @@ const allocationOperations: ApiContractOperation[] = [
           requestSchema: "AllocationPatch",
           requestRequired: true,
         }
-      : {}),
+      : method === "delete" ? { requestSchema: "PlanningRevisionInput", requestRequired: false, description: "Send the version last read in the JSON body. A stale version is 409; omitted versions are deprecated until the 2027-01-22 sunset, then refused." } : {}),
     parameters: [path("id")],
   })),
   {
@@ -755,7 +755,7 @@ const timeOffOperations: ApiContractOperation[] = [
           requestSchema: "TimeOffPatch",
           requestRequired: true,
         }
-      : {}),
+      : method === "delete" ? { requestSchema: "PlanningRevisionInput", requestRequired: false, description: "Send the version last read in the JSON body. A stale version is 409; omitted versions are deprecated until the 2027-01-22 sunset, then refused." } : {}),
     parameters: [path("id")],
   })),
 ];
@@ -4108,6 +4108,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: ["code", "message", "fields"],
     properties: {
+      currentVersion: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+      current: { oneOf: [reference("Allocation"), reference("TimeOff")] },
       code: stringSchema,
       message: stringSchema,
       fields: { type: "array", items: reference("FieldError") },
@@ -6117,9 +6119,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   CalendarProposalEnvelope: envelope("CalendarProposal"),
   CalendarProposalPage: page("CalendarProposal"),
+  PlanningRevisionInput: { type: "object", properties: { version: { type: "integer", minimum: 0, maximum: 9007199254740991 } }, additionalProperties: false },
   Allocation: {
     type: "object",
     required: [
+      "version",
       "id",
       "user_id",
       "project_id",
@@ -6130,6 +6134,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "updated_at",
     ],
     properties: {
+      version: { type: "integer", minimum: 0, maximum: 9007199254740991 },
       id: integerSchema,
       user_id: integerSchema,
       project_id: integerSchema,
@@ -6159,6 +6164,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   AllocationPatch: {
     type: "object",
     properties: {
+      version: { type: "integer", minimum: 0, maximum: 9007199254740991, description: "Version last read. Required from 2027-01-22; supplied values are always enforced." },
       start_date: dateSchema,
       end_date: dateSchema,
       planned_seconds_per_week: integerSchema,
@@ -6227,6 +6233,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   TimeOff: {
     type: "object",
     required: [
+      "version",
       "id",
       "user_id",
       "start_date",
@@ -6237,6 +6244,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "updated_at",
     ],
     properties: {
+      version: { type: "integer", minimum: 0, maximum: 9007199254740991 },
       id: integerSchema,
       user_id: integerSchema,
       start_date: dateSchema,
@@ -6267,6 +6275,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   TimeOffPatch: {
     type: "object",
     properties: {
+      version: { type: "integer", minimum: 0, maximum: 9007199254740991, description: "Version last read. Required from 2027-01-22; supplied values are always enforced." },
       start_date: dateSchema,
       end_date: dateSchema,
       kind: { type: "string", enum: ["vacation", "sick", "holiday", "other"] },

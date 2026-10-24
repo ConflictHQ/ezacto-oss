@@ -48,6 +48,9 @@ export const createPlanningEntry = (
   onChanged: () => void,
 ): PlanningEntry => {
   let mounted = false;
+  let epoch = 0;
+  let allocationVersion = 0;
+  let timeOffVersion = 0;
   let holidays: ReturnType<typeof createOrganizationHolidayController> | null = null;
   let people: readonly { id: number; name: string }[] = [];
   let projects: readonly { id: number; name: string }[] = [];
@@ -132,6 +135,7 @@ export const createPlanningEntry = (
     form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement;
 
   const resetAllocation = (): void => {
+    allocationVersion = 0;
     const form = allocationForm();
     form.reset();
     field(form, "id").value = "";
@@ -142,6 +146,7 @@ export const createPlanningEntry = (
     query<HTMLElement>("[data-planning-allocation-cancel]").hidden = true;
   };
   const resetTimeOff = (): void => {
+    timeOffVersion = 0;
     const form = timeOffForm();
     form.reset();
     field(form, "id").value = "";
@@ -152,6 +157,7 @@ export const createPlanningEntry = (
   };
 
   const editAllocation = (row: AllocationRow): void => {
+    allocationVersion = row.version;
     const form = allocationForm();
     field(form, "id").value = String(row.id);
     field(form, "user_id").value = String(row.user_id);
@@ -169,6 +175,7 @@ export const createPlanningEntry = (
     query<HTMLElement>("[data-planning-allocation-cancel]").hidden = false;
   };
   const editTimeOff = (row: TimeOffRow): void => {
+    timeOffVersion = row.version;
     const form = timeOffForm();
     field(form, "id").value = String(row.id);
     field(form, "user_id").value = String(row.user_id);
@@ -185,20 +192,50 @@ export const createPlanningEntry = (
     query<HTMLElement>("[data-planning-timeoff-cancel]").hidden = false;
   };
 
+  const showFailure = (error: unknown, status: HTMLElement, fallback: string, currentEpoch: number): void => {
+    const failure = error as { status?: unknown; body?: { error?: { code?: unknown; current?: unknown } } } | null;
+    const detail = failure?.body?.error;
+    if (failure?.status !== 409 || (detail?.code !== 'allocation_changed' && detail?.code !== 'time_off_changed')) {
+      status.textContent = messageOf(error, fallback);
+      return;
+    }
+    status.textContent = 'This record changed. Your edits are kept. Review the saved values before trying again. ';
+    // Refresh authoritative capacity and row lists, without resetting either draft.
+    onChanged();
+    const saved = detail.current as Record<string, unknown> | null | undefined;
+    if (!saved || !Number.isSafeInteger(saved.id) || !Number.isSafeInteger(saved.version) || Number(saved.version) < 0) return;
+    const reload = document.createElement('button');
+    reload.type = 'button';
+    reload.textContent = 'Reload saved values (replaces these edits)';
+    reload.addEventListener('click', () => {
+      if (!mounted || epoch !== currentEpoch) return;
+      if (detail.code === 'allocation_changed') editAllocation(saved as unknown as AllocationRow);
+      else editTimeOff(saved as unknown as TimeOffRow);
+      status.textContent = 'Saved values loaded. Review them before saving.';
+    });
+    status.append(reload);
+  };
+
   const run = async (
     statusSelector: string,
-    work: () => Promise<void>,
+    work: (isCurrent: () => boolean) => Promise<void>,
     done: string,
+    busy = 'Saving…',
   ): Promise<boolean> => {
+    const currentEpoch = epoch;
+    const isCurrent = () => mounted && currentEpoch === epoch;
+    if (!isCurrent()) return false;
     const status = query<HTMLElement>(statusSelector);
-    status.textContent = "Saving…";
+    status.textContent = busy;
     try {
-      await work();
+      await work(isCurrent);
+      if (!isCurrent()) return false;
       status.textContent = done;
       onChanged();
       return true;
     } catch (error) {
-      status.textContent = messageOf(error, "That could not be saved.");
+      if (!isCurrent()) return false;
+      showFailure(error, status, 'That could not be saved.', currentEpoch);
       return false;
     }
   };
@@ -246,21 +283,10 @@ export const createPlanningEntry = (
                 `allocation of ${personName(row.user_id)} to ${projectName(row.project_id)}`,
                 () => editAllocation(row),
                 async () => {
-                  const status = query<HTMLElement>(
-                    "[data-planning-allocation-status]",
-                  );
-                  status.textContent = "Deleting…";
-                  try {
-                    await api.deleteAllocation(row.id);
-                    status.textContent = "Allocation deleted.";
-                    resetAllocation();
-                    onChanged();
-                  } catch (error) {
-                    status.textContent = messageOf(
-                      error,
-                      "That could not be deleted.",
-                    );
-                  }
+                  await run('[data-planning-allocation-status]', async isCurrent => {
+                    await api.deleteAllocation(row.id, row.version);
+                    if (isCurrent()) resetAllocation();
+                  }, 'Allocation deleted.', 'Deleting…');
                 },
                 `allocation-${row.id}`,
               ),
@@ -307,21 +333,10 @@ export const createPlanningEntry = (
                 `${kindLabel[row.kind].toLowerCase()} of ${personName(row.user_id)}`,
                 () => editTimeOff(row),
                 async () => {
-                  const status = query<HTMLElement>(
-                    "[data-planning-timeoff-status]",
-                  );
-                  status.textContent = "Deleting…";
-                  try {
-                    await api.deleteTimeOff(row.id);
-                    status.textContent = "Time off deleted.";
-                    resetTimeOff();
-                    onChanged();
-                  } catch (error) {
-                    status.textContent = messageOf(
-                      error,
-                      "That could not be deleted.",
-                    );
-                  }
+                  await run('[data-planning-timeoff-status]', async isCurrent => {
+                    await api.deleteTimeOff(row.id, row.version);
+                    if (isCurrent()) resetTimeOff();
+                  }, 'Time off deleted.', 'Deleting…');
                 },
                 `timeoff-${row.id}`,
               ),
@@ -353,7 +368,7 @@ export const createPlanningEntry = (
       const id = field(form, "id").value;
       void run(
         "[data-planning-allocation-status]",
-        async () => {
+        async isCurrent => {
           if (id === "") {
             await api.createAllocation({
               user_id: user,
@@ -364,12 +379,13 @@ export const createPlanningEntry = (
             });
           } else {
             await api.updateAllocation(Number(id), {
+              version: allocationVersion,
               start_date: start,
               end_date: end,
               planned_seconds_per_week: planned,
             });
           }
-          resetAllocation();
+          if (isCurrent()) resetAllocation();
         },
         id === "" ? "Allocation added." : "Allocation saved.",
       );
@@ -396,7 +412,7 @@ export const createPlanningEntry = (
       const id = field(form, "id").value;
       void run(
         "[data-planning-timeoff-status]",
-        async () => {
+        async isCurrent => {
           if (id === "") {
             await api.createTimeOff({
               user_id: user,
@@ -407,13 +423,14 @@ export const createPlanningEntry = (
             });
           } else {
             await api.updateTimeOff(Number(id), {
+              version: timeOffVersion,
               start_date: start,
               end_date: end,
               kind,
               seconds_per_day: perDay,
             });
           }
-          resetTimeOff();
+          if (isCurrent()) resetTimeOff();
         },
         id === "" ? "Time off added." : "Time off saved.",
       );
@@ -439,28 +456,33 @@ export const createPlanningEntry = (
       if (holidayHost && api.holidays) holidays = createOrganizationHolidayController(holidayHost, api.holidays, onChanged);
     },
     unmount() {
+      epoch++;
       mounted = false;
+      people = []; projects = []; allocations = []; timeOff = [];
+      allocationVersion = 0; timeOffVersion = 0; pendingDelete = null;
       holidays?.clear(); holidays = null;
       host.replaceChildren();
       host.hidden = true;
     },
     async refresh(nextPeople, range, signal) {
-      if (!mounted) return;
-      people = nextPeople;
+      if (!mounted || signal.aborted) return;
+      const currentEpoch = epoch;
       await holidays?.refresh(range, signal);
       try {
-        if (projects.length === 0) projects = await api.listProjects(signal);
-        [allocations, timeOff] = await Promise.all([
+        const nextProjects = projects.length === 0 ? await api.listProjects(signal) : projects;
+        const [nextAllocations, nextTimeOff] = await Promise.all([
           api.listAllocations(range, signal),
           api.listTimeOff(range, signal),
         ]);
+        if (signal.aborted || !mounted || currentEpoch !== epoch) return;
+        people = nextPeople; projects = nextProjects;
+        allocations = nextAllocations; timeOff = nextTimeOff;
       } catch (error) {
-        if (signal.aborted) return;
+        if (signal.aborted || !mounted || currentEpoch !== epoch) return;
         query<HTMLElement>("[data-planning-allocation-status]").textContent =
           messageOf(error, "Allocations and time off could not be loaded.");
         return;
       }
-      if (signal.aborted) return;
       fillSelect(
         field(allocationForm(), "user_id") as HTMLSelectElement,
         people,

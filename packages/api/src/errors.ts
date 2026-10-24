@@ -16,6 +16,8 @@ export interface ApiErrorBody {
     code: string
     message: string
     fields: FieldError[]
+    currentVersion?: number
+    current?: unknown
   }
   request_id: string
 }
@@ -25,6 +27,7 @@ interface ApiErrorOptions {
   code: string
   message: string
   fields?: readonly FieldError[]
+  revisionConflict?: { currentVersion: number; current: unknown }
 }
 
 export interface JsonBodyOptions {
@@ -41,8 +44,9 @@ export class ApiError extends Error {
   readonly status: ContentfulStatusCode
   readonly code: string
   readonly fields: readonly FieldError[]
+  readonly revisionConflict: { currentVersion: number; current: unknown } | undefined
 
-  constructor({ status, code, message, fields = [] }: ApiErrorOptions) {
+  constructor({ status, code, message, fields = [], revisionConflict }: ApiErrorOptions) {
     super(message)
     this.name = 'ApiError'
     if (status < 400 || status > 599) throw new RangeError('API error status must be 4xx or 5xx')
@@ -61,6 +65,7 @@ export class ApiError extends Error {
     if (status === 422 && fields.length === 0) {
       throw new TypeError('422 API errors must carry at least one field error')
     }
+    this.revisionConflict = revisionConflict
     this.status = status
     this.code = code
     this.fields = fields.map((field) => ({ ...field }))
@@ -178,8 +183,9 @@ const bodyFor = <Bindings extends object>(
   code: string,
   message: string,
   fields: readonly FieldError[],
+  revisionConflict?: { currentVersion: number; current: unknown },
 ): ApiErrorBody => ({
-  error: { code, message, fields: fields.map((field) => ({ ...field })) },
+  error: { code, message, fields: fields.map((field) => ({ ...field })), ...revisionConflict },
   request_id: context.get('requestId'),
 })
 
@@ -190,7 +196,7 @@ export const errorResponse = <Bindings extends object>(
 ): Response => {
   if (error instanceof ApiError && error.status < 500) {
     return context.json(
-      bodyFor(context, error.code, error.message, error.fields),
+      bodyFor(context, error.code, error.message, error.fields, error.revisionConflict),
       error.status,
       { 'cache-control': 'no-store' },
     )

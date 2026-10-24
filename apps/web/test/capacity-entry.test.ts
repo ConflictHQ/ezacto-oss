@@ -1,6 +1,7 @@
 /** @vitest-environment happy-dom */
 
 import { describe, expect, it, vi } from "vitest";
+import { createPlanningEntry } from '../src/capacity/planning-browser.js'
 import { createCapacityController } from "../src/capacity/browser.js";
 import {
   hoursToSeconds,
@@ -38,6 +39,7 @@ const report: CapacityData = {
 };
 
 const allocation: AllocationRow = {
+  version: 0,
   id: 7,
   user_id: 1,
   project_id: 3,
@@ -46,6 +48,7 @@ const allocation: AllocationRow = {
   planned_seconds_per_week: hours(16),
 };
 const away: TimeOffRow = {
+  version: 0,
   id: 9,
   user_id: 1,
   start_date: "2026-10-12",
@@ -163,6 +166,7 @@ describe("capacity entry (issue 1007)", () => {
     submit("[data-planning-allocation-form]");
     await vi.waitFor(() =>
       expect(planning.updateAllocation).toHaveBeenCalledWith(7, {
+        version: 0,
         start_date: "2026-10-05",
         end_date: "2026-10-30",
         planned_seconds_per_week: 36_000,
@@ -178,7 +182,7 @@ describe("capacity entry (issue 1007)", () => {
       "Confirm delete of allocation of Maya Member to Atlas",
     ).click();
     await vi.waitFor(() =>
-      expect(planning.deleteAllocation).toHaveBeenCalledWith(7),
+      expect(planning.deleteAllocation).toHaveBeenCalledWith(7, 0),
     );
     await vi.waitFor(() =>
       expect(text("[data-planning-allocation-status]")).toBe(
@@ -211,6 +215,7 @@ describe("capacity entry (issue 1007)", () => {
     submit("[data-planning-timeoff-form]");
     await vi.waitFor(() =>
       expect(planning.updateTimeOff).toHaveBeenCalledWith(9, {
+        version: 0,
         start_date: "2026-10-12",
         end_date: "2026-10-13",
         kind: "vacation",
@@ -220,7 +225,7 @@ describe("capacity entry (issue 1007)", () => {
     buttonLabelled("Delete vacation of Maya Member").click();
     buttonLabelled("Confirm delete of vacation of Maya Member").click();
     await vi.waitFor(() =>
-      expect(planning.deleteTimeOff).toHaveBeenCalledWith(9),
+      expect(planning.deleteTimeOff).toHaveBeenCalledWith(9, 0),
     );
   });
 
@@ -269,4 +274,85 @@ it('[browser #852] sorts planning dates and hours without altering an unfinished
   expect(unfinished.value).toBe('3.75')
   expect(planning.createAllocation).not.toHaveBeenCalled()
   expect(planning.updateAllocation).not.toHaveBeenCalled()
+})
+
+it('[browser #1190] preserves a stale draft, refreshes capacity and reloads saved values only on request', async () => {
+  const planning = planningApi()
+  const saved = { ...allocation, version: 1, planned_seconds_per_week: hours(24) }
+  planning.updateAllocation = vi.fn(async () => { throw Object.assign(new Error('changed'), {
+    status: 409, body: { error: { code: 'allocation_changed', currentVersion: 1, current: saved } },
+  }) })
+  const { getCapacity } = await open(true, planning)
+  buttonLabelled('Edit allocation of Maya Member to Atlas').click()
+  input('[data-planning-allocation-form]', 'hours').value = '3.75'
+  submit('[data-planning-allocation-form]')
+  await vi.waitFor(() => expect(text('[data-planning-allocation-status]')).toContain('Your edits are kept'))
+  expect(input('[data-planning-allocation-form]', 'hours').value).toBe('3.75')
+  expect(planning.updateAllocation).toHaveBeenCalledWith(7, expect.objectContaining({ version: 0, planned_seconds_per_week: 13500 }))
+  await vi.waitFor(() => expect(getCapacity).toHaveBeenCalledTimes(2))
+  ;[...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Reload saved values (replaces these edits)')!.click()
+  expect(input('[data-planning-allocation-form]', 'hours').value).toBe('24')
+  planning.updateAllocation = vi.fn(async () => ({}))
+  submit('[data-planning-allocation-form]')
+  await vi.waitFor(() => expect(planning.updateAllocation).toHaveBeenCalledWith(7, expect.objectContaining({ version: 1 })))
+})
+
+it('[browser #1190] a late privileged refresh cannot restore old rows after a session change', async () => {
+  document.body.innerHTML = '<div data-planning-test-host></div>'
+  const host = document.querySelector<HTMLElement>('[data-planning-test-host]')!
+  const planning = planningApi()
+  let release!: (rows: readonly AllocationRow[]) => void
+  planning.listAllocations = vi.fn().mockImplementationOnce(() => new Promise<readonly AllocationRow[]>(resolve => { release = resolve })).mockResolvedValue([])
+  const entry = createPlanningEntry(host, planning, vi.fn())
+  entry.mount()
+  const old = entry.refresh([{ id: 1, name: 'Old privileged person' }], { from: '2026-10-05', to: '2026-10-11' }, new AbortController().signal)
+  await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+  entry.unmount()
+  planning.listProjects = vi.fn(async () => [{ id: 88, name: 'New session project' }])
+  planning.listTimeOff = vi.fn(async () => [])
+  entry.mount()
+  await entry.refresh([{ id: 2, name: 'New session person' }], { from: '2026-10-05', to: '2026-10-11' }, new AbortController().signal)
+  release([allocation])
+  await old
+  expect(host.textContent).not.toContain('Old privileged person')
+  expect(host.querySelectorAll('[data-planning-allocations] tbody tr[data-row-key]')).toHaveLength(0)
+  expect([...host.querySelectorAll<HTMLSelectElement>('select[name="project_id"] option')].map(option => option.textContent)).toEqual(['New session project'])
+  entry.unmount()
+})
+
+it('[browser #1190] clears the actual capacity activation on logout and ignores old refresh/write replies', async () => {
+  document.body.innerHTML = renderCapacityPage('capacity')
+  const planning = planningApi()
+  let finishWrite!: () => void
+  planning.updateAllocation = vi.fn(() => new Promise<void>(resolve => { finishWrite = resolve }))
+  let finishRefresh!: (value: { data: CapacityData }) => void
+  const nextReport = { ...report, people: report.people.map(person => ({ ...person, first_name: 'New' })) }
+  const getCapacity = vi.fn().mockResolvedValueOnce({ data: report })
+    .mockImplementationOnce(() => new Promise<{ data: CapacityData }>(resolve => { finishRefresh = resolve }))
+    .mockResolvedValue({ data: nextReport })
+  const controller = createCapacityController({ getCapacity, planning })
+  const oldSession = new AbortController()
+  await controller.activate(oldSession.signal, { administrator: true })
+  buttonLabelled('Edit allocation of Maya Member to Atlas').click()
+  input('[data-planning-allocation-form]', 'hours').value = '8'
+  submit('[data-planning-allocation-form]')
+  document.querySelector<HTMLButtonElement>('[data-capacity-retry]')!.click()
+  await vi.waitFor(() => expect(finishRefresh).toBeTypeOf('function'))
+  oldSession.abort()
+  expect(text('[data-capacity-grid]')).toBe('')
+  expect(document.querySelector('[data-planning-allocation-form]')).toBeNull()
+  await controller.activate(new AbortController().signal, { administrator: true })
+  buttonLabelled('Edit allocation of New Member to Atlas').click()
+  input('[data-planning-allocation-form]', 'hours').value = '5'
+  finishRefresh({ data: report })
+  finishWrite()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(text('[data-capacity-grid]')).toContain('New Member')
+  expect(input('[data-planning-allocation-form]', 'hours').value).toBe('5')
+  expect(text('[data-planning-allocation-status]')).not.toContain('saved')
+  const aborted = new AbortController()
+  aborted.abort()
+  await controller.activate(aborted.signal, { administrator: true })
+  expect(document.querySelector('[data-planning-allocation-form]')).toBeNull()
+  expect(getCapacity).toHaveBeenCalledTimes(3)
 })

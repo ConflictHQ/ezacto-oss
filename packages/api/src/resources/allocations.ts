@@ -1,3 +1,4 @@
+import { expectedPlanningVersion } from './planning-revisions.js'
 import {
   AllocationConflictError,
   AllocationNotFoundError,
@@ -38,6 +39,7 @@ import { installTimeOffRoutes, type TimeOffRepository } from './time-off.js'
  */
 
 export interface AllocationRecord {
+  version: number
   id: number
   userId: number
   projectId: number
@@ -64,6 +66,7 @@ export interface CreateAllocationRequest {
 }
 
 export interface UpdateAllocationRequest {
+  version?: number
   startDate?: string
   endDate?: string
   plannedSecondsPerWeek?: number
@@ -111,7 +114,7 @@ export interface AllocationRepository {
     patch: Readonly<UpdateAllocationRequest>,
     now: string,
   ): Promise<AllocationRecord>
-  delete(viewer: Readonly<TeamViewer>, id: number, now: string): Promise<AllocationRecord>
+  delete(viewer: Readonly<TeamViewer>, id: number, now: string, version?: number): Promise<AllocationRecord>
   capacity(
     viewer: Readonly<TeamViewer>,
     request: Readonly<{ from: string; to: string }>,
@@ -125,6 +128,7 @@ export interface AllocationRouteOptions {
 }
 
 interface AllocationOutput {
+  version: number
   id: number
   user_id: number
   project_id: number
@@ -137,6 +141,7 @@ interface AllocationOutput {
 
 export const serializeAllocation = (allocation: Readonly<AllocationRecord>): AllocationOutput => ({
   id: allocation.id,
+  version: allocation.version,
   user_id: allocation.userId,
   project_id: allocation.projectId,
   start_date: allocation.startDate,
@@ -178,7 +183,7 @@ const viewerOf = (principal: {
 const listKeys = new Set(['cursor', 'per_page', 'user_id', 'project_id', 'from', 'to'])
 const capacityKeys = new Set(['from', 'to'])
 const createKeys = new Set(['user_id', 'project_id', 'start_date', 'end_date', 'planned_seconds_per_week'])
-const updateKeys = new Set(['start_date', 'end_date', 'planned_seconds_per_week'])
+const updateKeys = new Set(['version', 'start_date', 'end_date', 'planned_seconds_per_week'])
 
 const listFilters = (url: URL): AllocationFilters => {
   const params = strictSearchParams(url, listKeys)
@@ -244,7 +249,7 @@ const updateInput = (body: Record<string, unknown>): UpdateAllocationRequest => 
   const startDate = optionalDate(body, 'start_date', errors)
   const endDate = optionalDate(body, 'end_date', errors)
   const planned = plannedSeconds(body, false, errors)
-  if (Object.keys(body).length === 0) {
+  if (Object.keys(body).every(key => key === 'version')) {
     errors.push({ field: 'body', code: 'empty', message: 'at least one field is required' })
   }
   assertFields(errors)
@@ -272,7 +277,14 @@ const capacityRange = (url: URL): { from: string; to: string } => {
 /** Allocation-specific failures; the rest are the shared resource errors. */
 const translateAllocationError = (error: unknown): never => {
   if (error instanceof AllocationNotFoundError) throw notFound('allocation')
-  if (error instanceof AllocationOverlapError || error instanceof AllocationConflictError) {
+  if (error instanceof AllocationConflictError) {
+    throw new ApiError({ status: 409, code: error.code, message: error.message,
+      ...(error.currentVersion === undefined || error.current === undefined ? {} : {
+        revisionConflict: { currentVersion: error.currentVersion, current: serializeAllocation(error.current as AllocationRecord) },
+      }),
+    })
+  }
+  if (error instanceof AllocationOverlapError) {
     throw new ApiError({ status: 409, code: error.code, message: error.message })
   }
   return translateResourceError(error, 'allocation')
@@ -340,11 +352,14 @@ export const installAllocationRoutes = <Bindings extends object>(
     requireApiScope(context, 'schedule:write')
     try {
       const id = resourceId(context.req.param('id'), 'allocation')
+      const body = await readObjectBody(context)
+      const now = options.clock.now().instant
+      const version = expectedPlanningVersion(body, now, (name, value) => context.header(name, value))
       const allocation = await options.repository.update(
         viewerOf(context.get('principal')),
         id,
-        updateInput(await readObjectBody(context)),
-        options.clock.now().instant,
+        { ...updateInput(body), ...(version === undefined ? {} : { version }) },
+        now,
       )
       return context.json(
         { data: serializeAllocation(allocation), links: { self: selfLink(id) } },
@@ -360,10 +375,15 @@ export const installAllocationRoutes = <Bindings extends object>(
     requireApiScope(context, 'schedule:write')
     try {
       const id = resourceId(context.req.param('id'), 'allocation')
+      const body = await readObjectBody(context, { allowEmptyObject: true })
+      assertFields(unknownFieldErrors(body, new Set(['version'])))
+      const now = options.clock.now().instant
+      const version = expectedPlanningVersion(body, now, (name, value) => context.header(name, value))
       const allocation = await options.repository.delete(
         viewerOf(context.get('principal')),
         id,
-        options.clock.now().instant,
+        now,
+        version,
       )
       return context.json(
         { data: serializeAllocation(allocation), links: { self: selfLink(id) } },
