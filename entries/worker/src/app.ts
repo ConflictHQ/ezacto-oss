@@ -1,3 +1,5 @@
+import { installOrganizationHolidayRoutes } from '@ezacto/api'
+import type { OrganizationHolidayRepository } from '@ezacto/core'
 import type { PayoutPreferenceService, PayoutProviderEnablement } from '@ezacto/api'
 import { installOutboundWebhookRoutes } from '@ezacto/api'
 import type { WebhookManagement } from '@ezacto/core'
@@ -401,6 +403,7 @@ export interface RuntimeServices {
   /** Calendar events offered as time, accepted through `trackedResources` (issue 428). */
   calendarProposals: CalendarProposalRepository
   /** Planned hours per week and the capacity view (issue 1007). */
+  organizationHolidays?: OrganizationHolidayRepository
   allocations: AllocationRepository
   /** Issue tracker connections and the links to their items (issue 1008). */
   workItems: {
@@ -889,6 +892,7 @@ export const createApp = (
               cursorSigningKey: services.cursorSigningKey,
               isExpensesModuleEnabled: services.isExpensesModuleEnabled,
             })
+            if (services.organizationHolidays) installOrganizationHolidayRoutes(api, services.organizationHolidays, { cursorSigningKey: services.cursorSigningKey, clock: () => systemClock.now().instant })
             installAllocationRoutes(api, {
               repository: services.allocations,
               clock: systemClock,

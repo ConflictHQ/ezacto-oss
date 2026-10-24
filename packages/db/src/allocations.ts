@@ -15,7 +15,7 @@ import {
 } from '@ezacto/core'
 import type BetterSqlite3 from 'better-sqlite3'
 import { and, asc, desc, eq, gt, gte, lte, sql, type SQL } from 'drizzle-orm'
-import { allocations, organizations, projects, timeOff, users } from './schema.js'
+import { allocations, organizations, projects, timeOff, organizationHolidays, users } from './schema.js'
 import { teamPersonAccessPredicate, teamPersonAccessSql, teamProjectAccessSql } from './team-access.js'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
@@ -504,6 +504,10 @@ export class DrizzleAllocationRepository {
         )
     ).map((row) => ({ userId: row.userId, startDate: row.startDate, endDate: row.endDate, secondsPerDay: row.secondsPerDay }))
 
+    const holidays = await this.#database.select().from(organizationHolidays)
+      .where(and(gte(organizationHolidays.date, first), lte(organizationHolidays.date, lastDay)))
+    const holidayDays = holidays.map(row => ({ startDate: row.date, endDate: row.date, secondsPerDay: null }))
+
     const scope = peopleScopePredicate(viewer)
     const tracked = await allRows<{ userId: number; spentDate: string; seconds: number }>(
       this.#database,
@@ -535,7 +539,7 @@ export class DrizzleAllocationRepository {
             )
             .reduce((total, row) => total + Number(row.seconds), 0)
           const timeOffSeconds = timeOffSecondsInWeek(
-            away.filter((row) => row.userId === person.id),
+            [...away.filter((row) => row.userId === person.id), ...holidayDays],
             weekStart,
             person.weeklyCapacity,
           )
