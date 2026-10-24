@@ -128,6 +128,46 @@ describe("payment run review", () => {
     ).toBe(true);
     expect(api.approvePaymentRun).not.toHaveBeenCalled();
   });
+  it("names a run with no label from who is paid, not from a field the person must fill", async () => {
+    const two: StaffPaymentReport = {
+      ...ledger,
+      rows: [row, { ...row, user_id: 3, name: "Second Person" }],
+    };
+    const preview = vi.fn<(command: { name: string }) => Promise<PaymentRun>>(async () => run);
+    const controller = createPaymentRunsController(
+      { getPaymentRunReport: async () => report, previewPaymentRun: preview },
+      async () => {},
+    );
+    await controller.activate(new AbortController().signal);
+    controller.ledger(two);
+    const form = document.querySelector<HTMLFormElement>("[data-run-form]")!;
+    const named = form.elements.namedItem("run_name") as HTMLInputElement;
+    expect(named.required).toBe(false);
+    (form.elements.namedItem("select-2") as HTMLInputElement).checked = true;
+    form.dispatchEvent(new SubmitEvent("submit", { cancelable: true }));
+    await vi.waitFor(() => expect(preview).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>("[data-run-review]")!.hidden).toBe(false),
+    );
+    expect(preview.mock.calls[0]![0].name).toBe(`${row.name} · ${row.month}`);
+    controller.resetSelection();
+    controller.ledger(two);
+    (form.elements.namedItem("select-2") as HTMLInputElement).checked = true;
+    (form.elements.namedItem("select-3") as HTMLInputElement).checked = true;
+    form.dispatchEvent(new SubmitEvent("submit", { cancelable: true }));
+    await vi.waitFor(() => expect(preview).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>("[data-run-review]")!.hidden).toBe(false),
+    );
+    expect(preview.mock.calls[1]![0].name).toBe("2 payments · 2026-09");
+    controller.resetSelection();
+    controller.ledger(two);
+    named.value = "August payroll";
+    (form.elements.namedItem("select-2") as HTMLInputElement).checked = true;
+    form.dispatchEvent(new SubmitEvent("submit", { cancelable: true }));
+    await vi.waitFor(() => expect(preview).toHaveBeenCalledTimes(3));
+    expect(preview.mock.calls[2]![0].name).toBe("August payroll");
+  });
   it("shows the request ID when the payment API fails", async () => {
     const controller = createPaymentRunsController(
       {

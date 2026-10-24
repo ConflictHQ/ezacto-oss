@@ -274,7 +274,6 @@ export {
   type ProposedTimeEntry,
 } from './calendar/proposals.js'
 
-
 export * from './wise/runtime.js'
 export * from './wise/webhook.js'
 export * from './wise/client.js'
@@ -289,5 +288,7 @@ export type {
   WorkItemWebhookRequest,
   WorkItemWebhookVerdict,
 } from './work-items/provider.js'
+
+export * from './work-items/github-read.js'
 
 export { createWorkerWebhookTransport } from './outbound-webhooks.js'

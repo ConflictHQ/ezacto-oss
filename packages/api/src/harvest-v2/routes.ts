@@ -1,4 +1,5 @@
 import {
+  canReviewSubmissions,
   canViewMoneyField,
   GeneralResourceError,
   type GeneralResourceKind,
@@ -14,6 +15,8 @@ import { authorizeInvoiceFilters, invoiceStateForViewer } from '../resources/inv
 import { notFound, resourceId, translateResourceError } from '../resources/support.js'
 import { assertMayNameUser } from '../resources/time-entries.js'
 import type {
+  ExpenseFilters,
+  ExpenseRecord,
   OrganizationTimeEntrySettings,
   TimeEntryActor,
   TimeEntryFilters,
@@ -21,18 +24,22 @@ import type {
 } from '../resources/tracked-repository.js'
 import { harvestPage, harvestPageWindow } from './pagination.js'
 import {
+  parseHarvestExpenseQuery,
   parseHarvestListQuery,
   parseHarvestTimeEntryQuery,
   type HarvestListResource,
 } from './params.js'
 import {
   serializeHarvestClient,
+  serializeHarvestExpense,
   serializeHarvestProjectAssignment,
   serializeHarvestTimeEntry,
   serializeHarvestProject,
   serializeHarvestTask,
   serializeHarvestUser,
 } from './serializers.js'
+
+type Viewer = Readonly<UserPrincipal>
 
 /** What the time_entries routes read besides the general resources: offset-paged, every person the viewer reaches. */
 export interface HarvestTimeEntrySource {
@@ -47,15 +54,35 @@ export interface HarvestTimeEntrySource {
   invoiceNumbers(ids: readonly number[]): Promise<ReadonlyMap<number, string>>
 }
 
+/** What the expenses routes read besides the general resources: offset-paged, every person the viewer reaches. */
+export interface HarvestExpenseSource {
+  canReadExpenseUser(viewer: Viewer, userId: number): Promise<boolean>
+  getExpense(viewer: Viewer, id: number): Promise<ExpenseRecord>
+  /** A null `userId` means everyone the viewer's review scope reaches. */
+  countExpenses(
+    userId: number | null,
+    filters: Readonly<ExpenseFilters>,
+    viewer: Viewer,
+  ): Promise<number>
+  expensesOffset(
+    userId: number | null,
+    filters: Readonly<ExpenseFilters>,
+    viewer: Viewer,
+    window: Readonly<{ offset: number; take: number }>,
+  ): Promise<readonly ExpenseRecord[]>
+  invoiceNumbers(ids: readonly number[]): Promise<ReadonlyMap<number, string>>
+}
+
 export interface HarvestV2RouteOptions {
   repository: GeneralResourceRepository
   timeEntries: HarvestTimeEntrySource
+  expenses: HarvestExpenseSource
+  /** Expenses are a module; absent means it is on. */
+  isExpensesModuleEnabled?(): Promise<boolean>
   /** Users and roles belong to the Team module; absent means it is on. */
   isTeamModuleEnabled?(): Promise<boolean>
   clock?: () => string
 }
-
-type Viewer = Readonly<UserPrincipal>
 
 /** Rows the viewer may read, rendered as Harvest objects. */
 type Renderer = (
@@ -246,6 +273,70 @@ export const installHarvestV2Routes = <Bindings extends object>(
     })
   }
 
+  const requireExpensesModule = async (): Promise<void> => {
+    if (options.isExpensesModuleEnabled !== undefined && !(await options.isExpensesModuleEnabled())) {
+      throw new ApiError({
+        status: 403,
+        code: 'module_disabled',
+        message: 'The expenses module is not enabled for this organization.',
+      })
+    }
+  }
+
+  const renderExpenses = async (
+    records: readonly ExpenseRecord[],
+    viewer: Viewer,
+  ): Promise<unknown[]> => {
+    if (records.length === 0) return []
+    const [users, projects, categories] = await Promise.all([
+      embedded('users', records.map((record) => record.userId)),
+      embedded('projects', records.map((record) => record.projectId)),
+      embedded('expense-categories', records.map((record) => record.expenseCategoryId)),
+    ])
+    const clients = await embedded(
+      'clients',
+      [...projects.values()].map((project) => Number(project.clientId)),
+    )
+    // The person's assignment to the project, when there is one: an expense is
+    // filed against a project, not against an assignment.
+    const assignments = new Map<string, GeneralResourceRecord | null>()
+    for (const record of records) {
+      const key = `${record.userId}:${record.projectId}`
+      if (assignments.has(key)) continue
+      const [assignment] = await repository.listOffset(
+        'user-assignments',
+        { userId: record.userId, projectId: record.projectId },
+        { offset: 0, take: 1 },
+      )
+      assignments.set(key, assignment ?? null)
+    }
+    const mayReadInvoices = canPrincipalUseApiScope(viewer, 'invoices:read')
+    const invoiceNumbers = mayReadInvoices
+      ? await options.expenses.invoiceNumbers(
+          records.flatMap((record) => (record.invoiceId === null ? [] : [record.invoiceId])),
+        )
+      : new Map<number, string>()
+    return records.map((record) => {
+      const project = need(projects, record.projectId, 'project')
+      const invoiceId = mayReadInvoices ? record.invoiceId : null
+      const number = invoiceId === null ? undefined : invoiceNumbers.get(invoiceId)
+      if (invoiceId !== null && number === undefined)
+        throw new Error(`Harvest shim: invoice ${invoiceId} is missing for expense ${record.id}`)
+      const assignment = assignments.get(`${record.userId}:${record.projectId}`) ?? null
+      return serializeHarvestExpense(record, {
+        user: need(users, record.userId, 'user'),
+        userAssignment:
+          assignment === null ? null : visibleGeneralRecord('user-assignments', assignment, viewer),
+        project,
+        client: need(clients, Number(project.clientId), 'client'),
+        expenseCategory: need(categories, record.expenseCategoryId, 'expense category'),
+        isBilled: mayReadInvoices ? record.state.isBilled : null,
+        lockedReason: invoiceStateForViewer(record.state, viewer).locked_reason,
+        invoice: invoiceId === null ? null : { id: invoiceId, number: number! },
+      })
+    })
+  }
+
   const taskAssignmentsOf = async (
     projectIds: readonly number[],
   ): Promise<Map<number, GeneralResourceRecord[]>> => {
@@ -412,6 +503,53 @@ export const installHarvestV2Routes = <Bindings extends object>(
       return context.json((await renderTimeEntries([entry], viewer))[0])
     } catch (error) {
       return translateResourceError(error, 'time entry', viewer)
+    }
+  })
+
+  harvest.get('/expenses', async (context) => {
+    requireApiScope(context, 'expenses:read')
+    const viewer = context.get('principal')
+    await requireExpensesModule()
+    const query = parseHarvestExpenseQuery(new URL(context.req.url).searchParams)
+    authorizeInvoiceFilters(new Map(query.echo), viewer)
+    // As natively: another person's expenses are for those who review
+    // submissions, and only within their scope. Unnamed, the list is every
+    // person the viewer reaches, which a member's own scope narrows to them.
+    if (query.userId !== undefined && query.userId !== viewer.userId) {
+      if (!canReviewSubmissions(viewer.profile) || !(await options.expenses.canReadExpenseUser(viewer, query.userId)))
+        throw new ApiError({
+          status: 403,
+          code: 'row_forbidden',
+          message: 'Expenses are limited to you and employees assigned to your review scope.',
+        })
+    }
+    const userId = query.userId ?? null
+    const [total, records] = await Promise.all([
+      options.expenses.countExpenses(userId, query.filters, viewer),
+      options.expenses.expensesOffset(userId, query.filters, viewer, harvestPageWindow(query.page)),
+    ])
+    return context.json(
+      harvestPage(
+        'expenses',
+        await renderExpenses(records, viewer),
+        total,
+        query.page,
+        '/harvest/v2/expenses',
+        query.echo,
+      ),
+    )
+  })
+
+  harvest.get('/expenses/:id', async (context) => {
+    requireApiScope(context, 'expenses:read')
+    const viewer = context.get('principal')
+    await requireExpensesModule()
+    const id = resourceId(context.req.param('id'), 'expense')
+    try {
+      const record = await options.expenses.getExpense(viewer, id)
+      return context.json((await renderExpenses([record], viewer))[0])
+    } catch (error) {
+      return translateResourceError(error, 'expense', viewer)
     }
   })
 }
