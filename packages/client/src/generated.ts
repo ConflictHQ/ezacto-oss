@@ -154,6 +154,49 @@ export type ElevatedInvoiceTimeUnlinkEnvelope = {
   "data": ElevatedInvoiceTimeUnlink;
 };
 
+export type OrganizationHoliday = {
+  "id": number;
+  "date": string;
+  "name": string;
+  "version": number;
+  "created_at": string;
+  "updated_at": string;
+};
+
+export type OrganizationHolidayInput = {
+  "date": string;
+  "name": string;
+};
+
+export type OrganizationHolidayUpdateInput = {
+  "date": string;
+  "name": string;
+  "version": number;
+};
+
+export type OrganizationHolidayDeleteInput = {
+  "version": number;
+};
+
+export type OrganizationHolidayEnvelope = {
+  "data": OrganizationHoliday;
+  "links": {
+  "self": string;
+};
+};
+
+export type OrganizationHolidayPage = {
+  "data": Array<OrganizationHoliday>;
+  "links": {
+  "self": string;
+  "next": string | null;
+};
+  "page": {
+  "per_page": number;
+  "next_cursor": string | null;
+};
+};
+
 export type AttachmentUploadInput = {
   "file": string;
 };
@@ -2075,6 +2118,26 @@ export type TeamRateInput = {
 export type TeamRateRemovalInput = {
   "expected_version": number;
   "kind": "billable" | "cost";
+};
+
+export type ProjectMissingRatesInput = {
+  "fingerprint"?: string;
+};
+
+export type ProjectMissingRatesEnvelope = {
+  "data": ProjectMissingRates;
+};
+
+export type ProjectMissingRates = {
+  "project_id": number;
+  "hourly_rate_cents": number;
+  "currency": string;
+  "entry_count": number;
+  "seconds": number;
+  "earliest_date": string;
+  "latest_date": string;
+  "fingerprint": string;
+  "applied_entries": number;
 };
 
 export type CostRateBackfillInput = {
@@ -5557,6 +5620,16 @@ export class EzactoClient {
     return body as T;
   }
 
+  async recoverProjectMissingRates(args: { "id": number; body: ProjectMissingRatesInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<ProjectMissingRatesEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ProjectMissingRatesEnvelope>("POST", "/api/v1/projects/:id/missing-rates".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
   async getNativeAppleCapabilities(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<NativeAppleCapabilities> {
     const headers = new Headers(args.headers);
 
@@ -6745,6 +6818,55 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<TimeOffEnvelope>("DELETE", "/api/v1/time-off/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listOrganizationHolidays(args: { query?: { "from"?: string; "to"?: string; "cursor"?: string; "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<OrganizationHolidayPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OrganizationHolidayPage>("GET", "/api/v1/organization-holidays", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getOrganizationHoliday(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<OrganizationHolidayEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OrganizationHolidayEnvelope>("GET", "/api/v1/organization-holidays/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createOrganizationHoliday(args: { body: OrganizationHolidayInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<OrganizationHolidayEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OrganizationHolidayEnvelope>("POST", "/api/v1/organization-holidays", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updateOrganizationHoliday(args: { "id": number; body: OrganizationHolidayUpdateInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<OrganizationHolidayEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OrganizationHolidayEnvelope>("PATCH", "/api/v1/organization-holidays/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async deleteOrganizationHoliday(args: { "id": number; body: OrganizationHolidayDeleteInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<OrganizationHolidayEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<OrganizationHolidayEnvelope>("DELETE", "/api/v1/organization-holidays/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });

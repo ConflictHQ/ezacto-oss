@@ -1,3 +1,4 @@
+import { renderFirstRunChecklist } from '../first-run/render.js'
 import { renderScheduledRunPage } from '../scheduled-runs/render.js'
 import { renderStaffPayments } from '../staff-payments/render.js'
 import { PASSWORD_MIN_CODE_POINTS, PASSWORD_MAX_CODE_POINTS } from '@ezacto/core'
@@ -671,6 +672,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
     root. The collapse toggle only shows in the sidebar, and only at desktop
     width; below 900px both layouts fold into the Menu drawer.
   -->
+  <a class="app-skip-link" href="#app-content" data-app-skip-link>Skip navigation</a>
   <header class="topbar" id="ez-app-nav" data-app-nav>
     <a class="brand" href="/dashboard" aria-label="${escapeHtml(brand)} home" data-home-link><span class="brand-wordmark">${wordmark(b.wordmarkDark, brand)}</span><span class="brand-glyph">${brand === defaultBrand.name && (b.wordmarkDark ?? '') === '' ? productLogo : iconMarkup('home')}</span></a>
     <button class="nav-collapse" type="button" data-sidebar-toggle aria-controls="ez-app-nav" aria-pressed="${sidebar === 'collapsed' ? 'true' : 'false'}" aria-label="Collapse sidebar">${iconMarkup('sidebar')}</button>
@@ -707,12 +709,14 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         </span>
         <a class="identity-settings" href="/settings/user" data-settings-link>${iconMarkup('sliders')}<span class="identity-action-label">Settings</span></a>
         ${(options.signInProviders ?? []).includes('apple') ? '<a class="identity-settings" href="/auth/apple/disconnect">Disconnect Apple</a>' : ''}
+        <button type="button" class="identity-settings" data-first-run-help aria-label="Help: setup guide" title="Help: setup guide" hidden>${iconMarkup('list')}<span class="identity-action-label">Help</span></button>
         <button type="button" class="identity-signout" data-logout>${iconMarkup('sign-out')}<span class="identity-action-label">Sign out</span></button>
         <p class="auth-result visually-hidden" data-logout-result role="status" aria-live="polite"></p>
       </div>
     </div>
   </header>
   ${renderTabStrip(options)}
+  ${renderFirstRunChecklist()}
   <main class="app-content page--grid" data-app-content${view === 'time' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">This week</p><h1>Time</h1></div>

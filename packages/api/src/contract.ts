@@ -1,3 +1,4 @@
+import { organizationHolidayOperations, organizationHolidaySchemas } from './organization-holiday-contract.js'
 import { outboundWebhookOperations, outboundWebhookSchemas } from './outbound-webhook-contract.js'
 import { invoiceElevationOperations, invoiceElevationSchemas, documentInvoiceTokenElevation } from './invoice-elevation-contract.js'
 import { scheduledJobOperations, scheduledJobSchemas } from './scheduled-job-contract.js'
@@ -3235,6 +3236,7 @@ const teamOperations: ApiContractOperation[] = [
 ];
 
 export const apiContractOperations: readonly ApiContractOperation[] = [
+  { method: "post", path: "/api/v1/projects/:id/missing-rates", operationId: "recoverProjectMissingRates", summary: "Preview or explicitly repair missing project-rate snapshots on open time", tag: "projects", responseStatus: 200, responseSchema: "ProjectMissingRatesEnvelope", requestSchema: "ProjectMissingRatesInput", requestRequired: true, sessionOnly: true, parameters: [path("id")] },
   { method:"get",path:"/auth/apple/native-capabilities",operationId:"getNativeAppleCapabilities",summary:"Check explicit native Apple lifecycle protocol support",tag:"authentication",public:true,responseStatus:200,responseSchema:"NativeAppleCapabilities" },
   { method:"post",path:"/auth/apple",operationId:"signInNativeApple",summary:"Verify origin-bound Apple lifecycle custody and native identity before sign-in",tag:"authentication",public:true,responseStatus:200,responseSchema:"NativeAppleSignInEnvelope",requestSchema:"NativeAppleSignInInput",requestRequired:true },
   { method:"post",path:"/auth/apple/deletion-requests/:id/binding",operationId:"rebindAppleCleanup",summary:"Bind fresh cleanup-purpose Apple custody to a pending deletion request",tag:"authentication",public:true,responseStatus:204,requestSchema:"AppleLifecycleProofInput",requestRequired:true,parameters:[stringPath("id")] },
@@ -3788,6 +3790,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...calendarProposalOperations,
   ...allocationOperations,
   ...timeOffOperations,
+  ...organizationHolidayOperations,
   ...workItemOperations,
   ...timesheetApprovalOperations,
   ...timesheetLockPolicyOperations,
@@ -4071,6 +4074,7 @@ const timeReportTotalsRequired: readonly string[] = [
 export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...outboundWebhookSchemas,
   ...invoiceElevationSchemas,
+  ...organizationHolidaySchemas,
   ...attachmentContractSchemas,
   ...staffPaymentSchemas,
   ...deelSyncSchemas,
@@ -5780,6 +5784,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  ProjectMissingRatesInput: { type: "object", properties: { fingerprint: { type: "string", pattern: "^[a-f0-9]{64}$" } }, additionalProperties: false },
+  ProjectMissingRatesEnvelope: { type: "object", required: ["data"], properties: { data: reference("ProjectMissingRates") }, additionalProperties: false },
+  ProjectMissingRates: { type: "object", required: ["project_id", "hourly_rate_cents", "currency", "entry_count", "seconds", "earliest_date", "latest_date", "fingerprint", "applied_entries"], properties: {
+    project_id: integerSchema, hourly_rate_cents: { type: "integer", minimum: 0 }, currency: stringSchema, entry_count: { type: "integer", minimum: 0 }, seconds: { type: "integer", minimum: 0 }, earliest_date: { type: "string", nullable: true }, latest_date: { type: "string", nullable: true }, fingerprint: stringSchema, applied_entries: { type: "integer", minimum: 0 }
+  }, additionalProperties: false },
   CostRateBackfillInput: {
     type: "object",
     required: ["from", "to", "cost_rate_cents", "reason"],

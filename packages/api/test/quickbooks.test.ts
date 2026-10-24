@@ -316,6 +316,16 @@ describe('the webhook on the shipped surface', () => {
     })
   })
 
+  it('[1013 security] forwards a raw CloudEvents array to signature verification unchanged', async () => {
+    const payload = '[\n  {"specversion":"1.0","type":"qbo.payment.created.v1","intuitentityid":"17","intuitaccountid":"42","time":"2026-10-23T12:00:00.123456789Z"}\n]'
+    const quickBooks = service()
+    const response = await shippedApp(quickBooks).request('http://localhost/webhooks/quickbooks', {
+      method: 'POST', body: payload, headers: { 'intuit-signature': 'raw-body-signature' },
+    })
+    expect(response.status).toBe(200)
+    expect(quickBooks.receiveWebhook).toHaveBeenCalledWith({ payload, signature: 'raw-body-signature' })
+  })
+
   it('[security] is not under /api/v1, where authentication refuses it first', async () => {
     const quickBooks = service()
     const response = await intuitDelivers(quickBooks, '/api/v1/integrations/quickbooks/webhook')

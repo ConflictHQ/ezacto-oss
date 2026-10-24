@@ -1,3 +1,4 @@
+import { createOrganizationHolidayRepository } from '@ezacto/db/d1'
 import { createWebhookSecretVault } from '@ezacto/core'
 import { createWebhookService } from '@ezacto/db/d1'
 import { createWorkerWebhookTransport } from '@ezacto/integrations'
@@ -36,6 +37,7 @@ import {
   createQuickBooksReconciliationSource,
   createQuickBooksStore,
   createGeneralResourceRepository,
+  recoverProjectMissingRates,
   createMoneyResourceRepository,
   listClientAncestors,
   createClientRateCardRepository,
@@ -1229,6 +1231,7 @@ export const createRuntimeServices = async (
       touchIntervalMs,
       ...(demoDeployment(env) ? { maxLifetimeMs: DEMO_API_TOKEN_MAX_LIFETIME_MS } : {}),
     }),
+    projectMissingRates: { recover: input => recoverProjectMissingRates(drizzle, input, dates => timesheetLockPolicy.lockedDates(dates)) },
     generalResources: createGeneralResourceRepository(drizzle),
     clientTree: {
       ancestors: (clientId) => listClientAncestors(drizzle, clientId),
@@ -1302,6 +1305,7 @@ export const createRuntimeServices = async (
     trackedResources,
     calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
     allocations: new DrizzleAllocationRepository(drizzle),
+      organizationHolidays: createOrganizationHolidayRepository(drizzle),
     workItems: {
       repository: new DrizzleWorkItemRepository(drizzle),
       credentialConfigured: (provider) => workItemCredentialConfigured(env, provider),

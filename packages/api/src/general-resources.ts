@@ -28,8 +28,15 @@ import {
   type FieldError,
 } from "./errors.js";
 import { cursorPage } from "./pagination.js";
+import { installProjectMissingRatesRoutes } from "./project-missing-rates.js";
 
 export interface GeneralResourceRouteOptions {
+  missingRates?: {
+    recover(input: { projectId: number; actorUserId: number; fingerprint?: string; occurredAt: string }): Promise<{
+      project_id: number; hourly_rate_cents: number; currency: string; entry_count: number; seconds: number;
+      earliest_date: string | null; latest_date: string | null; fingerprint: string; applied_entries: number;
+    }>;
+  };
   repository: GeneralResourceRepository;
   cursorSigningKey: Uint8Array;
   clock?: () => string;
@@ -733,7 +740,7 @@ const translate = (error: unknown): never => {
 
 const requireResourceModule = async (
   kind: GeneralResourceKind,
-  options: Required<GeneralResourceRouteOptions>,
+  options: Required<Omit<GeneralResourceRouteOptions, "missingRates">>,
 ): Promise<void> => {
   if (kind === "expense-categories" && !(await options.isExpensesModuleEnabled())) {
     throw new ApiError({
@@ -929,7 +936,7 @@ export const teamViewer = (principal: Readonly<UserPrincipal>): TeamViewer => ({
 });
 
 const ensureTeamTarget = async (
-  options: Readonly<Required<GeneralResourceRouteOptions>>,
+  options: Readonly<Required<Omit<GeneralResourceRouteOptions, "missingRates">>>,
   principal: Readonly<UserPrincipal>,
   userId: number,
 ): Promise<void> => {
@@ -980,7 +987,7 @@ const envelope = (
 const installResource = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   kind: GeneralResourceKind,
-  options: Required<GeneralResourceRouteOptions>,
+  options: Required<Omit<GeneralResourceRouteOptions, "missingRates">>,
 ): void => {
   const definition = routeDefinitions[kind];
   api.get(`/${kind}`, async (context) => {
@@ -1081,7 +1088,7 @@ const installResource = <Bindings extends object>(
 const installRates = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   kind: UserRateKind,
-  options: Required<GeneralResourceRouteOptions>,
+  options: Required<Omit<GeneralResourceRouteOptions, "missingRates">>,
 ): void => {
   const segment = `${kind}-rates`;
   api.get(`/users/:userId/${segment}`, async (context) => {
@@ -1261,7 +1268,9 @@ export const installGeneralResourceRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   supplied: GeneralResourceRouteOptions,
 ): void => {
-  const options: Required<GeneralResourceRouteOptions> = {
+  installProjectMissingRatesRoutes(api, supplied.missingRates, supplied.clock);
+
+  const options: Required<Omit<GeneralResourceRouteOptions, "missingRates">> = {
     ...supplied,
     clock: supplied.clock ?? (() => new Date().toISOString()),
     isTeamModuleEnabled: supplied.isTeamModuleEnabled ?? (async () => true),

@@ -307,3 +307,12 @@ failure handling. The short-lived elevation belongs to one administrator API
 token and one draft; password reset, token revocation, role changes and invoice
 state changes invalidate it. Browser invoice editing retains its existing
 session policy. Unlinking tracked time does not recalculate invoice lines.
+
+
+## Organization holidays in capacity planning
+
+Administrators add, rename, move and remove organization holidays under **Capacity → Organization holidays**. Enter explicit local dates and names; the app does not assume a country calendar. The list follows the complete weeks shown in the capacity grid. A stale edit or deletion is refused; refresh the view before retrying.
+
+A weekday holiday removes one fifth of each active person's current weekly capacity, matching the existing Monday–Friday planning convention and part-time hours. Weekend holidays remain visible in the calendar but do not remove capacity. A holiday and personal leave on the same date remove the larger daily amount, rather than adding them; available capacity stays at least zero. These dates change planning availability only. They do not create time entries or modify invoices, payments or tracked time. Historical capacity reads use the current holiday configuration and weekly capacity, alongside the existing allocation/time-off rules.
+
+The API lists global holiday dates for `schedule:read` users. Changes require an administrator with `schedule:write`, and the database rechecks the active administrator during the atomic write. A date is unique within the organization. Update and delete requests must carry the current `version`; every accepted change and its before/after audit commit together. Removing a holiday leaves personal leave intact. This is an operator calendar, with no leave approval workflow or public-holiday feed.

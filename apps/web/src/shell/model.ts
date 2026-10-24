@@ -1,4 +1,5 @@
 import type { CalendarProposalApi } from '../calendar-proposals/browser.js'
+import type { FirstRunApi } from '../first-run/model.js'
 import type { EstimateComposerApi } from '../estimates/composer.js'
 import type { ScheduledRunApi } from '../scheduled-runs/model.js'
 import type { StaffPaymentsApi } from '../staff-payments/browser.js'
@@ -105,7 +106,8 @@ export interface ShellApi
     Partial<RoleAdminApi>,
     Partial<TaskAdminApi>,
     Partial<TeamDirectoryApi>,
-    Partial<CompanySettingsApi> {
+    Partial<CompanySettingsApi>,
+    Partial<FirstRunApi> {
   whoami(signal?: AbortSignal): Promise<Whoami>
   /**
    * Your own reminder preferences (issue 935), under Settings. Optional like
@@ -1256,6 +1258,73 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       })
     ).data
   },
+  getFirstRunStatus: async (userId, signal, includeCompletedSetup = false) => {
+    const owner = (await client.getTeamPerson({ id: userId, ...withSignal(signal) })).data
+    if (!owner.is_owner) return null
+    const entries = await client.listTimeEntries({
+      query: { user_id: userId, per_page: 1 },
+      ...withSignal(signal),
+    })
+    if (entries.data.length > 0 && !includeCompletedSetup)
+      return {
+        hasTimeEntry: true,
+        hasClient: false,
+        hasProject: false,
+        hasTask: false,
+        hasProjectTask: false,
+        hasOwnAssignment: false,
+        projectId: null,
+      }
+    const [clients, projects, tasks, options] = await Promise.all([
+      client.listClients({ query: { is_active: true, per_page: 1 }, ...withSignal(signal) }),
+      client.listProjects({ query: { is_active: true, per_page: 1 }, ...withSignal(signal) }),
+      collect(
+        (cursor) =>
+          client.listTasks({
+            query: { is_active: true, per_page: 200, ...(cursor ? { cursor } : {}) },
+            ...withSignal(signal),
+          }),
+        signal,
+      ),
+      client.listTimeEntryOptions(withSignal(signal)),
+    ])
+    // Prefer an already usable project. Otherwise guide the owner through the
+    // first active project, keeping the task and person checks on that project.
+    const projectId = options.data[0]?.project_id ?? projects.data[0]?.id ?? null
+    const [taskAssignments, ownAssignments] =
+      projectId === null
+        ? [[], null]
+        : await Promise.all([
+            collect(
+              (cursor) =>
+                client.listTaskAssignments({
+                  query: {
+                    project_id: projectId,
+                    is_active: true,
+                    per_page: 200,
+                    ...(cursor ? { cursor } : {}),
+                  },
+                  ...withSignal(signal),
+                }),
+              signal,
+            ),
+            client.listUserAssignments({
+              query: { project_id: projectId, user_id: userId, is_active: true, per_page: 1 },
+              ...withSignal(signal),
+            }),
+          ])
+    return {
+      hasTimeEntry: entries.data.length > 0,
+      hasClient: clients.data.length > 0,
+      hasProject: projects.data.length > 0,
+      hasTask: tasks.length > 0,
+      hasProjectTask: taskAssignments.some((assignment) =>
+        tasks.some((task) => task.id === assignment['task_id']),
+      ),
+      hasOwnAssignment: (ownAssignments?.data.length ?? 0) > 0,
+      projectId,
+    }
+  },
   listProjects: (cursor, signal) =>
     client.listProjects({
       query: {
@@ -1813,6 +1882,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getProject({ id, ...withSignal(signal) })).data,
   createDirectoryProject: async (input, signal) =>
     (await client.createProject({ body: input, ...withSignal(signal) })).data,
+  recoverProjectMissingRates: async (id, fingerprint, signal) =>
+    (await client.recoverProjectMissingRates({ id, body: fingerprint === undefined ? {} : { fingerprint }, ...withSignal(signal) })).data,
   updateDirectoryProject: async (id, input, signal) =>
     (await client.updateProject({ id, body: input, ...withSignal(signal) })).data,
   archiveDirectoryProject: async (id, signal) => {
@@ -1994,6 +2065,12 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   getCapacity: (range, signal) =>
     client.getCapacity({ query: range, ...withSignal(signal) }),
   planning: {
+    holidays: {
+      list: (range, signal) => collectPlanned(cursor => client.listOrganizationHolidays({ query: { ...range, per_page: 200, ...(cursor === undefined ? {} : { cursor }) }, ...withSignal(signal) }), signal),
+      create: (body, signal) => client.createOrganizationHoliday({ body, ...withSignal(signal) }),
+      update: (id, body, signal) => client.updateOrganizationHoliday({ id, body, ...withSignal(signal) }),
+      remove: (id, version, signal) => client.deleteOrganizationHoliday({ id, body: { version }, ...withSignal(signal) }),
+    },
     listProjects: async (signal) =>
       (
         await collect(

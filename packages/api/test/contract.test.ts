@@ -1,3 +1,4 @@
+import { installOrganizationHolidayRoutes } from '../src/organization-holidays.js'
 import { installOutboundWebhookRoutes } from '../src/outbound-webhooks.js'
 import {installMigrationLoadRoutes} from '../src/migration-loads.js';
 import { installInvoiceElevationRoutes } from '../src/invoice-elevations.js';
@@ -227,6 +228,7 @@ const documentedApp = () =>
       });
     },
     installApi: (api) => {
+      installOrganizationHolidayRoutes(api,new Proxy({}, {get:()=>unavailable}) as never,{cursorSigningKey:new Uint8Array(32),clock:()=> '2026-10-22T00:00:00.000Z'});
       installSessionRoutes(api, sessions);
       installAccountRetentionReviewRoutes(api,{store:profileRepository,clock:()=>"2026-10-09T00:00:00.000Z"});
       installAccountClosureRoutes(api, {

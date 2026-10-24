@@ -1,3 +1,4 @@
+import { createOrganizationHolidayRepository } from '@ezacto/db'
 import { demoDeployment } from '../../worker/src/app.js'
 import { createWebhookSecretVault } from '@ezacto/core'
 import { createWebhookService } from '@ezacto/db'
@@ -51,6 +52,7 @@ import {
   createTwoFactorService,
   deriveTwoFactorEmailCodeKey,
   createGeneralResourceRepository,
+  recoverProjectMissingRates,
   createInvoiceGenerationService,
   createMoneyResourceRepository,
   createReportRepository,
@@ -900,6 +902,7 @@ export const createContainerRuntime = async (
       enrollOwnerPassword: (input) =>
         enrollInstanceOwnerPasswordContainer(database, input),
       tokens: createApiTokenStore(drizzle, touch),
+      projectMissingRates: { recover: input => recoverProjectMissingRates(drizzle, input, dates => timesheetLockPolicy.lockedDates(dates)) },
       generalResources: createGeneralResourceRepository(drizzle),
       clientTree: {
         ancestors: (clientId) => listClientAncestors(drizzle, clientId),
@@ -915,6 +918,7 @@ export const createContainerRuntime = async (
       trackedResources,
       calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
       allocations: new DrizzleAllocationRepository(drizzle),
+      organizationHolidays: createOrganizationHolidayRepository(drizzle),
       workItems: {
         repository: new DrizzleWorkItemRepository(drizzle),
         credentialConfigured: (provider) =>

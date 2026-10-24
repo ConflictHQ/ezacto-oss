@@ -88,9 +88,16 @@ Three things matter:
 | **Verifier token** | Revealed by the toggle. Intuit signs every delivery with it (HMAC-SHA256, `intuit-signature` header), and the endpoint **must** verify that signature — the URL is public, and anything that reaches it is otherwise unauthenticated. |
 | **Subscribed events** | Every entity is checked by default. Narrow it to **Invoice** and **Payment**; everything else is delivery volume for events that will be ignored. |
 
-Leave *"Enable cloud event payload format"* off unless the endpoint has been
-written for it — the warning on that toggle is accurate, and the two formats are
-not interchangeable.
+Enable **CloudEvents payload format** for this endpoint. Intuit's
+[mandatory migration deadline was July 31, 2026](https://medium.com/intuitdev/upcoming-change-to-webhooks-payload-structure-2a87dab642d0).
+The handler accepts the current CloudEvents v1.0 array as well as legacy
+`eventNotifications` batches, with the same raw-body signature verification.
+`intuitaccountid` selects the connected company, `intuitentityid` names the
+changed record, and `type`/`time` supply the operation and change timestamp.
+The CloudEvent `id` identifies the notification; it is not a payment ID.
+Both formats use the existing delivery claims. Receipt deduplication remains
+keyed to the QuickBooks payment reference even when event timestamps differ.
+Test the format in the owned sandbox before changing the production subscription.
 
 Configure the endpoint **after** it is deployed. Intuit begins delivering as soon
 as it is saved, and deliveries to a URL that 404s are retried and then dropped.
@@ -159,14 +166,25 @@ recorded twice.
   failed run leaves it where it was, records `failed`, and is retried.
 - Each run reads from five minutes before the cursor, because re-applying is
   free and a gap is not.
-- Intuit throttles with 429. Catch-up waits out `Retry-After` (otherwise 2, 4
-  and 8 seconds) and fails the run after four attempts.
+- Intuit throttles with 429. Catch-up records the failure and a durable retry
+  time from `Retry-After` (delta seconds or an HTTP date), or 60 seconds when the
+  header is absent or invalid. It never sleeps inside a request. Scheduled runs
+  before that time make no provider call; a restart preserves the cooldown.
+- A CDC response at the 1,000-object ceiling is incomplete evidence. Catch-up
+  applies none of it, preserves the previous cursor, and records
+  `full_reconcile_needed`. CDC has no continuation cursor, and deleted objects
+  follow active ones: advancing to the newest visible timestamp could lose an
+  omitted change. Compare the books; this does not automatically reset recovery.
 - Intuit replays 30 days at most. A cursor older than 29 days is not read; the
   run records `full_reconcile_needed`, the report says so, and the report is
-  the way to compare the books. Disconnecting and reconnecting starts a fresh
-  cursor.
+  the way to compare the books. After an old gap, disconnecting and reconnecting
+  allows the next run to start a fresh cursor. A recent capped window is not
+  automatically discarded by reconnecting.
 
-The report shows how the last run ended. The self-hosted container has no cron
+The report shows how the last run ended. See the dated
+[reconciliation boundary audit](quickbooks-reconciliation-boundary.md) for
+implemented behavior, provider limitations, and remaining acceptance.
+The self-hosted container has no cron
 and does not run catch-up. Only payments are caught up: an
 invoice's webhook has no effect here either, so nothing is lost by not reading
 invoices.
@@ -309,7 +327,7 @@ client an invoice just to prove configuration.
 | Invoice does not mirror | Outbox/scheduler, company mapping, provider response and stored sync outcome |
 | Webhook signature fails | Environment-specific verifier token and the raw request body |
 | Payment is accepted but skipped | Delivery reason, invoice mapping, already-recorded amount and remaining balance |
-| CloudEvents delivery is ignored | This handler expects the implemented legacy notification shape; use the matching subscription format |
+| CloudEvents delivery is ignored | Deployed release supports CloudEvents v1.0; exact connected `intuitaccountid`, subscribed Invoice/Payment entity, operation and RFC 3339 `time`; check the delivery reason |
 
 Use the integration's Disconnect action (the administrator API is
 `DELETE /api/v1/integrations/quickbooks`) to revoke/forget the connection rather

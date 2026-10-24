@@ -1110,6 +1110,8 @@ const receivablesReport = async (
 }
 
 export interface UninvoicedTimeCandidateRow {
+  projectBillBy?: string
+  projectHourlyRateCents?: number | null
   id: number
   clientId: number
   clientName: string
@@ -1222,9 +1224,12 @@ export const readUninvoicedCandidates = async (
     filter.from === null
       ? sql`expense.spent_date <= ${filter.to}`
       : sql`expense.spent_date BETWEEN ${filter.from} AND ${filter.to}`
+  // Invoice generation also reads historical migration ledgers. Its active-project
+  // guard already excludes archived examples, so it must not require later report views.
   const timeEntries = await database.all<UninvoicedTimeCandidateRow>(sql`
     SELECT entry.id AS "id", project.client_id AS "clientId", client.name AS "clientName",
       project.id AS "projectId", project.name AS "projectName", project.code AS "projectCode",
+      project.bill_by AS "projectBillBy", project.hourly_rate_cents AS "projectHourlyRateCents",
       task.id AS "taskId", task.name AS "taskName", user.id AS "userId",
       trim(user.first_name || ' ' || coalesce(user.last_name, '')) AS "userName",
       entry.spent_date AS "spentDate", entry.notes AS "notes",
@@ -1538,8 +1543,8 @@ const clientRollupReport = async (
         entry.timer_started_at AS "timerStartedAt", entry.started_time AS "startedTime",
         entry.ended_time AS "endedTime", entry.billable_rate_cents AS "billableRateCents",
         entry.cost_rate_cents AS "costRateCents"
-      FROM time_entries entry
-      JOIN projects project ON project.id = entry.project_id
+      FROM report_time_entries entry
+      JOIN report_projects project ON project.id = entry.project_id
       JOIN clients client ON client.id = project.client_id
       WHERE entry.spent_date BETWEEN ${range.from} AND ${range.to} AND ${subtree}
       ORDER BY entry.id
@@ -1550,8 +1555,8 @@ const clientRollupReport = async (
         upper(coalesce(project.billing_currency, client.currency)) AS "currency",
         expense.total_cost_cents AS "totalCostCents", expense.billable AS "billable",
         expense.invoice_id AS "invoiceId"
-      FROM expenses expense
-      JOIN projects project ON project.id = expense.project_id
+      FROM report_expenses expense
+      JOIN report_projects project ON project.id = expense.project_id
       JOIN clients client ON client.id = project.client_id
       WHERE expense.spent_date BETWEEN ${range.from} AND ${range.to} AND ${subtree}
       ORDER BY expense.id
@@ -1561,7 +1566,7 @@ const clientRollupReport = async (
         upper(coalesce(project.billing_currency, client.currency)) AS "currency",
         project.budget_by AS "budgetBy", project.budget_seconds AS "budgetSeconds",
         project.cost_budget_cents AS "costBudgetCents"
-      FROM projects project JOIN clients client ON client.id = project.client_id
+      FROM report_projects project JOIN clients client ON client.id = project.client_id
       WHERE ${subtree} ORDER BY project.id
     `),
     database.all<{ currency: string }>(sql`
@@ -1580,7 +1585,7 @@ const clientRollupReport = async (
         CASE WHEN project.budget_by = 'task' THEN assignment.budget_seconds
           WHEN project.budget_by = 'task_fees' THEN assignment.budget_cents ELSE NULL END AS "amount"
       FROM task_assignments assignment
-      JOIN projects project ON project.id = assignment.project_id
+      JOIN report_projects project ON project.id = assignment.project_id
       WHERE ${subtree}
       ORDER BY assignment.id
     `),
@@ -1588,7 +1593,7 @@ const clientRollupReport = async (
       SELECT assignment.project_id AS "projectId", assignment.id AS "sourceId",
         assignment.budget_seconds AS "amount"
       FROM user_assignments assignment
-      JOIN projects project ON project.id = assignment.project_id
+      JOIN report_projects project ON project.id = assignment.project_id
       WHERE project.budget_by = 'person' AND ${subtree}
       ORDER BY assignment.id
     `),
@@ -1745,7 +1750,7 @@ const projectBudgetSummaryReport = async (
       project.cost_budget_cents AS "costBudgetCents",
       project.cost_budget_include_expenses AS "costBudgetIncludeExpenses",
       upper(coalesce(project.billing_currency, client.currency)) AS "currency"
-    FROM projects project
+    FROM report_projects project
     JOIN clients client ON client.id = project.client_id
     WHERE (
       ${accountWide ? 1 : 0} = 1 OR EXISTS (
@@ -1770,15 +1775,15 @@ const projectBudgetSummaryReport = async (
   }>(sql`
     SELECT entry.project_id AS "projectId", entry.rounded_seconds AS "roundedSeconds",
       entry.billable_rate_cents AS "billableRateCents", entry.cost_rate_cents AS "costRateCents"
-    FROM time_entries entry
-    JOIN projects project ON project.id = entry.project_id
+    FROM report_time_entries entry
+    JOIN report_projects project ON project.id = entry.project_id
     WHERE ${countsTowardBudget('entry', 'project')}
       AND entry.spent_date BETWEEN ${range.from} AND ${range.to}
     ORDER BY entry.id
   `)
   const expenses = await database.all<{ projectId: number; cents: number }>(sql`
     SELECT project_id AS "projectId", total_cost_cents AS "cents"
-    FROM expenses WHERE spent_date BETWEEN ${range.from} AND ${range.to}
+    FROM report_expenses WHERE spent_date BETWEEN ${range.from} AND ${range.to}
     ORDER BY id
   `)
 
@@ -1878,7 +1883,7 @@ const projectBudgetReport = async (
     SELECT id AS "id", budget_by AS "budgetBy", budget_seconds AS "budgetSeconds",
       cost_budget_cents AS "costBudgetCents",
       cost_budget_include_expenses AS "costBudgetIncludeExpenses"
-    FROM projects project WHERE id = ${projectId} AND (
+    FROM report_projects project WHERE id = ${projectId} AND (
       ${accountWide ? 1 : 0} = 1 OR EXISTS (
         SELECT 1 FROM user_assignments assignment
         WHERE assignment.project_id = project.id
@@ -1897,8 +1902,8 @@ const projectBudgetReport = async (
     SELECT entry.task_assignment_id AS "taskAssignmentId",
       entry.user_assignment_id AS "userAssignmentId", entry.rounded_seconds AS "roundedSeconds",
       entry.billable_rate_cents AS "billableRateCents", entry.cost_rate_cents AS "costRateCents"
-    FROM time_entries entry
-    JOIN projects project ON project.id = entry.project_id
+    FROM report_time_entries entry
+    JOIN report_projects project ON project.id = entry.project_id
     WHERE entry.project_id = ${projectId} AND ${countsTowardBudget('entry', 'project')}
       AND entry.spent_date BETWEEN ${range.from} AND ${range.to}
     ORDER BY entry.id
@@ -1934,7 +1939,7 @@ const projectBudgetReport = async (
     }
     if (project.costBudgetIncludeExpenses === 1) {
       const expenseRows = await database.all<{ cents: number }>(sql`
-        SELECT total_cost_cents AS "cents" FROM expenses
+        SELECT total_cost_cents AS "cents" FROM report_expenses
         WHERE project_id = ${projectId}
           AND spent_date BETWEEN ${range.from} AND ${range.to}
         ORDER BY id
@@ -2067,8 +2072,8 @@ const memberHoursReport = async (
       project.code AS "projectCode", client.id AS "clientId",
       client.name AS "clientName", entry.seconds AS "seconds",
       entry.rounded_seconds AS "roundedSeconds", entry.billable AS "billable"
-    FROM time_entries entry
-    JOIN projects project ON project.id = entry.project_id
+    FROM report_time_entries entry
+    JOIN report_projects project ON project.id = entry.project_id
     JOIN clients client ON client.id = project.client_id
     WHERE entry.user_id = ${filter.userId}
       AND entry.spent_date BETWEEN ${filter.from} AND ${filter.to}
@@ -2151,7 +2156,7 @@ const contractorCostReport = async (
       entry.cost_rate_cents AS "costRateCents",
       coalesce(person.weekly_capacity, organization.weekly_capacity_default)
         AS "weeklyCapacity"
-    FROM time_entries entry
+    FROM report_time_entries entry
     JOIN users person ON person.id = entry.user_id
     CROSS JOIN organizations organization
     WHERE entry.spent_date BETWEEN ${range.from} AND ${range.to}
@@ -2411,8 +2416,8 @@ const profitabilityPopulation = async (
       entry.billable_rate_cents AS "billableRateCents",
       entry.cost_rate_cents AS "costRateCents",
       0 AS "feeCents", 'none' AS "feeTreatment"
-    FROM time_entries entry
-    JOIN projects project ON project.id = entry.project_id
+    FROM report_time_entries entry
+    JOIN report_projects project ON project.id = entry.project_id
     JOIN clients client ON client.id = project.client_id
     JOIN tasks task ON task.id = entry.task_id
     JOIN users person ON person.id = entry.user_id
@@ -2441,7 +2446,7 @@ const profitabilityPopulation = async (
       0 AS "costRateCents", fee.fee_cents AS "feeCents",
       fee.treatment AS "feeTreatment"
     FROM revenue_fees fee
-    JOIN projects project ON project.id = fee.project_id
+    JOIN report_projects project ON project.id = fee.project_id
     JOIN clients client ON client.id = project.client_id
     WHERE fee.recognized_on BETWEEN ${range.from} AND ${range.to}
       AND (${projectStatus} = 'all'
@@ -2848,8 +2853,8 @@ const detailedExpenseReport = async (
       upper(coalesce(project.billing_currency, client.currency, ${organizationCurrency}))
         AS "currency",
       expense.total_cost_cents AS "totalCostCents"
-    FROM expenses expense
-    JOIN projects project ON project.id = expense.project_id
+    FROM report_expenses expense
+    JOIN report_projects project ON project.id = expense.project_id
     JOIN clients client ON client.id = project.client_id
     JOIN expense_categories category ON category.id = expense.expense_category_id
     JOIN users person ON person.id = expense.user_id
@@ -2981,7 +2986,7 @@ const reportFilterNames = async (
     SELECT
       (SELECT name FROM organizations ORDER BY id LIMIT 1) AS "organizationName",
       (SELECT name FROM clients WHERE id = ${id(ids.clientId)}) AS "clientName",
-      (SELECT name FROM projects WHERE id = ${id(ids.projectId)}) AS "projectName",
+      (SELECT name FROM report_projects WHERE id = ${id(ids.projectId)}) AS "projectName",
       (SELECT name FROM tasks WHERE id = ${id(ids.taskId)}) AS "taskName",
       ${person(ids.userId)} AS "userName",
       (SELECT name FROM roles WHERE id = ${id(ids.roleId)}) AS "roleName",
@@ -3060,8 +3065,8 @@ const detailedTimeFacets = async (
   audience: ReportAudience,
 ): Promise<DetailedTimeFacets> => {
   const from = sql`
-    FROM time_entries entry
-    JOIN projects project ON project.id = entry.project_id
+    FROM report_time_entries entry
+    JOIN report_projects project ON project.id = entry.project_id
     JOIN clients client ON client.id = project.client_id
     JOIN tasks task ON task.id = entry.task_id
     JOIN users person ON person.id = entry.user_id`
@@ -3142,8 +3147,8 @@ const detailedTimeReport = async (
       claim.number AS "invoiceNumber",
       project.is_active AS "projectActive",
       entry.billable_rate_cents AS "billableRateCents"
-    FROM time_entries entry
-    JOIN projects project ON project.id = entry.project_id
+    FROM report_time_entries entry
+    JOIN report_projects project ON project.id = entry.project_id
     JOIN clients client ON client.id = project.client_id
     JOIN tasks task ON task.id = entry.task_id
     JOIN users person ON person.id = entry.user_id
@@ -3510,8 +3515,8 @@ const timeReport = async (
       trim(person.first_name || ' ' || person.last_name) AS "userName",
       person.is_contractor AS "isContractor",
       person.weekly_capacity AS "weeklyCapacity"
-    FROM time_entries entry
-    JOIN projects project ON project.id = entry.project_id
+    FROM report_time_entries entry
+    JOIN report_projects project ON project.id = entry.project_id
     JOIN clients client ON client.id = project.client_id
     JOIN tasks task ON task.id = entry.task_id
     JOIN users person ON person.id = entry.user_id
@@ -3853,8 +3858,8 @@ const bandedMonthReport = async (
       entry.billable_rate_cents AS "billableRateCents",
       entry.cost_rate_cents AS "costRateCents",
       entry.invoice_id AS "invoiceId"
-    FROM time_entries entry
-    JOIN projects project ON project.id = entry.project_id
+    FROM report_time_entries entry
+    JOIN report_projects project ON project.id = entry.project_id
     JOIN clients client ON client.id = project.client_id
     WHERE entry.spent_date BETWEEN ${range.from} AND ${range.to}
       AND entry.billable = 1
@@ -3876,7 +3881,7 @@ const bandedMonthReport = async (
       foregone_billable_cents AS "foregoneCents"
     FROM invoices
     WHERE id IN (
-      SELECT DISTINCT invoice_id FROM time_entries
+      SELECT DISTINCT invoice_id FROM report_time_entries
       WHERE invoice_id IS NOT NULL AND spent_date BETWEEN ${range.from} AND ${range.to}
     )`)
   const invoiceById = new Map(invoices.map((invoice) => [invoice.id, invoice]))
