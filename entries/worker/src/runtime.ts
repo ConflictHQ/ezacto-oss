@@ -26,6 +26,7 @@ import {
   createD1Database,
   readUserIdentity,
   readUserTimezone,
+  readEffectiveUserTimezone,
   updateUserTimezone,
   createD1IdentityStore,
   createD1OidcTransactionStore,
@@ -1318,6 +1319,7 @@ export const createRuntimeServices = async (
     },
     profile: {
       readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
+      readEffectiveTimezone: async (userId) => await readEffectiveUserTimezone(drizzle, userId),
       readIdentity: async (userId) => await readUserIdentity(drizzle, userId),
       updateTimezone: async (userId, timezone, occurredAt) => {
         await updateUserTimezone(drizzle, userId, timezone, occurredAt);

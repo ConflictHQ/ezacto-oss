@@ -6534,6 +6534,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       last_name: stringSchema,
       email: nullable(stringSchema),
       timezone: { type: "string", minLength: 1 },
+      // Server filing zone, including the organization fallback. Read-only and
+      // absent where an older/custom deployment does not compose its reader.
+      effective_timezone: { type: "string", minLength: 1, readOnly: true },
       // Whether this person is copied on the invoice emails they send. Absent
       // where the deployment sends no invoice email.
       invoice_copy_to_self: booleanSchema,

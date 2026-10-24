@@ -95,6 +95,45 @@ describe("what a calendar proposal becomes (issue 428)", () => {
       }),
     ).toEqual({ kind: "duration", spentDate: "2026-09-01", seconds: 7_200 });
   });
+
+  it.each([
+    { name: "spring gap", startsAt: "2026-03-08T06:30:00Z", endsAt: "2026-03-08T07:30:00Z", seconds: 3600 },
+    { name: "autumn fold", startsAt: "2026-11-01T05:45:00Z", endsAt: "2026-11-01T06:15:00Z", seconds: 1800 },
+  ])("[unit #1201] refuses a start/end $name rather than changing elapsed time", ({ startsAt, endsAt, seconds }) => {
+    const input = { startsAt, endsAt, timeZone: "America/New_York" };
+    expect(() => calendarProposalEntryFields({ ...input, mode: "start_end" }))
+      .toThrow(TrackedResourceInputError);
+    expect(calendarProposalEntryFields({ ...input, mode: "duration" }))
+      .toMatchObject({ seconds });
+  });
+
+  it.each(["2026-11-01T05:00:00Z", "2026-11-01T06:00:00Z"])(
+    "[unit #1201] retains a representable interval within either repeated hour (%s)",
+    (startsAt) => {
+      expect(calendarProposalEntryFields({
+        mode: "start_end", startsAt,
+        endsAt: new Date(Date.parse(startsAt) + 1800_000).toISOString(),
+        timeZone: "America/New_York",
+      })).toEqual({ kind: "start_end", spentDate: "2026-11-01", startedTime: "01:00", endedTime: "01:30" });
+    },
+  );
+
+  it.each(["2026-09-01T14:00:30.000Z", "2026-09-01T14:00:00.500Z"])(
+    "[unit #1201] refuses subminute endpoints without shifting them (%s)",
+    (startsAt) => {
+      const input = { startsAt, endsAt: new Date(Date.parse(startsAt) + 1800_000).toISOString(), timeZone: "UTC" };
+      expect(() => calendarProposalEntryFields({ ...input, mode: "start_end" }))
+        .toThrow(TrackedResourceInputError);
+      expect(calendarProposalEntryFields({ ...input, mode: "duration" }))
+        .toMatchObject({ seconds: 1800 });
+    },
+  );
+
+  it("[unit #1201] refuses a full day that identical minute clocks cannot encode", () => {
+    expect(() => calendarProposalEntryFields({ mode: "start_end", timeZone: "UTC",
+      startsAt: "2026-09-01T00:00:00Z", endsAt: "2026-09-02T00:00:00Z" }))
+      .toThrow(TrackedResourceInputError);
+  });
 });
 
 describe("a proposal's title", () => {

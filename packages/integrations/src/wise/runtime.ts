@@ -157,14 +157,11 @@ export interface WisePayoutAccountPort {
   detach(id: number, now: string): Promise<boolean>;
 }
 
-/**
- * The delivery ledger and the transfer log.
- *
- * `claim` is first and is the arbiter: Wise retries anything it did not get a
- * 2xx for, and only the first caller for a delivery id may act.
- */
+/** A verified event is completed by one local atomic store operation.
+ * Custom ports must implement this boundary; split claim/settle cannot recover
+ * a crash between writes. No provider request belongs inside this operation. */
 export interface WiseDeliveryPort {
-  claim(input: {
+  process(input: {
     deliveryId: string;
     subscriptionId: string;
     eventType: string;
@@ -172,17 +169,9 @@ export interface WiseDeliveryPort {
     currentState: string | null;
     occurredAt: string | null;
     now: string;
-  }): Promise<{ claim: "fresh" } | { claim: "duplicate" }>;
-  finish(deliveryId: string, now: string, skippedReason: string | null): Promise<void>;
-  settleTransfer(input: {
-    transferId: string;
-    outcome: "sent" | "failed";
-    failureReason: string | null;
-    now: string;
-  }): Promise<
-    | { settled: "sent" | "failed"; transferId: string }
-    | { settled: "none"; reason: string }
-  >;
+    outcome: "sent" | "failed" | null;
+    skippedReason: string | null;
+  }): Promise<void>;
 }
 
 export interface WiseConfig {
@@ -398,20 +387,15 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
     const transferId = event.kind === "transfer_state" ? event.transferId : null;
     const eventType =
       event.kind === "transfer_state" ? "transfers#state-change" : event.eventType;
-    // A delivery with no id of its own is keyed on the event's own identity,
-    // which is stable across a retry for the same reason: a retry is the same
-    // event again.
-    const deliveryId =
-      trimmed(input.deliveryId ?? undefined) ??
-      [
-        event.subscriptionId,
-        eventType,
-        transferId ?? "-",
-        event.kind === "transfer_state" ? event.currentState : "-",
-        event.occurredAt ?? "-",
-      ].join("|");
+    // Wise signs the raw body, not the delivery-id header. A changed header
+    // must not turn a verified retry into another durable event claim.
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input.payload));
+    const deliveryId = `wise-body-sha256:${Array.from(new Uint8Array(digest), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("")}`;
 
-    const claimed = await deliveries.claim({
+    const outcome = event.kind === "transfer_state" ? payoutOutcomeFor(event.currentState) : null;
+    await deliveries.process({
       deliveryId,
       subscriptionId: event.subscriptionId,
       eventType,
@@ -419,34 +403,14 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
       currentState: event.kind === "transfer_state" ? event.currentState : null,
       occurredAt: event.occurredAt,
       now,
-    });
-    // Told already. The right answer to a retry is 2xx and no further work.
-    if (claimed.claim === "duplicate") return { accepted: true };
-
-    if (event.kind !== "transfer_state") {
-      await deliveries.finish(deliveryId, now, `event type ${event.eventType} is not acted on`);
-      return { accepted: true };
-    }
-
-    const outcome = payoutOutcomeFor(event.currentState);
-    if (outcome === null) {
-      // In flight. Writing 'sent' here would mark money as moved while it is
-      // still reversible, and a sent row cannot be corrected afterwards.
-      await deliveries.finish(deliveryId, now, `state ${event.currentState} is not final`);
-      return { accepted: true };
-    }
-
-    const settlement = await deliveries.settleTransfer({
-      transferId: event.transferId,
       outcome,
-      failureReason: outcome === "failed" ? `wise reported ${event.currentState}` : null,
-      now,
+      skippedReason:
+        event.kind !== "transfer_state"
+          ? `event type ${event.eventType} is not acted on`
+          : outcome === null
+            ? `state ${event.currentState} is not final`
+            : null,
     });
-    await deliveries.finish(
-      deliveryId,
-      now,
-      settlement.settled === "none" ? settlement.reason : null,
-    );
     return { accepted: true };
   };
 
