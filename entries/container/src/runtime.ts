@@ -1,3 +1,4 @@
+import { createOrganizationHolidayRepository } from '@ezacto/db'
 import { demoDeployment } from '../../worker/src/app.js'
 import { createWebhookSecretVault } from '@ezacto/core'
 import { createWebhookService } from '@ezacto/db'
@@ -916,6 +917,7 @@ export const createContainerRuntime = async (
       trackedResources,
       calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
       allocations: new DrizzleAllocationRepository(drizzle),
+      organizationHolidays: createOrganizationHolidayRepository(drizzle),
       workItems: {
         repository: new DrizzleWorkItemRepository(drizzle),
         credentialConfigured: (provider) =>

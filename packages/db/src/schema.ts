@@ -4261,3 +4261,12 @@ export const clientRateCardVersions = sqliteTable(
     index('client_rate_card_versions_card').on(table.cardId),
   ],
 )
+
+/** Full local weekdays the operator marks unavailable for the whole organization. */
+export const organizationHolidays = sqliteTable('organization_holidays', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  date: text('holiday_date').notNull().unique(),
+  name: text('name').notNull(),
+  version: integer('version').notNull().default(0),
+  ...timestamps,
+})

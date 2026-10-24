@@ -98,8 +98,8 @@ export const assertTimeOffFields = (fields: Readonly<TimeOffFields>): void => {
  * Seconds of capacity the person's time off removes from the seven days
  * beginning `weekStart`. Only Monday to Friday count. A whole day removes a
  * fifth of the weekly capacity. The total never exceeds the capacity, so
- * available capacity is never negative. Entries are expected not to overlap
- * (the store refuses overlaps); a day is counted once per entry.
+ * available capacity is never negative. Overlapping personal leave and organization holidays remove only the larger
+ * daily amount; the same day is never subtracted twice.
  */
 export const timeOffSecondsInWeek = (
   entries: readonly {
@@ -116,9 +116,11 @@ export const timeOffSecondsInWeek = (
     const day = addDays(weekStart, offset);
     const weekday = new Date(`${day}T00:00:00.000Z`).getUTCDay();
     if (weekday === 0 || weekday === 6) continue;
+    let away = 0;
     for (const entry of entries) {
-      if (entry.startDate <= day && entry.endDate >= day) total += entry.secondsPerDay ?? wholeDay;
+      if (entry.startDate <= day && entry.endDate >= day) away = Math.max(away, entry.secondsPerDay ?? wholeDay);
     }
+    total += away;
   }
   return Math.min(total, weeklyCapacitySeconds);
 };

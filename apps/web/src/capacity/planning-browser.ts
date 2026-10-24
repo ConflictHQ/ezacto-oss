@@ -1,3 +1,4 @@
+import { createOrganizationHolidayController } from './organization-holidays-browser.js'
 import { renderDataTable } from "../components/data-table.js";
 import {
   hoursText,
@@ -47,6 +48,7 @@ export const createPlanningEntry = (
   onChanged: () => void,
 ): PlanningEntry => {
   let mounted = false;
+  let holidays: ReturnType<typeof createOrganizationHolidayController> | null = null;
   let people: readonly { id: number; name: string }[] = [];
   let projects: readonly { id: number; name: string }[] = [];
   let allocations: readonly AllocationRow[] = [];
@@ -433,15 +435,19 @@ export const createPlanningEntry = (
       host.hidden = false;
       mounted = true;
       wire();
+      const holidayHost = host.querySelector<HTMLElement>("[data-organization-holidays]");
+      if (holidayHost && api.holidays) holidays = createOrganizationHolidayController(holidayHost, api.holidays, onChanged);
     },
     unmount() {
       mounted = false;
+      holidays?.clear(); holidays = null;
       host.replaceChildren();
       host.hidden = true;
     },
     async refresh(nextPeople, range, signal) {
       if (!mounted) return;
       people = nextPeople;
+      await holidays?.refresh(range, signal);
       try {
         if (projects.length === 0) projects = await api.listProjects(signal);
         [allocations, timeOff] = await Promise.all([

@@ -558,4 +558,5 @@ export * from './invoice-elevations.js'
 
 export * from './migration-loads.js'
 
+export { installOrganizationHolidayRoutes } from './organization-holidays.js'
 export { installOutboundWebhookRoutes } from './outbound-webhooks.js'

@@ -29,6 +29,9 @@ type NativeClient = BetterSqlite3.Database | D1Database
  * subject, in order" is no longer a property anything can check.
  */
 export const ACTIVITY_EVENT_AGGREGATES = {
+  'organization_holiday.created': 'organization_calendar',
+  'organization_holiday.updated': 'organization_calendar',
+  'organization_holiday.deleted': 'organization_calendar',
   'auth.signed_in': 'user_authentication',
   'auth.signed_out': 'user_authentication',
   'api_token.created': 'api_token',

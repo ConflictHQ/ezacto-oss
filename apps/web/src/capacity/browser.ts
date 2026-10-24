@@ -1,5 +1,6 @@
 import { renderDataTable, type CellContent } from '../components/data-table.js'
 import {
+  addCalendarDays,
   capacityCellText,
   capacityRange,
   shortDate,
@@ -120,7 +121,9 @@ export const createCapacityController = (api: CapacityApi): CapacityController =
           id: person.user_id,
           name: `${person.first_name} ${person.last_name}`,
         })),
-        range,
+        // Entry lists cover the same complete weeks as the capacity grid.
+        { from: response.data.weeks[0] ?? range.from,
+          to: response.data.weeks.length ? addCalendarDays(response.data.weeks.at(-1)!, 6) : range.to },
         signal,
       )
     } catch (error) {
