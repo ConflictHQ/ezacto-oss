@@ -2547,6 +2547,7 @@ export type Profile = {
   "last_name"?: string;
   "email"?: string | null;
   "timezone": string;
+  "effective_timezone"?: string;
   "invoice_copy_to_self"?: boolean;
 };
 

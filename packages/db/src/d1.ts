@@ -45,6 +45,7 @@ export {
   listClientDescendants,
   readUserIdentity,
   readUserTimezone,
+  readEffectiveUserTimezone,
   updateUserTimezone,
   type ClientHierarchyNode,
 } from './operations.js'

@@ -143,6 +143,7 @@ import {
   createQuickBooksStore,
   readUserIdentity,
   readUserTimezone,
+  readEffectiveUserTimezone,
   updateUserTimezone,
   createContainerIdempotencyStore,
   createIdempotentSqlite,
@@ -921,6 +922,7 @@ export const createContainerRuntime = async (
       },
       profile: {
         readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
+        readEffectiveTimezone: async (userId) => await readEffectiveUserTimezone(drizzle, userId),
         readIdentity: async (userId) => await readUserIdentity(drizzle, userId),
         updateTimezone: async (userId, timezone, occurredAt) => {
           await updateUserTimezone(drizzle, userId, timezone, occurredAt)
