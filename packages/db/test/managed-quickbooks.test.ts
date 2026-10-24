@@ -135,6 +135,7 @@ const data = <T>(value: T | Response): T => {
 const interceptedStore = (
   database: Awaited<ReturnType<typeof fixture>>['db'],
   after: (rows: Record<string, unknown>[][]) => void | Promise<void>,
+  wrapFailure: (error: unknown) => unknown = (error) => error,
 ) => {
   const client = database.$client as BetterSqlite3.Database | D1Database
   const wrapped =
@@ -142,18 +143,26 @@ const interceptedStore = (
       ? {
           prepare: client.prepare.bind(client),
           batch: async (statements: D1PreparedStatement[]) => {
-            const results = await client.batch(statements)
-            await after(results.map((result) => result.results as Record<string, unknown>[]))
-            return results
+            try {
+              const results = await client.batch(statements)
+              await after(results.map((result) => result.results as Record<string, unknown>[]))
+              return results
+            } catch (error) {
+              throw wrapFailure(error)
+            }
           },
         }
       : {
           prepare: client.prepare.bind(client),
           transaction: (work: () => Record<string, unknown>[][]) => ({
             immediate: async () => {
-              const results = client.transaction(work).immediate()
-              await after(results)
-              return results
+              try {
+                const results = client.transaction(work).immediate()
+                await after(results)
+                return results
+              } catch (error) {
+                throw wrapFailure(error)
+              }
             },
           }),
         }
@@ -373,15 +382,33 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks native %s', (runtim
         void error
         throw new Error('ignored reporter failure')
       })
+    const deceptive = {
+      ...f.command,
+      tokens: {
+        ...f.command.tokens,
+        accessToken: 'managed_quickbooks_allowed_token',
+        companyName: 'CHECK constraint',
+      },
+    }
+    // The actual backend still performs and rolls back the failed command;
+    // model a diagnostic driver envelope that includes untrusted bound params.
+    const wrappedStore = interceptedStore(
+      f.db,
+      () => undefined,
+      (cause) =>
+        new Error(`Owned driver envelope params=${JSON.stringify(deceptive.tokens)}`, { cause }),
+    )
     const commands = createManagedQuickBooksGrantCommands({
-      store: f.store,
+      store: wrappedStore,
       authentication: { sessions: createApiSessionService(f.sessions) },
       now: f.now,
       reportError: reporter,
     })
-    const response = await commands.accept(f.request(), f.command)
+    const response = await commands.accept(f.request(), deceptive)
     expect((response as Response).status).toBe(503)
-    expect(await (response as Response).text()).not.toContain('PRIVATE_ACCESS_SENTINEL')
+    expect(await (response as Response).text()).not.toMatch(
+      /PRIVATE_ACCESS_SENTINEL|PRIVATE_REFRESH_SENTINEL|managed_quickbooks_allowed_token|CHECK constraint/,
+    )
     expect(
       log.mock.calls
         .flat()
@@ -389,18 +416,21 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks native %s', (runtim
           value instanceof Error ? `${value.name}:${value.message}:${value.stack}` : String(value),
         )
         .join(''),
-    ).not.toContain('PRIVATE_ACCESS_SENTINEL')
+    ).not.toMatch(
+      /PRIVATE_ACCESS_SENTINEL|PRIVATE_REFRESH_SENTINEL|managed_quickbooks_allowed_token|CHECK constraint/,
+    )
     expect(reporter).toHaveBeenCalledOnce()
-    expect(String(reporter.mock.calls[0]![0])).toContain('PRIVATE_ACCESS_SENTINEL')
+    expect(String(reporter.mock.calls[0]![0].cause)).toContain('PRIVATE_ACCESS_SENTINEL')
+    expect(reporter.mock.calls[0]![0].message).toContain('managed_quickbooks_allowed_token')
     const rejectedObserver = createManagedQuickBooksGrantCommands({
-      store: f.store,
+      store: wrappedStore,
       authentication: { sessions: createApiSessionService(f.sessions) },
       now: f.now,
       reportError: async () => {
         throw new Error('ignored async observer failure')
       },
     })
-    expect(((await rejectedObserver.accept(f.request(), f.command)) as Response).status).toBe(503)
+    expect(((await rejectedObserver.accept(f.request(), deceptive)) as Response).status).toBe(503)
     await Promise.resolve()
     expect(await f.rows('quickbooks_managed_grants')).toHaveLength(0)
     expect(await f.canonical.readConnection()).toBeNull()

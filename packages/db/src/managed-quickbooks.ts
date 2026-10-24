@@ -265,16 +265,11 @@ export const createManagedQuickBooksGrantStore = (
         const raced = await replay()
         if (raced) return raced
         if (error instanceof ManagedQuickBooksGrantError) throw error
-        let cause: unknown = error
-        for (let depth = 0; depth < 6 && cause; depth++) {
-          if (
-            /managed_quickbooks|quickbooks_generation|UNIQUE constraint|CHECK constraint|FOREIGN KEY constraint/.test(
-              String(cause),
-            )
-          )
-            fail('conflict')
-          cause = cause instanceof Error ? cause.cause : null
-        }
+        // Classify conflicts from current canonical facts, never error strings:
+        // driver wrappers can include token/company params in their messages.
+        const { state } = await snapshot(authority, now)
+        if (state.generation !== command.expectedConnectionGeneration || connected(state))
+          fail('conflict')
         throw error
       }
     },
