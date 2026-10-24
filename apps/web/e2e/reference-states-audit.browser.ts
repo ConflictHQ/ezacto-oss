@@ -124,7 +124,12 @@ for (const width of [390, 1280]) {
         await capture('error-expenses')
         await page.unroute(expenses, failExpenseRead)
         await page.locator('[data-expense-list-retry]').click()
-        await expect(page.locator('[data-expense-list] tbody tr[data-row]')).toHaveCount(3)
+        // Other cases' expenses remain in the shared list; verify every owned row.
+        for (const id of ownedIds) {
+          const row = page.locator(`[data-expense-list] tbody tr[data-row-key="${id}"]`)
+          await expect(row).toHaveCount(1)
+          await expect(row).toContainText(`Browser 360 Project ${id - 9299}`)
+        }
         await capture('populated-expenses')
 
         await page.goto('/reports?report=time&from=2026-08-01&to=2026-08-31')
