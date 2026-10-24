@@ -10021,9 +10021,11 @@ button[data-first-run-help] {
   background: var(--ez-ground);
   color: var(--ez-ink);
   transform: translateY(calc(-100% - 24px));
+  clip-path: inset(50%);
 }
 .app-skip-link:focus {
   transform: none;
+  clip-path: none;
   outline: 3px solid var(--ez-data);
   outline-offset: 3px;
 }
