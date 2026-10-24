@@ -1,25 +1,25 @@
 import { TrackedResourceInputError } from "./tracked-state.js";
 
 /**
- * Contract for client-read revision preconditions on allocation and personal
+ * Contract for client-read version preconditions on allocation and personal
  * time-off edits (issue 1190). Types and pure rules only: no schema, route or
  * repository changes live here. A real repository must pass the reusable suite
  * in `test/revision-store-suite.ts`.
  *
  * Invariants:
- * - A row's revision is an integer, zero at creation, incremented by exactly
+ * - A row's version is an integer, zero at creation, incremented by exactly
  *   one in the same atomic write as each successful update.
- * - PATCH and DELETE carry the revision the caller last read as `revision` in
+ * - PATCH and DELETE carry the version the caller last read as `version` in
  *   the JSON body (the shape organization holidays use for `version`).
  * - A supplied precondition is never ignored: wrong type, negative or null is
  *   a 422, a mismatch is a 409.
- * - Authority (schedule/profile/person/project) and the revision are compared
+ * - Authority (schedule/profile/person/project) and the version are compared
  *   in the mutation transaction. Authority is decided first, so a caller who
- *   lost access learns nothing about the row's current revision.
+ *   lost access learns nothing about the row's current version.
  * - A refused or stale write changes no data and records no audit event.
  */
 
-export const revisionField = "revision";
+export const versionField = "version";
 
 /**
  * `required`: a missing precondition is a 422. `legacy-unconditioned`: a missing
@@ -29,35 +29,35 @@ export const revisionField = "revision";
 export type RevisionCompatibility = "required" | "legacy-unconditioned";
 
 export interface Revisioned {
-  readonly revision: number;
+  readonly version: number;
 }
 
 const isRevision = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
 /**
- * Reads the expected revision from a request body. Returns null only when the
+ * Reads the expected version from a request body. Returns null only when the
  * field is absent under `legacy-unconditioned`.
  */
 export const parseExpectedRevision = (
   body: Readonly<Record<string, unknown>>,
   compatibility: RevisionCompatibility,
 ): number | null => {
-  if (!Object.hasOwn(body, revisionField)) {
+  if (!Object.hasOwn(body, versionField)) {
     if (compatibility === "required")
       throw new TrackedResourceInputError(
-        revisionField,
-        "revision_required",
-        "Send the revision you last read so a newer change is not overwritten.",
+        versionField,
+        "version_required",
+        "Send the version you last read so a newer change is not overwritten.",
       );
     return null;
   }
-  const value = body[revisionField];
+  const value = body[versionField];
   if (!isRevision(value))
     throw new TrackedResourceInputError(
-      revisionField,
-      "invalid_revision",
-      "revision must be a whole number, zero or greater.",
+      versionField,
+      "invalid_version",
+      "version must be a whole number, zero or greater.",
     );
   return value;
 };
@@ -65,13 +65,13 @@ export const parseExpectedRevision = (
 export type RevisionedWriteRefusal = "not_found" | "forbidden" | "stale";
 
 export type RevisionedWriteDecision =
-  | { readonly ok: true; readonly nextRevision: number }
+  | { readonly ok: true; readonly nextVersion: number }
   | { readonly ok: false; readonly refusal: RevisionedWriteRefusal };
 
 /**
  * The decision a mutation transaction makes from the freshly read row. Order is
- * fixed: missing row, then authority, then revision. Deleting does not use
- * `nextRevision`.
+ * fixed: missing row, then authority, then version. Deleting does not use
+ * `nextVersion`.
  */
 export const decideRevisionedWrite = (input: {
   readonly current: Readonly<Revisioned> | null;
@@ -80,9 +80,9 @@ export const decideRevisionedWrite = (input: {
 }): RevisionedWriteDecision => {
   if (input.current === null) return { ok: false, refusal: "not_found" };
   if (!input.authorized) return { ok: false, refusal: "forbidden" };
-  if (input.expected !== null && input.expected !== input.current.revision)
+  if (input.expected !== null && input.expected !== input.current.version)
     return { ok: false, refusal: "stale" };
-  return { ok: true, nextRevision: input.current.revision + 1 };
+  return { ok: true, nextVersion: input.current.version + 1 };
 };
 
 /**
@@ -92,6 +92,6 @@ export const decideRevisionedWrite = (input: {
  */
 export interface RevisionConflictBody<Row extends Revisioned> {
   readonly code: "allocation_changed" | "time_off_changed";
-  readonly currentRevision: number;
+  readonly currentVersion: number;
   readonly current: Row | null;
 }

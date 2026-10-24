@@ -18,7 +18,7 @@ const fakeStore = (): RevisionedStoreUnderTest => {
   let next = 1;
   return {
     async seed(note) {
-      const row = { id: next++, note, revision: 0 };
+      const row = { id: next++, note, version: 0 };
       rows.set(row.id, row);
       return { ...row };
     },
@@ -35,13 +35,13 @@ const fakeStore = (): RevisionedStoreUnderTest => {
         expected: a.expected,
       });
       if (!d.ok) return d.refusal;
-      rows.set(a.id, { id: a.id, note: a.note, revision: d.nextRevision });
+      rows.set(a.id, { id: a.id, note: a.note, version: d.nextVersion });
       events.push({
         id: events.length + 1,
         actorId: a.actorId,
         action: "update",
-        beforeRevision: current!.revision,
-        afterRevision: d.nextRevision,
+        beforeRevision: current!.version,
+        afterRevision: d.nextVersion,
       });
       return "ok";
     },
@@ -59,7 +59,7 @@ const fakeStore = (): RevisionedStoreUnderTest => {
         id: events.length + 1,
         actorId: a.actorId,
         action: "delete",
-        beforeRevision: current!.revision,
+        beforeRevision: current!.version,
         afterRevision: null,
       });
       return "ok";
@@ -77,8 +77,8 @@ describe("fake revisioned store satisfies the reusable contract", () => {
 describe("parseExpectedRevision", () => {
   it("reads a supplied whole number under either policy", () => {
     for (const policy of ["required", "legacy-unconditioned"] as const) {
-      expect(parseExpectedRevision({ revision: 0 }, policy)).toBe(0);
-      expect(parseExpectedRevision({ revision: 12 }, policy)).toBe(12);
+      expect(parseExpectedRevision({ version: 0 }, policy)).toBe(0);
+      expect(parseExpectedRevision({ version: 12 }, policy)).toBe(12);
     }
   });
   it("lets only the legacy policy omit it", () => {
@@ -87,7 +87,7 @@ describe("parseExpectedRevision", () => {
       TrackedResourceInputError,
     );
   });
-  it("never ignores a supplied value that is not a revision", () => {
+  it("never ignores a supplied value that is not a version", () => {
     for (const bad of [
       null,
       undefined,
@@ -101,17 +101,17 @@ describe("parseExpectedRevision", () => {
       {},
     ])
       for (const policy of ["required", "legacy-unconditioned"] as const)
-        expect(() => parseExpectedRevision({ revision: bad }, policy)).toThrow(
+        expect(() => parseExpectedRevision({ version: bad }, policy)).toThrow(
           expect.objectContaining({
-            field: "revision",
-            reasonCode: "invalid_revision",
+            field: "version",
+            reasonCode: "invalid_version",
           }),
         );
   });
 });
 
 describe("decideRevisionedWrite order", () => {
-  const current = { revision: 3 };
+  const current = { version: 3 };
   it("orders not_found, forbidden, stale", () => {
     expect(
       decideRevisionedWrite({ current: null, authorized: false, expected: 9 }),
@@ -124,6 +124,6 @@ describe("decideRevisionedWrite order", () => {
     ).toEqual({ ok: false, refusal: "stale" });
     expect(
       decideRevisionedWrite({ current, authorized: true, expected: 3 }),
-    ).toEqual({ ok: true, nextRevision: 4 });
+    ).toEqual({ ok: true, nextVersion: 4 });
   });
 });

@@ -42,10 +42,10 @@ export interface RevisionedStoreUnderTest {
 export const describeRevisionStoreContract = (
   make: () => RevisionedStoreUnderTest,
 ): void => {
-  it("starts at revision zero and increments by exactly one per update", async () => {
+  it("starts at version zero and increments by exactly one per update", async () => {
     const s = make();
     const row = await s.seed("a");
-    expect(row.revision).toBe(0);
+    expect(row.version).toBe(0);
     expect(
       await s.update({
         id: row.id,
@@ -55,7 +55,7 @@ export const describeRevisionStoreContract = (
         authorized: true,
       }),
     ).toBe("ok");
-    expect((await s.read(row.id))?.revision).toBe(1);
+    expect((await s.read(row.id))?.version).toBe(1);
     expect(
       await s.update({
         id: row.id,
@@ -65,7 +65,7 @@ export const describeRevisionStoreContract = (
         authorized: true,
       }),
     ).toBe("ok");
-    expect((await s.read(row.id))?.revision).toBe(2);
+    expect((await s.read(row.id))?.version).toBe(2);
   });
 
   it("refuses a stale update and delete without data change or audit event", async () => {
@@ -91,11 +91,11 @@ export const describeRevisionStoreContract = (
     expect(
       await s.remove({ id: row.id, actorId: 2, expected: 0, authorized: true }),
     ).toBe("stale");
-    expect(await s.read(row.id)).toMatchObject({ note: "b", revision: 1 });
+    expect(await s.read(row.id)).toMatchObject({ note: "b", version: 1 });
     expect((await s.audit()).length).toBe(events);
   });
 
-  it("refuses a future revision as stale", async () => {
+  it("refuses a future version as stale", async () => {
     const s = make();
     const row = await s.seed("a");
     expect(
@@ -109,7 +109,7 @@ export const describeRevisionStoreContract = (
     ).toBe("stale");
   });
 
-  it("checks authority before revision, so a stale caller without access learns only forbidden", async () => {
+  it("checks authority before version, so a stale caller without access learns only forbidden", async () => {
     const s = make();
     const row = await s.seed("a");
     await s.update({
@@ -136,7 +136,7 @@ export const describeRevisionStoreContract = (
         authorized: false,
       }),
     ).toBe("forbidden");
-    expect(await s.read(row.id)).toMatchObject({ note: "b", revision: 1 });
+    expect(await s.read(row.id)).toMatchObject({ note: "b", version: 1 });
   });
 
   it("reports a missing row as not_found whatever the precondition", async () => {
@@ -155,7 +155,7 @@ export const describeRevisionStoreContract = (
     ).toBe("not_found");
   });
 
-  it("lets a legacy caller without a precondition write, still bumping the revision", async () => {
+  it("lets a legacy caller without a precondition write, still bumping the version", async () => {
     const s = make();
     const row = await s.seed("a");
     expect(
@@ -167,10 +167,10 @@ export const describeRevisionStoreContract = (
         authorized: true,
       }),
     ).toBe("ok");
-    expect((await s.read(row.id))?.revision).toBe(1);
+    expect((await s.read(row.id))?.version).toBe(1);
   });
 
-  it("lets exactly one of two concurrent writers at the same revision win", async () => {
+  it("lets exactly one of two concurrent writers at the same version win", async () => {
     const s = make();
     const row = await s.seed("a");
     const results = await Promise.all([
@@ -199,7 +199,7 @@ export const describeRevisionStoreContract = (
     expect(events[0]?.beforeRevision).toBe(0);
   });
 
-  it("writes the before and after revision in the audit event of a successful update", async () => {
+  it("writes the before and after version in the audit event of a successful update", async () => {
     const s = make();
     const row = await s.seed("a");
     await s.update({
