@@ -46,7 +46,10 @@ same rows.
 6. Hidden scope: planned hours on projects the caller cannot see are included in
    `plannedSeconds` and reported as `otherScopePlannedSeconds` with
    `hasOtherScope`; tracked time on hidden projects is likewise included in
-   `trackedSeconds` and reported as `otherScopeTrackedSeconds`; a hidden
+   `trackedSeconds` and reported as `otherScopeTrackedSeconds`. The hidden
+   part of whole-person `personPlannedSeconds` is reported in both views as
+   `personOtherScopePlannedSeconds` and sets `hasOtherScope`, so in the project
+   view `overAllocated` never turns on hidden work without a label; a hidden
    placeholder sets `hasOtherScope` but no hidden project id, name or
    placeholder is ever emitted. Leave appears only as availability seconds, never kind or note.
 7. `revision` is a SHA-256 of the canonical projection (everything but

@@ -493,6 +493,28 @@ describe("resource calendar contract (issue 1192)", () => {
     expect(out.people[0]!.weeks[0]!.overAllocated).toBe(false);
   });
 
+  it("[unit] project view labels hidden whole-person planned hours behind overAllocated", () => {
+    const out = composeResourceCalendar(
+      context,
+      { ...query, view: "project", projectId: 10 },
+      {
+        ...base,
+        allocations: [
+          alloc({ plannedSecondsPerWeek: hours(10) }),
+          alloc({ id: 2, projectId: 99, plannedSecondsPerWeek: hours(30) }),
+        ],
+      },
+    );
+    const week = out.people[0]!.weeks[0]!;
+    expect(week.plannedSeconds).toBe(hours(10));
+    expect(week.otherScopePlannedSeconds).toBe(0);
+    expect(week.personPlannedSeconds).toBe(hours(40));
+    expect(week.personOtherScopePlannedSeconds).toBe(hours(30));
+    expect(week.overAllocated).toBe(true);
+    expect(out.hasOtherScope).toBe(true);
+    expect(JSON.stringify(out)).not.toMatch(/"projectId":99/u);
+  });
+
   it("[unit] bounds unassigned demand and skips it for a person filter or a later page", () => {
     const placeholders = Array.from(
       { length: maximumResourceCalendarPlaceholders + 5 },

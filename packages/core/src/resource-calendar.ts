@@ -170,6 +170,8 @@ export interface ResourceCalendarPersonWeek {
   readonly trackedSeconds: number;
   /** Whole-person planned seconds on every project; the numerator of overAllocated and the same scope as availableSeconds. */
   readonly personPlannedSeconds: number;
+  /** The part of personPlannedSeconds on projects the caller cannot see, in both views; never named. */
+  readonly personOtherScopePlannedSeconds: number;
   /** personPlannedSeconds > availableSeconds, in both views. */
   readonly overAllocated: boolean;
   /** Visible projects only. */
@@ -392,14 +394,20 @@ export const composeResourceCalendar = (
         (sum, allocation) => sum + allocation.plannedSecondsPerWeek,
         0,
       );
-      const personPlanned = rows.allocations
-        .filter(
-          (allocation) =>
-            allocation.personId === person.id &&
-            !allocation.projectArchived &&
-            allocationCoversWeek(allocation, weekStart),
-        )
+      const personCovering = rows.allocations.filter(
+        (allocation) =>
+          allocation.personId === person.id &&
+          !allocation.projectArchived &&
+          allocationCoversWeek(allocation, weekStart),
+      );
+      const personPlanned = personCovering.reduce(
+        (sum, allocation) => sum + allocation.plannedSecondsPerWeek,
+        0,
+      );
+      const personOther = personCovering
+        .filter((allocation) => !visible.has(allocation.projectId))
         .reduce((sum, allocation) => sum + allocation.plannedSecondsPerWeek, 0);
+      if (personOther > 0) hasOtherScope = true;
       const available =
         person.weeklyCapacitySeconds -
         timeOffSecondsInWeek(leave, weekStart, person.weeklyCapacitySeconds);
@@ -425,6 +433,7 @@ export const composeResourceCalendar = (
         availableSeconds: available,
         trackedSeconds: tracked,
         personPlannedSeconds: personPlanned,
+        personOtherScopePlannedSeconds: personOther,
         overAllocated: isOverAllocated(personPlanned, available),
         projects: [...byProject].map(([projectId, plannedSeconds]) => ({
           projectId,
