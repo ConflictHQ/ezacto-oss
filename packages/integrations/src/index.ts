@@ -291,3 +291,5 @@ export type {
 } from './work-items/provider.js'
 
 export { createWorkerWebhookTransport } from './outbound-webhooks.js'
+
+export * from './work-items/publication.js'
