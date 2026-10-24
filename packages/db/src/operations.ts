@@ -1,4 +1,5 @@
 import { eq, sql } from 'drizzle-orm'
+import { effectiveTimeZone } from '@ezacto/core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
@@ -136,6 +137,20 @@ export const readUserTimezone = async (
     .where(eq(users.id, userId))
     .limit(1)
   return row?.timezone ?? null
+}
+
+/** The same server-side filing zone used when accepting a calendar proposal. */
+export const readEffectiveUserTimezone = async (
+  database: Database,
+  userId: number,
+): Promise<string> => {
+  const [row] = await database
+    .select()
+    .from(users)
+    .leftJoin(organizations, eq(organizations.id, 1))
+    .where(eq(users.id, userId))
+    .limit(1)
+  return effectiveTimeZone(row?.users.timezone ?? null, row?.organizations?.timezone ?? 'UTC')
 }
 
 /**

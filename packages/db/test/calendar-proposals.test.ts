@@ -379,6 +379,29 @@ for (const [runtime, factory] of factories) {
       expect((await proposalRows(db))[0]).toMatchObject({ status: 'proposed' })
     }, 60_000)
 
+    it('[money #1201] keeps unrepresentable clock intervals open without creating wrong time', async () => {
+      const { db, repository } = await setup({ mode: 'start_end', mayaZone: 'America/New_York' })
+      await proposeCalendarEvents(db.orm, 1, [
+        event({ eventId: 'clock-fold', startsAt: '2026-11-01T05:45:00Z', endsAt: '2026-11-01T06:15:00Z' }),
+        event({ eventId: 'subminute', startsAt: '2026-09-01T14:00:30Z', endsAt: '2026-09-01T14:30:30Z' }),
+      ], t0)
+      const pending = await list(repository, 1)
+      for (const proposal of pending) {
+        await expect(repository.accept(maya, proposal.id, { projectId: 1, taskId: 1 },
+          at('2026-11-02T12:00:00.000Z'))).rejects.toMatchObject({
+          field: 'proposal', reasonCode: proposal.eventId === 'clock-fold' ? 'unrepresentable_time' : 'subminute_time',
+        })
+      }
+      expect(await entryRows(db)).toEqual([])
+      expect((await proposalRows(db)).map(row => [row.status, row.time_entry_id]))
+        .toEqual([['proposed', null], ['proposed', null]])
+      // Duration mode records the original elapsed time rather than wall-clock arithmetic.
+      await db.run("UPDATE organizations SET time_entry_mode='duration' WHERE id=1")
+      await repository.accept(maya, pending.find(proposal => proposal.eventId === 'clock-fold')!.id,
+        { projectId: 1, taskId: 1 }, at('2026-11-02T12:00:00.000Z'))
+      expect(await entryRows(db)).toMatchObject([{ seconds: 1800, started_time: null, ended_time: null }])
+    }, 60_000)
+
     it('[unit] applies the organization rounding rule, because it goes through the ordinary path', async () => {
       const { db, repository } = await setup({ rounding: ['up', 15] })
       await proposeCalendarEvents(

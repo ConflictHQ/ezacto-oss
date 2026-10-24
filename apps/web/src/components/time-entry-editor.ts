@@ -17,7 +17,7 @@ export type OrganizationClock = '12h' | '24h'
  * calendar (issue 943): it opens with its times already set and the note
  * waiting, and Enter in the note saves it.
  */
-export type EntryEditorContext = 'week-cell' | 'day' | 'quick-add' | 'edit' | 'timer' | 'calendar'
+export type EntryEditorContext = 'week-cell' | 'day' | 'quick-add' | 'edit' | 'timer' | 'calendar' | 'proposal'
 
 export interface TimeEntrySettings {
   readonly time_entry_mode: TimeEntryMode
@@ -89,6 +89,7 @@ export const modeForEntryDraft = (
       : 'start_end'
 
 export const contextLabel = (context: EntryEditorContext, editing: boolean): string => {
+  if (context === 'proposal') return 'Review calendar proposal'
   if (context === 'timer') return editing ? 'Running timer' : 'Start a timer'
   return editing ? 'Edit time entry' : 'Add time entry'
 }
