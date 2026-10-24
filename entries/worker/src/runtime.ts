@@ -1,4 +1,7 @@
 import { createOrganizationHolidayRepository } from '@ezacto/db/d1'
+import { createWebhookSecretVault } from '@ezacto/core'
+import { createWebhookService } from '@ezacto/db/d1'
+import { createWorkerWebhookTransport } from '@ezacto/integrations'
 import { createQueuedMigrationStore } from '@ezacto/db/queued-migrations'
 import { createInvoiceElevationStore, unlinkElevatedInvoiceTime } from '@ezacto/db/d1'
 import { createEstimateTemplateRepository } from '@ezacto/db/d1'
@@ -33,6 +36,7 @@ import {
   createQuickBooksReconciliationSource,
   createQuickBooksStore,
   createGeneralResourceRepository,
+  recoverProjectMissingRates,
   createMoneyResourceRepository,
   listClientAncestors,
   createClientRateCardRepository,
@@ -89,6 +93,8 @@ import {
   createBillLinkStore,
   createBillMirrorSource,
   createPayoutAccountStore,
+  createPayoutProviderEnablementStore,
+  createPayoutPreferenceStore,
   createWiseDeliveryStore,
   createDeelSyncSettingsStore,
   createDeelSyncStore,
@@ -1224,6 +1230,7 @@ export const createRuntimeServices = async (
       touchIntervalMs,
       ...(demoDeployment(env) ? { maxLifetimeMs: DEMO_API_TOKEN_MAX_LIFETIME_MS } : {}),
     }),
+    projectMissingRates: { recover: input => recoverProjectMissingRates(drizzle, input, dates => timesheetLockPolicy.lockedDates(dates)) },
     generalResources: createGeneralResourceRepository(drizzle),
     clientTree: {
       ancestors: (clientId) => listClientAncestors(drizzle, clientId),
@@ -1232,6 +1239,10 @@ export const createRuntimeServices = async (
     team: createTeamRepository(drizzle),
     invoiceElevations: createInvoiceElevationStore(drizzle),
     invoiceTimeUnlink: (command, elevation, now) => unlinkElevatedInvoiceTime(drizzle, command, elevation, now),
+    webhooks: createWebhookService(drizzle, {
+      vault: !demoDeployment(env) && env.WEBHOOK_ENCRYPTION_KEY ? await createWebhookSecretVault(env.WEBHOOK_ENCRYPTION_KEY) : null,
+      transport: createWorkerWebhookTransport(),
+    }),
     migrationLoads: createQueuedMigrationStore(binding),
     estimateTemplates: createEstimateTemplateRepository(drizzle),
     clientRateCards: createClientRateCardRepository(drizzle),
@@ -1501,6 +1512,8 @@ export const createRuntimeServices = async (
     staffPayments: createStaffPaymentStore(drizzle),
     contractorReview: createContractorReviewStore(drizzle),
     myPayments: createMyPaymentsStore(drizzle),
+    payoutProviderEnablement: createPayoutProviderEnablementStore(drizzle),
+    payoutPreferences: createPayoutPreferenceStore(drizzle),
     payoutAccounts: (() => {
       const store = createPayoutAccountStore(drizzle)
       return {

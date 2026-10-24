@@ -1,4 +1,7 @@
+import { createFirstRunController } from '../first-run/browser.js'
+import { wirePayoutDefaultSelf } from './payout-default-self.js'
 import { createScheduledRunController } from '../scheduled-runs/browser.js'
+import { wireDeelSelfPayout } from './payout-deel-self.js'
 import { createStaffPaymentsController } from '../staff-payments/browser.js'
 import { mountPasswordRecovery, takePasswordResetLink } from './password-recovery.js'
 import {
@@ -33,6 +36,7 @@ import {
   DEFAULT_COMPANY_SETTINGS_SECTION,
   applySettingsSection,
   resolveSettingsSection,
+  USER_SETTINGS_SECTIONS,
 } from '../settings-sections.js'
 import { browserTextSizeStore, createTextSizeRuntime, type TextSize, textSizes } from '../text-size.js'
 import {
@@ -1161,11 +1165,16 @@ const renderTimer = (running: DisplayTimeEntry | null): void => {
   if (timerInterval !== undefined) globalThis.clearInterval(timerInterval)
   if (running === null) {
     chip.dataset.state = 'stopped'
+    chip.setAttribute('aria-label', 'Start timer')
+    chip.title = 'Start timer'
     label.textContent = 'Start timer'
     elapsed.textContent = formatDuration(0, 'hours_minutes')
     return
   }
   chip.dataset.state = 'running'
+  const accessibleLabel = `Running timer: ${running.project_label} / ${running.task_label}`
+  chip.setAttribute('aria-label', accessibleLabel)
+  chip.title = accessibleLabel
   label.textContent = `${running.project_label} / ${running.task_label}`
   const update = (): void => {
     // A running clock reads as a clock on every client, whatever the
@@ -1555,6 +1564,7 @@ export const mountShell = async (
   const invoiceResult = required<HTMLElement>('[data-invoice-generation-result]')
   const invoiceSubmit = required<HTMLButtonElement>('[data-invoice-generation-submit]')
   const invoiceRetry = required<HTMLButtonElement>('[data-retry-invoice-catalog]')
+  const firstRun = createFirstRunController(api)
   const clientDirectory = createClientDirectoryController(api)
   const projectDirectory = createProjectDirectoryController(api)
   const taskAdmin = createTaskAdminController(api)
@@ -2038,6 +2048,14 @@ export const mountShell = async (
     configureNoteInput(entryNoteInput, entryNoteHint, 0)
     required<HTMLSelectElement>('[data-row-project]').replaceChildren()
     required<HTMLSelectElement>('[data-row-task]').replaceChildren()
+    required<HTMLElement>('[data-row-empty]').hidden = true
+    required<HTMLElement>('[data-row-empty-reason]').textContent = ''
+    const setup = required<HTMLAnchorElement>('[data-row-setup]')
+    setup.textContent = 'Set up a project'
+    setup.href = '/projects'
+    const timer = required<HTMLButtonElement>('[data-timer-chip]')
+    timer.setAttribute('aria-label', 'Timer')
+    timer.title = 'Timer'
     required<HTMLElement>('[data-command-result]').textContent = ''
     entryResult.textContent = ''
     required<HTMLElement>('[data-row-result]').textContent = ''
@@ -2494,6 +2512,9 @@ export const mountShell = async (
     const result = required<HTMLElement>('[data-settings-payout-result]')
     const submit = required<HTMLButtonElement>('[data-settings-payout-submit]')
     section.hidden = false
+    const deelSection = section.querySelector<HTMLElement>('[data-settings-payout-deel]')
+    if (deelSection !== null) wireDeelSelfPayout(deelSection, api, identity.user_id)
+    wirePayoutDefaultSelf(section, api, identity.user_id)
     // The public demo pays nobody (issue 931). It has no Wise to ask, so the
     // read could only fail; it says why instead, and offers no form.
     if (isDemoDeployment()) {
@@ -3281,6 +3302,28 @@ export const mountShell = async (
       ...projects.map((resource) => option(resource.id, resourceLabel(resource))),
     )
     updateRowTaskOptions(projects[0]?.id ?? 0)
+    const empty = projects.length === 0
+    required<HTMLElement>('[data-row-empty]').hidden = !empty
+    for (const label of document.querySelectorAll<HTMLElement>('[data-row-selection]')) {
+      label.hidden = empty
+    }
+    const submit = required<HTMLButtonElement>('[data-row-submit]')
+    submit.hidden = empty
+    submit.disabled = empty
+    const canSetUp = currentIdentity !== null &&
+      canProfileUseApiScope(currentIdentity.profile, 'projects:write')
+    required<HTMLElement>('[data-row-empty-reason]').textContent = canSetUp
+      ? 'You have no available project and task pair. In a project, use Assigned tasks → Assign task, and add the person logging time to its Project team.'
+      : 'You have no available project and task pair. Ask a project manager to add you to a project and assign a task to it.'
+    const setup = required<HTMLAnchorElement>('[data-row-setup]')
+    setup.hidden = !canSetUp
+    const firstProject = snapshot.catalog.projects[0]
+    setup.href = firstProject === undefined
+      ? '/projects'
+      : `/projects/${firstProject.id}#project-tasks-heading`
+    setup.textContent = firstProject === undefined
+      ? 'Set up a project'
+      : `Assign a task to ${resourceLabel(firstProject)}`
     updateEntrySuggestions()
   }
 
@@ -3917,6 +3960,7 @@ export const mountShell = async (
     // disagreed with what the timesheet called the same week.
     invoicePeriod.setWeekStartDay(loadedWeekStartDay)
     snapshot = loaded
+    if (requestedPerson === null && loaded.entries.length > 0) firstRun.markTimeEntrySaved()
     // A module an administrator switched off is not offered in the strip
     // (issue 815), the way Approvals and Team already are not. Only hidden,
     // never removed: the route still answers with its own "unavailable" state
@@ -4241,6 +4285,9 @@ export const mountShell = async (
             total.total_cents === undefined
               ? `${(total.rounded_seconds / 3_600).toFixed(2)} h`
               : moneyText(formatMoney(total.total_cents, total.currency)),
+            ...(total.unpriced_time_entry_count > 0
+              ? [` · ${total.unpriced_time_entry_count} unpriced ${total.unpriced_time_entry_count === 1 ? 'entry' : 'entries'}; amount incomplete`]
+              : []),
           ]),
         )
       }
@@ -4619,6 +4666,9 @@ export const mountShell = async (
           handleSessionFailure(error, authenticated)
         })
     }
+    firstRun.activate(identity, authenticated.signal, (error) =>
+      handleSessionFailure(error, authenticated),
+    )
     void loadTeamNavigation(identity, authenticated)
     hideActivityLogWhenOff(identity, authenticated)
     if (invoiceGenerationPage) {
@@ -5526,6 +5576,10 @@ export const mountShell = async (
       setSessionStatus('Go back to your own timesheet to start a timer.', 'ready')
       return
     }
+    if (snapshot.catalog.timeEntryOptions.length === 0) {
+      openRowDialog('timer')
+      return
+    }
     configureEntryEditor({
       context: 'timer',
       entry: null,
@@ -5551,8 +5605,16 @@ export const mountShell = async (
     )
     firstLink?.focus()
   })
+  function openRowDialog(purpose: 'row' | 'timer' = 'row'): void {
+    if (currentIdentity === null || snapshot === null) return
+    updateRowOptions()
+    required<HTMLElement>('#row-title').textContent =
+      purpose === 'timer' ? 'Start timer' : 'Add project and task'
+    required<HTMLElement>('[data-row-result]').textContent = ''
+    open(rowDialog)
+  }
   required<HTMLButtonElement>('[data-add-row-trigger]').addEventListener('click', () => {
-    if (currentIdentity !== null) open(rowDialog)
+    openRowDialog()
   })
   for (const close of document.querySelectorAll<HTMLButtonElement>('[data-dialog-close]')) {
     close.addEventListener('click', () => close.closest('dialog')?.close())
@@ -5614,7 +5676,7 @@ export const mountShell = async (
     // modifier and works from inside a cell.
     if (modified && event.key === 'Enter') {
       event.preventDefault()
-      open(rowDialog)
+      openRowDialog()
       return
     }
     if (event.altKey || modified || typingInAField()) return
@@ -6978,6 +7040,22 @@ export const mountShell = async (
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
         invoiceResult.textContent = messageFor(error)
+        if (error instanceof EzactoApiError && error.body !== null && typeof error.body === 'object') {
+          const detail = Reflect.get(error.body, 'error')
+          const fields: unknown = detail !== null && typeof detail === 'object' ? Reflect.get(detail, 'fields') : undefined
+          if (Array.isArray(fields)) {
+            for (const field of fields) {
+              if (field?.code !== 'missing_billable_rate' || typeof field.field !== 'string') continue
+              const match = /^project_ids\.([1-9]\d*)$/.exec(field.field)
+              if (match === null) continue
+              const link = document.createElement('a')
+              link.href = `/projects/${match[1]}`
+              link.textContent = 'Open project to fix rates'
+              invoiceResult.append(' ', link)
+              break
+            }
+          }
+        }
       })
       .finally(() => {
         if (!isSessionCurrent(operation)) return
@@ -7249,6 +7327,24 @@ export const mountShell = async (
     }
     showSection()
     globalThis.addEventListener('hashchange', showSection)
+  }
+
+  // The personal settings page, one part at a time (issue 1152): the same hash
+  // rule as the company page, with panes of their own, so the controllers that
+  // show and hide their sections are left alone.
+  if (settingsUserPage) {
+    const panes = [...document.querySelectorAll<HTMLElement>('[data-settings-user-pane]')]
+    const links = [...document.querySelectorAll<HTMLElement>('[data-settings-user-link]')]
+    const showPart = (): void => {
+      const wanted = resolveSettingsSection(globalThis.location.hash, USER_SETTINGS_SECTIONS)
+      for (const pane of panes) pane.hidden = pane.dataset['settingsUserPane'] !== wanted
+      for (const link of links) {
+        if (link.dataset['settingsUserLink'] === wanted) link.setAttribute('aria-current', 'page')
+        else link.removeAttribute('aria-current')
+      }
+    }
+    showPart()
+    globalThis.addEventListener('hashchange', showPart)
   }
 
   // The theme runtime resolved a stored choice against an organization default

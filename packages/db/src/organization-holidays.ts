@@ -2,7 +2,6 @@ import {
   assertOrganizationHolidayFields,
   OrganizationHolidayError,
   type OrganizationHoliday,
-  type OrganizationHolidayFields,
   type OrganizationHolidayFilter,
   type OrganizationHolidayRepository,
   type OrganizationHolidayWindow,

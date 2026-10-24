@@ -6,6 +6,7 @@ import { migrateContainer, migrateD1, migrationIds } from '../src/migrate.js'
 import { orgPeopleMigration } from '../src/migrations/0000_org_people.js'
 import { clientsMigration } from '../src/migrations/0001_clients.js'
 import { projectsTimeMigration } from '../src/migrations/0002_projects_time.js'
+import { recoverProjectMissingRates } from '../src/project-missing-rates.js'
 import { repriceTimeEntry, resolveEntryRates } from '../src/rate-resolver.js'
 import { createStoppedTimeEntry, startTimeEntry } from '../src/time-entries.js'
 
@@ -200,6 +201,93 @@ for (const [runtime, factory] of factories) {
       await installBaseFixture(database)
       return database
     }
+
+    it('[money] previews and audits missing project rates without changing captured rates or costs', async () => {
+      const db = await setup()
+      await db.run("UPDATE users SET profile = 'administrator' WHERE id = 1")
+      await db.run("UPDATE projects SET bill_by = 'project', hourly_rate_cents = NULL WHERE id = 1")
+      await db.run('UPDATE user_assignments SET use_default_rates = 0, hourly_rate_cents = 1000 WHERE id = 1')
+      const before = await createStoppedTimeEntry(db.drizzle, stoppedInput())
+      expect(before.billableRateCents).toBeNull()
+      await db.run('UPDATE projects SET hourly_rate_cents = 1000 WHERE id = 1')
+      const after = await createStoppedTimeEntry(db.drizzle, stoppedInput())
+      expect(after.billableRateCents).toBe(1000)
+      expect((await db.rows<{ rate: number | null }>('SELECT billable_rate_cents AS rate FROM time_entries WHERE id = ?', before.id))[0]?.rate).toBeNull()
+      const args = { projectId: 1, actorUserId: 1, occurredAt: timestamp }
+      const locks = async () => new Map<string, boolean>()
+      const preview = await recoverProjectMissingRates(db.drizzle, args, locks)
+      expect(preview).toMatchObject({ entry_count: 1, seconds: 3600, hourly_rate_cents: 1000, applied_entries: 0 })
+      expect(await db.rows('SELECT * FROM time_entry_rate_reprices')).toHaveLength(0)
+      const applied = await recoverProjectMissingRates(db.drizzle, { ...args, fingerprint: preview.fingerprint }, locks)
+      expect(applied.applied_entries).toBe(1)
+      expect(await db.rows('SELECT billable_rate_cents AS rate, cost_rate_cents AS cost FROM time_entries ORDER BY id')).toEqual([{ rate: 1000, cost: before.costRateCents }, { rate: 1000, cost: after.costRateCents }])
+      expect(await db.rows('SELECT previous_billable_rate_cents AS previous, billable_rate_cents AS rate, actor_user_id AS actor FROM time_entry_rate_reprices')).toEqual([{ previous: null, rate: 1000, actor: 1 }])
+      await expect(recoverProjectMissingRates(db.drizzle, { ...args, fingerprint: preview.fingerprint }, locks)).rejects.toThrow('missing_rate_preview_stale')
+      expect((await recoverProjectMissingRates(db.drizzle, args, locks)).entry_count).toBe(0)
+    })
+
+    it('[money] refuses stale rate previews and excludes locked dates and unauthorized actors', async () => {
+      const db = await setup()
+      await db.run("UPDATE users SET profile = 'administrator' WHERE id = 1")
+      await db.run("UPDATE projects SET bill_by = 'project', hourly_rate_cents = NULL WHERE id = 1")
+      await createStoppedTimeEntry(db.drizzle, stoppedInput())
+      await db.run('UPDATE projects SET hourly_rate_cents = 1000 WHERE id = 1')
+      const args = { projectId: 1, actorUserId: 1, occurredAt: timestamp }
+      const locks = async () => new Map<string, boolean>()
+      const preview = await recoverProjectMissingRates(db.drizzle, args, locks)
+      await db.run('UPDATE projects SET hourly_rate_cents = 2000 WHERE id = 1')
+      await expect(recoverProjectMissingRates(db.drizzle, { ...args, fingerprint: preview.fingerprint }, locks)).rejects.toThrow('missing_rate_preview_stale')
+      expect((await recoverProjectMissingRates(db.drizzle, args, async dates => new Map(dates.map(date => [date, true])))).entry_count).toBe(0)
+      await expect(recoverProjectMissingRates(db.drizzle, { ...args, actorUserId: 2 }, locks)).rejects.toThrow('set an hourly rate')
+      expect(await db.rows('SELECT * FROM time_entry_rate_reprices')).toHaveLength(0)
+      // A rate change after planning is fenced again inside the audit INSERT.
+      const fresh = await recoverProjectMissingRates(db.drizzle, args, locks)
+      const raced = await recoverProjectMissingRates(db.drizzle, { ...args, fingerprint: fresh.fingerprint }, async () => {
+        await db.run('UPDATE projects SET hourly_rate_cents = 3000 WHERE id = 1')
+        return new Map<string, boolean>()
+      })
+      expect(raced.applied_entries).toBe(0)
+      expect(await db.rows('SELECT * FROM time_entry_rate_reprices')).toHaveLength(0)
+      // A reassignment to another date may share the clock's updated_at. It
+      // must not evade that date's lazy lock-policy check or reuse this preview.
+      const datePreview = await recoverProjectMissingRates(db.drizzle, args, locks)
+      const dateRace = await recoverProjectMissingRates(db.drizzle, { ...args, fingerprint: datePreview.fingerprint }, async () => {
+        await db.run("UPDATE time_entries SET spent_date = '2026-06-29' WHERE project_id = 1")
+        return new Map<string, boolean>()
+      })
+      expect(dateRace.applied_entries).toBe(0)
+      expect(await db.rows('SELECT * FROM time_entry_rate_reprices')).toHaveLength(0)
+      const currencyPreview = await recoverProjectMissingRates(db.drizzle, args, locks)
+      expect(currencyPreview.currency).toBe('USD')
+      const currencyRace = await recoverProjectMissingRates(db.drizzle, { ...args, fingerprint: currencyPreview.fingerprint }, async () => {
+        await db.run("UPDATE clients SET currency = 'EUR' WHERE id = 1")
+        return new Map<string, boolean>()
+      })
+      expect(currencyRace.applied_entries).toBe(0)
+      expect(await db.rows('SELECT * FROM time_entry_rate_reprices')).toHaveLength(0)
+    })
+
+    it('[money] repairs only unchanged entries when one row moves after confirmation planning', async () => {
+      const db = await setup()
+      await db.run("UPDATE users SET profile = 'administrator' WHERE id = 1")
+      await db.run("UPDATE projects SET bill_by = 'project', hourly_rate_cents = NULL WHERE id = 1")
+      const moved = await createStoppedTimeEntry(db.drizzle, stoppedInput())
+      const retained = await createStoppedTimeEntry(db.drizzle, stoppedInput(1, 1, '2026-06-29'))
+      await db.run('UPDATE projects SET hourly_rate_cents = 1000 WHERE id = 1')
+      const args = { projectId: 1, actorUserId: 1, occurredAt: timestamp }
+      const preview = await recoverProjectMissingRates(db.drizzle, args, async () => new Map())
+      expect(preview.entry_count).toBe(2)
+      const result = await recoverProjectMissingRates(db.drizzle, { ...args, fingerprint: preview.fingerprint }, async () => {
+        await db.run("UPDATE time_entries SET spent_date = '2026-06-28' WHERE id = ?", moved.id)
+        return new Map<string, boolean>()
+      })
+      expect(result.applied_entries).toBe(1)
+      expect(await db.rows('SELECT id, billable_rate_cents AS rate, cost_rate_cents AS cost FROM time_entries ORDER BY id')).toEqual([
+        { id: moved.id, rate: null, cost: moved.costRateCents },
+        { id: retained.id, rate: 1000, cost: retained.costRateCents },
+      ])
+      expect(await db.rows('SELECT time_entry_id AS id FROM time_entry_rate_reprices')).toEqual([{ id: retained.id }])
+    })
 
     it('[unit] populates both native snapshot columns from spent_date and returns the live budget grain', async () => {
       const db = await setup()

@@ -1,3 +1,5 @@
+import { createPayoutDefaultsPanel } from './payout-defaults-browser.js'
+import { createPayoutProvidersPanel } from './payout-providers-browser.js'
 import { renderDataTable } from '../components/data-table.js'
 import { demoUnavailable, isDemoDeployment } from '../demo.js'
 import { markMoney } from '../money-display.js'
@@ -139,6 +141,7 @@ export const createTeamDirectoryController = (
   const listPageElement = required<HTMLElement>('[data-team-list-page]')
   const personPageElement = required<HTMLElement>('[data-team-person-page]')
   const listStatus = required<HTMLElement>('[data-team-list-status]')
+  const payoutDefaults = createPayoutDefaultsPanel(required<HTMLElement>('[data-team-defaults]'), api)
   const list = required<HTMLElement>('[data-team-list]')
   const listRetry = required<HTMLButtonElement>('[data-team-list-retry]')
   const search = required<HTMLInputElement>('[data-team-search]')
@@ -650,6 +653,8 @@ export const createTeamDirectoryController = (
   // that has just written a person has to say what the reader can now see, and
   // "it reloaded" is not the same answer as "the request came back".
   const loadPeople = async (active: ActiveSession): Promise<boolean> => {
+    // Payment defaults for everyone are an administrator's view (issue 1152).
+    if (active.identity.profile === 'administrator') void payoutDefaults.load(active.signal)
     if (!active.capabilities.canRead) {
       listStatus.textContent = readDenialMessage(active)
       list.replaceChildren()
@@ -948,7 +953,7 @@ export const createTeamDirectoryController = (
   }
 
   /**
-   * Take back a rate nobody meant to add (#727).
+   * Take back a rate nobody meant to add (issue 727).
    *
    * No confirmation dialog: the schema only admits a rate that has priced
    * nothing, so the button cannot destroy anything anybody was charged under,
@@ -1192,12 +1197,16 @@ export const createTeamDirectoryController = (
     active.identity.user_id === userId || active.capabilities.canManagePeople
 
   let payoutUserId: number | null = null
+  // Wise's form hides when an administrator has turned Wise off (issue 1152).
+  let payoutWiseEnabled = true
+  const payoutPanelRoot = required<HTMLElement>('[data-team-panel="payout"]')
+  const payoutProviders = createPayoutProvidersPanel(payoutPanelRoot, api)
 
   const paintPayout = (state: PayoutDestinationState): void => {
     payoutUnconfigured.hidden = state.configured
     const destination = state.destination
     payoutCurrent.hidden = destination === null
-    payoutForm.hidden = destination !== null || !state.configured
+    payoutForm.hidden = destination !== null || !state.configured || !payoutWiseEnabled
     if (destination === null) {
       payoutStatus.textContent = state.configured
         ? 'No payout destination yet.'
@@ -1218,6 +1227,8 @@ export const createTeamDirectoryController = (
     if (read === undefined || payoutTab.hidden) return
     payoutCurrent.hidden = true
     payoutForm.hidden = true
+    const providers = await payoutProviders.load(userId, active.signal, active.identity.profile === 'administrator')
+    payoutWiseEnabled = providers.wise
     // The public demo pays nobody (issue 931). It has no Wise to ask, so the
     // read could only fail; the panel says why instead, and offers no form.
     if (isDemoDeployment()) {

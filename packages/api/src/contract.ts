@@ -1,4 +1,5 @@
 import { organizationHolidayOperations, organizationHolidaySchemas } from './organization-holiday-contract.js'
+import { outboundWebhookOperations, outboundWebhookSchemas } from './outbound-webhook-contract.js'
 import { invoiceElevationOperations, invoiceElevationSchemas, documentInvoiceTokenElevation } from './invoice-elevation-contract.js'
 import { scheduledJobOperations, scheduledJobSchemas } from './scheduled-job-contract.js'
 import { contractorReviewOperations, contractorReviewSchemas } from './contractor-review-contract.js'
@@ -2332,6 +2333,71 @@ const payoutAccountOperations: ApiContractOperation[] = [
     sessionOnly: true,
     parameters: [path("id")],
   },
+  {
+    method: "get",
+    path: "/api/v1/payout-providers",
+    operationId: "listPayoutProviders",
+    summary: "The payout providers an administrator has made available",
+    tag: "payout-accounts",
+    responseStatus: 200,
+    responseSchema: "PayoutProviderListEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "patch",
+    path: "/api/v1/payout-providers/:provider",
+    operationId: "setPayoutProviderEnabled",
+    summary: "Enable or disable a payout provider for new links",
+    description: "Disabling a provider stops new links to it. Accounts already linked are kept.",
+    tag: "payout-accounts",
+    responseStatus: 204,
+    requestSchema: "PayoutProviderSettingInput",
+    requestRequired: true,
+    sessionOnly: true,
+    parameters: [
+      {
+        name: "provider",
+        location: "path",
+        schema: { type: "string", enum: ["deel", "wise"] },
+      },
+    ],
+  },
+  {
+    method: "get",
+    path: "/api/v1/users/:id/payout-preference",
+    operationId: "getPayoutPreference",
+    summary: "A person's default payout provider, and the organization's",
+    description: "Their own choice, or an administrator's. effective_provider is the default used for their payouts: their choice, else the organization default.",
+    tag: "payout-accounts",
+    responseStatus: 200,
+    responseSchema: "PayoutPreferenceEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "patch",
+    path: "/api/v1/users/:id/payout-preference",
+    operationId: "setPayoutPreference",
+    summary: "Choose a person's default payout provider",
+    description: "A person chooses their own; an administrator may choose it for them. Only a provider the person holds and the instance has enabled. Null returns to the organization default. expected_version must match the current version, or the answer is 409.",
+    tag: "payout-accounts",
+    responseStatus: 204,
+    additionalResponseStatuses: [409, 422],
+    requestSchema: "PayoutPreferenceInput",
+    requestRequired: true,
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "get",
+    path: "/api/v1/payout-preferences",
+    operationId: "listPayoutPreferences",
+    summary: "Every person's default payout provider, for administrators",
+    tag: "payout-accounts",
+    responseStatus: 200,
+    responseSchema: "PayoutPreferenceRosterEnvelope",
+    sessionOnly: true,
+  },
 ];
 
 const billOperations: ApiContractOperation[] = [
@@ -3170,6 +3236,7 @@ const teamOperations: ApiContractOperation[] = [
 ];
 
 export const apiContractOperations: readonly ApiContractOperation[] = [
+  { method: "post", path: "/api/v1/projects/:id/missing-rates", operationId: "recoverProjectMissingRates", summary: "Preview or explicitly repair missing project-rate snapshots on open time", tag: "projects", responseStatus: 200, responseSchema: "ProjectMissingRatesEnvelope", requestSchema: "ProjectMissingRatesInput", requestRequired: true, sessionOnly: true, parameters: [path("id")] },
   { method:"get",path:"/auth/apple/native-capabilities",operationId:"getNativeAppleCapabilities",summary:"Check explicit native Apple lifecycle protocol support",tag:"authentication",public:true,responseStatus:200,responseSchema:"NativeAppleCapabilities" },
   { method:"post",path:"/auth/apple",operationId:"signInNativeApple",summary:"Verify origin-bound Apple lifecycle custody and native identity before sign-in",tag:"authentication",public:true,responseStatus:200,responseSchema:"NativeAppleSignInEnvelope",requestSchema:"NativeAppleSignInInput",requestRequired:true },
   { method:"post",path:"/auth/apple/deletion-requests/:id/binding",operationId:"rebindAppleCleanup",summary:"Bind fresh cleanup-purpose Apple custody to a pending deletion request",tag:"authentication",public:true,responseStatus:204,requestSchema:"AppleLifecycleProofInput",requestRequired:true,parameters:[stringPath("id")] },
@@ -3767,6 +3834,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...estimateTemplateOperations,
   ...migrationLoadOperations,
   ...invoiceElevationOperations,
+  ...outboundWebhookOperations,
 ];
 
 const reconciliationStatusSchema: JsonSchema = {
@@ -4004,6 +4072,7 @@ const timeReportTotalsRequired: readonly string[] = [
 ];
 
 export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
+  ...outboundWebhookSchemas,
   ...invoiceElevationSchemas,
   ...organizationHolidaySchemas,
   ...attachmentContractSchemas,
@@ -5715,6 +5784,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  ProjectMissingRatesInput: { type: "object", properties: { fingerprint: { type: "string", pattern: "^[a-f0-9]{64}$" } }, additionalProperties: false },
+  ProjectMissingRatesEnvelope: { type: "object", required: ["data"], properties: { data: reference("ProjectMissingRates") }, additionalProperties: false },
+  ProjectMissingRates: { type: "object", required: ["project_id", "hourly_rate_cents", "currency", "entry_count", "seconds", "earliest_date", "latest_date", "fingerprint", "applied_entries"], properties: {
+    project_id: integerSchema, hourly_rate_cents: { type: "integer", minimum: 0 }, currency: stringSchema, entry_count: { type: "integer", minimum: 0 }, seconds: { type: "integer", minimum: 0 }, earliest_date: { type: "string", nullable: true }, latest_date: { type: "string", nullable: true }, fingerprint: stringSchema, applied_entries: { type: "integer", minimum: 0 }
+  }, additionalProperties: false },
   CostRateBackfillInput: {
     type: "object",
     required: ["from", "to", "cost_rate_cents", "reason"],
@@ -11099,6 +11173,87 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // person. A link nobody checked is a claim.
       verified_at: nullable(timestampSchema),
     },
+    additionalProperties: false,
+  },
+  PayoutPreference: {
+    type: "object",
+    required: ["user_id", "provider", "effective_provider", "organization_default", "version", "set_by", "linked_providers"],
+    properties: {
+      user_id: { type: "integer", minimum: 1 },
+      provider: { anyOf: [{ type: "string", enum: ["deel", "wise"] }, { type: "null" }] },
+      effective_provider: { type: "string", enum: ["deel", "wise"] },
+      organization_default: { type: "string", enum: ["deel", "wise"] },
+      version: { type: "integer", minimum: 0 },
+      set_by: { anyOf: [{ type: "string", enum: ["person", "administrator", "automatic"] }, { type: "null" }] },
+      linked_providers: { type: "array", items: { type: "string", enum: ["deel", "wise"] } },
+    },
+    additionalProperties: false,
+  },
+  PayoutPreferenceEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("PayoutPreference") },
+    additionalProperties: false,
+  },
+  PayoutPreferenceInput: {
+    type: "object",
+    required: ["provider", "expected_version"],
+    properties: {
+      provider: { anyOf: [{ type: "string", enum: ["deel", "wise"] }, { type: "null" }] },
+      expected_version: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  PayoutPreferenceRosterEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["organization_default", "people"],
+        properties: {
+          organization_default: { type: "string", enum: ["deel", "wise"] },
+          people: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["user_id", "name", "provider", "version", "set_by", "linked_providers"],
+              properties: {
+                user_id: { type: "integer", minimum: 1 },
+                name: { type: "string" },
+                provider: { anyOf: [{ type: "string", enum: ["deel", "wise"] }, { type: "null" }] },
+                version: { type: "integer", minimum: 0 },
+                set_by: { anyOf: [{ type: "string", enum: ["person", "administrator", "automatic"] }, { type: "null" }] },
+                linked_providers: { type: "array", items: { type: "string", enum: ["deel", "wise"] } },
+              },
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  PayoutProviderListEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: { type: "array", items: reference("PayoutProviderSetting") } },
+    additionalProperties: false,
+  },
+  PayoutProviderSetting: {
+    type: "object",
+    required: ["provider", "enabled"],
+    properties: {
+      provider: { type: "string", enum: ["deel", "wise"] },
+      enabled: { type: "boolean" },
+    },
+    additionalProperties: false,
+  },
+  PayoutProviderSettingInput: {
+    type: "object",
+    required: ["enabled"],
+    properties: { enabled: { type: "boolean" } },
     additionalProperties: false,
   },
   PayoutAccountListEnvelope: {

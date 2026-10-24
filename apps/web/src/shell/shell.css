@@ -795,6 +795,7 @@
   min-width: 0;
 }
 .period-step {
+  min-height: 44px;
   display: grid;
   place-items: center;
   flex: none;
@@ -3809,6 +3810,7 @@ a {
   color: var(--ez-ink);
 }
 .timer-chip {
+  min-height: 44px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -4438,6 +4440,7 @@ button.primary-action.primary-action {
 /* Leaving a half-finished second factor has to be as reachable as finishing
    it: the alternative is a person stuck on a code they cannot produce. */
 .sign-in-restart {
+  min-height: 44px;
   border: 0;
   padding: 0;
   background: none;
@@ -5679,7 +5682,7 @@ button.primary-action.primary-action {
     /* The top bar's floor is for a chip that shares a row; in the column it is
        the column's width, and narrowed it is an icon. */
     min-width: 0;
-    min-height: 40px;
+    min-height: 44px;
     margin: 8px 0 0;
   }
   [data-ez-nav='sidebar'] .timer-chip [data-timer-elapsed] {
@@ -6639,6 +6642,21 @@ dialog header button[aria-label^='Close'] {
 dialog header button[aria-label^='Close']:hover {
   background: var(--ez-surface-2);
   color: var(--ez-ink);
+}
+.time-setup-guidance {
+  display: grid;
+  gap: 14px;
+}
+.time-setup-guidance p {
+  margin: 0;
+}
+.time-setup-guidance a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 8px 12px;
+  text-align: center;
 }
 dialog label {
   display: grid;
@@ -9873,4 +9891,63 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+/* Payment defaults on the team page (issue 1152). A table that stacks into
+   blocks on a phone, so the page never scrolls sideways. */
+.team-defaults { margin: 1rem 0; }
+.team-defaults-table { width: 100%; border-collapse: collapse; }
+.team-defaults-table th,
+.team-defaults-table td { padding: 0.4rem 0.5rem; text-align: left; vertical-align: middle; }
+@media (max-width: 720px) {
+  .team-defaults-table thead { display: none; }
+  .team-defaults-table,
+  .team-defaults-table tbody,
+  .team-defaults-table tr,
+  .team-defaults-table td { display: block; width: 100%; box-sizing: border-box; }
+  .team-defaults-table tr { padding: 0.5rem 0; border-bottom: 1px solid currentColor; }
+  .team-defaults-table td { padding: 0.25rem 0; }
+}
+
+
+/* The owner’s first-run guide stays usable in either navigation layout. */
+.first-run-checklist {
+  margin: 20px;
+  padding: 20px;
+  border: 1px solid var(--ez-border);
+  border-radius: 12px;
+  background: var(--ez-ground);
+}
+.first-run-checklist header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+}
+.first-run-checklist h2 {
+  margin: 4px 0 12px;
+}
+.first-run-checklist ol {
+  padding-left: 24px;
+}
+.first-run-checklist li a,
+.first-run-checklist button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+}
+.first-run-checklist li[data-complete="true"] a {
+  text-decoration-style: dotted;
+}
+.first-run-checklist button {
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: 6px;
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  cursor: pointer;
+}
+
+button[data-first-run-help] {
+  min-height: 44px;
 }

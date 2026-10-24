@@ -5,6 +5,7 @@ export const renderTaskAdminPage = (view?: string): string => `
       <button class="primary-action" type="button" data-task-create data-task-write data-auth-action hidden disabled>Add task</button>
     </header>
     <p class="task-admin-intro">Manage the account-wide task templates available to projects and time entries.</p>
+    <p class="hint">Default tasks are added to new projects only. For an existing project, open <a href="/projects">Projects</a>, choose the project, then choose Assign task under Assigned tasks.</p>
     <div class="task-admin-toolbar">
       <fieldset aria-label="Task status">
         <legend class="visually-hidden">Task status</legend>
@@ -36,7 +37,8 @@ export const renderTaskAdminPage = (view?: string): string => `
           <span class="hint">USD per hour. Leave blank for no default rate.</span>
         </label>
         <label class="task-admin-check"><input name="billable_by_default" type="checkbox">Billable by default</label>
-        <label class="task-admin-check"><input name="is_default" type="checkbox">Automatically add to new projects</label>
+        <label class="task-admin-check"><input name="is_default" type="checkbox" aria-describedby="task-default-help">Automatically add to new projects</label>
+        <p class="hint" id="task-default-help">Existing projects keep their assigned tasks. Add this task from the project’s Assigned tasks section.</p>
         <label class="task-admin-check"><input name="is_active" type="checkbox">Active and available for new work</label>
       </div>
       <p class="form-result" data-task-form-result role="status" aria-live="polite"></p>

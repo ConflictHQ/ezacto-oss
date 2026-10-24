@@ -1,4 +1,5 @@
 import { installOrganizationHolidayRoutes } from '../src/organization-holidays.js'
+import { installOutboundWebhookRoutes } from '../src/outbound-webhooks.js'
 import {installMigrationLoadRoutes} from '../src/migration-loads.js';
 import { installInvoiceElevationRoutes } from '../src/invoice-elevations.js';
 import { installEstimateTemplateRoutes } from '../src/estimate-templates.js';
@@ -505,6 +506,7 @@ const documentedApp = () =>
         passwords:passwordAuth,policy:{isLive:async()=>true},secondFactor:twoFactor,emailCodesReady:false,
         unlinkTime:unavailable,clock:()=>"2026-08-28T12:00:00.000Z",clientKey:()=>"contract-fixture",
       });
+      installOutboundWebhookRoutes(api,new Proxy({}, {get:()=>unavailable}) as never,{cursorSigningKey:new Uint8Array(32)});
       installMigrationLoadRoutes(api,{status:unavailable});
       installEstimateTemplateRoutes(api, {
         list: async () => [], get: unavailable, save: unavailable, createDraft: unavailable,

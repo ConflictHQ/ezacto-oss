@@ -1,10 +1,11 @@
+import { renderWebhookSettings } from './webhooks-render.js'
 import { renderCompanyDataTools } from './data-tools.js'
 import { renderEmailSuppressionReview } from './email-suppressions-render.js'
 import { renderTimeRoundingSection } from './time-rounding-render.js'
 import { renderRetentionSection } from './retention.js'
 import { iconMarkup } from '../components/icons.js'
 import { demoUnavailable } from '../demo.js'
-import { COMPANY_SETTINGS_SECTIONS } from '../settings-sections.js'
+import { COMPANY_SETTINGS_SECTIONS, USER_SETTINGS_SECTIONS } from '../settings-sections.js'
 import { renderNotificationFields } from '../team/notification-fields.js'
 
 /**
@@ -21,6 +22,15 @@ const renderCompanySectionStrip = (): string =>
       `<a href="#${section.id}" data-settings-section-link="${section.id}"${section.id === 'payouts' ? ' hidden' : ''}>${section.label}</a>`,
   ).join('') +
   `</nav>`
+
+const renderUserSectionStrip = (): string =>
+  `<nav class="tabstrip view-switch settings-sections" aria-label="Your settings sections" data-settings-user-sections>` +
+  USER_SETTINGS_SECTIONS.map(
+    (section) => `<a href="#${section.id}" data-settings-user-link="${section.id}">${section.label}</a>`,
+  ).join('') +
+  `</nav>`
+
+const userPane = (id: string): string => `<div class="settings-user-pane" data-settings-user-pane="${id}" hidden>`
 
 export const renderModuleSettingsPage = (view?: string): string => `
   <main class="app-content module-settings-workspace page--settings" data-module-settings-page${view === 'settings-company' ? '' : ' hidden'}>
@@ -42,6 +52,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p class="form-result" data-settings-sign-in-status role="status" aria-live="polite">Loading sign-in methods&hellip;</p>
       <section class="module-settings-list" data-settings-sign-in-list aria-label="Sign-in methods" hidden></section>
     </section>
+    ${renderWebhookSettings()}
     ${renderRetentionSection()}
     <section class="settings-section" data-settings-section="time" aria-labelledby="settings-time-title">
       <header><h2 id="settings-time-title">Time tracking</h2>
@@ -184,6 +195,13 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p class="form-result" data-settings-wise-status role="status" aria-live="polite">Loading payout connection…</p>
       <dl class="settings-facts" data-settings-wise-facts hidden></dl>
       <p class="form-result settings-backup-alarm" data-settings-wise-alarm role="status" aria-live="polite" hidden></p>
+      <fieldset class="settings-payout-providers" data-settings-payout-providers hidden>
+        <legend>Payout providers</legend>
+        <p class="hint">Turn a provider on to let people be paid through it. A person can be linked to every provider that is on, and picks one as primary. Turning one off stops new links; destinations already set are kept.</p>
+        <label><input type="checkbox" data-settings-provider-toggle="wise"> Wise</label>
+        <label><input type="checkbox" data-settings-provider-toggle="deel"> Deel (people are matched by the email they use in Deel)</label>
+        <p class="form-result" data-settings-provider-result role="status" aria-live="polite"></p>
+      </fieldset>
     </section>
     ${renderCompanyDataTools()}
     <section class="settings-section" data-settings-section="backup" aria-labelledby="settings-backup-title">
@@ -290,8 +308,10 @@ export const renderModuleSettingsPage = (view?: string): string => `
     </header>
     ${renderSettingsTabs('user')}
     <p class="module-settings-intro">Your own account. Everything here is yours alone; the company settings beside it apply to everyone.</p>
+    ${renderUserSectionStrip()}
     <p class="form-result module-settings-status" data-settings-user-status role="status" aria-live="polite">Loading your account…</p>
     <dl class="settings-facts" data-settings-user-facts hidden></dl>
+    ${userPane('reminders')}
     <section class="settings-notifications" data-settings-notifications aria-labelledby="settings-notifications-heading" hidden>
       <h2 id="settings-notifications-heading">Your reminders</h2>
       <p class="hint">Whether and when this instance emails you to log your time, and to submit your week. They are yours to switch off.</p>
@@ -302,6 +322,8 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <button class="primary-action" type="submit" data-settings-notifications-submit>Save my reminders</button>
       </form>
     </section>
+    </div>
+    ${userPane('payouts')}
     <section class="settings-payout" data-settings-payout aria-labelledby="settings-payout-heading" hidden>
       <h2 id="settings-payout-heading">Where you are paid</h2>
       <p class="hint" data-settings-payout-unconfigured hidden>Wise is not connected on this instance, so there is nowhere to send a payout yet.</p>
@@ -319,7 +341,26 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <p class="form-result" data-settings-payout-result role="status" aria-live="polite"></p>
         <button class="primary-action" type="submit" data-settings-payout-submit>Save payout destination</button>
       </form>
+      <form class="settings-payout-default" data-settings-payout-default-form hidden>
+        <label for="ez-settings-payout-default">Pay me through<select id="ez-settings-payout-default" name="default_provider" data-settings-payout-default></select></label>
+        <p class="hint">Your default is where every payout to you goes. You can choose any provider you hold an account at; leave it on the organization default to follow the instance.</p>
+        <p class="form-result" data-settings-payout-default-result role="status" aria-live="polite"></p>
+        <button class="primary-action" type="submit">Save default</button>
+      </form>
+      <section class="settings-payout-deel" data-settings-payout-deel hidden>
+        <h3>Deel</h3>
+        <p data-settings-payout-deel-summary></p>
+        <button type="button" class="danger-action" data-settings-payout-deel-remove hidden>Remove Deel destination</button>
+        <form data-settings-payout-deel-form hidden>
+          <p class="hint">If you are paid through Deel, enter the email address you use in Deel. Payouts are matched on it.</p>
+          <label for="ez-settings-payout-deel-email">Email in Deel<input id="ez-settings-payout-deel-email" name="email" type="email" autocomplete="email" maxlength="254" required></label>
+          <p class="form-result" data-settings-payout-deel-result role="status" aria-live="polite"></p>
+          <button class="primary-action" type="submit">Save Deel destination</button>
+        </form>
+      </section>
     </section>
+    </div>
+    ${userPane('two-factor')}
     <section class="settings-two-factor" data-settings-2fa aria-labelledby="settings-2fa-heading" hidden>
       <h2 id="settings-2fa-heading">Two-step sign-in</h2>
       <p class="hint">A code on top of your password: from an authenticator app, or sent to your email address. Setting one up has been impossible from inside this app until now, which is awkward for an instance that can require it.</p>
@@ -357,6 +398,8 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <button class="danger-action" type="submit" data-settings-2fa-disable-submit>Turn off two-step sign-in</button>
       </form>
     </section>
+    </div>
+    ${userPane('tokens')}
     <section class="settings-tokens" data-settings-tokens aria-labelledby="settings-tokens-heading" hidden>
       <h2 id="settings-tokens-heading">API tokens</h2>
       <p class="hint">Tokens act as you, with only the scopes you tick, and they are how the CLI and anything else outside this app signs in. Issuing one has been a terminal job until now.</p>
@@ -385,6 +428,8 @@ export const renderModuleSettingsPage = (view?: string): string => `
         </form>
       </dialog>
     </section>
+    </div>
+    ${userPane('appearance')}
     <section class="settings-density" aria-labelledby="settings-scheme-heading">
       <h2 id="settings-scheme-heading">Theme</h2>
       <p class="hint">Light, a dim slate, dark, or whatever this computer is set to. Yours and this browser's, like row density; invoices and the other documents your clients receive stay on white paper. If this instance has colours of its own, System keeps them, and Dim and Dark switch to the built-in themes.</p>
@@ -421,6 +466,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <button type="button" data-text-size-choice="larger" aria-pressed="false">Larger</button>
       </div>
     </section>
+    </div>
   </main>`
 
 /**

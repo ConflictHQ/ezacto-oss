@@ -1,4 +1,5 @@
 import { consumeMigrationBatch } from './migration-queue.js'
+import { ensureRuntimeDatabaseReady } from './runtime.js'
 import * as Sentry from '@sentry/cloudflare'
 import { scheduleConfirmedRunWorkflows } from './scheduled-run-workflow-scheduler.js'
 import type { QueuedEmailJob } from '@ezacto/mailer'
@@ -123,12 +124,31 @@ const unavailable = (): Response => {
   )
 }
 
+/**
+ * Opens the database through the readiness check every request passes, so the
+ * deploy's own verification applies pending migrations, not the first customer
+ * request. Answers only ready or unavailable: the ledger is read by the deploy,
+ * not exposed here.
+ */
+const readiness = async (env: WorkerEnv): Promise<Response> => {
+  const headers = { 'cache-control': 'no-store' }
+  try {
+    await ensureRuntimeDatabaseReady(env.DB)
+    return Response.json({ status: 'ready', release: env.RELEASE }, { headers })
+  } catch (error) {
+    console.error('[worker] readiness check failed', error)
+    Sentry.captureException(error)
+    return Response.json({ status: 'unavailable' }, { status: 503, headers })
+  }
+}
+
 export const worker: ExportedHandler<WorkerEnv, unknown> = {
   async fetch(request, env, executionContext) {
     // First, before a route is matched or a service is constructed: nothing
     // below this line should ever compose a response for a cleartext request.
     const refusal = cleartextRefusal(request)
     if (refusal !== null) return refusal
+    if (new URL(request.url).pathname === '/readyz') return readiness(env)
     if (!isDataRequest(request)) {
       return withStrictTransport(
         request,
@@ -202,6 +222,14 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
   },
   async scheduled(controller, env) {
     const services = await createRuntimeServices(env)
+    if (controller.cron === '* * * * *' && services.webhooks) {
+      try {
+        await services.webhooks.processDue()
+        await services.webhooks.purge()
+      } catch {
+        console.error('[worker] webhook sweep failed')
+      }
+    }
     if (controller.cron === '* * * * *')
       await services.paymentRuns?.processDue(new Date().toISOString())
     if (controller.cron === '* * * * *' && services.budgetAlerts !== undefined) {

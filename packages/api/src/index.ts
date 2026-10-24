@@ -136,7 +136,7 @@ export {
   type ReleaseTimeOutcome,
 } from './invoice-time-claims.js'
 export {
-  installPayoutAccountRoutes,
+  installPayoutAccountRoutes, type PayoutProviderEnablement, type PayoutPreferenceService,
   type PayoutAccount,
   type PayoutAccountService,
   type PayoutLinkResult,
@@ -559,3 +559,4 @@ export * from './invoice-elevations.js'
 export * from './migration-loads.js'
 
 export { installOrganizationHolidayRoutes } from './organization-holidays.js'
+export { installOutboundWebhookRoutes } from './outbound-webhooks.js'

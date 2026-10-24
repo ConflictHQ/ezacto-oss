@@ -1,3 +1,6 @@
+import type { PayoutProviderSwitchesApi } from './payout-provider-switches.js'
+import type { EzactoClient } from '@conflict-hq/ezacto-client'
+export type WebhookApi = Pick<EzactoClient, 'listWebhookSubscriptions' | 'createWebhookSubscription' | 'setWebhookSubscriptionActive' | 'rotateWebhookSecret' | 'deleteWebhookSubscription' | 'listWebhookDeliveries' | 'replayWebhookDelivery'>
 import type { ReportWorkspaceApi } from '../reports/model.js'
 import {
   EzactoApiError,
@@ -256,7 +259,8 @@ export interface TimeRoundingApi {
   ): Promise<TimeRoundingRecalculationApplied>
 }
 
-export interface CompanySettingsApi {
+export interface CompanySettingsApi extends PayoutProviderSwitchesApi {
+  webhooks?: WebhookApi
   downloadDetailedTimeReport?: ReportWorkspaceApi['downloadDetailedTimeReport']
   getDetailedExpenseReport?: ReportWorkspaceApi['getDetailedExpenseReport']
   /** Optional: a build without the route hides nothing it cannot save. */

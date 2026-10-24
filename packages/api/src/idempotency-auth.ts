@@ -91,7 +91,8 @@ export const createApiIdempotencyAuthorization = (
     }
     if (
       response.status === 200 &&
-      (path === '/api/v1/invoice-elevations' || path.startsWith('/api/v1/invoice-elevations/'))
+      (path === '/api/v1/invoice-elevations' || path.startsWith('/api/v1/invoice-elevations/') ||
+        (request.method === 'POST' && (path.replace(/\/$/, '') === '/api/v1/webhook-subscriptions' || /^\/api\/v1\/webhook-subscriptions\/[^/]+\/rotate-secret\/?$/.test(path))))
     )
       return null
     return response.status === 200 ? response.text() : response

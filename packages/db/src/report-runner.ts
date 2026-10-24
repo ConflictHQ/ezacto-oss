@@ -101,8 +101,8 @@ export const runReportDefinition = async (
       person.first_name || ' ' || person.last_name AS "userName",
       entry.rounded_seconds AS "roundedSeconds", entry.billable,
       entry.billable_rate_cents AS "billableRateCents", entry.cost_rate_cents AS "costRateCents"
-    FROM time_entries entry
-    JOIN projects project ON project.id = entry.project_id
+    FROM report_time_entries entry
+    JOIN report_projects project ON project.id = entry.project_id
     JOIN clients client ON client.id = project.client_id
     JOIN tasks task ON task.id = entry.task_id
     JOIN users person ON person.id = entry.user_id

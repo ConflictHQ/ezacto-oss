@@ -70,6 +70,12 @@ export const KNOWN_ACTIVITY_EVENT_TYPES: readonly string[] = [
   'organization_holiday.created',
   'organization_holiday.updated',
   'organization_holiday.deleted',
+  'webhook_subscription.created',
+  'webhook_subscription.paused',
+  'webhook_subscription.resumed',
+  'webhook_subscription.secret_rotated',
+  'webhook_subscription.deleted',
+  'webhook_delivery.replayed',
   'auth.signed_in',
   'auth.signed_out',
   'api_token.created',
@@ -117,6 +123,7 @@ export const ACTIVITY_ENTITY_KINDS: readonly (readonly [type: string, label: str
  */
 export const subjectHref = (aggregate: { readonly type: string; readonly id: number }): string | null => {
   if (aggregate.type === 'organization_calendar') return '/capacity'
+  if (aggregate.type === 'webhook_configuration') return '/settings/company#webhooks'
   switch (aggregate.type) {
     case 'scheduled_run':
       return `/scheduled-runs/${aggregate.id}`

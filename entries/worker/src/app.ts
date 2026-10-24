@@ -1,5 +1,8 @@
 import { installOrganizationHolidayRoutes } from '@ezacto/api'
 import type { OrganizationHolidayRepository } from '@ezacto/core'
+import type { PayoutPreferenceService, PayoutProviderEnablement } from '@ezacto/api'
+import { installOutboundWebhookRoutes } from '@ezacto/api'
+import type { WebhookManagement } from '@ezacto/core'
 import {installMigrationLoadRoutes,type MigrationLoadStatusReader} from '@ezacto/api'
 import { installInvoiceElevationRoutes, type InvoiceElevationStore, type ElevatedInvoiceTimeUnlinkPort } from '@ezacto/api'
 import { installEstimateTemplateRoutes, type EstimateTemplateRepository } from '@ezacto/api'
@@ -272,6 +275,7 @@ export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & {
   SENTRY_DSN?: string
   /** Content-addressed attachment objects. Metadata remains in DB. */
   ATTACHMENTS?: R2Bucket
+  WEBHOOK_ENCRYPTION_KEY?: string
   API_CURSOR_SIGNING_KEY: string
   /**
    * How many seconds a session's last-seen time, or an API token's last-used
@@ -390,6 +394,7 @@ export interface RuntimeServices {
     input: InstanceOwnerPasswordInput,
   ): Promise<InstanceOwnerPasswordResult>
   tokens: ApiTokenService
+  projectMissingRates?: GeneralResourceRouteOptions['missingRates']
   generalResources: GeneralResourceRouteOptions['repository']
   /** Rooted reads of the client closure, behind the documented tree routes. */
   clientTree: ClientTreeReader
@@ -630,6 +635,10 @@ export interface RuntimeServices {
   myPayments?: MyPaymentsStore
   /** Linking a person to their payout provider account (#421). */
   payoutAccounts?: PayoutAccountService
+  /** Which payout providers an administrator has enabled (#1152). */
+  payoutProviderEnablement?: PayoutProviderEnablement
+  /** Each person's default payout provider (issue 1152). */
+  payoutPreferences?: PayoutPreferenceService
   billDelivery?: {
     isOptedIn(clientId: number): Promise<boolean>
     setOptedIn(clientId: number, enabled: boolean): Promise<boolean>
@@ -637,6 +646,7 @@ export interface RuntimeServices {
   /** Named rate cards on client nodes, inherited down the tree (issue 34). */
   invoiceTimeUnlink?: ElevatedInvoiceTimeUnlinkPort
   invoiceElevations?: InvoiceElevationStore
+  webhooks?: WebhookManagement & { processDue(): Promise<unknown>; purge(): Promise<unknown> }
   migrationLoads?: MigrationLoadStatusReader
   estimateTemplates?: EstimateTemplateRepository
   clientRateCards?: ClientRateCardRepository
@@ -770,6 +780,9 @@ export const createApp = (
       passwordSignIn: live('password'),
       // So the controls the demo refuses say so before they are clicked
       // (#931). The same caveat: `demo-lockdown.ts` is what refuses them.
+      attachmentsAvailable: services === undefined
+        ? 'ATTACHMENTS' in env && env.ATTACHMENTS !== undefined
+        : services.attachments !== undefined,
       demo: demoDeployment(env),
       // And whether its mail is held to an allowlist, so the Send dialog can
       // say so. Never the list itself: anyone can open the demo, and a page
@@ -846,6 +859,7 @@ export const createApp = (
               timezone: organizationTimezone,
             })
             installGeneralResourceRoutes(api, {
+              ...(services.projectMissingRates === undefined ? {} : { missingRates: services.projectMissingRates }),
               repository: services.generalResources,
               cursorSigningKey: services.cursorSigningKey,
               isExpensesModuleEnabled: services.isExpensesModuleEnabled,
@@ -862,6 +876,7 @@ export const createApp = (
               clock: () => systemClock.now().instant,
               clientKey: request => request.headers.get('cf-connecting-ip') ?? 'unknown-client',
             })
+            if (services.webhooks) installOutboundWebhookRoutes(api, services.webhooks, {cursorSigningKey:services.cursorSigningKey})
             if (services.migrationLoads) installMigrationLoadRoutes(api, services.migrationLoads)
             if (services.estimateTemplates) installEstimateTemplateRoutes(api, services.estimateTemplates, () => systemClock.now().instant)
             if (services.clientRateCards) installClientRateCardRoutes(api, { repository: services.clientRateCards, clock: systemClock })
@@ -1051,7 +1066,10 @@ export const createApp = (
               installInvoiceDefaultsRoutes(api, services.invoiceDefaults)
             }
             if (services.payoutAccounts !== undefined) {
-              installPayoutAccountRoutes(api, services.payoutAccounts)
+              installPayoutAccountRoutes(api, services.payoutAccounts, {
+                enablement: services.payoutProviderEnablement,
+                preferences: services.payoutPreferences,
+              })
             }
             if (services.bill !== undefined && services.billDelivery !== undefined) {
               const billRuntime = services.bill

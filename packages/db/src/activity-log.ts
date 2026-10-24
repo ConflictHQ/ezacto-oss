@@ -43,6 +43,12 @@ export const ACTIVITY_EVENT_AGGREGATES = {
   'backup.exported': 'backup_run',
   'backup.restored': 'backup_restore',
   'backup.restore_drilled': 'backup_drill',
+  'webhook_subscription.created': 'webhook_configuration',
+  'webhook_subscription.paused': 'webhook_configuration',
+  'webhook_subscription.resumed': 'webhook_configuration',
+  'webhook_subscription.secret_rotated': 'webhook_configuration',
+  'webhook_subscription.deleted': 'webhook_configuration',
+  'webhook_delivery.replayed': 'webhook_configuration',
   // A person asking for their own account to be deleted (account-deletion.ts).
   'account.deletion_requested': 'user_account',
   // Issue 1009: an administrator changing the automatic-approval policy (subject

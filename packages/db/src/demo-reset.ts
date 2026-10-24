@@ -167,6 +167,9 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // The migration creates this singleton with the manual default. Keeping it
   // means a demo wipe does not switch an instance's Deel sync mode or time (#1102).
   'deel_sync_settings',
+  // Seeded with both providers enabled. Keeping it means a demo wipe does not
+  // switch an instance's payout providers off (#1152).
+  'payout_provider_enablement',
   // Source triggers update this migration-seeded singleton in place. Keep its
   // sequence monotonic while clearing the per-person/month source versions.
   'contractor_source_clock',

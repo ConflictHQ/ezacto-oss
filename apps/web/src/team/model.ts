@@ -1,3 +1,4 @@
+import type { PayoutProvidersApi } from './payout-providers-browser.js'
 import type {
   GeneralResource,
   TeamAssignmentReplaceInput,
@@ -31,7 +32,7 @@ import type { PayoutDestinationState } from '../payout.js'
 
 export type { PayoutDestinationState as WisePayoutDestinationState } from '../payout.js'
 
-export interface TeamDirectoryApi {
+export interface TeamDirectoryApi extends PayoutProvidersApi {
   getTeamStatus(signal?: AbortSignal): Promise<{ readonly enabled: boolean }>
   getTeamWeekStartDay?(
     signal?: AbortSignal,

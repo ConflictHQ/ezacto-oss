@@ -11,6 +11,82 @@
     }
   ],
   "paths": {
+    "/api/v1/projects/{id}/missing-rates": {
+      "post": {
+        "operationId": "recoverProjectMissingRates",
+        "summary": "Preview or explicitly repair missing project-rate snapshots on open time",
+        "tags": [
+          "projects"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectMissingRatesEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/projects/:id/missing-rates",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectMissingRatesInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/auth/apple/native-capabilities": {
       "get": {
         "operationId": "getNativeAppleCapabilities",
@@ -28932,6 +29008,324 @@
         ]
       }
     },
+    "/api/v1/payout-providers": {
+      "get": {
+        "operationId": "listPayoutProviders",
+        "summary": "The payout providers an administrator has made available",
+        "tags": [
+          "payout-accounts"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayoutProviderListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/payout-providers",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/payout-providers/{provider}": {
+      "patch": {
+        "operationId": "setPayoutProviderEnabled",
+        "summary": "Enable or disable a payout provider for new links",
+        "description": "Disabling a provider stops new links to it. Accounts already linked are kept.",
+        "tags": [
+          "payout-accounts"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/payout-providers/:provider",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "deel",
+                "wise"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayoutProviderSettingInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{id}/payout-preference": {
+      "get": {
+        "operationId": "getPayoutPreference",
+        "summary": "A person's default payout provider, and the organization's",
+        "description": "Their own choice, or an administrator's. effective_provider is the default used for their payouts: their choice, else the organization default.",
+        "tags": [
+          "payout-accounts"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayoutPreferenceEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/users/:id/payout-preference",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "setPayoutPreference",
+        "summary": "Choose a person's default payout provider",
+        "description": "A person chooses their own; an administrator may choose it for them. Only a provider the person holds and the instance has enabled. Null returns to the organization default. expected_version must match the current version, or the answer is 409.",
+        "tags": [
+          "payout-accounts"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "description": "No content"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "description": "No content"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/users/:id/payout-preference",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayoutPreferenceInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payout-preferences": {
+      "get": {
+        "operationId": "listPayoutPreferences",
+        "summary": "Every person's default payout provider, for administrators",
+        "tags": [
+          "payout-accounts"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayoutPreferenceRosterEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/payout-preferences",
+        "x-ezacto-generate-client": true
+      }
+    },
     "/api/v1/integrations/bill": {
       "get": {
         "operationId": "getBillStatus",
@@ -31567,6 +31961,574 @@
           }
         }
       }
+    },
+    "/api/v1/webhook-subscriptions": {
+      "get": {
+        "operationId": "listWebhookSubscriptions",
+        "summary": "List subscriptions and webhook configuration",
+        "description": "Administrator session only. Events contain identifiers, resource sequence and relative API links. Secret issuance is returned once and cannot be replayed from the idempotency cache. Public demo delivery is disabled.",
+        "tags": [
+          "outbound-webhooks"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookSubscriptionsEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/webhook-subscriptions",
+        "x-ezacto-generate-client": true
+      },
+      "post": {
+        "operationId": "createWebhookSubscription",
+        "summary": "Create an endpoint and issue its signing secret once",
+        "description": "Administrator session only. Events contain identifiers, resource sequence and relative API links. Secret issuance is returned once and cannot be replayed from the idempotency cache. Public demo delivery is disabled.",
+        "tags": [
+          "outbound-webhooks"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookSecretEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/webhook-subscriptions",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookCreateInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhook-subscriptions/{id}": {
+      "patch": {
+        "operationId": "setWebhookSubscriptionActive",
+        "summary": "Pause or resume an endpoint at its current version",
+        "description": "Administrator session only. Events contain identifiers, resource sequence and relative API links. Secret issuance is returned once and cannot be replayed from the idempotency cache. Public demo delivery is disabled.",
+        "tags": [
+          "outbound-webhooks"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookSubscriptionEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/webhook-subscriptions/:id",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookActiveInput"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteWebhookSubscription",
+        "summary": "Delete an endpoint and erase its sealed signing secrets",
+        "description": "Administrator session only. Events contain identifiers, resource sequence and relative API links. Secret issuance is returned once and cannot be replayed from the idempotency cache. Public demo delivery is disabled.",
+        "tags": [
+          "outbound-webhooks"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookSubscriptionEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/webhook-subscriptions/:id",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookVersionInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhook-subscriptions/{id}/rotate-secret": {
+      "post": {
+        "operationId": "rotateWebhookSecret",
+        "summary": "Rotate a signing secret with a bounded overlap",
+        "description": "Administrator session only. Events contain identifiers, resource sequence and relative API links. Secret issuance is returned once and cannot be replayed from the idempotency cache. Public demo delivery is disabled.",
+        "tags": [
+          "outbound-webhooks"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookSecretEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/webhook-subscriptions/:id/rotate-secret",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookRotateInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhook-deliveries": {
+      "get": {
+        "operationId": "listWebhookDeliveries",
+        "summary": "Page through webhook delivery results",
+        "description": "Administrator session only. Events contain identifiers, resource sequence and relative API links. Secret issuance is returned once and cannot be replayed from the idempotency cache. Public demo delivery is disabled.",
+        "tags": [
+          "outbound-webhooks"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDeliveryPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/webhook-deliveries",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "subscription_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "processing",
+                "delivered",
+                "failed"
+              ]
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/webhook-deliveries/{id}/replay": {
+      "post": {
+        "operationId": "replayWebhookDelivery",
+        "summary": "Replay a settled delivery from the last seven days",
+        "description": "Administrator session only. Events contain identifiers, resource sequence and relative API links. Secret issuance is returned once and cannot be replayed from the idempotency cache. Public demo delivery is disabled.",
+        "tags": [
+          "outbound-webhooks"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDeliveryEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/webhook-deliveries/:id/replay",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookReplayInput"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -31674,6 +32636,558 @@
       }
     },
     "schemas": {
+      "WebhookSubscription": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "invoice.created",
+                "invoice.sent",
+                "invoice.viewed",
+                "invoice.updated",
+                "invoice.drafted",
+                "invoice.reopened",
+                "invoice.cancelled",
+                "invoice.written_off",
+                "invoice.closed",
+                "invoice.unpaid",
+                "invoice.partially_paid",
+                "invoice.paid",
+                "payment.recorded",
+                "payment.updated",
+                "payment.deleted",
+                "time_entry.created_on_behalf",
+                "time_entry.updated_on_behalf",
+                "time_entry.stopped_on_behalf",
+                "time_entry.deleted_on_behalf"
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 19,
+            "uniqueItems": true
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "previous_valid_until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "url",
+          "events",
+          "is_active",
+          "version",
+          "generation",
+          "previous_valid_until",
+          "created_at",
+          "updated_at",
+          "deleted_at"
+        ],
+        "additionalProperties": false
+      },
+      "WebhookSubscriptionsEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookSubscription"
+            }
+          },
+          "configuration": {
+            "type": "object",
+            "properties": {
+              "ready": {
+                "type": "boolean"
+              },
+              "event_types": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "invoice.created",
+                    "invoice.sent",
+                    "invoice.viewed",
+                    "invoice.updated",
+                    "invoice.drafted",
+                    "invoice.reopened",
+                    "invoice.cancelled",
+                    "invoice.written_off",
+                    "invoice.closed",
+                    "invoice.unpaid",
+                    "invoice.partially_paid",
+                    "invoice.paid",
+                    "payment.recorded",
+                    "payment.updated",
+                    "payment.deleted",
+                    "time_entry.created_on_behalf",
+                    "time_entry.updated_on_behalf",
+                    "time_entry.stopped_on_behalf",
+                    "time_entry.deleted_on_behalf"
+                  ]
+                },
+                "minItems": 1,
+                "maxItems": 19,
+                "uniqueItems": true
+              },
+              "max_subscriptions": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "rotation_overlap_seconds": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "ready",
+              "event_types",
+              "max_subscriptions",
+              "rotation_overlap_seconds"
+            ],
+            "additionalProperties": false
+          },
+          "links": {
+            "type": "object",
+            "properties": {
+              "self": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "self"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data",
+          "configuration",
+          "links"
+        ],
+        "additionalProperties": false
+      },
+      "WebhookSubscriptionEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WebhookSubscription"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "WebhookSecretEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WebhookSubscription"
+          },
+          "signing_secret": {
+            "type": "string",
+            "pattern": "^ezwh_[A-Za-z0-9_-]{43}$",
+            "description": "Copy once. Store securely at the receiver; never logged or returned by list endpoints."
+          }
+        },
+        "required": [
+          "data",
+          "signing_secret"
+        ],
+        "additionalProperties": false
+      },
+      "WebhookCreateInput": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 2048
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "invoice.created",
+                "invoice.sent",
+                "invoice.viewed",
+                "invoice.updated",
+                "invoice.drafted",
+                "invoice.reopened",
+                "invoice.cancelled",
+                "invoice.written_off",
+                "invoice.closed",
+                "invoice.unpaid",
+                "invoice.partially_paid",
+                "invoice.paid",
+                "payment.recorded",
+                "payment.updated",
+                "payment.deleted",
+                "time_entry.created_on_behalf",
+                "time_entry.updated_on_behalf",
+                "time_entry.stopped_on_behalf",
+                "time_entry.deleted_on_behalf"
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 19,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "url",
+          "events"
+        ],
+        "additionalProperties": false
+      },
+      "WebhookActiveInput": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "is_active": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "version",
+          "is_active"
+        ],
+        "additionalProperties": false
+      },
+      "WebhookRotateInput": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "overlap_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 86400,
+            "default": 900
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "WebhookVersionInput": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "WebhookReplayInput": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "WebhookDelivery": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "subscription_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string",
+            "enum": [
+              "invoice.created",
+              "invoice.sent",
+              "invoice.viewed",
+              "invoice.updated",
+              "invoice.drafted",
+              "invoice.reopened",
+              "invoice.cancelled",
+              "invoice.written_off",
+              "invoice.closed",
+              "invoice.unpaid",
+              "invoice.partially_paid",
+              "invoice.paid",
+              "payment.recorded",
+              "payment.updated",
+              "payment.deleted",
+              "time_entry.created_on_behalf",
+              "time_entry.updated_on_behalf",
+              "time_entry.stopped_on_behalf",
+              "time_entry.deleted_on_behalf"
+            ]
+          },
+          "payload_json": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "processing",
+              "delivered",
+              "failed"
+            ]
+          },
+          "attempt_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cycle_attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "replay_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last_status": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "timeout",
+                  "network_error",
+                  "destination_forbidden",
+                  "redirect",
+                  "http_error",
+                  "signing_secret_unavailable",
+                  "invalid_payload",
+                  "subscription_deleted",
+                  "delivery_expired",
+                  "attempt_abandoned"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next_attempt_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_attempt_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delivered_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "subscription_id",
+          "event_id",
+          "event_type",
+          "payload_json",
+          "status",
+          "attempt_count",
+          "cycle_attempts",
+          "replay_count",
+          "last_status",
+          "last_error_code",
+          "next_attempt_at",
+          "last_attempt_at",
+          "delivered_at",
+          "failed_at",
+          "created_at",
+          "updated_at"
+        ],
+        "additionalProperties": false
+      },
+      "WebhookDeliveryEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WebhookDelivery"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "WebhookDeliveryPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookDelivery"
+            }
+          },
+          "links": {
+            "type": "object",
+            "properties": {
+              "self": {
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "self",
+              "next"
+            ],
+            "additionalProperties": false
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "per_page": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "next_cursor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "per_page",
+              "next_cursor"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data",
+          "links",
+          "page"
+        ],
+        "additionalProperties": false
+      },
       "InvoiceElevationChallengeEnvelope": {
         "type": "object",
         "required": [
@@ -41423,6 +42937,79 @@
               "billable",
               "cost"
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectMissingRatesInput": {
+        "type": "object",
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectMissingRatesEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ProjectMissingRates"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectMissingRates": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "hourly_rate_cents",
+          "currency",
+          "entry_count",
+          "seconds",
+          "earliest_date",
+          "latest_date",
+          "fingerprint",
+          "applied_entries"
+        ],
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "hourly_rate_cents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "currency": {
+            "type": "string"
+          },
+          "entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "earliest_date": {
+            "type": "string",
+            "nullable": true
+          },
+          "latest_date": {
+            "type": "string",
+            "nullable": true
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "applied_entries": {
+            "type": "integer",
+            "minimum": 0
           }
         },
         "additionalProperties": false
@@ -57724,6 +59311,262 @@
                 "type": "null"
               }
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "PayoutPreference": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "provider",
+          "effective_provider",
+          "organization_default",
+          "version",
+          "set_by",
+          "linked_providers"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "deel",
+                  "wise"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "effective_provider": {
+            "type": "string",
+            "enum": [
+              "deel",
+              "wise"
+            ]
+          },
+          "organization_default": {
+            "type": "string",
+            "enum": [
+              "deel",
+              "wise"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "set_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "person",
+                  "administrator",
+                  "automatic"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "linked_providers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "deel",
+                "wise"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "PayoutPreferenceEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PayoutPreference"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PayoutPreferenceInput": {
+        "type": "object",
+        "required": [
+          "provider",
+          "expected_version"
+        ],
+        "properties": {
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "deel",
+                  "wise"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "PayoutPreferenceRosterEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "organization_default",
+              "people"
+            ],
+            "properties": {
+              "organization_default": {
+                "type": "string",
+                "enum": [
+                  "deel",
+                  "wise"
+                ]
+              },
+              "people": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "user_id",
+                    "name",
+                    "provider",
+                    "version",
+                    "set_by",
+                    "linked_providers"
+                  ],
+                  "properties": {
+                    "user_id": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "provider": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "deel",
+                            "wise"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "set_by": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "person",
+                            "administrator",
+                            "automatic"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "linked_providers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "deel",
+                          "wise"
+                        ]
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "PayoutProviderListEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayoutProviderSetting"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "PayoutProviderSetting": {
+        "type": "object",
+        "required": [
+          "provider",
+          "enabled"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "deel",
+              "wise"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PayoutProviderSettingInput": {
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false

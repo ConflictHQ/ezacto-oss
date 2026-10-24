@@ -1,4 +1,6 @@
 import { organizationHolidaysMigration } from './migrations/0155_organization_holidays.js'
+import { exampleProjectsMigration } from './migrations/0153_example_projects.js'
+import { outboundWebhooksMigration } from './migrations/0151_outbound_webhooks.js'
 import { queuedMigrationsMigration } from './migrations/0150_queued_migrations.js'
 import { invoiceElevationsMigration } from './migrations/0149_invoice_elevations.js'
 import { estimateTemplatesMigration } from './migrations/0148_estimate_templates.js'
@@ -53,6 +55,7 @@ import { emailFeedbackEventsMigration } from './migrations/0132_email_feedback_e
 import { quickBooksRecoveryMigration } from './migrations/0133_quickbooks_recovery.js'
 import { runItemQuantityMigration } from './migrations/0134_run_item_quantity.js'
 import { deelSyncSettingsMigration } from './migrations/0135_deel_sync_settings.js'
+import { payoutProviderEnablementMigration } from './migrations/0152_payout_provider_enablement.js'
 import { organizationInvoiceDefaultsMigration } from './migrations/0097_organization_invoice_defaults.js'
 import { journalFormatsInvoiceExtraMigration } from './migrations/0096_journal_formats_invoice_extra.js'
 import { freeFormInvoiceCreateMigration } from './migrations/0095_free_form_invoice_create.js'
@@ -1659,6 +1662,9 @@ const migrations = [
   { id: '0148_estimate_templates', statements: estimateTemplatesMigration },
   { id: '0149_invoice_elevations', statements: invoiceElevationsMigration },
   { id: '0150_queued_migrations', statements: queuedMigrationsMigration },
+  { id: '0151_outbound_webhooks', statements: outboundWebhooksMigration },
+  { id: '0152_payout_provider_enablement', statements: payoutProviderEnablementMigration },
+  { id: '0153_example_projects', statements: exampleProjectsMigration },
   { id: '0155_organization_holidays', statements: organizationHolidaysMigration },
 ] as const
 
