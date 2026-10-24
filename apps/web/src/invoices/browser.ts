@@ -3,6 +3,7 @@ import { renderDataTable, type CellContent, type DataTableSort } from '../compon
 import { rememberedSort, resolveSort } from '../components/table-sort.js'
 import { projectTimeRounding, roundingWithSource } from '../components/time-entry-editor.js'
 import { DEMO_MAIL_NOTE, isDemoDeployment, isDemoMailRestricted } from '../demo.js'
+import { attachmentsAvailable, ATTACHMENTS_UNAVAILABLE } from '../attachments-availability.js'
 import { markMoney, moneyText } from '../money-display.js'
 import {
   type Attachment,
@@ -1372,8 +1373,8 @@ export const createInvoicePaymentController = (
   }
 
   const loadAttachments = async (session: ActiveSession, invoiceId: number): Promise<void> => {
-    if (api.listInvoiceAttachments === undefined) {
-      attachmentStatus.textContent = 'Attachment storage is unavailable in this build.'
+    if (!attachmentsAvailable() || api.listInvoiceAttachments === undefined) {
+      attachmentStatus.textContent = ATTACHMENTS_UNAVAILABLE
       return
     }
     try {
@@ -1764,9 +1765,9 @@ export const createInvoicePaymentController = (
       status.textContent = options.headlineMessage ?? ''
       workflowStatus.textContent = options.successMessage ?? ''
       const canWrite = invoiceIdentityCanWrite(session.identity)
-      attachmentForm.hidden = demo || !canWrite || api.uploadInvoiceAttachment === undefined
-      attachmentReadonly.hidden = demo || canWrite || api.uploadInvoiceAttachment === undefined
-      attachmentDemo.hidden = !demo || api.uploadInvoiceAttachment === undefined
+      attachmentForm.hidden = !attachmentsAvailable() || demo || !canWrite || api.uploadInvoiceAttachment === undefined
+      attachmentReadonly.hidden = !attachmentsAvailable() || demo || canWrite || api.uploadInvoiceAttachment === undefined
+      attachmentDemo.hidden = !attachmentsAvailable() || !demo || api.uploadInvoiceAttachment === undefined
       attachmentSubmit.disabled = false
       void loadRounding(session, loadedInvoice)
       void loadEndClients(session, loadedInvoice)
@@ -2811,6 +2812,7 @@ export const createInvoicePaymentController = (
     event.preventDefault()
     const session = current()
     if (
+      !attachmentsAvailable() ||
       session === null ||
       !invoiceIdentityCanWrite(session.identity) ||
       invoice === null ||
