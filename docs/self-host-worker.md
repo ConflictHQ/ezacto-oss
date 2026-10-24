@@ -227,6 +227,14 @@ yet synced off-platform.
   bucket lifecycle rule or deletion removes backups and attachments together.
 - **Plain HTTP cannot sign in.** Session cookies are set `Secure`, so a browser
   will not send them over `http://`. Serve the Worker over HTTPS only.
+- **Expired sessions are inert, not deleted.** An expired or revoked session is
+  refused when it is read, but no job removes its row, and a sign-in or Access
+  request that opens a session adds one. This is accepted rather than fixed, so
+  there is no migration. An operator who wants the table trimmed can delete rows
+  whose `absolute_expires_at` is long past.
+- **Magic links are confirmed, not consumed, by a GET.** Opening the emailed
+  link shows a confirm page; the link is spent only when the page is submitted,
+  so a mail scanner or link preview cannot use it up.
 - **Admin email templates are privileged.** Whoever can edit email templates
   controls the text of messages sent from your domain, including sign-in and
   password-reset mail. Grant that to administrators you trust with that power.
