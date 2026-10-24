@@ -68,3 +68,27 @@ it('keeps unsaved fields and shows the server conflict when another administrato
     expect.any(AbortSignal),
   )
 })
+it('ignores an already-aborted refresh without reopening controls or clearing a newer session', async () => {
+  const api: HolidayApi = {
+    list: vi.fn(async () => [row]),
+    create: vi.fn(),
+    update: vi.fn(),
+    remove: vi.fn(),
+  }
+  const { root, controller } = setup(api)
+  const ended = new AbortController()
+  ended.abort()
+  controller.clear()
+  await controller.refresh(range, ended.signal)
+  expect(root.hidden).toBe(true)
+  expect(api.list).not.toHaveBeenCalled()
+
+  const active = new AbortController()
+  await controller.refresh(range, active.signal)
+  const name = root.querySelector<HTMLInputElement>('[name="name"]')!
+  name.value = 'Current session edit'
+  await controller.refresh(range, ended.signal)
+  expect(root.hidden).toBe(false)
+  expect(name.value).toBe('Current session edit')
+  expect(api.list).toHaveBeenCalledTimes(1)
+})

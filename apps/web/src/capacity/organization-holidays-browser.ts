@@ -153,6 +153,7 @@ export const createOrganizationHolidayController = (
   return {
     clear,
     async refresh(range: PlanningRange, signal: AbortSignal) {
+      if (signal.aborted) return
       const a = { signal, range },
         revision = ++readRevision
       const changedSignal = active?.signal !== signal
