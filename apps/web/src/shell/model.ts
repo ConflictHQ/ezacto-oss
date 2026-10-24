@@ -1,3 +1,4 @@
+import type { CalendarProposalApi } from '../calendar-proposals/browser.js'
 import type { EstimateComposerApi } from '../estimates/composer.js'
 import type { ScheduledRunApi } from '../scheduled-runs/model.js'
 import type { StaffPaymentsApi } from '../staff-payments/browser.js'
@@ -88,7 +89,7 @@ export interface InvoiceJournalChoice {
 }
 
 export interface ShellApi
-  extends StaffPaymentsApi,
+  extends Partial<CalendarProposalApi>, StaffPaymentsApi,
     Partial<ClientDirectoryApi>,
     Partial<ProjectDirectoryApi>,
     Partial<ReportWorkspaceApi>,
@@ -301,6 +302,7 @@ export interface ShellApi
   getProfile?(signal?: AbortSignal): Promise<{
     user_id: number
     timezone: string
+    effective_timezone?: string
     first_name?: string
     last_name?: string
     email?: string | null
@@ -2477,6 +2479,11 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  listCalendarProposals: (query, signal) => client.listCalendarProposals({ query, ...withSignal(signal) }),
+  acceptCalendarProposal: async (id, body, signal) =>
+    (await client.acceptCalendarProposal({ id, body, ...withSignal(signal) })).data,
+  discardCalendarProposal: async (id, signal) =>
+    (await client.discardCalendarProposal({ id, ...withSignal(signal) })).data,
   getTimeEntrySettings: async (signal) =>
     (await client.getTimeEntrySettings(withSignal(signal))).data,
   listTimeEntries: async (query, signal) => {

@@ -803,6 +803,10 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         </header>
         <p class="form-result" data-calendar-status role="status" aria-live="polite">Loading calendar…</p>
         <p class="visually-hidden" data-calendar-live aria-live="polite"></p>
+        <aside class="calendar-proposals" data-calendar-proposals hidden>
+          <p data-proposal-status role="status" aria-live="polite"></p>
+          <button type="button" data-proposal-retry hidden>Retry proposals</button>
+        </aside>
         <div class="calendar-surface" data-calendar-grid></div>
       </section>
       <div class="day-list" data-day-list data-view="phone">
@@ -1157,6 +1161,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   <dialog class="entry-dialog" data-entry-dialog data-timer-dialog data-note-dialog aria-labelledby="entry-title">
     <form data-timer-form novalidate data-entry-form data-note-form>
       <header><div><p class="eyebrow" data-entry-context>Time entry</p><h2 id="entry-title" data-entry-title data-note-title>Log time</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
+      <p class="hint" data-entry-proposal-source hidden></p>
       <div class="entry-assignment">
         <label>Project<select name="project" data-entry-project data-entry-project-options required></select></label>
         <label>Task<select name="task" data-entry-task data-entry-task-options required></select></label>
@@ -1172,7 +1177,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
       <label for="ez-entry-note">Note<textarea id="ez-entry-note" name="notes" data-entry-note-input data-timer-note data-note-input rows="5" maxlength="10000" aria-describedby="note-hint note-result"></textarea></label>
       <p class="hint" id="note-hint" data-entry-note-hint data-timer-note-hint data-note-hint>Optional. Up to 10,000 characters.</p>
       <p class="form-result" id="note-result" data-entry-result data-timer-result data-note-result role="status"></p>
-      <div class="timer-actions"><button class="primary-action" type="submit" data-entry-submit>Save entry</button><button type="button" data-stop-timer hidden>Stop running timer</button><button type="button" class="danger-action" data-entry-delete hidden>Delete entry</button></div>
+      <div class="timer-actions"><button class="primary-action" type="submit" data-entry-submit>Save entry</button><button type="button" data-proposal-discard hidden>Discard proposal</button><button type="button" data-proposal-check hidden>Check proposal status</button><button type="button" data-stop-timer hidden>Stop running timer</button><button type="button" class="danger-action" data-entry-delete hidden>Delete entry</button></div>
     </form>
   </dialog>
   <dialog class="menu-dialog" data-menu-dialog aria-labelledby="menu-title">

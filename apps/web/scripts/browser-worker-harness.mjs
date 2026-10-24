@@ -165,6 +165,7 @@ const run = async (statement, ...bindings) => {
 
 let rateCardFixture = null
 let scheduledManifestFixture = null
+let calendarProposalFixture = null
 
 const rows = async (statement, ...bindings) =>
   (await database.prepare(statement).bind(...bindings).all()).results
@@ -1411,6 +1412,65 @@ const fixtureControl = async (request, response) => {
       person.last_name !== "account"
     )
       throw new Error("Disposable closure was not durably applied");
+  } else if (action === 'calendar-proposals-seed' || action === 'calendar-proposals-cleanup') {
+    if (calendarProposalFixture !== null) {
+      await run(`UPDATE timesheet_lock_windows SET version=version+1,unlocked_by_user_id=1,unlocked_at=?,unlock_reason='Owned fixture cleanup'
+        WHERE lock_reason='browser-1201-lock' AND unlocked_at IS NULL`, new Date().toISOString())
+      const created = await rows(`SELECT time_entry_id AS id FROM calendar_proposals WHERE calendar_id='browser-owned-1201' AND time_entry_id IS NOT NULL`)
+      await run(`DELETE FROM calendar_proposals WHERE calendar_id='browser-owned-1201'`)
+      for (const { id } of created) await run('DELETE FROM time_entries WHERE id=? AND user_id=1 AND invoice_id IS NULL', id)
+      await run('DELETE FROM user_assignments WHERE user_id=120190')
+      await run('DELETE FROM users WHERE id=120190')
+      const old = calendarProposalFixture
+      await run(`UPDATE organizations SET time_entry_mode=?,time_format=?,clock=?,timezone=?,week_start_day=?,modules=? WHERE id=1`,
+        old.organization.time_entry_mode, old.organization.time_format, old.organization.clock,
+        old.organization.timezone, old.organization.week_start_day, old.organization.modules)
+      await run('UPDATE users SET timezone=? WHERE id=1', old.owner.timezone)
+      calendarProposalFixture = null
+    }
+    if (action === 'calendar-proposals-seed') {
+      if ((await rows('SELECT id FROM users WHERE id=120190')).length ||
+          (await rows('SELECT id FROM calendar_proposals WHERE id BETWEEN 120101 AND 120107')).length)
+        throw new Error('Calendar proposal fixture identifiers are already occupied')
+      calendarProposalFixture = {
+        organization: (await rows('SELECT time_entry_mode,time_format,clock,timezone,week_start_day,modules FROM organizations WHERE id=1'))[0],
+        owner: (await rows('SELECT timezone FROM users WHERE id=1'))[0],
+      }
+      await run(`UPDATE organizations SET time_entry_mode='duration',time_format='decimal',clock='24h',timezone='America/Costa_Rica',week_start_day='monday',modules=json_set(modules,'$.approval',json('true')) WHERE id=1`)
+      await run("UPDATE users SET timezone='UTC' WHERE id=1")
+      await run(`INSERT INTO users(id,first_name,last_name,profile,manager_grants,timezone,created_at,updated_at)
+        VALUES(120190,'Proposal','Other','member','[]','America/Costa_Rica',?,?)`, timestamp, timestamp)
+      await run(`INSERT INTO user_assignments(id,project_id,user_id,created_at,updated_at) VALUES(120190,1,120190,?,?)`, timestamp, timestamp)
+      const values = [
+        [120101,1,'Owned proposed workshop','2026-08-27T15:00:00.000Z','2026-08-27T16:00:00.000Z'],
+        [120102,1,'Owned proposed discard','2026-08-28T16:00:00.000Z','2026-08-28T16:30:00.000Z'],
+        [120103,1,'Owned overnight proposal','2026-08-28T05:30:00.000Z','2026-08-28T07:00:00.000Z'],
+        [120104,1,'Owned locked proposal','2026-08-26T15:00:00.000Z','2026-08-26T16:00:00.000Z'],
+        [120105,120190,'Other person private calendar','2026-08-27T15:00:00.000Z','2026-08-27T16:00:00.000Z'],
+      ]
+      for (const [id,userId,title,start,end] of values)
+        await run(`INSERT INTO calendar_proposals(id,user_id,provider,calendar_id,event_id,title,starts_at,ends_at,created_at,updated_at)
+          VALUES(?,?,'google','browser-owned-1201',?,?,?, ?,?,?)`, id,userId,`browser-1201:${id}`,title,start,end,timestamp,timestamp)
+      await run("DELETE FROM auth_rate_limits WHERE action='sign_in'")
+    }
+  } else if (action === 'calendar-proposals-start-end') {
+    if (calendarProposalFixture === null) throw new Error('Calendar proposal fixture is not active')
+    await run("UPDATE organizations SET time_entry_mode='start_end' WHERE id=1")
+  } else if (action === 'calendar-proposals-dst') {
+    if (calendarProposalFixture === null) throw new Error('Calendar proposal fixture is not active')
+    await run("UPDATE users SET timezone='America/New_York' WHERE id=1")
+    await run(`INSERT INTO calendar_proposals(id,user_id,provider,calendar_id,event_id,title,starts_at,ends_at,created_at,updated_at)
+      VALUES(120106,1,'google','browser-owned-1201','browser-1201:120106','Owned DST clock proposal','2026-11-01T05:45:00.000Z','2026-11-01T06:15:00.000Z',?,?),
+        (120107,1,'google','browser-owned-1201','browser-1201:120107','Owned precise-second proposal','2026-11-01T15:00:15.000Z','2026-11-01T16:00:00.000Z',?,?)`, timestamp,timestamp,timestamp,timestamp)
+  } else if (action === 'calendar-proposals-assert') {
+    const proposals = await rows(`SELECT id,status,time_entry_id FROM calendar_proposals WHERE calendar_id='browser-owned-1201' ORDER BY id`)
+    if (proposals.length !== 7 || proposals[0].status !== 'accepted' || proposals[1].status !== 'discarded' ||
+        proposals.slice(2).some((item) => item.status !== 'proposed')) throw new Error('Proposal decisions were not isolated')
+    const entries = await rows(`SELECT user_id,project_id,task_id,spent_date,seconds,started_time,ended_time,calendar_event_ref FROM time_entries WHERE id=?`, proposals[0].time_entry_id)
+    const entry = entries[0]
+    if (entries.length !== 1 || entry.user_id !== 1 || entry.project_id !== 1 || entry.task_id !== 1 ||
+        entry.spent_date !== '2026-08-27' || entry.seconds !== 3600 || entry.started_time !== null || entry.ended_time !== null ||
+        JSON.parse(entry.calendar_event_ref).event_id !== 'browser-1201:120101') throw new Error('Atomic acceptance changed source timing or assignment')
   } else if (action === 'payment-run-reset' || action === 'sign-in-rate-reset') {
     // Clearing the sign-in limit is all either does. The second name is for a
     // spec that signs in late in a run, after the rest of the suite has spent

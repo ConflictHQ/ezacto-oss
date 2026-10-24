@@ -9886,3 +9886,29 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   .team-defaults-table tr { padding: 0.5rem 0; border-bottom: 1px solid currentColor; }
   .team-defaults-table td { padding: 0.25rem 0; }
 }
+
+/* Provider-free suggestions have a separate identity and never count as time. */
+.cal-proposal {
+  touch-action: pan-y;
+  min-height: 44px;
+  border: 2px dashed var(--ez-data);
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+  cursor: pointer;
+}
+.cal-proposal .cal-block-time { display: block; overflow: hidden; text-overflow: ellipsis; }
+.cal-proposal:focus-visible { outline: 3px solid var(--ez-data); outline-offset: 2px; }
+.calendar-proposals { padding: 8px 16px; border-block: 1px solid var(--ez-border); }
+.calendar-proposals p { margin: 0; max-width: 70ch; }
+.calendar-proposals button,
+[data-proposal-discard],
+[data-proposal-check] { min-height: 44px; padding: 8px 12px; }
+[data-entry-proposal-source] { overflow-wrap: anywhere; }
+
+.entry-dialog[data-entry-context='proposal'] .timer-actions > button {
+  min-height: 44px;
+}
+.entry-dialog[data-entry-context='proposal'] [data-dialog-close] {
+  min-width: 44px;
+  min-height: 44px;
+}

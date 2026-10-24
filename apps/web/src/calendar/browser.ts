@@ -1,8 +1,10 @@
+import { proposalSourceLabel, type ProposalBlock } from '../calendar-proposals/model.js'
 import { icon } from '../components/icons.js'
 import { formatTimeForClock, type OrganizationClock } from '../components/time-entry-editor.js'
 import type { CalendarLayout } from './layout.js'
 import {
   calendarWeek,
+  assignLanes,
   clockFromMinutes,
   firstVisibleMinutes,
   MINUTES_IN_DAY,
@@ -43,6 +45,9 @@ export interface CalendarDisplayEntry extends CalendarEntry {
 }
 
 export interface CalendarView {
+  readonly proposals?: readonly ProposalBlock[]
+  readonly proposalTimeZone?: string
+
   /** The week, in the organization's order. */
   readonly dates: readonly string[]
   readonly entries: readonly CalendarDisplayEntry[]
@@ -63,6 +68,8 @@ export interface CalendarPlacement {
 }
 
 export interface CalendarHost {
+  reviewProposal?(id: number, anchor: HTMLElement): void
+
   /** Open the editor on an entry: a click, a tap, Enter. */
   openEntry(entryId: number): void
   /** A drag, a click or Enter on empty clock: the editor for a new entry there. */
@@ -122,6 +129,7 @@ interface PendingKeyMove {
 }
 
 type FocusMark =
+  | { readonly kind: 'proposal'; readonly proposalId: number; readonly date: string }
   | { readonly kind: 'block' | 'chip'; readonly entryId: number }
   | { readonly kind: 'cursor'; readonly date: string }
   | { readonly kind: 'step'; readonly offset: string }
@@ -316,6 +324,30 @@ export const createCalendarController = (host: CalendarHost): CalendarController
     time.textContent = running ? `${timeLabel(span.start)} – now` : rangeLabel(span)
   }
 
+  const drawProposal = (block: ProposalBlock, lane: number, lanes: number): HTMLElement => {
+    const node = element('button', 'cal-block cal-proposal')
+    node.type = 'button'
+    node.dataset.calendarProposal = String(block.proposal.id)
+    node.dataset.proposalDate = block.date
+    const source = proposalSourceLabel(block.proposal, view!.proposalTimeZone!)
+    node.setAttribute(
+      'aria-label',
+      `Review proposed event: ${block.proposal.title}. ${source}. Not saved time.`,
+    )
+    node.append(
+      element('span', 'cal-block-title', block.proposal.title),
+      element('span', 'cal-block-task', 'Proposed · not saved'),
+      element('span', 'cal-block-time', source),
+    )
+    setSpanStyle(node, block, lane, lanes)
+    node.addEventListener('pointerdown', (event) => event.stopPropagation())
+    node.addEventListener('click', (event) => {
+      event.stopPropagation()
+      host.reviewProposal?.(block.proposal.id, node)
+    })
+    return node
+  }
+
   const drawBlock = (block: CalendarBlock<CalendarDisplayEntry>): HTMLElement => {
     const entry = block.entry
     const node = element('button', 'cal-block')
@@ -450,6 +482,8 @@ export const createCalendarController = (host: CalendarHost): CalendarController
   const describeFocus = (): FocusMark | null => {
     const active = document.activeElement
     if (!(active instanceof HTMLElement) || !surface.contains(active)) return null
+    if (active.dataset.calendarProposal !== undefined)
+      return { kind: 'proposal', proposalId: Number(active.dataset.calendarProposal), date: active.dataset.proposalDate! }
     if (active.dataset.calendarBlock !== undefined)
       return { kind: 'block', entryId: Number(active.dataset.calendarBlock) }
     if (active.dataset.calendarChip !== undefined)
@@ -463,6 +497,8 @@ export const createCalendarController = (host: CalendarHost): CalendarController
 
   const focusTarget = (mark: FocusMark): HTMLElement | null => {
     switch (mark.kind) {
+      case 'proposal':
+        return surface.querySelector<HTMLElement>(`[data-calendar-proposal="${mark.proposalId}"][data-proposal-date="${mark.date}"]`)
       case 'block':
         return surface.querySelector<HTMLElement>(`[data-calendar-block="${mark.entryId}"]`)
       case 'chip':
@@ -553,7 +589,16 @@ export const createCalendarController = (host: CalendarHost): CalendarController
       column.dataset.calendarDay = day.date
       if (day.date === next.now.date) column.dataset.today = 'true'
       column.append(drawCursor(day.date))
-      for (const block of day.blocks) column.append(drawBlock(block))
+      const proposed = (next.proposals ?? []).filter((block) => block.date === day.date)
+      const lanes = assignLanes([
+        ...day.blocks.map((block) => ({ key: block.entry.id, start: block.start, end: block.end })),
+        ...proposed.map((block) => ({ key: -block.proposal.id, start: block.start, end: Math.max(block.end, block.start + 60) })),
+      ])
+      for (const block of day.blocks) column.append(drawBlock({ ...block, ...lanes.get(block.entry.id)! }))
+      for (const block of proposed) {
+        const lane = lanes.get(-block.proposal.id)!
+        column.append(drawProposal(block, lane.lane, lane.lanes))
+      }
       if (day.date === next.now.date) column.append(drawNow())
       columns.set(day.date, column)
       grid.append(column)
@@ -586,7 +631,8 @@ export const createCalendarController = (host: CalendarHost): CalendarController
     const scrollKey = `${next.layout}|${shown[0] ?? ''}`
     if (scrollKey !== scrolledFor || previousScroll === null) {
       scrolledFor = scrollKey
-      scroll.scrollTop = (firstVisibleMinutes(days) / MINUTES_IN_DAY) * scroll.scrollHeight
+      const earliestProposal = (next.proposals ?? []).filter((block) => shown.includes(block.date)).reduce((earliest, block) => Math.min(earliest, Math.max(0, block.start - 30)), 8 * 60)
+      scroll.scrollTop = (Math.min(firstVisibleMinutes(days), earliestProposal) / MINUTES_IN_DAY) * scroll.scrollHeight
     } else {
       scroll.scrollTop = previousScroll
     }
@@ -1196,7 +1242,7 @@ export const createCalendarController = (host: CalendarHost): CalendarController
       if (live !== null) live.textContent = ''
     },
     focusEntry(entryId) {
-      const node = surface.querySelector<HTMLElement>(`[data-calendar-block="${entryId}"]`)
+      const node = surface.querySelector<HTMLElement>(`[data-calendar-entry="${entryId}"]`)
       if (node === null) return
       node.focus({ preventScroll: true })
       node.scrollIntoView({ block: 'nearest' })
