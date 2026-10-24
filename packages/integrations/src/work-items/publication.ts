@@ -139,7 +139,10 @@ export interface PublishContext {
   /** Unguessable and bound to one connection; never logged. */
   readonly marker: string
   readonly now: () => number
-  /** Minimum time after an attempt before a missing comment counts as absent. */
+  /**
+   * Minimum time after an attempt before a missing comment counts as absent.
+   * Owner decision: production passes 60_000, then retries once on proven absence.
+   */
   readonly settleMs: number
 }
 
