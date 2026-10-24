@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { moduleAvailability } from '@ezacto/api'
 import { invoiceNumberIsAddressable, paletteDestinations } from '@ezacto/web'
 import { providerCredentials } from '../src/runtime.js'
 import {
-  accountingEnabled,
   createApp,
   type AppEnv,
   type Env,
@@ -30,15 +30,16 @@ describe('worker entry', () => {
     expect(await html(keys)).not.toContain('data-accounting-unavailable')
     expect(await html({ ...keys, ACCOUNTING_ENABLED: 'false' })).toContain('data-accounting-unavailable')
     expect(await html({ ...keys, ACCOUNTING_ENABLED: 'true' })).not.toContain('data-accounting-unavailable')
-    expect(await html({ ...keys, ACCOUNTING_ENABLED: 'nope' })).toContain('data-accounting-unavailable')
+    // An invalid flag refuses the page rather than reading as on or off.
+    expect((await app.request('/invoices', {}, { ...env, ...keys, ACCOUNTING_ENABLED: 'nope' })).status).toBe(500)
   })
 
   it('[#1217] accepts only true or false for ACCOUNTING_ENABLED', () => {
-    expect(accountingEnabled({})).toBe(true)
-    expect(accountingEnabled({ ACCOUNTING_ENABLED: 'true' })).toBe(true)
-    expect(accountingEnabled({ ACCOUNTING_ENABLED: 'false' })).toBe(false)
+    expect(moduleAvailability({}).accounting).toBe(true)
+    expect(moduleAvailability({ ACCOUNTING_ENABLED: 'true' }).accounting).toBe(true)
+    expect(moduleAvailability({ ACCOUNTING_ENABLED: 'false' }).accounting).toBe(false)
     for (const bad of ['', 'FALSE', '0', 'no']) {
-      expect(() => accountingEnabled({ ACCOUNTING_ENABLED: bad })).toThrow(/ACCOUNTING_ENABLED/)
+      expect(() => moduleAvailability({ ACCOUNTING_ENABLED: bad })).toThrow(/ACCOUNTING_ENABLED/)
     }
   })
 

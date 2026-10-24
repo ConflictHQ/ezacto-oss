@@ -58,6 +58,9 @@ export interface AppShellOptions {
   /** Whether an accounting provider is configured and accounting is not switched off. */
   readonly accountingAvailable?: boolean
   readonly backupsAvailable?: boolean
+  /** The operator's switches for invoices and single sign-on (issue 1254); false hides the module. */
+  readonly invoicesAvailable?: boolean
+  readonly ssoAvailable?: boolean
   readonly environment: string
   readonly release: string
   readonly brand?: Partial<DeploymentBrand>
@@ -555,7 +558,9 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const timeLayout = resolveCalendarLayout(options.timeLayout)
   const navLink = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
     `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Payments' ? ' data-staff-payments-nav hidden' : ''}${section === 'Expenses' ? ' data-expenses-nav' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${iconMarkup(sectionIcons[section])}<span class="nav-label">${section}</span></a>`
-  const navigation = sections.map(navLink).join('')
+  // The operator's invoices switch takes the section out of every strip (issue 1254).
+  const offered = sections.filter((section) => section !== 'Invoices' || options.invoicesAvailable !== false)
+  const navigation = offered.map(navLink).join('')
   // The Menu's cards are their own component: the sidebar's links shrink to
   // marks when it is collapsed, and the Menu must never inherit that. Same
   // gates and same current-page mark as the links, so permissions and the
@@ -567,11 +572,11 @@ export const renderAppShell = (options: AppShellOptions): string => {
         `<span class="nav-label">${section}</span>`,
         `<span class="menu-card-text"><span class="menu-card-title">${section}</span><span class="menu-card-hint" id="menu-hint-${section.toLowerCase()}" aria-hidden="true">${sectionHints[section]}</span></span>`,
       )
-  const menuNavigation = sections.map(menuCard).join('')
+  const menuNavigation = offered.map(menuCard).join('')
   const menuFoldedNavigation = foldedSections.map(menuCard).join('')
 
   return `<!doctype html>
-<html lang="en"${options.attachmentsAvailable === false ? ' data-attachments-unavailable' : ''}${options.accountingAvailable === false ? ' data-accounting-unavailable' : ''}${options.backupsAvailable === false ? ' data-backups-unavailable' : ''} data-ez-theme="${defaultTheme}" data-ez-scheme="${colorScheme}"${instancePalette ? ' data-ez-palette="instance"' : ''} data-ez-nav="${navLayout}" data-ez-sidebar="${sidebar}" data-ez-time-layout="${timeLayout}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
+<html lang="en"${options.attachmentsAvailable === false ? ' data-attachments-unavailable' : ''}${options.accountingAvailable === false ? ' data-accounting-unavailable' : ''}${options.backupsAvailable === false ? ' data-backups-unavailable' : ''}${options.invoicesAvailable === false ? ' data-invoices-unavailable' : ''}${options.ssoAvailable === false ? ' data-sso-unavailable' : ''} data-ez-theme="${defaultTheme}" data-ez-scheme="${colorScheme}"${instancePalette ? ' data-ez-palette="instance"' : ''} data-ez-nav="${navLayout}" data-ez-sidebar="${sidebar}" data-ez-time-layout="${timeLayout}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
