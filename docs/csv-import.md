@@ -186,6 +186,8 @@ rejected.
 
 ## Not covered yet
 
-A Clockify adapter, the upload wizard, running on D1 or the
-Worker, and a mapping preview UI are later slices of the same issue. This slice
-is CLI and container (SQLite) only.
+Clockify and Toggl CSV adapters are available through the CLI described above.
+The upload wizard, mapping preview UI and Worker/D1 CSV execution are not yet
+available. See the [first browser import plan](import-tools-plan.md) for the
+selected Clockify contract, reuse boundaries, safety gates and implementation
+stories. Current CSV import remains CLI and container (SQLite) only.

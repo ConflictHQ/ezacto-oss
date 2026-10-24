@@ -1369,6 +1369,19 @@ describe("our own receipts coming back from QuickBooks", () => {
     ).toBe(true);
   };
 
+  const announceCloud = async (
+    built: QuickBooksRuntime,
+    overrides: Record<string, unknown> = {},
+  ): Promise<void> => {
+    const payload = JSON.stringify([{
+      specversion: "1.0", id: "d9639109-fb57-493c-899a-378515daeaad",
+      source: "intuit.fixture-source", type: "qbo.payment.created.v1",
+      datacontenttype: "application/json", time: "2026-09-11T12:05:00.000000000Z",
+      intuitentityid: "qb-pay-9", intuitaccountid: "realm-a", data: {}, ...overrides,
+    }], null, 2);
+    expect((await built.service.receiveWebhook({ payload, signature: await sign(payload) })).accepted).toBe(true);
+  };
+
   const receipts = () =>
     sqlite!
       .prepare(
@@ -1392,6 +1405,53 @@ describe("our own receipts coming back from QuickBooks", () => {
         )
         .all() as { skipped_reason: string | null }[]
     ).map((row) => row.skipped_reason);
+
+  it.each(["CloudEvents", "legacy"])("[1013 money] %s-first signed deliveries share one receipt and delivery identity", async (first) => {
+    const fetchImpl = intuitWith({ ...quickBooksPayment(1_000), MetaData: { LastUpdatedTime: t(5) } });
+    const built = await runtime(fetchImpl, everythingReal());
+    await connected(built.store);
+    await built.mirror(42);
+    const writesBefore = fetchImpl.mock.calls.filter(([request]) => request.method !== "GET").length;
+    if (first === "legacy") await announce(built);
+    await announceCloud(built);
+    await announceCloud(built, { id: "another-envelope-for-the-same-payment" });
+    await announce(built);
+    expect(receipts()).toEqual([
+      { id: expect.any(Number), provider: "quickbooks", provider_transaction_id: "qb-pay-9:qb-inv-8", amount_cents: 100_000 },
+    ]);
+    expect(owed()).toEqual({ due_amount_cents: 150_000, state: "open" });
+    expect(sqlite!.prepare("SELECT count(*) AS n FROM quickbooks_webhook_deliveries WHERE entity_id = 'qb-pay-9'").get()).toEqual({ n: 1 });
+    expect(fetchImpl.mock.calls.filter(([request]) => /\/payment\/qb-pay-9\?/u.test(request.url))).toHaveLength(1);
+    // CloudEvents time describes the occurrence and need not equal legacy
+    // lastUpdated or the fetched entity's own version timestamp. A distinct
+    // delivery is read again, but the provider payment ID still owns one receipt.
+    await announceCloud(built, { time: "2026-09-11T12:05:00.987654321Z" });
+    expect(sqlite!.prepare("SELECT count(*) AS n FROM quickbooks_webhook_deliveries WHERE entity_id = 'qb-pay-9'").get()).toEqual({ n: 2 });
+    expect(fetchImpl.mock.calls.filter(([request]) => /\/payment\/qb-pay-9\?/u.test(request.url))).toHaveLength(2);
+    expect(receipts()).toHaveLength(1);
+    expect(owed()).toEqual({ due_amount_cents: 150_000, state: "open" });
+    // A later provider edit still cannot create a second receipt for this payment.
+    await announceCloud(built, { type: "qbo.payment.updated.v1", time: "2026-09-11T12:09:00Z" });
+    expect(receipts()).toHaveLength(1);
+    expect(owed()).toEqual({ due_amount_cents: 150_000, state: "open" });
+    expect(fetchImpl.mock.calls.filter(([request]) => request.method !== "GET")).toHaveLength(writesBefore);
+  });
+
+  it("[1013 security] ignores foreign companies and unrelated entities in signed CloudEvents", async () => {
+    const fetchImpl = intuitWith(quickBooksPayment(1_000));
+    const built = await runtime(fetchImpl, everythingReal());
+    await connected(built.store);
+    await announceCloud(built, { intuitaccountid: "realm-somebody-else" });
+    await announceCloud(built, { type: "qbo.purchase.created.v1", intuitentityid: "qb-purchase-1" });
+    expect(receipts()).toEqual([]);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(sqlite!.prepare("SELECT entity_name, skipped_reason FROM quickbooks_webhook_deliveries").all()).toEqual([
+      { entity_name: "Purchase", skipped_reason: "Purchase Create is not mirrored back" },
+    ]);
+    const payload = JSON.stringify([{ specversion: "1.0", type: "qbo.payment.created.v1", time: "2026-09-11T12:05:00Z", intuitentityid: "qb-pay-9", intuitaccountid: "realm-a" }]);
+    expect((await built.service.receiveWebhook({ payload: payload + " ", signature: await sign(payload) })).accepted).toBe(false);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
 
   it("[money] a receipt the mirror filed comes back from QuickBooks and is not recorded again", async () => {
     // Part of the balance, so the overpayment guard cannot be what stops it:

@@ -169,3 +169,140 @@ describe('reading a delivery', () => {
     expect(() => canonicalLastUpdated('not a date')).toThrow(QuickBooksWebhookError)
   })
 })
+
+/** Sanitized CloudEvents v1.0 fixture following Intuit's current webhook reference. */
+const cloudEvent = (overrides: Record<string, unknown> = {}) => ({
+  specversion: '1.0',
+  id: 'a485044f-9891-431d-8ae5-8142dbdb9f27',
+  source: 'intuit.fixture-source',
+  type: 'qbo.payment.created.v1',
+  datacontenttype: 'application/json',
+  time: '2026-09-11T12:00:00.179851517Z',
+  intuitentityid: 'qb-pay-1',
+  intuitaccountid: 'realm-a',
+  data: {},
+  ...overrides,
+})
+
+describe('CloudEvents deliveries', () => {
+  it('[1013] verifies the raw signed array before normalizing each company and entity', async () => {
+    const payload = JSON.stringify(
+      [
+        cloudEvent({ data: { id: 'wrong-record', realmId: 'wrong-company' } }),
+        cloudEvent({
+          id: 'second-envelope',
+          type: 'qbo.invoice.updated.v1',
+          intuitentityid: 'qb-inv-7',
+          intuitaccountid: 'realm-b',
+        }),
+        cloudEvent({ type: 'qbo.billpayment.voided.v1', intuitentityid: 'qb-bill-2' }),
+      ],
+      null,
+      2,
+    )
+    const signature = await sign(payload)
+    await expect(verifyWebhookSignature({ payload, signature, verifierToken })).resolves.toBe(true)
+    expect(parseWebhookNotification(payload)).toEqual([
+      {
+        realmId: 'realm-a',
+        name: 'Payment',
+        id: 'qb-pay-1',
+        operation: 'Create',
+        lastUpdated: '2026-09-11T12:00:00.179851517Z',
+      },
+      {
+        realmId: 'realm-b',
+        name: 'Invoice',
+        id: 'qb-inv-7',
+        operation: 'Update',
+        lastUpdated: '2026-09-11T12:00:00.179851517Z',
+      },
+      {
+        realmId: 'realm-a',
+        name: 'BillPayment',
+        id: 'qb-bill-2',
+        operation: 'Void',
+        lastUpdated: '2026-09-11T12:00:00.179851517Z',
+      },
+    ])
+    await expect(
+      verifyWebhookSignature({
+        payload: JSON.stringify(JSON.parse(payload)),
+        signature,
+        verifierToken,
+      }),
+    ).resolves.toBe(false)
+    await expect(
+      verifyWebhookSignature({
+        payload: payload.replace('qb-pay-1', 'forged-pay'),
+        signature,
+        verifierToken,
+      }),
+    ).resolves.toBe(false)
+  })
+
+  it.each([
+    ['created', 'Create'],
+    ['updated', 'Update'],
+    ['deleted', 'Delete'],
+    ['voided', 'Void'],
+    ['merged', 'Merge'],
+    ['emailed', 'Emailed'],
+  ])('[1013] maps the %s operation to the existing %s handling', (event, operation) => {
+    expect(
+      parseWebhookNotification(JSON.stringify([cloudEvent({ type: `qbo.payment.${event}.v1` })]))[0]
+        ?.operation,
+    ).toBe(operation)
+  })
+
+  it.each([
+    { intuitaccountid: '' },
+    { intuitaccountid: ' realm-a' },
+    { intuitaccountid: 123 },
+    { intuitentityid: '' },
+    { intuitentityid: 'qb\u0000pay' },
+    { intuitentityid: null },
+    { specversion: '2.0' },
+    { type: 'qbo.payment.created.v2' },
+    { type: 'other.payment.created.v1' },
+    { type: 'qbo.payment.create.v1' },
+    { type: 'qbo.constructor.created.v1' },
+    { type: 'qbo.payment.constructor.v1' },
+    { time: 'not-a-date' },
+    { time: '2026-09-11' },
+    { time: '2026-09-11T12:00:00' },
+    { time: '2026-02-29T12:00:00Z' },
+    { time: '2026-09-31T12:00:00Z' },
+    { time: '2026-09-11T24:00:00Z' },
+    { time: '2026-09-11T12:60:00Z' },
+    { time: '2026-09-11T12:00:60Z' },
+    { time: '2026-09-11T12:00:00+99:00' },
+    { time: '2026-09-11T12:00:00.Z' },
+    { time: '9999-12-31T23:59:59-23:59' },
+    { time: '0000-01-01T00:00:00+23:59' },
+  ])('[1013] skips malformed or unsupported identity fields: %j', (override) => {
+    expect(parseWebhookNotification(JSON.stringify([cloudEvent(override)]))).toEqual([])
+  })
+
+  it('[1013] accepts nanosecond fractions and explicit RFC 3339 zones with canonical legacy precision', () => {
+    for (const time of [
+      '2026-09-11T12:00:00.179851517Z',
+      '2026-09-11T12:00:00.179851517123Z',
+      '2026-09-11T13:00:00.179851517+01:00',
+      '2026-09-11t12:00:00.179851517z',
+    ]) {
+      const change = parseWebhookNotification(JSON.stringify([cloudEvent({ time })]))[0]!
+      expect(canonicalLastUpdated(change.lastUpdated)).toBe('2026-09-11T12:00:00.179Z')
+    }
+    expect(
+      parseWebhookNotification(JSON.stringify([cloudEvent({ time: '2028-02-29T00:00:00Z' })])),
+    ).toHaveLength(1)
+  })
+
+  it('[1013] skips non-event entries while retaining valid signed notifications and empty pings', () => {
+    expect(parseWebhookNotification('[]')).toEqual([])
+    expect(
+      parseWebhookNotification(JSON.stringify([null, [], 'not-an-event', 3, cloudEvent()])),
+    ).toHaveLength(1)
+  })
+})
