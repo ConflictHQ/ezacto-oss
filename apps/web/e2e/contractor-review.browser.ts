@@ -1,10 +1,12 @@
 import { expect, test } from '@playwright/test'
+import { withoutHttpReplaySupport } from './manual-retry-fixture.js'
 import { summarizeStaffPayments, type ContractorReview } from '@ezacto/core'
 const email = process.env.EZACTO_BROWSER_FIXTURE_EMAIL!,
   password = process.env.EZACTO_BROWSER_FIXTURE_PASSWORD!
 test('[e2e:contractor-review] reviews current and projected balances, preserves currencies and retries an explicit confirmation safely', async ({
   page,
 }) => {
+  await withoutHttpReplaySupport(page)
   const ledger = {
     month: '2026-09',
     as_of: '2026-10-01',

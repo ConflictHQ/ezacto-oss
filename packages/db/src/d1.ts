@@ -45,6 +45,7 @@ export {
   listClientDescendants,
   readUserIdentity,
   readUserTimezone,
+  readEffectiveUserTimezone,
   updateUserTimezone,
   type ClientHierarchyNode,
 } from './operations.js'
@@ -555,6 +556,10 @@ export * from './invoice-elevations.js'
 
 export * from './invoice-elevated-time.js'
 
+export * from './organization-holidays.js'
 export * from './webhooks.js'
 
 export * from './project-missing-rates.js'
+
+// Runtime infrastructure: callers must establish idempotence before use.
+export { retryTransientD1IdempotentOperation } from './d1-idempotent-retry.js'

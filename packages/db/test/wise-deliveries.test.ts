@@ -82,6 +82,7 @@ describe('claiming a delivery (#543)', () => {
     await claim(store)
     expect(await store.historyForTransfer('49983981')).toEqual([
       {
+        identitySource: 'signed-payload',
         deliveryId: 'delivery-1',
         eventType: 'transfers#state-change',
         transferId: '49983981',
@@ -114,7 +115,7 @@ describe('claiming a delivery (#543)', () => {
     await claim(store)
     expect(() =>
       database
-        .prepare(`UPDATE wise_webhook_deliveries SET current_state = 'cancelled' WHERE delivery_id = ?`)
+        .prepare(`UPDATE wise_signed_webhook_deliveries SET current_state = 'cancelled' WHERE delivery_id = ?`)
         .run('delivery-1'),
     ).toThrow(/is immutable/u)
   })

@@ -88,9 +88,16 @@ Three things matter:
 | **Verifier token** | Revealed by the toggle. Intuit signs every delivery with it (HMAC-SHA256, `intuit-signature` header), and the endpoint **must** verify that signature — the URL is public, and anything that reaches it is otherwise unauthenticated. |
 | **Subscribed events** | Every entity is checked by default. Narrow it to **Invoice** and **Payment**; everything else is delivery volume for events that will be ignored. |
 
-Leave *"Enable cloud event payload format"* off unless the endpoint has been
-written for it — the warning on that toggle is accurate, and the two formats are
-not interchangeable.
+Enable **CloudEvents payload format** for this endpoint. Intuit's
+[mandatory migration deadline was July 31, 2026](https://medium.com/intuitdev/upcoming-change-to-webhooks-payload-structure-2a87dab642d0).
+The handler accepts the current CloudEvents v1.0 array as well as legacy
+`eventNotifications` batches, with the same raw-body signature verification.
+`intuitaccountid` selects the connected company, `intuitentityid` names the
+changed record, and `type`/`time` supply the operation and change timestamp.
+The CloudEvent `id` identifies the notification; it is not a payment ID.
+Both formats use the existing delivery claims. Receipt deduplication remains
+keyed to the QuickBooks payment reference even when event timestamps differ.
+Test the format in the owned sandbox before changing the production subscription.
 
 Configure the endpoint **after** it is deployed. Intuit begins delivering as soon
 as it is saved, and deliveries to a URL that 404s are retried and then dropped.
@@ -320,7 +327,7 @@ client an invoice just to prove configuration.
 | Invoice does not mirror | Outbox/scheduler, company mapping, provider response and stored sync outcome |
 | Webhook signature fails | Environment-specific verifier token and the raw request body |
 | Payment is accepted but skipped | Delivery reason, invoice mapping, already-recorded amount and remaining balance |
-| CloudEvents delivery is ignored | This handler expects the implemented legacy notification shape; use the matching subscription format |
+| CloudEvents delivery is ignored | Deployed release supports CloudEvents v1.0; exact connected `intuitaccountid`, subscribed Invoice/Payment entity, operation and RFC 3339 `time`; check the delivery reason |
 
 Use the integration's Disconnect action (the administrator API is
 `DELETE /api/v1/integrations/quickbooks`) to revoke/forget the connection rather

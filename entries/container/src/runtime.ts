@@ -1,3 +1,4 @@
+import { createOrganizationHolidayRepository } from '@ezacto/db'
 import { demoDeployment } from '../../worker/src/app.js'
 import { createWebhookSecretVault } from '@ezacto/core'
 import { createWebhookService } from '@ezacto/db'
@@ -144,6 +145,7 @@ import {
   createQuickBooksStore,
   readUserIdentity,
   readUserTimezone,
+  readEffectiveUserTimezone,
   updateUserTimezone,
   createContainerIdempotencyStore,
   createIdempotentSqlite,
@@ -916,6 +918,7 @@ export const createContainerRuntime = async (
       trackedResources,
       calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
       allocations: new DrizzleAllocationRepository(drizzle),
+      organizationHolidays: createOrganizationHolidayRepository(drizzle),
       workItems: {
         repository: new DrizzleWorkItemRepository(drizzle),
         credentialConfigured: (provider) =>
@@ -923,6 +926,7 @@ export const createContainerRuntime = async (
       },
       profile: {
         readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
+        readEffectiveTimezone: async (userId) => await readEffectiveUserTimezone(drizzle, userId),
         readIdentity: async (userId) => await readUserIdentity(drizzle, userId),
         updateTimezone: async (userId, timezone, occurredAt) => {
           await updateUserTimezone(drizzle, userId, timezone, occurredAt)

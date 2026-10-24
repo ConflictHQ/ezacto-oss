@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises'
 import { expect, test } from '@playwright/test'
 
-// Current-app evidence only: the supplied dashboard/login/styles reference is unavailable.
+// Native evidence complements the supplied reference comparison in docs/design-reference-audit.md.
 for (const width of [390, 1280])
   for (const scheme of ['light', 'dark'] as const) {
     test.describe(`current layout ${width}px ${scheme}`, () => {
@@ -30,7 +30,7 @@ for (const width of [390, 1280])
           const layout = await page.evaluate(() => {
             const root = document.documentElement
             const controls = [
-              ...document.querySelectorAll<HTMLElement>('button,summary,input,select,textarea'),
+              ...document.querySelectorAll<HTMLElement>('button,summary,input,select,textarea,[data-settings-link]'),
             ]
               .filter(
                 (element) =>
@@ -74,6 +74,20 @@ for (const width of [390, 1280])
               const arrow = layout.controls.find((control) => control.label === label)
               expect.soft(arrow?.height, label + ' touch target').toBeGreaterThanOrEqual(44)
             }
+          for (const label of ['Hide money amounts ($)', 'Open navigation', 'Log time', 'Sign out', 'Settings', 'Collapse sidebar', 'Expand sidebar', 'Copy last week', 'This week', 'Add row']) {
+            const control = layout.controls.find((candidate) => candidate.label === label)
+            if (control) {
+              expect.soft(control.height, `${screen} ${label} touch height`).toBeGreaterThanOrEqual(44)
+              expect.soft(control.width, `${screen} ${label} touch width`).toBeGreaterThanOrEqual(44)
+            }
+          }
+          for (const control of layout.controls.filter((candidate) => candidate.label.startsWith('Search'))) {
+            expect.soft(control.height, `${screen} search target`).toBeGreaterThanOrEqual(44)
+          }
+          if (screen === 'approvals') {
+            for (const control of layout.controls.filter((candidate) => candidate.tag === 'SELECT' || candidate.label === 'Apply'))
+              expect.soft(control.height, 'approval filter touch height').toBeGreaterThanOrEqual(44)
+          }
           expect(layout.reducedMotion).toBe(true)
           await page.keyboard.press('Tab')
           const focused = await page.evaluate(() => {
@@ -82,11 +96,14 @@ for (const width of [390, 1280])
               tag: node?.tagName,
               inert: !!node?.closest('[inert],[hidden]'),
               outline: node ? getComputedStyle(node).outlineStyle : '',
+              outlineWidth: node ? parseFloat(getComputedStyle(node).outlineWidth) : 0,
+              shadow: node ? getComputedStyle(node).boxShadow : 'none',
             }
           })
           observations.push({ screen, focus: focused })
           expect.soft(focused.tag, `${screen} keyboard focus`).not.toBe('BODY')
           expect.soft(focused.inert, `${screen} inert focus`).toBe(false)
+          expect.soft((focused.outline !== 'none' && focused.outlineWidth >= 1) || focused.shadow !== 'none', `${screen} visible keyboard focus`).toBe(true)
           await page.screenshot({
             path: info.outputPath(`${screen}-${width}-${scheme}.png`),
             fullPage: true,

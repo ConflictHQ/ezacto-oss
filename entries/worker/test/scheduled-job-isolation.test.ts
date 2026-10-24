@@ -1,0 +1,135 @@
+import { beforeEach, expect, it, vi } from "vitest";
+import { worker } from "../src/index.js";
+import { createRuntimeServices } from "../src/runtime.js";
+import { runDemoMaintenance, seedDemoSender } from "../src/demo.js";
+import { runNightlyExport } from "../src/nightly-export.js";
+import * as Sentry from "@sentry/cloudflare";
+
+vi.mock("../src/runtime.js", async (original) => ({
+  ...(await original<object>()),
+  createRuntimeServices: vi.fn(),
+}));
+vi.mock("../src/demo.js", async (original) => ({
+  ...(await original<object>()),
+  runDemoMaintenance: vi.fn(),
+  seedDemoSender: vi.fn(),
+}));
+vi.mock("../src/nightly-export.js", () => ({ runNightlyExport: vi.fn() }));
+vi.mock("@sentry/cloudflare", async (original) => ({
+  ...(await original<object>()),
+  captureException: vi.fn(),
+  withSentry: (_options: unknown, handler: unknown) => handler,
+}));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+const minute = [
+  "webhook",
+  "purge",
+  "payment",
+  "budget",
+  "time",
+  "approval",
+  "backup",
+  "proposal",
+  "notice",
+  "dispatch",
+  "expiry",
+  "maintenance",
+  "outbox",
+];
+const daily = ["export", "recurring", "reminder", "maintenance", "outbox"];
+const hourly = [
+  "bill",
+  "quickbooks",
+  "deelStatus",
+  "deel",
+  "maintenance",
+  "outbox",
+];
+
+it.each([
+  ...minute.map((failure) => ({ cron: "* * * * *", order: minute, failure })),
+  ...daily.map((failure) => ({ cron: "0 3 * * *", order: daily, failure })),
+  ...hourly.map((failure) => ({ cron: "0 * * * *", order: hourly, failure })),
+])(
+  "isolates $failure on $cron and continues independent jobs exactly once",
+  async ({ cron, order, failure }) => {
+    const calls: string[] = [],
+      error = new Error("injected job failure");
+    const job =
+      <T>(name: string, result: T) =>
+      async () => {
+        calls.push(name);
+        if (name === failure) throw error;
+        return result;
+      };
+    vi.mocked(runDemoMaintenance).mockImplementation(
+      job("maintenance", { ran: "nothing" }) as never,
+    );
+    vi.mocked(runNightlyExport).mockImplementation(
+      job("export", undefined) as never,
+    );
+    vi.mocked(createRuntimeServices).mockResolvedValue({
+      webhooks: {
+        processDue: job("webhook", undefined),
+        purge: job("purge", undefined),
+      },
+      paymentRuns: { processDue: job("payment", undefined) },
+      budgetAlerts: { evaluate: job("budget", undefined) },
+      timeReminders: { processDue: job("time", undefined) },
+      timesheetAutoApprovalSweep: {
+        processDue: job("approval", { failed: [] }),
+      },
+      offsiteBackupSync: { processDue: job("backup", undefined) },
+      scheduledJobProposals: { processDue: job("proposal", { failed: [] }) },
+      scheduledRunNotices: { processDue: job("notice", undefined) },
+      scheduledRunDispatch: { processDue: job("dispatch", { failed: [] }) },
+      scheduledActionExpiry: { expireDue: job("expiry", undefined) },
+      recurringInvoices: { generateDue: job("recurring", undefined) },
+      reminders: { processDue: job("reminder", undefined) },
+      bill: { reconcilePayments: job("bill", undefined) },
+      quickBooks: { catchUp: job("quickbooks", undefined) },
+      deelSync: {
+        status() {
+          calls.push("deelStatus");
+          if (failure === "deelStatus") throw error;
+          return { configured: true };
+        },
+        runAutomaticIfDue: job("deel", { status: "ok" }),
+      },
+      outbox: { drain: job("outbox", {}) },
+    } as never);
+    await worker.scheduled!(
+      { cron, scheduledTime: Date.now() } as never,
+      { ATTACHMENTS: {} } as never,
+      {} as never,
+    );
+    expect(calls).toEqual(
+      order.filter((name) => !(failure === "deelStatus" && name === "deel")),
+    );
+    expect(Sentry.captureException).toHaveBeenCalledExactlyOnceWith(error);
+    expect(createRuntimeServices).toHaveBeenCalledExactlyOnceWith(
+      { ATTACHMENTS: {} },
+      { retryReadiness: true },
+    );
+  },
+);
+
+it("keeps the outbox independent from a failed demo sender after a successful rebuild", async () => {
+  const error = new Error("sender unavailable"),
+    drain = vi.fn(async () => ({}));
+  vi.mocked(createRuntimeServices).mockResolvedValue({
+    outbox: { drain },
+  } as never);
+  vi.mocked(runDemoMaintenance).mockResolvedValue({ ran: "rebuild" } as never);
+  vi.mocked(seedDemoSender).mockRejectedValue(error);
+  await worker.scheduled!(
+    { cron: "* * * * *" } as never,
+    {} as never,
+    {} as never,
+  );
+  expect(drain).toHaveBeenCalledOnce();
+  expect(Sentry.captureException).toHaveBeenCalledExactlyOnceWith(error);
+});

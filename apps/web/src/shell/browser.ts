@@ -1,3 +1,15 @@
+import {
+  createCalendarProposalController,
+  type ProposalDecision,
+} from '../calendar-proposals/browser.js'
+import {
+  proposalBlocks,
+  proposalSourceLabel,
+  proposalTimeZone,
+  proposalReviewFields,
+  proposalBillingSeconds,
+} from '../calendar-proposals/model.js'
+import { bindSkipNavigation } from './skip-navigation.js'
 import { createFirstRunController } from '../first-run/browser.js'
 import { wirePayoutDefaultSelf } from './payout-default-self.js'
 import { createScheduledRunController } from '../scheduled-runs/browser.js'
@@ -6,6 +18,8 @@ import { createStaffPaymentsController } from '../staff-payments/browser.js'
 import { mountPasswordRecovery, takePasswordResetLink } from './password-recovery.js'
 import {
   EzactoApiError,
+  type CalendarProposal,
+  type CalendarProposalAcceptInput,
   type GeneralResource,
   type Invoice,
   type InvoiceGenerationInput,
@@ -235,6 +249,11 @@ interface GridHandlers {
 }
 
 interface ActiveEntryEditor {
+  readonly proposalRange?: string
+  readonly proposalZone?: string
+  readonly proposal?: CalendarProposal
+  readonly proposalUnconfirmed?: boolean
+
   readonly context: EntryEditorContext
   readonly cell?: WeekGridCell
   readonly view?: GridView
@@ -1359,6 +1378,7 @@ export const mountShell = async (
   const authChecking = required<HTMLElement>('[data-auth-checking]')
   const sessionCheckOverlay = required<HTMLElement>('[data-session-check-overlay]')
   const authenticatedShell = required<HTMLElement>('[data-authenticated-shell]')
+  bindSkipNavigation(authenticatedShell)
   const invoiceGenerationPage =
     document.documentElement.dataset.appView === 'invoice-generation'
   // The week grid also mounts behind the invoice wizard and normalizes its own
@@ -1499,6 +1519,9 @@ export const mountShell = async (
   const entryNoteHint = required<HTMLElement>('[data-entry-note-hint]')
   const entryResult = required<HTMLElement>('[data-entry-result]')
   const entrySubmit = required<HTMLButtonElement>('[data-entry-submit]')
+  const proposalSource = required<HTMLElement>('[data-entry-proposal-source]')
+  const proposalDiscard = required<HTMLButtonElement>('[data-proposal-discard]')
+  const proposalCheck = required<HTMLButtonElement>('[data-proposal-check]')
   const stopTimer = required<HTMLButtonElement>('[data-stop-timer]')
   const deleteEntry = required<HTMLButtonElement>('[data-entry-delete]')
   const weekRemoved = required<HTMLElement>('[data-week-removed]')
@@ -1580,10 +1603,16 @@ export const mountShell = async (
   })
   const calendar = createCalendarController({
     openEntry: (entryId) => openCalendarEntry(entryId),
+    reviewProposal: (id, anchor) => openCalendarProposal(id, anchor),
     createEntry: (placement) => createCalendarEntry(placement),
     moveEntry: (entryId, placement) => moveCalendarEntry(entryId, placement),
     stepDay: (offset) => moveDay(offset),
     now: () => calendarNow(),
+  })
+  const calendarProposals = createCalendarProposalController(api, {
+    root: required<HTMLElement>('[data-calendar-proposals]'),
+    changed: () => render(),
+    message: messageFor,
   })
   const staffPayments = createStaffPaymentsController(api)
   const dashboard = createDashboardController(api)
@@ -1780,6 +1809,7 @@ export const mountShell = async (
   required<HTMLElement>('[data-week-period]').appendChild(weekPeriod.element)
   let supplementalRows: WeekRowSeed[] = []
   let selectedDay = Math.max(0, weekDates(within, weekStartDay).indexOf(localDate()))
+  let effectiveProposalZone: string | null = null
   let snapshot: ShellSnapshot | null = null
   let grid: WeekGrid | null = null
   let activeEntry: ActiveEntryEditor | null = null
@@ -2069,6 +2099,12 @@ export const mountShell = async (
     required<HTMLElement>('[data-week-grid-rows]').replaceChildren()
     required<HTMLElement>('[data-week-grid-totals]').replaceChildren()
     required<HTMLElement>('[data-day-rows]').replaceChildren()
+    calendarProposals.clear()
+    effectiveProposalZone = null
+    proposalSource.textContent = ''
+    proposalSource.hidden = true
+    proposalDiscard.hidden = true
+    proposalCheck.hidden = true
     calendar.clear()
     invoiceClient.replaceChildren()
     invoiceProjects.replaceChildren()
@@ -3140,6 +3176,7 @@ export const mountShell = async (
   const showTimePerson = (person: { readonly id: number; readonly name: string } | null): void => {
     const operation = sessionOperation()
     if (operation === null || operation.userId === null) return
+    suspendCalendarProposals()
     viewedPerson = person
     timePerson.value = person === null ? '' : String(person.id)
     if (entryDialog.open) entryDialog.close()
@@ -3288,6 +3325,16 @@ export const mountShell = async (
       ),
     )
     entryTask.value = heldTask
+    if (activeEntry?.proposal !== undefined) {
+      for (const [control, title] of [[entryProject, 'Choose project'], [entryTask, 'Choose task']] as const) {
+        const placeholder = document.createElement('option')
+        placeholder.value = ''
+        placeholder.textContent = title
+        control.prepend(placeholder)
+      }
+      entryProject.value = heldProject
+      entryTask.value = heldTask
+    }
   }
 
   entryProject.addEventListener('change', () => updateEntrySuggestions())
@@ -3731,7 +3778,43 @@ export const mountShell = async (
       ...(profileZone === null ? [] : [profileZone]),
       ...(lockPolicy === null ? [] : [lockPolicy.timezone]),
     ])
+    const proposalOperation = sessionOperation()
+    const proposalsVisible =
+      document.documentElement.dataset.appView === 'time' &&
+      document.documentElement.dataset.timeView === 'calendar' &&
+      viewedPerson === null &&
+      proposalOperation !== null
+    const zone = effectiveProposalZone ?? lockPolicy?.timezone ?? null
+    const proposalDates = calendarLayout.current() === 'day' ? [grid.dates[selectedDay]!] : grid.dates
+    calendarProposals.sync(
+      proposalsVisible
+        ? {
+            userId: proposalOperation!.userId!,
+            dates: proposalDates,
+            timeZone: zone,
+            signal: proposalOperation!.signal,
+            onSessionFailure: (error) => handleSessionFailure(error, proposalOperation!),
+          }
+        : null,
+    )
+    if (
+      activeEntry?.proposal !== undefined &&
+      (!proposalsVisible ||
+        !calendarProposals.canReview() ||
+        activeEntry.proposalRange !== proposalDates.join(',') ||
+        activeEntry.proposalZone !== zone)
+    ) {
+      entryDialog.close()
+      activeEntry = null
+      proposalSource.textContent = ''
+      proposalSource.hidden = true
+      proposalDiscard.hidden = true
+      proposalCheck.hidden = true
+      entryForm.reset()
+    }
+
     calendar.render({
+      ...(zone === null ? {} : { proposals: proposalBlocks(calendarProposals.proposals(), grid.dates, zone), proposalTimeZone: zone }),
       dates: grid.dates,
       entries: snapshot.entries,
       layout: calendarLayout.current(),
@@ -3847,18 +3930,19 @@ export const mountShell = async (
   // The zone a timer is filed on is the person's own before the organization's
   // (issue 651), and only `GET /profile` says what it is. Read with the week so
   // the grid's today is the server's, not the browser's.
-  const loadProfileZone = async (operation: AuthOperation): Promise<string | null> => {
-    if (api.getProfile === undefined) return null
+  const loadProfileZone = async (operation: AuthOperation): Promise<{ clock: string | null; proposal: string | null }> => {
+    if (api.getProfile === undefined) return { clock: null, proposal: null }
     try {
       const profile = await api.getProfile(operation.signal)
-      return profile.timezone === 'UTC' ? null : profile.timezone
+      const authoritative = proposalTimeZone(profile)
+      return { clock: authoritative, proposal: authoritative }
     } catch (error) {
       // A session that has ended is the week's failure, not this read's. Any
       // other refusal or fault falls back to the browser's clock: the zone
       // decides which cell is today, and a week that cannot say is still a
       // week worth showing.
       if (error instanceof EzactoApiError && error.status === 401) throw error
-      return null
+      return { clock: null, proposal: null }
     }
   }
 
@@ -3984,7 +4068,8 @@ export const mountShell = async (
     approvedNextCursor = approval.approvedCursor
     lockPolicyAvailable = policy.available
     lockPolicy = policy.policy
-    profileZone = zone
+    profileZone = zone.clock
+    effectiveProposalZone = zone.proposal
     activeTimesheetLocks = policy.locks
     // The latest requested week is on screen: nothing superseded gets this far.
     endWeekLoading()
@@ -3993,8 +4078,23 @@ export const mountShell = async (
     return true
   }
 
+  const suspendCalendarProposals = (): void => {
+    calendarProposals.clear()
+    for (const block of document.querySelectorAll('[data-calendar-proposal]')) block.remove()
+    if (activeEntry?.proposal !== undefined) {
+      entryDialog.close()
+      activeEntry = null
+      entryForm.reset()
+    }
+    proposalSource.textContent = ''
+    proposalSource.hidden = true
+    proposalDiscard.hidden = true
+    proposalCheck.hidden = true
+  }
+
   const loadWeek = async (operation: AuthOperation): Promise<void> => {
     if (!isSessionCurrent(operation)) return
+    suspendCalendarProposals()
     setSessionStatus('Loading your week…', 'loading')
     try {
       if (!(await refresh(operation))) return
@@ -5213,6 +5313,182 @@ export const mountShell = async (
       ? {}
       : { owner: { userId: viewedPerson.id, options: snapshot.catalog.timeEntryOptions } }
 
+  function openCalendarProposal(id: number, anchor: HTMLElement): void {
+    const proposal = calendarProposals.proposals().find((item) => item.id === id)
+    const zone = effectiveProposalZone ?? lockPolicy?.timezone ?? null
+    if (
+      proposal === undefined ||
+      zone === null ||
+      snapshot === null ||
+      viewedPerson !== null ||
+      sessionOperation() === null
+    )
+      return
+    const source = proposalReviewFields(proposal, zone)
+    configureEntryEditor(
+      {
+        context: 'proposal',
+        proposal,
+        proposalRange: (calendarLayout.current() === 'day'
+          ? [grid!.dates[selectedDay]!]
+          : grid!.dates
+        ).join(','),
+        proposalZone: zone,
+        proposalUnconfirmed: calendarProposals.unconfirmed(id),
+        entry: null,
+        projectId: 0,
+        taskId: 0,
+        spentDate: source.date,
+        seconds: source.seconds,
+        times: source.times,
+        notes: proposal.title,
+        mode: snapshot.timeEntrySettings.time_entry_mode,
+        timer: false,
+        minimumNoteLength: 0,
+      },
+      calendarProposals.unconfirmed(id)
+        ? 'The prior decision is not confirmed. Check its status before retrying.'
+        : '',
+    )
+    entryDialog.addEventListener(
+      'close',
+      () => {
+        if (anchor.isConnected) anchor.focus({ preventScroll: true })
+      },
+      { once: true },
+    )
+  }
+
+  const proposalPending = (pending: boolean): void => {
+    entryForm.setAttribute('aria-busy', String(pending))
+    entrySubmit.disabled = pending || activeEntry?.proposalUnconfirmed === true
+    proposalDiscard.disabled = pending || activeEntry?.proposalUnconfirmed === true
+    proposalCheck.disabled = pending
+    entryProject.disabled = pending
+    entryTask.disabled = pending
+    entryNoteInput.disabled = pending
+  }
+  const applyProposalDecision = async (
+    outcome: ProposalDecision,
+    editor: ActiveEntryEditor,
+    operation: AuthOperation,
+  ): Promise<void> => {
+    if (!isSessionCurrent(operation) || viewedPerson !== null || outcome.status === 'stale') return
+    if (outcome.status === 'unconfirmed' || outcome.status === 'open') {
+      if (activeEntry?.proposal?.id !== editor.proposal!.id || !entryDialog.open) return
+      activeEntry = { ...editor, proposalUnconfirmed: true }
+      proposalCheck.hidden = false
+      entryResult.textContent =
+        outcome.status === 'unconfirmed'
+          ? outcome.message
+          : 'The decision is not confirmed. Check proposal status before retrying.'
+      return
+    }
+    const acceptedId = outcome.status === 'accepted' ? outcome.proposal.time_entry_id : null
+    const wasOpen = entryDialog.open && activeEntry?.proposal?.id === editor.proposal!.id
+    if (wasOpen && activeEntry?.proposal?.id === editor.proposal!.id) {
+      entryDialog.close()
+      activeEntry = null
+      proposalSource.textContent = ''
+      proposalSource.hidden = true
+      proposalDiscard.hidden = true
+      proposalCheck.hidden = true
+      entryNoteInput.value = ''
+    }
+    try {
+      if (!(await refresh(operation))) return
+    } catch (error) {
+      if (handleSessionFailure(error, operation)) return
+      renderWeekLoadFailure()
+      setSessionStatus(
+        `Proposal ${outcome.status}. Your saved time could not reload; retry loading the week.`,
+        'error',
+        true,
+      )
+      return
+    }
+    await calendarProposals.reload()
+    if (outcome.status === 'accepted' && acceptedId === null)
+      setSessionStatus(
+        'This proposal was accepted earlier; its linked time entry is no longer available.',
+        'ready',
+      )
+    if (acceptedId !== null) {
+      const entry = snapshot?.entries.find((item) => item.id === acceptedId)
+      if (entry !== undefined)
+        document.dispatchEvent(new CustomEvent('ezacto:time-entry-created', { detail: entry }))
+      if (wasOpen) calendar.focusEntry(acceptedId)
+    }
+  }
+  function submitProposal(
+    editor: ActiveEntryEditor,
+    operation: AuthOperation,
+    input: CalendarProposalAcceptInput | null,
+  ): void {
+    if (editor.proposal === undefined || calendarProposals.pending()) return
+    proposalPending(true)
+    entryResult.textContent = input === null ? 'Discarding proposal…' : 'Accepting proposal…'
+    const request =
+      input === null
+        ? calendarProposals.discard(editor.proposal.id)
+        : calendarProposals.accept(editor.proposal.id, input)
+    void request
+      .then((outcome) => applyProposalDecision(outcome, editor, operation))
+      .catch((error: unknown) => {
+        if (
+          handleSessionFailure(error, operation) ||
+          !entryDialog.open ||
+          activeEntry?.proposal?.id !== editor.proposal!.id
+        )
+          return
+        const minimum = requiredMinimumFromError(error)
+        if (minimum !== null) {
+          activeEntry = { ...editor, minimumNoteLength: minimum }
+          configureNoteInput(entryNoteInput, entryNoteHint, minimum)
+        }
+        entryResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (
+          isSessionCurrent(operation) &&
+          activeEntry?.proposal?.id === editor.proposal!.id &&
+          entryDialog.open
+        )
+          proposalPending(false)
+      })
+  }
+  proposalDiscard.addEventListener('click', () => {
+    const operation = sessionOperation()
+    if (operation === null || activeEntry?.proposal === undefined || activeEntry.proposalUnconfirmed)
+      return
+    submitProposal(activeEntry, operation, null)
+  })
+  proposalCheck.addEventListener('click', () => {
+    const operation = sessionOperation(),
+      editor = activeEntry
+    if (operation === null || editor?.proposal === undefined || calendarProposals.pending()) return
+    proposalPending(true)
+    void calendarProposals
+      .check(editor.proposal.id)
+      .then(async (outcome) => {
+        if (!isSessionCurrent(operation) || activeEntry?.proposal?.id !== editor.proposal!.id) return
+        if (outcome.status === 'open') {
+          activeEntry = { ...editor, proposalUnconfirmed: false }
+          proposalCheck.hidden = true
+          entryResult.textContent =
+            'This proposal is still open. You can review the choices and try again.'
+        } else await applyProposalDecision(outcome, editor, operation)
+      })
+      .finally(() => {
+        if (
+          isSessionCurrent(operation) &&
+          activeEntry?.proposal?.id === editor.proposal!.id &&
+          entryDialog.open
+        )
+          proposalPending(false)
+      })
+  })
+
   /** A click, a tap or Enter on an entry drawn on the calendar. */
   function openCalendarEntry(entryId: number): void {
     const entry = snapshot?.entries.find((candidate) => candidate.id === entryId)
@@ -5317,9 +5593,20 @@ export const mountShell = async (
     const initialDurationValue =
       durationValue ?? formatCellHours(next.seconds, snapshot.timeEntrySettings.time_format)
     activeEntry = { ...next, initialDurationValue }
+    const reviewingProposal = next.proposal !== undefined
+    proposalSource.hidden = !reviewingProposal
+    proposalSource.textContent = reviewingProposal
+      ? `Proposed event: ${next.proposal!.title}. ${proposalSourceLabel(next.proposal!, effectiveProposalZone ?? lockPolicy!.timezone)}. Timing comes from the original event and cannot be edited here.` : ''
+    proposalDiscard.hidden = !reviewingProposal
+    proposalDiscard.disabled = false
+    proposalCheck.hidden = !next.proposalUnconfirmed
+    entrySubmit.disabled = next.proposalUnconfirmed === true
+    proposalDiscard.disabled = next.proposalUnconfirmed === true
+    for (const field of [entryDate, entryDurationInput, entryStart, entryEnd]) field.readOnly = reviewingProposal
+
     entryDialog.dataset.entryContext = next.context
     entryContext.textContent =
-      next.context === 'timer' ? 'Global timer' : 'Time entry'
+      reviewingProposal ? 'Calendar proposal' : next.context === 'timer' ? 'Global timer' : 'Time entry'
     entryTitle.textContent = contextLabel(
       next.context,
       next.entry !== null,
@@ -5361,7 +5648,7 @@ export const mountShell = async (
     ]) field.disabled = immutable
     entryNoteInput.disabled = next.entry?.is_locked === true
     entrySubmit.hidden = next.entry?.is_locked === true
-    entrySubmit.textContent = running
+    entrySubmit.textContent = reviewingProposal ? 'Accept proposal' : running
       ? 'Save note'
       : next.timer
         ? 'Start timer'
@@ -5387,6 +5674,11 @@ export const mountShell = async (
     }
     // A span drawn on the calendar arrives with its times set: the note is the
     // one thing left to say, and Enter in it saves.
+    if (next.context === 'proposal') {
+      updateEntrySuggestions({ project: '', task: '' })
+      entryProject.focus()
+      return
+    }
     if (next.context === 'calendar') {
       entryNoteInput.focus()
       return
@@ -5986,6 +6278,11 @@ export const mountShell = async (
       entryNoteInput.focus()
       return
     }
+    if (editor.proposal !== undefined) {
+      if (editor.proposalUnconfirmed || calendarProposals.pending()) return
+      submitProposal(editor, operation, { project_id: projectId, task_id: taskId, notes: notes.trim() === '' ? null : notes })
+      return
+    }
     const running = editor.entry?.is_running === true
     let timing: Pick<TimeEntryInput, 'seconds' | 'started_time' | 'ended_time'>
     try {
@@ -6122,8 +6419,9 @@ export const mountShell = async (
     if (option === undefined) return
     let seconds: number
     try {
-      seconds =
-        editor.mode === 'duration'
+      seconds = editor.proposal !== undefined && editor.proposalZone !== undefined
+        ? proposalBillingSeconds(editor.proposal, editor.mode, editor.proposalZone)
+        : editor.mode === 'duration'
           ? parseCellSeconds(entryDurationInput.value)
           : secondsBetweenTimes(
               parseTimeForClock(entryStart.value, snapshot.timeEntrySettings.clock),
@@ -6133,7 +6431,7 @@ export const mountShell = async (
       return
     }
     if (!Number.isSafeInteger(seconds) || seconds < 1) return
-    entryBilling.textContent = billsAsText(seconds, option.time_rounding)
+    entryBilling.textContent = `${editor.proposal === undefined ? '' : 'If accepted: '}${billsAsText(seconds, option.time_rounding)}`
     entryBilling.hidden = false
   }
 
@@ -6706,6 +7004,7 @@ export const mountShell = async (
       })
   }
   function moveWeekTo(nextWithin: string): void {
+    suspendCalendarProposals()
     const operation = sessionOperation()
     if (operation === null || operation.userId === null) return
     within = nextWithin
@@ -6723,6 +7022,7 @@ export const mountShell = async (
   required<HTMLButtonElement>('[data-week-current]').addEventListener('click', () => {
     const operation = sessionOperation()
     if (operation === null || operation.userId === null) return
+    suspendCalendarProposals()
     within = localDate()
     supplementalRows = loadSupplementalRows(weekPersonId(operation), within, weekStartDay)
     selectedDay = Math.max(0, weekDates(within, weekStartDay).indexOf(localDate()))

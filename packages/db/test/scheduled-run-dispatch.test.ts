@@ -1,7 +1,8 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { sql } from 'drizzle-orm'
 import { Miniflare } from 'miniflare'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core'
 import { scheduledJobConfig } from '@ezacto/core'
 import {
   createQueuedMailer,
@@ -180,7 +181,7 @@ for (const runtime of ['SQLite', 'D1'])
         },
       }
     }
-    it('[workflow #62] control-plane candidates advance fairly past the first ten runs', async () => {
+    it('[workflow #62 #1204] retries an ambiguous checkpoint for the same ten candidates, then advances fairly', async () => {
       const f = await setup()
       await f.runs.confirm(1, 1, '2026-10-01T09:01:00.000Z')
       for (let month = 1; month <= 11; month += 1) {
@@ -203,13 +204,52 @@ for (const runtime of ['SQLite', 'D1'])
         if (proposal.outcome !== 'proposed') throw new Error(proposal.outcome)
         await f.runs.confirm(proposal.run.id, 1, '2026-10-01T09:01:00.000Z')
       }
+      const originalAll = f.database.all.bind(f.database)
+      const dialect = new SQLiteSyncDialect()
+      let checkpoints = 0
+      const checkpointIds: unknown[][] = []
+      vi.spyOn(f.database, 'all').mockImplementation((async (query: Parameters<typeof originalAll>[0]) => {
+        const statement = typeof query === 'string' ? { sql: query, params: [] } : dialect.sqlToQuery(query.getSQL())
+        const result = await originalAll(query)
+        if (statement.sql.startsWith('UPDATE proposed_runs SET workflow_checked_at=')) {
+          checkpoints++
+          checkpointIds.push(statement.params)
+          if (checkpoints === 1) throw new Error('Failed query', { cause: new Error('D1_ERROR: Network connection lost') })
+        }
+        return result
+      }) as never)
       expect(
         (await f.dispatch.workflowCandidates()).map((row) => row.id).sort((a, b) => a - b),
       ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+      expect(checkpoints).toBe(2)
+      expect(checkpointIds[0]).toEqual(checkpointIds[1])
       f.advance('2026-10-01T09:03:00.000Z')
       const next = await f.dispatch.workflowCandidates()
       expect(next).toHaveLength(10)
       expect(next.map((row) => row.id)).toEqual(expect.arrayContaining([11, 12]))
+    })
+    it('[workflow #1204] rechecks cancellation and active leases between candidate read and checkpoint', async () => {
+      const f = await setup()
+      await f.runs.confirm(1, 1, '2026-10-01T09:01:00.000Z')
+      const originalAll = f.database.all.bind(f.database)
+      const dialect = new SQLiteSyncDialect()
+      let race: 'lease' | 'checkpoint' | 'cancel' = 'lease'
+      vi.spyOn(f.database, 'all').mockImplementation((async (query: Parameters<typeof originalAll>[0]) => {
+        if ((typeof query === 'string' ? query : dialect.sqlToQuery(query.getSQL()).sql).startsWith('UPDATE proposed_runs SET workflow_checked_at=')) {
+          if (race === 'lease') await f.database.run(sql`UPDATE run_items SET state='running',attempted_at='2026-10-01T09:00:00Z',lease_expires_at='2027-01-01T00:00:00Z' WHERE run_id=1`)
+          else if (race === 'checkpoint') await f.database.run(sql`UPDATE proposed_runs SET workflow_checked_at='2026-10-01T09:30:00Z' WHERE id=1`)
+          else await f.database.run(sql`UPDATE proposed_runs SET state='cancelled' WHERE id=1`)
+        }
+        return await originalAll(query)
+      }) as never)
+      expect(await f.dispatch.workflowCandidates()).toEqual([])
+      await f.database.run(sql`UPDATE run_items SET state='pending',lease_expires_at=NULL WHERE run_id=1`)
+      race = 'checkpoint'
+      expect(await f.dispatch.workflowCandidates()).toEqual([])
+      expect(await f.database.get(sql`SELECT workflow_checked_at FROM proposed_runs WHERE id=1`)).toMatchObject({ workflow_checked_at: '2026-10-01T09:30:00Z' })
+      race = 'cancel'
+      expect(await f.dispatch.workflowCandidates()).toEqual([])
+      expect(await f.database.get(sql`SELECT state FROM proposed_runs WHERE id=1`)).toMatchObject({ state: 'cancelled' })
     })
     it('[workflow #62] scopes a pass to its immutable proposal and excludes finished runs', async () => {
       const f = await setup()

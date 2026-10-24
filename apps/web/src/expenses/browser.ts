@@ -206,6 +206,11 @@ export const createExpenseWorkflowController = (
     onChange: () => {},
   })
   required<HTMLElement>('[data-expense-period]').appendChild(period.element)
+  const createOpen = required<HTMLButtonElement>('[data-expense-create-open]')
+  const createClose = required<HTMLButtonElement>('[data-expense-create-close]')
+  const emptyCreate = required<HTMLButtonElement>('[data-expense-empty-create]')
+  const createNotice = required<HTMLElement>('[data-expense-create-notice]')
+  let createOpener = createOpen
   const createPanel = required<HTMLElement>('[data-expense-create-panel]')
   const createForm = required<HTMLFormElement>('[data-expense-create-form]')
   const createSubmit = required<HTMLButtonElement>('[data-expense-create-submit]')
@@ -255,6 +260,61 @@ export const createExpenseWorkflowController = (
     !active.signal.aborted
       ? active
       : null
+
+  const canOpenCreate = (): boolean =>
+    listPage &&
+    current() !== null &&
+    moduleAvailable &&
+    catalogReady &&
+    api.createWorkflowExpense !== undefined
+
+  const syncCreateControls = (): void => {
+    const canOpen = canOpenCreate()
+    createOpen.hidden = !moduleAvailable
+    createOpen.disabled = !canOpen || mutationPending
+    emptyCreate.disabled = !canOpen || mutationPending
+    createClose.disabled = mutationPending
+    const ready =
+      canOpen &&
+      !createPanel.hidden &&
+      catalog.categories.some((item) => item.is_active) &&
+      catalog.projects.some((item) => item['is_active'] !== false)
+    for (const field of [...createForm.elements]) {
+      if (
+        field instanceof HTMLInputElement ||
+        field instanceof HTMLSelectElement ||
+        field instanceof HTMLTextAreaElement ||
+        field instanceof HTMLButtonElement
+      ) {
+        field.disabled = !ready || mutationPending
+      }
+    }
+  }
+  const setCreateExpanded = (expanded: boolean): void => {
+    createPanel.hidden = !expanded
+    createOpen.setAttribute('aria-expanded', String(expanded))
+    emptyCreate.setAttribute('aria-expanded', String(expanded))
+    syncCreateControls()
+  }
+  const restoreCreateFocus = (): void => {
+    if (current() === null || !moduleAvailable) return
+    const target = !createOpener.hidden && !createOpener.disabled ? createOpener : createOpen
+    if (!target.hidden && !target.disabled) target.focus()
+  }
+  const openCreate = (opener: HTMLButtonElement): void => {
+    if (!canOpenCreate() || mutationPending) return
+    createOpener = opener
+    createNotice.hidden = true
+    setCreateExpanded(true)
+    if (
+      !catalog.categories.some((item) => item.is_active) ||
+      !catalog.projects.some((item) => item['is_active'] !== false)
+    ) {
+      createResult.textContent =
+        'Create an active project and expense category before adding an expense.'
+      createResult.focus()
+    } else formSelect(createForm, 'project_id').focus()
+  }
 
   const apiErrorCode = (error: unknown): string | null => {
     if (!(error instanceof EzactoApiError) || typeof error.body !== 'object' || error.body === null) {
@@ -374,6 +434,10 @@ export const createExpenseWorkflowController = (
     list.replaceChildren()
     attachmentList.replaceChildren()
     createResult.textContent = ''
+    createNotice.replaceChildren()
+    createNotice.hidden = true
+    emptyCreate.hidden = true
+    createOpener = createOpen
     editResult.textContent = ''
     attachmentStatus.textContent = ''
     lockMessage.textContent = ''
@@ -395,7 +459,7 @@ export const createExpenseWorkflowController = (
       '[data-expense-detail-total]',
     ]) required<HTMLElement>(selector).textContent = '—'
 
-    createPanel.hidden = false
+    setCreateExpanded(false)
     filterForm.hidden = false
     list.hidden = false
     for (const notice of moduleNotices) notice.hidden = true
@@ -414,7 +478,9 @@ export const createExpenseWorkflowController = (
     list.replaceChildren()
     attachmentList.replaceChildren()
     detailArticle.hidden = true
-    createPanel.hidden = true
+    setCreateExpanded(false)
+    emptyCreate.hidden = true
+    createNotice.hidden = true
     filterForm.hidden = true
     list.hidden = true
     loadMore.hidden = true
@@ -642,6 +708,7 @@ export const createExpenseWorkflowController = (
     const filters = { ...currentFilters }
     const cursor = append ? nextCursor ?? undefined : undefined
     if (!append) {
+      emptyCreate.hidden = true
       listedExpenses = []
       nextCursor = null
       renderList()
@@ -661,6 +728,8 @@ export const createExpenseWorkflowController = (
       listedExpenses = append ? [...listedExpenses, ...page.data] : [...page.data]
       renderList()
       nextCursor = page.page.next_cursor
+      emptyCreate.hidden = listedExpenses.length > 0 || !canOpenCreate()
+      syncCreateControls()
       loadMore.hidden = nextCursor === null
       const expenseCount = list.querySelectorAll('tbody tr[data-row]').length
       listStatus.textContent = expenseCount === 0
@@ -820,9 +889,7 @@ export const createExpenseWorkflowController = (
     period.setWeekStartDay(configuredWeekStart)
     populateCatalogs()
     applyFilterValues()
-    createSubmit.disabled =
-      categories.every((item) => !item.is_active) ||
-      projects.every((item) => item['is_active'] === false)
+    syncCreateControls()
     return true
   }
 
@@ -881,36 +948,59 @@ export const createExpenseWorkflowController = (
     )
   })
 
+  createOpen.addEventListener('click', () => openCreate(createOpen))
+  emptyCreate.addEventListener('click', () => openCreate(emptyCreate))
+  createClose.addEventListener('click', () => {
+    if (mutationPending || current() === null) return
+    setCreateExpanded(false)
+    restoreCreateFocus()
+  })
+
   createForm.addEventListener('submit', (event) => {
     event.preventDefault()
     const session = current()
-    if (session === null || mutationPending || api.createWorkflowExpense === undefined) return
+    if (session === null || !moduleAvailable || !catalogReady || createPanel.hidden || mutationPending || api.createWorkflowExpense === undefined) return
     let payload: ExpenseInput
     try {
       payload = expensePayload(createForm, catalog.categories)
     } catch (error) {
       createResult.textContent = apiMessage(error)
+      createResult.focus()
       return
     }
+    let created = false
+    let focusError = false
     mutationPending = true
-    createSubmit.disabled = true
+    syncCreateControls()
     createResult.textContent = 'Adding expense…'
     api.createWorkflowExpense(payload, session.signal).then((expense) => {
       if (current() !== session) return
       createForm.reset()
       formInput(createForm, 'spent_date').value = localDate()
       populateCatalogs()
-      createResult.textContent = `Expense added. Open expense #${expense.id} to attach a receipt.`
+      createResult.textContent = ''
+      createNotice.hidden = false
+      const link = document.createElement('a')
+      link.href = `/expenses/${expense.id}`
+      link.textContent = `Open expense #${expense.id}`
+      createNotice.replaceChildren('Expense added. ', link)
+      created = true
+      setCreateExpanded(false)
       void loadList()
     }).catch((error: unknown) => {
       if (current() !== session) return
       if (sessionFailure(error, session)) return
       if (apiErrorCode(error) === 'module_disabled') showModuleUnavailable()
-      else createResult.textContent = apiMessage(error)
+      else {
+        createResult.textContent = apiMessage(error)
+        focusError = true
+      }
     }).finally(() => {
       if (current() === session && moduleAvailable) {
         mutationPending = false
-        createSubmit.disabled = false
+        syncCreateControls()
+        if (created) restoreCreateFocus()
+        else if (focusError) createResult.focus()
       }
     })
   })

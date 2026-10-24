@@ -99,5 +99,30 @@ export const calendarProposalEntryFields = (input: {
       "This event runs past midnight and a start/end entry belongs to one day.",
     );
   }
+  // A start/end entry stores minute clocks. Preserve the actual event rather
+  // than silently shifting subminute endpoints or changing its elapsed hours.
+  const precision = new Intl.DateTimeFormat("en-US", {
+    timeZone: input.timeZone, second: "2-digit", fractionalSecondDigits: 3,
+  });
+  for (const instant of [input.startsAt, input.endsAt]) {
+    if (precision.formatToParts(new Date(instant)).some((part) =>
+      (part.type === "second" || part.type === "fractionalSecond") && Number(part.value) !== 0)) {
+      throw new TrackedResourceInputError(
+        "proposal", "subminute_time",
+        "This event includes seconds that a minute-based start/end entry cannot preserve.",
+      );
+    }
+  }
+  const minuteOfDay = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+  const difference = minuteOfDay(endedTime) - minuteOfDay(startedTime);
+  // Match the ordinary entry path's implicit overnight arithmetic, including
+  // equal clocks meaning zero rather than an invented full day.
+  const wallSeconds = (difference < 0 ? difference + 1440 : difference) * 60;
+  if (wallSeconds * 1000 !== Date.parse(input.endsAt) - Date.parse(input.startsAt)) {
+    throw new TrackedResourceInputError(
+      "proposal", "unrepresentable_time",
+      "This event cannot be represented accurately by a minute-based start/end entry.",
+    );
+  }
   return { kind: "start_end", spentDate, startedTime, endedTime };
 };
