@@ -88,6 +88,13 @@ const surfaces: readonly Surface[] = [
     absent: /INSTANCE_THEME_STYLESHEET_PATH|wordmark|favicon|instance-theme/i,
   },
   {
+    id: "staff-magic-link-confirm",
+    status: "gap",
+    sources: ["packages/api/src/staff-magic-link.ts"],
+    anchor: "const confirmPage",
+    absent: /INSTANCE_THEME_STYLESHEET_PATH|wordmark|favicon|instance-theme/i,
+  },
+  {
     id: "portal-estimate-review",
     status: "delivered",
     sources: [PORTAL_ESTIMATE_REVIEW, PORTAL_BRAND],
@@ -198,7 +205,7 @@ describe("brand surface audit (#1011)", () => {
     expect(
       found,
       "an HTML document builder changed: add or update its row in docs/instance-theme.md and surfaces here",
-    ).toEqual({ [SHELL]: 2, [PORTAL_ESTIMATE_REVIEW]: 1, [PORTAL_INVOICE]: 1 });
+    ).toEqual({ [SHELL]: 2, [PORTAL_ESTIMATE_REVIEW]: 1, [PORTAL_INVOICE]: 1, "packages/api/src/staff-magic-link.ts": 1 });
   });
 
   it("[unit] every PDF writer has an audit row", () => {

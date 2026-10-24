@@ -267,6 +267,17 @@ class MemoryMagicLinks implements StaffMagicLinkStorePort {
   }
 }
 
+/** Issue 740: the emailed link is redeemed by a same-origin form POST. */
+const redeemLink = (app: { request: (input: string, init?: RequestInit) => Response | Promise<Response> }) =>
+  app.request('http://localhost/auth/magic-link/verify', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      origin: 'http://localhost',
+    },
+    body: `token=${'T'.repeat(43)}`,
+  })
+
 const magicLinkHarness = (twoFactor: TwoFactorGate) => {
   const sessions = { issue: vi.fn(async () => ({ setCookie: SESSION_COOKIE })) }
   const app = createApiApp({
@@ -322,7 +333,7 @@ describe('the emailed factor does not apply to other sign-ins', () => {
   it('[security] a magic link for an email-only user signs in without a second code to the same mailbox', async () => {
     const gateway = gate({ email: true })
     const { app, sessions } = magicLinkHarness(gateway)
-    const response = await app.request(`/auth/magic-link/verify?token=${'T'.repeat(43)}`)
+    const response = await redeemLink(app)
 
     expect(response.headers.get('location')).toBe('/')
     expect(sessions.issue).toHaveBeenCalledTimes(1)
@@ -334,7 +345,7 @@ describe('the emailed factor does not apply to other sign-ins', () => {
   it('[security] a magic link for a user with an authenticator issues a challenge that can never be mailed a code', async () => {
     const gateway = gate({ totp: true, email: true })
     const { app, sessions } = magicLinkHarness(gateway)
-    const response = await app.request(`/auth/magic-link/verify?token=${'T'.repeat(43)}`)
+    const response = await redeemLink(app)
 
     expect(response.headers.get('location')).toBe('/?two_factor=1')
     expect(sessions.issue).not.toHaveBeenCalled()
