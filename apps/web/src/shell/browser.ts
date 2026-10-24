@@ -1,3 +1,4 @@
+import { createFirstRunController } from '../first-run/browser.js'
 import { wirePayoutDefaultSelf } from './payout-default-self.js'
 import { createScheduledRunController } from '../scheduled-runs/browser.js'
 import { wireDeelSelfPayout } from './payout-deel-self.js'
@@ -1563,6 +1564,7 @@ export const mountShell = async (
   const invoiceResult = required<HTMLElement>('[data-invoice-generation-result]')
   const invoiceSubmit = required<HTMLButtonElement>('[data-invoice-generation-submit]')
   const invoiceRetry = required<HTMLButtonElement>('[data-retry-invoice-catalog]')
+  const firstRun = createFirstRunController(api)
   const clientDirectory = createClientDirectoryController(api)
   const projectDirectory = createProjectDirectoryController(api)
   const taskAdmin = createTaskAdminController(api)
@@ -3958,6 +3960,7 @@ export const mountShell = async (
     // disagreed with what the timesheet called the same week.
     invoicePeriod.setWeekStartDay(loadedWeekStartDay)
     snapshot = loaded
+    if (requestedPerson === null && loaded.entries.length > 0) firstRun.markTimeEntrySaved()
     // A module an administrator switched off is not offered in the strip
     // (issue 815), the way Approvals and Team already are not. Only hidden,
     // never removed: the route still answers with its own "unavailable" state
@@ -4282,6 +4285,9 @@ export const mountShell = async (
             total.total_cents === undefined
               ? `${(total.rounded_seconds / 3_600).toFixed(2)} h`
               : moneyText(formatMoney(total.total_cents, total.currency)),
+            ...(total.unpriced_time_entry_count > 0
+              ? [` · ${total.unpriced_time_entry_count} unpriced ${total.unpriced_time_entry_count === 1 ? 'entry' : 'entries'}; amount incomplete`]
+              : []),
           ]),
         )
       }
@@ -4660,6 +4666,9 @@ export const mountShell = async (
           handleSessionFailure(error, authenticated)
         })
     }
+    firstRun.activate(identity, authenticated.signal, (error) =>
+      handleSessionFailure(error, authenticated),
+    )
     void loadTeamNavigation(identity, authenticated)
     hideActivityLogWhenOff(identity, authenticated)
     if (invoiceGenerationPage) {
@@ -7031,6 +7040,22 @@ export const mountShell = async (
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
         invoiceResult.textContent = messageFor(error)
+        if (error instanceof EzactoApiError && error.body !== null && typeof error.body === 'object') {
+          const detail = Reflect.get(error.body, 'error')
+          const fields: unknown = detail !== null && typeof detail === 'object' ? Reflect.get(detail, 'fields') : undefined
+          if (Array.isArray(fields)) {
+            for (const field of fields) {
+              if (field?.code !== 'missing_billable_rate' || typeof field.field !== 'string') continue
+              const match = /^project_ids\.([1-9]\d*)$/.exec(field.field)
+              if (match === null) continue
+              const link = document.createElement('a')
+              link.href = `/projects/${match[1]}`
+              link.textContent = 'Open project to fix rates'
+              invoiceResult.append(' ', link)
+              break
+            }
+          }
+        }
       })
       .finally(() => {
         if (!isSessionCurrent(operation)) return

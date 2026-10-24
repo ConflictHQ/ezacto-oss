@@ -117,6 +117,7 @@ export interface InvoiceBandClaim {
 export type GeneratedInvoice = InvoiceResource & { band?: InvoiceBandClaim }
 
 export type InvoiceGenerationErrorCode =
+  | 'missing_billable_rate'
   | 'invalid_command_input'
   | 'forbidden'
   | 'command_id_reused'
@@ -127,7 +128,7 @@ export type InvoiceGenerationErrorCode =
 export class InvoiceGenerationError extends Error {
   readonly code: InvoiceGenerationErrorCode
 
-  constructor(code: InvoiceGenerationErrorCode, message: string) {
+  constructor(code: InvoiceGenerationErrorCode, message: string, readonly projectId?: number) {
     super(message)
     this.name = 'InvoiceGenerationError'
     this.code = code
@@ -1017,6 +1018,19 @@ const groupExpenses = (
  * over the rounded hours, to the cent, which is as close to the entries as one
  * quantity and one price can come. Hours that round to nothing bill nothing.
  */
+const missingBillableRate = (entry: UninvoicedTimeCandidateRow): never => {
+  const cause = entry.projectBillBy === 'project' && entry.projectHourlyRateCents == null
+    ? 'bills by project but has no hourly rate. Set the project hourly rate, or change Bill by for new time'
+    : entry.projectBillBy === 'project'
+      ? 'has existing time with no captured billable rate. Preview and confirm Repair missing rates on the project'
+      : `has unpriced time billed by ${entry.projectBillBy ?? 'its configured rate source'}. Check the selected rate source`
+  throw new InvoiceGenerationError(
+    'missing_billable_rate',
+    `project "${entry.projectName}" ${cause}. Changing rates affects new entries only; existing unpriced time can be repaired explicitly using the project rate.`,
+    entry.projectId,
+  )
+}
+
 const timeLines = (
   entries: readonly UninvoicedTimeCandidateRow[],
   summary: InvoiceGenerationTimeSummary,
@@ -1028,7 +1042,7 @@ const timeLines = (
       'time duration',
     )
     const rates = group.entries.map(
-      (entry) => entry.billableRateCents ?? invalid(`time entry ${entry.id} has no billable rate`),
+      (entry) => entry.billableRateCents ?? missingBillableRate(entry),
     )
     const quantity = hoursToTheHundredth(roundedSeconds)
     let unitPriceCents = rates[0]!

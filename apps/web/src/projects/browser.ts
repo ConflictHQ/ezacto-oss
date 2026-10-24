@@ -791,6 +791,71 @@ export const createProjectDirectoryController = (
         : []),
     ]
     facts.replaceChildren(...rows)
+    if (
+      active.identity.profile === 'administrator' &&
+      api.recoverProjectMissingRates !== undefined &&
+      projectText(currentProject, 'billing_method') === 'time_materials' &&
+      projectText(currentProject, 'bill_by') === 'project'
+    ) {
+      const controls = document.createElement('div')
+      const explanation = document.createElement('p')
+      explanation.textContent =
+        'Rate changes apply to new time only. Preview a repair to price up to 1,000 existing unpriced entries at the current project rate. Captured rates, costs, invoices, running time and locked time stay unchanged.'
+      const result = document.createElement('p')
+      result.setAttribute('role', 'status')
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.dataset.projectMissingRates = ''
+      button.textContent = 'Preview missing rates'
+      button.disabled = projectNumber(currentProject, 'hourly_rate_cents') === null
+      if (button.disabled) result.textContent = 'Edit this project and set its hourly rate first.'
+      let fingerprint: string | undefined
+      const projectId = currentProject.id
+      button.addEventListener('click', () => {
+        if (currentSession() !== active) return
+        const confirming = fingerprint !== undefined
+        button.disabled = true
+        void api.recoverProjectMissingRates!(projectId, fingerprint, active.signal)
+          .then((report) => {
+            if (currentSession() !== active) return
+            if (confirming) {
+              result.textContent = `${report.applied_entries} ${report.applied_entries === 1 ? 'entry' : 'entries'} repaired. Return to the invoice dialog to create the draft.${report.applied_entries < report.entry_count ? ' Some entries changed during confirmation; preview again for the remainder.' : ''}`
+              fingerprint = undefined
+              button.textContent = 'Preview missing rates'
+            } else {
+              fingerprint = report.entry_count > 0 ? report.fingerprint : undefined
+              if (report.entry_count === 0) {
+                result.textContent = 'No eligible unpriced time. Approved, pending, locked, invoiced and running entries are excluded.'
+              } else {
+                result.replaceChildren(
+                  `${report.entry_count} ${report.entry_count === 1 ? 'entry' : 'entries'} (${(report.seconds / 3600).toFixed(2)} hours), ${report.earliest_date} to ${report.latest_date}, will be priced at `,
+                  moneyText(projectMoney(report.hourly_rate_cents, report.currency)),
+                  '/hour. Confirm to record an audited repair.',
+                )
+              }
+              button.textContent =
+                fingerprint === undefined
+                  ? 'Preview missing rates'
+                  : `Confirm repair of ${report.entry_count} ${report.entry_count === 1 ? 'entry' : 'entries'}`
+            }
+          })
+          .catch((error: unknown) => {
+            active.presentFailure(error, () => {
+              result.textContent = messageFor(error)
+              fingerprint = undefined
+              button.textContent = 'Preview missing rates'
+            })
+          })
+          .finally(() => {
+            if (currentSession() === active) button.disabled = false
+          })
+      })
+      const actions = document.createElement('div')
+      actions.className = 'project-confirm-actions'
+      actions.append(button)
+      controls.append(explanation, actions, result)
+      facts.append(fact('Repair missing rates', controls))
+    }
   }
 
   const renderAssignments = (): void => {
@@ -979,6 +1044,11 @@ export const createProjectDirectoryController = (
       // The switch is offered above the amount it governs, because the amount
       // is only consulted when the switch is off and a form that asked for the
       // number first would invite one that is never read.
+      const rateHint = document.createElement('p')
+      rateHint.textContent = projectText(currentProject!, 'bill_by') === 'people'
+        ? 'Person rates apply to new time on this project. Existing time keeps its captured rate.'
+        : 'This rate is used only when the project bills by person. This project currently uses another rate source; change Bill by on the project to use person rates.'
+      staffingFormBody.append(rateHint)
       staffingFormBody.append(
         checkbox('use_default_rates', "Bill at the person's default rate"),
         label('Project hourly rate', input('hourly_rate_cents', { type: 'number', min: '0', step: '0.01' })),
@@ -1203,6 +1273,26 @@ export const createProjectDirectoryController = (
       notes.rows = 5
       notes.maxLength = 10_000
       body.push(label('Administrator notes', notes))
+    }
+    if (active.capabilities.canViewBillableMoney) {
+      const hint = document.createElement('p')
+      hint.dataset.projectRateHint = ''
+      const rate = body.flatMap((element) => [
+        ...element.querySelectorAll<HTMLInputElement>('[name="hourly_rate_cents"]'),
+      ])[0]
+      const syncHint = (): void => {
+        hint.textContent =
+          billingMethod.value === 'time_materials' &&
+          billBy.value === 'project' &&
+          (rate?.value ?? '') === ''
+            ? 'This project bills at the project hourly rate. Without a rate, logged time cannot be invoiced. Person and task rates are ignored. Set a rate, or change Bill by. Rate changes affect new time only; use Repair missing rates on the project for existing unpriced entries.'
+            : 'Bill by selects which rates apply: project, task or person. Changing a rate affects new time only; existing snapshots are preserved.'
+      }
+      body.push(hint)
+      billingMethod.addEventListener('change', syncHint)
+      billBy.addEventListener('change', syncHint)
+      rate?.addEventListener('input', syncHint)
+      queueMicrotask(syncHint)
     }
     projectFormBody.replaceChildren(...body)
     if (project === null) {
