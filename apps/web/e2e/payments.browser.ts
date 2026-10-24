@@ -175,10 +175,8 @@ test("[e2e:payments] schedules only after review and exposes the filtered paymen
   ).toBeChecked();
   expect(approved).toBe(false);
   expect(previews).toBe(0);
-  await expect(form.getByLabel("Run name")).toHaveValue(
-    "Payment Fixture · 2026-08",
-  );
-  await form.getByLabel("Run name").fill("August payroll");
+  await expect(form.getByLabel("Run label (optional)")).toHaveValue("");
+  await form.getByLabel("Run label (optional)").fill("August payroll");
   await form.getByLabel("When", { exact: true }).selectOption("scheduled");
   await form.getByLabel("Start at").fill("2026-10-01T09:00");
   await form.getByLabel("Pay Payment Fixture", { exact: true }).check();
