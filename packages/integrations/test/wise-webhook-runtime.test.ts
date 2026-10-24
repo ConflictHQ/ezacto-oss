@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { createWiseRuntime, type WiseDeliveryPort } from "../src/wise/runtime.js";
 import { WISE_SANDBOX_WEBHOOK_PUBLIC_KEY } from "../src/wise/webhook.js";
@@ -44,14 +45,19 @@ const signedWith = async (body: string) => {
   const der = new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey));
   const base64 = btoa(String.fromCharCode(...der));
   const pem = `-----BEGIN PUBLIC KEY-----\n${(base64.match(/.{1,64}/gu) ?? []).join("\n")}\n-----END PUBLIC KEY-----`;
-  const signature = btoa(
-    String.fromCharCode(
-      ...new Uint8Array(
-        await crypto.subtle.sign("RSASSA-PKCS1-v1_5", pair.privateKey, new TextEncoder().encode(body)),
+  const sign = async (payload: string) =>
+    btoa(
+      String.fromCharCode(
+        ...new Uint8Array(
+          await crypto.subtle.sign(
+            "RSASSA-PKCS1-v1_5",
+            pair.privateKey,
+            new TextEncoder().encode(payload),
+          ),
+        ),
       ),
-    ),
-  );
-  return { pem, signature };
+    );
+  return { pem, signature: await sign(body), sign };
 };
 
 const transferBody = (state: string, id = "49983981") =>
@@ -106,6 +112,9 @@ const deliver = (
     isTest: input.isTest ?? false,
   });
 
+const payloadIdentity = (body: string) =>
+  `wise-body-sha256:${createHash("sha256").update(body).digest("hex")}`;
+
 describe("a signed delivery (#543)", () => {
   it("[money] accepts Wise's own, and records what it said", async () => {
     const { wise, deliveries } = runtime();
@@ -113,7 +122,7 @@ describe("a signed delivery (#543)", () => {
       accepted: true,
     });
     expect(deliveries.claim).toHaveBeenCalledWith({
-      deliveryId: "delivery-1",
+      deliveryId: payloadIdentity(SIGNED_BODY),
       subscriptionId: "90aa8e14-4ef1-4a56-861c-f3c9cde097ea",
       eventType: "transfers#state-change",
       transferId: "49983981",
@@ -238,7 +247,7 @@ describe("settling a payout from a state change (#543)", () => {
       failureReason: null,
       now: "2026-09-13T12:00:00.000Z",
     });
-    expect(deliveries.finish).toHaveBeenCalledWith("delivery-1", "2026-09-13T12:00:00.000Z", null);
+    expect(deliveries.finish).toHaveBeenCalledWith(payloadIdentity(body), "2026-09-13T12:00:00.000Z", null);
   });
 
   it("[money] settles as failed on each of Wise's reversals, saying which", async () => {
@@ -262,7 +271,7 @@ describe("settling a payout from a state change (#543)", () => {
     // log's sent rows are immutable.
     expect(deliveries.settleTransfer).not.toHaveBeenCalled();
     expect(deliveries.finish).toHaveBeenCalledWith(
-      "delivery-1",
+      payloadIdentity(body),
       "2026-09-13T12:00:00.000Z",
       "state processing is not final",
     );
@@ -281,16 +290,66 @@ describe("settling a payout from a state change (#543)", () => {
     expect(deliveries.settleTransfer).not.toHaveBeenCalled();
   });
 
-  it("[money] keys a delivery with no id on the event itself, so a retry still collides", async () => {
+  it("[security] deduplicates a verified raw body despite changed or missing unsigned headers", async () => {
     const body = transferBody("outgoing_payment_sent");
     const { pem, signature } = await signedWith(body);
-    const { wise, deliveries } = runtime({ publicKey: pem });
-    await deliver(wise, { payload: body, signature, deliveryId: null });
-    expect(deliveries.claim).toHaveBeenCalledWith(
-      expect.objectContaining({
-        deliveryId: "sub-1|transfers#state-change|49983981|outgoing_payment_sent|2026-09-13T10:00:00Z",
+    const seen = new Set<string>();
+    const { wise, deliveries } = runtime({
+      publicKey: pem,
+      deliveries: port({
+        claim: vi.fn(async ({ deliveryId }: { deliveryId: string }) => {
+          if (seen.has(deliveryId)) return { claim: "duplicate" as const };
+          seen.add(deliveryId);
+          return { claim: "fresh" as const };
+        }),
       }),
+    });
+    for (const deliveryId of ["original-header", "changed-header", null])
+      expect(await deliver(wise, { payload: body, signature, deliveryId })).toEqual({
+        accepted: true,
+      });
+    expect([...seen]).toEqual([payloadIdentity(body)]);
+    expect(deliveries.settleTransfer).toHaveBeenCalledTimes(1);
+    expect(deliveries.finish).toHaveBeenCalledTimes(1);
+  });
+
+  it("[security] separates genuinely different signed raw bodies even with the same delivery header", async () => {
+    const body = transferBody("outgoing_payment_sent");
+    const { pem, signature, sign } = await signedWith(body);
+    const other = body.replace(
+      '"sent_at":"2026-09-13T10:00:01Z"',
+      '"sent_at":"2026-09-13T10:00:02Z"',
     );
+    const { wise, deliveries } = runtime({ publicKey: pem });
+    await deliver(wise, { payload: body, signature, deliveryId: "same-header" });
+    await deliver(wise, { payload: other, signature: await sign(other), deliveryId: "same-header" });
+    expect(deliveries.claim).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ deliveryId: payloadIdentity(body) }),
+    );
+    expect(deliveries.claim).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ deliveryId: payloadIdentity(other) }),
+    );
+    expect(payloadIdentity(other)).not.toBe(payloadIdentity(body));
+  });
+
+  it("[security] hashes the signed UTF-8 bytes without normalizing equivalent JSON", async () => {
+    const body = transferBody("outgoing_payment_sent").replace('"sub-1"', '"sub-☃"');
+    const escaped = body.replace("☃", "\\u2603");
+    const { pem, signature, sign } = await signedWith(body);
+    const { wise, deliveries } = runtime({ publicKey: pem });
+    await deliver(wise, { payload: body, signature });
+    await deliver(wise, { payload: escaped, signature: await sign(escaped) });
+    expect(deliveries.claim).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      deliveryId: payloadIdentity(body), subscriptionId: "sub-☃",
+    }));
+    expect(deliveries.claim).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      deliveryId: payloadIdentity(escaped), subscriptionId: "sub-☃",
+    }));
+    expect(payloadIdentity(body)).not.toBe(payloadIdentity(escaped));
+    expect(await deliver(wise, { payload: escaped, signature })).toEqual({ accepted: false });
+    expect(deliveries.claim).toHaveBeenCalledTimes(2);
   });
 
   it("[money] records why a settlement did not land rather than dropping it", async () => {
@@ -307,7 +366,7 @@ describe("settling a payout from a state change (#543)", () => {
     });
     expect(await deliver(wise, { payload: body, signature })).toEqual({ accepted: true });
     expect(deliveries.finish).toHaveBeenCalledWith(
-      "delivery-1",
+      payloadIdentity(body),
       "2026-09-13T12:00:00.000Z",
       "no matching payout transfer",
     );
@@ -322,7 +381,7 @@ describe("settling a payout from a state change (#543)", () => {
     // "We were told and chose not to act" is a different fact from "nothing
     // arrived", and inbound money is #101's seam rather than this one.
     expect(deliveries.finish).toHaveBeenCalledWith(
-      "delivery-1",
+      payloadIdentity(body),
       "2026-09-13T12:00:00.000Z",
       "event type balances#credit is not acted on",
     );

@@ -398,18 +398,12 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
     const transferId = event.kind === "transfer_state" ? event.transferId : null;
     const eventType =
       event.kind === "transfer_state" ? "transfers#state-change" : event.eventType;
-    // A delivery with no id of its own is keyed on the event's own identity,
-    // which is stable across a retry for the same reason: a retry is the same
-    // event again.
-    const deliveryId =
-      trimmed(input.deliveryId ?? undefined) ??
-      [
-        event.subscriptionId,
-        eventType,
-        transferId ?? "-",
-        event.kind === "transfer_state" ? event.currentState : "-",
-        event.occurredAt ?? "-",
-      ].join("|");
+    // Wise signs the raw body, not the delivery-id header. A changed header
+    // must not turn a verified retry into another durable event claim.
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input.payload));
+    const deliveryId = `wise-body-sha256:${Array.from(new Uint8Array(digest), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("")}`;
 
     const claimed = await deliveries.claim({
       deliveryId,

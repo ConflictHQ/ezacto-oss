@@ -1,3 +1,4 @@
+import { wiseSignedDeliveriesMigration } from './migrations/0156_wise_signed_deliveries.js'
 import { organizationHolidaysMigration } from './migrations/0155_organization_holidays.js'
 import { quickBooksRetryMigration } from './migrations/0154_quickbooks_retry.js'
 import { exampleProjectsMigration } from './migrations/0153_example_projects.js'
@@ -1668,6 +1669,7 @@ const migrations = [
   { id: '0153_example_projects', statements: exampleProjectsMigration },
   { id: '0154_quickbooks_retry', statements: quickBooksRetryMigration },
   { id: '0155_organization_holidays', statements: organizationHolidaysMigration },
+  { id: '0156_wise_signed_deliveries', statements: wiseSignedDeliveriesMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

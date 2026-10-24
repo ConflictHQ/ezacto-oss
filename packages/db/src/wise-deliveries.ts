@@ -47,7 +47,7 @@ export type WiseSettlement =
   | { settled: 'none'; reason: string }
 
 export interface WiseDeliveryStore {
-  /** Claims the delivery. Only the first caller for an id gets `fresh`. */
+  /** Claims a verified raw-body identity in the trusted ledger only. */
   claim(input: WiseDeliveryInput): Promise<WiseDeliveryClaim>
   /** Marks a claimed delivery done, with why it was not acted on if it was not. */
   finish(deliveryId: string, now: string, skippedReason: string | null): Promise<void>
@@ -68,6 +68,7 @@ export interface WiseDeliveryStore {
 }
 
 export interface WiseDeliveryRecord {
+  identitySource: 'legacy-header' | 'signed-payload'
   deliveryId: string
   eventType: string
   transferId: string | null
@@ -79,6 +80,7 @@ export interface WiseDeliveryRecord {
 }
 
 interface DeliveryRow {
+  identity_source: 'legacy-header' | 'signed-payload'
   delivery_id: string
   event_type: string
   transfer_id: string | null
@@ -90,6 +92,7 @@ interface DeliveryRow {
 }
 
 const record = (row: DeliveryRow): WiseDeliveryRecord => ({
+  identitySource: row.identity_source,
   deliveryId: row.delivery_id,
   eventType: row.event_type,
   transferId: row.transfer_id,
@@ -101,7 +104,7 @@ const record = (row: DeliveryRow): WiseDeliveryRecord => ({
 })
 
 const columns = `delivery_id, event_type, transfer_id, current_state, occurred_at,
-  received_at, processed_at, skipped_reason`
+  received_at, processed_at, skipped_reason, identity_source`
 
 export const createWiseDeliveryStore = (database: Database): WiseDeliveryStore => ({
   /**
@@ -113,7 +116,7 @@ export const createWiseDeliveryStore = (database: Database): WiseDeliveryStore =
    */
   claim: async (input) => {
     const inserted = await database.all<{ delivery_id: string }>(sql`
-      INSERT INTO wise_webhook_deliveries
+      INSERT INTO wise_signed_webhook_deliveries
         (delivery_id, subscription_id, event_type, transfer_id, current_state,
          occurred_at, received_at)
       VALUES (${input.deliveryId}, ${input.subscriptionId}, ${input.eventType},
@@ -125,7 +128,7 @@ export const createWiseDeliveryStore = (database: Database): WiseDeliveryStore =
 
   finish: async (deliveryId, now, skippedReason) => {
     await database.all(sql`
-      UPDATE wise_webhook_deliveries
+      UPDATE wise_signed_webhook_deliveries
       SET processed_at = ${now}, skipped_reason = ${skippedReason}
       WHERE delivery_id = ${deliveryId}
       RETURNING delivery_id`)
@@ -160,8 +163,8 @@ export const createWiseDeliveryStore = (database: Database): WiseDeliveryStore =
   historyForTransfer: async (transferId) =>
     (
       await database.all<DeliveryRow>(sql`
-        SELECT ${sql.raw(columns)} FROM wise_webhook_deliveries
+        SELECT ${sql.raw(columns)} FROM wise_all_webhook_deliveries
         WHERE transfer_id = ${transferId}
-        ORDER BY received_at DESC`)
+        ORDER BY received_at DESC, identity_source DESC, delivery_id DESC`)
     ).map(record),
 })

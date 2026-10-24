@@ -34,7 +34,21 @@ Create a profile-level `transfers#state-change` subscription for the paying prof
 https://app.example.com/webhooks/wise
 ```
 
-Use [Wise's subscription instructions](https://docs.wise.com/guides/developer/webhooks/subscribe-to-webhooks) for the access available to your account. The endpoint is at the site root, not under `/api/v1`. It is not mounted without `WISE_WEBHOOK_PUBLIC_KEY`. An unauthenticated GET is not a webhook test; inspect a supported signed delivery and its delivery ID/status. Requests are verified using `X-Signature-SHA256` before their contents are trusted.
+Use [Wise's subscription instructions](https://docs.wise.com/guides/developer/webhooks/subscribe-to-webhooks) for the access available to your account. The endpoint is at the site root, not under `/api/v1`. Real deliveries are refused without `WISE_WEBHOOK_PUBLIC_KEY`. A subscription test can be acknowledged before that key is installed; this bootstrap acknowledgement does not prove signature verification. An unauthenticated GET is not a webhook test; inspect a supported signed delivery and its delivery ID/status. Requests are verified using `X-Signature-SHA256` before their contents are trusted.
+
+Verified deliveries use a `wise-body-sha256:` digest of the exact signed body as
+their claim identity. Changing or omitting the unsigned delivery-ID header cannot
+turn identical signed bytes into another claim. Distinct signed bodies remain
+separate events; the existing planned-only payout fence still prevents rewriting
+settled money. No new event-age cutoff is introduced.
+
+Migration `0156_wise_signed_deliveries` stores new claims in a separate trusted
+ledger. Historical header-derived rows remain unchanged and appear alongside new
+rows in read-only history, labeled `legacy-header` or `signed-payload`. Equal
+textual IDs across those namespaces do not collide. Original raw bodies were not
+retained, so old rows are not rehashed; the first post-upgrade delivery can add a
+new history row without settling the same money again. Retention review includes
+both ledgers and their protected backups; see the [closure inventory](account-closure-data-inventory.md).
 
 ## Approving and scheduling payments
 

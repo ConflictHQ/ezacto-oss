@@ -172,6 +172,10 @@ export function createAccountClosureRepository(database: Database): AccountClosu
       entries.push(
         `json_object('location','${table}.address','count',(SELECT count(*) FROM ${table} suppression WHERE EXISTS (SELECT 1 FROM user_emails address WHERE address.user_id=(SELECT id FROM subject) AND lower(address.address)=suppression.address)),'category','audit_and_security')`,
       )
+    if (tables.some(({ name }) => name === 'wise_signed_webhook_deliveries'))
+      entries.push(
+        `json_object('location','wise_all_webhook_deliveries.transfer_id','count',(SELECT count(*) FROM wise_all_webhook_deliveries delivery WHERE EXISTS (SELECT 1 FROM payout_transfers payout WHERE payout.external_transfer_id=delivery.transfer_id AND payout.user_id=(SELECT id FROM subject)) OR EXISTS (SELECT 1 FROM payment_run_items item WHERE item.transfer_id=delivery.transfer_id AND item.user_id=(SELECT id FROM subject))),'category','billing_and_payments')`,
+      )
     // D1 has tighter compound-SELECT and function-argument limits than SQLite.
     // Each bounded array contains objects, so trimming its outer brackets is exact.
     const groups: string[] = []
