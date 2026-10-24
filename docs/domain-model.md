@@ -87,7 +87,7 @@ Harvest's `company` + the Preferences/Modules settings surface (UI inventory §3
 | `auto_lock` / `auto_submit` | bool | Harvest "NEW" prefs. |
 | `time_entry_notes_required` | bool | |
 | `time_rounding_mode` / `time_rounding_minutes` | enum `exact\|up\|down\|nearest` / int `6\|10\|15\|20\|30\|60` | The organization's rounding rule: a direction and an increment (issue 949). Drives native `rounded_seconds` (§3.4). A project may carry its own pair; the old `time_rounding` enum (`none\|nearest_6\|nearest_15\|nearest_30\|up_6\|up_15\|up_30`, the set [Harvest's Preferences controls](https://support.getharvest.com/hc/en-us/articles/360048179912-Customizing-account-preferences) evidence) was copied into the pair by migration 0112 and is no longer read. |
-| `modules` | json | Feature flags: `expenses, invoices, estimates, approval, team, client_portal, activity_log`. Disabled modules disappear from nav (UI §38 Modules — keep this). |
+| `modules` | json | Feature flags: `expenses, invoices, estimates, approval, team, client_portal, activity_log`. Disabled modules disappear from nav (UI §38 Modules — keep this). The operator can also switch `invoices`, `sso`, `backups` and `accounting` off for the whole instance from the environment; that switch outranks this column and is never stored here (see the [operator guide](operator-guide.md#switch-whole-modules-off)). |
 | `require_2fa` / `require_sso` | bool | Commercial-tier enforcement; columns exist in OSS, enforcement is Identity-seam concern (D4). |
 
 ### 2.2 `user`

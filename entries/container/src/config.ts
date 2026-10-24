@@ -1,6 +1,7 @@
 import { isAbsolute, normalize, resolve } from 'node:path'
 import { lastSeenIntervalFromSeconds } from '@ezacto/db'
-import { accountingEnabled, type AppEnv } from '../../worker/src/app.js'
+import { moduleAvailability, OPERATOR_MODULE_FLAGS, OPERATOR_MODULES } from '@ezacto/api'
+import type { AppEnv } from '../../worker/src/app.js'
 
 export interface ContainerConfig {
   host: string
@@ -208,11 +209,16 @@ export const readContainerConfig = (
       'QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET must be set together',
     )
   }
-  const accountingFlag = optional(environment, 'ACCOUNTING_ENABLED', 5)
-  // Invalid values throw here, at start-up (#1217).
-  const accounting = accountingEnabled({
-    ...(accountingFlag === undefined ? {} : { ACCOUNTING_ENABLED: accountingFlag }),
-  })
+  // The operator's module switches (issue 1254; ACCOUNTING_ENABLED is #1217).
+  // Invalid values throw here, at start-up.
+  const moduleFlags = Object.fromEntries(
+    OPERATOR_MODULES.flatMap((module) => {
+      const name = OPERATOR_MODULE_FLAGS[module]
+      const value = optional(environment, name, 5)
+      return value === undefined ? [] : [[name, value]]
+    }),
+  )
+  const accounting = moduleAvailability(moduleFlags).accounting
   const wiseToken = optional(environment, 'WISE_TOKEN', 512)
   const githubWorkItemsCredential = optional(environment, 'GITHUB_WORK_ITEMS_CREDENTIAL', 4_096)
   const wiseProfileId = optional(environment, 'WISE_PROFILE_ID', 64)
@@ -244,7 +250,7 @@ export const readContainerConfig = (
       ['APPLE_WEB_ACTIVE_KEY_ID', optional(environment, 'APPLE_WEB_ACTIVE_KEY_ID', 32)],
       ['APPLE_WEB_ROUTING_SECRET', optional(environment, 'APPLE_WEB_ROUTING_SECRET', 43)],
     ].filter(([, value]) => value !== undefined)),
-    ...(accountingFlag === undefined ? {} : { ACCOUNTING_ENABLED: accountingFlag }),
+    ...moduleFlags,
     ...(bootstrapToken === undefined
       ? {}
       : { EZACTO_BOOTSTRAP_TOKEN: bootstrapToken }),
