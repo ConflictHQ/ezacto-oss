@@ -120,3 +120,31 @@ resource calendars, feeds and native parity out of current-availability claims.
 The private native source at `c148488f356b3e36bf1b9260e0d1d6a0738824db` has
 no resource-capacity/allocation/time-off screen found in the `src` inventory.
 Native implementation and device evidence remain with #1195 and that repository.
+
+## Placeholder assignment contract (#1191, contract only)
+
+[`packages/core/src/placeholder-allocation.ts`](../packages/core/src/placeholder-allocation.ts)
+fixes the interface before the tables exist; its reference store and
+[tests](../packages/core/test/placeholder-allocation.test.ts) are what a real
+repository must pass. No schema, route or migration is added by it.
+
+- A placeholder allocation names unassigned project demand: project, inclusive
+  dates, weekly seconds, `state` (`open`, `assigned`, `archived`), integer
+  `revision` from 0. It has no user, capacity, rate or time. Identifiers are
+  never reused after archive or erasure.
+- One command assigns: `{idempotencyKey, placeholderAllocationId,
+  expectedRevision, userId}`. In a single transaction it re-reads authority,
+  creates the person allocation from the placeholder's project/dates/hours and
+  marks the placeholder `assigned` with a revision bump and audit event.
+- Refusal order, each writing nothing: not found (404), no management of the
+  project (403), stale revision (409), not open (409), inactive person/project
+  (422), same person/project date overlap (409). A replayed key returns the
+  stored result before any check.
+- Warnings, never refusals: `over_allocated` per week (existing policy).
+  Missing project access is returned as a `project_access_missing`
+  prerequisite; the command creates no staffing assignment or access.
+- Unassigned rows are listed separately and never enter a person's capacity or
+  utilization. Organization-wide lists need `schedule:write` over the project.
+
+Open: the revision wire shape depends on #1190, and the audit/idempotency
+storage is decided with the migration.
