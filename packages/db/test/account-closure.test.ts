@@ -116,6 +116,22 @@ for (const runtime of ['SQLite', 'D1'])
         tracking: createAccountDeletionStatusRepository(db),
       }
     }
+    it('[privacy #1200] inventories both Wise delivery ledgers as linked billing evidence', async () => {
+      const { closure, exec } = await setup()
+      await exec(`INSERT INTO user_payout_accounts(id,user_id,provider,external_id,linked_by_user_id,linked_at,verified_at,created_at,updated_at)
+        VALUES(1,2,'wise','synthetic-recipient',1,'${at}','${at}','${at}','${at}')`)
+      await exec(`INSERT INTO payout_transfers(id,user_id,period_start,period_end,payout_account_id,amount_cents,currency,state,external_transfer_id,created_at,updated_at)
+        VALUES(1,2,'2026-09-01','2026-09-30',1,1000,'USD','planned','synthetic-transfer','${at}','${at}')`)
+      for (const table of ['wise_webhook_deliveries', 'wise_signed_webhook_deliveries'])
+        await exec(`INSERT INTO ${table}(delivery_id,subscription_id,event_type,transfer_id,current_state,received_at)
+          VALUES('same-key','synthetic-subscription','transfers#state-change','synthetic-transfer','processing','${at}')`)
+      const preview = await closure.preview(1, 'close-pat')
+      expect(preview.inventory).toContainEqual({
+        location: 'wise_all_webhook_deliveries.transfer_id', count: 2, category: 'billing_and_payments',
+      })
+      expect(preview.uncovered_categories).toContain('billing_and_payments')
+    })
+
     it('[privacy #42] inventories suppressed recipient addresses and retains reviewed delivery evidence on closure', async () => {
       const { closure, exec, rows } = await setup()
       await exec(`INSERT INTO email_log(id,from_json,to_json,template,subject,status,created_at,updated_at)

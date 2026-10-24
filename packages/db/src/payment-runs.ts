@@ -504,7 +504,7 @@ export const createPaymentRunsService = (
         id: string
       }>(sql`SELECT i.id FROM payment_run_items i JOIN payment_runs r ON r.id=i.run_id
         WHERE r.state='approved' AND r.scheduled_at<=${now} AND i.next_attempt_at<=${now} AND (i.lease_until IS NULL OR i.lease_until<${now})
-        AND (i.state IN ('queued','creating','funding','processing') OR (i.state='attention' AND i.transfer_id IS NOT NULL) OR (i.state='paid' AND (r.approved_at>=${later(now, -90 * 86400)} OR EXISTS(SELECT 1 FROM wise_webhook_deliveries w WHERE w.transfer_id=i.transfer_id AND w.received_at>i.updated_at)))) ORDER BY i.next_attempt_at,i.id LIMIT 10`)
+        AND (i.state IN ('queued','creating','funding','processing') OR (i.state='attention' AND i.transfer_id IS NOT NULL) OR (i.state='paid' AND (r.approved_at>=${later(now, -90 * 86400)} OR EXISTS(SELECT 1 FROM wise_all_webhook_deliveries w WHERE w.transfer_id=i.transfer_id AND w.received_at>i.updated_at)))) ORDER BY i.next_attempt_at,i.id LIMIT 10`)
       let examined = 0
       for (const { id } of due) {
         // Advance up to three durable stages per tick; each reacquires a lease.

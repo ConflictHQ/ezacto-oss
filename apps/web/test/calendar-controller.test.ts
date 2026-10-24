@@ -1,5 +1,6 @@
 /** @vitest-environment happy-dom */
 
+import type { CalendarProposal } from '@conflict-hq/ezacto-client'
 import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -137,6 +138,40 @@ describe('drag to create', () => {
     expect(document.querySelector('[data-calendar-draft]')).not.toBeNull()
     controller.clearDraft()
     expect(document.querySelector('[data-calendar-draft]')).toBeNull()
+  })
+
+  it.each([false, true])('reserves short actual entry lanes with proposals=%s', (withProposal) => {
+    const { controller } = mount()
+    const proposals = withProposal
+      ? [
+          {
+            proposal: {
+              id: 10,
+              title: 'Proposed',
+              starts_at: '2026-10-13T12:00:00Z',
+              ends_at: '2026-10-13T13:00:00Z',
+            } as CalendarProposal,
+            date: '2026-10-13',
+            start: 720,
+            end: 780,
+            continuesBefore: false,
+            continuesAfter: false,
+          },
+        ]
+      : []
+    controller.render(
+      view(
+        [
+          entry(1, { started_time: '09:00', ended_time: '09:01', seconds: 60 }),
+          entry(2, { started_time: '09:10', ended_time: '09:11', seconds: 60 }),
+        ],
+        { proposals, proposalTimeZone: 'UTC' },
+      ),
+    )
+    expect([1, 2].map((id) => block(id).style.getPropertyValue('--cal-lanes'))).toEqual(['2', '2'])
+    expect(block(1).style.getPropertyValue('--cal-lane')).not.toBe(
+      block(2).style.getPropertyValue('--cal-lane'),
+    )
   })
 
   it('allows a drag into an occupied slot: an overlap is drawn side by side, not refused', () => {
