@@ -846,8 +846,8 @@ export class DrizzleTrackedResourceRepository {
     return conditions
   }
 
-  #expenseConditions(userId: number, filters: Readonly<ExpenseFilters>): SQL[] {
-    const conditions: SQL[] = [eq(expenses.userId, userId)]
+  #expenseConditions(userId: number | null, filters: Readonly<ExpenseFilters>): SQL[] {
+    const conditions: SQL[] = userId === null ? [] : [eq(expenses.userId, userId)]
     if (filters.clientId !== undefined) {
       conditions.push(sql`EXISTS (
         SELECT 1 FROM ${projects} filter_project
@@ -1046,6 +1046,38 @@ export class DrizzleTrackedResourceRepository {
         return Promise.all(rows.map((row) => this.#expenseRecord(row, byDate?.get(row.spentDate))))
       },
     }
+  }
+
+  /** The size of what `expensesOffset` pages over: every person the viewer reaches, or the one named. */
+  async countExpenses(
+    userId: number | null,
+    filters: Readonly<ExpenseFilters>,
+    viewer: Readonly<TeamViewer>,
+  ): Promise<number> {
+    return this.#database.$count(
+      expenses,
+      and(...this.#expenseConditions(userId, filters), this.#expenseReadAccess(viewer, expenses.userId)),
+    )
+  }
+
+  /** Rows in id order from `window.offset`, for the Harvest shim's page numbers. */
+  async expensesOffset(
+    userId: number | null,
+    filters: Readonly<ExpenseFilters>,
+    viewer: Readonly<TeamViewer>,
+    window: Readonly<{ offset: number; take: number }>,
+  ): Promise<readonly ExpenseRecord[]> {
+    const rows = await this.#database
+      .select()
+      .from(expenses)
+      .where(
+        and(...this.#expenseConditions(userId, filters), this.#expenseReadAccess(viewer, expenses.userId)),
+      )
+      .orderBy(asc(expenses.id))
+      .limit(window.take)
+      .offset(window.offset)
+    const byDate = await this.#policy.lockedDates?.(rows.map(({ spentDate }) => spentDate))
+    return Promise.all(rows.map((row) => this.#expenseRecord(row, byDate?.get(row.spentDate))))
   }
 
   async getTimeEntry(actor: TimeEntryActor, id: number): Promise<TimeEntryRecord> {

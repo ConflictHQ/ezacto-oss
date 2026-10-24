@@ -1,5 +1,5 @@
 import type { GeneralResourceRecord } from '@ezacto/core'
-import type { TimeEntryRecord } from '../resources/tracked-repository.js'
+import type { ExpenseRecord, TimeEntryRecord } from '../resources/tracked-repository.js'
 
 /**
  * Canonical record -> Harvest v2 object. Every compat quirk (decimal hours and
@@ -460,3 +460,86 @@ export const serializeHarvestProjectAssignment = (
     })),
   }
 }
+
+export interface HarvestExpense {
+  id: number
+  notes: string | null
+  total_cost: number
+  units: number | null
+  is_closed: boolean
+  approval_status: string
+  is_locked: boolean
+  is_billed: boolean | null
+  locked_reason: string | null
+  spent_date: string
+  created_at: string
+  updated_at: string
+  billable: boolean
+  user: { id: number; name: string }
+  user_assignment: HarvestUserAssignmentSummary | null
+  project: { id: number; name: string; code: string | null }
+  expense_category: { id: number; name: string; unit_name: string | null; unit_price: number | null }
+  client: { id: number; name: string; currency: string }
+  invoice: { id: number; number: string } | null
+}
+
+/**
+ * The rows an expense points at, already stripped of what the viewer may not
+ * read; the lock reason and invoice are decided by the route the way the native
+ * serializer decides them. The user assignment is null when the person was never
+ * assigned to the project (an imported expense can outlive that), and the
+ * receipt is not rendered: receipts are attachments here, not a column.
+ */
+export interface HarvestExpenseContext {
+  user: GeneralResourceRecord
+  userAssignment: GeneralResourceRecord | null
+  project: GeneralResourceRecord
+  client: GeneralResourceRecord
+  expenseCategory: GeneralResourceRecord
+  /** Null when the viewer may not read invoices, as the native API omits it. */
+  isBilled: boolean | null
+  lockedReason: string | null
+  invoice: { id: number; number: string } | null
+}
+
+export const serializeHarvestExpense = (
+  expense: Readonly<ExpenseRecord>,
+  context: HarvestExpenseContext,
+): HarvestExpense => ({
+  id: expense.id,
+  notes: expense.notes,
+  total_cost: harvestMoney(expense.totalCostCents) ?? 0,
+  units: expense.units,
+  // Harvest's deprecated is_closed is the approved state; both are rendered.
+  is_closed: expense.state.approvalStatus === 'approved',
+  approval_status: expense.state.approvalStatus,
+  is_locked: expense.state.isLocked,
+  is_billed: context.isBilled,
+  locked_reason: context.lockedReason,
+  spent_date: expense.spentDate,
+  created_at: harvestInstant(expense.createdAt),
+  updated_at: harvestInstant(expense.updatedAt),
+  billable: expense.billable,
+  user: { id: context.user.id, name: personName(context.user) },
+  user_assignment:
+    context.userAssignment === null
+      ? null
+      : serializeHarvestUserAssignmentSummary(context.userAssignment),
+  project: {
+    id: context.project.id,
+    name: requiredText(context.project, 'name'),
+    code: text(context.project, 'code'),
+  },
+  expense_category: {
+    id: context.expenseCategory.id,
+    name: requiredText(context.expenseCategory, 'name'),
+    unit_name: text(context.expenseCategory, 'unitName'),
+    unit_price: harvestMoney(number(context.expenseCategory, 'unitPriceCents')),
+  },
+  client: {
+    id: context.client.id,
+    name: requiredText(context.client, 'name'),
+    currency: requiredText(context.client, 'currency'),
+  },
+  invoice: context.invoice,
+})

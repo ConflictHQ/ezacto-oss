@@ -1,0 +1,45 @@
+{
+  "id": 9101,
+  "notes": "Invented note.",
+  "total_cost": 80.4,
+  "units": 120,
+  "is_closed": false,
+  "approval_status": "unsubmitted",
+  "is_locked": true,
+  "is_billed": null,
+  "locked_reason": "This record is locked.",
+  "spent_date": "2024-03-08",
+  "created_at": "2024-01-05T10:00:00Z",
+  "updated_at": "2024-03-09T16:45:30Z",
+  "billable": true,
+  "user": {
+    "id": 401,
+    "name": "Sample Sample-Worker"
+  },
+  "user_assignment": {
+    "id": 501,
+    "is_project_manager": false,
+    "is_active": true,
+    "budget": 20,
+    "created_at": "2024-01-05T10:00:00Z",
+    "updated_at": "2024-03-09T16:45:30Z",
+    "hourly_rate": 125.5
+  },
+  "project": {
+    "id": 301,
+    "name": "Sample Rollout",
+    "code": "SMP-1"
+  },
+  "expense_category": {
+    "id": 801,
+    "name": "Sample Mileage",
+    "unit_name": "Sample mile",
+    "unit_price": 0.67
+  },
+  "client": {
+    "id": 101,
+    "name": "Sample Widgets Ltd",
+    "currency": "USD"
+  },
+  "invoice": null
+}
