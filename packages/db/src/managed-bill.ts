@@ -65,7 +65,7 @@ export const createManagedBillConnectionStore = (
       await atomic([
         { text: `SELECT ${columns} FROM bill_managed_connection WHERE singleton=1`, params: [] },
       ])
-    )[0]?.[0] as Row | undefined
+    )[0]?.[0] as unknown as Row | undefined
     if (!row) return fail('conflict')
     return row
   }
@@ -190,7 +190,7 @@ export const createManagedBillConnectionStore = (
               },
           { text: `SELECT ${columns} FROM bill_managed_connection WHERE singleton=1`, params: [] },
         ])
-        const row = result.at(-1)?.[0] as Row | undefined
+        const row = result.at(-1)?.[0] as unknown as Row | undefined
         if (!row || row.generation !== command.expectedGeneration + 1) return fail('conflict')
         return { ...state(row), outcome: 'applied' as const }
       } catch (error) {
