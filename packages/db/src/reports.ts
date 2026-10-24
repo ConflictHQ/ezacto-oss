@@ -1224,6 +1224,8 @@ export const readUninvoicedCandidates = async (
     filter.from === null
       ? sql`expense.spent_date <= ${filter.to}`
       : sql`expense.spent_date BETWEEN ${filter.from} AND ${filter.to}`
+  // Invoice generation also reads historical migration ledgers. Its active-project
+  // guard already excludes archived examples, so it must not require later report views.
   const timeEntries = await database.all<UninvoicedTimeCandidateRow>(sql`
     SELECT entry.id AS "id", project.client_id AS "clientId", client.name AS "clientName",
       project.id AS "projectId", project.name AS "projectName", project.code AS "projectCode",
@@ -1235,8 +1237,8 @@ export const readUninvoicedCandidates = async (
       upper(coalesce(project.billing_currency, client.currency)) AS "currency",
       entry.rounded_seconds AS "roundedSeconds",
       entry.billable_rate_cents AS "billableRateCents", entry.updated_at AS "updatedAt"
-    FROM report_time_entries entry
-    JOIN report_projects project ON project.id = entry.project_id
+    FROM time_entries entry
+    JOIN projects project ON project.id = entry.project_id
     JOIN clients client ON client.id = project.client_id
     JOIN tasks task ON task.id = entry.task_id
     JOIN users user ON user.id = entry.user_id
@@ -1256,8 +1258,8 @@ export const readUninvoicedCandidates = async (
       expense.spent_date AS "spentDate", expense.notes AS "notes", expense.units AS "units",
       upper(coalesce(project.billing_currency, client.currency)) AS "currency",
       expense.total_cost_cents AS "totalCostCents", expense.updated_at AS "updatedAt"
-    FROM report_expenses expense
-    JOIN report_projects project ON project.id = expense.project_id
+    FROM expenses expense
+    JOIN projects project ON project.id = expense.project_id
     JOIN clients client ON client.id = project.client_id
     JOIN expense_categories category ON category.id = expense.expense_category_id
     JOIN users user ON user.id = expense.user_id
