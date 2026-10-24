@@ -329,11 +329,13 @@ for (const [runtime, factory] of factories) {
       const range = { from: '2026-08-01', to: '2026-08-31' };
       await harness.run('UPDATE projects SET is_example=1 WHERE id=1', []);
       expect((await harness.reports.timeReport(range)).projects.map(row => row.projectId)).toContain(1);
+      expect((await harness.reports.uninvoiced(range)).projects.map(row => row.projectId).sort()).toEqual([1, 2, 3]);
       await harness.run('UPDATE projects SET is_active=0 WHERE id=1', []);
       const report = await harness.reports.timeReport(range);
       expect(report.projects.map(row => row.projectId).sort()).toEqual([2, 3, 4]);
       expect(report.totals.timeEntryCount).toBe(3);
       expect(report.totals.roundedSeconds).toBe(6300);
+      expect((await harness.reports.uninvoiced(range)).projects.map(row => row.projectId).sort()).toEqual([2, 3]);
       expect(await harness.reports.detailedTime({...range, projectId: 1})).toMatchObject({kind: 'report', report: {rows: []}});
       expect(await harness.reports.detailedTime({...range, projectId: 4})).toMatchObject({kind: 'report', report: {rows: [expect.objectContaining({projectId: 4})]}});
       const expenses = await harness.reports.detailedExpense(range);
