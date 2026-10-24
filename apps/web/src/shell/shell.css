@@ -5788,6 +5788,10 @@ button.primary-action.primary-action {
     place-items: center;
     padding: 0;
   }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] button[data-first-run-help] {
+    width: 44px;
+    min-height: 44px;
+  }
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-settings .ez-icon,
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-signout .ez-icon {
     display: block;
@@ -9950,9 +9954,4 @@ button[data-first-run-help] {
     clip-path: inset(50%);
     white-space: nowrap;
   }
-}
-
-[data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] button[data-first-run-help] {
-  width: 44px;
-  min-height: 44px;
 }
