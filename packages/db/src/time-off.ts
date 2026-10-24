@@ -10,6 +10,7 @@ import {
   type TimeOffKind,
 } from '@ezacto/core'
 import { and, asc, desc, eq, gt, gte, lte, sql, type SQL } from 'drizzle-orm'
+import { QueryBuilder } from 'drizzle-orm/sqlite-core'
 import { timeOff, users } from './schema.js'
 import { planningWriteActorSql } from './planning-write-authority.js'
 import { teamPersonAccessSql } from './team-access.js'
@@ -267,7 +268,20 @@ export class DrizzleTimeOffRepository {
     assertTimeOffFields(input)
     await this.#assertEnterable(viewer, input.userId)
     const values = { ...input, version: 0, createdAt: now, updatedAt: now }
-    const write = this.#database.insert(timeOff).values(values).returning()
+    const write = this.#database.insert(timeOff).select(new QueryBuilder().select({
+      id: sql<number>`NULL`.as('id'), // SQLite assigns the native autoincrement identity.
+      userId: users.id,
+      startDate: sql<string>`${input.startDate}`.as('startDate'),
+      endDate: sql<string>`${input.endDate}`.as('endDate'),
+      kind: sql<TimeOffKind>`${input.kind}`.as('kind'),
+      secondsPerDay: sql<number | null>`${input.secondsPerDay}`.as('secondsPerDay'),
+      version: sql<number>`0`.as('version'),
+      createdAt: sql<string>`${now}`.as('createdAt'),
+      updatedAt: sql<string>`${now}`.as('updatedAt'),
+    }).from(users).where(and(eq(users.id, input.userId), eq(users.isActive, true),
+      planningWriteActorSql(viewer),
+      viewer.profile === 'project_manager' ? teamPersonAccessSql(viewer, 'users') : sql`1`,
+    ))).returning()
     // The event names the row the insert has just taken, so it is built with a
     // placeholder id that the statement replaces.
     const pending: TimeOffRecord = { id: 0, ...values }
@@ -280,7 +294,11 @@ export class DrizzleTimeOffRepository {
       if (hasMessage(error, overlapPattern)) throw new TimeOffOverlapError()
       throw error
     }
-    return await this.get(viewer, Number(row?.id))
+    if (row === undefined) {
+      await this.#assertEnterable(viewer, input.userId)
+      throw new TimeOffNotFoundError()
+    }
+    return await this.get(viewer, Number(row.id))
   }
 
   async update(

@@ -299,6 +299,39 @@ for (const [runtime, factory] of factories) {
     })
   }
   describe(`allocations on ${runtime} (issue 1007)`, () => {
+    it('[container/D1 #1190] fences native creation against authority and archival changes after validation reads', async () => {
+      const { db } = await setup(factory)
+      await db.run("UPDATE users SET profile='administrator' WHERE id=4")
+      const editor = viewer(4, 'administrator')
+      const baseline = await events(db)
+      for (const kind of ['allocation', 'time-off'] as const) {
+        for (const change of ['actor', 'person', ...(kind === 'allocation' ? ['project', 'assignment'] : [])] as const) {
+          const race = raceAfterRead(db.orm, row => row.id === 1 && (change === 'project' || change === 'assignment' ? 'clientId' in row : 'weeklyCapacity' in row), async () => {
+            if (change === 'actor') await db.run("UPDATE users SET profile='member' WHERE id=4")
+            else if (change === 'person') await db.run('UPDATE users SET is_active=0 WHERE id=1')
+            else if (change === 'project') await db.run('UPDATE projects SET is_active=0 WHERE id=1')
+            else await db.run('UPDATE user_assignments SET is_project_manager=0 WHERE user_id=2 AND project_id=1')
+          })
+          const guarded = new DrizzleAllocationRepository(race.orm)
+          await expect(kind === 'allocation'
+            ? guarded.create(change === 'assignment' ? pia : editor, plan(), t0)
+            : guarded.timeOff.create(editor, { userId: 1, startDate: '2026-10-05', endDate: '2026-10-06', kind: 'vacation', secondsPerDay: null }, t0)).rejects.toBeInstanceOf(Error)
+          expect(race.changes()).toBe(1)
+          expect(await db.rows('SELECT id FROM allocations')).toEqual([])
+          expect(await db.rows('SELECT id FROM time_off')).toEqual([])
+          expect(await events(db)).toEqual(baseline)
+          await db.run("UPDATE users SET profile='administrator' WHERE id=4")
+          await db.run('UPDATE users SET is_active=1 WHERE id=1')
+          await db.run('UPDATE projects SET is_active=1 WHERE id=1')
+          await db.run('UPDATE user_assignments SET is_project_manager=1 WHERE user_id=2 AND project_id=1')
+        }
+      }
+      // A current actor still creates native version-zero rows after all refusals.
+      const current = new DrizzleAllocationRepository(db.orm)
+      expect((await current.create(editor, plan(), t0)).version).toBe(0)
+      expect((await current.timeOff.create(editor, { userId: 1, startDate: '2026-10-05', endDate: '2026-10-06', kind: 'vacation', secondsPerDay: null }, t0)).version).toBe(0)
+    })
+
     it('[container/D1 #1190] fences stale time-off updates/deletes and authority/archive changes after native reads', async () => {
       const { db, repository } = await setup(factory)
       const allocation = await repository.create(ada, plan(), t0)

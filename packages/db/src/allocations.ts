@@ -16,6 +16,7 @@ import {
 } from '@ezacto/core'
 import type BetterSqlite3 from 'better-sqlite3'
 import { and, asc, desc, eq, gt, gte, lte, sql, type SQL } from 'drizzle-orm'
+import { QueryBuilder } from 'drizzle-orm/sqlite-core'
 import { allocations, organizations, projects, timeOff, organizationHolidays, users } from './schema.js'
 import { planningWriteActorSql } from './planning-write-authority.js'
 import { teamPersonAccessPredicate, teamPersonAccessSql, teamProjectAccessSql } from './team-access.js'
@@ -371,7 +372,22 @@ export class DrizzleAllocationRepository {
     assertAllocationFields(input)
     await this.#assertPlannable(viewer, input.userId, input.projectId)
     const values = { ...input, version: 0, createdAt: now, updatedAt: now }
-    const write = this.#database.insert(allocations).values(values).returning()
+    const write = this.#database.insert(allocations).select(new QueryBuilder().select({
+      id: sql<number>`NULL`.as('id'), // SQLite assigns the native autoincrement identity.
+      userId: users.id,
+      projectId: sql<number>`${input.projectId}`.as('projectId'),
+      startDate: sql<string>`${input.startDate}`.as('startDate'),
+      endDate: sql<string>`${input.endDate}`.as('endDate'),
+      plannedSecondsPerWeek: sql<number>`${input.plannedSecondsPerWeek}`.as('plannedSecondsPerWeek'),
+      version: sql<number>`0`.as('version'),
+      createdAt: sql<string>`${now}`.as('createdAt'),
+      updatedAt: sql<string>`${now}`.as('updatedAt'),
+    }).from(users).where(and(eq(users.id, input.userId), eq(users.isActive, true),
+      planningWriteActorSql(viewer),
+      viewer.profile === 'project_manager' ? teamPersonAccessSql(viewer, 'users') : sql`1`,
+      sql`EXISTS (SELECT 1 FROM projects WHERE projects.id = ${input.projectId} AND projects.is_active = 1
+        AND ${viewer.profile === 'project_manager' ? teamProjectAccessSql(viewer, 'projects') : sql`1`})`,
+    ))).returning()
     // The event names the row the insert has just taken, so it is built with a
     // placeholder id that the statement replaces.
     const pending: AllocationRecord = { id: 0, ...values }
@@ -384,7 +400,11 @@ export class DrizzleAllocationRepository {
       if (hasMessage(error, overlapPattern)) throw new AllocationOverlapError()
       throw error
     }
-    return await this.get(viewer, Number(row?.id))
+    if (row === undefined) {
+      await this.#assertPlannable(viewer, input.userId, input.projectId)
+      throw new AllocationNotFoundError()
+    }
+    return await this.get(viewer, Number(row.id))
   }
 
   async update(
