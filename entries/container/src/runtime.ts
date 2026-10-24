@@ -1,3 +1,4 @@
+import { moduleAvailability } from '@ezacto/api'
 import { createOrganizationHolidayRepository } from '@ezacto/db'
 import { demoDeployment } from '../../worker/src/app.js'
 import { createWebhookSecretVault } from '@ezacto/core'
@@ -821,6 +822,9 @@ export const createContainerRuntime = async (
       },
       now: () => new Date().toISOString(),
     })
+    // The operator's invoices switch (issue 1254): where it is off the invoice
+    // sweeps below do not run, and what they would have touched stays as is.
+    const invoicesOn = moduleAvailability(config.appEnv).invoices
     let lastMinutePass = 0
     const minutePasses = async (): Promise<void> => {
       const at = Date.now()
@@ -855,6 +859,7 @@ export const createContainerRuntime = async (
       } catch (error) {
         console.error('[container] automatic approval sweep failed', error)
       }
+      if (!invoicesOn) return
       try {
         const result = await proposeDueScheduledJobs(drizzle, now, objects)
         for (const failure of result.failed)
@@ -887,7 +892,7 @@ export const createContainerRuntime = async (
       beforeDrain: async () => {
         await paymentRuns.processDue(new Date().toISOString())
         await minutePasses()
-        await processDueReminders(new Date().toISOString())
+        if (invoicesOn) await processDueReminders(new Date().toISOString())
         await reconcileBillPayments()
       },
     })
