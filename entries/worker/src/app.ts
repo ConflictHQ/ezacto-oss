@@ -223,6 +223,13 @@ export type Env = {
 
 export type AppEnv = Env & {
   APP_BASE_URL?: string
+  /**
+   * `false` turns accounting off whatever credentials are present (#1217): the
+   * routes are not mounted and the shell hides every accounting control. Unset
+   * is on, so a self-hosted install is unchanged; anything else is refused at
+   * start-up.
+   */
+  ACCOUNTING_ENABLED?: string
   OIDC_REDIRECT_ORIGIN?: string
   OIDC_GOOGLE_CLIENT_ID?: string
   OIDC_GOOGLE_CLIENT_SECRET?: string
@@ -783,6 +790,9 @@ export const createApp = (
       attachmentsAvailable: services === undefined
         ? 'ATTACHMENTS' in env && env.ATTACHMENTS !== undefined
         : services.attachments !== undefined,
+      accountingAvailable: services === undefined
+        ? accountingConfigured(env)
+        : services.quickBooks !== undefined,
       demo: demoDeployment(env),
       // And whether its mail is held to an allowlist, so the Send dialog can
       // say so. Never the list itself: anyone can open the demo, and a page
@@ -2650,6 +2660,32 @@ export const appleProvider = (env: AppEnv): AppleProviderConfig | null => {
 export const workItemCredentialConfigured = (env: AppEnv, provider: WorkItemProviderId): boolean => {
   const value = env[workItemProviders[provider].credentialSecret]
   return typeof value === 'string' && value !== ''
+}
+
+/**
+ * Whether accounting is switched on. Unset is on; only `true` and `false` are
+ * accepted, so a typo cannot leave accounting enabled where it was meant off.
+ */
+export const accountingEnabled = (env: { readonly ACCOUNTING_ENABLED?: string }): boolean => {
+  const value = env.ACCOUNTING_ENABLED
+  if (value === undefined || value === 'true') return true
+  if (value === 'false') return false
+  throw new TypeError('ACCOUNTING_ENABLED must be "true" or "false"')
+}
+
+/** Page-render form of the above: an invalid value reads as unavailable. */
+const accountingConfigured = (env: AppEnv): boolean => {
+  const keys = env as Pick<WorkerEnv, 'QUICKBOOKS_CLIENT_ID' | 'QUICKBOOKS_CLIENT_SECRET'>
+  try {
+    return (
+      accountingEnabled(env) &&
+      !demoDeployment(env) &&
+      keys.QUICKBOOKS_CLIENT_ID !== undefined &&
+      keys.QUICKBOOKS_CLIENT_SECRET !== undefined
+    )
+  } catch {
+    return false
+  }
 }
 
 export const demoDeployment = (env: AppEnv): boolean =>
