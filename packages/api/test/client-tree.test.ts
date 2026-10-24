@@ -481,13 +481,14 @@ for (const [runtime, factory] of factories) {
       );
     }, 30_000);
 
+    // This provisions the full native D1 schema, just like its 30s siblings.
     it("[api] returns 404 for nonexistent client ancestors/descendants", async () => {
       harness = await factory();
       const ancestors = await harness.request("/clients/999/ancestors");
       expect(ancestors.status).toBe(404);
       const descendants = await harness.request("/clients/999/descendants");
       expect(descendants.status).toBe(404);
-    }, 15_000);
+    }, 30_000);
 
     it("[api] returns correct ancestors and descendants for each node", async () => {
       harness = await factory();
