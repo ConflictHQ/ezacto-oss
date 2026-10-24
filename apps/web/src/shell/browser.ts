@@ -7607,7 +7607,7 @@ export const mountShell = async (
     const links = [...document.querySelectorAll<HTMLElement>('[data-settings-section-link]')]
     const strip = document.querySelector<HTMLElement>('[data-settings-sections]')
     // A deployment with accounting off or unconfigured has no Accounting
-    // section to offer (#1217). Marked before the first show, so the hash
+    // section to offer (issue 1217). Marked before the first show, so the hash
     // never lands on it.
     if (!accountingAvailable()) {
       for (const section of sections) {
