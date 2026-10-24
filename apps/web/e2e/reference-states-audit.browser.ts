@@ -49,12 +49,17 @@ for (const width of [390, 1280]) {
         await page.getByLabel('Password', { exact: true }).fill(process.env.EZACTO_BROWSER_FIXTURE_PASSWORD!)
         await page.getByRole('button', { name: 'Sign in', exact: true }).click()
         await expect(page.locator('[data-authenticated-shell]:not([inert])')).toBeVisible()
-        const whoami = await page.request.get('/api/v1/whoami')
-        expect(whoami.status()).toBe(200)
-        const { data: identity } = await whoami.json()
-        const settingsResponse = await page.request.get('/api/v1/time-entry-settings')
-        expect(settingsResponse.status()).toBe(200)
-        const { data: settings } = await settingsResponse.json()
+        // Use the same browser cookie and fetch context as the generated client.
+        const authenticatedGet = async (path: string) => {
+          const result = await page.evaluate(async path => {
+            const response = await fetch(path, { credentials: 'same-origin' })
+            return { status: response.status, body: await response.json() }
+          }, path)
+          expect(result.status).toBe(200)
+          return result.body
+        }
+        const { data: identity } = await authenticatedGet('/api/v1/whoami')
+        const { data: settings } = await authenticatedGet('/api/v1/time-entry-settings')
         const dates = weekDates(spentDate, settings.week_start_day)
         const readWeek = async () => {
           const entries: TimeEntry[] = []
@@ -65,13 +70,11 @@ for (const width of [390, 1280]) {
               user_id: String(identity.user_id), from: dates[0]!, to: dates[6]!, per_page: '200',
             })
             if (cursor !== null) query.set('cursor', cursor)
-            const response = await page.request.get(`/api/v1/time-entries?${query}`)
-            expect(response.status()).toBe(200)
-            const body = await response.json()
+            const body = await authenticatedGet(`/api/v1/time-entries?${query}`)
             expect(Array.isArray(body.data)).toBe(true)
             entries.push(...body.data)
-            expect(body).toHaveProperty('next_cursor')
-            cursor = body.next_cursor
+            expect(body.page).toHaveProperty('next_cursor')
+            cursor = body.page.next_cursor
             if (cursor !== null) {
               expect(typeof cursor).toBe('string')
               expect(seenCursors.has(cursor)).toBe(false)
