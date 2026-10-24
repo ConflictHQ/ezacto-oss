@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type {
-  PlaceholderAssignmentError} from "../src/index.js";
+import type { PlaceholderAssignmentError } from "../src/index.js";
 import {
   InMemoryPlaceholderPlanning,
   type AssignmentContext,
