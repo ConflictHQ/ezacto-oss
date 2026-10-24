@@ -72,7 +72,7 @@ export const renderCompanyDataTools = () => `
   <h3>Other exports and recovery</h3>
   <ul><li><a href="/reports?report=detailed-time&grain=entry">Reports with client, project and person filters</a></li>
    <li><a data-settings-data-activity href="/settings/activity">Activity log and its CSV export</a><span data-settings-data-activity-off hidden>Activity log is disabled.</span></li>
-   <li><a href="/settings/company#backup">Backup downloads, off-site status and recovery guidance</a></li></ul>
+   <li data-settings-data-backups><a href="/settings/company#backup">Backup downloads, off-site status and recovery guidance</a></li></ul>
   <h3>CSV time imports</h3>
   <p>Run a dry run from the operator checkout before applying a file. CSV import covers people, clients, projects, tasks and time; it does not import invoices, payments, expenses or credentials.</p>
   <pre class="settings-data-command"><code>npm ci

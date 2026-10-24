@@ -6,6 +6,7 @@ import type { WebhookManagement } from '@ezacto/core'
 import {installMigrationLoadRoutes,type MigrationLoadStatusReader} from '@ezacto/api'
 import { installInvoiceElevationRoutes, type InvoiceElevationStore, type ElevatedInvoiceTimeUnlinkPort } from '@ezacto/api'
 import { installEstimateTemplateRoutes, type EstimateTemplateRepository } from '@ezacto/api'
+import { backupsEnabled } from './backups-enabled.js'
 import type { OffsiteBackupEnvironment } from './offsite-backups.js'
 import type { ReminderProcessOptions, ReminderProcessSummary } from '@ezacto/db/d1'
 import { appleWebConfiguration } from './apple-web.js'
@@ -64,6 +65,7 @@ import {
   installEmailConfigurationRoutes,
   installGeneralResourceRoutes,
   installHarvestV2Routes,
+  type HarvestExpenseSource,
   type HarvestTimeEntrySource,
   installMagicLinkRoutes,
   installModuleSettingsRoutes,
@@ -273,6 +275,13 @@ export type AppEnv = Env & {
    * `demoMailDomains`.
    */
   DEMO_MAIL_ALLOWED_DOMAINS?: string
+  /**
+   * Whether this deployment offers its own backup feature (issue 1216). On
+   * unless exactly `false`; any other value than `true` or `false` is refused.
+   * Hosted tenants are backed up by the platform and set it off. See
+   * `backupsEnabled`.
+   */
+  BACKUPS_ENABLED?: string
 }
 
 export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & {
@@ -406,7 +415,7 @@ export interface RuntimeServices {
   /** Rooted reads of the client closure, behind the documented tree routes. */
   clientTree: ClientTreeReader
   team: TeamRouteOptions['repository']
-  trackedResources: TrackedResourceRepository & HarvestTimeEntrySource
+  trackedResources: TrackedResourceRepository & HarvestTimeEntrySource & HarvestExpenseSource
   /** Calendar events offered as time, accepted through `trackedResources` (issue 428). */
   calendarProposals: CalendarProposalRepository
   /** Planned hours per week and the capacity view (issue 1007). */
@@ -794,6 +803,7 @@ export const createApp = (
       accountingAvailable: services === undefined
         ? accountingConfigured(env)
         : services.quickBooks !== undefined,
+      backupsAvailable: backupsEnabled(env),
       demo: demoDeployment(env),
       // And whether its mail is held to an allowlist, so the Send dialog can
       // say so. Never the list itself: anyone can open the demo, and a page
@@ -1156,6 +1166,8 @@ export const createApp = (
             installHarvestV2Routes(harvest, {
               repository: services.generalResources,
               timeEntries: services.trackedResources,
+              expenses: services.trackedResources,
+              isExpensesModuleEnabled: services.isExpensesModuleEnabled,
               isTeamModuleEnabled: services.isTeamModuleEnabled,
               clock: () => systemClock.now().instant,
             }),

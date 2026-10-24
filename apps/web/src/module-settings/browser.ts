@@ -1,4 +1,5 @@
 import { accountingAvailable } from '../accounting-availability.js'
+import { backupsAvailable } from '../backups-availability.js'
 import { createWebhookController } from './webhooks.js'
 import { createPayoutProviderSwitches } from './payout-provider-switches.js'
 import { createCompanyDataTools } from './data-tools.js'
@@ -2723,7 +2724,7 @@ export const createModuleSettingsController = (
     payouts: async (active) => {
       await Promise.all([loadWiseConnection(active), payoutProviderSwitches.load(active.signal)])
     },
-    backup: (active) => loadBackups(active.identity, active),
+    backup: (active) => (backupsAvailable() ? loadBackups(active.identity, active) : Promise.resolve()),
     brand: (active) => loadBrandAssets(active.identity, active),
     appearance: (active) => loadInstanceTheme(active.identity, active),
     integrations: (active) => loadQuickBooks(active.identity, active),
@@ -2749,9 +2750,25 @@ export const createModuleSettingsController = (
   const shownSection = (): string => {
     const wanted = resolveSettingsSection(globalThis.location.hash)
     return (wanted === 'payouts' && wiseSection.hasAttribute('data-settings-unavailable')) ||
-      (wanted === 'integrations' && !accountingAvailable())
+      (wanted === 'integrations' && !accountingAvailable()) ||
+      (wanted === 'backup' && !backupsAvailable())
       ? DEFAULT_COMPANY_SETTINGS_SECTION
       : wanted
+  }
+
+  // Where the platform backs the tenant up the screen is not offered at all
+  // (issue 1216): withdrawn from the strip like Payouts, and never read, so no
+  // request reaches the backup endpoints.
+  if (!backupsAvailable()) {
+    document
+      .querySelector<HTMLElement>('[data-settings-section="backup"]')
+      ?.setAttribute('data-settings-unavailable', '')
+    for (const link of document.querySelectorAll<HTMLElement>(
+      '[data-settings-section-link="backup"]',
+    )) {
+      link.hidden = true
+    }
+    globalThis.dispatchEvent(new Event('hashchange'))
   }
 
   // Following a link in the strip is a hash change (issue 800), and the

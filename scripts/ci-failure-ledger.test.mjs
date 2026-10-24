@@ -25,6 +25,8 @@ AssertionError: message?.id === id`,
   gyp: "gyp ERR! stack Error: read ECONNRESET\ngyp http GET https://nodejs.org/download/release/v22/node-headers.tar.gz",
   timeout: "Error: Test timed out in 20000ms\nTests  1 failed | 107 passed (108)",
   hook: "Error: Hook timed out in 10000ms.",
+  kdf: "PasswordDerivationOverloadedError: password derivation capacity is temporarily unavailable",
+  abort: "TimeoutError: The operation was aborted due to timeout\n at readiness-lifecycle.test.ts:93",
   other: "AssertionError: expected 3 to equal 4",
 };
 
@@ -40,6 +42,8 @@ test("each known signature is recognised from its recorded log", () => {
   assert.equal(classify(logs.gyp), "registry-reset");
   assert.equal(classify(logs.timeout), "vitest-timeout");
   assert.equal(classify(logs.hook), "vitest-timeout");
+  assert.equal(classify(logs.kdf), "kdf-overload");
+  assert.equal(classify(logs.abort), "request-abort-timeout");
 });
 
 test("a bare false == true from our own code is not claimed as upstream", () => {
