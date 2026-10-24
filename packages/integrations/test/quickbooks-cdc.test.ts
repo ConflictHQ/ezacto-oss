@@ -66,14 +66,17 @@ describe('QuickBooks change data capture', () => {
     expect(changes.payments).toEqual([])
   })
 
-  it('[unit] a window at Intuit\'s ceiling is marked full, so the caller pages on', async () => {
+  it("[unit] a window at Intuit's ceiling is marked incomplete", async () => {
     const payments = Array.from({ length: QUICKBOOKS_CDC_PAGE_SIZE }, (_, index) => ({
       Id: String(index),
       SyncToken: '0',
       TotalAmt: 1,
     }))
     const changes = await client(() =>
-      answer({ CDCResponse: [{ QueryResponse: [{ Payment: payments }] }], time: '2026-10-19T12:00:00Z' }),
+      answer({
+        CDCResponse: [{ QueryResponse: [{ Payment: payments }] }],
+        time: '2026-10-19T12:00:00Z',
+      }),
     ).paymentChangesSince('2026-10-19T11:55:00.000Z')
     expect(changes.full).toBe(true)
   })
@@ -101,6 +104,31 @@ describe('QuickBooks change data capture', () => {
       .catch((caught: unknown) => caught)
     expect(bare).toMatchObject({ status: 429, retryAfterSeconds: null })
   })
+})
+
+describe('QuickBooks Retry-After', () => {
+  const now = Date.parse('2026-10-23T12:00:00Z')
+  for (const [header, expected] of [
+    ['7200', 7200],
+    ['Fri, 23 Oct 2026 12:02:00 GMT', 120],
+    ['Fri, 23 Oct 2026 11:59:00 GMT', 0],
+    ['not a date', null],
+    ['999999999999', null],
+    ['999999999999999999999999', null],
+  ] as const) {
+    it(`parses ${header} without shortening the provider delay`, async () => {
+      const api = new QuickBooksClient({
+        realmId: 'realm-a',
+        accessToken: 'access',
+        now: () => new Date(now),
+        fetch: async () => answer({}, 429, { 'retry-after': header }),
+      })
+      const error = await api
+        .paymentChangesSince('2026-10-23T11:00:00Z')
+        .catch((caught: unknown) => caught)
+      expect(error).toMatchObject({ status: 429, retryAfterSeconds: expected })
+    })
+  }
 })
 
 describe('isVoidedPayment', () => {

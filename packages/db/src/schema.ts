@@ -907,6 +907,8 @@ export const projects = sqliteTable(
     name: text('name').notNull(),
     code: text('code').notNull().default(''),
     isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    /** Practice data created by hosted bootstrap, never by ordinary project creation. */
+    isExample: integer('is_example', { mode: 'boolean' }).notNull().default(false),
     billingMethod: text('billing_method', {
       enum: ['non_billable', 'time_materials', 'fixed_fee'],
     })
@@ -952,6 +954,7 @@ export const projects = sqliteTable(
     uniqueIndex('projects_harvest_id_unique').on(table.harvestId),
     index('projects_client_id').on(table.clientId),
     check('projects_is_active_boolean', sql`${table.isActive} in (0, 1)`),
+    check('projects_is_example_boolean', sql`${table.isExample} in (0, 1)`),
     check(
       'projects_hourly_rate_nonnegative',
       sql`${table.hourlyRateCents} is null or ${table.hourlyRateCents} >= 0`,

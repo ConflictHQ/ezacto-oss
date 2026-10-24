@@ -342,6 +342,20 @@ for (const [runtime, createHarness] of factories) {
     }, 20_000);
     afterEach(async () => harness.close());
 
+    it('[#1163] exposes a true example marker read-only and preserves ordinary response shape', async () => {
+      const client = await data(await harness.request('/clients', json({name: 'Example client'})));
+      const project = await data(await harness.request('/projects', json({client_id: client.id, name: 'Example project'})));
+      expect(project).not.toHaveProperty('is_example');
+      await harness.run('UPDATE projects SET is_example=1 WHERE id=?', project.id);
+      const example = await data(await harness.request(`/projects/${project.id}`));
+      expect(example.is_example).toBe(true);
+      const refused = await harness.request(`/projects/${project.id}`, json({is_example: false}, 'PATCH'));
+      expect(refused.status).toBe(422);
+      await data(await harness.request(`/projects/${project.id}`, json({name: 'Renamed'}, 'PATCH')));
+      expect((await data(await harness.request(`/projects/${project.id}`))).is_example).toBe(true);
+    });
+
+
     it('[issue 740] refuses inherited property names as fields with 422', async () => {
       for (const field of ['constructor', 'toString', '__proto__']) {
         const body = `{"name":"Kestrel","${field}":"x"}`;

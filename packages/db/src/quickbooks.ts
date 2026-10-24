@@ -50,6 +50,7 @@ export type QuickBooksSyncOutcome = 'caught_up' | 'failed' | 'full_reconcile_nee
 
 /** Where change-data-capture catch-up resumes for a company (issue 1013). */
 export interface QuickBooksSyncCursorRecord {
+  readonly retryNotBefore: string | null
   readonly cdcCursor: string
   readonly lastRunAt: string
   readonly lastOutcome: QuickBooksSyncOutcome
@@ -232,6 +233,7 @@ export interface QuickBooksStore {
     realmId: string
     lastRunAt: string
     lastOutcome: QuickBooksSyncOutcome
+    retryNotBefore?: string
   }): Promise<void>
   /**
    * Notes that a QuickBooks payment was voided or deleted there, and answers
@@ -464,12 +466,13 @@ export const createQuickBooksStore = (database: Database): QuickBooksStore => ({
       cdc_cursor: string
       last_run_at: string
       last_outcome: QuickBooksSyncOutcome
-    }>(sql`SELECT cdc_cursor, last_run_at, last_outcome
+      retry_not_before: string | null
+    }>(sql`SELECT cdc_cursor, last_run_at, last_outcome, retry_not_before
        FROM quickbooks_sync_cursors WHERE realm_id = ${realmId}`)
     const row = rows[0]
     return row === undefined
       ? null
-      : { cdcCursor: row.cdc_cursor, lastRunAt: row.last_run_at, lastOutcome: row.last_outcome }
+      : { cdcCursor: row.cdc_cursor, lastRunAt: row.last_run_at, lastOutcome: row.last_outcome, retryNotBefore: row.retry_not_before }
   },
 
   saveSyncCursor: async (input) => {
@@ -484,7 +487,11 @@ export const createQuickBooksStore = (database: Database): QuickBooksStore => ({
 
   recordSyncOutcome: async (input) => {
     await database.run(sql`UPDATE quickbooks_sync_cursors
-       SET last_run_at = ${input.lastRunAt}, last_outcome = ${input.lastOutcome}
+       SET last_run_at = ${input.lastRunAt}, last_outcome = ${input.lastOutcome},
+         retry_not_before = CASE
+           WHEN ${input.retryNotBefore ?? null} IS NOT NULL
+             AND (retry_not_before IS NULL OR retry_not_before < ${input.retryNotBefore ?? null})
+           THEN ${input.retryNotBefore ?? null} ELSE retry_not_before END
        WHERE realm_id = ${input.realmId}`)
   },
 
