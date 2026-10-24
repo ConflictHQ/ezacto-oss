@@ -128,6 +128,40 @@ describe("payment run review", () => {
     ).toBe(true);
     expect(api.approvePaymentRun).not.toHaveBeenCalled();
   });
+  it("tells the person what a status check did instead of staying silent", async () => {
+    const stuck: PaymentRun = {
+      ...run,
+      state: "approved",
+      items: [{ ...run.items[0]!, state: "attention", execution_quote: run.items[0]!.quote }],
+    };
+    const reconcile = vi.fn(async () => stuck);
+    const controller = createPaymentRunsController(
+      {
+        getPaymentRunReport: async () => ({ ...report, runs: [stuck] }),
+        reconcilePaymentRunItem: reconcile,
+      },
+      async () => {},
+    );
+    await controller.activate(new AbortController().signal);
+    controller.ledger(ledger);
+    await vi.waitFor(() =>
+      expect(document.querySelector("[data-run-history] button")).not.toBeNull(),
+    );
+    const button = [
+      ...document.querySelectorAll<HTMLButtonElement>("[data-run-history] button"),
+    ].find((b) => b.textContent === "Check status")!;
+    expect(button.disabled).toBe(false);
+    button.click();
+    await vi.waitFor(() => expect(reconcile).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(document.querySelector("[data-run-status]")!.textContent).toContain(
+        "Status check requested for Person Two",
+      ),
+    );
+    expect(document.querySelector("[data-run-status]")!.textContent).toContain(
+      "no Wise transfer created yet",
+    );
+  });
   it("names a run with no label from who is paid, not from a field the person must fill", async () => {
     const two: StaffPaymentReport = {
       ...ledger,

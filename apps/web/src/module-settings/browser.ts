@@ -1,3 +1,4 @@
+import { accountingAvailable } from '../accounting-availability.js'
 import { backupsAvailable } from '../backups-availability.js'
 import { createWebhookController } from './webhooks.js'
 import { createPayoutProviderSwitches } from './payout-provider-switches.js'
@@ -1834,7 +1835,7 @@ export const createModuleSettingsController = (
         'Connecting an accounting system is an administrator action.'
       return
     }
-    if (api.getQuickBooksConnection === undefined) {
+    if (api.getQuickBooksConnection === undefined || !accountingAvailable()) {
       quickBooksStatus.textContent =
         'This deployment is not configured for QuickBooks.'
       return
@@ -2749,6 +2750,7 @@ export const createModuleSettingsController = (
   const shownSection = (): string => {
     const wanted = resolveSettingsSection(globalThis.location.hash)
     return (wanted === 'payouts' && wiseSection.hasAttribute('data-settings-unavailable')) ||
+      (wanted === 'integrations' && !accountingAvailable()) ||
       (wanted === 'backup' && !backupsAvailable())
       ? DEFAULT_COMPANY_SETTINGS_SECTION
       : wanted

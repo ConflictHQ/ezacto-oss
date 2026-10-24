@@ -133,7 +133,7 @@ export const createPaymentRunsController = (
     busy = false,
     generation = 0;
   let pendingCommand: PaymentRunCommand | null = null;
-  const action = async (work: () => Promise<void>, target = status) => {
+  const action = async (work: () => Promise<string | void>, target = status) => {
     if (busy || !signal || signal.aborted) return;
     busy = true;
     target.textContent = "Working…";
@@ -148,8 +148,8 @@ export const createPaymentRunsController = (
       control.disabled = true;
     });
     try {
-      await work();
-      if (!signal.aborted) target.textContent = "";
+      const note = await work();
+      if (!signal.aborted) target.textContent = note ?? "";
     } catch (error) {
       if (!signal.aborted) target.textContent = errorText(error);
     } finally {
@@ -224,8 +224,21 @@ export const createPaymentRunsController = (
                   "click",
                   () =>
                     void action(async () => {
-                      await api.reconcilePaymentRunItem!(run.id, i.id, signal);
+                      const checked = await api.reconcilePaymentRunItem!(
+                        run.id,
+                        i.id,
+                        signal,
+                      );
                       await refresh();
+                      // The check only asks the sender to look again; Wise is
+                      // queried by the next minute's run, so say what happened
+                      // instead of leaving a silent button.
+                      const now = checked.items.find((x) => x.id === i.id);
+                      return `Status check requested for ${i.name}. Now: ${paymentStateLabel((now ?? i).state)}${
+                        (now ?? i).transfer_id === null
+                          ? ", with no Wise transfer created yet"
+                          : ""
+                      }. Wise is checked within the next minute; press Check status again then to see the result.`;
                     }),
                 );
                 return b;

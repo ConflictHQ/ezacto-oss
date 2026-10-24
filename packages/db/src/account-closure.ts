@@ -53,6 +53,7 @@ const removedTables = new Set([
   'saved_report_role_shares',
   'saved_reports',
   'quickbooks_oauth_states',
+  'quickbooks_managed_grants',
   'calendar_proposals',
   'allocations',
   'time_off',
@@ -67,6 +68,7 @@ const closureTables = new Set([
   'closed_account_sign_in_guards',
 ])
 const category = (table: string): AccountRetentionCategory => {
+  if (table === 'quickbooks_managed_grants') return 'audit_and_security'
   if (
     [
       'time_entries',
