@@ -34,6 +34,9 @@ it('runs the public managed command inside workerd with real D1 session/CSRF and
     `,
     },
     bundle: true,
+    // Match Vitest and the existing Worker fixtures: CI tests source exports
+    // before any workspace dist build has run.
+    conditions: ['development'],
     format: 'esm',
     platform: 'browser',
     external: ['node:async_hooks'],
