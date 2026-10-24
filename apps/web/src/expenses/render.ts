@@ -4,15 +4,16 @@ export const renderExpenseWorkflowPages = (view?: string): string => `
   <main class="app-content expense-workspace page--grid" data-expense-list-page${view === 'expense-list' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Money out</p><h1>Expenses</h1></div>
-      <a href="/expense-categories">Manage categories</a>
+      <div class="report-actions"><a href="/expense-categories">Manage categories</a><button type="button" class="primary-action" data-expense-create-open aria-controls="expense-create-panel" aria-expanded="false" disabled>Add expense</button></div>
     </header>
     <p class="expense-intro">Record your own expenses, then narrow the list by work, category, approval, or reimbursement status.</p>
     <section class="expense-module-unavailable" data-expense-module-unavailable hidden>
       <h2>Expenses are unavailable</h2>
       <p>The expenses module is not enabled for this organization.</p>
     </section>
-    <section class="expense-create-panel" data-expense-create-panel aria-labelledby="expense-create-heading">
-      <header><div><p class="eyebrow">New expense</p><h2 id="expense-create-heading">Add an expense</h2></div></header>
+    <p class="form-result" data-expense-create-notice role="status" aria-live="polite" hidden></p>
+    <section id="expense-create-panel" class="expense-create-panel" data-expense-create-panel aria-labelledby="expense-create-heading" hidden>
+      <header><div><p class="eyebrow">New expense</p><h2 id="expense-create-heading">Add an expense</h2></div><div class="report-actions"><button type="button" data-expense-create-close>Close</button></div></header>
       <form class="expense-form" data-expense-create-form>
         <label>Project<select name="project_id" data-expense-create-project required></select></label>
         <label>Category<select name="expense_category_id" data-expense-create-category required></select></label>
@@ -22,7 +23,7 @@ export const renderExpenseWorkflowPages = (view?: string): string => `
         <label class="expense-check"><input name="billable" type="checkbox">Billable</label>
         <label class="expense-check"><input name="reimbursable" type="checkbox">Reimbursable</label>
         <button class="primary-action" type="submit" data-expense-create-submit>Add expense</button>
-        <p class="form-result expense-wide-field" data-expense-create-result role="status" aria-live="polite"></p>
+        <p class="form-result expense-wide-field" data-expense-create-result tabindex="-1" role="status" aria-live="polite"></p>
       </form>
     </section>
     <form class="expense-filter-form" data-expense-filter-form>
@@ -44,6 +45,7 @@ export const renderExpenseWorkflowPages = (view?: string): string => `
     </form>
     <p class="form-result expense-page-status" data-expense-list-status role="status" aria-live="polite">Loading expenses…</p>
     <div data-expense-list></div>
+    <button type="button" class="primary-action" data-expense-empty-create aria-controls="expense-create-panel" aria-expanded="false" hidden>Add an expense</button>
     <button type="button" data-expense-load-more hidden>Load more expenses</button>
     <button type="button" data-expense-list-retry hidden>Retry loading expenses</button>
   </main>
