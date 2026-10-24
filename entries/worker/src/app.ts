@@ -345,6 +345,13 @@ export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & {
   /** Which profile pays, where the token reaches more than one. */
   WISE_PROFILE_ID?: string
   /**
+   * `read_only` keeps the Wise token for status and masked recipient reads only
+   * (issue 1237): no destination writes, and the payment provider is not
+   * composed, so a token alone never enables money movement. Absent keeps the
+   * existing behaviour, where the token also composes payments.
+   */
+  WISE_MODE?: string
+  /**
    * The PEM Wise signs webhook deliveries with. Without it the webhook route is
    * not mounted at all: an unverifiable claim about money is not one to act on.
    */

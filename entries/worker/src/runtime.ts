@@ -644,6 +644,12 @@ export const createD1AttachmentOwnerAuthorizer =
     }
   };
 
+const parseWiseMode = (value: string | undefined): 'full' | 'read_only' => {
+  if (value === undefined || value === '') return 'full'
+  if (value === 'read_only') return 'read_only'
+  throw new TypeError('WISE_MODE must be unset or read_only')
+}
+
 /** The secrets that let this deployment reach a payment or accounting provider. */
 type ProviderCredentials = Pick<
   WorkerEnv,
@@ -929,9 +935,12 @@ export const createRuntimeServices = async (
   // Same gating, and for the same reason: a connect button that cannot connect
   // is worse than no button. `entry-surface.ts` declares it so both halves of
   // the contract guard agree.
+  // Only the exact value opts a token out of payments; a typo must not
+  // silently leave the money-moving path mounted, so any other value fails.
+  const wiseMode = parseWiseMode(env.WISE_MODE)
   const paymentRuns = createPaymentRunsService(
     drizzle,
-    credentials.WISE_TOKEN === undefined
+    credentials.WISE_TOKEN === undefined || wiseMode !== 'full'
       ? null
       : createWisePaymentProvider({
           token: credentials.WISE_TOKEN,
@@ -946,6 +955,7 @@ export const createRuntimeServices = async (
     credentials.WISE_TOKEN === undefined
       ? null
       : createWiseRuntime({
+          mode: wiseMode,
           config: {
             token: credentials.WISE_TOKEN,
             profileId: credentials.WISE_PROFILE_ID,
@@ -969,7 +979,8 @@ export const createRuntimeServices = async (
               detach: (id: number, now: string) => store.detach(id, now),
             };
           })(),
-          deliveries: createWiseDeliveryStore(drizzle),
+          // A read-only connection settles nothing, so it receives no deliveries.
+          ...(wiseMode === 'full' ? { deliveries: createWiseDeliveryStore(drizzle) } : {}),
           fetch: (input, init) => fetch(input as RequestInfo, init as RequestInit),
           now: () => new Date(),
         });
