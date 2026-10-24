@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Route } from '@playwright/test'
 
 const control = '/__ezacto_browser_fixture__/start-end'
 const controlHeaders = { 'x-ezacto-browser-fixture-control': 'start-end-round-trip' }
@@ -22,7 +22,7 @@ for (const width of [390, 1280]) {
       const held = new Promise<void>(resolve => { release = resolve })
       let requested!: () => void
       const seen = new Promise<void>(resolve => { requested = resolve })
-      const failExpenseRead = async (route: import('@playwright/test').Route) => {
+      const failExpenseRead = async (route: Route) => {
         requested()
         await held
         await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({
@@ -72,6 +72,11 @@ for (const width of [390, 1280]) {
 
         await page.goto('/reports?report=time&from=2026-08-01&to=2026-08-31')
         await expect(page.locator('[data-report-results]')).toContainText('Browser 360')
+        const fixedFee = page.locator('[data-report-fixed-fee-field]')
+        expect((await fixedFee.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+        const checkbox = await fixedFee.locator('input').boundingBox()
+        expect(checkbox!.width).toBeLessThanOrEqual(24)
+        expect(checkbox!.height).toBeLessThanOrEqual(24)
         await capture('populated-reports')
 
         const anonymous = await browser.newContext()

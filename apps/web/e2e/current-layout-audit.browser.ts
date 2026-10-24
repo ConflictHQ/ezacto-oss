@@ -30,7 +30,7 @@ for (const width of [390, 1280])
           const layout = await page.evaluate(() => {
             const root = document.documentElement
             const controls = [
-              ...document.querySelectorAll<HTMLElement>('button,summary,input,select,textarea'),
+              ...document.querySelectorAll<HTMLElement>('button,summary,input,select,textarea,[data-settings-link]'),
             ]
               .filter(
                 (element) =>

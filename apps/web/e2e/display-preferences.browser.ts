@@ -463,6 +463,9 @@ test('[e2e:nav] fits the top bar at every width, at each band edge', async ({ pa
   await page.setViewportSize({ width: 1519, height: 900 })
   await expect(search.locator('.command-trigger-label')).toBeHidden()
   await expect(page.getByRole('button', { name: 'Search and commands' })).toBeVisible()
+  const compactSearch = await search.boundingBox()
+  expect(compactSearch!.width).toBeGreaterThanOrEqual(44)
+  expect(compactSearch!.height).toBeGreaterThanOrEqual(44)
   // Which leaves a running timer its name at 1440. With the field there the
   // chip had 37px of label, "Bro…"; without it, about 180.
   await page.setViewportSize({ width: 1440, height: 900 })

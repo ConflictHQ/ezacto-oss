@@ -749,14 +749,14 @@
   color: var(--ez-muted);
   font-size: 12px;
 }
-.report-filters input,
+.report-filters input:not([type="checkbox"], [type="radio"]),
 .report-filters select,
 .report-filters button,
 [data-report-retry] {
   min-width: 0;
   min-height: 44px;
 }
-.report-filters input,
+.report-filters input:not([type="checkbox"], [type="radio"]),
 .report-filters select {
   width: 100%;
   padding: 0 10px;
@@ -764,6 +764,19 @@
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
   color: var(--ez-ink);
+}
+.report-check-field {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  gap: 8px;
+}
+.report-check-field input[type="checkbox"] {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--ez-action);
 }
 .report-filters [hidden] {
   display: none;
@@ -5522,14 +5535,14 @@ button.primary-action.primary-action {
 }
 @media (min-width: 1300px) and (max-width: 1519px) {
   .primary-nav a {
-    padding: 0 10px;
+    padding: 0 9px;
   }
 }
 /* Search keeps its name and its shortcut; it loses only the field around them. */
 @media (min-width: 721px) and (max-width: 1519px) {
   .command-trigger {
-    min-width: 36px;
-    width: 36px;
+    min-width: 44px;
+    width: 44px;
     justify-content: center;
     padding: 0;
   }
@@ -5539,6 +5552,9 @@ button.primary-action.primary-action {
   }
 }
 @media (min-width: 721px) and (max-width: 1299px) {
+  .topbar {
+    padding-inline: 16px;
+  }
   .primary-nav {
     display: none;
   }

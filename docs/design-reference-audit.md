@@ -40,10 +40,10 @@ HTML. The final PR verification receipt identifies the exact integrated source.
 | Timer and week | Home offers a day-list timesheet and a distinct Calendar/Week surface; running time has a clear label, status and stop action | Preserve the working Week/Day/Calendar modes, persisted start/end behavior, timer and note controls. The weekly totals grid is not the mock's day list, and duration entries must not acquire invented start times to resemble appointments. Period arrows fixed by #1152 stay 44px; week actions/person selector now share that target size. #1171 supplies discoverable timer labels and role-aware no-task guidance. |
 | Invoices | Heading/action, light bounded table, aligned amounts, status pills | Retain the actual list filters, invoice editor, currencies, states and authority checks. Native populated rows verify real invoice numbers and separate currency amounts; do not copy the prototype's static totals. Shared primary actions receive the consistent minimum target. Existing invoice-data-table and responsive editor improvements remain. |
 | Expenses | List-first hierarchy, Add expense action, concise filters and aligned amounts/status | The previous always-open creation form pushed phone results far below the list. Use an accessible Add expense action and an initially closed inline panel. Opening focuses a field; Close preserves the draft and returns focus; errors stay in the open form; only confirmed creation resets/closes it and exposes the new record link. Pending/session/module fences remain. Align filter tracks to their 44px controls and cap explanatory prose at 64ch. |
-| Reports | Clear page title, grouped summaries, data table and an export action | Preserve actual report selection, scope/date filters, per-currency values, missing-rate states, visible sorting and real exports. Current phone/dark layouts are deliberate improvements over the static desktop summary. Shared period controls retain their existing keyboard behavior and target-size repair. |
+| Reports | Clear page title, grouped summaries, data table and an export action | Preserve actual report selection, scope/date filters, per-currency values, missing-rate states, visible sorting and real exports. Current phone/dark layouts are deliberate improvements over the static desktop summary. Shared period controls retain their existing keyboard behavior and target-size repair. Keep report checkboxes compact beside their text, with the whole label providing a 44px target. |
 | Approvals | Heading/action, concise person/period/hours/status rows | Keep actual pending/recent-history sections, scoped filters, expandable review and lock policy. Requesting approval belongs to the working own-time submission flow, not an inert copied CTA on the reviewer screen. Raise all filter selects/Apply to 44px. The organization timezone form now uses the same single-column phone rule as the adjacent policy forms and an unbroken action label. |
 | Login and help | Demo-specific marketing headline/ribbon, form, theme toggle and published demo-account cards | Runtime authentication is installation-specific. Keep the working sign-in/recovery/SSO/second-factor states, deployment branding and conditional public-demo accounts; never put a demo password or marketing subscription gate on an ordinary operator installation. Existing sign-in/recovery targets and bounded readable width remain. Help is the actual owner setup guide and contextual member guidance; the supplied package has no separate Help screen to reproduce. |
-| Keyboard and motion | Prototype focus styles and visual transitions | Retain native semantics, visible keyboard outlines, dialog focus behavior and reduced-motion overrides. Measured controls have visible focus and contained layouts in the native matrix. The first-run Help repair preserves its accessible name with an icon at constrained widths and keeps collapsed-sidebar rules inside the desktop media block. |
+| Keyboard and motion | Prototype focus styles and visual transitions | Retain native semantics, visible keyboard outlines, dialog focus behavior and reduced-motion overrides. Measured controls have visible focus and contained layouts in the native matrix. An authenticated-only Skip navigation link reveals a 44px outlined target on first Tab and focuses the current visible, non-inert main without changing URL/history. The first-run Help repair preserves its accessible name with an icon at constrained widths and keeps collapsed-sidebar rules inside the desktop media block. |
 
 The prototype's 390px login measures a 446px document, and its business panels
 retain a fixed desktop sidebar with clipped content. Those are not patterns to
@@ -57,7 +57,7 @@ subscription restrictions from the static package are shipped as application dat
 The native layout matrix covers login, week, dashboard, invoice, expense, report
 and approval pages at 390/1280, light/dark, with reduced motion and keyboard focus.
 It records document/control geometry, focused-element state, transition duration,
-page errors and a screenshot per screen. New assertions pin the measured 44px
+page errors and a screenshot per screen. New assertions pin compact report checkbox/label geometry and the measured 44px
 toolbar, approval, week and account controls. The original stylesheet fails those
 assertions, including 36px approval filters; #1152's recovery/period regressions
 remain covered.
@@ -89,13 +89,13 @@ Generate/build the local workspaces needed by the native harness, then run:
 
 ```sh
 npm run generated
-npm exec -w @ezacto/web -- playwright test --config playwright.config.ts current-layout-audit.browser.ts reference-states-audit.browser.ts expense-list-first.browser.ts
+npm exec -w @ezacto/web -- playwright test --config playwright.config.ts current-layout-audit.browser.ts reference-states-audit.browser.ts expense-list-first.browser.ts skip-navigation.browser.ts
 ```
 
 Use `EZACTO_BROWSER_PORT` for an isolated local port. For local iterative work,
 pass a dedicated `--output` directory before starting another Playwright command;
 its default test-results cleanup otherwise removes earlier screenshots. CI's full
-native invocation retains all three specs' artifacts together.
+native invocation retains all four specs' artifacts together.
 
 Inspect `current-app-observations.json`, the seven-screen screenshots, populated
 and loading/error screenshots, and the expense interaction captures in the native
