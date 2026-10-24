@@ -6,6 +6,7 @@ import { createWorkerWebhookTransport } from '@ezacto/integrations'
 import { createQueuedMigrationStore } from '@ezacto/db/queued-migrations'
 import { createInvoiceElevationStore, unlinkElevatedInvoiceTime } from '@ezacto/db/d1'
 import { createEstimateTemplateRepository } from '@ezacto/db/d1'
+import { backupsEnabled } from './backups-enabled.js'
 import { createWorkerOffsiteBackups } from './offsite-backups.js'
 import { createScheduledRunDispatchService } from '@ezacto/db/d1'
 import { prepareScheduledRunNotifications } from '@ezacto/db/d1'
@@ -1209,7 +1210,10 @@ export const createRuntimeServices = async (
       )?.address ?? null,
   })
 
-  const offsiteBackupSync = await createWorkerOffsiteBackups(drizzle,env)
+  // Off where the platform backs the tenant up (issue 1216): nothing below is
+  // composed, so the routes answer 404 and the cron has no sync to run.
+  const backups = backupsEnabled(env)
+  const offsiteBackupSync = backups ? await createWorkerOffsiteBackups(drizzle,env) : undefined
   const scheduledObjects = env.ATTACHMENTS === undefined ? undefined : createR2AttachmentObjectStore(env.ATTACHMENTS)
   const scheduledRunDispatch = scheduledObjects === undefined || organizationMailer?.enqueuePersisted === undefined
     ? undefined : createScheduledRunDispatchService(drizzle, {
@@ -1455,7 +1459,7 @@ export const createRuntimeServices = async (
     // The signed download of a nightly bundle (issue 39). Mounted wherever
     // backup status is, like it; a deployment with no bucket still answers, and
     // every download is the same plain refusal because there is no bundle.
-    backupDownloads: {
+    ...(offsiteBackupSync === undefined ? {} : { backupDownloads: {
       origin: invoiceViewLinkOrigin(env.APP_BASE_URL),
       allow: (scope: 'mint' | 'redeem', key: string, now: string) =>
         allowBackupDownloadRequest(drizzle, scope, key, now),
@@ -1485,7 +1489,7 @@ export const createRuntimeServices = async (
       runsSnapshot: () => getBackupRunsSnapshot(database),
       pageRuns: (window) => pageBackupRuns(database, window),
       countRuns: (filter) => countBackupRuns(database, filter),
-    },
+    } }),
     // Composed only where the deployment carries Intuit keys. Without them the
     // routes are not mounted, because a connect button that cannot connect is
     // worse than no button -- `entry-surface.ts` declares that gating so both

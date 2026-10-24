@@ -30,18 +30,25 @@ const bearers: Readonly<
   admin: {
     userId: 1,
     profile: 'administrator',
-    scopes: ['clients:read', 'projects:read', 'team:read', 'time_entries:read'],
+    scopes: ['clients:read', 'projects:read', 'team:read', 'time_entries:read', 'expenses:read'],
   },
   'admin-invoices': {
     userId: 1,
     profile: 'administrator',
-    scopes: ['clients:read', 'projects:read', 'team:read', 'time_entries:read', 'invoices:read'],
+    scopes: [
+      'clients:read',
+      'projects:read',
+      'team:read',
+      'time_entries:read',
+      'expenses:read',
+      'invoices:read',
+    ],
   },
   'clients-only': { userId: 1, profile: 'administrator', scopes: ['clients:read'] },
   'member-ada': {
     userId: 2,
     profile: 'member',
-    scopes: ['clients:read', 'projects:read', 'time_entries:read'],
+    scopes: ['clients:read', 'projects:read', 'time_entries:read', 'expenses:read'],
   },
 }
 
@@ -79,6 +86,7 @@ interface Harness {
   native(path: string, init?: RequestInit): Promise<Response>
   shim(path: string, token?: string | null, init?: RequestInit): Promise<Response>
   setTeamModuleEnabled(enabled: boolean): void
+  setExpensesModuleEnabled(enabled: boolean): void
   /** Run SQL against the organization's database, for state the API cannot reach. */
   exec(statement: string): Promise<void>
   close(): Promise<void>
@@ -93,6 +101,7 @@ const compose = (
   const teamRepository = createTeamRepository(database)
   const tracked = new DrizzleTrackedResourceRepository(database, { isLocked: async () => false })
   let teamModuleEnabled = true
+  let expensesModuleEnabled = true
   const app = createApiApp({
     authentication,
     installApi: (api) => {
@@ -114,6 +123,8 @@ const compose = (
       installHarvestV2Routes(harvest, {
         repository,
         timeEntries: tracked,
+        expenses: tracked,
+        isExpensesModuleEnabled: async () => expensesModuleEnabled,
         isTeamModuleEnabled: async () => teamModuleEnabled,
         clock: () => now,
       }),
@@ -131,6 +142,9 @@ const compose = (
     },
     setTeamModuleEnabled: (enabled) => {
       teamModuleEnabled = enabled
+    },
+    setExpensesModuleEnabled: (enabled) => {
+      expensesModuleEnabled = enabled
     },
     exec,
     close,
@@ -671,6 +685,136 @@ describe.each([
       const refused = await harness.shim(`/users/${ids.ada}/project_assignments`)
       expect(refused.status).toBe(403)
       expect(await refused.json()).toMatchObject({ error: { code: 'module_disabled' } })
+    })
+  })
+  describe('expenses', () => {
+    let mileage = 0
+    let expenses: { ada: number; owner: number }
+
+    const insert = async (userId: number, units: number | null, totalCents: number, category: number) => {
+      const id = userId * 100
+      await harness.exec(`INSERT INTO expenses (id, user_id, project_id, expense_category_id, spent_date, notes, units,
+        total_cost_cents, billable, created_at, updated_at)
+        VALUES (${id}, ${userId}, ${ids.projectA}, ${category}, '2026-08-27', 'Invented note.',
+        ${units ?? 'NULL'}, ${totalCents}, 1, '${now}', '${now}')`)
+      return id
+    }
+
+    beforeEach(async () => {
+      mileage = await created(
+        await harness.native(
+          '/expense-categories',
+          json({ name: 'Sample Mileage', unit_name: 'Sample mile', unit_price_cents: 67 }),
+        ),
+      )
+      expenses = {
+        ada: await insert(ids.ada, 120, 8_040, mileage),
+        owner: await insert(ids.owner, null, 1_999, mileage),
+      }
+    })
+
+    const list = (query = '', token = 'admin') => harness.shim(`/expenses${query}`, token)
+
+    it('needs a bearer with the expenses:read scope and the module on', async () => {
+      expect((await list('', 'clients-only')).status).toBe(403)
+      expect((await harness.shim('/expenses', null)).status).toBe(401)
+      expect((await harness.shim(`/expenses/${expenses.ada}`, 'clients-only')).status).toBe(403)
+      harness.setExpensesModuleEnabled(false)
+      for (const path of ['/expenses', `/expenses/${expenses.ada}`]) {
+        const response = await harness.shim(path)
+        expect(response.status, path).toBe(403)
+        expect(await response.json()).toMatchObject({ error: { code: 'module_disabled' } })
+      }
+    })
+
+    it('lists every person\'s expenses for an administrator, in the Harvest envelope', async () => {
+      const body = await page<'expenses'>(await list())
+      expect(body).toMatchObject({ per_page: 2000, total_pages: 1, total_entries: 2, page: 1 })
+      expect(body.links.first).toBe('/harvest/v2/expenses?page=1&per_page=2000')
+      expect(body.expenses.map((expense) => expense.id)).toEqual([expenses.owner, expenses.ada])
+    })
+
+    it('renders decimal money with the embedded category, project, client, user and assignment', async () => {
+      const expense = await (await harness.shim(`/expenses/${expenses.ada}`)).json()
+      expect(expense).toEqual({
+        id: expenses.ada,
+        notes: 'Invented note.',
+        total_cost: 80.4,
+        units: 120,
+        is_closed: false,
+        approval_status: 'unsubmitted',
+        is_locked: false,
+        is_billed: null,
+        locked_reason: null,
+        spent_date: '2026-08-27',
+        created_at: '2026-08-28T12:00:00Z',
+        updated_at: '2026-08-28T12:00:00Z',
+        billable: true,
+        user: { id: ids.ada, name: 'Sample Ada' },
+        user_assignment: expect.objectContaining({ is_active: true, is_project_manager: false }),
+        project: { id: ids.projectA, name: 'Sample Project A', code: 'SMP-1' },
+        expense_category: { id: mileage, name: 'Sample Mileage', unit_name: 'Sample mile', unit_price: 0.67 },
+        client: { id: ids.clientA, name: 'Sample Client A', currency: 'USD' },
+        invoice: null,
+      })
+      // The owner was never assigned to the project, so there is no assignment to embed.
+      const unassigned = (await (await harness.shim(`/expenses/${expenses.owner}`)).json()) as Record<string, unknown>
+      expect(unassigned).toMatchObject({ total_cost: 19.99, units: null, user_assignment: null })
+    })
+
+    it('pages by offset and filters in the repository', async () => {
+      const second = await page<'expenses'>(await list('?per_page=1&page=2'))
+      expect(second.expenses.map((expense) => expense.id)).toEqual([expenses.ada])
+      expect(second).toMatchObject({ total_pages: 2, total_entries: 2, next_page: null, previous_page: 1 })
+      expect((await page<'expenses'>(await list('?per_page=1&page=3'))).expenses).toEqual([])
+      expect((await page<'expenses'>(await list(`?project_id=${ids.projectB}`))).total_entries).toBe(0)
+      expect((await page<'expenses'>(await list(`?client_id=${ids.clientA}`))).total_entries).toBe(2)
+      expect((await page<'expenses'>(await list('?from=2026-08-28'))).total_entries).toBe(0)
+      const named = await page<'expenses'>(await list(`?user_id=${ids.ada}`))
+      expect(named.expenses.map((expense) => expense.id)).toEqual([expenses.ada])
+      expect(named.links.first).toBe(`/harvest/v2/expenses?user_id=${ids.ada}&page=1&per_page=2000`)
+      for (const query of ['?from=2026-02-30', '?user_id=abc', '?is_billed=maybe', '?page=0'])
+        expect((await list(query)).status, query).toBe(422)
+    })
+
+    it('shows a member only their own expenses and refuses naming anyone else', async () => {
+      const own = await page<'expenses'>(await list('', 'member-ada'))
+      expect(own.expenses.map((expense) => expense.id)).toEqual([expenses.ada])
+      expect((await list(`?user_id=${ids.owner}`, 'member-ada')).status).toBe(403)
+      expect((await harness.shim(`/expenses/${expenses.owner}`, 'member-ada')).status).toBe(404)
+      expect((await harness.shim(`/expenses/${expenses.ada}`, 'member-ada')).status).toBe(200)
+    })
+
+    it('hides invoice state without the invoices:read scope and refuses the filters', async () => {
+      expect((await list('?is_billed=true')).status).toBe(403)
+      expect((await list('?is_billed=false', 'admin-invoices')).status).toBe(200)
+      const body = await page<'expenses'>(await list())
+      expect(body.expenses.every((expense) => expense.is_billed === null && expense.invoice === null)).toBe(true)
+    })
+
+    it('embeds the invoice number for a billed expense and says it is locked', async () => {
+      await harness.exec(`INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date, state,
+        foregone_billable_cents, created_at, updated_at)
+        VALUES (900, ${ids.clientA}, 'SMP-0042', 'USD', '2026-08-28', '2026-09-28', 'open', 0,
+        '${now}', '${now}');
+        UPDATE expenses SET invoice_id = 900 WHERE id = ${expenses.ada}`)
+      const billed = await (await harness.shim(`/expenses/${expenses.ada}`, 'admin-invoices')).json()
+      expect(billed).toMatchObject({
+        is_billed: true,
+        is_locked: true,
+        locked_reason: 'Invoiced',
+        invoice: { id: 900, number: 'SMP-0042' },
+      })
+      const hidden = await (await harness.shim(`/expenses/${expenses.ada}`, 'admin')).json()
+      expect(hidden).toMatchObject({ is_billed: null, invoice: null, locked_reason: 'This record is locked.' })
+      const billedList = await page<'expenses'>(await list('?is_billed=true', 'admin-invoices'))
+      expect(billedList.expenses.map((expense) => expense.id)).toEqual([expenses.ada])
+    })
+
+    it('answers 404 for an unknown or malformed expense id and serves no mutating verbs', async () => {
+      for (const path of ['/expenses/9999', '/expenses/abc', '/expenses/0'])
+        expect((await harness.shim(path)).status, path).toBe(404)
+      expect((await harness.shim('/expenses', 'admin', json({ notes: 'Sample' }))).status).toBe(404)
     })
   })
 })

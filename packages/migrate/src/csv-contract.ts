@@ -420,6 +420,16 @@ export const parseCsv = (bytes: Uint8Array, adapter?: CsvAdapter): ParsedCsv => 
     ])
   }
 
+  if (adapter !== undefined && read[0]!.fields.length > MAX_CSV_COLUMNS) {
+    // The source header is bounded before a vendor adapter projects it down.
+    return emptyResult(bytes, [
+      {
+        line: 1,
+        code: 'too_many_columns',
+        message: `The file has ${read[0]!.fields.length} columns; at most ${MAX_CSV_COLUMNS}.`,
+      },
+    ])
+  }
   const dataRows = read.length - 1
   const fileErrors: CsvIssue[] = []
   const invalid: CsvIssue[] = []

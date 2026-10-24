@@ -8,7 +8,7 @@ export const renderPaymentRuns = (): string => `
   <p>Choose outstanding amounts, review Wise recipients and costs, then approve a payment run. Processing starts within the next minute. Scheduled and processing payments reserve their balances.</p>
   <form data-run-form>
     <div class="staff-payment-toolbar">
-      <label>Run name<input name="run_name" required maxlength="100" placeholder="September payments"></label>
+      <label>Run label (optional)<input name="run_name" maxlength="100" placeholder="Named from who you pay"></label>
       <label>Pay from Wise balance<input name="source_currency" value="USD" pattern="[A-Z]{3}" maxlength="3" required></label>
       <label>When<select name="timing" aria-label="When"><option value="now">Send now</option><option value="scheduled">Schedule</option></select></label>
       <label data-run-schedule hidden>Start at<input type="datetime-local" name="scheduled_at"></label>
