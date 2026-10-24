@@ -78,6 +78,17 @@ first component exceeds 12. That heuristic is insufficient for browser
 confirmation and must be hardened by the adapter story. CLI compatibility is
 separate; no silent change to a prior run's adapter interpretation is allowed.
 
+Adapter identities are frozen per run
+(`CLOCKIFY_ADAPTERS` in [`csv-clockify.ts`](../packages/migrate/src/csv-clockify.ts)).
+`clockify-detailed-cli@1` is the existing CLI reader: ISO or month-first dates,
+first of any repeated header. `clockify-detailed-browser@1`
+(`createClockifyBrowserAdapter({ exporterZone })`) is the browser contract: ISO
+dates only (any slash date refuses the file), a repeated header is a file error,
+the source header is bounded to 40 columns before projection, a wall-clock time
+in a daylight-saving gap is rejected for that row, and midnight spans, repeated
+hours, seconds and duration/clock differences each carry a warning naming the
+line. Neither reader converts zones. A change of reading is a new identity.
+
 Require unrounded export durations and `HH:MM:SS` duration output. Clockify's
 [rounding guide](https://clockify.me/help/track-time-and-expenses/time-rounding)
 explains that exported values can already be rounded. Preview shows source
@@ -238,3 +249,13 @@ boundary, not a universal-import marketing claim.
 | 4 | [#1182: Administrator mapping and preview interface](https://github.com/ConflictHQ/ezacto-pvt/issues/1182) | [#1181](https://github.com/ConflictHQ/ezacto-pvt/issues/1181) | Responsive upload/map/preview flow, all errors/counts/exclusions, target/date-zone/currency review and explicit confirmation |
 | 5 | [#1183: Durable apply, cancel/resume and disposable acceptance](https://github.com/ConflictHQ/ezacto-pvt/issues/1183) | [#1181](https://github.com/ConflictHQ/ezacto-pvt/issues/1181), [#1182](https://github.com/ConflictHQ/ezacto-pvt/issues/1182) | Fenced chunks through the existing writer, partial-state controls, replay/race proof, purge and owned end-to-end acceptance; container release gate |
 | 6 | [#1184: Worker/D1 runtime adaptation, separately gated](https://github.com/ConflictHQ/ezacto-pvt/issues/1184) | [#1180](https://github.com/ConflictHQ/ezacto-pvt/issues/1180), [#1183](https://github.com/ConflictHQ/ezacto-pvt/issues/1183) | Equivalent planner, atomic D1 ledger writes and owned D1/R2/queue acceptance before enabling Worker UI |
+
+## Apply contract for #1183
+
+The executable contract for the durable apply (store port, authority recheck,
+fenced lease, bounded retry, cancel, reconciliation) is
+[`csv-apply-contract.ts`](../packages/migrate/src/csv-apply-contract.ts). Its
+store invariants are pinned by a reusable suite, `describeApplyContract` in
+`packages/migrate/test/csv-apply-suite.ts`, which any SQLite (and later D1)
+store must pass; an in-memory fake runs it today. This is contract only: nothing
+in production imports it, and it does not make the browser import available.

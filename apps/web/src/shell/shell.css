@@ -13,6 +13,11 @@
   display: none !important;
 }
 
+/* Backups are the platform's where the server says so (issue 1216). */
+html[data-backups-unavailable] [data-settings-data-backups] {
+  display: none;
+}
+
 /*
  * Density and type scale. Old Harvest fitted a working week on one screen and
  * gave every page one number big enough to read from across the room; §4 and §6

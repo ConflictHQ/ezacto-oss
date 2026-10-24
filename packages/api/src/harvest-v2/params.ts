@@ -1,5 +1,5 @@
 import type { GeneralResourceFilters } from '@ezacto/core'
-import type { TimeEntryFilters } from '../resources/tracked-repository.js'
+import type { ExpenseFilters, TimeEntryFilters } from '../resources/tracked-repository.js'
 import { validationError, type FieldError } from '../errors.js'
 import {
   harvestDefaultPerPage,
@@ -175,4 +175,66 @@ export const parseHarvestTimeEntryQuery = (params: URLSearchParams): HarvestTime
   const page = readPaging(params, reject)
   if (errors.length > 0) throw validationError(errors)
   return { filters, page, echo }
+}
+
+export interface HarvestExpenseQuery {
+  /** Whose expenses, when named; otherwise every person the viewer reaches. */
+  userId?: number
+  filters: ExpenseFilters
+  page: HarvestPageRequest
+  echo: ReadonlyArray<readonly [string, string]>
+}
+
+const expenseParameters = [
+  'user_id',
+  'client_id',
+  'project_id',
+  'is_billed',
+  'updated_since',
+  'from',
+  'to',
+] as const
+
+/**
+ * Map Harvest's expenses parameters onto the canonical filters, with the same
+ * rules as the other lists. Who may name another person, or filter by invoice,
+ * is the route's to decide.
+ */
+export const parseHarvestExpenseQuery = (params: URLSearchParams): HarvestExpenseQuery => {
+  const errors: FieldError[] = []
+  const reject = (field: string, message: string): void => {
+    errors.push({ field, code: 'invalid', message })
+  }
+  const filters: { -readonly [K in keyof ExpenseFilters]: ExpenseFilters[K] } = {}
+  let userId: number | undefined
+  const echo: Array<readonly [string, string]> = []
+  for (const name of expenseParameters) {
+    const value = params.get(name)
+    if (value === null) continue
+    echo.push([name, value])
+    if (name === 'user_id' || name === 'client_id' || name === 'project_id') {
+      if (!positiveInteger.test(value)) {
+        reject(name, `${name} must be a positive integer.`)
+        continue
+      }
+      if (name === 'user_id') userId = Number(value)
+      else if (name === 'client_id') filters.clientId = Number(value)
+      else filters.projectId = Number(value)
+    } else if (name === 'is_billed') {
+      if (value === 'true') filters.isBilled = true
+      else if (value === 'false') filters.isBilled = false
+      else reject(name, 'is_billed must be true or false.')
+    } else if (name === 'updated_since') {
+      if (instant.test(value)) filters.updatedSince = new Date(value).toISOString()
+      else reject(name, 'updated_since must be an ISO 8601 UTC timestamp.')
+    } else if (calendarDate(value)) {
+      if (name === 'from') filters.from = value
+      else filters.to = value
+    } else reject(name, `${name} must be a date as YYYY-MM-DD.`)
+  }
+  if (filters.from !== undefined && filters.to !== undefined && filters.from > filters.to)
+    reject('to', 'to must not precede from.')
+  const page = readPaging(params, reject)
+  if (errors.length > 0) throw validationError(errors)
+  return { ...(userId === undefined ? {} : { userId }), filters, page, echo }
 }

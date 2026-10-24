@@ -377,6 +377,33 @@ export const listClientDescendants = async (
   }))
 }
 
+/**
+ * Client nodes a contact of `contactClientId` may see work for: that node and
+ * its descendants, never ancestors, siblings or cousins. An inactive node is
+ * excluded together with everything beneath it. This is the worked-for tree
+ * only; bill-to (`bill_to_client_id`) is a separate relation and grants no
+ * access here.
+ */
+export const listContactVisibleClientIds = async (
+  database: Database,
+  contactClientId: number,
+): Promise<number[]> => {
+  const rows = await database.all<{ id: number }>(sql`
+    WITH RECURSIVE visible(id, visited) AS (
+      SELECT id, printf(',%d,', id) FROM clients
+      WHERE id = ${contactClientId} AND is_active = 1
+      UNION ALL
+      SELECT child.id, visible.visited || child.id || ','
+      FROM visible
+      JOIN clients child ON child.parent_client_id = visible.id
+      WHERE child.is_active = 1
+        AND instr(visible.visited, printf(',%d,', child.id)) = 0
+    )
+    SELECT id FROM visible ORDER BY id
+  `)
+  return rows.map((row) => row.id)
+}
+
 export const listClientAncestors = async (
   database: Database,
   clientId: number,
