@@ -156,4 +156,93 @@ describe('opt-in time publication contract (fake)', () => {
     advance(30_000)
     expect((await reconcilePublication(ctx, key, 1, day)).outcome).toBe('created')
   })
+
+  it('[unit] an update that landed before a lost response is adopted, not a conflict', async () => {
+    const { surface, ctx, journal } = setup()
+    await reconcilePublication(ctx, key, 1, day)
+    surface.updateFault = 'after'
+    const next = { ...day, seconds: 7200 }
+    expect((await reconcilePublication(ctx, key, 2, next)).outcome).toBe('ambiguous')
+    expect((await reconcilePublication(ctx, key, 2, next)).outcome).toBe('unchanged')
+    expect([...journal.rows.values()][0]!.status).toBe('published')
+    expect([...journal.rows.values()][0]!.pendingWrite).toBeNull()
+    expect([...surface.comments.values()][0]!.body).toContain('2h')
+  })
+
+  it('[unit] an update that did not land is retried, and a human edit meanwhile is still a conflict', async () => {
+    const a = setup()
+    await reconcilePublication(a.ctx, key, 1, day)
+    a.surface.updateFault = 'before'
+    const next = { ...day, seconds: 7200 }
+    await reconcilePublication(a.ctx, key, 2, next)
+    expect((await reconcilePublication(a.ctx, key, 2, next)).outcome).toBe('updated')
+
+    const b = setup()
+    await reconcilePublication(b.ctx, key, 1, day)
+    b.surface.updateFault = 'before'
+    await reconcilePublication(b.ctx, key, 2, next)
+    const c = [...b.surface.comments.values()][0]!
+    b.surface.comments.set(c.id, { ...c, body: c.body + ' (by hand)' })
+    expect((await reconcilePublication(b.ctx, key, 2, next)).code).toBe('remote_edited')
+  })
+
+  it('[unit] a delete that landed before a lost response retires cleanly', async () => {
+    const { surface, ctx, journal } = setup()
+    await reconcilePublication(ctx, key, 1, day)
+    surface.deleteFault = 'after'
+    expect((await reconcilePublication(ctx, key, 2, null)).outcome).toBe('ambiguous')
+    expect(surface.comments.size).toBe(0)
+    expect((await reconcilePublication(ctx, key, 2, null)).outcome).toBe('deleted')
+    expect([...journal.rows.values()][0]!.status).toBe('retired')
+  })
+
+  it('[unit] a delete that did not land is retried', async () => {
+    const { surface, ctx } = setup()
+    await reconcilePublication(ctx, key, 1, day)
+    surface.deleteFault = 'before'
+    await reconcilePublication(ctx, key, 2, null)
+    expect(surface.comments.size).toBe(1)
+    expect((await reconcilePublication(ctx, key, 2, null)).outcome).toBe('deleted')
+    expect(surface.comments.size).toBe(0)
+  })
+
+  it('[unit] a lower sourceVersion cannot overwrite a newer one', async () => {
+    const { surface, ctx, journal } = setup()
+    await reconcilePublication(ctx, key, 5, { ...day, seconds: 7200 })
+    const stale = await reconcilePublication(ctx, key, 3, { ...day, seconds: 60 })
+    expect(stale).toEqual({ outcome: 'stale', code: 'stale_version' })
+    expect([...surface.comments.values()][0]!.body).toContain('2h')
+    expect([...journal.rows.values()][0]!.sourceVersion).toBe(5)
+    expect((await reconcilePublication(ctx, key, 5, { ...day, seconds: 7200 })).outcome).toBe(
+      'unchanged',
+    )
+  })
+
+  it('[unit] ambiguous and deferred holds are visible in the journal', async () => {
+    const { surface, ctx, journal, advance } = setup()
+    surface.timeoutBeforeWrite = true
+    await reconcilePublication(ctx, key, 1, day)
+    await reconcilePublication(ctx, key, 1, day)
+    expect([...journal.rows.values()][0]!.status).toBe('ambiguous')
+    advance(60_000)
+    surface.cooldownMs = 5_000
+    await reconcilePublication(ctx, key, 1, day)
+    const row = [...journal.rows.values()][0]!
+    expect(row.status).toBe('deferred')
+    expect(row.retryAt).toBe(1_000 + 60_000 + 5_000)
+  })
+
+  it('[unit] a cooldown during reconcile keeps the unknown attempt and adopts later without a second post', async () => {
+    const { surface, ctx, journal, advance } = setup()
+    surface.timeoutAfterWrite = true
+    await reconcilePublication(ctx, key, 1, day)
+    surface.cooldownMs = 10_000
+    expect((await reconcilePublication(ctx, key, 1, day)).outcome).toBe('deferred')
+    expect([...journal.rows.values()][0]!.attemptedAt).not.toBeNull()
+    surface.cooldownMs = null
+    advance(10_000)
+    expect((await reconcilePublication(ctx, key, 1, day)).outcome).toBe('adopted')
+    expect(surface.creates).toBe(1)
+    expect([...journal.rows.values()][0]!.retryAt).toBeNull()
+  })
 })

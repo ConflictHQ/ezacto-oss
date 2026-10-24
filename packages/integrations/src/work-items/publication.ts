@@ -4,7 +4,7 @@
  * Contract only: no network, no storage. A real adapter implements
  * `CommentSurface` (GitHub issue comments) and a real store implements
  * `PublicationJournal` (SQLite and D1 with the same uniqueness and fences);
- * both must pass `publication.test.ts` through the fakes' behaviour.
+ * both must pass `work-item-publication.test.ts` through the fakes' behaviour.
  *
  * Invariants:
  * - A POST is never assumed idempotent. Before any create is sent the attempt is
@@ -12,6 +12,10 @@
  *   matching a comment on BOTH the app author and the connection-bound marker.
  * - Absence is provable only from a complete listing taken after `settleMs` has
  *   passed since the attempt. Otherwise the publication is held for an operator.
+ * - Edit and delete are journaled (`pendingWrite`) before they are sent. After an
+ *   ambiguous failure the next run treats a remote body equal to the intended one,
+ *   or absence after an intended delete, as already applied.
+ * - A lower sourceVersion than the journal holds is stale and writes nothing.
  * - Edit and delete touch only a comment that is verified app-owned and whose body
  *   still equals what we last wrote. Anything else is a visible conflict; nothing
  *   is silently recreated, overwritten or removed.
@@ -61,6 +65,10 @@ export interface PublishedValues {
   readonly seconds: number
 }
 
+/** An edit or delete journaled before it is sent; cleared once its result is known. */
+export type PendingWrite =
+  { readonly kind: 'update'; readonly body: string } | { readonly kind: 'delete' }
+
 export type PublicationStatus =
   | 'pending'
   | 'attempted' // a create was sent and its result is unknown (attemptedAt stays set until reconciled)
@@ -81,6 +89,7 @@ export interface PublicationRecord {
   readonly lastBody: string | null
   readonly lastPublished: PublishedValues | null
   readonly attemptedAt: number | null
+  readonly pendingWrite: PendingWrite | null
   readonly retryAt: number | null
   /** Monotonic claim fence; a write with a stale fence is refused by the store. */
   readonly fence: number
@@ -95,7 +104,8 @@ export interface PublicationKey {
 export interface PublicationJournal {
   /**
    * Take the exclusive claim on a key, creating the row when absent, and return it
-   * with a new fence. Null when another worker holds the claim, or when the
+   * with a new fence. The stored sourceVersion is the greater of the stored and the
+   * passed one, never lower. Null when another worker holds the claim, or when the
    * connection was disconnected or revoked (the store checks in the same statement).
    */
   claim(key: PublicationKey, sourceVersion: number): Promise<PublicationRecord | null>
@@ -111,6 +121,7 @@ export type PublishOutcome =
   | 'unchanged'
   | 'deleted'
   | 'busy'
+  | 'stale' // a newer sourceVersion is already journaled
   | 'fenced'
   | 'deferred'
   | 'ambiguous'
@@ -181,6 +192,10 @@ export async function reconcilePublication(
 ): Promise<PublicationResult> {
   const claimed = await ctx.journal.claim(key, sourceVersion)
   if (claimed === null) return { outcome: 'busy', code: null }
+  if (claimed.sourceVersion > sourceVersion) {
+    await ctx.journal.release(key, claimed.fence)
+    return { outcome: 'stale', code: 'stale_version' }
+  }
   try {
     return await run(ctx, claimed, values)
   } finally {
@@ -193,7 +208,8 @@ async function run(
   start: PublicationRecord,
   values: PublishedValues | null,
 ): Promise<PublicationResult> {
-  let record = start
+  // A cooldown that has passed is no longer news; the next save persists the clear.
+  let record = start.retryAt !== null ? { ...start, retryAt: null } : start
   const fenced: PublicationResult = { outcome: 'fenced', code: 'stale_fence' }
   const hold = async (
     status: PublicationStatus,
@@ -206,10 +222,11 @@ async function run(
   }
   // Only an operator clears a conflict; a retired row simply starts over if the entry returns.
   if (record.status === 'conflicted') return { outcome: 'conflicted', code: null }
-  if (record.retryAt !== null && ctx.now() < record.retryAt)
+  if (start.retryAt !== null && ctx.now() < start.retryAt)
     return { outcome: 'deferred', code: 'cooldown' }
 
   let sentCreate = false
+  let sentWrite = false
   try {
     // Reconcile an unknown create before anything else.
     if (record.remoteId === null && record.attemptedAt !== null) {
@@ -260,29 +277,74 @@ async function run(
       return saved === null ? fenced : { outcome: 'created', code: null }
     }
 
-    const remote = await ctx.surface.getComment(record.itemId, record.remoteId)
+    const remoteId = record.remoteId
+    const remote = await ctx.surface.getComment(record.itemId, remoteId)
+    // Resolve an edit or delete whose result is unknown before judging the remote.
+    const pending = record.pendingWrite
+    if (pending !== null) {
+      if (remote === null) {
+        if (pending.kind === 'delete')
+          return hold('retired', 'deleted', '', {
+            remoteId: null,
+            lastBody: null,
+            lastPublished: null,
+            pendingWrite: null,
+          })
+        return hold('conflicted', 'conflicted', 'remote_removed', { pendingWrite: null })
+      }
+      const landed =
+        pending.kind === 'update' &&
+        isOurs(remote, ctx, record.entryId) &&
+        remote.body === pending.body
+      const next = landed ? { lastBody: remote.body, pendingWrite: null } : { pendingWrite: null }
+      if (landed || isUntouched(remote, record, ctx)) {
+        const saved = await save(ctx, record, next)
+        if (saved === null) return fenced
+        record = saved
+      }
+    }
     if (remote === null) return hold('conflicted', 'conflicted', 'remote_removed')
     if (!isUntouched(remote, record, ctx)) return hold('conflicted', 'conflicted', 'remote_edited')
 
     if (values === null) {
-      await ctx.surface.deleteComment(record.itemId, record.remoteId)
-      return hold('retired', 'deleted', '', { remoteId: null, lastBody: null, lastPublished: null })
+      const intended = await save(ctx, record, { pendingWrite: { kind: 'delete' } })
+      if (intended === null) return fenced
+      record = intended
+      sentWrite = true
+      await ctx.surface.deleteComment(record.itemId, remoteId)
+      return hold('retired', 'deleted', '', {
+        remoteId: null,
+        lastBody: null,
+        lastPublished: null,
+        pendingWrite: null,
+      })
     }
     const body = renderTimeComment(ctx.marker, record.entryId, values)
     if (body === remote.body) return hold('published', 'unchanged', '', { lastPublished: values })
-    const updated = await ctx.surface.updateComment(record.itemId, record.remoteId, body)
-    return hold('published', 'updated', '', { lastBody: updated.body, lastPublished: values })
+    const intended = await save(ctx, record, { pendingWrite: { kind: 'update', body } })
+    if (intended === null) return fenced
+    record = intended
+    sentWrite = true
+    const updated = await ctx.surface.updateComment(record.itemId, remoteId, body)
+    return hold('published', 'updated', '', {
+      lastBody: updated.body,
+      lastPublished: values,
+      pendingWrite: null,
+    })
   } catch (e) {
     if (e instanceof CooldownError) {
-      // A refused create (429) did not land, so the attempt is withdrawn; a refused
+      // A refused write (429) did not land, so the attempt is withdrawn; a refused
       // reconcile leaves the earlier unknown attempt in place.
-      const extra = sentCreate ? { attemptedAt: null } : {}
+      const extra = {
+        ...(sentCreate ? { attemptedAt: null } : {}),
+        ...(sentWrite ? { pendingWrite: null } : {}),
+      }
       return hold('deferred', 'deferred', 'cooldown', {
         retryAt: ctx.now() + e.retryAfterMs,
         ...extra,
       })
     }
-    // An ambiguous create stays 'attempted' so the next run reconciles before retrying.
+    // An ambiguous write stays journaled (attempt or pendingWrite) so the next run reconciles first.
     if (e instanceof AmbiguousWriteError) return { outcome: 'ambiguous', code: 'ambiguous_write' }
     throw e
   }

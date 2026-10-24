@@ -18,6 +18,9 @@ export class FakeCommentSurface implements CommentSurface {
   timeoutAfterWrite = false
   /** Next create throws without landing. */
   timeoutBeforeWrite = false
+  /** Next update or delete: 'after' lands then throws, 'before' throws without landing. */
+  updateFault: 'before' | 'after' | null = null
+  deleteFault: 'before' | 'after' | null = null
   cooldownMs: number | null = null
   truncated = false
   private seq = 0
@@ -53,13 +56,21 @@ export class FakeCommentSurface implements CommentSurface {
   async updateComment(itemId: string, id: string, body: string): Promise<RemoteComment> {
     const c = this.comments.get(id)
     if (c === undefined || c.itemId !== itemId) throw new Error('not_found')
+    const fault = this.updateFault
+    this.updateFault = null
+    if (fault === 'before') throw new AmbiguousWriteError()
     const next = { ...c, body }
     this.comments.set(id, next)
+    if (fault === 'after') throw new AmbiguousWriteError()
     return next
   }
 
   async deleteComment(_itemId: string, id: string): Promise<void> {
+    const fault = this.deleteFault
+    this.deleteFault = null
+    if (fault === 'before') throw new AmbiguousWriteError()
     this.comments.delete(id)
+    if (fault === 'after') throw new AmbiguousWriteError()
   }
 
   private rateLimit(): void {
@@ -89,9 +100,10 @@ export class FakePublicationJournal implements PublicationJournal {
       lastPublished: null,
       attemptedAt: null,
       retryAt: null,
+      pendingWrite: null,
       ...prior,
       ...key,
-      sourceVersion,
+      sourceVersion: Math.max(prior?.sourceVersion ?? 0, sourceVersion),
       fence: (prior?.fence ?? 0) + 1,
     }
     this.rows.set(id, row)
