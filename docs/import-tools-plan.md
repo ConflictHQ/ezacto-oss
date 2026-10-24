@@ -238,3 +238,13 @@ boundary, not a universal-import marketing claim.
 | 4 | [#1182: Administrator mapping and preview interface](https://github.com/ConflictHQ/ezacto-pvt/issues/1182) | [#1181](https://github.com/ConflictHQ/ezacto-pvt/issues/1181) | Responsive upload/map/preview flow, all errors/counts/exclusions, target/date-zone/currency review and explicit confirmation |
 | 5 | [#1183: Durable apply, cancel/resume and disposable acceptance](https://github.com/ConflictHQ/ezacto-pvt/issues/1183) | [#1181](https://github.com/ConflictHQ/ezacto-pvt/issues/1181), [#1182](https://github.com/ConflictHQ/ezacto-pvt/issues/1182) | Fenced chunks through the existing writer, partial-state controls, replay/race proof, purge and owned end-to-end acceptance; container release gate |
 | 6 | [#1184: Worker/D1 runtime adaptation, separately gated](https://github.com/ConflictHQ/ezacto-pvt/issues/1184) | [#1180](https://github.com/ConflictHQ/ezacto-pvt/issues/1180), [#1183](https://github.com/ConflictHQ/ezacto-pvt/issues/1183) | Equivalent planner, atomic D1 ledger writes and owned D1/R2/queue acceptance before enabling Worker UI |
+
+## Apply contract for #1183
+
+The executable contract for the durable apply (store port, authority recheck,
+fenced lease, bounded retry, cancel, reconciliation) is
+[`csv-apply-contract.ts`](../packages/migrate/src/csv-apply-contract.ts). Its
+store invariants are pinned by a reusable suite, `describeApplyContract` in
+`packages/migrate/test/csv-apply-suite.ts`, which any SQLite (and later D1)
+store must pass; an in-memory fake runs it today. This is contract only: nothing
+in production imports it, and it does not make the browser import available.
