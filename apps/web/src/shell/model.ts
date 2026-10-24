@@ -1967,6 +1967,12 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   getCapacity: (range, signal) =>
     client.getCapacity({ query: range, ...withSignal(signal) }),
   planning: {
+    holidays: {
+      list: (range, signal) => collectPlanned(cursor => client.listOrganizationHolidays({ query: { ...range, per_page: 200, ...(cursor === undefined ? {} : { cursor }) }, ...withSignal(signal) }), signal),
+      create: (body, signal) => client.createOrganizationHoliday({ body, ...withSignal(signal) }),
+      update: (id, body, signal) => client.updateOrganizationHoliday({ id, body, ...withSignal(signal) }),
+      remove: (id, version, signal) => client.deleteOrganizationHoliday({ id, body: { version }, ...withSignal(signal) }),
+    },
     listProjects: async (signal) =>
       (
         await collect(

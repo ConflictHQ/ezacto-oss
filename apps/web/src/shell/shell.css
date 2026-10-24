@@ -669,7 +669,8 @@
   .team-period strong {
     min-width: 0;
   }
-  .team-period [data-team-week-current] {
+  .team-period [data-team-week-current],
+  .team-period [data-capacity-current] {
     grid-column: 1 / -1;
     width: 100%;
   }
@@ -4817,7 +4818,9 @@ button.primary-action.primary-action {
    does. */
 .settings-form input:not([type='checkbox']):not([type='radio']),
 .settings-form select,
-.settings-form textarea {
+.settings-form textarea,
+.capacity-form input:not([type='hidden']),
+.capacity-form select {
   width: 100%;
   min-height: 44px;
   padding: 8px 12px;
@@ -4831,7 +4834,9 @@ button.primary-action.primary-action {
 @media (pointer: fine) {
   .settings-form input:not([type='checkbox']):not([type='radio']),
   .settings-form select,
-  .settings-form textarea {
+  .settings-form textarea,
+  .capacity-form input:not([type='hidden']),
+  .capacity-form select {
     font-size: var(--ez-text-size);
   }
 }
@@ -4847,7 +4852,9 @@ button.primary-action.primary-action {
    switched back on is still worth reading. */
 .settings-form input:not([type='checkbox']):not([type='radio']):disabled,
 .settings-form select:disabled,
-.settings-form textarea:disabled {
+.settings-form textarea:disabled,
+.capacity-form input:disabled,
+.capacity-form select:disabled {
   background: var(--ez-surface-2);
   color: var(--ez-muted);
   cursor: not-allowed;
@@ -9756,8 +9763,23 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
 }
 .capacity-form label {
   display: grid;
+  flex: 1 1 160px;
+  min-width: 0;
   gap: 4px;
   font-size: 13px;
+}
+.capacity-form button {
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font: inherit;
+}
+.team-period [data-capacity-current] {
+  padding-inline: 14px;
+  white-space: nowrap;
 }
 
 .invoice-hours-line { grid-column: 1 / -1; margin: 0; }

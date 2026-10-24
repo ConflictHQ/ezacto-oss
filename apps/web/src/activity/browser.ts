@@ -67,6 +67,9 @@ export interface ActivityController {
 
 /** What the event picker suggests. A suggestion, not a limit: any event type can be typed. */
 export const KNOWN_ACTIVITY_EVENT_TYPES: readonly string[] = [
+  'organization_holiday.created',
+  'organization_holiday.updated',
+  'organization_holiday.deleted',
   'auth.signed_in',
   'auth.signed_out',
   'api_token.created',
@@ -113,6 +116,7 @@ export const ACTIVITY_ENTITY_KINDS: readonly (readonly [type: string, label: str
  * submission, so it points at the queue.
  */
 export const subjectHref = (aggregate: { readonly type: string; readonly id: number }): string | null => {
+  if (aggregate.type === 'organization_calendar') return '/capacity'
   switch (aggregate.type) {
     case 'scheduled_run':
       return `/scheduled-runs/${aggregate.id}`

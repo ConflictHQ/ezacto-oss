@@ -1,3 +1,4 @@
+import { createOrganizationHolidayRepository } from '@ezacto/db'
 import {migrationLoadStatusProjection} from '@ezacto/db/queued-migrations'
 import type {MigrationLoadStatus} from '@ezacto/core'
 import { createInvoiceElevationStore, unlinkElevatedInvoiceTime } from '@ezacto/db'
@@ -899,6 +900,7 @@ export const createContainerRuntime = async (
       trackedResources,
       calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
       allocations: new DrizzleAllocationRepository(drizzle),
+      organizationHolidays: createOrganizationHolidayRepository(drizzle),
       workItems: {
         repository: new DrizzleWorkItemRepository(drizzle),
         credentialConfigured: (provider) =>

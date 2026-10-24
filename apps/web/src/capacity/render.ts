@@ -58,5 +58,22 @@ export const renderPlanningSection = (): string => `
     </form>
     <p class="form-result" data-planning-timeoff-status role="status" aria-live="polite"></p>
     <div data-planning-timeoff></div>
+    <section data-organization-holidays hidden aria-labelledby="organization-holidays-title">
+      <h2 id="organization-holidays-title">Organization holidays</h2>
+      <p>Whole days unavailable for everyone. Weekdays reduce each person's capacity by one fifth of their weekly hours; weekends leave capacity unchanged. Personal leave on the same date is counted once. These dates do not change tracked time.</p>
+      <form class="capacity-form" data-holiday-form>
+        <label>Holiday date<input name="date" type="date" required></label>
+        <label>Holiday name<input name="name" required maxlength="120" autocomplete="off"></label>
+        <button type="submit" data-holiday-save>Add holiday</button><button type="button" data-holiday-cancel hidden>Cancel holiday edit</button>
+      </form>
+      <p class="form-result" data-holiday-status role="status" aria-live="polite"></p>
+      <div data-holiday-table></div>
+      <dialog class="settings-token-dialog" data-holiday-delete-dialog aria-labelledby="holiday-delete-title">
+        <form class="settings-form" data-holiday-delete-form><h3 id="holiday-delete-title">Remove organization holiday</h3>
+          <p data-holiday-delete-description></p><p>Capacity will be recalculated for everyone. Personal leave stays in place.</p>
+          <div class="dialog-actions"><button type="button" data-holiday-delete-cancel>Cancel</button><button type="submit">Remove holiday</button></div>
+        </form>
+      </dialog>
+    </section>
   </section>
 `

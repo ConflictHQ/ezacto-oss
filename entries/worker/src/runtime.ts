@@ -1,3 +1,4 @@
+import { createOrganizationHolidayRepository } from '@ezacto/db/d1'
 import { createQueuedMigrationStore } from '@ezacto/db/queued-migrations'
 import { createInvoiceElevationStore, unlinkElevatedInvoiceTime } from '@ezacto/db/d1'
 import { createEstimateTemplateRepository } from '@ezacto/db/d1'
@@ -1292,6 +1293,7 @@ export const createRuntimeServices = async (
     trackedResources,
     calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
     allocations: new DrizzleAllocationRepository(drizzle),
+      organizationHolidays: createOrganizationHolidayRepository(drizzle),
     workItems: {
       repository: new DrizzleWorkItemRepository(drizzle),
       credentialConfigured: (provider) => workItemCredentialConfigured(env, provider),

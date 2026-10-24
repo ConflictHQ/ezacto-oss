@@ -70,7 +70,15 @@ export interface PlanningRange {
   readonly to: string
 }
 
+export interface HolidayRow { readonly id: number; readonly date: string; readonly name: string; readonly version: number }
+export interface HolidayApi {
+  list(range: PlanningRange, signal?: AbortSignal): Promise<readonly HolidayRow[]>
+  create(input: { date: string; name: string }, signal?: AbortSignal): Promise<unknown>
+  update(id: number, input: { date: string; name: string; version: number }, signal?: AbortSignal): Promise<unknown>
+  remove(id: number, version: number, signal?: AbortSignal): Promise<unknown>
+}
 export interface PlanningApi {
+  readonly holidays?: HolidayApi
   listProjects(
     signal?: AbortSignal,
   ): Promise<readonly { readonly id: number; readonly name: string }[]>
