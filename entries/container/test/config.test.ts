@@ -28,6 +28,17 @@ describe('container configuration', () => {
     expect(config.appEnv).not.toHaveProperty('SMTP_URL')
   })
 
+  it('[unit] ACCOUNTING_ENABLED=false withholds QuickBooks and an invalid value refuses to start (#1217)', () => {
+    const keys = { QUICKBOOKS_CLIENT_ID: 'id', QUICKBOOKS_CLIENT_SECRET: 'secret' }
+    expect(readContainerConfig({ ...valid(), ...keys }).quickBooks).toBeDefined()
+    const off = readContainerConfig({ ...valid(), ...keys, ACCOUNTING_ENABLED: 'false' })
+    expect(off.quickBooks).toBeUndefined()
+    expect(off.appEnv.ACCOUNTING_ENABLED).toBe('false')
+    expect(() => readContainerConfig({ ...valid(), ...keys, ACCOUNTING_ENABLED: 'off' })).toThrow(
+      /ACCOUNTING_ENABLED/,
+    )
+  })
+
   it('[unit] reads how often a signed-in request records last-seen (#951)', () => {
     expect(readContainerConfig(valid()).lastSeenIntervalMs).toBe(300_000)
     expect(

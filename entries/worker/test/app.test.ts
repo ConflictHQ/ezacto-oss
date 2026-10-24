@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { invoiceNumberIsAddressable, paletteDestinations } from '@ezacto/web'
+import { providerCredentials } from '../src/runtime.js'
 import {
+  accountingEnabled,
   createApp,
   type AppEnv,
   type Env,
@@ -18,6 +20,42 @@ describe('worker entry', () => {
     expect(withoutStorage).toContain('data-attachments-unavailable')
     const withStorage = await (await app.request('/projects/1', {}, { ...env, ATTACHMENTS: {} })).text()
     expect(withStorage).not.toContain('data-attachments-unavailable')
+  })
+
+  it('[#1217] bootstraps accounting availability from the runtime before session restoration', async () => {
+    const keys = { QUICKBOOKS_CLIENT_ID: 'id', QUICKBOOKS_CLIENT_SECRET: 'secret' }
+    const html = async (extra: Partial<WorkerEnv>) =>
+      (await (await app.request('/invoices', {}, { ...env, ...extra })).text())
+    expect(await html({})).toContain('data-accounting-unavailable')
+    expect(await html(keys)).not.toContain('data-accounting-unavailable')
+    expect(await html({ ...keys, ACCOUNTING_ENABLED: 'false' })).toContain('data-accounting-unavailable')
+    expect(await html({ ...keys, ACCOUNTING_ENABLED: 'true' })).not.toContain('data-accounting-unavailable')
+    expect(await html({ ...keys, ACCOUNTING_ENABLED: 'nope' })).toContain('data-accounting-unavailable')
+  })
+
+  it('[#1217] accepts only true or false for ACCOUNTING_ENABLED', () => {
+    expect(accountingEnabled({})).toBe(true)
+    expect(accountingEnabled({ ACCOUNTING_ENABLED: 'true' })).toBe(true)
+    expect(accountingEnabled({ ACCOUNTING_ENABLED: 'false' })).toBe(false)
+    for (const bad of ['', 'FALSE', '0', 'no']) {
+      expect(() => accountingEnabled({ ACCOUNTING_ENABLED: bad })).toThrow(/ACCOUNTING_ENABLED/)
+    }
+  })
+
+  it('[#1217] withholds the QuickBooks keys from the runtime when accounting is off', () => {
+    const keys = {
+      QUICKBOOKS_CLIENT_ID: 'id',
+      QUICKBOOKS_CLIENT_SECRET: 'secret',
+      QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN: 'token',
+    }
+    expect(providerCredentials({ ...env, ...keys } as WorkerEnv)).toMatchObject(keys)
+    const off = providerCredentials({ ...env, ...keys, ACCOUNTING_ENABLED: 'false' } as WorkerEnv)
+    expect(off.QUICKBOOKS_CLIENT_ID).toBeUndefined()
+    expect(off.QUICKBOOKS_CLIENT_SECRET).toBeUndefined()
+    expect(off.QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN).toBeUndefined()
+    expect(() => providerCredentials({ ...env, ...keys, ACCOUNTING_ENABLED: 'maybe' } as WorkerEnv)).toThrow(
+      /ACCOUNTING_ENABLED/,
+    )
   })
 
   it('[#1216] marks backups unavailable only when BACKUPS_ENABLED is explicitly false', async () => {

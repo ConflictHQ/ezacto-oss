@@ -55,6 +55,8 @@ export interface ShellTab {
 export interface AppShellOptions {
   /** Whether this runtime has an attachment storage adapter. */
   readonly attachmentsAvailable?: boolean
+  /** Whether an accounting provider is configured and accounting is not switched off. */
+  readonly accountingAvailable?: boolean
   readonly backupsAvailable?: boolean
   readonly environment: string
   readonly release: string
@@ -569,7 +571,7 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const menuFoldedNavigation = foldedSections.map(menuCard).join('')
 
   return `<!doctype html>
-<html lang="en"${options.attachmentsAvailable === false ? ' data-attachments-unavailable' : ''}${options.backupsAvailable === false ? ' data-backups-unavailable' : ''} data-ez-theme="${defaultTheme}" data-ez-scheme="${colorScheme}"${instancePalette ? ' data-ez-palette="instance"' : ''} data-ez-nav="${navLayout}" data-ez-sidebar="${sidebar}" data-ez-time-layout="${timeLayout}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
+<html lang="en"${options.attachmentsAvailable === false ? ' data-attachments-unavailable' : ''}${options.accountingAvailable === false ? ' data-accounting-unavailable' : ''}${options.backupsAvailable === false ? ' data-backups-unavailable' : ''} data-ez-theme="${defaultTheme}" data-ez-scheme="${colorScheme}"${instancePalette ? ' data-ez-palette="instance"' : ''} data-ez-nav="${navLayout}" data-ez-sidebar="${sidebar}" data-ez-time-layout="${timeLayout}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
