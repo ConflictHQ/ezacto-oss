@@ -136,7 +136,9 @@ jobs:
             }
           # The only suite that drives a browser, so the only one that pays for
           # Chromium.
-          - { name: web, workspaces: -w @ezacto/web, playwright: 'true' }
+          # Run 40047697593 exhausted 20m after 659s of passing unit tests
+          # and only 52/91 native cases. Keep the complete suite and its assertions.
+          - { name: web, workspaces: -w @ezacto/web, playwright: 'true', timeout_minutes: 30 }
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/node-workspace
