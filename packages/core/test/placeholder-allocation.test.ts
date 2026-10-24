@@ -25,6 +25,7 @@ const fields = {
   plannedSecondsPerWeek: 72_000,
 };
 const command = (over = {}) => ({
+  actorId: "actor-1",
   idempotencyKey: "k1",
   placeholderAllocationId: "ph-1",
   expectedRevision: 0,
@@ -68,10 +69,65 @@ describe("placeholder assignment contract (issue 1191)", () => {
   it("[unit] replaying a key returns the prior result and writes nothing", () => {
     const store = seeded();
     const first = store.assign(command(), context());
-    expect(
-      store.assign(command(), context({ actorCanManageProject: false })),
-    ).toBe(first);
+    expect(store.assign(command(), context())).toBe(first);
     expect(store.allocations).toHaveLength(1);
+  });
+
+  it("[unit] a replay re-checks authority and discloses nothing to a caller who lost it", () => {
+    const store = seeded();
+    store.assign(command(), context());
+    expect(
+      code(() =>
+        store.assign(command(), context({ actorCanManageProject: false })),
+      ),
+    ).toBe("placeholder_forbidden");
+  });
+
+  it("[unit] a key is scoped to its actor and cannot be reused for a different request", () => {
+    const store = seeded();
+    const first = store.assign(command(), context());
+    // Another actor with the same key gets no stored result; the placeholder is consumed.
+    expect(
+      code(() =>
+        store.assign(
+          command({ actorId: "actor-2", expectedRevision: 1 }),
+          context(),
+        ),
+      ),
+    ).toBe("placeholder_not_open");
+    // Same actor and key, different user or placeholder.
+    expect(code(() => store.assign(command({ userId: "u2" }), context()))).toBe(
+      "idempotency_key_reused",
+    );
+    expect(
+      code(() =>
+        store.assign(command({ placeholderAllocationId: "ph-2" }), context()),
+      ),
+    ).toBe("idempotency_key_reused");
+    expect(store.allocations).toEqual([first.allocation]);
+  });
+
+  it("[unit] a refused assignment leaves every row and the key untouched", () => {
+    const store = seeded();
+    const personAllocations = [
+      {
+        id: "a0",
+        userId: "u1",
+        projectId: "p1",
+        startDate: "2026-11-02",
+        endDate: "2026-11-13",
+        plannedSecondsPerWeek: 1,
+      },
+    ];
+    expect(
+      code(() => store.assign(command(), context({ personAllocations }))),
+    ).toBe("allocation_overlap");
+    expect(store.allocations).toHaveLength(0);
+    expect(store.get("ph-1")).toMatchObject({ state: "open", revision: 0 });
+    // The refused key was not recorded, so the same key can succeed later.
+    expect(store.assign(command(), context()).placeholder.state).toBe(
+      "assigned",
+    );
   });
 
   it("[unit] a second key for a consumed placeholder cannot duplicate the plan", () => {

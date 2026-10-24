@@ -132,14 +132,20 @@ repository must pass. No schema, route or migration is added by it.
   dates, weekly seconds, `state` (`open`, `assigned`, `archived`), integer
   `revision` from 0. It has no user, capacity, rate or time. Identifiers are
   never reused after archive or erasure.
-- One command assigns: `{idempotencyKey, placeholderAllocationId,
+- One command assigns: `{actorId, idempotencyKey, placeholderAllocationId,
   expectedRevision, userId}`. In a single transaction it re-reads authority,
   creates the person allocation from the placeholder's project/dates/hours and
   marks the placeholder `assigned` with a revision bump and audit event.
 - Refusal order, each writing nothing: not found (404), no management of the
   project (403), stale revision (409), not open (409), inactive person/project
-  (422), same person/project date overlap (409). A replayed key returns the
-  stored result before any check.
+  (422), same person/project date overlap (409). Not found precedes forbidden
+  because authority comes from the placeholder's project; a route that must
+  hide which ids exist answers 404 for both.
+- Idempotency: a key is scoped to actor and key, and stores a fingerprint of
+  placeholder, revision and user. A replay with the same fingerprint re-checks
+  authority (403 if lost), then returns the stored result and writes nothing.
+  The same key with a different fingerprint is refused with 422
+  `idempotency_key_reused`.
 - Warnings, never refusals: `over_allocated` per week (existing policy).
   Missing project access is returned as a `project_access_missing`
   prerequisite; the command creates no staffing assignment or access.

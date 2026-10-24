@@ -37,7 +37,12 @@ export interface PersonAllocationRow extends AllocationFields {
 
 /** The one explicit command. Project and dates come from the placeholder row. */
 export interface AssignPlaceholderCommand {
-  /** Replaying a key returns the stored result and writes nothing. */
+  /** The authenticated caller. Idempotency keys are scoped to this actor. */
+  readonly actorId: string;
+  /**
+   * Replaying the same key from the same actor with the same payload returns
+   * the stored result and writes nothing, after authority is re-checked.
+   */
   readonly idempotencyKey: string;
   readonly placeholderAllocationId: string;
   readonly expectedRevision: number;
@@ -82,9 +87,10 @@ export type PlaceholderAssignmentErrorCode =
   | "placeholder_stale"
   | "placeholder_not_open"
   | "assignment_target_inactive"
-  | "allocation_overlap";
+  | "allocation_overlap"
+  | "idempotency_key_reused";
 
-/** HTTP mapping a route must use: 404, 403, 409, 409, 422, 409. */
+/** HTTP mapping a route must use: 404, 403, 409, 409, 422, 409, 422. */
 export class PlaceholderAssignmentError extends Error {
   constructor(
     readonly code: PlaceholderAssignmentErrorCode,
@@ -100,6 +106,11 @@ export class PlaceholderAssignmentError extends Error {
  * first refusal or returns the rows to write. A refusal writes nothing, so the
  * placeholder is never consumed by a rejected overlap. Over-allocation and
  * missing project access are reported, never refused.
+ *
+ * Not found is answered before forbidden on purpose: authority is derived from
+ * the placeholder's project, so it cannot be checked for a row that does not
+ * exist. A route that must not reveal which ids exist should answer 404 for
+ * both, which this order allows without a second lookup.
  */
 export const decideAssignment = (
   command: AssignPlaceholderCommand,
@@ -197,11 +208,15 @@ export const decideAssignment = (
 
 /**
  * Reference store with the transaction semantics a real repository must have:
- * replay before anything else, all-or-nothing writes, ids never reused.
+ * replay scoped to actor and key with a payload fingerprint, authority
+ * re-checked on replay, all-or-nothing writes, ids never reused.
  */
 export class InMemoryPlaceholderPlanning {
   private readonly placeholders = new Map<string, PlaceholderAllocation>();
-  private readonly results = new Map<string, AssignmentResult>();
+  private readonly results = new Map<
+    string,
+    { fingerprint: string; result: AssignmentResult }
+  >();
   private readonly usedIds = new Set<string>();
   readonly allocations: PersonAllocationRow[] = [];
   private counter = 0;
@@ -265,8 +280,28 @@ export class InMemoryPlaceholderPlanning {
     command: AssignPlaceholderCommand,
     context: AssignmentContext,
   ): AssignmentResult {
-    const replay = this.results.get(command.idempotencyKey);
-    if (replay) return replay;
+    const replayKey = JSON.stringify([command.actorId, command.idempotencyKey]);
+    const fingerprint = JSON.stringify([
+      command.placeholderAllocationId,
+      command.expectedRevision,
+      command.userId,
+    ]);
+    const replay = this.results.get(replayKey);
+    if (replay) {
+      if (replay.fingerprint !== fingerprint) {
+        throw new PlaceholderAssignmentError(
+          "idempotency_key_reused",
+          "This key was already used for a different request.",
+        );
+      }
+      if (!context.actorCanManageProject) {
+        throw new PlaceholderAssignmentError(
+          "placeholder_forbidden",
+          "You cannot manage this project.",
+        );
+      }
+      return replay.result;
+    }
     const id = `allocation-${this.counter + 1}`;
     const result = decideAssignment(
       command,
@@ -277,7 +312,7 @@ export class InMemoryPlaceholderPlanning {
     this.counter += 1;
     this.allocations.push(result.allocation);
     this.placeholders.set(result.placeholder.id, result.placeholder);
-    this.results.set(command.idempotencyKey, result);
+    this.results.set(replayKey, { fingerprint, result });
     return result;
   }
 }
