@@ -139,6 +139,7 @@ interface Harness {
   store: ReturnType<typeof createQuickBooksStore>;
   intuit: Intuit;
   sleeps: number[];
+  restart(): QuickBooksRuntime;
   deliver(id: string, operation: string, lastUpdated: string): Promise<void>;
 }
 
@@ -211,7 +212,7 @@ const build = async (): Promise<Harness> => {
   }
   const server = intuit();
   const sleeps: number[] = [];
-  const runtime = createQuickBooksRuntime({
+  const runtimeOptions = {
     config: {
       clientId: "client-id",
       clientSecret: "client-secret",
@@ -224,15 +225,17 @@ const build = async (): Promise<Harness> => {
     reconciliation: createQuickBooksReconciliationSource(database),
     fetch: fetcher(server),
     now: () => new Date(clock.now),
-    sleep: async (milliseconds) => {
+    sleep: async (milliseconds: number) => {
       sleeps.push(milliseconds);
     },
-  });
+  };
+  const runtime = createQuickBooksRuntime(runtimeOptions);
   return {
     runtime,
     store,
     intuit: server,
     sleeps,
+    restart: () => createQuickBooksRuntime(runtimeOptions),
     deliver: async (id, operation, lastUpdated) => {
       const payload = notification(id, operation, lastUpdated);
       const result = await runtime.service.receiveWebhook({ payload, signature: await sign(payload) });
@@ -270,6 +273,7 @@ describe("QuickBooks catch-up (slice 2)", () => {
     expect(result).toMatchObject({ seeded: true, outcome: "caught_up", examined: 0 });
     expect(cursor()).toEqual({
       realm_id: "realm-a",
+      retry_not_before: null,
       cdc_cursor: iso(base),
       last_run_at: iso(base),
       last_outcome: "caught_up",
@@ -371,25 +375,43 @@ describe("QuickBooks catch-up (slice 2)", () => {
     expect(cursor()).toMatchObject({ cdc_cursor: iso(clock.now), last_outcome: "caught_up" });
   });
 
-  it("[reliability] waits out a 429 by Retry-After, then by doubling, then gives up", async () => {
+  it.each(["7200", "Mon, 19 Oct 2026 14:30:00 GMT"])("[reliability] persists Retry-After %s across restart without sleeping or moving the cursor", async (retryAfter) => {
     const harness = await build();
     await harness.runtime.catchUp();
     clock.now = base + 30 * minute;
-    let throttled = 2;
-    harness.intuit.cdc = () =>
-      throttled-- > 0
-        ? json({ Fault: { Error: [{ code: "3001" }] } }, 429, { "retry-after": "3" })
-        : json(cdc([], iso(clock.now)));
-    await harness.runtime.catchUp();
-    expect(harness.sleeps).toEqual([3000, 3000]);
+    harness.intuit.cdc = () => json({ Fault: { Error: [{ code: "3001" }] } }, 429, { "retry-after": retryAfter });
+    await expect(harness.runtime.catchUp()).rejects.toThrow(/status 429/u);
+    const retryAt = clock.now + 120 * minute;
+    expect(harness.sleeps).toEqual([]);
+    expect(cursor()).toMatchObject({ cdc_cursor: iso(base), last_outcome: "failed", retry_not_before: iso(retryAt) });
+    const calls = harness.intuit.calls.length;
+    const restarted = harness.restart();
+    clock.now += 60 * minute;
+    await expect(restarted.catchUp()).rejects.toThrow(/retry_deferred/u);
+    expect(harness.intuit.calls).toHaveLength(calls);
+    clock.now = retryAt;
+    harness.intuit.cdc = () => json(cdc([], iso(clock.now)));
+    expect(await restarted.catchUp()).toMatchObject({ outcome: "caught_up", cursor: iso(clock.now) });
+    expect(cursor()).toMatchObject({ cdc_cursor: iso(clock.now), last_outcome: "caught_up" });
+    expect(receipts()).toHaveLength(0);
+  });
 
-    harness.sleeps.length = 0;
-    clock.now = base + 60 * minute;
+  it("[reliability] uses Intuit's 60-second fallback and retries only once it is due", async () => {
+    const harness = await build();
+    await harness.runtime.catchUp();
+    clock.now = base + 30 * minute;
     harness.intuit.cdc = () => json({ Fault: { Error: [{ code: "3001" }] } }, 429);
     await expect(harness.runtime.catchUp()).rejects.toThrow(/status 429/u);
-    // Four attempts, three waits, no fixed sleep inside the runtime.
-    expect(harness.sleeps).toEqual([2000, 4000, 8000]);
-    expect(cursor()).toMatchObject({ last_outcome: "failed" });
+    const retryAt = clock.now + minute;
+    expect(cursor()).toMatchObject({ cdc_cursor: iso(base), retry_not_before: iso(retryAt) });
+    const calls = harness.intuit.calls.length;
+    clock.now = retryAt - 1;
+    await expect(harness.runtime.catchUp()).rejects.toThrow(/retry_deferred/u);
+    expect(harness.intuit.calls).toHaveLength(calls);
+    clock.now = retryAt;
+    harness.intuit.cdc = () => json(cdc([], iso(clock.now)));
+    expect(await harness.runtime.catchUp()).toMatchObject({ outcome: "caught_up" });
+    expect(harness.sleeps).toEqual([]);
   });
 
   it("[reliability] a gap beyond Intuit's 30 days asks for a full reconcile and reads nothing", async () => {
@@ -424,33 +446,26 @@ describe("QuickBooks catch-up (slice 2)", () => {
     expect(harness.intuit.calls).toEqual([]);
   });
 
-  it("[reliability] a full window is paged from its newest change and the cursor follows", async () => {
+  it("[reliability] a CDC ceiling preserves the cursor and applies none of the incomplete window", async () => {
     const harness = await build();
     await harness.runtime.catchUp();
     clock.now = base + 30 * minute;
-    const asked: string[] = [];
-    harness.intuit.cdc = (request) => {
-      asked.push(new URL(request.url).searchParams.get("changedSince")!);
-      if (asked.length > 1) return json(cdc([], iso(clock.now)));
-      // 1000 payments is Intuit's ceiling: the window may have more behind it.
-      return json(
-        cdc(
-          Array.from({ length: 1000 }, (_, index) =>
-            payment(`X${String(index)}`, 0.01, {
-              Line: [{ Amount: 0.01, LinkedTxn: [{ TxnId: "qb-other", TxnType: "Invoice" }] }],
-              MetaData: {
-                CreateTime: "2026-10-19T05:10:00-07:00",
-                LastUpdatedTime: iso(base + 10 * minute + index * 1000),
-              },
-            }),
-          ),
-          iso(clock.now),
-        ),
-      );
-    };
+    const paymentsBefore = sqlite!.prepare("SELECT * FROM invoice_payments").all();
+    const invoicesBefore = sqlite!.prepare("SELECT * FROM invoices ORDER BY id").all();
+    harness.intuit.cdc = () => json(cdc(
+      Array.from({ length: 1000 }, (_, index) => payment(`X${String(index)}`, 0.01, {
+        MetaData: { LastUpdatedTime: iso(base + 10 * minute + index * 1000) },
+      })), iso(clock.now),
+    ));
     const result = await harness.runtime.catchUp();
-    expect(result).toMatchObject({ examined: 1000, outcome: "caught_up" });
-    expect(asked[1]).toBe(iso(base + 10 * minute + 999 * 1000));
+    expect(result).toMatchObject({ examined: 0, outcome: "full_reconcile_needed", cursor: iso(base) });
+    expect(cursor()).toMatchObject({ cdc_cursor: iso(base), last_outcome: "full_reconcile_needed" });
+    expect(harness.intuit.calls).toHaveLength(1);
+    expect(sqlite!.prepare("SELECT * FROM invoice_payments").all()).toEqual(paymentsBefore);
+    expect(sqlite!.prepare("SELECT * FROM invoices ORDER BY id").all()).toEqual(invoicesBefore);
+    expect(sqlite!.prepare("SELECT * FROM quickbooks_webhook_deliveries").all()).toEqual([]);
+    expect(sqlite!.prepare("SELECT * FROM quickbooks_payment_divergences").all()).toEqual([]);
+    expect(harness.intuit.calls.every(request => request.method === "GET")).toBe(true);
   });
 });
 
@@ -660,6 +675,7 @@ describe("the recovery tables", () => {
       lastOutcome: "failed",
     });
     expect(await harness.store.readSyncCursor("realm-a")).toEqual({
+      retryNotBefore: null,
       cdcCursor: iso(base),
       lastRunAt: iso(base + minute),
       lastOutcome: "failed",

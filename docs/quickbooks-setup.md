@@ -159,14 +159,25 @@ recorded twice.
   failed run leaves it where it was, records `failed`, and is retried.
 - Each run reads from five minutes before the cursor, because re-applying is
   free and a gap is not.
-- Intuit throttles with 429. Catch-up waits out `Retry-After` (otherwise 2, 4
-  and 8 seconds) and fails the run after four attempts.
+- Intuit throttles with 429. Catch-up records the failure and a durable retry
+  time from `Retry-After` (delta seconds or an HTTP date), or 60 seconds when the
+  header is absent or invalid. It never sleeps inside a request. Scheduled runs
+  before that time make no provider call; a restart preserves the cooldown.
+- A CDC response at the 1,000-object ceiling is incomplete evidence. Catch-up
+  applies none of it, preserves the previous cursor, and records
+  `full_reconcile_needed`. CDC has no continuation cursor, and deleted objects
+  follow active ones: advancing to the newest visible timestamp could lose an
+  omitted change. Compare the books; this does not automatically reset recovery.
 - Intuit replays 30 days at most. A cursor older than 29 days is not read; the
   run records `full_reconcile_needed`, the report says so, and the report is
-  the way to compare the books. Disconnecting and reconnecting starts a fresh
-  cursor.
+  the way to compare the books. After an old gap, disconnecting and reconnecting
+  allows the next run to start a fresh cursor. A recent capped window is not
+  automatically discarded by reconnecting.
 
-The report shows how the last run ended. The self-hosted container has no cron
+The report shows how the last run ended. See the dated
+[reconciliation boundary audit](quickbooks-reconciliation-boundary.md) for
+implemented behavior, provider limitations, and remaining acceptance.
+The self-hosted container has no cron
 and does not run catch-up. Only payments are caught up: an
 invoice's webhook has no effect here either, so nothing is lost by not reading
 invoices.
