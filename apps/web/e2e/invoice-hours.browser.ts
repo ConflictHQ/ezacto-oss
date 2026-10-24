@@ -1,8 +1,10 @@
 import { expect, test } from '@playwright/test'
+import { withoutHttpReplaySupport } from './manual-retry-fixture.js'
 const at = '2026-08-31T12:00:00.000Z'
 test('[e2e:invoice-hours #924] warns, saves a quantity and explicitly releases matching time with a safe retry', async ({
   page,
 }) => {
+  await withoutHttpReplaySupport(page)
   const item = (id: number, position: number, quantity: number, price: number) => ({
     id,
     invoice_id: 7,
