@@ -103,3 +103,14 @@ artifact. Follow-on verification includes the existing narrow invoice/recurring
 editor and header-band tests, renderer/controller checks, web typecheck/lint/build
 and generated asset checks. The final PR body records the commands/results and
 source receipt; deployment read-back is separate from local fixture evidence.
+
+## Validation result
+
+The integrated local audit passes all 10 native cases above, plus two header-band
+checks (including all 12 topbar width edges) and three existing native receipt,
+invoice-line editor and recurring-editor flows. The web unit run passes 141 files
+and 1,689 tests. Web typecheck, lint, build, theme contrast, generated shell check,
+diff check and the branch-history secret scan pass. Independent source and visual
+review found the compact Search, report checkbox and unfocused skip-link capture
+gaps; those are corrected and covered by the final native rerun. CI and deployed
+release evidence belong to the PR receipt and deployment run, respectively.
