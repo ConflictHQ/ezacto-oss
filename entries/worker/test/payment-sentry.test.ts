@@ -6,7 +6,7 @@ import {
 } from "miniflare";
 import { expect, it, vi } from "vitest";
 
-it("delivers a handled payment 502 as a Sentry envelope with the request ID", async () => {
+it("delivers a scrubbed handled payment 502 with request correlation and owned stack positions", async () => {
   // Exercise the real Worker application's error reporter and SDK transport in
   // workerd. The fake DSN and outbound sink keep this entirely local.
   const bundled = await build({
@@ -15,14 +15,20 @@ it("delivers a handled payment 502 as a Sentry envelope with the request ID", as
         import * as Sentry from '@sentry/cloudflare';
         import { ApiError } from '@ezacto/api';
         import { createApp } from './src/app.ts';
+        import { scrubWorkerEvent } from './src/error-reporting.ts';
         const app = createApp();
         app.post('/test-payment-failure', () => {
-          throw new ApiError({status:502, code:'provider_error', message:'Wise 403 during lookup. Trace: fixture'});
+          Sentry.setUser({email:'SECRET@example.test'});
+          Sentry.setContext('private',{token:'SECRET'});
+          Sentry.setExtra('provider_body','SECRET');
+          Sentry.setTag('private','SECRET');
+          Sentry.addBreadcrumb({message:'SECRET'});
+          throw new ApiError({status:502, code:'provider_error', message:'SECRET Wise provider response SQL credentials'});
         });
         export default Sentry.withSentry(env => ({
           dsn:env.SENTRY_DSN, enabled:Boolean(env.SENTRY_DSN),
           environment:env.ENVIRONMENT, release:env.RELEASE,
-          sendDefaultPii:false, tracesSampleRate:0,
+          sendDefaultPii:false, tracesSampleRate:0, beforeSend:scrubWorkerEvent,
         }), { fetch: (request, env, ctx) => app.fetch(request, env, ctx) });
       `,
       resolveDir: new URL("..", import.meta.url).pathname,
@@ -44,7 +50,7 @@ it("delivers a handled payment 502 as a Sentry envelope with the request ID", as
     bindings: {
       SENTRY_DSN: "https://fixture@sentry.example.com/123",
       ENVIRONMENT: "test",
-      RELEASE: "payment-sentry-test",
+      RELEASE: "a".repeat(40),
     },
     outboundService: async (request: MiniflareRequest) => {
       expect(new URL(request.url).pathname).toBe("/api/123/envelope/");
@@ -54,8 +60,8 @@ it("delivers a handled payment 502 as a Sentry envelope with the request ID", as
   });
   try {
     const response = await worker.dispatchFetch(
-      "https://app.example.com/test-payment-failure",
-      { method: "POST" },
+      "https://app.example.com/test-payment-failure?secret=SECRET",
+      { method: "POST", headers: { authorization: "Bearer SECRET", cookie: "SECRET=SECRET" }, body: "SECRET" },
     );
     expect(response.status).toBe(502);
     const body = (await response.json()) as { request_id: string };
@@ -74,15 +80,22 @@ it("delivers a handled payment 502 as a Sentry envelope with the request ID", as
     expect(event).toMatchObject({
       tags: { request_id: body.request_id },
       environment: "test",
-      release: "payment-sentry-test",
+      release: "a".repeat(40),
       exception: {
         values: [
           expect.objectContaining({
-            value: "Wise 403 during lookup. Trace: fixture",
+            value: "eZacto runtime failure",
           }),
         ],
       },
     });
+    expect(envelopes.join('\n')).not.toContain('SECRET');
+    expect(event).not.toHaveProperty('request');
+    expect(event).not.toHaveProperty('user');
+    expect(event).not.toHaveProperty('breadcrumbs');
+    const frames = (event.exception as { values: { stacktrace?: { frames: unknown[] } }[] }).values[0]!.stacktrace?.frames;
+    expect(frames?.length).toBeGreaterThan(0);
+    expect(event.contexts).toMatchObject({ trace: { trace_id: expect.stringMatching(/^[a-f0-9]{32}$/) } });
   } finally {
     await worker.dispose();
   }

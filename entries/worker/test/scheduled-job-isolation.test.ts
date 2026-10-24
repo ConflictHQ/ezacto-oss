@@ -1,3 +1,4 @@
+import { scrubWorkerEvent } from '../src/error-reporting.js';
 import { beforeEach, expect, it, vi } from "vitest";
 import { worker } from "../src/index.js";
 import { createRuntimeServices } from "../src/runtime.js";
@@ -109,10 +110,14 @@ it.each([
     expect(calls).toEqual(
       order.filter((name) => !(failure === "deelStatus" && name === "deel")),
     );
-    expect(Sentry.captureException).toHaveBeenCalledExactlyOnceWith(error);
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    const captured = vi.mocked(Sentry.captureException).mock.calls[0]![0] as Error;
+    expect(captured).not.toBe(error);
+    expect(captured.message).toBe('eZacto runtime failure');
+    expect(scrubWorkerEvent({ exception: { values: [{ value: error.message }] } }, { originalException: captured })).toMatchObject({ tags: { phase: 'scheduled' }, exception: { values: [{ value: 'eZacto runtime failure' }] } });
     expect(createRuntimeServices).toHaveBeenCalledExactlyOnceWith(
       { ATTACHMENTS: {} },
-      { retryReadiness: true },
+      { retryReadiness: true, reportError: expect.any(Function) },
     );
   },
 );
@@ -131,5 +136,9 @@ it("keeps the outbox independent from a failed demo sender after a successful re
     {} as never,
   );
   expect(drain).toHaveBeenCalledOnce();
-  expect(Sentry.captureException).toHaveBeenCalledExactlyOnceWith(error);
+  expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    const captured = vi.mocked(Sentry.captureException).mock.calls[0]![0] as Error;
+    expect(captured).not.toBe(error);
+    expect(captured.message).toBe('eZacto runtime failure');
+    expect(scrubWorkerEvent({ exception: { values: [{ value: error.message }] } }, { originalException: captured })).toMatchObject({ tags: { phase: 'scheduled' }, exception: { values: [{ value: 'eZacto runtime failure' }] } });
 });
