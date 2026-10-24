@@ -1,15 +1,20 @@
 import BetterSqlite3 from 'better-sqlite3'
+import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createContainerDatabase } from '../src/adapters.js'
 import {
   billDemoBacklog,
   createContainerDemoResetDriver,
+  createD1DemoResetDriver,
   PRESERVED_TABLES,
   wipeAndSeedDemo,
   type DemoResetDriver,
 } from '../src/demo-reset.js'
 import type { InvoiceGenerationDatabase } from '../src/invoice-generation.js'
-import { migrateContainer } from '../src/migrate.js'
+import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import { createManagedQuickBooksGrantStore } from '../src/managed-quickbooks.js'
+import { createQuickBooksStore } from '../src/quickbooks.js'
+import type { ManagedQuickBooksGrantCommand } from '@ezacto/core'
 
 const now = '2026-09-09T12:00:00.000Z'
 // Long enough that several client-months are billable, short enough that the
@@ -101,10 +106,70 @@ describe('demo reset', () => {
     expect(revision()?.revision).toBe(rebuilt!.revision + 1)
   })
 
+  it('[security] clears QuickBooks credentials/receipts but fences pending grants across a completed demo wipe', async () => {
+    const { client, driver } = harness()
+    migrateContainer(client)
+    client
+      .prepare(
+        `INSERT INTO users(id,first_name,last_name,profile,manager_grants,created_at,updated_at)
+      VALUES(1,'Owned','Administrator','administrator','[]',?,?)`,
+      )
+      .run(now, now)
+    const db = createContainerDatabase(client)
+    const grants = createManagedQuickBooksGrantStore(db)
+    const connections = createQuickBooksStore(db)
+    const authority = { kind: 'guarded-session' as const, userId: 1 }
+    const command: ManagedQuickBooksGrantCommand = {
+      grantId: 'a'.repeat(64),
+      browserHash: 'b'.repeat(64),
+      credentialHash: 'c'.repeat(64),
+      expectedActorUserId: 1,
+      expectedConnectionGeneration: 0,
+      expiresAt: Date.parse(now) + 600_000,
+      tokens: {
+        realmId: 'owned-demo-realm',
+        companyName: null,
+        accessToken: 'OWNED_DEMO_ACCESS',
+        refreshToken: 'OWNED_DEMO_REFRESH',
+        accessTokenExpiresAt: '2026-09-09T13:00:00.000Z',
+        refreshTokenExpiresAt: '2027-09-09T12:00:00.000Z',
+        scope: 'com.intuit.quickbooks.accounting',
+      },
+    }
+    await grants.accept(command, authority, now)
+    await connections.disconnect({ now })
+    const pending = { ...command, grantId: 'd'.repeat(64), expectedConnectionGeneration: 2 }
+    expect(await grants.prepare(authority, now)).toEqual({
+      connectionGeneration: 2,
+      connected: false,
+    })
+    expect(count(client, 'quickbooks_managed_grants')).toBe(1)
+
+    await wipeAndSeedDemo(driver, { now, years, confirm: 'wipe-and-reload' })
+
+    expect(count(client, 'quickbooks_managed_grants')).toBe(0)
+    expect(count(client, 'quickbooks_connections')).toBe(0)
+    await expect(grants.accept(pending, authority, now)).rejects.toMatchObject({ kind: 'conflict' })
+    expect(await grants.prepare(authority, now)).toEqual({
+      connectionGeneration: 3,
+      connected: false,
+    })
+    expect(count(client, 'quickbooks_managed_grants')).toBe(0)
+    expect(count(client, 'quickbooks_connections')).toBe(0)
+    await expect(
+      grants.accept(
+        { ...pending, grantId: 'e'.repeat(64), expectedConnectionGeneration: 3 },
+        authority,
+        now,
+      ),
+    ).resolves.toEqual({ outcome: 'accepted', connectionGeneration: 4, connected: true })
+  })
+
   it('[security] invalidates pre-wipe authority even if rebuilding never starts', async () => {
     const { client, driver } = harness()
     migrateContainer(client)
     client.exec('UPDATE idempotency_authorization SET revision = 1000 WHERE id = 1')
+    client.exec('UPDATE quickbooks_connection_generation SET generation=generation+1 WHERE singleton=1')
 
     await expect(wipeAndSeedDemo({
       ...driver,
@@ -113,6 +178,48 @@ describe('demo reset', () => {
 
     expect(client.prepare('SELECT revision FROM idempotency_authorization WHERE id = 1').get())
       .toEqual({ revision: 1001 })
+    expect(client.prepare('SELECT generation FROM quickbooks_connection_generation WHERE singleton=1').get())
+      .toEqual({ generation: 2 })
+  })
+
+  it('[security] advances the retained D1 QuickBooks fence before an interrupted rebuild', async () => {
+    const runtime = new Miniflare({
+      modules: true,
+      script: 'export default {fetch(){return new Response("owned fixture")}}',
+      d1Databases: ['DB'],
+    })
+    try {
+      const binding = await runtime.getD1Database('DB')
+      await migrateD1(binding)
+      await binding
+        .prepare(
+          'UPDATE quickbooks_connection_generation SET generation=generation+1 WHERE singleton=1',
+        )
+        .run()
+      const driver = createD1DemoResetDriver(binding)
+      await expect(
+        wipeAndSeedDemo(
+          {
+            ...driver,
+            bootstrap: async () => {
+              throw new Error('owned D1 interruption')
+            },
+          },
+          { now, years, confirm: 'wipe-and-reload' },
+        ),
+      ).rejects.toThrow('owned D1 interruption')
+      expect(
+        await binding
+          .prepare('SELECT generation FROM quickbooks_connection_generation WHERE singleton=1')
+          .first(),
+      ).toEqual({ generation: 2 })
+      // The retained singleton remains protected after the atomic trigger lift.
+      await expect(
+        binding.prepare('DELETE FROM quickbooks_connection_generation').run(),
+      ).rejects.toThrow()
+    } finally {
+      await runtime.dispose()
+    }
   })
 
   it('[security] puts the triggers back when the wipe fails halfway through', async () => {

@@ -8,6 +8,9 @@
  */
 
 import { sql } from 'drizzle-orm'
+import { atomicStatements } from './atomic-statements.js'
+import type { InvoiceStateDatabase } from './invoice-state.js'
+import { quickBooksConnectionStatements } from './quickbooks-connection-command.js'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
@@ -280,30 +283,7 @@ export const createQuickBooksStore = (database: Database): QuickBooksStore => ({
   },
 
   saveConnection: async (input) => {
-    // A previous connection is disconnected rather than overwritten, because the
-    // realm is immutable while live -- connecting a different company is a new
-    // connection, and the trigger says so.
-    await database.run(sql`UPDATE quickbooks_connections
-       SET disconnected_at = ${input.now}, updated_at = ${input.now}
-       WHERE id = 1 AND disconnected_at IS NULL AND realm_id <> ${input.realmId}`)
-    await database.run(sql`INSERT INTO quickbooks_connections
-         (id, realm_id, company_name, access_token, refresh_token,
-          access_token_expires_at, refresh_token_expires_at, scope,
-          allow_online_payment, connected_by_user_id, connected_at,
-          disconnected_at, created_at, updated_at)
-       VALUES (1, ${input.realmId}, ${input.companyName}, ${input.accessToken}, ${input.refreshToken}, ${input.accessTokenExpiresAt}, ${input.refreshTokenExpiresAt}, ${input.scope}, 0, ${input.connectedByUserId}, ${input.now}, NULL, ${input.now}, ${input.now})
-       ON CONFLICT(id) DO UPDATE SET
-         realm_id = excluded.realm_id,
-         company_name = excluded.company_name,
-         access_token = excluded.access_token,
-         refresh_token = excluded.refresh_token,
-         access_token_expires_at = excluded.access_token_expires_at,
-         refresh_token_expires_at = excluded.refresh_token_expires_at,
-         scope = excluded.scope,
-         connected_by_user_id = excluded.connected_by_user_id,
-         connected_at = excluded.connected_at,
-         disconnected_at = NULL,
-         updated_at = excluded.updated_at`)
+    await atomicStatements(database as InvoiceStateDatabase, quickBooksConnectionStatements(input))
   },
 
   saveTokens: async (input) => {
@@ -319,8 +299,19 @@ export const createQuickBooksStore = (database: Database): QuickBooksStore => ({
   },
 
   disconnect: async (input) => {
-    await database.run(sql`UPDATE quickbooks_connections SET disconnected_at = ${input.now}, updated_at = ${input.now}
-       WHERE id = 1 AND disconnected_at IS NULL`)
+    // An explicit disconnect fences an in-flight grant even if there is no
+    // connection, or the previous connection was already disconnected.
+    await atomicStatements(database as InvoiceStateDatabase, [
+      {
+        text: `UPDATE quickbooks_connection_generation SET generation=generation+1 WHERE singleton=1
+          AND NOT EXISTS(SELECT 1 FROM quickbooks_connections WHERE id=1 AND disconnected_at IS NULL) RETURNING generation`,
+        params: [],
+      },
+      {
+        text: `UPDATE quickbooks_connections SET disconnected_at=?,updated_at=? WHERE id=1 AND disconnected_at IS NULL RETURNING id`,
+        params: [input.now, input.now],
+      },
+    ])
   },
 
   readLink: async (input) => {

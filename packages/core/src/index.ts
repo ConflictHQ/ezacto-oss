@@ -1,3 +1,4 @@
+export * from './managed-quickbooks.js'
 export * from './offsite-backups.js'
 export * from './backup-encryption.js'
 export * from './scheduled-jobs.js'

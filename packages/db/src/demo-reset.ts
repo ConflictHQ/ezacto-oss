@@ -173,6 +173,9 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // Source triggers update this migration-seeded singleton in place. Keep its
   // sequence monotonic while clearing the per-person/month source versions.
   'contractor_source_clock',
+  // Connection incarnations must remain monotonic across destructive resets.
+  // The wipe advances this singleton while connection triggers are lifted.
+  'quickbooks_connection_generation',
 ])
 
 /**
@@ -218,6 +221,9 @@ const wipeStatements = (objects: DemoSchemaObjects): readonly DemoSeedStatement[
   // Authority changed while its triggers were lifted. Advance the preserved
   // revision in the wipe transaction, even if bootstrap/seed never resumes.
   { text: 'UPDATE idempotency_authorization SET revision = revision + 1 WHERE id = 1', bindings: [] },
+  // Connection deletion is a lifecycle change even while its triggers are lifted.
+  // Invalidate pending grants even if the subsequent bootstrap never resumes.
+  { text: 'UPDATE quickbooks_connection_generation SET generation = generation + 1 WHERE singleton = 1', bindings: [] },
   { text: 'UPDATE contractor_source_clock SET revision = revision + 1 WHERE id = 1', bindings: [] },
   { text: "INSERT INTO contractor_source_versions(scope,revision) SELECT 'all',revision FROM contractor_source_clock WHERE id=1 ON CONFLICT(scope) DO UPDATE SET revision=excluded.revision", bindings: [] },
   // Preserved, but not carried over either: a template version records who
