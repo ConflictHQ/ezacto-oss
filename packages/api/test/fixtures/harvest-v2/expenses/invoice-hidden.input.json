@@ -1,0 +1,82 @@
+{
+  "expense": {
+    "id": 9101,
+    "harvestId": null,
+    "userId": 401,
+    "projectId": 301,
+    "spentDate": "2024-03-08",
+    "notes": "Invented note.",
+    "billable": true,
+    "approvalStatus": "unsubmitted",
+    "sourceApprovalStatus": null,
+    "invoiceId": 701,
+    "createdAt": "2024-01-05T10:00:00.123Z",
+    "updatedAt": "2024-03-09T16:45:30.987Z",
+    "state": {
+      "approvalStatus": "unsubmitted",
+      "invoiceId": 701,
+      "isBilled": true,
+      "isLocked": true,
+      "lockedReasonCode": "invoiced",
+      "lockedReason": "Invoiced"
+    },
+    "expenseCategoryId": 801,
+    "units": 120,
+    "totalCostCents": 8040,
+    "reimbursable": false,
+    "reimbursementStatus": "none",
+    "payoutRef": null
+  },
+  "context": {
+    "user": {
+      "id": 401,
+      "firstName": "Sample",
+      "lastName": "Sample-Worker",
+      "email": "worker@example.test",
+      "profile": "member",
+      "createdAt": "2024-01-05T10:00:00.123Z",
+      "updatedAt": "2024-03-09T16:45:30.987Z"
+    },
+    "userAssignment": {
+      "id": 501,
+      "projectId": 301,
+      "userId": 401,
+      "isActive": true,
+      "isProjectManager": false,
+      "useDefaultRates": false,
+      "hourlyRateCents": 12550,
+      "budgetSeconds": 72000,
+      "createdAt": "2024-01-05T10:00:00.123Z",
+      "updatedAt": "2024-03-09T16:45:30.987Z"
+    },
+    "project": {
+      "id": 301,
+      "clientId": 101,
+      "name": "Sample Rollout",
+      "code": "SMP-1",
+      "createdAt": "2024-01-05T10:00:00.123Z",
+      "updatedAt": "2024-03-09T16:45:30.987Z"
+    },
+    "client": {
+      "id": 101,
+      "name": "Sample Widgets Ltd",
+      "address": null,
+      "currency": "USD",
+      "isActive": true,
+      "createdAt": "2024-01-05T10:00:00.123Z",
+      "updatedAt": "2024-03-09T16:45:30.987Z"
+    },
+    "expenseCategory": {
+      "id": 801,
+      "name": "Sample Mileage",
+      "unitName": "Sample mile",
+      "unitPriceCents": 67,
+      "isActive": true,
+      "createdAt": "2024-01-05T10:00:00.123Z",
+      "updatedAt": "2024-03-09T16:45:30.987Z"
+    },
+    "isBilled": null,
+    "lockedReason": "This record is locked.",
+    "invoice": null
+  }
+}

@@ -64,6 +64,7 @@ import {
   installEmailConfigurationRoutes,
   installGeneralResourceRoutes,
   installHarvestV2Routes,
+  type HarvestExpenseSource,
   type HarvestTimeEntrySource,
   installMagicLinkRoutes,
   installModuleSettingsRoutes,
@@ -399,7 +400,7 @@ export interface RuntimeServices {
   /** Rooted reads of the client closure, behind the documented tree routes. */
   clientTree: ClientTreeReader
   team: TeamRouteOptions['repository']
-  trackedResources: TrackedResourceRepository & HarvestTimeEntrySource
+  trackedResources: TrackedResourceRepository & HarvestTimeEntrySource & HarvestExpenseSource
   /** Calendar events offered as time, accepted through `trackedResources` (issue 428). */
   calendarProposals: CalendarProposalRepository
   /** Planned hours per week and the capacity view (issue 1007). */
@@ -1146,6 +1147,8 @@ export const createApp = (
             installHarvestV2Routes(harvest, {
               repository: services.generalResources,
               timeEntries: services.trackedResources,
+              expenses: services.trackedResources,
+              isExpensesModuleEnabled: services.isExpensesModuleEnabled,
               isTeamModuleEnabled: services.isTeamModuleEnabled,
               clock: () => systemClock.now().instant,
             }),

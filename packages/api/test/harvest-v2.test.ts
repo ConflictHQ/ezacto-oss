@@ -8,15 +8,17 @@ import {
   parseHarvestListQuery,
   parseHarvestTimeEntryQuery,
   serializeHarvestClient,
+  serializeHarvestExpense,
   serializeHarvestProject,
   serializeHarvestProjectAssignment,
   serializeHarvestTask,
   serializeHarvestTimeEntry,
   serializeHarvestUser,
+  type HarvestExpenseContext,
   type HarvestTimeEntryContext,
   type HarvestUserContext,
 } from '../src/harvest-v2/index.js'
-import type { TimeEntryRecord } from '../src/resources/tracked-repository.js'
+import type { ExpenseRecord, TimeEntryRecord } from '../src/resources/tracked-repository.js'
 import { ApiError as NativeApiError } from '../src/errors.js'
 
 const corpusRoot = join(import.meta.dirname, 'fixtures', 'harvest-v2')
@@ -27,6 +29,10 @@ const render = (resource: string, input: unknown): unknown => {
   if (resource === 'time_entries') {
     const { entry, context } = input as { entry: TimeEntryRecord; context: HarvestTimeEntryContext }
     return serializeHarvestTimeEntry(entry, context)
+  }
+  if (resource === 'expenses') {
+    const { expense, context } = input as { expense: ExpenseRecord; context: HarvestExpenseContext }
+    return serializeHarvestExpense(expense, context)
   }
   if (resource === 'project_assignments') {
     const { assignment, project, client, taskAssignments } = input as {
@@ -48,7 +54,7 @@ const render = (resource: string, input: unknown): unknown => {
   return serializeHarvestUser(user, context)
 }
 
-const resources = ['clients', 'projects', 'tasks', 'users', 'time_entries', 'project_assignments']
+const resources = ['clients', 'projects', 'tasks', 'users', 'time_entries', 'project_assignments', 'expenses']
 const cases = resources.flatMap((resource) =>
   readdirSync(join(corpusRoot, resource))
     .filter((file) => file.endsWith('.input.json'))
