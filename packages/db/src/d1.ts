@@ -536,6 +536,7 @@ export { createD1AppleWebCustodyStore } from './apple-web-custody.js'
 export { createMyPaymentsStore } from './my-payments.js'
 
 export * from './deel-time-sync.js'
+export { createDeelCredentialSource, createManagedDeelConnectionStore } from './managed-deel.js'
 export { createClientRateCardRepository } from './client-rate-cards.js'
 
 export * from './contractor-review.js'

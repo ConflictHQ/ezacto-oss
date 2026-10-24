@@ -420,7 +420,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
       // within the hour. A failed run is recorded in `deel_sync_runs`, reported,
       // and never stops the drain below.
       try {
-        const run = services.deelSync.status().configured
+        const run = (await services.deelSync.status()).configured
           ? await services.deelSync.runAutomaticIfDue() : undefined
         if (run?.status === 'failed') {
           console.error('[worker] Deel time sync failed', run.error, run.failed)

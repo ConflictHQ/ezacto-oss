@@ -176,6 +176,9 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // Connection incarnations must remain monotonic across destructive resets.
   // The wipe advances this singleton while connection triggers are lifted.
   'quickbooks_connection_generation',
+  // Same for the Deel connection (#1238): the wipe deletes the connection row
+  // with its triggers lifted, so the counter is advanced explicitly below.
+  'deel_connection_generation',
 ])
 
 /**
@@ -224,6 +227,7 @@ const wipeStatements = (objects: DemoSchemaObjects): readonly DemoSeedStatement[
   // Connection deletion is a lifecycle change even while its triggers are lifted.
   // Invalidate pending grants even if the subsequent bootstrap never resumes.
   { text: 'UPDATE quickbooks_connection_generation SET generation = generation + 1 WHERE singleton = 1', bindings: [] },
+  { text: 'UPDATE deel_connection_generation SET generation = generation + 1 WHERE singleton = 1', bindings: [] },
   { text: 'UPDATE contractor_source_clock SET revision = revision + 1 WHERE id = 1', bindings: [] },
   { text: "INSERT INTO contractor_source_versions(scope,revision) SELECT 'all',revision FROM contractor_source_clock WHERE id=1 ON CONFLICT(scope) DO UPDATE SET revision=excluded.revision", bindings: [] },
   // Preserved, but not carried over either: a template version records who

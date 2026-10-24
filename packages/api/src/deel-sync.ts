@@ -20,7 +20,9 @@ export interface DeelSyncRunBody extends DeelSyncWindowBody {
 }
 
 export interface DeelSyncApiRuntime {
-  status(): { configured: boolean; reason: string | null }
+  status():
+    | { configured: boolean; reason: string | null }
+    | Promise<{ configured: boolean; reason: string | null }>
   preview(window: DeelSyncWindowBody): Promise<DeelSyncApiResult>
   run(request: {
     window: DeelSyncWindowBody
@@ -150,7 +152,7 @@ export const installDeelSyncRoutes = <Bindings extends object>(
   })
 
   api.get('/deel-sync', async (context) => {
-    const status = dependencies.runtime.status()
+    const status = await dependencies.runtime.status()
     const settings = await dependencies.settings.get()
     const runs = await dependencies.recentRuns(10)
     return context.json(
