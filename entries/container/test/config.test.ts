@@ -39,6 +39,17 @@ describe('container configuration', () => {
     )
   })
 
+  it('[unit] carries every operator module switch and refuses a bad one at start-up (issue 1254)', () => {
+    const flags = { SSO_ENABLED: 'false', BACKUPS_ENABLED: 'false', INVOICES_ENABLED: 'false', ACCOUNTING_ENABLED: 'true' }
+    expect(readContainerConfig({ ...valid(), ...flags }).appEnv).toMatchObject(flags)
+    expect(readContainerConfig(valid()).appEnv).not.toHaveProperty('SSO_ENABLED')
+    for (const name of Object.keys(flags)) {
+      for (const bad of ['off', 'TRUE', '1']) {
+        expect(() => readContainerConfig({ ...valid(), [name]: bad })).toThrow(new RegExp(name))
+      }
+    }
+  })
+
   it('[unit] reads how often a signed-in request records last-seen (#951)', () => {
     expect(readContainerConfig(valid()).lastSeenIntervalMs).toBe(300_000)
     expect(

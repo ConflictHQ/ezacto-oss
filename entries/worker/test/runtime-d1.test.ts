@@ -262,7 +262,7 @@ describe("Worker D1 runtime composition", () => {
     } finally { await runtime.dispose(); }
   });
 
-  it('[#1216] answers 404 on every backup route when BACKUPS_ENABLED is false, and serves them otherwise', async () => {
+  it('[#1216] answers 403 module_disabled on every backup route when BACKUPS_ENABLED is false, and serves them otherwise', async () => {
     const run = async (extra: Record<string, string>) => {
       const runtime = new Miniflare({
         bindings: { API_CURSOR_SIGNING_KEY: cursorSecret, ENVIRONMENT: 'test', RELEASE: 'backups-flag-test', ...extra },
@@ -295,7 +295,7 @@ describe("Worker D1 runtime composition", () => {
     expect(on.runs).toBe(200);
     expect(on.page).not.toContain('data-backups-unavailable');
     const off = await run({ BACKUPS_ENABLED: 'false' });
-    expect(off).toMatchObject({ status: 404, runs: 404, check: 404, mint: 404, redeem: 404 });
+    expect(off).toMatchObject({ status: 403, runs: 403, check: 403, mint: 403, redeem: 403 });
     expect(off.page).toContain('data-backups-unavailable');
     // An unrecognised value is refused at start-up, not read as on or off.
     const invalid = new Miniflare({

@@ -45,6 +45,34 @@ Update the authoritative environment secret store, deploy through CI, verify the
 
 Before disconnecting a money provider, review pending invoices, scheduled payments and uncertain transfers with their operator. Preserve provider IDs and audit records for reconciliation. Before disabling an identity provider, verify another working administrator login. Disabling a login method is separate from deleting an account or revoking provider grants.
 
+## Switch whole modules off
+
+An operator can turn a company module off for the whole instance with one environment variable. This is the operator's switch, separate from the per-organization module toggles in Settings > Company: it outranks them, it is read only from the environment, and nothing in the app or the API can turn a module back on.
+
+| Module | Variable | Effect when `false` |
+| --- | --- | --- |
+| Single sign-on | `SSO_ENABLED` | Google, GitHub and Apple sign-in are not offered on the sign-in page, their routes and the SSO domain settings are refused, and the SSO section is hidden. Password and magic-link sign-in are untouched. |
+| Backups | `BACKUPS_ENABLED` | The backup status, history, download and off-site routes are refused, the off-site sync does not run, and the Backups section is hidden. |
+| Invoices | `INVOICES_ENABLED` | Invoice, recurring invoice, invoice setting, client sending, scheduled month-end run and client invoice page routes are refused, the Invoices section and its settings (with Reminders) disappear from the app, `/invoices` pages redirect to the home page, and recurring generation, payment reminders and month-end runs do not run. |
+| Accounting | `ACCOUNTING_ENABLED` | QuickBooks routes and its webhook are refused, the QuickBooks credentials are not used, and the Accounting section and the invoice QuickBooks line are hidden. |
+
+Unset means on, so an install that sets none of them is unchanged. The only accepted values are `true` and `false`, exactly, in lower case. Anything else, including an empty value, stops start-up with a message naming the variable, so a typo cannot leave a module on that was meant off. `BACKUPS_ENABLED` and `ACCOUNTING_ENABLED` keep their existing names and meaning.
+
+A disabled module answers every API call with `403` and the stable code `module_disabled` before any route runs, so no provider, mail or storage request is made. Existing data is not touched: switching the variable back to `true` (or removing it) and restarting restores the module with everything in it. Mail already queued before a module was switched off is not recalled.
+
+To turn all four off on a Cloudflare Worker, set them as variables in `wrangler.jsonc` (the container reads the same names from its environment):
+
+```jsonc
+"vars": {
+  "SSO_ENABLED": "false",
+  "BACKUPS_ENABLED": "false",
+  "INVOICES_ENABLED": "false",
+  "ACCOUNTING_ENABLED": "false"
+}
+```
+
+Turn off one by setting only its variable. Sign-in stays available through password or magic link, so keep one working administrator sign-in before switching SSO off.
+
 ## Archive a finished year of the activity log
 
 The activity log is append-only and nothing in it is ever deleted. Once a year has finished, an administrator can move the live log into its own archive table from Settings > Activity ("Archive a finished year"). The roll is an operator action, never a schedule: the page offers it, and it runs only when you confirm. It renames the live table to `activity_log_<year>`, keeps every guard on the archive, starts a fresh live table, and records itself in the log as `activity_log.rolled`, all in one transaction. Archived entries still appear in the log, the export and the backup bundle.
