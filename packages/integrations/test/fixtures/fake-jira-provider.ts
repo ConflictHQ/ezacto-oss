@@ -1,5 +1,7 @@
 import {
   JiraProviderError,
+  JiraWorklogHeldError,
+  jiraMarker,
   planJiraWorklog,
   type JiraConnectionBinding,
   type JiraIssueSnapshot,
@@ -9,6 +11,7 @@ import {
   type JiraWorklogPage,
   type JiraWorklogProvider,
 } from '../../src/work-items/jira.js'
+import type { JiraContractHarness } from './jira-provider-contract.js'
 
 /** In-memory Jira. Failure knobs let the contract suite drive scope loss, rate limits and timeout-after-write. */
 export class FakeJiraProvider implements JiraWorklogProvider {
@@ -18,7 +21,6 @@ export class FakeJiraProvider implements JiraWorklogProvider {
   grantedScopes = new Set(['read:jira-work', 'write:jira-work'])
   rateLimitedFor: number | undefined
   timeoutAfterNextWrite = false
-  private readonly byKey = new Map<string, string>()
 
   constructor(
     readonly binding: JiraConnectionBinding,
@@ -47,9 +49,9 @@ export class FakeJiraProvider implements JiraWorklogProvider {
   async createWorklog(input: JiraWorklogInput) {
     this.guard('write:jira-work')
     const plan = planJiraWorklog(input, this.binding)
-    if (plan.status === 'held') throw new JiraProviderError('forbidden')
-    const marker = `marker:${input.idempotencyKey}`
-    const existing = this.worklogs.find((w) => w.marker === marker)
+    if (plan.status === 'held') throw new JiraWorklogHeldError(plan.reason)
+    const marker = jiraMarker(this.binding, input.idempotencyKey)
+    const existing = this.worklogs.find((w) => w.marker === marker && w.issueId === input.issueId)
     if (existing !== undefined) return { worklog: existing, created: false }
     const worklog: JiraWorklog = {
       worklogId: `wl-${this.worklogs.length + 1}`,
@@ -60,7 +62,6 @@ export class FakeJiraProvider implements JiraWorklogProvider {
       updatedAt: '2026-10-01T00:00:00.000Z',
     }
     this.worklogs.push(worklog)
-    this.byKey.set(input.idempotencyKey, worklog.worklogId)
     if (this.timeoutAfterNextWrite) {
       this.timeoutAfterNextWrite = false
       throw new JiraProviderError('ambiguous')
@@ -85,5 +86,30 @@ export class FakeJiraProvider implements JiraWorklogProvider {
     if (this.rateLimitedFor !== undefined)
       throw new JiraProviderError('rate_limited', this.rateLimitedFor)
     if (!this.grantedScopes.has(scope)) throw new JiraProviderError('scope_missing')
+  }
+}
+
+/** Adapt the fake to the provider contract suite. */
+export function fakeJiraHarness(binding: JiraConnectionBinding): JiraContractHarness {
+  const fake = new FakeJiraProvider(binding)
+  return {
+    provider: fake,
+    seedIssue: (issue) => void fake.issues.set(issue.issueId, issue),
+    seedWorklog: (w) => void fake.worklogs.push(w),
+    revokeScope: (scope) => void fake.grantedScopes.delete(scope),
+    rateLimit: (seconds) => {
+      fake.rateLimitedFor = seconds
+    },
+    timeoutAfterNextWrite: () => {
+      fake.timeoutAfterNextWrite = true
+    },
+    signedWebhook: (deliveryId, body) => ({
+      headers: {
+        'x-hub-signature': `sha256=${fake.secret}`,
+        'x-atlassian-webhook-identifier': deliveryId,
+      },
+      body,
+    }),
+    remoteWorklogs: () => fake.worklogs,
   }
 }

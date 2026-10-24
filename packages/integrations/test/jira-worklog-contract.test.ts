@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   JIRA_SCOPES_FOR,
-  JiraProviderError,
+  applyJiraIssueEvent,
   classifyJiraWorklog,
   planJiraWorklog,
+  utcOffsetMinutesAt,
   type JiraConnectionBinding,
   type JiraWorklogInput,
 } from '../src/work-items/jira.js'
-import { FakeJiraProvider } from './fixtures/fake-jira-provider.js'
+import { fakeJiraHarness } from './fixtures/fake-jira-provider.js'
+import { runJiraProviderContract } from './fixtures/jira-provider-contract.js'
 
 const binding: JiraConnectionBinding = {
   cloudId: 'cloud-1',
@@ -42,17 +44,37 @@ describe('jira worklog planning', () => {
     })
   })
 
-  it('[unit] resolves the offset on both sides of a DST change as given by the caller', () => {
-    const before = planJiraWorklog(
-      { ...input, startedAt: '2026-03-08T07:30:00.000Z', utcOffsetMinutes: -420 },
-      binding,
-    )
-    const after = planJiraWorklog(
-      { ...input, startedAt: '2026-03-08T10:30:00.000Z', utcOffsetMinutes: -360 },
-      binding,
-    )
-    expect(before).toMatchObject({ body: { started: '2026-03-08T00:30:00.000-0700' } })
-    expect(after).toMatchObject({ body: { started: '2026-03-08T04:30:00.000-0600' } })
+  it('[unit] derives the offset from a zone on both sides of a DST change', () => {
+    // US spring forward 2026-03-08 at 09:00Z; fall back 2026-11-01 at 08:00Z.
+    const cases: [string, number, string][] = [
+      ['2026-03-08T08:59:00.000Z', -420, '2026-03-08T01:59:00.000-0700'],
+      ['2026-03-08T09:00:00.000Z', -360, '2026-03-08T03:00:00.000-0600'],
+      ['2026-11-01T07:59:00.000Z', -360, '2026-11-01T01:59:00.000-0600'],
+      ['2026-11-01T08:00:00.000Z', -420, '2026-11-01T01:00:00.000-0700'],
+    ]
+    for (const [startedAt, offset, started] of cases) {
+      expect(utcOffsetMinutesAt(startedAt, 'America/Denver')).toBe(offset)
+      const plan = planJiraWorklog(
+        { ...input, startedAt, utcOffsetMinutes: utcOffsetMinutesAt(startedAt, 'America/Denver') },
+        binding,
+      )
+      expect(plan).toMatchObject({ body: { started } })
+    }
+    expect(utcOffsetMinutesAt('2026-07-01T00:00:00Z', 'Asia/Kolkata')).toBe(330)
+    expect(utcOffsetMinutesAt('2026-07-01T00:00:00Z', 'Europe/London')).toBe(60)
+    expect(() => utcOffsetMinutesAt('2026-07-01T00:00:00Z', 'Not/AZone')).toThrow(RangeError)
+  })
+
+  it('[unit] requires a Z or explicit offset on startedAt, never the host timezone', () => {
+    for (const startedAt of ['2026-10-01', '2026-10-01T08:30:00', 'tomorrow', '2026-10-01T08:30']) {
+      expect(planJiraWorklog({ ...input, startedAt }, binding)).toEqual({
+        status: 'held',
+        reason: 'invalid_start',
+      })
+    }
+    expect(
+      planJiraWorklog({ ...input, startedAt: '2026-10-01T08:30:00-06:00' }, binding),
+    ).toMatchObject({ body: { started: '2026-10-01T08:30:00.000-0600' } })
   })
 
   it('[unit] holds a duration-only entry instead of inventing a start', () => {
@@ -86,6 +108,22 @@ describe('jira worklog planning', () => {
     }
   })
 
+  it('[security] a stale event cannot restore old issue state', () => {
+    const current = {
+      ...issue(),
+      status: 'Done',
+      state: 'closed' as const,
+      updatedAt: '2026-10-02T00:00:00.000Z',
+    }
+    const stale = { ...issue(), updatedAt: '2026-10-01T00:00:00.000Z' }
+    const newer = { ...issue(), status: 'Reopened', updatedAt: '2026-10-03T00:00:00.000Z' }
+    expect(applyJiraIssueEvent(current, stale)).toBe(current)
+    expect(applyJiraIssueEvent(current, { ...stale, updatedAt: current.updatedAt })).toBe(current)
+    expect(applyJiraIssueEvent(current, { ...stale, updatedAt: 'garbage' })).toBe(current)
+    expect(applyJiraIssueEvent(current, newer)).toBe(newer)
+    expect(applyJiraIssueEvent(null, stale)).toBe(stale)
+  })
+
   it('[security] reading never requires the write scope and no scope is implied', () => {
     expect(JIRA_SCOPES_FOR.read).toEqual(['read:jira-work'])
     expect(JIRA_SCOPES_FOR.writeWorklogs).toContain('write:jira-work')
@@ -93,79 +131,14 @@ describe('jira worklog planning', () => {
   })
 })
 
-describe('jira provider contract (fake)', () => {
-  it('[unit] finds nothing outside the project allowlist', async () => {
-    const p = new FakeJiraProvider(binding)
-    p.issues.set('10001', issue())
-    p.issues.set('20002', { ...issue('XYZ'), issueId: '20002' })
-    expect(await p.fetchIssue('10001')).toMatchObject({ projectKey: 'ABC' })
-    expect(await p.fetchIssue('20002')).toBeNull()
-  })
-
-  it('[security] replay of the same key creates one remote worklog', async () => {
-    const p = new FakeJiraProvider(binding)
-    const first = await p.createWorklog(input)
-    const replay = await p.createWorklog(input)
-    expect(first.created).toBe(true)
-    expect(replay).toEqual({ worklog: first.worklog, created: false })
-    expect(p.worklogs).toHaveLength(1)
-  })
-
-  it('[unit] after timeout-after-write, listing finds the worklog by marker and a retry adds none', async () => {
-    const p = new FakeJiraProvider(binding)
-    p.timeoutAfterNextWrite = true
-    await expect(p.createWorklog(input)).rejects.toMatchObject({ code: 'ambiguous' })
-    const page = await p.listWorklogs('10001', undefined, 50)
-    expect(page.worklogs.map((w) => w.marker)).toEqual(['marker:entry-9:2026-10-01'])
-    expect((await p.createWorklog(input)).created).toBe(false)
-    expect(p.worklogs).toHaveLength(1)
-  })
-
-  it('[unit] pages worklogs with a bounded limit and a cursor until the last page', async () => {
-    const p = new FakeJiraProvider(binding)
-    for (let i = 0; i < 5; i++) await p.createWorklog({ ...input, idempotencyKey: `k${i}` })
-    const seen: string[] = []
-    let cursor: string | undefined
-    let pages = 0
-    do {
-      const page = await p.listWorklogs('10001', cursor, 2)
-      expect(page.worklogs.length).toBeLessThanOrEqual(2)
-      seen.push(...page.worklogs.map((w) => w.worklogId))
-      cursor = page.nextCursor
-      pages++
-    } while (cursor !== undefined)
-    expect(pages).toBe(3)
-    expect(new Set(seen).size).toBe(5)
-  })
-
-  it('[unit] reports scope loss and rate limits as sanitized codes', async () => {
-    const p = new FakeJiraProvider(binding)
-    p.grantedScopes.delete('write:jira-work')
-    await expect(p.createWorklog(input)).rejects.toMatchObject({ code: 'scope_missing' })
-    expect(await p.fetchIssue('10001')).toBeNull()
-    p.rateLimitedFor = 30
-    const err = await p.fetchIssue('10001').catch((e: unknown) => e)
-    expect(err).toBeInstanceOf(JiraProviderError)
-    expect(err).toMatchObject({ code: 'rate_limited', retryAfterSeconds: 30 })
-  })
-
-  it('[security] accepts a delivery once, and trusts the credential binding over the body', async () => {
-    const p = new FakeJiraProvider(binding)
-    const req = {
-      headers: { 'x-hub-signature': 'sha256=jira-secret', 'x-atlassian-webhook-identifier': 'd-1' },
-      body: JSON.stringify({ cloudId: 'attacker-cloud' }),
-    }
-    expect(await p.verifyWebhook(req)).toEqual({ verified: true, deliveryId: 'd-1' })
-    expect(await p.verifyWebhook(req)).toEqual({ verified: false })
-    expect(await p.verifyWebhook({ headers: {}, body: '{}' })).toEqual({ verified: false })
-  })
-})
+runJiraProviderContract('fake', fakeJiraHarness)
 
 describe('jira remote worklog classification', () => {
   const published = {
     started: '2026-10-01T08:30:00.000-0600',
     timeSpentSeconds: 5400,
     marker: 'm1',
+    issueId: '10001',
   }
   const remote = {
     worklogId: 'wl-1',
@@ -185,6 +158,9 @@ describe('jira remote worklog classification', () => {
     })
     expect(classifyJiraWorklog(published, null, binding)).toEqual({ state: 'deleted' })
     expect(classifyJiraWorklog(published, { ...remote, marker: 'other' }, binding)).toEqual({
+      state: 'foreign',
+    })
+    expect(classifyJiraWorklog(published, { ...remote, issueId: '99999' }, binding)).toEqual({
       state: 'foreign',
     })
     expect(

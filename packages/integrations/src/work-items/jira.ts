@@ -49,7 +49,7 @@ export interface JiraWorklogInput {
   /** Same key, same remote worklog. */
   readonly idempotencyKey: string
   readonly seconds: number
-  /** UTC instant, ISO 8601 with a Z suffix, or absent for a duration-only entry. */
+  /** ISO 8601 instant with a Z or explicit offset (never zone-less), or absent for a duration-only entry. */
   readonly startedAt?: string | undefined
   /** The local entry's UTC offset in minutes at `startedAt` (DST resolved by the caller). */
   readonly utcOffsetMinutes?: number | undefined
@@ -58,7 +58,12 @@ export interface JiraWorklogInput {
 }
 
 export type JiraHoldReason =
-  'missing_start' | 'missing_offset' | 'invalid_seconds' | 'author_unmapped' | 'author_mismatch'
+  | 'missing_start'
+  | 'invalid_start'
+  | 'missing_offset'
+  | 'invalid_seconds'
+  | 'author_unmapped'
+  | 'author_mismatch'
 
 /** The wire body for POST /issue/{id}/worklog. No remaining-estimate field exists here by design. */
 export interface JiraWorklogBody {
@@ -71,6 +76,9 @@ export type JiraWorklogPlan =
   | { readonly status: 'ready'; readonly body: JiraWorklogBody }
   | { readonly status: 'held'; readonly reason: JiraHoldReason }
 
+/** Date, time and a mandatory zone. A zone-less string would parse in the host's timezone. */
+const ZONED_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/
+
 const pad = (n: number, width = 2) => String(n).padStart(width, '0')
 
 /** Turn an entry into a wire body, or hold it with the reason. Pure. */
@@ -80,8 +88,9 @@ export function planJiraWorklog(
 ): JiraWorklogPlan {
   if (!Number.isInteger(input.seconds) || input.seconds <= 0)
     return { status: 'held', reason: 'invalid_seconds' }
-  if (input.startedAt === undefined || Number.isNaN(Date.parse(input.startedAt))) {
-    return { status: 'held', reason: 'missing_start' }
+  if (input.startedAt === undefined) return { status: 'held', reason: 'missing_start' }
+  if (!ZONED_INSTANT.test(input.startedAt) || Number.isNaN(Date.parse(input.startedAt))) {
+    return { status: 'held', reason: 'invalid_start' }
   }
   const offset = input.utcOffsetMinutes
   if (offset === undefined || !Number.isInteger(offset) || Math.abs(offset) > 14 * 60) {
@@ -99,6 +108,55 @@ export function planJiraWorklog(
     `T${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}:${pad(local.getUTCSeconds())}.${pad(local.getUTCMilliseconds(), 3)}` +
     `${sign}${pad(Math.floor(abs / 60))}${pad(abs % 60)}`
   return { status: 'ready', body: { started, timeSpentSeconds: input.seconds } }
+}
+
+/**
+ * The UTC offset in minutes that `timeZone` (IANA name) has at `instant`, DST
+ * included. Callers use it to fill `utcOffsetMinutes`; `planJiraWorklog` never
+ * guesses one. Throws RangeError for an unknown zone or an invalid instant.
+ */
+export function utcOffsetMinutesAt(instant: string, timeZone: string): number {
+  const ms = Date.parse(instant)
+  if (Number.isNaN(ms)) throw new RangeError('invalid instant')
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+  }).formatToParts(new Date(ms))
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value)
+  const asUtc = Date.UTC(
+    get('year'),
+    get('month') - 1,
+    get('day'),
+    get('hour'),
+    get('minute'),
+    get('second'),
+  )
+  return Math.round((asUtc - Math.floor(ms / 1000) * 1000) / 60_000)
+}
+
+/** The marker is bound to the connection (cloud id) as well as the key, so another site's worklog never matches. */
+export function jiraMarker(binding: JiraConnectionBinding, idempotencyKey: string): string {
+  return `ezacto:${binding.cloudId}:${idempotencyKey}`
+}
+
+/**
+ * Apply an inbound issue event. An event whose `updatedAt` is not strictly newer
+ * than what we hold (or is unparseable) cannot restore old state.
+ */
+export function applyJiraIssueEvent(
+  current: JiraIssueSnapshot | null,
+  incoming: JiraIssueSnapshot,
+): JiraIssueSnapshot {
+  if (current === null) return incoming
+  if (current.issueId !== incoming.issueId) return current
+  const next = Date.parse(incoming.updatedAt)
+  return !Number.isNaN(next) && next > Date.parse(current.updatedAt) ? incoming : current
 }
 
 export interface JiraWorklog {
@@ -121,12 +179,16 @@ export type JiraWorklogState =
 
 /** Compare what we published with what Jira holds. A difference is a visible conflict, never a rewrite. */
 export function classifyJiraWorklog(
-  published: JiraWorklogBody & { readonly marker: string },
+  published: JiraWorklogBody & { readonly marker: string; readonly issueId: string },
   remote: JiraWorklog | null,
   binding: JiraConnectionBinding,
 ): JiraWorklogState {
   if (remote === null) return { state: 'deleted' }
-  if (remote.marker !== published.marker || remote.authorAccountId !== binding.authorAccountId) {
+  if (
+    remote.marker !== published.marker ||
+    remote.issueId !== published.issueId ||
+    remote.authorAccountId !== binding.authorAccountId
+  ) {
     return { state: 'foreign' }
   }
   const fields: ('started' | 'timeSpentSeconds')[] = []
@@ -147,6 +209,14 @@ export class JiraProviderError extends Error {
   ) {
     super(code)
     this.name = 'JiraProviderError'
+  }
+}
+
+/** A local hold surfaced by a provider that was handed an unplannable entry. Not a remote failure. */
+export class JiraWorklogHeldError extends Error {
+  constructor(readonly reason: JiraHoldReason) {
+    super(`held:${reason}`)
+    this.name = 'JiraWorklogHeldError'
   }
 }
 
@@ -183,4 +253,63 @@ export interface JiraWorklogProvider {
   ): Promise<{ readonly worklog: JiraWorklog; readonly created: boolean }>
   /** Bounded: `limit` caps a page. Reconciliation walks cursors to the end. */
   listWorklogs(issueId: string, cursor: string | undefined, limit: number): Promise<JiraWorklogPage>
+}
+
+export type JiraReplayOutcome =
+  | { readonly outcome: 'found'; readonly worklog: JiraWorklog }
+  | { readonly outcome: 'absent' }
+  | { readonly outcome: 'hold_for_operator' }
+
+/**
+ * After an `ambiguous` create: walk every page looking for our marker. Absence
+ * is reported only when the whole listing was read; any listing failure or an
+ * unbounded walk holds for an operator, and nothing is retried.
+ */
+export async function reconcileAmbiguousWorklog(
+  provider: JiraWorklogProvider,
+  binding: JiraConnectionBinding,
+  input: JiraWorklogInput,
+  options: { readonly limit?: number; readonly maxPages?: number } = {},
+): Promise<JiraReplayOutcome> {
+  const limit = options.limit ?? 50
+  const maxPages = options.maxPages ?? 20
+  const marker = jiraMarker(binding, input.idempotencyKey)
+  let cursor: string | undefined
+  try {
+    for (let page = 0; page < maxPages; page++) {
+      const result = await provider.listWorklogs(input.issueId, cursor, limit)
+      const worklog = result.worklogs.find(
+        (w) => w.marker === marker && w.issueId === input.issueId,
+      )
+      if (worklog !== undefined) return { outcome: 'found', worklog }
+      if (result.nextCursor === undefined) return { outcome: 'absent' }
+      cursor = result.nextCursor
+    }
+  } catch {
+    return { outcome: 'hold_for_operator' }
+  }
+  return { outcome: 'hold_for_operator' }
+}
+
+/**
+ * Walk worklog pages from `startCursor`. `saveCheckpoint` runs only after
+ * `applyPage` resolved for that page, so a failed page is read again.
+ * Saves `undefined` when the last page is done.
+ */
+export async function syncJiraWorklogs(
+  provider: JiraWorklogProvider,
+  issueId: string,
+  startCursor: string | undefined,
+  limit: number,
+  applyPage: (worklogs: readonly JiraWorklog[]) => Promise<void>,
+  saveCheckpoint: (cursor: string | undefined) => Promise<void>,
+): Promise<void> {
+  let cursor = startCursor
+  for (;;) {
+    const page = await provider.listWorklogs(issueId, cursor, limit)
+    await applyPage(page.worklogs)
+    await saveCheckpoint(page.nextCursor)
+    if (page.nextCursor === undefined) return
+    cursor = page.nextCursor
+  }
 }
