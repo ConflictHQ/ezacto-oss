@@ -392,6 +392,7 @@ export interface RuntimeServices {
     input: InstanceOwnerPasswordInput,
   ): Promise<InstanceOwnerPasswordResult>
   tokens: ApiTokenService
+  projectMissingRates?: GeneralResourceRouteOptions['missingRates']
   generalResources: GeneralResourceRouteOptions['repository']
   /** Rooted reads of the client closure, behind the documented tree routes. */
   clientTree: ClientTreeReader
@@ -776,6 +777,9 @@ export const createApp = (
       passwordSignIn: live('password'),
       // So the controls the demo refuses say so before they are clicked
       // (#931). The same caveat: `demo-lockdown.ts` is what refuses them.
+      attachmentsAvailable: services === undefined
+        ? 'ATTACHMENTS' in env && env.ATTACHMENTS !== undefined
+        : services.attachments !== undefined,
       demo: demoDeployment(env),
       // And whether its mail is held to an allowlist, so the Send dialog can
       // say so. Never the list itself: anyone can open the demo, and a page
@@ -852,6 +856,7 @@ export const createApp = (
               timezone: organizationTimezone,
             })
             installGeneralResourceRoutes(api, {
+              ...(services.projectMissingRates === undefined ? {} : { missingRates: services.projectMissingRates }),
               repository: services.generalResources,
               cursorSigningKey: services.cursorSigningKey,
               isExpensesModuleEnabled: services.isExpensesModuleEnabled,

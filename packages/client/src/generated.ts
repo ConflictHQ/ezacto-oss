@@ -2077,6 +2077,26 @@ export type TeamRateRemovalInput = {
   "kind": "billable" | "cost";
 };
 
+export type ProjectMissingRatesInput = {
+  "fingerprint"?: string;
+};
+
+export type ProjectMissingRatesEnvelope = {
+  "data": ProjectMissingRates;
+};
+
+export type ProjectMissingRates = {
+  "project_id": number;
+  "hourly_rate_cents": number;
+  "currency": string;
+  "entry_count": number;
+  "seconds": number;
+  "earliest_date": string;
+  "latest_date": string;
+  "fingerprint": string;
+  "applied_entries": number;
+};
+
 export type CostRateBackfillInput = {
   "from": string;
   "to": string;
@@ -5554,6 +5574,16 @@ export class EzactoClient {
       );
     }
     return body as T;
+  }
+
+  async recoverProjectMissingRates(args: { "id": number; body: ProjectMissingRatesInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<ProjectMissingRatesEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ProjectMissingRatesEnvelope>("POST", "/api/v1/projects/:id/missing-rates".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
   }
 
   async getNativeAppleCapabilities(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<NativeAppleCapabilities> {
