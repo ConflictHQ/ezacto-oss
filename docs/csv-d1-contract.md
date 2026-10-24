@@ -21,13 +21,23 @@ the names here; the invariants stand.
 | Dry-run applies, then rolls back | No interactive transactions. Preview is a read-only planner over `CsvD1PreviewReader`, which has no write method. |
 | Time insert then `last_insert_rowid()` ledger insert in one transaction | One `D1Database.batch`, which is atomic. Per row: time insert, ledger insert. |
 | One process owns the file | At-least-once, unordered queue delivery and concurrent invocations. |
-| No statement budget | 100 bound parameters per statement and a per-invocation query cap; a chunk is sized to fit. |
+| No statement budget | 100 bound parameters and 100 KB per statement, and a per-invocation query cap; a chunk is sized to fit. |
+
+Budget assumptions, taken from the D1 limits page and not checked against a live
+account (re-verify on adoption): 100 bound parameters, 100,000 bytes per statement,
+and 50 queries per invocation on Workers Free (1,000 on the paid plan). The contract
+budgets against 50, so a chunk of 24 rows is 1 guard + 48 inserts = 49 statements
+and is valid on either plan. `chunkBudget(rows)` derives statements, parameters and
+bytes from the rows; `assertChunkWithinBudget` refuses what does not fit.
 
 ## Invariants
 
 1. **Atomic chunk.** One chunk is one batch: a guard statement, then per unkeyed row
    the time insert and its ledger insert. A failed statement writes nothing. A time
-   entry never exists without its source key, or the reverse.
+   entry never exists without its source key, or the reverse. After a failed batch the
+   store records the safe code `storage_failure` outside the batch and the run stays
+   `partial`; the next successful chunk clears it. The suite injects the failure
+   through the factory's `failBatch()`, so any store can be tested.
 2. **Guard first.** The guard checks, in the batch, that the lease generation is
    current, the run is not cancelled, the actor is still an active administrator
    and the destination version equals the one the preview bound to. Reuse the
@@ -37,15 +47,21 @@ the names here; the invariants stand.
    out-of-order delivery is safe.
 4. **Duplicate keys are counted.** A source key already recorded (this run, an
    earlier run or earlier in the same chunk) is skipped and reported as
-   `alreadyImported`. It is neither an error nor a second entry. Edited rows keep
+   `alreadyImported`. Scope is the run's `sourceId`: keys dedup across all runs of one
+   source and never across sources, so the same key under two sources is two rows.
+   `importedKeys(sourceId)` returns exactly that source's keys. It is neither an error nor a second entry. Edited rows keep
    the append limitation stated in the plan.
 5. **Lease generations only increase.** A lapsed lease is replaced with generation
-   + 1; a live one answers `held`. A writer holding an older generation gets
-   `stale_lease` and writes nothing.
+   + 1; a live one answers `held` for every holder, including the one that already
+   holds it, so a re-claim never fences out its own in-flight write. A writer holding
+   an older generation gets `stale_lease` and writes nothing.
 6. **Pause, do not fail.** `actor_unauthorized` and `destination_stale` pause the
-   run for reauthorization or a fresh preview; neither broadens selection.
+   run for reauthorization or a fresh preview; neither broadens selection. Paused is
+   observable: `status` reports `paused` with that outcome as `lastErrorCode`, and a
+   later chunk that applies clears it. There is no `aborted` or `failed` status.
 7. **Recoverable continuation.** The next message is derived from committed state
-   (`nextChunk`: lowest uncommitted index), never from an acknowledged send. A lost
+   (`nextChunk`: lowest uncommitted index of a run that is not cancelled, so `null`
+   for a cancelled run as well as a finished one), never from an acknowledged send. A lost
    acknowledgement or a crash after commit is repaired by the next delivery.
 8. **Cancel is not rollback.** `cancel` stops future chunks and claims; committed
    rows and setup rows stay. Status reports committed counts.

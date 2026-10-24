@@ -8,6 +8,8 @@ import type {
 } from '../src/csv-d1-contract.js'
 
 interface Run {
+  sourceId: string
+  paused: boolean
   totalChunks: number
   generation: number
   holder: string | null
@@ -26,7 +28,8 @@ interface Run {
  */
 export class FakeCsvD1 implements CsvD1ApplyStore, CsvD1PreviewReader {
   readonly timeEntries: Array<{ sourceKey: string; entry: unknown; actorId: string }> = []
-  private readonly keys = new Set<string>()
+  /** Dedup keys per source: the same key under another source is a different row. */
+  private readonly keys = new Map<string, Set<string>>()
   private readonly runs = new Map<number, Run>()
   admins = new Set<string>()
   version = 'v1'
@@ -35,10 +38,10 @@ export class FakeCsvD1 implements CsvD1ApplyStore, CsvD1PreviewReader {
   /** Make the next batch fail after computing, to prove nothing is half-written. */
   failNextBatch = false
 
-  constructor(private readonly sourceId = 'src') {}
-
-  addRun(runId: number, totalChunks: number): void {
+  addRun(runId: number, totalChunks: number, sourceId = 'src'): void {
     this.runs.set(runId, {
+      sourceId,
+      paused: false,
       totalChunks,
       generation: 0,
       holder: null,
@@ -58,7 +61,7 @@ export class FakeCsvD1 implements CsvD1ApplyStore, CsvD1PreviewReader {
   }
 
   async importedKeys(sourceId: string): Promise<ReadonlySet<string>> {
-    return sourceId === this.sourceId ? new Set(this.keys) : new Set()
+    return new Set(this.keys.get(sourceId) ?? [])
   }
 
   async destinationVersion(): Promise<string> {
@@ -73,7 +76,7 @@ export class FakeCsvD1 implements CsvD1ApplyStore, CsvD1PreviewReader {
   }): Promise<CsvD1LeaseClaim> {
     const run = this.run(input.runId)
     if (run.cancelled) return { kind: 'cancelled' }
-    if (run.holder !== null && run.expiresAt > input.now && run.holder !== input.holder) {
+    if (run.holder !== null && run.expiresAt > input.now) {
       return { kind: 'held', retryAfterMs: run.expiresAt - input.now }
     }
     this.writes += 1
@@ -90,14 +93,24 @@ export class FakeCsvD1 implements CsvD1ApplyStore, CsvD1PreviewReader {
     if (request.leaseGeneration !== run.generation) return { kind: 'stale_lease' }
     const prior = run.committed.get(request.chunkIndex)
     if (prior) return { kind: 'replayed', ...prior }
-    if (!this.admins.has(request.actorId)) return { kind: 'actor_unauthorized' }
-    if (request.destinationVersion !== this.version) return { kind: 'destination_stale' }
+    if (!this.admins.has(request.actorId)) {
+      run.paused = true
+      run.lastErrorCode = 'actor_unauthorized'
+      return { kind: 'actor_unauthorized' }
+    }
+    if (request.destinationVersion !== this.version) {
+      run.paused = true
+      run.lastErrorCode = 'destination_stale'
+      return { kind: 'destination_stale' }
+    }
+
+    const known = this.keys.get(run.sourceId) ?? new Set<string>()
 
     const seen = new Set<string>()
     const fresh: CsvD1ChunkRequest['rows'][number][] = []
     let alreadyImported = 0
     for (const row of request.rows) {
-      if (this.keys.has(row.sourceKey) || seen.has(row.sourceKey)) alreadyImported += 1
+      if (known.has(row.sourceKey) || seen.has(row.sourceKey)) alreadyImported += 1
       else {
         seen.add(row.sourceKey)
         fresh.push(row)
@@ -109,8 +122,9 @@ export class FakeCsvD1 implements CsvD1ApplyStore, CsvD1PreviewReader {
       throw new Error('batch failed')
     }
     this.writes += 1
+    this.keys.set(run.sourceId, known)
     for (const row of fresh) {
-      this.keys.add(row.sourceKey)
+      known.add(row.sourceKey)
       this.timeEntries.push({
         sourceKey: row.sourceKey,
         entry: row.entry,
@@ -121,6 +135,7 @@ export class FakeCsvD1 implements CsvD1ApplyStore, CsvD1PreviewReader {
     run.committed.set(request.chunkIndex, counts)
     run.inserted += counts.inserted
     run.alreadyImported += counts.alreadyImported
+    run.paused = false
     run.lastErrorCode = null
     return { kind: 'applied', ...counts }
   }
@@ -142,7 +157,13 @@ export class FakeCsvD1 implements CsvD1ApplyStore, CsvD1PreviewReader {
     const run = this.run(runId)
     const complete = run.committed.size === run.totalChunks
     return {
-      status: run.cancelled ? 'cancelled' : complete ? 'complete' : 'partial',
+      status: run.cancelled
+        ? 'cancelled'
+        : complete
+          ? 'complete'
+          : run.paused
+            ? 'paused'
+            : 'partial',
       totalChunks: run.totalChunks,
       committedChunks: run.committed.size,
       insertedRows: run.inserted,

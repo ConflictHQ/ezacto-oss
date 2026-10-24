@@ -12,21 +12,38 @@
  * what a D1 store must guarantee when a chunk is written.
  */
 
-/** Cloudflare D1 limits this contract budgets against. Check them when adopting. */
+/**
+ * Cloudflare D1 limits this contract budgets against. They come from the D1 limits
+ * page as understood when this was written; they are not checked against a live
+ * account, so re-verify them when adopting.
+ */
 export const D1_MAX_BOUND_PARAMETERS = 100
 export const D1_MAX_STATEMENT_BYTES = 100_000
-/** Statements one Worker invocation may issue; a chunk uses a fraction of it. */
-export const D1_MAX_QUERIES_PER_INVOCATION = 1_000
+/**
+ * Queries one Worker invocation may issue. This is the Workers Free plan figure (50);
+ * the paid plan allows 1,000. The contract budgets against the lower one so a chunk
+ * is valid on either plan.
+ */
+export const D1_MAX_QUERIES_PER_INVOCATION = 50
+export const D1_MAX_QUERIES_PER_INVOCATION_PAID = 1_000
 /** A queue message is a pointer to a chunk, never the rows. */
 export const QUEUE_MAX_MESSAGE_BYTES = 128 * 1024
 
-/** Rows per chunk. Each row is one time insert plus one ledger insert. */
-export const CSV_D1_CHUNK_ROWS = 25
+/**
+ * Rows per chunk. Each row is one time insert plus one ledger insert, and one guard
+ * statement leads: 1 + 24 * 2 = 49, inside the 50-query budget.
+ */
+export const CSV_D1_CHUNK_ROWS = 24
 export const CSV_D1_STATEMENTS_PER_ROW = 2
 /** One lease/actor guard statement leads every batch. */
 export const CSV_D1_GUARD_STATEMENTS = 1
 
-export type CsvD1RunStatus = 'partial' | 'complete' | 'aborted' | 'cancelled' | 'failed'
+/**
+ * `paused` is a run stopped by `actor_unauthorized` or `destination_stale`; its
+ * `lastErrorCode` carries that outcome. A later chunk that applies clears it.
+ * A failed batch is not a status: the run stays `partial` and records `storage_failure`.
+ */
+export type CsvD1RunStatus = 'partial' | 'paused' | 'complete' | 'cancelled'
 
 /** Identity of a run: the sealed dataset. Matches `csv_import_runs` today. */
 export interface CsvD1RunIdentity {
@@ -49,7 +66,11 @@ export interface CsvD1PlannedRow {
   entry: Readonly<Record<string, string | number | null>>
 }
 
-/** What a store must prove current at write time, all inside the same batch. */
+/**
+ * What a store must prove current at write time, all inside the same batch. The
+ * dedup source is the run's `sourceId` (see `CsvD1RunIdentity`); the request does
+ * not repeat it.
+ */
 export interface CsvD1ChunkRequest {
   runId: number
   /** Position in the immutable plan. (runId, chunkIndex) is the idempotency key. */
@@ -77,7 +98,10 @@ export type CsvD1ChunkOutcome =
 
 export type CsvD1LeaseClaim =
   | { kind: 'claimed'; generation: number; expiresAt: number }
-  /** Another unexpired lease holds the run. Redeliver later; do not write. */
+  /**
+   * An unexpired lease holds the run, whoever the holder is, including the caller
+   * itself. Redeliver later; do not write; the generation does not change.
+   */
   | { kind: 'held'; retryAfterMs: number }
   | { kind: 'cancelled' }
 
@@ -100,7 +124,8 @@ export interface CsvD1RunStatusView {
 export interface CsvD1ApplyStore {
   /**
    * Claim the run. A lapsed lease is replaced with generation + 1; a live one is
-   * `held`. Generations only increase.
+   * `held` for every holder, so a re-claim never fences out the holder's own
+   * in-flight write. Generations only increase.
    */
   claimLease(input: {
     runId: number
@@ -119,8 +144,9 @@ export interface CsvD1ApplyStore {
   applyChunk(request: CsvD1ChunkRequest): Promise<CsvD1ChunkOutcome>
 
   /**
-   * The lowest uncommitted chunk index of a live run, or null when every chunk is
-   * committed. Continuation publication is recoverable because the next message is
+   * The lowest uncommitted chunk index of a live (not cancelled) run, or null when
+   * every chunk is committed or the run is cancelled. A paused run still reports its
+   * next index. Continuation publication is recoverable because the next message is
    * derived from committed state, not from an acknowledged send.
    */
   nextChunk(runId: number): Promise<number | null>
@@ -133,8 +159,9 @@ export interface CsvD1ApplyStore {
 
 /**
  * Preview on D1 must be a read-only planner. This is the whole surface it may
- * call; it has no write method by construction, and a conforming fake counts any
- * attempt to reach a write path.
+ * call; it has no write method by construction. Dedup is scoped by source:
+ * `importedKeys(sourceId)` returns only the keys recorded under that source, across
+ * every run of it, and the same source key under another source is a different row.
  */
 export interface CsvD1PreviewReader {
   importedKeys(sourceId: string): Promise<ReadonlySet<string>>
@@ -146,10 +173,39 @@ export interface CsvD1Budget {
   statements: number
   /** The most bound parameters any one statement in the chunk uses. */
   maxStatementParameters: number
+  /** The largest single statement, in bytes of SQL text plus bound text values. */
+  maxStatementBytes: number
 }
+
+/** Guard binds run id, lease generation, actor id and destination version. */
+export const CSV_D1_GUARD_PARAMETERS = 4
+/** Ledger insert binds run id, source id and source key. */
+export const CSV_D1_LEDGER_PARAMETERS = 3
+/** Allowance for the SQL text of one insert, on top of its bound values. */
+export const CSV_D1_STATEMENT_OVERHEAD_BYTES = 1_000
 
 export const chunkStatementCount = (rows: number): number =>
   CSV_D1_GUARD_STATEMENTS + rows * CSV_D1_STATEMENTS_PER_ROW
+
+/**
+ * The budget a set of planned rows needs, derived from the rows: statements from
+ * the row count, parameters from the widest entry (one bind per entry field) or the
+ * guard/ledger statements, bytes from the largest entry plus its source key.
+ */
+export const chunkBudget = (rows: readonly CsvD1PlannedRow[]): CsvD1Budget => {
+  const encoder = new TextEncoder()
+  let maxStatementParameters = Math.max(CSV_D1_GUARD_PARAMETERS, CSV_D1_LEDGER_PARAMETERS)
+  let maxStatementBytes = CSV_D1_STATEMENT_OVERHEAD_BYTES
+  for (const row of rows) {
+    maxStatementParameters = Math.max(maxStatementParameters, Object.keys(row.entry).length)
+    const bytes =
+      CSV_D1_STATEMENT_OVERHEAD_BYTES +
+      encoder.encode(JSON.stringify(row.entry)).byteLength +
+      encoder.encode(row.sourceKey).byteLength
+    maxStatementBytes = Math.max(maxStatementBytes, bytes)
+  }
+  return { statements: chunkStatementCount(rows.length), maxStatementParameters, maxStatementBytes }
+}
 
 /** Throws when a chunk could not be sent as one batch; the planner must split it. */
 export const assertChunkWithinBudget = (budget: CsvD1Budget): void => {
@@ -158,6 +214,9 @@ export const assertChunkWithinBudget = (budget: CsvD1Budget): void => {
   }
   if (budget.maxStatementParameters > D1_MAX_BOUND_PARAMETERS) {
     throw new RangeError('csv_d1_chunk_too_many_parameters')
+  }
+  if (budget.maxStatementBytes > D1_MAX_STATEMENT_BYTES) {
+    throw new RangeError('csv_d1_chunk_statement_too_large')
   }
 }
 
