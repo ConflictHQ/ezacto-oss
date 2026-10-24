@@ -1,3 +1,4 @@
+import { retryTransientD1IdempotentOperation } from '@ezacto/db/d1'
 import { createOrganizationHolidayRepository } from '@ezacto/db/d1'
 import { createWebhookSecretVault } from '@ezacto/core'
 import { createWebhookService } from '@ezacto/db/d1'
@@ -693,6 +694,8 @@ export const createRuntimeServices = async (
     ses?: SesMailerOptions;
     mailgun?: MailgunOptions;
     cloudflareAccessFetch?: CloudflareAccessFetch;
+    /** Scheduled ticks retry only ledger-fenced readiness, never service effects. */
+    retryReadiness?: boolean;
   } = {},
 ): Promise<RuntimeServices> => {
   const binding = requireDatabase(env);
@@ -719,7 +722,11 @@ export const createRuntimeServices = async (
     env.PORTAL_MAGIC_LINK_SIGNING_KEY === ""
       ? undefined
       : parseCursorSigningKey(env.PORTAL_MAGIC_LINK_SIGNING_KEY);
-  await ensureRuntimeDatabaseReady(database);
+  if (options.retryReadiness) {
+    await retryTransientD1IdempotentOperation(() => ensureRuntimeDatabaseReady(database));
+  } else {
+    await ensureRuntimeDatabaseReady(database);
+  }
   // The nightly demo wipe can make a populated database empty again.
   await ensureOrdinaryMigrationAccess(binding, !demo);
   const drizzle = createD1Database(database);

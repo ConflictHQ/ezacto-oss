@@ -221,17 +221,25 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
     )
   },
   async scheduled(controller, env) {
-    const services = await createRuntimeServices(env)
-    if (controller.cron === '* * * * *' && services.webhooks) {
-      try {
-        await services.webhooks.processDue()
-        await services.webhooks.purge()
-      } catch {
-        console.error('[worker] webhook sweep failed')
+    // Migration batches are ledger-fenced and restartable even if a committed
+    // response was lost. Service construction/provider jobs are not retried.
+    // Exhaustion propagates to withSentry once and marks this tick failed;
+    // readiness is cached only on success, so the next tick can recover.
+    const services = await createRuntimeServices(env, { retryReadiness: true })
+    const isolate = async <T>(name: string, job: () => Promise<T>): Promise<T | undefined> => {
+      try { return await job() }
+      catch (error) {
+        console.error(`[worker] ${name} failed`, error)
+        Sentry.captureException(error)
+        return undefined
       }
     }
-    if (controller.cron === '* * * * *')
-      await services.paymentRuns?.processDue(new Date().toISOString())
+    if (controller.cron === '* * * * *' && services.webhooks) {
+      await isolate('webhook sweep', () => services.webhooks!.processDue())
+      await isolate('webhook purge', () => services.webhooks!.purge())
+    }
+    if (controller.cron === '* * * * *' && services.paymentRuns !== undefined)
+      await isolate('payment run sweep', () => services.paymentRuns!.processDue(new Date().toISOString()))
     if (controller.cron === '* * * * *' && services.budgetAlerts !== undefined) {
       // Budget alerts (issue 934): a pass over the projects that asked to be
       // told, before the drain below so the event it writes is mailed in the
@@ -312,10 +320,10 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
     if (controller.cron === '* * * * *' && services.scheduledActionExpiry !== undefined) {
       // Proposed month-end runs past their deadline (issue 63). The sweep
       // reports its own failure, so it never stops the drain below.
-      await services.scheduledActionExpiry.expireDue(new Date().toISOString(), (error) => {
+      await isolate('scheduled run expiry', () => services.scheduledActionExpiry!.expireDue(new Date().toISOString(), (error) => {
         console.error('[worker] scheduled run expiry failed', error)
         Sentry.captureException(error)
-      })
+      }))
     }
     // Not on the demo (#931): its database is thrown away at this hour, and an
     // export would copy whatever visitors typed into it into the bucket, which
@@ -325,7 +333,7 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
       env.ATTACHMENTS !== undefined &&
       !demoDeployment(env)
     ) {
-      await runNightlyExport(env.DB, env.ATTACHMENTS)
+      await isolate('nightly export', () => runNightlyExport(env.DB, env.ATTACHMENTS!))
     }
     if (controller.cron === '0 3 * * *') {
       // Daily rather than every minute: a definition is due on a date, so the
@@ -339,17 +347,17 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
       // the next day still generates the day it was scheduled for. The engine
       // treats every definition due on or before that date, so the day a cron
       // misses entirely is caught up by the next one.
-      await services.recurringInvoices.generateDue(
+      await isolate('recurring invoice generation', () => services.recurringInvoices.generateDue(
         new Date(controller.scheduledTime).toISOString().slice(0, 10),
         { type: 'system' },
-      )
+      ))
       // Payment reminders that have come due (issue 801). Daily, like the
       // generation above and for the same reason: a reminder is due on a
       // date. The mail it enqueues is drained below in the same invocation.
       // `now` rather than `scheduledTime`: the rows carry their own due date,
       // and the message says how late the invoice is today.
       if (services.reminders !== undefined) {
-        await services.reminders.processDue(new Date().toISOString())
+        await isolate('payment reminders', () => services.reminders!.processDue(new Date().toISOString()))
       }
     }
     if (controller.cron === '0 * * * *' && services.bill !== undefined) {
@@ -358,13 +366,13 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
       // for the daily one when a client has just paid. Cheap when BILL is not
       // configured or nothing is mirrored, and never throws -- a BILL outage
       // is reported and the drain below still runs.
-      await createScheduledBillReconciliation({
-        reconcile: services.bill.reconcilePayments,
+      await isolate('BILL reconciliation', () => createScheduledBillReconciliation({
+        reconcile: services.bill!.reconcilePayments,
         report: (error) => {
           console.error('[worker] BILL reconciliation failed', error)
           Sentry.captureException(error)
         },
-      })()
+      })())
     }
     if (controller.cron === '0 * * * *' && services.quickBooks !== undefined) {
       // Payments QuickBooks changed that no webhook told us of (issue 1013).
@@ -378,15 +386,16 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
         Sentry.captureException(error)
       }
     }
-    if (controller.cron === '0 * * * *' && services.deelSync?.status().configured === true) {
+    if (controller.cron === '0 * * * *' && services.deelSync !== undefined) {
       // Deel time sync (issue 103, #1102). Runs only when the organization has
       // set the sync to automatic, once a day at its configured time; manual is
       // the default and this does nothing. Hourly, so a configured time is met
       // within the hour. A failed run is recorded in `deel_sync_runs`, reported,
       // and never stops the drain below.
       try {
-        const run = await services.deelSync.runAutomaticIfDue()
-        if (run.status === 'failed') {
+        const run = services.deelSync.status().configured
+          ? await services.deelSync.runAutomaticIfDue() : undefined
+        if (run?.status === 'failed') {
           console.error('[worker] Deel time sync failed', run.error, run.failed)
           Sentry.captureException(new Error(run.error ?? 'Deel time sync had failed submissions'))
         }
@@ -397,15 +406,15 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
     }
     // Refuses on any deployment that is not the demo, so this line is safe to
     // read as unconditional. See `runDemoMaintenance`.
-    const maintenance = await runDemoMaintenance(env, controller.cron)
+    const maintenance = await isolate('demo maintenance', () => runDemoMaintenance(env, controller.cron))
     // The rebuild empties the demo's sender with everything else, and nobody
     // using the demo may make another (#931).
-    if (maintenance.ran === 'rebuild') await seedDemoSender(services, env)
-    const drained = await services.outbox.drain()
+    if (maintenance?.ran === 'rebuild') await isolate('demo sender seed', () => seedDemoSender(services, env))
+    const drained = await isolate('outbox drain', () => services.outbox.drain())
     // A database failure while claiming stops the tick rather than throwing
     // (#1104). Nothing was lost: the events are still queued for the next
     // minute. Reported once per tick here, not once per row.
-    if (drained.interrupted !== undefined) {
+    if (drained?.interrupted !== undefined) {
       console.error('[worker] outbox drain interrupted', drained.interrupted)
       Sentry.captureException(drained.interrupted)
     }

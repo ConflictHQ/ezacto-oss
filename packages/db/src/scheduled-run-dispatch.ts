@@ -1,3 +1,4 @@
+import { retryTransientD1IdempotentOperation } from './d1-idempotent-retry.js'
 import { sql } from 'drizzle-orm'
 import type { EmailMessage, SenderBoundQueuedMailer } from '@ezacto/mailer'
 import { createAttachmentStore } from './attachments.js'
@@ -144,14 +145,28 @@ export const createScheduledRunDispatchService = (
   const service = {
     /** A stable proposal identity also fences old Workflows after a demo reset. */
     async workflowCandidates(now = ports.now()) {
-      return database.all<{ id: number; proposed_at: string; generation: number }>(sql`
-        UPDATE proposed_runs SET workflow_checked_at=${now} WHERE id IN(
-          SELECT run.id FROM proposed_runs run WHERE run.state='confirmed' AND EXISTS(
-            SELECT 1 FROM run_items item WHERE item.run_id=run.id AND
-            ((item.state IN('pending','failed') AND item.attempt_count<item.attempt_limit)
-              OR (item.state='running' AND (item.lease_expires_at IS NULL OR item.lease_expires_at<=${now}))))
-          ORDER BY COALESCE(run.workflow_checked_at,run.confirmed_at),run.id LIMIT 10)
-        RETURNING id,proposed_at,(SELECT SUM(attempt_limit) FROM run_items WHERE run_id=proposed_runs.id) AS generation`)
+      // Snapshot before checkpointing: after an ambiguous UPDATE response, a
+      // retry must not rotate to a different batch and strand the first ten.
+      const candidates = await retryTransientD1IdempotentOperation(async () => await database.all<{
+        id: number; proposed_at: string; workflow_checked_at: string | null
+      }>(sql`SELECT run.id,run.proposed_at,run.workflow_checked_at FROM proposed_runs run
+        WHERE run.state='confirmed' AND EXISTS(
+          SELECT 1 FROM run_items item WHERE item.run_id=run.id AND
+          ((item.state IN('pending','failed') AND item.attempt_count<item.attempt_limit)
+            OR (item.state='running' AND (item.lease_expires_at IS NULL OR item.lease_expires_at<=${now}))))
+        ORDER BY COALESCE(run.workflow_checked_at,run.confirmed_at),run.id LIMIT 10`))
+      if (candidates.length === 0) return []
+      const identities = sql.join(candidates.map(candidate =>
+        sql`(id=${candidate.id} AND proposed_at=${candidate.proposed_at}
+          AND (workflow_checked_at IS ${candidate.workflow_checked_at} OR workflow_checked_at=${now}))`), sql` OR `)
+      return retryTransientD1IdempotentOperation(async () => await database.all<{
+        id: number; proposed_at: string; generation: number
+      }>(sql`UPDATE proposed_runs SET workflow_checked_at=${now}
+        WHERE (${identities}) AND state='confirmed' AND EXISTS(
+          SELECT 1 FROM run_items item WHERE item.run_id=proposed_runs.id AND
+          ((item.state IN('pending','failed') AND item.attempt_count<item.attempt_limit)
+            OR (item.state='running' AND (item.lease_expires_at IS NULL OR item.lease_expires_at<=${now}))))
+        RETURNING id,proposed_at,(SELECT SUM(attempt_limit) FROM run_items WHERE run_id=proposed_runs.id) AS generation`))
     },
     async processRun(runId: number, proposedAt: string) {
       const result = await service.processDue(ports.now(), { runId, proposedAt })
